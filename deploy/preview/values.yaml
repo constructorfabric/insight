@@ -1,0 +1,54 @@
+# One preview experiment = one release of this chart. Provision by hand
+# (`helm upgrade --install preview-<name> deploy/preview --set experiment=<name> ...`);
+# `helm uninstall preview-<name>` removes exactly this experiment's path. See README.md.
+
+# REQUIRED. The experiment slug. Forms the URL segment (/exp/<experiment>) and
+# the resource name (preview-<experiment>), so it MUST be a DNS-1123 label:
+# lowercase alphanumerics and '-', starting/ending alphanumeric, at most 55
+# characters (so preview-<experiment> never truncates at the 63-char limit).
+# Templates fail fast otherwise.
+experiment: ""
+
+replicaCount: 1
+
+podAnnotations: {}
+
+# The FE image. Only the FE varies per experiment; the backend never does.
+image:
+  repository: ghcr.io/constructorfabric/insight-front
+  tag: "" # REQUIRED per experiment (a build tag; rendered as repository:tag). No `:latest` default.
+  pullPolicy: IfNotPresent
+
+# Pull secrets for private registries, e.g. [{ name: ghcr-pull }].
+imagePullSecrets: []
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  className: nginx
+  # The single preview host. One host serves every experiment (one Entra
+  # redirect URI, same-origin session cookie); only the path varies.
+  host: ""
+  # Path prefix experiments live under. `/exp/<experiment>` is prefix-stripped
+  # to `/` before reaching the FE pod, so the image serves under any prefix.
+  basePath: /exp
+  # Extra annotations merged onto the per-experiment route object.
+  annotations: {}
+
+# No auth or backend values: preview login is the gateway+authenticator's job,
+# not FE-side OIDC (authenticated return path shipped in #1972). Experiments are
+# a gated capability, off by default: only a stand whose authenticator sets
+# `experiments_enabled: true` honors a login return into `/exp/<name>`, so a
+# production stand cannot host experimental frontends against its data. Dev/demo
+# preview hosts opt in and serve experiments over that stand's own data. The gate
+# lives on the authenticator (gitops), not this FE chart (#1973).
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

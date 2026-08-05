@@ -145,8 +145,9 @@ async fn refresh_and_callback_buckets_trip_past_burst() {
     let (status, _) = refresh(&http, &auth_base, &other, &other_csrf).await;
     assert_eq!(status, 200, "another session must have its own bucket");
 
-    // 3. Callback bucket: hammering one (bogus) state flips from 400
-    //    (unknown state) to 429 once the per-state bucket empties.
+    // 3. Callback bucket: hammering one (bogus) state flips from 302 (the
+    //    unknown-state auth_error redirect, #2032) to 429 once the per-state
+    //    bucket empties.
     let mut saw_429 = false;
     for _ in 1..=8 {
         let resp = http
@@ -157,7 +158,7 @@ async fn refresh_and_callback_buckets_trip_past_burst() {
             .await
             .unwrap();
         match resp.status().as_u16() {
-            400 => {}
+            302 => {}
             429 => {
                 saw_429 = true;
                 break;

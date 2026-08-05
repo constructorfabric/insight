@@ -2,7 +2,7 @@
 # Downstream-verification e2e (NGINX_BFF §6 R1 / §D).
 #
 # Brings up the full chain — fakeidp + authenticator + gateway + the REAL
-# analytics (Rust) and identity (.NET) services + MariaDB/Redis — and asserts
+# analytics and identity-resolution services + MariaDB/Redis — and asserts
 # the five downstream-verification scenarios. Stack lifecycle + assertions live
 # in conftest.py + test_downstream.py.
 #

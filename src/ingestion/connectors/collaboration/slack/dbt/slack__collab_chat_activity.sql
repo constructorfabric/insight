@@ -38,8 +38,8 @@ SELECT
         toString(toDate(parseDateTimeBestEffortOrNull(u.date)))
     )) AS unique_key,
     u.user_id,
-    coalesce(u.email_address, '') AS user_name,
-    coalesce(u.email_address, '') AS email,
+    toNullable(coalesce(u.email_address, '')) AS user_name,
+    toNullable(coalesce(u.email_address, '')) AS email,
     if(coalesce(u.email_address, '') != '',
        lower(u.email_address),
        lower(u.user_id)) AS person_key,
@@ -47,10 +47,10 @@ SELECT
     CAST(NULL AS Nullable(Int64)) AS direct_messages,
     CAST(NULL AS Nullable(Int64)) AS group_chat_messages,
     -- #266: total - channel = DMs + MPIMs (everything posted outside channels).
-    toInt64(greatest(
+    toNullable(toInt64(greatest(
         coalesce(u.messages_posted_count, 0) - coalesce(u.channel_messages_posted_count, 0),
         0
-    )) AS direct_and_group_messages,
+    ))) AS direct_and_group_messages,
     coalesce(u.messages_posted_count, 0) AS total_chat_messages,
     u.channel_messages_posted_count AS channel_posts,
     CAST(NULL AS Nullable(Int64)) AS channel_replies,

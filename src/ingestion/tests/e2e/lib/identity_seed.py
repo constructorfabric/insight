@@ -7,6 +7,7 @@ so tests can assert exact ids; all rows carry reason='e2e-seed'.
 The org tree (tenant = TEST_TENANT_ID, source = bamboohr/SOURCE_ID):
 
     alice (admin, root)
+    ├── no_email (person id only — no email observation)
     ├── bob ── carol
     ├── dup1 ┐  same email dup@e2e.test → ambiguous-profile case
     └── dup2 ┘
@@ -49,6 +50,9 @@ CAROL = uuid.UUID("aaaaaaaa-0000-4000-8000-000000000003")
 DUP1 = uuid.UUID("aaaaaaaa-0000-4000-8000-000000000004")
 DUP2 = uuid.UUID("aaaaaaaa-0000-4000-8000-000000000005")
 HIDDEN = uuid.UUID("aaaaaaaa-0000-4000-8000-000000000006")
+# A person the log knows WITHOUT a current email — reachable only by person id
+# (the key the SPA routes on). Inside alice's subtree so visibility passes.
+NO_EMAIL_PERSON = uuid.UUID("aaaaaaaa-0000-4000-8000-000000000007")
 EVE = uuid.UUID("bbbbbbbb-0000-4000-8000-000000000001")
 
 VISIBILITY_GRANT_BOB_HIDDEN = uuid.UUID("cccccccc-0000-4000-8000-000000000001")
@@ -56,7 +60,7 @@ ALICE_ADMIN_ASSIGNMENT = uuid.UUID("cccccccc-0000-4000-8000-000000000002")
 
 # persons-seed runs under its OWN tenant so its tenant-scoped rebuild of
 # account_person_map / org_chart never touches the fixture tree above.
-# (The identity_inputs read is deliberately tenant-UNfiltered — hotfix #1550 —
+# (The identity_inputs read is deliberately tenant-UNfiltered — HOTFIX(#1550) —
 # but every WRITE binds the caller's tenant.)
 SEED_TENANT = uuid.UUID("44444444-4444-4444-4444-444444444444")
 SEED_ADMIN = uuid.UUID("dddddddd-0000-4000-8000-000000000001")
@@ -70,9 +74,14 @@ HIDDEN_EMAIL = "hidden@e2e.test"
 EVE_EMAIL = "eve@e2e.test"
 UNKNOWN_EMAIL = "nobody@e2e.test"
 
+# ALICE's source-native account id on SOURCE_TYPE — the value_type='id'
+# observation the by-external-id internal-resolve contract tests exercise
+# (mirrors what a real IdP connector, e.g. ms-entra, would seed as `oid`).
+ALICE_ACCOUNT_ID = "acc-alice"
+
 # person -> (email, account id, display_name, department, job_title)
 PEOPLE: dict[uuid.UUID, tuple[str, str, str, str, str]] = {
-    ALICE: (ALICE_EMAIL, "acc-alice", "Alice Admin", "Engineering", "CTO"),
+    ALICE: (ALICE_EMAIL, ALICE_ACCOUNT_ID, "Alice Admin", "Engineering", "CTO"),
     BOB: (BOB_EMAIL, "acc-bob", "Bob Builder", "Engineering", "Team Lead"),
     CAROL: (CAROL_EMAIL, "acc-carol", "Carol Coder", "Engineering", "Engineer"),
     DUP1: (DUP_EMAIL, "acc-dup1", "Dup One", "Sales", "AE"),
@@ -83,6 +92,7 @@ PEOPLE: dict[uuid.UUID, tuple[str, str, str, str, str]] = {
 # child -> parent (None = top of tree). All within TEST_TENANT_ID.
 ORG_EDGES: dict[uuid.UUID, uuid.UUID | None] = {
     ALICE: None,
+    NO_EMAIL_PERSON: ALICE,
     BOB: ALICE,
     CAROL: BOB,
     DUP1: ALICE,
@@ -103,9 +113,15 @@ def _connection(cfg: SessionConfig) -> pymysql.connections.Connection:
     )
 
 
+# One row of the persons observation log, in INSERT column order:
+# (value_type, source_type, source_id, tenant_id, value_id, value_full_text,
+#  person_id, author_person_id) — uuids as raw bytes, as MariaDB stores them.
+ObservationRow = tuple[str, str, bytes, bytes, str | None, str | None, bytes, bytes]
+
+
 def _observation_rows(
     tenant: uuid.UUID, person: uuid.UUID, email: str, account: str, name: str, dept: str, title: str
-) -> list[tuple]:
+) -> list[ObservationRow]:
     """(value_type, value_id, value_full_text) observation triples for one person."""
     rows: list[tuple[str, str | None, str | None]] = [
         ("email", email, None),
@@ -113,6 +129,22 @@ def _observation_rows(
         ("display_name", None, name),
         ("department", None, dept),
         ("job_title", None, title),
+        ("status", None, "Active"),
+    ]
+    return [
+        (value_type, SOURCE_TYPE, SOURCE_ID.bytes, tenant.bytes, value_id, value_full_text, person.bytes, ALICE.bytes)
+        for (value_type, value_id, value_full_text) in rows
+    ]
+
+
+def _emailless_observation_rows(tenant: uuid.UUID, person: uuid.UUID) -> list[ObservationRow]:
+    """Observations for a person with NO email: the person-id key must resolve
+    them anyway (the email key structurally cannot)."""
+    rows: list[tuple[str, str | None, str | None]] = [
+        ("id", "acc-no-email", None),
+        ("display_name", None, "No Email Person"),
+        ("department", None, "Engineering"),
+        ("job_title", None, "Engineer"),
         ("status", None, "Active"),
     ]
     return [
@@ -137,9 +169,9 @@ def seed(cfg: SessionConfig) -> None:
             )
             for person, (email, account, name, dept, title) in PEOPLE.items():
                 cur.executemany(
-                    observation_sql,
-                    _observation_rows(TEST_TENANT_ID, person, email, account, name, dept, title),
+                    observation_sql, _observation_rows(TEST_TENANT_ID, person, email, account, name, dept, title)
                 )
+            cur.executemany(observation_sql, _emailless_observation_rows(TEST_TENANT_ID, NO_EMAIL_PERSON))
             # eve: same shape, other tenant.
             cur.executemany(
                 observation_sql,
@@ -163,10 +195,7 @@ def seed(cfg: SessionConfig) -> None:
                         ALICE.bytes,
                     ),
                 )
-            cur.execute(
-                org_sql,
-                (OTHER_TENANT.bytes, SOURCE_TYPE, SOURCE_ID.bytes, EVE.bytes, None, ALICE.bytes),
-            )
+            cur.execute(org_sql, (OTHER_TENANT.bytes, SOURCE_TYPE, SOURCE_ID.bytes, EVE.bytes, None, ALICE.bytes))
 
             # alice is the tenant admin (fixed assignment id so revoke tests
             # elsewhere can reference it).
@@ -174,13 +203,7 @@ def seed(cfg: SessionConfig) -> None:
                 "INSERT INTO person_roles (person_role_id, insight_tenant_id, person_id, role_id,"
                 " valid_from, valid_to, author_person_id, reason)"
                 " VALUES (%s, %s, %s, %s, UTC_TIMESTAMP(6), NULL, %s, 'e2e-seed')",
-                (
-                    ALICE_ADMIN_ASSIGNMENT.bytes,
-                    TEST_TENANT_ID.bytes,
-                    ALICE.bytes,
-                    ADMIN_ROLE_ID.bytes,
-                    ALICE.bytes,
-                ),
+                (ALICE_ADMIN_ASSIGNMENT.bytes, TEST_TENANT_ID.bytes, ALICE.bytes, ADMIN_ROLE_ID.bytes, ALICE.bytes),
             )
 
             # persons-seed operator: an active admin assignment in SEED_TENANT
@@ -203,13 +226,7 @@ def seed(cfg: SessionConfig) -> None:
                 "INSERT INTO visibility (visibility_id, insight_tenant_id, viewer_person_id,"
                 " viewed_person_id, valid_from, valid_to, author_person_id, reason)"
                 " VALUES (%s, %s, %s, %s, UTC_TIMESTAMP(6), NULL, %s, 'e2e-seed')",
-                (
-                    VISIBILITY_GRANT_BOB_HIDDEN.bytes,
-                    TEST_TENANT_ID.bytes,
-                    BOB.bytes,
-                    HIDDEN.bytes,
-                    ALICE.bytes,
-                ),
+                (VISIBILITY_GRANT_BOB_HIDDEN.bytes, TEST_TENANT_ID.bytes, BOB.bytes, HIDDEN.bytes, ALICE.bytes),
             )
     finally:
         conn.close()

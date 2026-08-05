@@ -80,71 +80,38 @@ case "$cmd" in
         docker compose "${COMPOSE_FILES[@]}" logs --tail=200 "$@"
         ;;
     gates)
-        # Run the coverage gate(s) against the inputs a prior `./e2e.sh test`
-        # collected into .artifacts/ — pure file analysis inside the runner
-        # image (no DB via --no-deps, no second compose). Each suite's
-        # contract coverage is self-contained now: the api/ contract suite
-        # alone exercises every spec operation, so `./e2e.sh test api/`
-        # followed by `./e2e.sh gates api` is a complete endpoint-gate loop,
-        # and `./e2e.sh test metrics/` + `./e2e.sh gates metrics` likewise for
-        # the metric gate. A `-k` subset run within either suite still
-        # under-fills that suite's ledger and will fail its gate. CI mirrors
-        # this split as two independent lanes (e2e-api / e2e-metrics), each
-        # uploading its own artifact and feeding only its own gate job (see
-        # e2e-bronze-to-api.yml).
+        # Run the metric coverage gate against the inputs a prior
+        # `./e2e.sh test metrics/` collected into .artifacts/ — pure file
+        # analysis inside the runner image (no DB via --no-deps, no second
+        # compose). A `-k` subset run under-fills the ledger and will fail it.
+        #
+        # The api and identity-rust endpoint gates used to live here too. They
+        # retired with the HTTP contract suites they measured: those contracts
+        # are asserted against a deployed stand now, and their gate is
+        # `tests/lib/insight_stand/coverage.py`, run by `e2e-stand.yml` and by
+        # `./dev-compose.sh test-stand test`.
         which=${1:-all}
         case "$which" in
-            all|metrics|api|identity) ;;
+            all|metrics) ;;
             *)
-                echo "usage: $0 gates [api|metrics|identity]" >&2
+                echo "usage: $0 gates [metrics]" >&2
+                echo "  (the api/identity endpoint gates moved to tests/stand — see" >&2
+                echo "   tests/lib/insight_stand/coverage.py)" >&2
                 exit 2
                 ;;
         esac
-        if [ "$which" = all ] || [ "$which" = metrics ]; then
-            if [ ! -f .artifacts/metric_definitions.json ]; then
-                echo "no .artifacts/metric_definitions.json — run './e2e.sh test metrics/' first" >&2
-                exit 2
-            fi
+        if [ ! -f .artifacts/metric_definitions.json ]; then
+            echo "no .artifacts/metric_definitions.json — run './e2e.sh test metrics/' first" >&2
+            exit 2
         fi
-        if [ "$which" = all ] || [ "$which" = api ]; then
-            if [ ! -f .artifacts/observed_endpoints.json ]; then
-                echo "no .artifacts/observed_endpoints.json — run './e2e.sh test api/' first (it collects the endpoint ledger)" >&2
-                exit 2
-            fi
-        fi
-        if [ "$which" = all ] || [ "$which" = identity ]; then
-            if [ ! -f .artifacts/observed_identity_endpoints.json ]; then
-                echo "no .artifacts/observed_identity_endpoints.json — run './e2e.sh test identity/' first (it collects the identity endpoint ledger)" >&2
-                exit 2
-            fi
-        fi
-        spec=/workspace/docs/components/backend/analytics/openapi.json
-        identity_spec=/workspace/docs/components/backend/identity/openapi.json
         run=(docker compose "${COMPOSE_FILES[@]}" -f compose/docker-compose.norebuild.yml run --rm --no-deps -T runner)
         rc=0
-        if [ "$which" = all ] || [ "$which" = metrics ]; then
-            echo "── metric coverage (gate) ──"
-            "${run[@]}" python3 lib/metric_coverage.py --universe-file .artifacts/metric_definitions.json || rc=1
-        fi
-        if [ "$which" = all ] || [ "$which" = api ]; then
-            echo "── api endpoint coverage (gate) ──"
-            "${run[@]}" python3 lib/api_coverage.py --observed .artifacts/observed_endpoints.json --spec "$spec" || rc=1
-        fi
-        if [ "$which" = all ] || [ "$which" = identity ]; then
-            echo "── identity endpoint coverage (gate) ──"
-            # The suppression lists are implementation-aware: a Rust run may
-            # legitimately skip the dropped legacy endpoint, a dotnet run must
-            # not. Match the gate to whichever implementation the suite ran.
-            identity_suite=identity
-            if [ "${E2E_IDENTITY_IMPLEMENTATION:-dotnet}" = "rust" ]; then
-                identity_suite=identity-rust
-            fi
-            "${run[@]}" python3 lib/api_coverage.py --suite "$identity_suite" --observed .artifacts/observed_identity_endpoints.json --spec "$identity_spec" || rc=1
-        fi
+        echo "── metric coverage (gate) ──"
+        "${run[@]}" python3 lib/metric_coverage.py --universe-file .artifacts/metric_definitions.json || rc=1
         exit "$rc"
         ;;
     *)
-        echo "usage: $0 {build|test|run|shell|up|down|logs|gates [api|metrics]} [args...]" >&2
+        echo "usage: $0 {build|test|run|shell|up|down|logs|gates [metrics]} [args...]" >&2
         exit 2
         ;;
 esac

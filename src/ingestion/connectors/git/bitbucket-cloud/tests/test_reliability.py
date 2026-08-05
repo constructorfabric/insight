@@ -151,8 +151,28 @@ class TestClientHardening:
         client.paginate = fake_paginate
         list(client.commits_between(repository(), ["new1", "new2"], ["old1"]))
         assert seen["method"] == "POST"
-        assert seen["params"] == {"pagelen": "100"}
+        assert seen["params"]["pagelen"] == "100"
         assert ("include", "new1") in seen["data"] and ("exclude", "old1") in seen["data"]
+
+    def test_commits_between_projects_only_what_the_streams_read(self):
+        """The API silently drops a misspelled fields entry, so a wrong list
+        surfaces as NULL columns, not an error: pin what the record builder and
+        the pagination need."""
+        projected = set(BitbucketClient.COMMIT_FIELDS.split(","))
+
+        assert "next" in projected, "without it pagination stops after one page"
+        record_reads = {
+            "values.hash",
+            "values.date",
+            "values.message",
+            "values.parents.hash",
+        }
+        identity_reads = {
+            f"values.{role}.{part}"
+            for role in ("author", "committer")
+            for part in ("raw", "user.display_name", "user.uuid", "user.account_id")
+        }
+        assert projected == record_reads | identity_reads | {"next"}
 
     def test_commits_between_without_current_heads_asks_nothing(self):
         client = self.make_client()

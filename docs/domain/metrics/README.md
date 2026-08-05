@@ -28,6 +28,14 @@ anywhere: at request time the runtime applies a definition to the matching
 observations — "alice, January: 312 ÷ 405 = 77%" — and returns it labeled and
 ready to render.
 
+Metric **evidence** is the source-level population behind that answer. Each
+managed source exposes a normalized serving table.
+Definitions inherit drilldown support when all compatible inputs are backed by
+the same validated evidence relation, so adding a metric over an existing
+measure requires no drilldown-specific configuration.
+The backend applies the same entity, period, dimension, input-role, and
+computation semantics used by metric results.
+
 The split exists because one fact serves many meanings and one meaning serves
 many questions. The same `accepted_edit_actions` observation is the whole
 value of `ai.accepted_edit_actions` and the numerator of
@@ -43,12 +51,12 @@ in that shape, definitions reference facts only by measure key, and the
 runtime can therefore connect any definition to any matching facts without
 either side knowing the other exists.
 
-| | Observation | Definition | Metric result |
-|---|---|---|---|
-| What | a fact | the meaning of facts | the computed answer |
-| Lives | ClickHouse views over silver (computed on read, nothing stored) | registry (MariaDB, seeded from Rust) | nowhere — made per request |
-| Knows | what happened | what it is called, how to compute, how to show | both, combined |
-| Authored by | connector + gold model | one struct per metric | nobody — the runtime derives it |
+| | Observation | Evidence | Definition | Metric result |
+|---|---|---|---|---|
+| What | an aggregate-ready fact | the participating source population | the meaning of facts | the computed answer |
+| Lives | ClickHouse views or tables over silver | ClickHouse serving tables | registry | nowhere |
+| Knows | what happened numerically | which records participated | how to compute and display | all three, combined |
+| Authored by | connector + gold model | connector + gold model | one struct per metric | nobody |
 
 ## Documents
 
@@ -64,12 +72,19 @@ either side knowing the other exists.
 | Definition loading, reconciler, schema validator | [`src/backend/services/analytics/src/domain/metric_definitions/`](../../../src/backend/services/analytics/src/domain/metric_definitions/) |
 | Result runtime (validation, query compiler, response builder) | [`src/backend/services/analytics/src/domain/metric_results/`](../../../src/backend/services/analytics/src/domain/metric_results/) |
 | Result endpoint | [`src/backend/services/analytics/src/api/metric_results.rs`](../../../src/backend/services/analytics/src/api/metric_results.rs) |
+| Drilldown runtime | [`src/backend/services/analytics/src/domain/metric_drilldown/`](../../../src/backend/services/analytics/src/domain/metric_drilldown/) |
+| Drilldown endpoints | [`src/backend/services/analytics/src/api/metric_drilldown.rs`](../../../src/backend/services/analytics/src/api/metric_drilldown.rs) |
 | Registry schema migration | [`src/backend/services/analytics/src/migration/m20260625_000001_metric_definitions.rs`](../../../src/backend/services/analytics/src/migration/m20260625_000001_metric_definitions.rs) |
 | Managed observation sources (dbt gold models) | [`src/ingestion/gold/`](../../../src/ingestion/gold/) |
 | Class-contract data-quality tests | [`src/ingestion/dbt/tests/ai/`](../../../src/ingestion/dbt/tests/ai/) |
 
 ## Boundaries
 
+- Current deployments isolate one tenant per instance. Drilldown entity IDs
+  remain source-derived identifiers, commonly normalized email addresses.
+  Multi-tenant warehouse predicates, canonical person IDs, cross-source alias
+  resolution, and subordinate authorization belong to the identity-resolution
+  epic and are required before a multi-tenant instance enables drilldown.
 - The AI class contracts feeding the observation models are documented in
   [`src/ingestion/silver/ai/schema.yml`](../../../src/ingestion/silver/ai/schema.yml)
   (activity invariant, label and conversation-count semantics).

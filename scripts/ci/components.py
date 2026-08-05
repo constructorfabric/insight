@@ -6,7 +6,6 @@ the CI matrix). Pure data + lookup: no CLI, no side effects, never runs tests.
 Per component: name, lang, root (collection cwd), paths (repo-relative prefixes
 for bucketing), plus per-language extras consumed by the CI producer jobs:
   rust   -> package (cargo package name); all_features (default True)
-  dotnet -> solution
   python -> cov_package (the source_* package to measure)
 
 Nocode (declarative-YAML) connectors are excluded — no first-party code to
@@ -53,7 +52,7 @@ COMPONENTS = [
         "cover_ignore_regex": "src/backend/libs/",
         "paths": ["src/backend/services/analytics"],
     },
-    # cover=False (mirrors authenticator/identity): the crate's business logic
+    # cover=False (mirrors authenticator): the crate's business logic
     # is exercised by env-gated live tests (IDENTITY_TEST_* against a dev
     # MariaDB/ClickHouse) that skip cleanly in CI, so only the pure-logic unit
     # tests would count — gating the crate far below the 80% line. fmt + clippy
@@ -103,7 +102,7 @@ COMPONENTS = [
         "package": "routegen",
         "paths": ["src/backend/tools/routegen"],
     },
-    # cover=False (mirrors identity): the authenticator's security-critical
+    # cover=False: the authenticator's security-critical
     # flow (OIDC login, sessions, cookie->JWT exchange) is proven by the e2e
     # login-loop, which drives the server as a SEPARATE process — so it can't
     # feed `cargo llvm-cov` (that instruments the test binary, not a spawned
@@ -146,19 +145,6 @@ COMPONENTS = [
         "all_features": False,
         "clippy": False,
         "paths": ["src/ingestion/connectors/task-tracking/jira/enrich"],
-    },
-    # .NET
-    # cover=False: identity is excluded from coverage collection and gating
-    # entirely (2026-07 decision) — its tests still run in the dotnet CI job
-    # and still fail the pipeline on regressions; only the Cobertura
-    # collection, upload, and the per-component/new-code gates are dropped.
-    {
-        "name": "identity",
-        "lang": "dotnet",
-        "root": "src/backend/services/identity",
-        "solution": "Insight.Identity.sln",
-        "cover": False,
-        "paths": ["src/backend/services/identity"],
     },
     # Python CDK connectors
     {
@@ -236,7 +222,7 @@ COMPONENTS = [
         "triggered_by": ["connector-mock-tests"],
         "paths": ["src/ingestion/tests/connectors"],
     },
-    # cover=False (mirrors the rust/dotnet flag): the suites job still runs and
+    # cover=False (mirrors the rust flag): the suites job still runs and
     # uploads its Cobertura — those lines merge into connector-tests-harness at
     # the gate — but every file it measures lives under the harness paths, so
     # this component itself never has measured lines and must not be in the
@@ -249,10 +235,7 @@ COMPONENTS = [
         "pytest_args": "--suites-only",
         "cover": False,
         "triggered_by": ["connector-tests-harness"],
-        "paths": [
-            "src/ingestion/connectors/task-tracking/jira",
-            "src/ingestion/connectors/ai/claude-admin",
-        ],
+        "paths": ["src/ingestion/connectors/task-tracking/jira", "src/ingestion/connectors/ai/claude-admin"],
     },
 ]
 

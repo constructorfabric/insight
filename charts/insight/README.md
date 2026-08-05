@@ -16,9 +16,9 @@ local `file://` subchart:
 | API Gateway           | app service (req'd)  | `src/backend/services/api-gateway/helm`      | mandatory (no flag)             |
 | Analytics             | app service (req'd)  | `src/backend/services/analytics/helm`        | mandatory (no flag)             |
 | Frontend (SPA)        | app service (req'd)  | `src/frontend/helm`                          | mandatory (no flag)             |
-| Identity (.NET 9)     | app service (opt)    | `src/backend/services/identity/helm`         | `identity.deploy`               |
+| Identity Resolution   | app service (opt)    | `src/backend/services/identity-resolution/helm` | `identityResolution.deploy`  |
 
-> Identity requires a populated `persons` table (seeded by `src/backend/services/identity/seed/seed-persons.sh`). Not an OIDC provider. Off by default.
+> Identity Resolution requires a populated `persons` table (seeded by `src/backend/services/identity-resolution/seed/seed-persons.sh`). Not an OIDC provider. Off by default.
 
 ## What it does NOT contain
 
@@ -35,7 +35,7 @@ See [`docs/distribution/README.md`](../../docs/distribution/README.md) for the f
 
 **This chart assumes release name = `insight`.**
 
-Internal DNS references between app services (e.g. `http://insight-analytics:8081`, `http://insight-identity:8082`) are templated with the `insight-` prefix. Helm subcharts use `{{ .Release.Name }}-{chart-suffix}` for service naming, which produces these exact names when the release is `insight`. (External L2 infra is reached via the explicit `<dep>.host` wiring, not the release-name convention.)
+Internal DNS references between app services (e.g. `http://insight-analytics:8081`, `http://insight-identity-resolution:8082`) are templated with the `insight-` prefix. Helm subcharts use `{{ .Release.Name }}-{chart-suffix}` for service naming, which produces these exact names when the release is `insight`. (External L2 infra is reached via the explicit `<dep>.host` wiring, not the release-name convention.)
 
 If you install under a different name, override all cross-service URLs in your own values.yaml. Prefer sticking to the convention.
 
@@ -91,7 +91,7 @@ Key groups:
 - `global.*` — cluster-wide defaults (pull secrets, storage class)
 - `<dep>.host` / `<dep>.port` / `<dep>.passwordSecret` (Redpanda: `<dep>.brokers`) — external-infra wiring for ClickHouse, MariaDB, Redis, Redpanda
 - `apiGateway` / `analytics` / `frontend` — **mandatory** app services (no deploy-flag; the gateway is the single entrance and the product is one unit)
-- `identity.deploy` — **optional** .NET identity service (off by default; not an OIDC provider)
+- `identityResolution.deploy` — **optional** identity-resolution service (off by default; not an OIDC provider)
 - `apiGateway.oidc` — OIDC configuration (prefer `existingSecret`; inline requires `issuer` + `clientId` + `redirectUri` together)
 - `apiGateway.proxy.routes` — reverse-proxy config to downstream services
 - `ingestion.templates.enabled` — whether to ship Argo WorkflowTemplates; requires Argo CRDs to be present in the cluster

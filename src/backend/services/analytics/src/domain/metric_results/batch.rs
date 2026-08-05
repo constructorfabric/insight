@@ -388,6 +388,7 @@ fn decode_narrow_row<T: serde::de::DeserializeOwned>(
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::metric_results::validation::ValidatedEntitySelection;
     use std::collections::BTreeSet;
 
     use super::*;
@@ -430,11 +431,14 @@ mod tests {
 
     fn request(metrics: Vec<ValidatedMetricRequest>) -> ValidatedMetricResultsRequest {
         ValidatedMetricResultsRequest {
-            entity_type: "person".to_owned(),
-            entity_ids: vec!["a@x.io".to_owned()],
+            tenant_id: uuid::Uuid::from_u128(0x1967),
+            entity: ValidatedEntitySelection::Person {
+                ids: vec![uuid::Uuid::from_u128(1)],
+            },
             from: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap_or_default(),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).unwrap_or_default(),
             metrics,
+            enforce_tenant_scope: true,
         }
     }
 
@@ -565,7 +569,11 @@ mod tests {
         );
         assert!(rankings.iter().all(|ranking| {
             ranking.key.rank_metric_key == "m_rank"
-                && ranking.query.params.iter().any(|value| value == "a@x.io")
+                && ranking
+                    .query
+                    .params
+                    .iter()
+                    .any(|value| value == "00000000-0000-0000-0000-000000000001")
         }));
     }
 
@@ -582,7 +590,7 @@ mod tests {
     #[test]
     fn demux_period_maps_aliases_and_preserves_null() {
         let rows = vec![PeriodWideRow {
-            entity_id: "a@x.io".to_owned(),
+            entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             extra: [
                 ("m0".to_owned(), json!(1.5)),
                 ("m1".to_owned(), json!(null)),
@@ -595,7 +603,11 @@ mod tests {
         };
         assert_eq!(per_item[0][0].value, Some(1.5));
         assert_eq!(per_item[1][0].value, None);
-        assert!(per_item.iter().all(|rows| rows[0].entity_id == "a@x.io"));
+        assert!(
+            per_item
+                .iter()
+                .all(|rows| rows[0].entity_id == "00000000-0000-0000-0000-00000000000a")
+        );
     }
 
     #[test]
@@ -603,7 +615,7 @@ mod tests {
         // ClickHouse quotes UInt64 in JSONEachRow output by default; the
         // demuxed row must decode "7" through PeerQueryRow's optional_u64.
         let rows = vec![PeerWideRow {
-            entity_id: "a@x.io".to_owned(),
+            entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             extra: [
                 ("m0_target".to_owned(), json!(3.0)),
                 ("m0_p25".to_owned(), json!(null)),
@@ -628,13 +640,13 @@ mod tests {
     #[test]
     fn demux_missing_alias_is_internal_error() {
         let period_rows = vec![PeriodWideRow {
-            entity_id: "a@x.io".to_owned(),
+            entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             extra: HashMap::new(),
         }];
         assert!(demux_period_rows(&items(1), period_rows).is_err());
 
         let peer_rows = vec![PeerWideRow {
-            entity_id: "a@x.io".to_owned(),
+            entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             extra: [("m0_target".to_owned(), json!(1.0))].into_iter().collect(),
         }];
         assert!(demux_peer_rows(&items(1), peer_rows).is_err());

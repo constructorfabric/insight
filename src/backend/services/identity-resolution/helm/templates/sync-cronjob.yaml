@@ -1,0 +1,101 @@
+{{- if .Values.sync.enabled }}
+# Scheduled persons-sync: copies the MariaDB `persons` observation log into
+# ClickHouse `identity.identity_persons` — the table the metrics dbt builds
+# resolve email → person_id against. Scheduled AFTER the seed CronJob by
+# default: the seed rewrites the log, the sync publishes it (each run is a
+# full snapshot + atomic swap, so ordering is a freshness concern only,
+# never a correctness one).
+#
+# Same image/config/secret wiring as the seed CronJob; the `sync`
+# subcommand runs one copy and exits (exit codes: 0 ok / 1 failed /
+# 2 lock busy / 3 empty-log guard — override the guard with a manual
+# `--force` Job). Runs serialize on a global MariaDB advisory lock, so
+# `concurrencyPolicy: Forbid` is belt-and-braces for cron-vs-cron only.
+#
+# Manual run:
+#   kubectl create job --from=cronjob/{{ include "insight-identity-resolution.fullname" . }}-sync sync-manual-$USER
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "insight-identity-resolution.fullname" . }}-sync
+  labels:
+    {{- include "insight-identity-resolution.labels" . | nindent 4 }}
+    app.kubernetes.io/component: persons-sync
+spec:
+  schedule: {{ .Values.sync.schedule | quote }}
+  concurrencyPolicy: {{ .Values.sync.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.sync.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.sync.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      # Retries for transient connect blips; the advisory lock + the
+      # snapshot-swap idempotency make a repeated run safe. The deadline caps
+      # a wedged pod well past the in-binary 5-minute sync timeout.
+      backoffLimit: {{ .Values.sync.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.sync.activeDeadlineSeconds }}
+      template:
+        metadata:
+          # NOT the shared selectorLabels: the Service selects on
+          # name+instance alone, and a sync pod carrying them would enter the
+          # Service's endpoints (it listens on nothing).
+          labels:
+            app.kubernetes.io/name: identity-resolution-sync
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: persons-sync
+        spec:
+          {{- with .Values.global }}
+          {{- with .imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- end }}
+          enableServiceLinks: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+          containers:
+            - name: persons-sync
+              image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["/app/identity-resolution"]
+              args: ["-c", "/app/config/insight.yaml", "sync"]
+              volumeMounts:
+                - name: identity-resolution-config
+                  mountPath: /app/config/insight.yaml
+                  subPath: insight.yaml
+                  readOnly: true
+                # The gears host creates `server.home_dir` at boot; the `sync`
+                # subcommand never starts grpc-hub, so /app/data is the only
+                # writable path it needs under a read-only root.
+                - name: data
+                  mountPath: /app/data
+              envFrom:
+                # Same Secret as the deployment: database_url, clickhouse_*,
+                # tenant_default_id — everything the sync needs. The
+                # ClickHouse user must be able to CREATE/INSERT/EXCHANGE in
+                # the `identity` database (the snapshot-swap write path).
+                - secretRef:
+                    name: {{ required "existingSecret is required (umbrella provides `insight-identity-resolution-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
+              {{- with .Values.sync.tenantDefaultId }}
+              env:
+                # Explicit tenant for the JOURNAL row (the copy itself is
+                # tenant-agnostic). Same override semantics as the seed's.
+                - name: APP__gears__identity_resolution__config__tenant_default_id
+                  value: {{ . | quote }}
+              {{- end }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                {{- toYaml .Values.sync.resources | nindent 16 }}
+          volumes:
+            - name: identity-resolution-config
+              configMap:
+                name: {{ include "insight-identity-resolution.fullname" . }}-gears-config
+            - name: data
+              emptyDir: {}
+{{- end }}

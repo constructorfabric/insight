@@ -135,12 +135,12 @@ dashboards:
              "targets": [
                {"refId": "A", "legendFormat": "{{status}}", "expr": "sum by (status) (count_over_time({namespace=\"insight\", container=\"api-gateway\"} |= \"access_log\" | logfmt | status=~\"5..\" [$__auto]))"}
              ]},
-            {"id": 5, "type": "logs", "title": "Service errors (gateway / analytics / identity)",
+            {"id": 5, "type": "logs", "title": "Service errors (gateway / analytics / identity-resolution)",
              "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
              "datasource": {"type": "loki", "uid": "loki"},
              "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending"},
              "targets": [
-               {"refId": "A", "expr": "{namespace=\"insight\", container=~\"api-gateway|analytics|identity\"} |= \"ERROR\""}
+               {"refId": "A", "expr": "{namespace=\"insight\", container=~\"api-gateway|analytics|identity-resolution\"} |= \"ERROR\""}
              ]}
           ]
         }

@@ -15,6 +15,11 @@ spec:
         {{- include "insight-keycloak.selectorLabels" . | nindent 8 }}
     spec:
       enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: keycloak
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -44,6 +49,13 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # No readOnlyRootFilesystem: `start-dev` re-augments Quarkus into
+            # /opt/keycloak/lib/quarkus on every boot, and an emptyDir there hides
+            # quarkus-application.dat from the image. See #2084.
           volumeMounts:
             - name: realm
               mountPath: /opt/keycloak/data/import

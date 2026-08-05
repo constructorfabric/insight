@@ -31,8 +31,8 @@ SELECT
         ''
     ) AS file_extension,
     COALESCE(status, '') AS change_type,
-    COALESCE(additions, 0) AS lines_added,
-    COALESCE(deletions, 0) AS lines_removed,
+    toNullable(COALESCE(additions, 0)) AS lines_added,
+    toNullable(COALESCE(deletions, 0)) AS lines_removed,
     COALESCE(source_type, '') AS source_type,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,

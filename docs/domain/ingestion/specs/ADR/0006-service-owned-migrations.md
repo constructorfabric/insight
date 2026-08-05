@@ -79,7 +79,7 @@ while keeping the ownership rules identical.
   scripts in a `SchemaVersions` table inside the service's own
   database).
 - One-shot seed scripts (bash + Python) live at
-  `src/backend/services/identity/seed/`.
+  `src/backend/services/identity-resolution/seed/`.
 
 ## Consequences
 

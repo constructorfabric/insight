@@ -1,11 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-07-16
+superseded_by: cpt-insightspec-adr-auth-0002-real-idp-on-deployed-stands
 ---
 
 # ADR-0001: Per-Environment IdP Selection (fakeidp for all dev environments; production broker deferred)
 
 **ID**: `cpt-insightspec-adr-auth-0001-per-environment-idp-selection`
+
+**Status history**:
+
+- 2026-07-30: ACCEPTED -> SUPERSEDED (real IdP required on deployed stands; see ADR-0002)
 
 <!-- toc -->
 

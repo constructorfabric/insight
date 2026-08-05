@@ -9,8 +9,6 @@ verifies a signed ES256 gateway JWT on every data route and maps its `tenant_id`
 claim to the request tenant. The rig mints those JWTs and serves the JWKS +
 OIDC discovery over a self-signed TLS front (see lib/gateway_jwt.py); the removed
 `X-Insight-Tenant-Id` header is gone. `/health` is public (host gear, no auth).
-`metric_seed.seed_test_metrics` re-homes the seeded metric definitions onto
-`config.TEST_TENANT_ID`, which is the tenant the harness's default bearer carries.
 """
 
 from __future__ import annotations
@@ -134,7 +132,7 @@ class AnalyticsProcess:
         self.cfg = cfg
         self.binary = binary
         self.port = port
-        # Identity base URL for GET /v1/persons/{email}. Empty → the handler 500s
+        # Identity base URL for GET /v1/persons/{person_id}. Empty → the handler 500s
         # ("identity not configured"); the rig passes the in-process stub's URL so
         # the endpoint exercises its real 200/404 contract (#1691).
         self.identity_url = identity_url
@@ -210,8 +208,7 @@ class AnalyticsProcess:
                         "clickhouse_url": "",
                         "clickhouse_database": "insight",
                         "identity_url": "",
-                        "redis_url": "",
-                        "metric_catalog": {"tenant_default_id": None},
+                        "metric_catalog": {},
                     }
                 },
             },
@@ -250,13 +247,6 @@ class AnalyticsProcess:
                 "APP__gears__analytics__config__clickhouse_database": self.cfg.ch_database,
                 "APP__gears__analytics__config__clickhouse_user": self.cfg.ch_user,
                 "APP__gears__analytics__config__clickhouse_password": self.cfg.ch_password,
-                # Single-tenant catalog-resolution hint. The request tenant comes
-                # from the signed JWT's `tenant_id`; platform metric definitions
-                # seed under GLOBAL_TENANT (nil) and stay visible via
-                # `InsightTenantId IN [tenant, nil]`, so this need not match the
-                # seeded bronze tenant.
-                "APP__gears__analytics__config__metric_catalog__tenant_default_id": "00000000-0000-0000-0000-000000000001",
-                # No redis_url — leave config default (empty).
                 "RUST_LOG": env.get("RUST_LOG", "info"),
             }
         )

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: insight-preview
+description: One path-based FE preview experiment (/exp/<name>) for the presentation layer
+type: application
+version: 0.1.0
+# No appVersion default: image.tag MUST be set by the operator per experiment.

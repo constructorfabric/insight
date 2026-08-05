@@ -246,3 +246,47 @@ async fn full_login_exchange_logout_loop() {
         "401 must never be cached"
     );
 }
+
+/// Failed callbacks bounce back into the SPA (#2032): the browser lands on
+/// `/auth/callback` from an IdP redirect, so a problem+json answer would
+/// dead-end the login on raw JSON. Every browser-facing failure must 302 to
+/// `default_return_to` with a fixed `auth_error=<reason>` the SPA consumes to
+/// restart the flow.
+#[tokio::test]
+#[ignore = "requires a running authenticator + fakeidp + Redis stack"]
+async fn failed_callback_redirects_into_the_spa_with_auth_error() {
+    let auth_base = env("AUTH_BASE", "http://localhost:8083");
+    let http = client();
+
+    // Distinct `state` values per case AND per run: the per-state callback
+    // rate-limit bucket (5-burst, 10/min refill) must not couple these
+    // requests — or trip on rapid suite re-runs against the same stack.
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let cases = [
+        (
+            format!("code=x&state=e2e-auth-error-unknown-{run}"),
+            "/?auth_error=state_expired",
+        ),
+        (
+            format!("error=access_denied&state=e2e-auth-error-idp-{run}"),
+            "/?auth_error=idp_error",
+        ),
+        (
+            format!("state=e2e-auth-error-no-code-{run}"),
+            "/?auth_error=invalid_callback",
+        ),
+    ];
+    for (query, expected_location) in cases {
+        let resp = http
+            .get(format!("{auth_base}/auth/callback?{query}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 302, "{query} must redirect");
+        let location = resp.headers()[reqwest::header::LOCATION].to_str().unwrap();
+        assert_eq!(location, expected_location, "for {query}");
+    }
+}

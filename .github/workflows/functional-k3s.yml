@@ -30,6 +30,7 @@ env:
   YQ_VERSION: v4.44.3
   KUBESEAL_VERSION: v0.27.2
   CLICKHOUSE_PASSWORD: insightpass123
+  CLICKHOUSE_PRESENTATION_PASSWORD: presentationpass123
   MARIADB_PASSWORD: insightpass123
   MARIADB_ROOT_PASSWORD: insightroot123
   REDIS_PASSWORD: insightpass123
@@ -153,6 +154,7 @@ jobs:
             --dry-run=client -o yaml > "${secret_dir}/redis-creds.yaml"
           kubectl -n "${INSIGHT_NAMESPACE}" create secret generic insight-db-creds \
             --from-literal=clickhouse-password="${CLICKHOUSE_PASSWORD}" \
+            --from-literal=clickhouse-presentation-password="${CLICKHOUSE_PRESENTATION_PASSWORD}" \
             --from-literal=mariadb-password="${MARIADB_PASSWORD}" \
             --from-literal=mariadb-root-password="${MARIADB_ROOT_PASSWORD}" \
             --from-literal=redis-password="${REDIS_PASSWORD}" \

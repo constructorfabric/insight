@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Generate / drift-check a committed OpenAPI spec against a service's live spec.
 
-Shared by both backend services. The live spec is whatever the service emits,
-captured to a file:
-  - analytics: the offline `analytics openapi` subcommand
-  - identity: the served `GET /openapi.json`, dumped by its integration test
+Shared by the backend services. The live spec is whatever the service emits,
+captured to a file (e.g. the offline `analytics openapi` /
+`authenticator openapi` subcommands).
 
 This is the whole gate — one script, no shell wrapper, pure stdlib:
 
@@ -27,8 +26,8 @@ from pathlib import Path
 # scripts/ci/openapi_spec.py -> scripts/ci -> scripts -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 # The committed doc defaults to analytics's (a code constant, not
-# operator-tunable input); identity overrides it with --file. The live dump is
-# always caller-supplied (--live-file), so it has no default.
+# operator-tunable input); other services override it with --file. The live
+# dump is always caller-supplied (--live-file), so it has no default.
 DEFAULT_SPEC_FILE = _REPO_ROOT / "docs/components/backend/analytics/openapi.json"
 
 
@@ -47,10 +46,9 @@ def _load_live(live_file: str) -> tuple[str | None, str | None]:
     file (after printing an error)."""
     live_path = Path(live_file)
     if not live_path.exists():
-        print(
+        print(  # noqa: T201 — drift report goes to stdout by contract
             f"ERROR: {live_path} not found — pass --live-file pointing at a "
-            f"generated OpenAPI dump (e.g. `analytics openapi > dump.json`, or "
-            f"the identity integration test's IDENTITY_OPENAPI_DUMP output)",
+            f"generated OpenAPI dump (e.g. `analytics openapi > dump.json`)",
             file=sys.stderr,
         )
         return None, None
@@ -58,19 +56,11 @@ def _load_live(live_file: str) -> tuple[str | None, str | None]:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(
-        description="Generate / drift-check a committed OpenAPI spec."
-    )
+    p = argparse.ArgumentParser(description="Generate / drift-check a committed OpenAPI spec.")
     p.add_argument(
-        "mode",
-        choices=["check", "update"],
-        help="check: exit 2 on drift; update: rewrite the committed doc",
+        "mode", choices=["check", "update"], help="check: exit 2 on drift; update: rewrite the committed doc"
     )
-    p.add_argument(
-        "--live-file",
-        required=True,
-        help="generated OpenAPI JSON dump to drift-check against (required)",
-    )
+    p.add_argument("--live-file", required=True, help="generated OpenAPI JSON dump to drift-check against (required)")
     p.add_argument("--file", default=str(DEFAULT_SPEC_FILE), help="committed spec path")
     args = p.parse_args()
 
@@ -82,20 +72,19 @@ def main() -> int:
     if args.mode == "update":
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(live, encoding="utf-8")
-        print(f"wrote {path} ({len(live.splitlines())} lines) from {source}")
+        print(f"wrote {path} ({len(live.splitlines())} lines) from {source}")  # noqa: T201 — drift report goes to stdout by contract
         return 0
 
     # check
     if not path.exists():
-        print(
-            f"ERROR: {path} does not exist — run "
-            f"`python3 scripts/ci/openapi_spec.py update` to create it",
+        print(  # noqa: T201 — drift report goes to stdout by contract
+            f"ERROR: {path} does not exist — run `python3 scripts/ci/openapi_spec.py update` to create it",
             file=sys.stderr,
         )
         return 2
     committed = path.read_text(encoding="utf-8")
     if committed == live:
-        print(f"OK: {path} matches the live spec ({source})")
+        print(f"OK: {path} matches the live spec ({source})")  # noqa: T201 — drift report goes to stdout by contract
         return 0
 
     sys.stdout.writelines(
@@ -106,7 +95,7 @@ def main() -> int:
             tofile=f"{source} (live)",
         )
     )
-    print(
+    print(  # noqa: T201 — drift report goes to stdout by contract
         f"\nERROR: {path} is STALE vs the live spec.\n"
         f"Regenerate the live dump, run `python3 scripts/ci/openapi_spec.py update "
         f"--file {path} --live-file <dump>`, and commit {path}.",

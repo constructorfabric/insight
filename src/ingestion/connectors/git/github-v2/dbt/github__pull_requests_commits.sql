@@ -15,7 +15,7 @@ SELECT
     COALESCE(repo_name, '') AS repo_slug,
     COALESCE(pull_request_id, 0) AS pr_id,
     COALESCE(sha, '') AS commit_hash,
-    0 AS commit_order,
+    toInt64(0) AS commit_order,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at

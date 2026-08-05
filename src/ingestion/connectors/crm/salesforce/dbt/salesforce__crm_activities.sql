@@ -48,7 +48,7 @@ WITH tasks AS (
             'CallType',    coalesce(toString(CallType), ''),
             'IsDeleted',   toString(coalesce(IsDeleted, false))
         ))                                          AS metadata,
-        custom_fields,
+        coalesce(custom_fields, '{}')                   AS custom_fields,
         CreatedDate                                 AS created_at,
         data_source,
         coalesce(toUnixTimestamp64Milli(SystemModstamp), 0) AS _version
@@ -93,7 +93,7 @@ events AS (
             'EventSubtype', coalesce(toString(EventSubtype), ''),
             'IsDeleted',    toString(coalesce(IsDeleted, false))
         ))                                          AS metadata,
-        custom_fields,
+        coalesce(custom_fields, '{}')                   AS custom_fields,
         CreatedDate                                 AS created_at,
         data_source,
         coalesce(toUnixTimestamp64Milli(SystemModstamp), 0) AS _version

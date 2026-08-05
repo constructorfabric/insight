@@ -38,7 +38,6 @@ from lib.enrich import EnrichRunner
 from lib.fixture_loader import TestYaml, discover_tests
 from lib.fixture_loader import load as load_test
 from lib.identity_stub import IdentityStub
-from lib.metric_seed import seed_test_metrics
 from lib.migration_applier import apply_all as apply_ch_migrations
 from lib.worker import WorkerContext
 
@@ -219,8 +218,8 @@ def _collect_metrics(cfg: SessionConfig) -> None:
 def identity_stub():
     """In-process loopback Identity stub (lib.identity_stub).
 
-    The rig runs no Identity service, so GET /v1/persons/{email} would 500
-    ("identity not configured"). This stub resolves one seeded email (→ 200) and
+    The rig runs no Identity service, so GET /v1/persons/{person_id} would 500
+    ("identity not configured"). This stub resolves one seeded person (→ 200) and
     404s the rest, so the persons endpoint exercises its real 200/404 contract
     (#1691). Started before `analytics` (which depends on it) so its URL is known
     when the binary boots — the analytics IdentityClient reads identity_url once
@@ -237,8 +236,7 @@ def analytics(
     ch_migrations_applied: SessionConfig, dbt_runner: DbtRunner, worker_ctx: WorkerContext, identity_stub: IdentityStub
 ):
     """Spawn the analytics binary baked into the runner image. Its SeaORM
-    migrations run on startup; we then upsert test-specific metrics from
-    seed/metrics.yaml.
+    migrations run on startup.
 
     If the binary is missing, this is a hard FAIL — identical locally and in CI.
     A skip here would make the whole transformation suite silently green while
@@ -257,7 +255,6 @@ def analytics(
     port = find_free_port()
     proc = AnalyticsProcess(cfg, binary, port, identity_url=identity_stub.url)
     proc.start()
-    seed_test_metrics(cfg)
     yield proc
     try:
         _collect_metrics(cfg)
@@ -286,42 +283,8 @@ _METRICS_ROOT = Path(__file__).parent / "metrics"
 
 
 def pytest_collection_modifyitems(config, items):
-    """Convenience: order the fast rig/contract tests (meta/ + api/) first."""
-    items.sort(key=lambda i: 0 if ("meta/" in str(i.path) or "api/" in str(i.path)) else 1)
-
-
-def pytest_sessionfinish(session, exitstatus):
-    """Dump the API-endpoint ledger recorded by the httpx response hook in
-    `AnalyticsProcess.client()` (`lib.api_coverage.record_response`).
-
-    The endpoint-coverage gate (`lib/api_coverage.py`, run by `./e2e.sh gates`
-    and the api-endpoint-coverage-gate CI job via the coverage-inputs-api
-    artifact) diffs this against the committed OpenAPI spec. Primary worker only;
-    best-effort — a failed artifact write is logged, never fails the run (a
-    missing ledger then fails the downstream gate loudly instead)."""
-    if not _IS_PRIMARY:
-        return
-    from lib import api_coverage
-
-    out = Path(__file__).parent / ".artifacts" / "observed_endpoints.json"
-    try:
-        api_coverage.dump_observed(out)
-        LOG.info("wrote API-endpoint ledger (%d ops): %s", len(api_coverage._OBSERVED), out)
-    except OSError as e:
-        LOG.warning("could not write API-endpoint ledger %s: %s", out, e)
-
-    # Identity suite ledger (identity/ tests; separate spec, separate gate —
-    # see lib/api_coverage.py on why the two are never mixed).
-    identity_out = Path(__file__).parent / ".artifacts" / "observed_identity_endpoints.json"
-    try:
-        api_coverage.dump_observed_identity(identity_out)
-        LOG.info(
-            "wrote identity-endpoint ledger (%d ops): %s",
-            len(api_coverage._OBSERVED_IDENTITY),
-            identity_out,
-        )
-    except OSError as e:
-        LOG.warning("could not write identity-endpoint ledger %s: %s", identity_out, e)
+    """Convenience: order the fast rig tests (meta/) first."""
+    items.sort(key=lambda i: 0 if "meta/" in str(i.path) else 1)
 
 
 def pytest_generate_tests(metafunc):

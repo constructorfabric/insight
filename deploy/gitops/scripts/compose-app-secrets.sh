@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# compose-app-secrets.sh — derive insight-analytics-config and
-# insight-identity-config from the credentials already materialised in
-# the cluster's `insight-db-creds` Secret, plus the L2 service hosts
-# declared in environments/<env>/values.yaml.
+# compose-app-secrets.sh — derive the insight-{analytics,authenticator,
+# identity-resolution}-config Secrets from the credentials already
+# materialised in the cluster's `insight-db-creds` Secret, plus the L2
+# service hosts declared in environments/<env>/values.yaml.
 #
 # Why this exists: the chart auto-generates these "config" Secrets only
 # when `credentials.autoGenerate: true`. The gitops contract forbids
@@ -19,26 +19,35 @@
 # Inputs (env vars):
 #   ENV           required — selects environments/$ENV/values.yaml
 #   NS_APP        required — namespace where the Secrets land (insight)
-#   RELEASE       required — used to compute identity svc name
+#   RELEASE       required — used to compute identity-resolution svc name
 #
 # The script reads from `environments/$ENV/values.yaml`:
 #   .mariadb.host    .mariadb.port   .mariadb.username    .mariadb.database
 #   .clickhouse.host .clickhouse.port .clickhouse.username .clickhouse.database
 #   .redis.host      .redis.port
-#   .identity.databaseName       (defaults to "identity")
+#   .identityResolution.databaseName (defaults to "identity")
 #   .global.tenantDefaultId      (optional; empty disables the resolver
-#                                 on both identity and analytics.
-#                                 Single source of truth for the
-#                                 single-tenant UUID — matches the
-#                                 chart's `global.tenantDefaultId` knob
-#                                 which also drives api-gateway's
-#                                 single-tenant-tr-plugin.)
-#   .identity.orgChartSourceType (optional; empty falls back to the
-#                                 appsettings default `bamboohr`)
-#   .identityUrl                 (optional; the identity URL analytics +
-#                                 authenticator call — the .NET→Rust cutover
-#                                 switch. Empty = the historical .NET
-#                                 `http://<release>-identity:8082`.)
+#                                 on both identity-resolution and
+#                                 analytics. Single source of truth for
+#                                 the single-tenant UUID — matches the
+#                                 chart's `global.tenantDefaultId` knob.)
+#   .identityUrl                 (optional; the identity URL ANALYTICS calls.
+#                                 Empty = the default
+#                                 `http://<release>-identity-resolution:8082`.
+#                                 The authenticator does NOT use this — see below.)
+#   .identityResolution.deploy   required to be true — the authenticator's
+#                                 login-bootstrap resolve
+#                                 (GET /internal/persons/by-external-id /
+#                                 by-email-override) only exists on
+#                                 identity-resolution (constructorfabric/insight#1960).
+#                                 The authenticator is ALWAYS pointed at
+#                                 `http://<release>-identity-resolution:8082`,
+#                                 unlike analytics (overridable via
+#                                 .identityUrl above).
+#   .authenticator.oidc.sourceType       required — idp.source_type (the
+#                                        identity-resolution source_type this
+#                                        IdP is seeded under, e.g. "ms-entra").
+#   .authenticator.oidc.externalIdClaim  optional; default "sub" (Entra: "oid").
 #
 # Cleartext passwords live only in this shell's memory; they are never
 # written to disk and never echoed.
@@ -63,31 +72,35 @@ MDB_USER=$(yq -r '.mariadb.username'         "$VALUES")
 MDB_DB=$(  yq -r '.mariadb.database'         "$VALUES")
 CH_HOST=$( yq -r '.clickhouse.host'          "$VALUES")
 CH_PORT=$( yq -r '.clickhouse.port  // 8123' "$VALUES")
-# Native (Octonica) port for the identity service — it speaks the native
-# protocol, not HTTP (CH_PORT above, used by analytics-api). Overridable via
-# .clickhouse.nativePort; defaults to the standard 9000.
-CH_NATIVE_PORT=$( yq -r '.clickhouse.nativePort // 9000' "$VALUES")
 CH_USER=$( yq -r '.clickhouse.username'      "$VALUES")
 CH_DB=$(   yq -r '.clickhouse.database'      "$VALUES")
 RD_HOST=$( yq -r '.redis.host'               "$VALUES")
 RD_PORT=$( yq -r '.redis.port       // 6379' "$VALUES")
-IDENTITY_DB=$(yq -r '.identity.databaseName       // "identity"' "$VALUES")
 TENANT_DEFAULT=$(yq -r '.global.tenantDefaultId          // ""' "$VALUES")
-IDENTITY_ORG_CHART_SOURCE=$(yq -r '.identity.orgChartSourceType // ""' "$VALUES")
 IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN=$(yq -r '.identityResolution.bootstrapAdminPersonId // ""' "$VALUES")
-# Falls back to the .NET identity databaseName — the umbrella render fails
-# when both deploy with diverging names, so the fallback only fires on
-# Rust-only installs that didn't set it.
-IDENTITY_RESOLUTION_DB=$(yq -r '.identityResolution.databaseName // .identity.databaseName // "identity"' "$VALUES")
-# Which identity implementation the CONSUMERS (analytics, authenticator) call —
-# the .NET→Rust cutover switch (constructorfabric/insight#1602). Empty keeps
-# the historical default (the .NET `<release>-identity` Service), so existing
-# environments are untouched; the flip sets it to
-# `http://<release>-identity-resolution:8082`, and the ROLLBACK is clearing it
-# back (plus a rollout restart of analytics + authenticator — they read the
-# composed Secret at pod start).
+IDENTITY_RESOLUTION_DB=$(yq -r '.identityResolution.databaseName // "identity"' "$VALUES")
+# The identity URL ANALYTICS calls. Empty = the identity-resolution Service
+# (constructorfabric/insight#1602). The AUTHENTICATOR does NOT use this —
+# see AUTHENTICATOR_IDENTITY_URL below.
 IDENTITY_URL=$(yq -r '.identityUrl // ""' "$VALUES")
-[ -n "$IDENTITY_URL" ] && [ "$IDENTITY_URL" != "null" ] || IDENTITY_URL="http://${RELEASE}-identity:8082"
+[ -n "$IDENTITY_URL" ] && [ "$IDENTITY_URL" != "null" ] || IDENTITY_URL="http://${RELEASE}-identity-resolution:8082"
+
+# The authenticator's login-bootstrap resolve
+# (GET /internal/persons/by-external-id / by-email-override) only exists on
+# identity-resolution (constructorfabric/insight#1960) — so, unlike analytics
+# above, the authenticator is ALWAYS pointed at identity-resolution,
+# regardless of .identityUrl. Refuse to compose a config that would point it
+# at a service that was never deployed (helm's own render-time check —
+# charts/insight/templates/_helpers.tpl `insight.validate` — covers the
+# non-gitops path; this mirrors it for gitops installs, which skip that
+# validator entirely since autoGenerate=false short-circuits the chart's own
+# Secret rendering).
+IDENTITY_RESOLUTION_DEPLOY=$(yq -r '.identityResolution.deploy // false' "$VALUES")
+if [ "$IDENTITY_RESOLUTION_DEPLOY" != "true" ]; then
+  echo "ERROR: identityResolution.deploy must be true in $VALUES — the authenticator's login-bootstrap resolve only exists on identity-resolution (constructorfabric/insight#1960)." >&2
+  exit 1
+fi
+AUTHENTICATOR_IDENTITY_URL="http://${RELEASE}-identity-resolution:8082"
 
 # ── Authenticator OIDC (NGINX_BFF). issuerUrl/redirectUri may be Helm template
 #    strings in values.yaml; render {{ .Release.Name }}/{{ .Release.Namespace }}
@@ -128,6 +141,13 @@ AUTH_SCOPES=$(yq -r '(.authenticator.oidc.scopes // ["openid","email","profile"]
 # (e.g. Okta). Empty fallback = fail closed downstream.
 AUTH_TENANT_CLAIM=$(     yq -r '.authenticator.oidc.tenantClaim     // "tenant_id"' "$VALUES")
 AUTH_DEFAULT_TENANT_ID=$(yq -r '.authenticator.oidc.defaultTenantId // ""' "$VALUES")
+# The identity-resolution source_type this IdP is seeded under (e.g.
+# "ms-entra") — required; drives the login-bootstrap resolve
+# (GET /internal/persons/by-external-id?source_type=...&external_id=...).
+AUTH_SOURCE_TYPE=$(yq -r '.authenticator.oidc.sourceType // ""' "$VALUES")
+# id_token claim carrying the IdP's stable external user id for source_type
+# (Entra: "oid"; the generic OIDC "sub" is not the same directory-stable id).
+AUTH_EXTERNAL_ID_CLAIM=$(yq -r '.authenticator.oidc.externalIdClaim // "sub"' "$VALUES")
 # `__override` view-as login (insight#1941/#1944) — dev/demo stands ONLY.
 AUTH_OVERRIDE_ENABLED=$(yq -r '.authenticator.overrideEnabled // false' "$VALUES")
 # The authn-tls discovery FQDN — the minted token `iss` and downstream issuer.
@@ -135,9 +155,9 @@ GATEWAY_ISSUER="https://${RELEASE}-authenticator.${NS_APP}.svc.cluster.local:844
 GATEWAY_JWKS_URL="http://${RELEASE}-authenticator.${NS_APP}.svc.cluster.local:8083/.well-known/jwks.json"
 AUTH_TOKEN_AUD="http://${RELEASE}-authenticator.${NS_APP}.svc.cluster.local:8093/internal/token"
 
-for v in AUTH_IDP_ISSUER AUTH_REDIRECT_URI; do
+for v in AUTH_IDP_ISSUER AUTH_REDIRECT_URI AUTH_SOURCE_TYPE; do
   [ -n "${!v}" ] && [ "${!v}" != "null" ] || {
-    echo "ERROR: authenticator.oidc.* incomplete in $VALUES ($v empty) — auth is always on (NGINX_BFF)" >&2
+    echo "ERROR: authenticator.oidc.* incomplete in $VALUES ($v empty) — auth is always on (NGINX_BFF); sourceType is required for the login-bootstrap resolve (constructorfabric/insight#1960)" >&2
     exit 1
   }
 done
@@ -165,8 +185,24 @@ CH_PW=$( kubectl -n "$NS_APP" get secret insight-db-creds \
   -o jsonpath='{.data.clickhouse-password}'| base64 -d)
 RD_PW=$( kubectl -n "$NS_APP" get secret insight-db-creds \
   -o jsonpath='{.data.redis-password}'     | base64 -d)
+# Which ClickHouse user analytics connects as — the #1964 admin→read-only
+# cutover switch, same contract as identityUrl above. Empty keeps the
+# historical admin user, so environments pinned to a release without
+# insight#2036 (which provisions the user) are untouched; per env, set
+# .clickhouse.analyticsUsername to "presentation" once its pin carries #2036
+# (the clickhouse-<user>-password key must be sealed into insight-db-creds).
+# Rollback is clearing it back (+ rollout restart of analytics).
+CH_ANALYTICS_USER=$(yq -r '.clickhouse.analyticsUsername // ""' "$VALUES")
+[ "$CH_ANALYTICS_USER" != "null" ] || CH_ANALYTICS_USER=""
+if [ -n "$CH_ANALYTICS_USER" ]; then
+  CH_ANALYTICS_PW=$(kubectl -n "$NS_APP" get secret insight-db-creds \
+    -o jsonpath="{.data.clickhouse-${CH_ANALYTICS_USER}-password}" | base64 -d)
+else
+  CH_ANALYTICS_USER="$CH_USER"
+  CH_ANALYTICS_PW="$CH_PW"
+fi
 
-for v in MDB_PW CH_PW; do
+for v in MDB_PW CH_PW CH_ANALYTICS_PW; do
   [ -n "${!v}" ] || {
     echo "ERROR: $v missing from $NS_APP/insight-db-creds — refusing to compose with empty password" >&2
     exit 1
@@ -209,17 +245,11 @@ stringData:
   APP__gears__analytics__config__database_url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${MDB_DB}"
   APP__gears__analytics__config__clickhouse_url: "http://${CH_HOST}:${CH_PORT}"
   APP__gears__analytics__config__clickhouse_database: "${CH_DB}"
-  APP__gears__analytics__config__clickhouse_user: "${CH_USER}"
-  APP__gears__analytics__config__clickhouse_password: "${CH_PW}"
+  APP__gears__analytics__config__clickhouse_user: "${CH_ANALYTICS_USER}"
+  APP__gears__analytics__config__clickhouse_password: "${CH_ANALYTICS_PW}"
   APP__gears__analytics__config__identity_url: "${IDENTITY_URL}"
   APP__gears__analytics__config__redis_url: "${REDIS_URL}"
 EOF
-  # Metric Catalog single-tenant fallback. Mirrors the chart-side block
-  # (charts/insight/templates/secrets.yaml) — emit only when set so
-  # multi-tenant installs keep the resolver strict.
-  if [ -n "$TENANT_DEFAULT" ] && [ "$TENANT_DEFAULT" != "null" ]; then
-    echo "  APP__gears__analytics__config__metric_catalog__tenant_default_id: \"${TENANT_DEFAULT}\""
-  fi
 } | kubectl -n "$NS_APP" apply -f - >/dev/null
 echo "composed → $NS_APP/insight-analytics-config"
 
@@ -240,13 +270,15 @@ metadata:
 type: Opaque
 stringData:
   APP__gears__authenticator__config__redis_url: "${REDIS_URL}"
-  APP__gears__authenticator__config__identity_url: "${IDENTITY_URL}"
+  APP__gears__authenticator__config__identity_url: "${AUTHENTICATOR_IDENTITY_URL}"
   APP__gears__authenticator__config__gateway_issuer: "${GATEWAY_ISSUER}"
   APP__gears__authenticator__config__idp__issuer_url: "${AUTH_IDP_ISSUER}"
   APP__gears__authenticator__config__idp__client_id: "${AUTH_CLIENT_ID}"
   APP__gears__authenticator__config__idp__client_secret: "${AUTH_CLIENT_SECRET}"
   APP__gears__authenticator__config__idp__tenant_claim: "${AUTH_TENANT_CLAIM}"
   APP__gears__authenticator__config__idp__default_tenant_id: "${AUTH_DEFAULT_TENANT_ID}"
+  APP__gears__authenticator__config__idp__source_type: "${AUTH_SOURCE_TYPE}"
+  APP__gears__authenticator__config__idp__external_id_claim: "${AUTH_EXTERNAL_ID_CLAIM}"
   APP__gears__authenticator__config__redirect_uri: "${AUTH_REDIRECT_URI}"
   APP__gears__authenticator__config__oidc_scopes: "${AUTH_SCOPES}"
   APP__gears__authenticator__config__service_tokens__audience: "${AUTH_TOKEN_AUD}"
@@ -255,53 +287,11 @@ EOF
 } | kubectl -n "$NS_APP" apply -f - >/dev/null
 echo "composed → $NS_APP/insight-authenticator-config"
 
-# `insight-identity-config` carries the .NET identity service's
-# IDENTITY__* config. The service applies its own DbUp migrations
-# against `${IDENTITY_DB}` at startup — see ADR-0006 (service-owned
-# migrations). Empty IDENTITY__identity__tenant_default_id disables
-# the config-default tenant resolver; callers must then send the
-# X-Insight-Tenant-Id header.
-{
-  cat <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-identity-config
-  namespace: $NS_APP
-  annotations:
-    helm.sh/resource-policy: keep   # see analytics-config rationale above
-type: Opaque
-stringData:
-  IDENTITY__mariadb__url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${IDENTITY_DB}"
-  # Gateway-JWT verification (NGINX_BFF R1). issuer = the authn-tls FQDN (equals
-  # the token iss); JWKS is fetched over plain http from the authenticator main
-  # port (identity validates iss as a string, RequireHttpsMetadata=false).
-  IDENTITY__identity__auth_gateway_issuer: "${GATEWAY_ISSUER}"
-  IDENTITY__identity__auth_gateway_jwks_url: "${GATEWAY_JWKS_URL}"
-  # ClickHouse for persons-seed (reads identity.identity_inputs). The identity
-  # service uses the NATIVE protocol (Octonica client, port 9000) — NOT the HTTP
-  # port (8123) analytics-api uses. Section \`clickhouse\` -> IDENTITY__clickhouse__*.
-  IDENTITY__clickhouse__host: "${CH_HOST}"
-  IDENTITY__clickhouse__port: "${CH_NATIVE_PORT}"
-  IDENTITY__clickhouse__user: "${CH_USER}"
-  IDENTITY__clickhouse__password: "${CH_PW}"
-  IDENTITY__clickhouse__database: "${CH_DB}"
-EOF
-  if [ -n "$TENANT_DEFAULT" ] && [ "$TENANT_DEFAULT" != "null" ]; then
-    echo "  IDENTITY__identity__tenant_default_id: \"${TENANT_DEFAULT}\""
-  fi
-  if [ -n "$IDENTITY_ORG_CHART_SOURCE" ] && [ "$IDENTITY_ORG_CHART_SOURCE" != "null" ]; then
-    echo "  IDENTITY__identity__org_chart_source_type: \"${IDENTITY_ORG_CHART_SOURCE}\""
-  fi
-} | kubectl -n "$NS_APP" apply -f - >/dev/null
-echo "composed → $NS_APP/insight-identity-config"
-
-# `insight-identity-resolution-config` carries the Rust identity-resolution
+# `insight-identity-resolution-config` carries the identity-resolution
 # service's leaf config (gears-rust env-override convention, like analytics).
-# It points at the SAME MariaDB identity database the .NET service owns and
-# migrates during the side-by-side transition, and reads ClickHouse over the
-# HTTP protocol (8123) via the shared insight-clickhouse client — NOT the
-# native port the .NET service uses.
+# It points at the MariaDB identity database the service owns and migrates,
+# and reads ClickHouse over the HTTP protocol (8123) via the shared
+# insight-clickhouse client.
 {
   cat <<EOF
 apiVersion: v1
@@ -313,22 +303,22 @@ metadata:
     helm.sh/resource-policy: keep   # see analytics-config rationale above
 type: Opaque
 stringData:
-  APP__gears__identity-resolution__config__database_url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${IDENTITY_RESOLUTION_DB}"
-  APP__gears__identity-resolution__config__clickhouse_url: "http://${CH_HOST}:${CH_PORT}"
-  APP__gears__identity-resolution__config__clickhouse_database: "${CH_DB}"
-  APP__gears__identity-resolution__config__clickhouse_user: "${CH_USER}"
-  APP__gears__identity-resolution__config__clickhouse_password: "${CH_PW}"
+  APP__gears__identity_resolution__config__database_url: "mysql://${MDB_USER}:${MDB_PW}@${MDB_HOST}:${MDB_PORT}/${IDENTITY_RESOLUTION_DB}"
+  APP__gears__identity_resolution__config__clickhouse_url: "http://${CH_HOST}:${CH_PORT}"
+  APP__gears__identity_resolution__config__clickhouse_database: "${CH_DB}"
+  APP__gears__identity_resolution__config__clickhouse_user: "${CH_USER}"
+  APP__gears__identity_resolution__config__clickhouse_password: "${CH_PW}"
 EOF
   # First-admin bootstrap inputs (migrate initContainer): mirror the
   # chart-side block in charts/insight/templates/secrets.yaml.
   if [ -n "$TENANT_DEFAULT" ] && [ "$TENANT_DEFAULT" != "null" ]; then
-    echo "  APP__gears__identity-resolution__config__tenant_default_id: \"${TENANT_DEFAULT}\""
+    echo "  APP__gears__identity_resolution__config__tenant_default_id: \"${TENANT_DEFAULT}\""
   fi
   if [ -n "$IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN" ] && [ "$IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN" != "null" ]; then
-    echo "  APP__gears__identity-resolution__config__bootstrap_admin_person_id: \"${IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN}\""
+    echo "  APP__gears__identity_resolution__config__bootstrap_admin_person_id: \"${IDENTITY_RESOLUTION_BOOTSTRAP_ADMIN}\""
   fi
 } | kubectl -n "$NS_APP" apply -f - >/dev/null
 echo "composed → $NS_APP/insight-identity-resolution-config"
 
 # Don't echo any of the passwords; clear the shell env explicitly.
-unset MDB_PW CH_PW RD_PW REDIS_URL
+unset MDB_PW CH_PW RD_PW REDIS_URL CH_ANALYTICS_PW

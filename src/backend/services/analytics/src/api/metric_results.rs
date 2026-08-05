@@ -1,15 +1,17 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
 use axum::extract::Extension;
+use axum::http::HeaderMap;
 use futures::stream::{self, StreamExt};
 use serde::de::DeserializeOwned;
 use toolkit_canonical_errors::CanonicalError;
 
 use super::AppState;
 use super::error::MetricError;
+use crate::domain::metric_drilldown::load_capabilities;
 use crate::domain::metric_results::{
     BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultViewDto,
     MetricResultsRequest, MetricResultsResponse, PeerWideRow, PeriodWideRow, PlannedQuery,
@@ -18,6 +20,7 @@ use crate::domain::metric_results::{
     build_period_view, build_ranked_groups, build_timeseries_view, demux_peer_rows,
     demux_period_rows, enforce_view_row_limit, plan_queries, plan_rankings, validate_request,
 };
+use crate::domain::person_visibility::authorize_entity_ids;
 use toolkit_security::SecurityContext;
 
 const QUERY_CONCURRENCY: usize = 4;
@@ -30,25 +33,53 @@ const QUERY_FETCH_TIMEOUT: Duration = Duration::from_mins(1);
 pub async fn query_metric_results(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
+    headers: HeaderMap,
     Json(req): Json<MetricResultsRequest>,
 ) -> Result<Json<MetricResultsResponse>, CanonicalError> {
-    let req = validate_request(&state.db, ctx.subject_tenant_id(), req).await?;
-    let mut ranking_results = BTreeMap::new();
-    let mut rankings = stream::iter(plan_rankings(&req))
-        .map(|ranking| {
-            let state = Arc::clone(&state);
-            async move {
-                let comment = format!("metric-results:ranking:{}", ranking.key.rank_metric_key);
-                let rows = fetch_rows::<RankingQueryRow>(&state, ranking.query, &comment).await?;
-                let groups = build_ranked_groups(&ranking.dimensions, rows)?;
-                Ok::<_, CanonicalError>((ranking.key, groups))
-            }
-        })
-        .buffer_unordered(QUERY_CONCURRENCY);
-    while let Some(result) = rankings.next().await {
-        let (key, groups) = result?;
-        ranking_results.insert(key, groups);
-    }
+    let tenant_id = ctx.subject_tenant_id();
+    let mut req = validate_request(&state.db, tenant_id, req).await?;
+    req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
+
+    // Visibility gate BEFORE any ClickHouse work: the caller may only query
+    // persons inside their visible set (identity /v1/visible-persons, by
+    // person UUID since the cutover). Service principals bypass.
+    authorize_entity_ids(
+        &state.identity,
+        &ctx,
+        super::forwarded_authorization(&headers),
+        req.entity.entity_type(),
+        req.entity.person_ids(),
+    )
+    .await?;
+
+    let metric_keys = req
+        .metrics
+        .iter()
+        .map(|metric| metric.def.key().to_owned())
+        .collect::<Vec<_>>();
+    let capabilities = load_capabilities(&state.db, tenant_id, &metric_keys);
+    let rankings = async {
+        let mut ranking_results = BTreeMap::new();
+        let mut rankings = stream::iter(plan_rankings(&req))
+            .map(|ranking| {
+                let state = Arc::clone(&state);
+                async move {
+                    let comment = format!("metric-results:ranking:{}", ranking.key.rank_metric_key);
+                    let rows =
+                        fetch_rows::<RankingQueryRow>(&state, ranking.query, &comment).await?;
+                    let groups = build_ranked_groups(&ranking.dimensions, rows)?;
+                    Ok::<_, CanonicalError>((ranking.key, groups))
+                }
+            })
+            .buffer_unordered(QUERY_CONCURRENCY);
+        while let Some(result) = rankings.next().await {
+            let (key, groups) = result?;
+            ranking_results.insert(key, groups);
+        }
+        Ok::<_, CanonicalError>(ranking_results)
+    };
+    let (ranking_results, capabilities) = tokio::join!(rankings, capabilities);
+    let ranking_results = ranking_results?;
     let planned = plan_queries(&req, &ranking_results)?;
 
     let mut views_by_metric: Vec<Vec<Option<MetricResultViewDto>>> = req
@@ -68,6 +99,13 @@ pub async fn query_metric_results(
         }
     }
 
+    let capabilities = match capabilities {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            tracing::warn!(error = ?error, "metric drilldown capability load failed");
+            HashMap::default()
+        }
+    };
     let mut metrics = Vec::with_capacity(req.metrics.len());
     for (idx, metric) in req.metrics.iter().enumerate() {
         let mut views = Vec::with_capacity(metric.views.len());
@@ -78,7 +116,31 @@ pub async fn query_metric_results(
             enforce_view_row_limit(&view, format!("metrics[{idx}].views[{view_index}]"))?;
             views.push(view);
         }
-        metrics.push(build_metric_result(&metric.def, views));
+        let selection = crate::domain::metric_results::MetricResultSelectionDto {
+            metric_key: metric.def.key().to_owned(),
+            entity: crate::domain::metric_results::MetricResultsEntityDto {
+                r#type: req.entity.entity_type().to_owned(),
+                ids: req.entity.entity_ids(),
+            },
+            period: crate::domain::metric_results::MetricResultsPeriodDto {
+                from: req.from.to_string(),
+                to: req.to.to_string(),
+            },
+            filters: metric
+                .filters
+                .iter()
+                .map(
+                    |filter| crate::domain::metric_results::MetricDimensionFilterDto {
+                        dimension: filter.dimension.clone(),
+                        values: filter.values.clone(),
+                    },
+                )
+                .collect(),
+        };
+
+        let mut result = build_metric_result(&metric.def, views, selection);
+        result.drilldown = capabilities.get(metric.def.key()).cloned();
+        metrics.push(result);
     }
 
     let response = MetricResultsResponse { metrics };

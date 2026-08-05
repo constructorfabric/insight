@@ -2,3 +2,4 @@
 
 pub mod db;
 pub mod identity_inputs;
+pub mod identity_persons;

@@ -54,6 +54,8 @@ mod m20260710_000001_metric_distinct_count_computation;
 mod m20260714_000001_metric_value_transform;
 mod m20260721_000001_metric_definition_short_label;
 mod m20260722_000001_metric_definition_last_observed;
+mod m20260727_000001_metric_evidence;
+mod m20260730_000001_saved_queries;
 
 use sea_orm_migration::prelude::*;
 
@@ -117,6 +119,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260714_000001_metric_value_transform::Migration),
             Box::new(m20260721_000001_metric_definition_short_label::Migration),
             Box::new(m20260722_000001_metric_definition_last_observed::Migration),
+            Box::new(m20260727_000001_metric_evidence::Migration),
+            Box::new(m20260730_000001_saved_queries::Migration),
         ]
     }
 }

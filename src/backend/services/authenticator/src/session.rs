@@ -1,5 +1,5 @@
 //! Session Manager — the single owner of session state in Redis (DESIGN §3.2,
-//! §3.7). All keys carry the `asm:` prefix (authenticator session management).
+//! §3.7). All keys carry the `{asm}:` prefix (authenticator session management).
 //!
 //! Multi-key writes go through `MULTI/EXEC` pipelines so a session and its
 //! linked JWT, indexes, and refresh schedule stay consistent. The store fails
@@ -28,7 +28,7 @@ pub struct LoginState {
 }
 
 impl LoginState {
-    /// The HASH fields for `asm:login_state:{state}`.
+    /// The HASH fields for `{asm}:login_state:{state}`.
     fn to_fields(&self) -> Vec<(&'static str, String)> {
         vec![
             ("pkce_verifier", self.pkce_verifier.clone()),
@@ -50,7 +50,7 @@ impl LoginState {
     }
 }
 
-/// A session record — the `asm:session:{session_id}` HASH (DESIGN §3.7).
+/// A session record — the `{asm}:session:{session_id}` HASH (DESIGN §3.7).
 #[derive(Debug, Clone)]
 pub struct SessionRecord {
     pub person_id: String,
@@ -81,7 +81,7 @@ pub struct SessionRecord {
 }
 
 impl SessionRecord {
-    /// The HASH fields for `asm:session:{session_id}` (DESIGN §3.7). `Vec`
+    /// The HASH fields for `{asm}:session:{session_id}` (DESIGN §3.7). `Vec`
     /// arrays serialize as JSON; optional fields store `""` when absent.
     fn to_fields(&self) -> Vec<(&'static str, String)> {
         let json = |v: &[String]| serde_json::to_string(v).unwrap_or_else(|_| "[]".to_owned());
@@ -169,36 +169,36 @@ pub struct NewSession {
 }
 
 fn session_key(session_id: &str) -> String {
-    format!("asm:session:{session_id}")
+    format!("{{asm}}:session:{session_id}")
 }
 fn token_key(token: &str) -> String {
-    format!("asm:token:{token}")
+    format!("{{asm}}:token:{token}")
 }
 fn jwt_key(session_id: &str) -> String {
-    format!("asm:jwt:{session_id}")
+    format!("{{asm}}:jwt:{session_id}")
 }
 fn user_sessions_key(person_id: &str) -> String {
-    format!("asm:user_sessions:{person_id}")
+    format!("{{asm}}:user_sessions:{person_id}")
 }
 fn sid_index_key(iss: &str, idp_sid: &str) -> String {
-    format!("asm:sid_index:{iss}:{idp_sid}")
+    format!("{{asm}}:sid_index:{iss}:{idp_sid}")
 }
 fn sub_index_key(iss: &str, idp_sub: &str) -> String {
-    format!("asm:sub_index:{iss}:{idp_sub}")
+    format!("{{asm}}:sub_index:{iss}:{idp_sub}")
 }
 fn logout_jti_key(iss: &str, jti: &str) -> String {
-    format!("asm:logout_jti:{iss}:{jti}")
+    format!("{{asm}}:logout_jti:{iss}:{jti}")
 }
 fn login_state_key(state: &str) -> String {
-    format!("asm:login_state:{state}")
+    format!("{{asm}}:login_state:{state}")
 }
 /// Live login-state index (ZSET, score = expiry) backing the layer-2 cap:
-/// counting `asm:login_state:*` cheaply requires an index, not SCAN-per-login.
-const LOGIN_STATE_LIVE_KEY: &str = "asm:login_state_live";
+/// counting `{asm}:login_state:*` cheaply requires an index, not SCAN-per-login.
+const LOGIN_STATE_LIVE_KEY: &str = "{asm}:login_state_live";
 fn service_jti_key(service: &str, jti: &str) -> String {
-    format!("asm:svc_jti:{service}:{jti}")
+    format!("{{asm}}:svc_jti:{service}:{jti}")
 }
-const REFRESH_DUE_KEY: &str = "asm:idp_refresh_due";
+const REFRESH_DUE_KEY: &str = "{asm}:idp_refresh_due";
 
 /// The Session Manager. Cheap to clone (the connection manager is `Arc`-backed).
 #[derive(Clone)]
@@ -214,10 +214,31 @@ impl SessionManager {
     pub async fn connect(redis_url: &str) -> anyhow::Result<Self> {
         anyhow::ensure!(!redis_url.is_empty(), "redis_url is required (fail closed)");
         let client = redis::Client::open(redis_url).context("open Redis client")?;
-        let conn = client
+        let mut conn = client
             .get_connection_manager()
             .await
             .context("establish Redis connection manager")?;
+
+        // EXPIREAT NX|GT needs Redis >= 7.0; fail at boot, not per login.
+        let info: String = redis::cmd("INFO")
+            .arg("server")
+            .query_async(&mut conn)
+            .await
+            .context("read Redis server info")?;
+        let version = info
+            .lines()
+            .find_map(|l| l.strip_prefix("redis_version:"))
+            .map_or("", str::trim);
+        let major: u64 = version
+            .split('.')
+            .next()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        anyhow::ensure!(
+            major >= 7,
+            "Redis >= 7.0 required (EXPIREAT NX/GT), server reports {version:?}"
+        );
+
         Ok(Self { conn })
     }
 
@@ -321,7 +342,7 @@ impl SessionManager {
     // ── Service-token assertion replay guard ───────────────────────────────
 
     /// One-shot replay guard for an RFC 7523 client assertion `jti`
-    /// (`asm:svc_jti:{service}:{jti}`), mirroring the back-channel `logout_jti`
+    /// (`{asm}:svc_jti:{service}:{jti}`), mirroring the back-channel `logout_jti`
     /// pattern: `SET NX EX`. Returns `true` when this `jti` was seen for the
     /// first time (the caller may proceed), `false` when it is a replay.
     ///
@@ -377,12 +398,27 @@ impl SessionManager {
                 .with_expiration(redis::SetExpiry::EX(s.jwt_reissue_after_seconds)),
         )
         .ignore();
-        // User-session index (score = expiry).
-        pipe.zadd(user_sessions_key(&r.person_id), &s.session_id, expires_at)
+        // User-session index (score = expiry): inline trim + guarded TTL
+        // stand in for the removed janitor SCAN.
+        let ukey = user_sessions_key(&r.person_id);
+        let created = i64::try_from(r.created_at).unwrap_or(0);
+        let absolute = i64::try_from(r.absolute_expires_at).unwrap_or(i64::MAX);
+        pipe.zrembyscore(&ukey, 0, created).ignore();
+        pipe.zadd(&ukey, &s.session_id, expires_at).ignore();
+        // INVARIANT: index TTL >= every member's absolute expiry. NX seeds
+        // a TTL (GT treats no-TTL as infinite); GT only ever extends.
+        pipe.cmd("EXPIREAT")
+            .arg(&ukey)
+            .arg(absolute)
+            .arg("NX")
+            .ignore();
+        pipe.cmd("EXPIREAT")
+            .arg(&ukey)
+            .arg(absolute)
+            .arg("GT")
             .ignore();
         // Back-channel logout indexes: by OIDC `sid` (when the IdP supplies
         // one) and by `(iss, sub)` — the sub-only fallback path.
-        let absolute = i64::try_from(r.absolute_expires_at).unwrap_or(i64::MAX);
         // A view-as session is ALSO indexed under the real principal, so
         // revoke-by-person against the impersonator (admin deprovisioning,
         // self "log out everywhere") reaches it. Scored at the absolute cap:
@@ -391,22 +427,49 @@ impl SessionManager {
         // Reads stay correct — a dead session's record is gone, so index
         // readers skip it.
         if !r.impersonator_person_id.is_empty() {
-            pipe.zadd(
-                user_sessions_key(&r.impersonator_person_id),
-                &s.session_id,
-                absolute,
-            )
-            .ignore();
+            let ikey = user_sessions_key(&r.impersonator_person_id);
+            pipe.zrembyscore(&ikey, 0, created).ignore();
+            pipe.zadd(&ikey, &s.session_id, absolute).ignore();
+            pipe.cmd("EXPIREAT")
+                .arg(&ikey)
+                .arg(absolute)
+                .arg("NX")
+                .ignore();
+            pipe.cmd("EXPIREAT")
+                .arg(&ikey)
+                .arg(absolute)
+                .arg("GT")
+                .ignore();
         }
         if let Some(sid) = &r.idp_sid {
             let idx = sid_index_key(&r.idp_iss, sid);
             pipe.sadd(&idx, &s.session_id).ignore();
-            pipe.expire_at(&idx, absolute).ignore();
+            // INVARIANT: NX/GT, never plain EXPIREAT — the set is shared and
+            // a shorter-lived session must not cut the TTL under a live one.
+            pipe.cmd("EXPIREAT")
+                .arg(&idx)
+                .arg(absolute)
+                .arg("NX")
+                .ignore();
+            pipe.cmd("EXPIREAT")
+                .arg(&idx)
+                .arg(absolute)
+                .arg("GT")
+                .ignore();
         }
         if !r.idp_sub.is_empty() {
             let idx = sub_index_key(&r.idp_iss, &r.idp_sub);
             pipe.sadd(&idx, &s.session_id).ignore();
-            pipe.expire_at(&idx, absolute).ignore();
+            pipe.cmd("EXPIREAT")
+                .arg(&idx)
+                .arg(absolute)
+                .arg("NX")
+                .ignore();
+            pipe.cmd("EXPIREAT")
+                .arg(&idx)
+                .arg(absolute)
+                .arg("GT")
+                .ignore();
         }
         // IdP refresh schedule (consumer lands in step 10).
         if let Some(due) = s.refresh_due_at {
@@ -586,7 +649,7 @@ impl SessionManager {
         Ok(led == 1)
     }
 
-    /// Sessions due for IdP refresh (`ZRANGEBYSCORE asm:idp_refresh_due 0 now`,
+    /// Sessions due for IdP refresh (`ZRANGEBYSCORE {asm}:idp_refresh_due 0 now`,
     /// bounded).
     ///
     /// # Errors
@@ -627,7 +690,7 @@ impl SessionManager {
         let mut conn = self.conn.clone();
         let token = uuid::Uuid::now_v7().to_string();
         let set: Option<String> = redis::cmd("SET")
-            .arg(format!("asm:refresh_lock:{session_id}"))
+            .arg(format!("{{asm}}:refresh_lock:{session_id}"))
             .arg(&token)
             .arg("NX")
             .arg("PX")
@@ -658,7 +721,7 @@ impl SessionManager {
         ";
         let mut conn = self.conn.clone();
         let _: i64 = redis::Script::new(UNLOCK)
-            .key(format!("asm:refresh_lock:{session_id}"))
+            .key(format!("{{asm}}:refresh_lock:{session_id}"))
             .arg(owner_token)
             .invoke_async(&mut conn)
             .await
@@ -759,11 +822,11 @@ impl SessionManager {
         Ok(())
     }
 
-    /// One janitor pass (DESIGN §4.3): trim expired members from every
-    /// `asm:user_sessions:*` ZSET (`ZREMRANGEBYSCORE 0 now` — per-key TTLs
-    /// removed the records, the index members linger) and drop long-overdue
-    /// orphans from the refresh schedule (live sessions are re-scheduled by
-    /// the refresher; an entry still due after `orphan_grace` has no owner).
+    /// One janitor pass (DESIGN §4.3): trim expired members from the
+    /// login-state index and drop long-overdue orphans from the refresh
+    /// schedule (live sessions are re-scheduled by the refresher; an entry
+    /// still due after `orphan_grace` has no owner). Per-user session
+    /// indexes are trimmed inline by writers and TTL-bounded — no SCAN.
     /// Returns (removed members, overdue-backlog size before trimming).
     ///
     /// # Errors
@@ -773,38 +836,6 @@ impl SessionManager {
         let now_i = i64::try_from(now).unwrap_or(i64::MAX);
         let mut removed = 0u64;
         let mut backlog = 0u64;
-
-        // SCAN, never KEYS — bounded batches on a shared Redis.
-        let mut cursor: u64 = 0;
-        loop {
-            let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")
-                .arg(cursor)
-                .arg("MATCH")
-                .arg("asm:user_sessions:*")
-                .arg("COUNT")
-                .arg(100)
-                .query_async(&mut conn)
-                .await
-                .context("scan user-session indexes")?;
-            for key in keys {
-                let expired: u64 = conn
-                    .zcount(&key, 0, now_i)
-                    .await
-                    .context("count expired index members")?;
-                if expired > 0 {
-                    backlog += expired;
-                    let n: u64 = conn
-                        .zrembyscore(&key, 0, now_i)
-                        .await
-                        .context("trim expired index members")?;
-                    removed += n;
-                }
-            }
-            cursor = next;
-            if cursor == 0 {
-                break;
-            }
-        }
 
         // Expired login-state index members (the HASH keys expired via TTL).
         let stale_states: u64 = conn
@@ -853,7 +884,7 @@ impl SessionManager {
     // ── Back-channel logout (PRD 5.10) ─────────────────────────────────────
 
     /// One-shot replay guard for a back-channel `logout_token` `jti`
-    /// (`asm:logout_jti:{iss}:{jti}`, `SET NX EX`). Returns `true` on first
+    /// (`{asm}:logout_jti:{iss}:{jti}`, `SET NX EX`). Returns `true` on first
     /// delivery; `false` when this `(iss, jti)` was already accepted.
     ///
     /// # Errors
@@ -927,7 +958,7 @@ impl SessionManager {
 
     /// List a person's live sessions from the per-user index (score > `now`),
     /// loading each record. Index members whose record has already expired are
-    /// skipped (the janitor trims them).
+    /// skipped (the next session-create on this index trims them).
     ///
     /// # Errors
     /// Fails on a Redis error.

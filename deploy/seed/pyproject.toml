@@ -14,7 +14,7 @@ description = "Insight sample-data seeder for the local docker-compose stack."
 requires-python = ">=3.13"
 dependencies = [
     "PyMySQL==1.2.0",
-    "clickhouse-connect==1.2.0",
+    "clickhouse-connect==1.6.0",
     # Unpinned to match src/ingestion/tools/toolbox/Dockerfile. dbt-core pulls
     # in PyYAML, which apply-ch-migrations.sh's profiles.yml generator imports.
     "dbt-clickhouse",
@@ -22,9 +22,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "mypy==2.1.0",
-    "ruff==0.15.16",
-    "types-PyMySQL==1.1.0.20260518",
+    # dbt-core 1.12 raised its own cap to pathspec<1.1 (dbt-labs/dbt-core#12385),
+    # so a current mypy resolves again. Below 2.0 it would pull pathspec<1.0 and
+    # drag dbt-core back to the 1.11 line.
+    "mypy>=2,<3",
+    # Same pin as the ruff-pre-commit hook in .pre-commit-config.yaml, so a local
+    # run and the commit hook cannot reach different verdicts.
+    "ruff==0.16.0",
+    "types-PyMySQL==1.2.0.20260724",
 ]
 
 # Flat layout: top-level modules plus the generators/ package.

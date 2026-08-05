@@ -87,6 +87,12 @@ vars:
 # keeps connector-specific table lists co-located with the connector code.
 on-run-start:
   - "{{ create_task_field_history_staging() }}"
+  # identity.identity_persons — the persons-log copy the identity-resolution
+  # service's persons-sync fills; gold models resolve email → person_id
+  # against it. The hook only guarantees the (possibly empty) table exists
+  # so builds don't fail before the first sync — see the macro's schema
+  # contract with infra/identity_persons.rs.
+  - "{{ create_identity_persons() }}"
   # Drop the silver placeholders (created by create-bronze-placeholders.sh,
   # run from the clickhouse-migrate Hook Job) BEFORE any model
   # materialization starts. Two-factor detection (placeholder marker +

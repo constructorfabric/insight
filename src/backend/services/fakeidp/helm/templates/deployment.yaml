@@ -14,6 +14,11 @@ spec:
       labels:
         {{- include "insight-fakeidp.selectorLabels" . | nindent 8 }}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: fakeidp
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -21,6 +26,11 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: FAKEIDP_ISSUER
               value: {{ tpl (required "fakeidp.issuer is required (the in-cluster fakeidp URL)" .Values.issuer) . | quote }}

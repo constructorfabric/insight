@@ -12,7 +12,9 @@ use crate::infra::db::persons_repo::SourceIdRow;
 
 /// Body of `POST /v1/profiles`. `value_type = "email"` matches across all
 /// sources for the tenant; `value_type = "id"` matches a source-native account
-/// id within one source instance (needs `insight_source_type` + `insight_source_id`).
+/// id within one source instance (needs `insight_source_type` + `insight_source_id`);
+/// `value_type = "person_id"` takes the canonical person UUID itself — the key
+/// the metrics runtime and its routes use since the identity cutover.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ResolveProfileRequest {
     pub value_type: String,

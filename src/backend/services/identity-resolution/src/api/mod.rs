@@ -9,7 +9,9 @@ pub mod person_roles;
 pub mod roles;
 pub mod seed;
 pub mod subchart;
+pub mod sync;
 pub mod visibility;
+pub mod visible_persons;
 
 use std::sync::Arc;
 
@@ -17,7 +19,6 @@ use axum::Extension;
 use axum::Router;
 use axum::http::StatusCode;
 use sea_orm::DatabaseConnection;
-use tokio::sync::mpsc;
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
 
 use crate::config::GearConfig;
@@ -30,8 +31,6 @@ pub struct AppState {
     pub db: DatabaseConnection,
     /// Gear config (`org_chart_source_type`, `clickhouse_*`, …).
     pub config: GearConfig,
-    /// Sender to the persons-seed worker's job queue (POST enqueues here).
-    pub seed_tx: mpsc::Sender<seed::PersonsSeedJob>,
 }
 
 /// Mount the identity-resolution routes onto the host's router.
@@ -56,14 +55,21 @@ pub fn register_routes(
 /// + its OpenAPI spec + auth/error metadata).
 #[allow(clippy::too_many_lines)] // one flat block per route — readability over splitting
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
-    // Internal, SERVICE-ONLY S2S lookup for the login bootstrap. Registered as a
-    // raw route so it stays out of the generated OpenAPI (matching the .NET
-    // `.ExcludeFromDescription()`); auth is still enforced by the host gateway
-    // and `SecurityContext` is injected by the host authn pipeline, same as
-    // every other route. The handler itself gates on `subject_type == "service"`.
+    // Internal, SERVICE-ONLY S2S resolvers — TWO SEPARATE routes so the
+    // login-bootstrap (external id) and the authenticator's admin `__override`
+    // view-as feature (email) can never be confused for one another via a
+    // shared dispatch parameter. Registered as raw routes so they stay out of
+    // the generated OpenAPI (matching the .NET `.ExcludeFromDescription()`);
+    // auth is still enforced by the host gateway and `SecurityContext` is
+    // injected by the host authn pipeline, same as every other route. Each
+    // handler itself gates on `subject_type == "service"`.
     let router = router.route(
-        "/internal/persons/by-email/{email}",
-        axum::routing::get(handlers::internal_person_by_email),
+        "/internal/persons/by-external-id",
+        axum::routing::get(handlers::internal_person_by_external_id),
+    );
+    let router = router.route(
+        "/internal/persons/by-email-override",
+        axum::routing::get(handlers::internal_person_by_email_override),
     );
 
     let router = OperationBuilder::post("/v1/profiles")
@@ -81,23 +87,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(handlers::resolve_profile)
         .register(router, openapi);
 
-    // Persons-seed (async job): enqueue + poll. Admin-gated: caller = gateway-JWT
-    // subject, must hold the `admin` role in the tenant.
-    let router = OperationBuilder::post("/v1/persons-seed")
-        .operation_id("identity_resolution.persons_seed.create")
-        .summary("Enqueue a persons-seed run (async)")
-        .authenticated()
-        .no_license_required()
-        .json_request::<seed::PersonsSeedRequest>(openapi, "Seed options")
-        .json_response_with_schema::<seed::PersonsSeedOperationResponse>(
-            openapi,
-            StatusCode::ACCEPTED,
-            "Queued operation",
-        )
-        .standard_errors(openapi)
-        .handler(seed::create_persons_seed)
-        .register(router, openapi);
-
+    // Persons-seed operations journal (read-only; the seed itself runs via the
+    // `seed` CLI subcommand — CronJob / manual Job, see `crate::seed_runner`).
+    // Admin-gated: caller = gateway-JWT subject, must hold the `admin` role in
+    // the tenant.
     let router = OperationBuilder::get("/v1/persons-seed/{id}")
         .operation_id("identity_resolution.persons_seed.get")
         .summary("Get a persons-seed operation")
@@ -124,6 +117,37 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(seed::list_persons_seed)
+        .register(router, openapi);
+
+    // Persons-sync journal (read-only, admin-gated): the sync itself is
+    // CLI-only (`identity-resolution sync` — see crate::sync_runner), same
+    // trigger model as the seed after #1690.
+    let router = OperationBuilder::get("/v1/persons-sync/{id}")
+        .operation_id("identity_resolution.persons_sync.get")
+        .summary("Get a persons-sync operation")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<sync::PersonsSyncOperationResponse>(
+            openapi,
+            StatusCode::OK,
+            "Operation status",
+        )
+        .standard_errors(openapi)
+        .handler(sync::get_persons_sync)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/persons-sync")
+        .operation_id("identity_resolution.persons_sync.list")
+        .summary("List persons-sync operations")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<sync::PersonsSyncListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Operations",
+        )
+        .standard_errors(openapi)
+        .handler(sync::list_persons_sync)
         .register(router, openapi);
 
     // Roles catalogue (admin-gated CRUD over the global `roles` table).
@@ -257,7 +281,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(subchart::get_forest)
         .register(router, openapi);
 
-    OperationBuilder::get("/v1/subchart/{person_id}")
+    let router = OperationBuilder::get("/v1/subchart/{person_id}")
         .operation_id("identity_resolution.subchart.get")
         .summary("Depth-bounded org subtree rooted at a person")
         .authenticated()
@@ -269,5 +293,20 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(subchart::get_subchart)
+        .register(router, openapi);
+
+    OperationBuilder::post("/v1/visible-persons")
+        .operation_id("identity_resolution.visible_persons.create")
+        .summary("Filter person ids to the ones the caller may see")
+        .authenticated()
+        .no_license_required()
+        .json_request::<visible_persons::VisiblePersonsRequest>(openapi, "Person ids to check")
+        .json_response_with_schema::<visible_persons::VisiblePersonsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Visible subset",
+        )
+        .standard_errors(openapi)
+        .handler(visible_persons::filter_visible_persons)
         .register(router, openapi)
 }

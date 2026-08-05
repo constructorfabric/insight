@@ -58,7 +58,7 @@ data:
   INSIGHT_GATEWAY_HOST:       {{ include "insight.gateway.host"       . | quote }}
   INSIGHT_AUTHENTICATOR_HOST: {{ include "insight.authenticator.host" . | quote }}
   INSIGHT_ANALYTICS_HOST:   {{ include "insight.analytics.host"  . | quote }}
-  INSIGHT_IDENTITY_HOST:    {{ include "insight.identity.host"   . | quote }}
+  INSIGHT_IDENTITY_HOST:    {{ include "insight.identityResolution.host" . | quote }}
   INSIGHT_FRONTEND_HOST:    {{ include "insight.frontend.host"   . | quote }}
 
   # ─── Observability (emission contract) ───

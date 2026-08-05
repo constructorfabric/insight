@@ -109,8 +109,6 @@ connectors:
         value: fake
       zoom_client_secret:
         value: fake
-      zoom_start_date:
-        value: "2020-01-01"
   zulip-proxy:
     path: collaboration/zulip-proxy
     config:
@@ -146,6 +144,8 @@ connectors:
         env: SALESFORCE_CLIENT_SECRET
       salesforce_instance_url:
         env: SALESFORCE_INSTANCE_URL
+      salesforce_start_date:
+        value: "2024-01-01"
   bitbucket-cloud:
     path: git/bitbucket-cloud
     config:
@@ -185,6 +185,21 @@ connectors:
         value: https://gitlab.example.com
       insight_source_id:
         value: gitlab-acme-prod
+      insight_tenant_id:
+        value: fake
+  active-directory:
+    path: hr-directory/active-directory
+    config:
+      ad_bind_dn:
+        value: svc-insight@corp.example.com
+      ad_bind_password:
+        value: fake
+      ad_search_base:
+        value: DC=corp,DC=example,DC=com
+      ad_server_host:
+        value: dc1.corp.example.com
+      insight_source_id:
+        value: active-directory-corp
       insight_tenant_id:
         value: fake
   bamboohr:

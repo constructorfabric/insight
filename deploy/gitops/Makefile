@@ -360,6 +360,24 @@ keycloak-realm: kube-ctx values-present
 	  kubectl --context $(KUBE_CTX) -n $(NS_APP) apply -f -; \
 	echo "$(C_GRN)applied$(C_RST) configmap $(RELEASE)-keycloak-realm → $(NS_APP)"
 
+.PHONY: keycloak-broker-realms
+# Apply the environment's versioned broker realm YAML
+# (environments/$(ENV)/keycloak/realms/*.yaml) as the
+# `$(RELEASE)-keycloak-config-realms` ConfigMap that the umbrella's
+# keycloak-config-cli hook Job mounts and re-applies on every deploy
+# (ADR-0003: realm content is configuration-as-code; drift reverts on sync).
+# Chained into deploy-insight. No-op unless keycloakConfig.enabled=true.
+keycloak-broker-realms: kube-ctx values-present
+	@if [ "$$(yq -r '.keycloakConfig.enabled // false' $(VALUES))" != "true" ]; then \
+	  echo "$(C_YEL)skip$(C_RST) keycloak-broker-realms (keycloakConfig.enabled != true)"; exit 0; fi; \
+	DIR=environments/$(ENV)/keycloak/realms; \
+	ls $$DIR/*.yaml >/dev/null 2>&1 \
+	  || { echo "$(C_RED)ERROR$(C_RST): keycloakConfig.enabled=true but no realm YAML in $$DIR/"; exit 1; }; \
+	kubectl --context $(KUBE_CTX) -n $(NS_APP) create configmap $(RELEASE)-keycloak-config-realms \
+	  --from-file="$$DIR" --dry-run=client -o yaml | \
+	  kubectl --context $(KUBE_CTX) -n $(NS_APP) apply -f -; \
+	echo "$(C_GRN)applied$(C_RST) configmap $(RELEASE)-keycloak-config-realms → $(NS_APP)"
+
 .PHONY: deploy-app
 deploy-app: deploy-insight
 
@@ -408,7 +426,7 @@ validate-insight: values-present local-chart-present
 	@kubeconform -strict -summary < $(RENDER_DIR)/validate-render-$(ENV).yaml
 
 .PHONY: deploy-insight
-deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present apply-app-secrets
+deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present apply-app-secrets keycloak-broker-realms
 	@mkdir -p $(RENDER_DIR)
 	@helm template $(RELEASE) $(CHART) --version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) \
 		-n $(NS_APP) -f $(VALUES) \

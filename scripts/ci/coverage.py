@@ -9,10 +9,10 @@ job is to check already-collected reports against two gates:
 
 Usage: python3 scripts/ci/coverage.py gate [--no-patch] [--reports-dir D] [--summary F]
 """
+
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
 import subprocess
@@ -28,13 +28,13 @@ try:
 except ImportError:
     from xml.etree.ElementTree import parse as _xml_parse
 
-from components import ROOT, COMPARE_BRANCH, COMPONENTS, component_for
+from components import COMPARE_BRANCH, COMPONENTS, ROOT, component_for
 
 COVERAGE_DIR = ROOT / "coverage"
 
 # The two gate thresholds (percent).
-OVERALL_MIN = 80    # each component's overall line coverage
-NEW_CODE_MIN = 80   # new-code (patch) line coverage
+OVERALL_MIN = 80  # each component's overall line coverage
+NEW_CODE_MIN = 80  # new-code (patch) line coverage
 
 
 # --------------------------------------------------------------------------- #
@@ -51,8 +51,7 @@ def _normalize(filename: str, sources: list[str], root: Path) -> str:
     """
     fn = filename.replace("\\", "/")
     p = Path(fn)
-    candidates = [p] if p.is_absolute() else \
-        [Path(s) / fn for s in sources] + [root / fn]
+    candidates = [p] if p.is_absolute() else [Path(s) / fn for s in sources] + [root / fn]
 
     under_root: list[tuple[str, bool]] = []
     for c in candidates:
@@ -91,9 +90,9 @@ def load_all_reports(reports_dir: Path, root: Path) -> dict[str, dict[int, int]]
     """Merge every Cobertura *.xml in reports_dir. Empty dict if none (e.g. no
     component changed, so no producer ran)."""
     merged: dict[str, dict[int, int]] = {}
-    report_files = sorted(glob.glob(str(reports_dir / "*.xml")))
+    report_files = sorted(reports_dir.glob("*.xml"))
     for rf in report_files:
-        for rel, lines in parse_cobertura(Path(rf), root).items():
+        for rel, lines in parse_cobertura(rf, root).items():
             dst = merged.setdefault(rel, {})
             for no, hits in lines.items():
                 dst[no] = max(dst.get(no, 0), hits)
@@ -114,8 +113,7 @@ def measure(files: dict[str, dict[int, int]], components: list[dict]) -> tuple[d
             continue
         agg[name][0] += sum(1 for h in lines.values() if h > 0)
         agg[name][1] += len(lines)
-    result = {name: (cov, tot, (cov / tot * 100.0) if tot else 0.0)
-              for name, (cov, tot) in agg.items()}
+    result = {name: (cov, tot, (cov / tot * 100.0) if tot else 0.0) for name, (cov, tot) in agg.items()}
     return result, unbucketed
 
 
@@ -126,18 +124,19 @@ def print_table(measured: dict) -> bool:
     """Print the per-component table against OVERALL_MIN; return True if all pass."""
     name_w = max([len("Component")] + [len(n) for n in measured])
     header = f"{'Component':<{name_w}}  {'Lines':>13}  {'Coverage':>9}  {'Min':>5}  Result"
-    print(header)
-    print("-" * len(header))
+    print(header)  # noqa: T201 — gate report goes to stdout by contract
+    print("-" * len(header))  # noqa: T201 — gate report goes to stdout by contract
     all_pass = True
     for name in sorted(measured):
         cov, tot, pct = measured[name]
         ok = pct >= OVERALL_MIN
         all_pass &= ok
         lines_cell = f"{cov}/{tot}"
-        print(f"{name:<{name_w}}  {lines_cell:>13}  {pct:>8.1f}%  {OVERALL_MIN:>4}%  "
-              f"{'PASS' if ok else 'FAIL'}"
-              + ("" if ok else f"  (< min by {OVERALL_MIN - pct:.1f})"))
-    print("-" * len(header))
+        print(  # noqa: T201 — gate report goes to stdout by contract
+            f"{name:<{name_w}}  {lines_cell:>13}  {pct:>8.1f}%  {OVERALL_MIN:>4}%  "
+            f"{'PASS' if ok else 'FAIL'}" + ("" if ok else f"  (< min by {OVERALL_MIN - pct:.1f})")
+        )
+    print("-" * len(header))  # noqa: T201 — gate report goes to stdout by contract
     return all_pass
 
 
@@ -146,12 +145,20 @@ def _icon(ok: bool) -> str:
 
 
 # (lang key, section heading) — controls the order of report sections.
-LANG_SECTIONS = [("rust", "Rust"), ("python", "Python"), ("dotnet", ".NET")]
+LANG_SECTIONS = [("rust", "Rust"), ("python", "Python")]
 
 
-def markdown_report(measured: dict, components: list[dict], comp_pass: bool,
-                    patch_pass: bool, patch_per_comp: dict, patch_output: str,
-                    no_patch: bool, unbucketed: int, missing: list[str] = ()) -> str:
+def markdown_report(
+    measured: dict,
+    components: list[dict],
+    comp_pass: bool,
+    patch_pass: bool,
+    patch_per_comp: dict,
+    patch_output: str,
+    no_patch: bool,
+    unbucketed: int,
+    missing: list[str] = (),
+) -> str:
     """Render the gate result as a GitHub-flavored markdown report, one table per language."""
     by_name = {c["name"]: c for c in components}
     overall = comp_pass and (no_patch or patch_pass) and not missing
@@ -165,13 +172,15 @@ def markdown_report(measured: dict, components: list[dict], comp_pass: bool,
         f"new-code (≥ {NEW_CODE_MIN}%) {patch_state}",
     ]
     if missing:
-        out += ["", f"> 🔴 **Changed component(s) produced no coverage report** "
-                f"(build/test failed, or no tests where some are required): "
-                f"{', '.join(missing)}"]
+        out += [
+            "",
+            f"> 🔴 **Changed component(s) produced no coverage report** "
+            f"(build/test failed, or no tests where some are required): "
+            f"{', '.join(missing)}",
+        ]
 
     def table(names: list[str]) -> list[str]:
-        rows = ["| Component | Lines | Coverage | Min | Result |",
-                "| --- | ---: | ---: | ---: | :---: |"]
+        rows = ["| Component | Lines | Coverage | Min | Result |", "| --- | ---: | ---: | ---: | :---: |"]
         for name in names:
             cov, tot, pct = measured[name]
             rows.append(f"| {name} | {cov}/{tot} | {pct:.1f}% | {OVERALL_MIN}% | {_icon(pct >= OVERALL_MIN)} |")
@@ -192,12 +201,14 @@ def markdown_report(measured: dict, components: list[dict], comp_pass: bool,
     if not no_patch:
         out += ["", f"### New code (≥ {NEW_CODE_MIN}%)", ""]
         if patch_per_comp:
+
             def patch_table(names: list[str]) -> list[str]:
-                rows = ["| Component | New lines | Coverage | Min | Result |",
-                        "| --- | ---: | ---: | ---: | :---: |"]
+                rows = ["| Component | New lines | Coverage | Min | Result |", "| --- | ---: | ---: | ---: | :---: |"]
                 for name in names:
                     cov, tot, pct = patch_per_comp[name]
-                    rows.append(f"| {name} | {cov}/{tot} | {pct:.1f}% | {NEW_CODE_MIN}% | {_icon(pct >= NEW_CODE_MIN)} |")
+                    rows.append(
+                        f"| {name} | {cov}/{tot} | {pct:.1f}% | {NEW_CODE_MIN}% | {_icon(pct >= NEW_CODE_MIN)} |"
+                    )
                 return rows
 
             lang_of = {c["name"]: c["lang"] for c in components}
@@ -257,13 +268,12 @@ def run_patch_gate(reports_dir: Path, components: list[dict]) -> tuple[bool, dic
     """
     if which("diff-cover") is None:
         sys.exit("diff-cover not found — `pip install diff-cover` (required for the new-code gate).")
-    reports = sorted(glob.glob(str(reports_dir / "*.xml")))
+    reports = sorted(str(p) for p in reports_dir.glob("*.xml"))
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
         json_path = tf.name
     # --fail-under 0: diff-cover never fails here; we decide per-component below.
-    cmd = ["diff-cover", *reports, "--compare-branch", COMPARE_BRANCH,
-           "--json-report", json_path, "--fail-under", "0"]
-    print(f"\nNew-code gate: {' '.join(cmd)}\n")
+    cmd = ["diff-cover", *reports, "--compare-branch", COMPARE_BRANCH, "--json-report", json_path, "--fail-under", "0"]
+    print(f"\nNew-code gate: {' '.join(cmd)}\n")  # noqa: T201 — gate report goes to stdout by contract
     proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     sys.stdout.write(proc.stdout)
     if proc.stderr:
@@ -285,34 +295,35 @@ def run_patch_gate(reports_dir: Path, components: list[dict]) -> tuple[bool, dic
 
 
 def print_patch_table(per_component: dict, components: list[dict]) -> None:
-    print(f"\n=== New-code coverage gate (>= {NEW_CODE_MIN}%) ===\n")
+    print(f"\n=== New-code coverage gate (>= {NEW_CODE_MIN}%) ===\n")  # noqa: T201 — gate report goes to stdout by contract
     if not per_component:
-        print("No changed coverable lines in this diff.")
+        print("No changed coverable lines in this diff.")  # noqa: T201 — gate report goes to stdout by contract
         return
     lang_of = {c["name"]: c["lang"] for c in components}
     seen_langs = {lang for lang, _ in LANG_SECTIONS}
     name_w = max([len("Component")] + [len(n) for n in per_component])
     header = f"{'Component':<{name_w}}  {'New lines':>11}  {'Coverage':>9}  {'Min':>5}  Result"
-    print(header)
-    print("-" * len(header))
+    print(header)  # noqa: T201 — gate report goes to stdout by contract
+    print("-" * len(header))  # noqa: T201 — gate report goes to stdout by contract
 
     def rows(names: list[str]) -> None:
         for name in names:
             cov, tot, pct = per_component[name]
             ok = pct >= NEW_CODE_MIN
-            print(f"{name:<{name_w}}  {f'{cov}/{tot}':>11}  {pct:>8.1f}%  {NEW_CODE_MIN:>4}%  "
-                  f"{'PASS' if ok else 'FAIL'}")
+            print(  # noqa: T201 — gate report goes to stdout by contract
+                f"{name:<{name_w}}  {f'{cov}/{tot}':>11}  {pct:>8.1f}%  {NEW_CODE_MIN:>4}%  {'PASS' if ok else 'FAIL'}"
+            )
 
     for lang, heading in LANG_SECTIONS:
         names = sorted(n for n in per_component if lang_of.get(n) == lang)
         if names:
-            print(f"[{heading}]")
+            print(f"[{heading}]")  # noqa: T201 — gate report goes to stdout by contract
             rows(names)
     other = sorted(n for n in per_component if lang_of.get(n) not in seen_langs)
     if other:
-        print("[Other]")
+        print("[Other]")  # noqa: T201 — gate report goes to stdout by contract
         rows(other)
-    print("-" * len(header))
+    print("-" * len(header))  # noqa: T201 — gate report goes to stdout by contract
 
 
 # --------------------------------------------------------------------------- #
@@ -336,19 +347,18 @@ def cmd_gate(args) -> int:
     required = [n.strip() for n in (getattr(args, "require", None) or "").split(",") if n.strip()]
     missing = sorted(n for n in required if measured_all.get(n, (0, 0, 0.0))[1] == 0)
 
-    print(f"\n=== Per-component overall coverage gate (>= {OVERALL_MIN}%) ===\n")
+    print(f"\n=== Per-component overall coverage gate (>= {OVERALL_MIN}%) ===\n")  # noqa: T201 — gate report goes to stdout by contract
     if measured:
         comp_pass = print_table(measured)
     else:
         comp_pass = True
-        print("No component reports — nothing to gate.")
+        print("No component reports — nothing to gate.")  # noqa: T201 — gate report goes to stdout by contract
     if skipped:
-        print(f"\nskipped (no diff / not run): {', '.join(skipped)}")
+        print(f"\nskipped (no diff / not run): {', '.join(skipped)}")  # noqa: T201 — gate report goes to stdout by contract
     if unbucketed:
-        print(f"\nnote: {unbucketed} covered file(s) matched no component (ignored).")
+        print(f"\nnote: {unbucketed} covered file(s) matched no component (ignored).")  # noqa: T201 — gate report goes to stdout by contract
     if missing:
-        print(f"\n::error::changed component(s) produced no coverage report "
-              f"(build/test failed?): {', '.join(missing)}")
+        print(f"\n::error::changed component(s) produced no coverage report (build/test failed?): {', '.join(missing)}")  # noqa: T201 — gate report goes to stdout by contract
 
     patch_pass, patch_per_comp, patch_output = True, {}, ""
     if not args.no_patch and files:
@@ -356,17 +366,28 @@ def cmd_gate(args) -> int:
         print_patch_table(patch_per_comp, COMPONENTS)
 
     ok = comp_pass and patch_pass and not missing
-    print(f"\nOverall: {'PASS' if ok else 'FAIL'} "
-          f"(components: {'PASS' if comp_pass else 'FAIL'}, "
-          f"new-code: {'PASS' if patch_pass else 'FAIL' if not args.no_patch else 'SKIPPED'}"
-          f"{f', missing-reports: {len(missing)}' if missing else ''})")
+    print(  # noqa: T201 — gate report goes to stdout by contract
+        f"\nOverall: {'PASS' if ok else 'FAIL'} "
+        f"(components: {'PASS' if comp_pass else 'FAIL'}, "
+        f"new-code: {'PASS' if patch_pass else 'FAIL' if not args.no_patch else 'SKIPPED'}"
+        f"{f', missing-reports: {len(missing)}' if missing else ''})"
+    )
 
     if getattr(args, "summary", None):
-        md = markdown_report(measured, COMPONENTS, comp_pass, patch_pass,
-                             patch_per_comp, patch_output, args.no_patch, unbucketed, missing)
-        with open(args.summary, "a", encoding="utf-8") as f:
+        md = markdown_report(
+            measured,
+            COMPONENTS,
+            comp_pass,
+            patch_pass,
+            patch_per_comp,
+            patch_output,
+            args.no_patch,
+            unbucketed,
+            missing,
+        )
+        with Path(args.summary).open("a", encoding="utf-8") as f:
             f.write(md + "\n")
-        print(f"\nMarkdown report written to {args.summary}")
+        print(f"\nMarkdown report written to {args.summary}")  # noqa: T201 — gate report goes to stdout by contract
     return 0 if ok else 2
 
 
@@ -374,15 +395,16 @@ def cmd_gate(args) -> int:
 # CLI
 # --------------------------------------------------------------------------- #
 def main() -> int:
-    p = argparse.ArgumentParser(
-        description="Insight coverage gate — checks Cobertura reports; runs no tests.")
+    p = argparse.ArgumentParser(description="Insight coverage gate — checks Cobertura reports; runs no tests.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pg = sub.add_parser("gate", help="evaluate coverage gates against Cobertura reports")
     pg.add_argument("--no-patch", action="store_true", help="skip the new-code (diff-cover) gate")
     pg.add_argument("--reports-dir", help="dir of Cobertura *.xml (default: ./coverage)")
-    pg.add_argument("--require", help="comma-separated component names that MUST have a "
-                    "report (the changed set); fail if any produced none")
+    pg.add_argument(
+        "--require",
+        help="comma-separated component names that MUST have a report (the changed set); fail if any produced none",
+    )
     pg.add_argument("--summary", help="append a markdown report to this file (e.g. $GITHUB_STEP_SUMMARY)")
     pg.set_defaults(func=cmd_gate)
 

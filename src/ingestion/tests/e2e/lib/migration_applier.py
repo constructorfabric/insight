@@ -10,9 +10,10 @@ mirroring the prod order from src/ingestion/scripts/apply-ch-migrations.sh:
        (what create-bronze-placeholders.sh does in prod)
     3. Run scripts/migrations/*.sql
 
-The connectors-ddl snapshot is CI-generated from the real connectors and dbt
-models (see .github/workflows/connectors-ddl.yml), so the test rig stays in
-lock-step with prod schema evolution by construction.
+The connectors-ddl snapshot is generated from the real connectors and dbt models
+and validated on every PR (see .github/workflows/connectors-ddl.yml, which fails
+on drift), so the test rig stays in lock-step with prod schema evolution by
+construction.
 
 Idempotent: every statement uses CREATE OR REPLACE / IF NOT EXISTS / DROP IF
 EXISTS. We split multi-statement files on `;` because clickhouse-connect's
@@ -135,18 +136,10 @@ def reconcile_bronze_schema(cfg: SessionConfig, ddl_dir: Path) -> int:
         fetch_rows=lambda sql: [[str(cell) for cell in row] for row in ch.query(cfg, sql)],
     )
     if result.columns_added:
-        LOG.info(
-            "reconciled %d bronze column(s) across %d table(s)",
-            result.columns_added,
-            result.tables_reconciled,
-        )
+        LOG.info("reconciled %d bronze column(s) across %d table(s)", result.columns_added, result.tables_reconciled)
     for qualified, name, snapshot_type, live_type in result.type_drift:
         LOG.warning(
-            "%s.%s type differs — snapshot=%s live=%s (left unchanged)",
-            qualified,
-            name,
-            snapshot_type,
-            live_type,
+            "%s.%s type differs — snapshot=%s live=%s (left unchanged)", qualified, name, snapshot_type, live_type
         )
     return result.columns_added
 

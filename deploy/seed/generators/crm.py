@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from generators.base import (
+    anchor_date,
     bulk_insert,
     days_window,
     deterministic_uuid,
@@ -29,10 +30,7 @@ if TYPE_CHECKING:
 
 def _eligible(roster: Sequence[Person]) -> list[Person]:
     """Persons whose team profile has any hubspot weight."""
-    return [
-        p for p in roster
-        if p.team and TEAM_PROFILES[p.team].weights.get("hubspot", 0) > 0
-    ]
+    return [p for p in roster if p.team and TEAM_PROFILES[p.team].weights.get("hubspot", 0) > 0]
 
 
 def _owner_id(p: Person) -> str:
@@ -50,10 +48,15 @@ def seed_class_crm_users(
     version = 1
     for p in _eligible(roster):
         owner = _owner_id(p)
-        rows.append((
-            deterministic_uuid("crm.user", p.email),
-            owner, owner, p.email, version,
-        ))
+        rows.append(
+            (
+                deterministic_uuid("crm.user", p.email),
+                owner,
+                owner,
+                p.email,
+                version,
+            )
+        )
     return bulk_insert(client, "silver", "class_crm_users", cols, rows)
 
 
@@ -64,8 +67,14 @@ def seed_class_crm_deals(
 ) -> int:
     truncate(client, "silver", "class_crm_deals")
     cols = [
-        "unique_key", "created_at", "close_date", "is_won", "is_closed",
-        "amount_home", "owner_id", "_version",
+        "unique_key",
+        "created_at",
+        "close_date",
+        "is_won",
+        "is_closed",
+        "amount_home",
+        "owner_id",
+        "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
@@ -79,19 +88,28 @@ def seed_class_crm_deals(
             for i in range(n_deals):
                 deal_id = deterministic_uuid("crm.deal", p.uuid, d.isoformat(), str(i))
                 created_dt = _dt.datetime.combine(
-                    d, _dt.time(9 + rng.randint(0, 8), rng.randint(0, 59)),
+                    d,
+                    _dt.time(9 + rng.randint(0, 8), rng.randint(0, 59)),
                 )
                 cycle = rng.randint(7, 60)
                 close = d + _dt.timedelta(days=cycle)
                 # Closed if the close date is in the past (i.e. before today).
-                today = _dt.datetime.now(_dt.UTC).date()
+                today = anchor_date()
                 is_closed = 1 if close < today else 0
                 is_won = 1 if is_closed and rng.random() < 0.35 else 0
                 amount = round(rng.uniform(500, 50000), 2)
-                rows.append((
-                    deal_id, created_dt, close,
-                    is_won, is_closed, amount, _owner_id(p), version,
-                ))
+                rows.append(
+                    (
+                        deal_id,
+                        created_dt,
+                        close,
+                        is_won,
+                        is_closed,
+                        amount,
+                        _owner_id(p),
+                        version,
+                    )
+                )
     return bulk_insert(client, "silver", "class_crm_deals", cols, rows)
 
 
@@ -105,8 +123,12 @@ def seed_class_crm_activities(
 ) -> int:
     truncate(client, "silver", "class_crm_activities")
     cols = [
-        "unique_key", "timestamp", "activity_type", "owner_id",
-        "created_by_user_id", "_version",
+        "unique_key",
+        "timestamp",
+        "activity_type",
+        "owner_id",
+        "created_by_user_id",
+        "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
@@ -121,12 +143,19 @@ def seed_class_crm_activities(
             for i in range(n_acts):
                 kind = _CRM_ACTIVITY_TYPES[i % len(_CRM_ACTIVITY_TYPES)]
                 ts = _dt.datetime.combine(
-                    d, _dt.time(9 + rng.randint(0, 8), rng.randint(0, 59)),
+                    d,
+                    _dt.time(9 + rng.randint(0, 8), rng.randint(0, 59)),
                 )
-                rows.append((
-                    deterministic_uuid("crm.activity", p.uuid, d.isoformat(), str(i)),
-                    ts, kind, owner, owner, version,
-                ))
+                rows.append(
+                    (
+                        deterministic_uuid("crm.activity", p.uuid, d.isoformat(), str(i)),
+                        ts,
+                        kind,
+                        owner,
+                        owner,
+                        version,
+                    )
+                )
     return bulk_insert(client, "silver", "class_crm_activities", cols, rows)
 
 
@@ -137,7 +166,7 @@ def generate(
     days: int,
 ) -> dict[str, int]:
     return {
-        "silver.class_crm_users":      seed_class_crm_users(client, roster),
-        "silver.class_crm_deals":      seed_class_crm_deals(client, roster, days),
+        "silver.class_crm_users": seed_class_crm_users(client, roster),
+        "silver.class_crm_deals": seed_class_crm_deals(client, roster, days),
         "silver.class_crm_activities": seed_class_crm_activities(client, roster, days),
     }

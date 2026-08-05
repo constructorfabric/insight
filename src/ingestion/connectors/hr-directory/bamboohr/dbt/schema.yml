@@ -11,11 +11,7 @@ sources:
 models:
   - name: bamboohr__to_class_people
     description: >
-      BambooHR Employees -> class_people (Silver Step 1).
-      Full-refresh source. Identity key: email (workEmail).
-      Maps BambooHR status to normalised status (active/on_leave/terminated).
-      SCD Type 2 fields (valid_from/valid_to) are set as current-state snapshot
-      (valid_from = lastChanged, valid_to = NULL).
+      BambooHR Employees -> class_people (Silver Step 1). Full-refresh source. Identity key: email (workEmail). Maps BambooHR status to normalised status (active/terminated/unknown) — a record that is neither explicitly Active nor Terminated is `unknown`, never `active`, so it cannot silently inflate headcount. Current-state snapshot: entity-level `unique_key` (one row per employee) and `valid_from` = lastChanged. No `valid_to` — this model holds no version history; that lives in bamboohr__employees_snapshot / bamboohr__employees_fields_history. Reads bronze with FINAL because bronze is append-only RMT (see ADR-0001).
     columns:
       - name: tenant_id
         description: "Tenant isolation identifier"
@@ -42,11 +38,12 @@ models:
       - name: last_name
         description: "Last name"
       - name: status
-        description: "Normalised: active, on_leave, terminated"
+        description: >
+          Normalised: active, on_leave, terminated, or unknown when the source record is neither explicitly Active nor explicitly Terminated. Never defaults to active — that silently inflates headcount.
         tests:
           - accepted_values:
               arguments:
-                values: ['active', 'on_leave', 'terminated']
+                values: ['active', 'on_leave', 'terminated', 'unknown']
       - name: source
         description: "Always 'bamboohr'"
         tests:
@@ -61,9 +58,7 @@ models:
 
   - name: bamboohr__hr_events
     description: >
-      BambooHR leave_requests → class_hr_events (Silver Step 2 staging).
-      One row per leave request. Joins to employees to resolve email.
-      type/amount/status are JSON objects in Bronze — extracted with JSONExtractString.
+      BambooHR leave_requests → class_hr_events (Silver Step 2 staging). One row per leave request. Joins to employees to resolve email. type/amount/status are JSON objects in Bronze — extracted with JSONExtractString.
     columns:
       - name: insight_tenant_id
         tests:
@@ -118,9 +113,7 @@ models:
 
   - name: bamboohr__working_hours
     description: >
-      BambooHR active employees → class_hr_working_hours (Silver Step 2 staging).
-      One row per active employee with their scheduled working hours.
-      standardHoursPerWeek is not provided by this tenant; defaults to 8h/day / 40h/week.
+      BambooHR active employees → class_hr_working_hours (Silver Step 2 staging). One row per active employee with their scheduled working hours. standardHoursPerWeek is not provided by this tenant; defaults to 8h/day / 40h/week.
     columns:
       - name: insight_tenant_id
         tests:
@@ -164,9 +157,7 @@ models:
 
   - name: bamboohr__employees_snapshot
     description: >
-      SCD2 append-only snapshot of BambooHR employees.
-      Tracks changes in standard fields and custom fields from raw_data.
-      Custom fields list is passed via dbt var bamboohr_custom_fields.
+      SCD2 append-only snapshot of BambooHR employees. Tracks changes in standard fields and custom fields from raw_data. Custom fields list is passed via dbt var bamboohr_custom_fields.
     columns:
       - name: unique_key
         tests:
@@ -178,9 +169,7 @@ models:
 
   - name: bamboohr__employees_fields_history
     description: >
-      Field-level change log for BambooHR employees.
-      One row per changed field per version transition.
-      Includes both standard and custom fields (from raw_data).
+      Field-level change log for BambooHR employees. One row per changed field per version transition. Includes both standard and custom fields (from raw_data).
     columns:
       - name: entity_id
         description: "BambooHR employee ID"

@@ -1182,7 +1182,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
-    use crate::domain::schema_validator::parse::parse_metric_key;
+    use crate::domain::metric_key::parse_metric_key;
 
     #[test]
     fn seed_list_is_non_empty() {

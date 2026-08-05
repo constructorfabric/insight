@@ -78,6 +78,13 @@ spec:
               mountPath: {{ dir .Values.idp.extraCaCertPath | quote }}
               readOnly: true
             {{- end }}
+            # The only two paths the process writes under a read-only root:
+            # the gears host creates `server.home_dir` at boot, and grpc-hub
+            # binds its UDS under /tmp (both set in the ConfigMap).
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -103,6 +110,9 @@ spec:
           {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
@@ -132,10 +142,18 @@ spec:
             - name: authn-tls-cert
               mountPath: /tls
               readOnly: true
+            # nginx-unprivileged keeps its pid and every *_temp dir under /tmp.
+            # Its own volume, not the authenticator's — that one carries the
+            # grpc-hub UDS, which nothing outside the process may reach.
+            - name: authn-tls-tmp
+              mountPath: /tmp
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
             runAsUser: 101       # the nginx-unprivileged user (owns /tmp paths)
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
         {{- end }}
       volumes:
         - name: authenticator-config
@@ -144,6 +162,10 @@ spec:
         - name: signing-keys
           secret:
             secretName: {{ required "signingKeysSecret is required (mount the ES256 current.pem/previous.pem)" .Values.signingKeysSecret | quote }}
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.idp.extraCaCertSecret }}
         - name: idp-extra-ca
           secret:
@@ -159,4 +181,6 @@ spec:
         - name: authn-tls-cert
           secret:
             secretName: {{ include "insight-authenticator.authnTlsSecret" . }}
+        - name: authn-tls-tmp
+          emptyDir: {}
         {{- end }}

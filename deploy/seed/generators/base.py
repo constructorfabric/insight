@@ -11,8 +11,13 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import logging
+import os
 import random
+import re
 from typing import TYPE_CHECKING
+
+LOG = logging.getLogger("seed.generators")
 
 if TYPE_CHECKING:
     import clickhouse_connect.driver.client
@@ -21,15 +26,76 @@ if TYPE_CHECKING:
 
 UTC = _dt.UTC
 
+DEFAULT_SEED_DAYS = 60
+
+# Env knobs. Both are resolved ONCE per process by the helpers below and are
+# recorded in the manifest, so a run is reproducible from what it reports.
+_ANCHOR_ENV = "SEED_ANCHOR_DATE"
+_DAYS_ENV = "SEED_DAYS"
+
+_anchor_cache: _dt.date | None = None
+
+
+def anchor_date() -> _dt.date:
+    """The last calendar day that carries seeded activity, inclusive.
+
+    Every generator derives its dates from this — nothing may read the clock
+    directly, or two generators in the same run could straddle UTC midnight
+    and desynchronise (and a re-seed the next day would silently produce a
+    different dataset).
+
+    `SEED_ANCHOR_DATE` pins it to an ISO date; the literal `today` selects
+    the default explicitly. The default is *yesterday* UTC, because the
+    current day is deliberately excluded (a partial day fights the gold
+    views' day-aligned aggregates).
+
+    The default deliberately tracks the calendar rather than a committed
+    constant: a fixed past anchor ages one day per day, and the metric
+    surfaces this seed exists to populate are read through a UI whose
+    default period is relative to now. A stand seeded against a constant
+    from months ago renders empty while being perfectly "deterministic".
+    Determinism here means "a given anchor always yields the same bytes",
+    and the anchor is reported in the manifest — so CI and test stands pin
+    it explicitly and get exact reproducibility, while the developer inner
+    loop stays populated.
+    """
+    global _anchor_cache
+    if _anchor_cache is None:
+        raw = os.environ.get(_ANCHOR_ENV, "").strip()
+        if raw and raw.lower() != "today":
+            _anchor_cache = _dt.date.fromisoformat(raw)
+        else:
+            _anchor_cache = _dt.datetime.now(UTC).date() - _dt.timedelta(days=1)
+    return _anchor_cache
+
+
+def anchor_datetime() -> _dt.datetime:
+    """Anchor as an aware UTC midnight datetime.
+
+    Aware, not naive: clickhouse-connect serialises DateTime with
+    `int(x.timestamp())`, which resolves a naive value in the seeding
+    process's local timezone and would make the seeding host an undeclared
+    input.
+    """
+    return _dt.datetime.combine(anchor_date(), _dt.time(), tzinfo=UTC)
+
+
+def seed_days(default: int = DEFAULT_SEED_DAYS) -> int:
+    """Length of the seeded activity window, in days."""
+    raw = os.environ.get(_DAYS_ENV, "").strip()
+    return int(raw) if raw else default
+
 
 def days_window(days: int, end: _dt.date | None = None) -> list[_dt.date]:
-    """Return `days` consecutive dates ending the day BEFORE `end`.
+    """Return `days` consecutive dates ending on the anchor, inclusive.
 
-    `end` defaults to "today (UTC)". The current day is excluded so
-    partial-day rows don't fight the gold views' day-aligned aggregates.
+    `end` is EXCLUSIVE and defaults to the day after `anchor_date()`, so the
+    window is `[anchor - days + 1 .. anchor]`. Callers should not pass `end`
+    unless they genuinely need a different window; the default is what keeps
+    every generator on the same calendar.
     """
     if end is None:
-        end = _dt.datetime.now(UTC).date()
+        end = anchor_date() + _dt.timedelta(days=1)
     return [end - _dt.timedelta(days=i) for i in range(days, 0, -1)]
 
 
@@ -105,6 +171,47 @@ def truncate(
     client.command(f"TRUNCATE TABLE IF EXISTS `{schema}`.`{table}`")
 
 
+def _live_columns(
+    client: clickhouse_connect.driver.client.Client,
+    schema: str,
+    table: str,
+) -> dict[str, str]:
+    """Column name -> type for the target table, read at insert time."""
+    result = client.query(
+        "SELECT name, type FROM system.columns "
+        "WHERE database = {db:String} AND table = {tbl:String}",
+        parameters={"db": schema, "tbl": table},
+    )
+    return {row[0]: row[1] for row in result.result_rows}
+
+
+def _coerce(value: object, ch_type: str) -> object:
+    """Widen a `date` to midnight UTC `datetime` for DateTime-typed columns.
+
+    The snapshot schema types some day-grain columns as `DateTime`/
+    `DateTime64` where a generator supplies `datetime.date`; the driver then
+    calls `.timestamp()` on it and raises. A date means midnight on that
+    date, so the widening is lossless and unambiguous. Anything else is
+    passed through untouched — this is not a general type converter.
+
+    The result MUST be timezone-aware. clickhouse-connect serialises
+    DateTime/DateTime64 with `int(x.timestamp())`, and `.timestamp()` on a
+    NAIVE datetime resolves it in the seeding *process's* local timezone. A
+    naive midnight therefore lands 8h early on a UTC+8 host — i.e. on the
+    previous calendar day once ClickHouse renders it in UTC — silently
+    misdating every affected row. That is invisible in the seed-sample
+    container (UTC) but real for the host-side run CONTRIBUTING.md
+    documents. `.timestamp()` on an AWARE datetime is host-independent.
+    """
+    if (
+        isinstance(value, _dt.date)
+        and not isinstance(value, _dt.datetime)
+        and "DateTime" in ch_type
+    ):
+        return _dt.datetime.combine(value, _dt.time(), tzinfo=UTC)
+    return value
+
+
 def bulk_insert(
     client: clickhouse_connect.driver.client.Client,
     schema: str,
@@ -112,8 +219,81 @@ def bulk_insert(
     columns: list[str],
     rows: list[tuple[object, ...]],
 ) -> int:
-    """Insert `rows` and return the count. No-op on empty input."""
+    """Insert `rows` and return the count. No-op on empty input.
+
+    Columns the target table does not have are dropped (with a warning)
+    rather than raising `Unrecognized column`. The silver schema is created
+    by `create-bronze-placeholders.sh` from the CI-generated
+    `connectors-ddl/` snapshot, which mirrors the real dbt models; a
+    generator's hardcoded column list can lag behind that snapshot. Making
+    the live schema authoritative here means one place adapts instead of
+    every generator, and a lagging column degrades to a logged omission
+    instead of aborting the whole seed.
+
+    A column the schema DOES have is never dropped, so this cannot silently
+    hide a value the gold layer reads — it only drops what the target has
+    nowhere to put.
+    """
     if not rows:
         return 0
+    have = _live_columns(client, schema, table)
+    if not have:
+        raise RuntimeError(
+            f"{schema}.{table} has no columns (does the table exist?) — "
+            f"cannot reconcile generator columns {columns}"
+        )
+    extra = [c for c in columns if c not in have]
+    if extra:
+        keep = [i for i, c in enumerate(columns) if c in have]
+        LOG.warning(
+            "%s.%s: dropping %d generator column(s) absent from the live schema: %s",
+            schema,
+            table,
+            len(extra),
+            ", ".join(extra),
+        )
+        columns = [columns[i] for i in keep]
+        rows = [tuple(row[i] for i in keep) for row in rows]
+    if "unique_key" in have and "unique_key" not in columns:
+        # The real silver tables are ReplacingMergeTree ORDER BY unique_key.
+        # A generator that omits unique_key leaves every row with the same
+        # default value, so the engine dedups the whole table down to ONE
+        # row — silently, and only visible after a merge. Synthesising the
+        # key from the row's own values keeps rows distinct, stays
+        # deterministic across re-seeds (same values -> same key), and still
+        # dedups genuinely identical rows, which is what the key is for.
+        LOG.warning(
+            "%s.%s: generator omits unique_key on a ReplacingMergeTree table; "
+            "synthesising it per row to prevent dedup collapse",
+            schema,
+            table,
+        )
+        # Respect the column's declared width: unique_key is FixedString(N)
+        # on some tables and String on others.
+        width_match = re.search(r"FixedString\((\d+)\)", have["unique_key"])
+        width = int(width_match.group(1)) if width_match else None
+
+        # Engine/metadata columns MUST NOT feed the key. These tables are
+        # ReplacingMergeTree(_version), whose contract is "same sorting key ->
+        # collapse, keep the highest _version". If _version were part of the
+        # key, bumping it would yield a DIFFERENT unique_key and the newer row
+        # would be appended alongside the old one instead of replacing it —
+        # inverting the engine's semantics. Same for _airbyte_extracted_at,
+        # which is an ingestion timestamp, not identity.
+        key_idx = [i for i, c in enumerate(columns) if not c.startswith("_")]
+
+        def _key(row: tuple[object, ...]) -> str:
+            seed = "|".join(repr(row[i]) for i in key_idx)
+            digest = hashlib.blake2b(
+                f"{schema}|{table}|{seed}".encode(), digest_size=16
+            ).hexdigest()
+            return digest[:width] if width else deterministic_uuid(schema, table, seed)
+
+        columns = [*columns, "unique_key"]
+        rows = [(*row, _key(row)) for row in rows]
+
+    types = [have[c] for c in columns]
+    if any("DateTime" in t for t in types):
+        rows = [tuple(_coerce(v, t) for v, t in zip(row, types, strict=True)) for row in rows]
     client.insert(table, rows, column_names=columns, database=schema)
     return len(rows)

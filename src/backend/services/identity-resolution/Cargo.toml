@@ -43,6 +43,7 @@ serde_json = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 # MariaDB via SeaORM — connection pool + entities + raw resolve queries.
 sea-orm = { workspace = true }

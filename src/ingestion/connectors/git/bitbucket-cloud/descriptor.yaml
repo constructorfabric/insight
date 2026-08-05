@@ -1,9 +1,9 @@
 name: bitbucket-cloud
-version: "1.12.0"
+version: "1.14.0"
 type: cdk
-# 05:00 — dedicated slot: the 02:00 slot is shared with cursor + m365 and the
-# single-worker node starves replication pods there (Broken-pipe startup
-# deaths, Temporal activity timeouts — jobs 432/454 on 2026-07-15/16).
+# A slot of its own: replication pods sharing a slot with other connector
+# syncs can be starved of workers, which surfaces as startup and activity
+# timeouts rather than as a connector error.
 schedule: "0 5 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016).
@@ -12,7 +12,7 @@ images:
     name: source-bitbucket-cloud-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-bitbucket-cloud-insight:2026.07.29.12.37-ebf72fd"
+    image: "ghcr.io/constructorfabric/source-bitbucket-cloud-insight:2026.08.04.05.15-55939e2"
 dbt_select: "tag:bitbucket-cloud+"
 connection:
   namespace: "bronze_bitbucket_cloud"

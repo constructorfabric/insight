@@ -23,6 +23,8 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from generators.base import (
+    anchor_date,
+    anchor_datetime,
     bulk_insert,
     days_window,
     deterministic_uuid,
@@ -124,7 +126,7 @@ def seed_task_users(
     on insight_source_id + user_id) actually emits rows."""
     truncate(client, "silver", "class_task_users")
     cols = [
-        "insight_tenant_id",
+        "tenant_id",
         "insight_source_id",
         "user_id",
         "email",
@@ -328,7 +330,7 @@ def seed_task_field_history(
                 if rng.random() < 0.55:
                     days_to_close = rng.randint(3, 28)
                     close_day = created_day + _dt.timedelta(days=days_to_close)
-                    today = _dt.datetime.now(_dt.UTC).date()
+                    today = anchor_date()
                     if close_day < today:
                         close_status = _CLOSE_STATUSES[rng.randint(0, len(_CLOSE_STATUSES) - 1)]
                         close_at = _dt.datetime.combine(
@@ -376,7 +378,7 @@ def seed_class_task_statuses(
         "unique_key",
         "_version",
     ]
-    now = _dt.datetime.now(_dt.UTC).replace(tzinfo=None)
+    now = anchor_datetime()
     rows: list[tuple[object, ...]] = []
     for p in _task_persons(roster):
         src_id = deterministic_uuid("task.source", p.uuid)

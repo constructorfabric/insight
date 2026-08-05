@@ -453,8 +453,8 @@ Day-to-day backend / frontend work needs a fast loop with no Kubernetes overhead
 
 ##### Responsibility scope
 
-- Runs `docker-compose.yml`: api-gateway + analytics (Rust) + identity (.NET 9) + frontend, plus bundled MariaDB / ClickHouse / Redis / Redpanda containers.
-- Builds the backend services and (optionally) the frontend in builder containers — no Rust / .NET / Node toolchain on the host. Per-service `<SVC>_IMAGE` overrides in `.env.compose` (or `--from-ghcr=<svc>`) pull a published image instead of building.
+- Runs `docker-compose.yml`: api-gateway + analytics + identity-resolution (all Rust) + frontend, plus bundled MariaDB / ClickHouse / Redis / Redpanda containers.
+- Builds the backend services and (optionally) the frontend in builder containers — no Rust / Node toolchain on the host. Per-service `<SVC>_IMAGE` overrides in `.env.compose` (or `--from-ghcr=<svc>`) pull a published image instead of building.
 - Auto-reloads each backend service in ~1 second on rebuild via `watchexec` when `ENABLE_AUTO_RELOAD=true` (compose-only; never set in a Kubernetes manifest).
 - Auto-seeds a demo dataset (identity + silver) on first `up`, tracked via `SEEDED_LOCAL_*` markers in `.env.compose`.
 - A first-run wizard generates `.env.compose`, capturing local-vs-external MariaDB / ClickHouse, the dev-user email, the tenant id, and the frontend mode. Re-run by deleting `.env.compose` or `./dev-compose.sh prune`.
@@ -546,7 +546,7 @@ Per-tag artifacts are immutable; the Chart Publishing CI does not overwrite. GHC
 |-------------------|----------------|---------|
 | `src/backend/services/api-gateway/helm` | Helm subchart | Mandatory app service shipped under `apiGateway` alias. |
 | `src/backend/services/analytics/helm` | Helm subchart | Mandatory app service shipped under `analytics` alias. |
-| `src/backend/services/identity/helm` | Helm subchart | Optional identity-resolution stub under `identityResolution` alias. |
+| `src/backend/services/identity-resolution/helm` | Helm subchart | Optional identity-resolution service under `identityResolution` alias (off by default via `identityResolution.deploy`). |
 | `src/frontend/helm` | Helm subchart | Mandatory SPA shipped under `frontend` alias. |
 | `charts/insight/templates/ingestion/*.yaml` | First-class Helm templates | Ingestion WorkflowTemplate sources, gated by `ingestion.templates.enabled`; consume umbrella helpers directly via `include`. |
 | `.github/workflows/build-images.yml` (`publish-chart` job) | GitHub Actions workflow | Chart Publishing CI — produces the published umbrella artifact per merge to `main`. |

@@ -16,6 +16,11 @@ on:
       - "src/backend/services/authenticator/**"
       - "src/backend/services/fakeidp/**"
       - "src/backend/libs/authenticator-sdk/**"
+      # A workspace-wide dependency bump can break the authenticator build
+      # without touching its sources (reqwest 0.12 -> 0.13 did, via
+      # openidconnect's pinned HTTP-client impls).
+      - "src/backend/Cargo.toml"
+      - "src/backend/Cargo.lock"
       - "src/ingestion/tests/e2e/lib/api_coverage.py"
       - "docs/components/backend/authenticator/openapi.json"
       - ".github/workflows/authenticator.yml"
@@ -34,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
 
@@ -44,11 +49,11 @@ jobs:
         # cmake-build; librdkafka's OAUTHBEARER path needs curl/curl.h.
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: "1.95.0"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src/backend -> target
           key: authenticator-e2e
@@ -65,7 +70,7 @@ jobs:
       # suite (the ledger holds whatever ran before the failure).
       - name: Upload coverage ledger
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-inputs-authenticator
           path: observed_authenticator_endpoints.json
@@ -86,13 +91,13 @@ jobs:
     steps:
       # Checkout only for the gate script + the committed OpenAPI spec (the
       # coverage universe — kept fresh by the openapi-specs drift gate).
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: coverage-inputs-authenticator
           path: coverage-inputs

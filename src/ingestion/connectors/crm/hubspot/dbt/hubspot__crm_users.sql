@@ -49,7 +49,7 @@ WITH src AS (
         -- the columns to exist so emit explicit NULLs.
         CAST(NULL AS Nullable(String))                  AS title,
         CAST(NULL AS Nullable(String))                  AS department,
-        toInt64(NOT coalesce(archived, false))          AS is_active,
+        toNullable(toInt64(NOT coalesce(archived, false)))          AS is_active,
         toJSONString(map(
             'userId',   coalesce(toString(userId), ''),
             'archived', toString(coalesce(archived, false))

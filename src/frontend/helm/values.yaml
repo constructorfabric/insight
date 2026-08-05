@@ -4,7 +4,7 @@ podAnnotations: {}
 
 image:
   repository: ghcr.io/constructorfabric/insight-front
-  tag: ""                # MUST be set by the operator. No `:latest` default.
+  tag: "" # MUST be set by the operator. No `:latest` default.
   pullPolicy: IfNotPresent
 
 service:
@@ -16,25 +16,6 @@ ingress:
   className: nginx
   annotations: {}
   host: ""
-
-oidc:
-  issuer: ""
-  clientId: ""
-  # Space-separated OIDC scopes. IdP-specific:
-  #   Entra v2 single-app: "openid profile email api://<clientId>/Access.Default"
-  #   Okta:                "openid profile email <api-name>.<scope>"
-  # REQUIRED when oidc.issuer and oidc.clientId are set; entrypoint refuses
-  # to start otherwise.
-  scopes: ""
-
-# Dev-impersonation escape hatch. When set (and OIDC is not configured),
-# the entrypoint writes a runtime `oidc-config.js` carrying
-# `window.__DEV_CONFIG__={devUserEmail:"..."}`; the FE then builds an
-# unsigned-JWT bearer for that email on every /api/* call. Mutually
-# exclusive with `oidc.issuer` / `oidc.clientId` — the entrypoint
-# refuses to start if both are set (so a misconfigured prod can't
-# silently impersonate everyone as this address).
-devUserEmail: ""
 
 resources:
   requests:

@@ -379,7 +379,7 @@ Every cluster targeted by gitops production **MUST** carry exactly two Insight-o
 
 - [ ] `p2` - **ID**: `cpt-insightspec-fr-dep-dev-wrapper`
 
-The system **MUST** ship a Docker Compose dev stack (`dev-compose.sh` + `docker-compose.yml`) that, with only Docker on the host, builds the backend services (Rust + .NET) and the frontend from source in builder containers — or pulls their published images on demand — runs them alongside bundled MariaDB / ClickHouse / Redis / Redpanda containers, auto-reloads each backend service on rebuild, auto-seeds a demo dataset on first `up`, and publishes the web services on configurable host ports (Frontend :3000, API Gateway :8080, Analytics API :8081, Identity :8082, ClickHouse :8123, MariaDB :3306, Redis :6379). A first-run wizard captures the MariaDB / ClickHouse / tenant / dev-email choices. The stack does not consume the umbrella chart and does not ship Airbyte / Argo Workflows; ingestion work uses the local gitops path instead.
+The system **MUST** ship a Docker Compose dev stack (`dev-compose.sh` + `docker-compose.yml`) that, with only Docker on the host, builds the backend services (Rust) and the frontend from source in builder containers — or pulls their published images on demand — runs them alongside bundled MariaDB / ClickHouse / Redis / Redpanda containers, auto-reloads each backend service on rebuild, auto-seeds a demo dataset on first `up`, and publishes the web services on configurable host ports (Frontend :3000, API Gateway :8080, Analytics API :8081, Identity :8082, ClickHouse :8123, MariaDB :3306, Redis :6379). A first-run wizard captures the MariaDB / ClickHouse / tenant / dev-email choices. The stack does not consume the umbrella chart and does not ship Airbyte / Argo Workflows; ingestion work uses the local gitops path instead.
 
 **Rationale**: The day-to-day backend / frontend loop must be fast and require no Kubernetes; chart-shape and ingestion validation belongs on the local gitops cluster (`make deploy ENV=local`), which exercises the same artifact production consumes.
 
@@ -545,7 +545,7 @@ Every merge to `main` of `constructorfabric/insight` **MUST** publish a new umbr
 
 **Actors**: `cpt-insightspec-actor-platform-developer`, `cpt-insightspec-actor-customer-sre`
 
-**Preconditions**: Docker (Engine 24+, compose v2) is running; no Insight stack is running. No Rust / .NET / Node / kubectl / helm needed.
+**Preconditions**: Docker (Engine 24+, compose v2) is running; no Insight stack is running. No Rust / Node / kubectl / helm needed.
 
 **Main Flow**:
 

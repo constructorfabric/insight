@@ -1,8 +1,7 @@
 """Fixtures for the identity contract suite (`identity/test_*.py`, #1753).
 
-The service under test is whatever `lib.identity.spawn` yields — the .NET
-identity service today, the Rust identity-resolution port after the cutover,
-or an external deployment via E2E_IDENTITY_URL. Tests never know which.
+The service under test is whatever `lib.identity.spawn` yields — the Rust
+identity-resolution service. Tests never spawn it themselves.
 
 Caller identity matters here (unlike the analytics suite): the JWT `sub` claim
 IS the caller's person_id, and the seeded dataset gives each fixture client a
@@ -14,7 +13,6 @@ service principal (the authenticator's S2S shape).
 from __future__ import annotations
 
 import pytest
-
 from lib import identity as identity_lib
 from lib import identity_seed
 from lib.config import SessionConfig
@@ -62,12 +60,9 @@ def service_api(identity_svc):
 def anon_api(identity_svc):
     """Recording client with NO Authorization header (401 cases)."""
     import httpx
-
     from lib import api_coverage
 
     with httpx.Client(
-        base_url=identity_svc.base_url,
-        timeout=30.0,
-        event_hooks={"response": [api_coverage.record_identity_response]},
+        base_url=identity_svc.base_url, timeout=30.0, event_hooks={"response": [api_coverage.record_identity_response]}
     ) as c:
         yield c

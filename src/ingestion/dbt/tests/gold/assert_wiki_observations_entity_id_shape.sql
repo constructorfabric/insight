@@ -1,14 +1,14 @@
 -- Build-integrity check (untagged → error severity under `dbt build`).
--- Unified entity ids for persons are lowercased emails; the runtime and the
--- cohort view join on exact string equality, so an empty, mixed-case, or
--- non-email id (an unresolved wiki account leaking past the staging email
--- gate) silently drops the person from every surface.
+-- Unified entity ids for persons are canonical person UUIDs since the
+-- identity cutover; the runtime and the cohort relation join on exact string
+-- equality, so an empty, mixed-case, non-UUID id — a source email leaking
+-- past the resolve gate — or the nil UUID silently drops the person from
+-- every surface.
 SELECT
     entity_id,
     measure_key,
     count() AS row_count
 FROM {{ ref('wiki_metric_observations') }}
-WHERE entity_id = ''
-   OR entity_id != lower(entity_id)
-   OR entity_id NOT LIKE '%@%'
+WHERE NOT match(entity_id, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+   OR entity_id = '00000000-0000-0000-0000-000000000000'
 GROUP BY entity_id, measure_key

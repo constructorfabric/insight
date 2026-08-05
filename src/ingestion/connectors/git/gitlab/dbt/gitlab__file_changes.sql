@@ -39,8 +39,8 @@ SELECT
         fc.renamed_file = true, 'renamed',
         'modified'
     ) AS change_type,
-    COALESCE(fc.lines_added, 0) AS lines_added,
-    COALESCE(fc.lines_removed, 0) AS lines_removed,
+    toNullable(COALESCE(fc.lines_added, 0)) AS lines_added,
+    toNullable(COALESCE(fc.lines_removed, 0)) AS lines_removed,
     '' AS source_type,
     'insight_gitlab' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,

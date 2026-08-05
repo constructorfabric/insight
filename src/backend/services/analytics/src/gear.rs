@@ -3,10 +3,9 @@
 //! Hosts the analytics REST surface on the `api-gateway` system gear (the REST
 //! host) under `toolkit::bootstrap::run_server`. All runtime construction that
 //! used to live in `main.rs::run_server` — the self-managed MariaDB pool, its
-//! migrations + startup probes, the ClickHouse / Identity clients, the catalog
-//! cache, the schema-validator and admin-CRUD service — happens in
-//! [`AnalyticsApiGear::init`]. Auth is disabled on this host; the tenant
-//! override layer lives in [`crate::auth`].
+//! migrations + startup probe, the ClickHouse / Identity clients and the
+//! metric-definition validator — happens in [`AnalyticsApiGear::init`]. Auth is
+//! disabled on this host; the tenant override layer lives in [`crate::auth`].
 //!
 //! The DB is self-managed (LOCKED DECISION): we do NOT use the toolkit `db`
 //! capability — ClickHouse is not a toolkit-db backend, and the gear keeps its
@@ -19,16 +18,11 @@ use toolkit::api::OpenApiRegistry;
 use toolkit::{Gear, GearCtx, RestApiCapability};
 
 use crate::config::GearConfig;
-use crate::domain::admin_threshold::AdminThresholdService;
-use crate::domain::auth::ConfigTenantAuthorization;
-use crate::domain::catalog::{CatalogReader, ThresholdResolver};
-use crate::domain::schema_validator::SchemaValidator;
-use crate::infra::cache::catalog_cache::{CatalogCache, NoopCatalogCache, RedisCatalogCache};
 use crate::{api, infra};
 
-/// Analytics API gear. Capabilities: `rest` only (the startup schema-validator
-/// scan is a one-shot `tokio::spawn` in `init`, faithful to the old
-/// `run_server`; no `stateful`/`RunnableCapability`).
+/// Analytics API gear. Capabilities: `rest` only (the background validator and
+/// contract-version passes are `tokio::spawn`ed in `init`; no
+/// `stateful`/`RunnableCapability`).
 // Config key is the gear name `analytics`; env overrides are
 // `APP__gears__analytics__config__*`.
 #[toolkit::gear(
@@ -70,53 +64,6 @@ impl Gear for AnalyticsApiGear {
         // `cpt-metric-cat-constraint-mariadb-check`.
         infra::db::check_probe::assert_required_checks(&db).await?;
 
-        // Refuse to start if any enabled `metric_catalog` row is missing its
-        // `product-default` `metric_threshold` floor (Refs #523). See
-        // `infra/db/product_default_probe` and DESIGN §3.6.
-        infra::db::product_default_probe::assert_product_default_present(&db).await?;
-
-        // Catalog cache (Refs #524). Redis when configured; otherwise the
-        // no-op stub for single-replica dev installs. Redis-mode boot is
-        // best-effort — a Redis blip MUST NOT gate boot.
-        let catalog_cache: Arc<dyn CatalogCache> = if cfg.redis_url.is_empty() {
-            tracing::info!(
-                "catalog_cache: redis_url not configured; using no-op stub. \
-                 Multi-replica deploys MUST configure redis_url per \
-                 cpt-metric-cat-nfr-cross-replica-invalidation."
-            );
-            Arc::new(NoopCatalogCache::default())
-        } else {
-            match RedisCatalogCache::connect(&cfg.redis_url).await {
-                Ok(c) => {
-                    tracing::info!(
-                        redis_url = %redact_url(&cfg.redis_url),
-                        "catalog_cache: Redis backend connected"
-                    );
-                    Arc::new(c)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        redis_url = %redact_url(&cfg.redis_url),
-                        "catalog_cache: Redis connection failed at boot; \
-                         degrading to no-op stub. Cross-replica invalidation \
-                         NFR will not hold until Redis is restored."
-                    );
-                    Arc::new(NoopCatalogCache::default())
-                }
-            }
-        };
-
-        // Flush the catalog cache so newly seeded rows are visible on the next
-        // read without waiting for the TTL. Best-effort.
-        if let Err(e) = catalog_cache.flush_all().await {
-            tracing::warn!(error = %e, "catalog_cache: flush_all failed at boot; continuing");
-        }
-
-        // Threshold resolver + reader (Refs #524).
-        let catalog_reader =
-            CatalogReader::new(catalog_cache.clone(), ThresholdResolver::new(db.clone()));
-
         // Connect to ClickHouse. Observation views execute live and their
         // union branches run as parallel pipelines, so per-query memory
         // scales with thread count: four threads measured at the same
@@ -135,49 +82,32 @@ impl Gear for AnalyticsApiGear {
         let ch = insight_clickhouse::Client::new(ch_config);
 
         // Identity client.
-        let identity = infra::identity::IdentityClient::new(&cfg.identity_url);
+        let identity = infra::identity::IdentityClient::new(&cfg.identity_url)?;
 
-        // Schema-validator (Refs #521). Held in AppState (admin-crud per-write
-        // hook) and cloned into the post-init startup pass below.
-        let validator = SchemaValidator::new(db.clone(), ch.clone());
         let metric_definition_validator =
             crate::domain::metric_definitions::MetricDefinitionValidator::new(
                 db.clone(),
                 ch.clone(),
             );
-        // Catalog auth-trait (Refs #522 / #525). v1 stub — see `domain::auth`.
-        let tenant_auth: Arc<dyn crate::domain::auth::TenantAuthorization> = Arc::new(
-            ConfigTenantAuthorization::new(cfg.metric_catalog.tenant_default_id),
-        );
 
-        // Admin-CRUD service (Refs #525).
-        let admin_threshold = AdminThresholdService::new(
-            db.clone(),
-            tenant_auth.clone(),
-            catalog_cache.clone(),
-            validator.clone(),
-        );
+        let contract_ch = ch.clone();
 
         let state = api::AppState {
             db,
             ch,
             identity,
             config: cfg,
-            validator: validator.clone(),
-            tenant_auth,
-            catalog_reader,
-            admin_threshold,
         };
 
         self.state
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;
 
-        // Startup schema-validator scan (Refs #521). One-shot, post-init, so a
-        // ClickHouse outage at boot can never delay readiness — faithful to the
-        // old `run_server`'s `tokio::spawn(validator.validate_all())`.
+        // INVARIANT: periodic and never gating boot — the stamp lands after
+        // boot (post-install migrate hook) and a later in-place bump must
+        // surface without a pod restart.
         tokio::spawn(async move {
-            validator.validate_all().await;
+            crate::domain::contract_version::run(&contract_ch).await;
         });
         // Periodic, not one-shot: the managed observation views are
         // dbt-created after boot on a fresh deploy, and the registry has no
@@ -205,15 +135,14 @@ impl RestApiCapability for AnalyticsApiGear {
     }
 }
 
-/// `analytics migrate`: run migrations + both startup probes + a
-/// best-effort cache flush, then exit. Mirrors the old `main.rs::run_migrate`,
-/// reading the gear config out of the loaded `AppConfig` (toolkit owns config
-/// layering; the figment loader is gone).
+/// `analytics migrate`: run migrations + the startup probe, then exit. Mirrors
+/// the old `main.rs::run_migrate`, reading the gear config out of the loaded
+/// `AppConfig` (toolkit owns config layering; the figment loader is gone).
 ///
 /// # Errors
 ///
-/// Returns an error if config extraction, DB connect, migrations, or either
-/// probe fails.
+/// Returns an error if config extraction, DB connect, migrations, or the probe
+/// fails.
 pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
     tracing::info!("running migrations");
 
@@ -226,31 +155,9 @@ pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<
     // leave builtin metric definitions matching the code registry.
     crate::domain::metric_definitions::reconcile_builtin_definitions(&db).await?;
 
-    // Same probes as `init`. An operator running `migrate` standalone wants
-    // the integrity signals too (DESIGN §2.2 / §3.6).
+    // Same probe as `init`. An operator running `migrate` standalone wants
+    // the integrity signal too (DESIGN §2.2).
     infra::db::check_probe::assert_required_checks(&db).await?;
-    infra::db::product_default_probe::assert_product_default_present(&db).await?;
-
-    // DESIGN §3.6 seed sequence ends with `cache_layer.flush_all()`. Operators
-    // who run `migrate` as a standalone step need the same flush. Best-effort.
-    let catalog_cache: Arc<dyn CatalogCache> = if cfg.redis_url.is_empty() {
-        Arc::new(NoopCatalogCache::default())
-    } else {
-        match RedisCatalogCache::connect(&cfg.redis_url).await {
-            Ok(c) => Arc::new(c),
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "catalog_cache: Redis connection failed during migrate; \
-                     skipping flush (next server boot will retry)"
-                );
-                Arc::new(NoopCatalogCache::default())
-            }
-        }
-    };
-    if let Err(e) = catalog_cache.flush_all().await {
-        tracing::warn!(error = %e, "catalog_cache: flush_all failed after migrate; continuing");
-    }
 
     tracing::info!("migrations complete");
     Ok(())
@@ -295,17 +202,6 @@ pub fn check_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Redact userinfo (`user:pass@`) from a connection URL before logging, so
-/// credentials embedded in e.g. `redis://:pass@host` never reach the logs.
-fn redact_url(url: &str) -> String {
-    match (url.find("://"), url.find('@')) {
-        (Some(scheme_end), Some(at)) if at > scheme_end + 3 => {
-            format!("{}{}", &url[..scheme_end + 3], &url[at + 1..])
-        }
-        _ => url.to_owned(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,18 +215,6 @@ mod tests {
         c.gears
             .insert("analytics".to_owned(), serde_json::Value::Object(section));
         c
-    }
-
-    #[test]
-    fn redact_url_strips_userinfo() {
-        assert_eq!(redact_url("redis://:secret@host:6379"), "redis://host:6379");
-        assert_eq!(redact_url("redis://user:pw@h:1/0"), "redis://h:1/0");
-    }
-
-    #[test]
-    fn redact_url_passthrough_without_userinfo() {
-        assert_eq!(redact_url("redis://host:6379"), "redis://host:6379");
-        assert_eq!(redact_url("not-a-url"), "not-a-url");
     }
 
     #[test]

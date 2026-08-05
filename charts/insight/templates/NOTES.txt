@@ -22,10 +22,10 @@ Application services (always-on):
 {{- if .Values.fakeidp.deploy }}
   ⚠ fakeidp (dev IdP)  http://{{ include "insight.fakeidp.host" . }}:8084  (DEV/E2E ONLY — never production)
 {{- end }}
-{{- if .Values.identity.deploy }}
-  ✓ Identity           http://{{ include "insight.identity.host" . }}:8082  (deployed)
+{{- if .Values.identityResolution.deploy }}
+  ✓ Identity           http://{{ include "insight.identityResolution.host" . }}:8082  (deployed)
 {{- else }}
-  · Identity           not deployed (requires a populated `persons` table; enable via identity.deploy=true)
+  · Identity           not deployed (requires a populated `persons` table; enable via identityResolution.deploy=true)
 {{- end }}
 {{- if .Values.ingestion.templates.enabled }}
   ✓ Ingestion templates: airbyte-sync, dbt-run, ingestion-pipeline

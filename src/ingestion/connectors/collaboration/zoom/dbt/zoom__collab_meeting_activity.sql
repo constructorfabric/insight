@@ -87,7 +87,7 @@ SELECT
     -- this, GROUP BY would split them and produce two rows with identical
     -- unique_key — the staging model's `unique_key` is keyed on
     -- (tenant, source, lower(email), date), so user_name is non-keying.
-    coalesce(any(p.user_name), '') AS user_name,
+    toNullable(coalesce(any(p.user_name), '')) AS user_name,
     p.email AS email,
     lower(p.email) AS person_key,
     toDate(parseDateTimeBestEffortOrNull(p.join_time)) AS date,

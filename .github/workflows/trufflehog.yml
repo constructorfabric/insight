@@ -1,8 +1,8 @@
 name: TruffleHog Secrets
 
-# Secret detection. All passes report-only (#2020).
+# Secret detection (#2020). `secrets-diff` BLOCKS; the other passes report only.
 #
-#   secrets-diff     — pull requests, the PR's own commits only (#2025).
+#   secrets-diff     — pull requests, the PR's own commits only (#2025). BLOCKING.
 #   secrets-history  — nightly, every ref. Baseline: 253 unverified false positives.
 #   secrets-api      — nightly, GitHub API: comments, wikis, unreachable objects.
 #
@@ -113,6 +113,7 @@ jobs:
             "is a detector false positive on synthetic data, say so in the PR and add a narrow, "
             "reviewed exclusion rather than widening the filter.\n")
           out.close()
+          sys.exit(1)
           PY
 
   secrets-history:

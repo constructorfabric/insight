@@ -21,9 +21,9 @@ SELECT
     COALESCE(committer_email, '') AS committer_email,
     COALESCE(message, '') AS message,
     parseDateTimeBestEffortOrNull(committed_date) AS date,
-    COALESCE(changed_files, 0) AS files_changed,
-    COALESCE(additions, 0) AS lines_added,
-    COALESCE(deletions, 0) AS lines_removed,
+    toNullable(COALESCE(changed_files, 0)) AS files_changed,
+    toNullable(COALESCE(additions, 0)) AS lines_added,
+    toNullable(COALESCE(deletions, 0)) AS lines_removed,
     -- parent_hashes arrives as a JSON-array string (Airbyte serializes the
     -- connector's array field into the Nullable(String) bronze column), so
     -- count elements with JSONLength — plain length() would count characters

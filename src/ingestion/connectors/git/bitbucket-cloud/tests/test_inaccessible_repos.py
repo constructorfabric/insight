@@ -1,11 +1,10 @@
 """A repository the token cannot read must not fail the sync.
 
 A repository can be listed for a workspace and still answer 403 to every request
-under it — routine with repo-scoped tokens and per-repository permissions, and
-observed in production. Retrying never changes it, so treating it as a failure
-leaves the sync red on every run and buries the transient failures that do need
-attention. These tests pin the distinction: denied is skipped, everything else
-still fails loudly.
+under it — routine with repo-scoped tokens and per-repository permissions.
+Retrying never changes it, so treating it as a failure leaves the sync red on
+every run and buries the transient failures that do need attention. These tests
+pin the distinction: denied is skipped, everything else still fails loudly.
 
 The matrix classes at the bottom run EVERY stream the source wires — the list is
 derived from `SourceBitbucketCloud.streams()` itself, so a stream added later is
@@ -26,7 +25,7 @@ from tests.conftest import SHARED, FakeCatalog, FakeClient, branch, repository
 
 
 def every_stream_class():
-    """All stream classes, from the production wiring — not a hand list."""
+    """All stream classes, from the source's own wiring — not a hand list."""
     source = SourceBitbucketCloud()
     streams = source.streams(
         {

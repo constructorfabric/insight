@@ -4,14 +4,18 @@ pub mod error_code;
 pub mod listing;
 #[cfg(test)]
 mod live_tests;
+pub mod passport;
 mod repository;
 mod seeds;
+#[cfg(test)]
+pub(crate) mod test_fixture;
 pub mod validator;
 
 pub use definition::{
-    CohortSource, ComputationSpec, MetricDefinition, MetricDirection, MetricFormat,
-    ObservationRelation,
+    CohortSource, ComputationSpec, EvidenceGranularity, EvidenceRelation, MetricDefinition,
+    MetricDirection, MetricFormat, ObservationRelation,
 };
 pub use repository::load_definitions;
+pub(crate) use repository::load_definitions_with_ids;
 pub use seeds::reconcile_builtin_definitions;
 pub use validator::MetricDefinitionValidator;

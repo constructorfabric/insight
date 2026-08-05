@@ -191,7 +191,7 @@ async fn csrf_token(http: &common::Client, auth_base: &str, token: &str) -> Stri
 /// Login with one override, log out, log in with ANOTHER override: no state
 /// from the first view-as session may leak into the second. Every layer keys
 /// on values that change across logins — the cookie token, the `session_id`,
-/// and the linked `asm:jwt:{session_id}` are all minted fresh, and the nginx
+/// and the linked `{asm}:jwt:{session_id}` are all minted fresh, and the nginx
 /// exchange cache (not in this stack) is keyed by the cookie value, so a new
 /// cookie can never hit the old entry. This test pins the authenticator side:
 /// the old credential is fully dead and the new session is the new target.
@@ -344,12 +344,18 @@ async fn override_with_unknown_target_is_denied() {
     let user = env("E2E_USER", "dev@company.nonpresent");
     let http = client();
 
-    // The identity stub 404s emails prefixed `unknown-` (test seam).
+    // The identity stub 404s emails prefixed `unknown-` (test seam). The
+    // denial is an auth_error bounce back into the SPA (#2032), never a
+    // fallback to the caller's own identity.
     let cb = login_flow(&http, &auth_base, &user, Some("unknown-nobody@example.com")).await;
     assert_eq!(
         cb.status(),
-        403,
+        302,
         "an unknown override target must be denied"
+    );
+    assert_eq!(
+        cb.headers()[reqwest::header::LOCATION].to_str().unwrap(),
+        "/?auth_error=access_denied"
     );
     assert!(cookie_from(&cb).is_none(), "no session may be minted");
 }

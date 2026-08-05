@@ -57,13 +57,13 @@ If `validate-strict` passed, these are already satisfied automatically — but e
 
 ## Step 2c: Per-stream `read` smoke test (MANDATORY)
 
-Run the per-stream `read` loop from `connector-create.md` §5.6 and verify, for every stream:
+Run the per-stream `read` loop from `create.md` §5.6 and verify, for every stream:
 
 - [ ] First-read record count > 0 (unless the source truly has no data).
 - [ ] Error count = 0 in both first read and resume read (any `ERROR` / `FATAL` in the log is a blocker).
 - [ ] Every emitted record contains `tenant_id`, `source_id`, `unique_key`.
 - [ ] For substreams, the parent_key/partition_field uses the parent's stable internal id (e.g. `youtrack_id` from `record['id']`), NOT a nullable human-readable field like `id_readable` from `record.get('idReadable')` — a `null` value silently routes to `.../None/<endpoint>` which 404s and drops the slice.
-- [ ] For incremental streams, a **resume read** (second run after capturing the emitted `STATE` message from stdout and writing it to `state.json`) returns a strict subset of the first-read records — usually zero. The skill's smoke-test script in `connector-create.md` §5.6 does this capture + persist + resume automatically. A naive "second consecutive read" without persisting state cannot validate cursor advancement (`source.sh read` writes Airbyte Protocol JSON to stdout but does not update `state.json` itself).
+- [ ] For incremental streams, a **resume read** (second run after capturing the emitted `STATE` message from stdout and writing it to `state.json`) returns a strict subset of the first-read records — usually zero. The skill's smoke-test script in `create.md` §5.6 does this capture + persist + resume automatically. A naive "second consecutive read" without persisting state cannot validate cursor advancement (`source.sh read` writes Airbyte Protocol JSON to stdout but does not update `state.json` itself).
 
 ## Step 3: Spec-level checklist
 
@@ -147,7 +147,9 @@ Read connector package files and verify each item:
 
 **Check 5 — Strict semver `version:` (CI bump precondition)**
 
-- Because the CI `bump-descriptors` job bumps `descriptor.version` by one minor every time an image rebuilds (per ADR-0016 + ADR-0015), the field MUST be on strict-semver form `MAJOR.MINOR.PATCH` from day one. The matcher is `python3 .github/workflows/scripts/bump-descriptor-version.py --descriptor <path> --print-only` succeeding (exit 0).
+- Because the CI `bump-descriptors` job bumps `descriptor.version` by one minor every time an image rebuilds (per ADR-0016 + ADR-0015), the field MUST be on strict-semver form `MAJOR.MINOR.PATCH` from day one. The matcher is `.github/workflows/scripts/bump-descriptor-version.sh --descriptor <path> --print-only` succeeding (exit 0) — it prints the version it *would* write and leaves the file untouched.
+- `bump-descriptors` fires **only on the push to `main`**, so this check failing does NOT fail the PR on its own. Run Check 8 (the wiring guard), which does.
+- Applies to descriptors that declare an `images:` block. Descriptors without one never reach `bump-descriptors`; legacy non-semver values there (`ai/openai`, `collaboration/slack`, `hr-directory/bamboohr`) are tolerated per ADR-0015 §"Legacy non-semver values" — report as a warning, not a failure.
 - Each of MAJOR, MINOR, PATCH MUST be `0` or a non-zero digit followed by more digits (no leading zeros — semver.org §2).
 - NO `v` prefix, NO pre-release suffix, NO build metadata.
 - Examples that PASS: `1.0.0`, `0.1.0`, `10.20.30`, `100.0.0`.
@@ -162,6 +164,31 @@ Read connector package files and verify each item:
 - `Connector <name>: paths-filter for <slug> does not exclude descriptor.yaml; descriptor-bump commit will infinite-loop.`
 - `Connector <name>: images.enrich present but no chart workflow template references <connector>_enrich_image parameter.`
 - `Connector <name>: descriptor.version is not strict semver MAJOR.MINOR.PATCH — CI bump-descriptors will fail loud on next image rebuild. Got: '<value>'. Fix to e.g. "1.0.0".`
+
+**Check 6 — Registered in `connectors-config.yaml` (bootstrap-db precondition)**
+
+- `src/ingestion/scripts/bootstrap-db/connectors-config.yaml` MUST contain an entry whose `path` equals `<category>/<name>`. Without it `bootstrap-db.sh` never creates `bronze_<snake>`, the connector's dbt models fail `Code: 81 UNKNOWN_DATABASE`, `set -e` aborts the run before the gold-view migrations, and the regenerated `connectors-ddl` snapshot silently loses whatever was downstream.
+- Fix: `cd src/ingestion/scripts/bootstrap-db && ./generate-connectors-config.sh '<category>/<name>'`, then merge the fragment by hand. NEVER regenerate the whole file — it replaces the `env:` credential refs with fake `value:` entries.
+
+**Check 7 — Shared silver class column types agree across sources**
+
+- For every `silver:class_<X>`-tagged staging model, each column MUST carry the same type as the sibling sources' models for that class. `union_by_tag` UNION ALLs them; a mismatch raises `Code: 386 NO_COMMON_TYPE` and the shared class table fails to build for ALL sources.
+- Highest-risk shape is a `CAST(NULL AS <type>) AS <col>` placeholder. Compare with `grep -rn '<col>' src/ingestion/connectors/*/*/dbt/*__<class>.sql`.
+
+**Check 8 — Wiring guard (the only pre-merge gate of the three above)**
+
+```bash
+python3 scripts/ci/connector_wiring.py
+```
+
+- MUST exit 0. Covers Check 5 (semver, for image-bearing descriptors), Check 6, Check 7, and the `class_<X>.sql` `depends_on` edge in one pass.
+- Warnings are acceptable and do not fail it: an empty `images.*.image` on a brand-new connector is expected (the first `main` build patches it), and legacy non-semver versions on image-less descriptors are tolerated by ADR-0015.
+- Runs in CI as the `connector-wiring-guard` job in `.github/workflows/ci.yml`. Checks 5–7 otherwise surface only *after* merge, so this is the one that actually blocks a bad PR.
+
+**Output on failure**:
+
+- `Connector <name>: no entry in scripts/bootstrap-db/connectors-config.yaml — bootstrap-db will not create bronze_<snake>; dbt fails Code 81 and takes the shared silver class down.`
+- `Connector <name>: class_<X> column '<col>' typed <T1> but sibling <other> uses <T2> — union_by_tag will raise Code 386 NO_COMMON_TYPE.`
 
 ### dbt Models
 - [ ] Model name follows `<connector>__<domain>.sql` pattern
@@ -179,7 +206,7 @@ Read connector package files and verify each item:
   person-identifying value), the three-macro chain is present:
   `<name>__users_snapshot` (snapshot) → `<name>__users_fields_history`
   (fields_history) → `<name>__identity_inputs` (identity_inputs_from_history,
-  tagged `silver:identity_inputs`). See `connector-create.md` §3.6b.
+  tagged `silver:identity_inputs`). See `create.md` §3.6b.
 - [ ] `src/ingestion/silver/_shared/identity_inputs.sql` carries a
   `-- depends_on: {{ ref('<name>__identity_inputs') }}` line for the connector.
 - [ ] `fields_history(entity_id_col=…)` evaluates to a **String**. If the source
@@ -238,7 +265,7 @@ Exit 0 = PASS for the targeted connector(s); exit 2 = at least one FAIL. Rule ID
 
 A connector whose silver class feeds a dashboard metric does NOT surface in the
 UI from the silver model alone — the gold view, the metric `query_ref`(s), and
-the catalog each enumerate inputs explicitly (see `connector-create.md` §3.6c).
+the catalog each enumerate inputs explicitly (see `create.md` §3.6c).
 If the connector is expected to show a per-person card, verify the full chain;
 if it is bronze-only or its class has no gold consumer, confirm the README says
 so and skip this section.
@@ -254,6 +281,11 @@ so and skip this section.
 - [ ] `insight_source_id` is included
 - [ ] No real credentials in any tracked file
 
+### Repo-wide wiring (EVERY connector — Checks 6-8)
+- [ ] Entry in `src/ingestion/scripts/bootstrap-db/connectors-config.yaml` with `path: <category>/<name>`
+- [ ] Shared silver class column types identical to sibling sources (no `Code: 386` risk)
+- [ ] `python3 scripts/ci/connector_wiring.py` exits 0
+
 ## Output
 
 ```
@@ -265,6 +297,7 @@ so and skip this section.
   dbt Models:   PASS (7/7)
   dbt Schema:   PASS (4/4)
   Credentials:  PASS (3/3)
+  Repo wiring:  PASS (3/3)
 
   Status: PASS
 ```

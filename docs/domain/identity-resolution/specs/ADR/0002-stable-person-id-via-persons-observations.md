@@ -12,7 +12,7 @@ The `persons` table (MariaDB, see
 `cpt-insightspec-ir-dbtable-persons-mariadb`) records identity-attribute
 history per source-account per person. It is populated initially from
 ClickHouse `identity.identity_inputs` via a one-time seed script
-(`src/backend/services/identity/seed/seed-persons-from-identity-input.py`),
+(`src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py`),
 and maintained thereafter by operator flows (future PR).
 
 `person_id` is the join key across the whole system: everything

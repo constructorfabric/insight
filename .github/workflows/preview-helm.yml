@@ -1,0 +1,51 @@
+name: Preview env — Helm contract
+
+# Render-contract gate for the `insight-preview` per-experiment bundle (#1971).
+# The contract is prefix-strip routing under /exp/<name> and per-experiment
+# naming — a broken route object silently makes an experiment unreachable or
+# collides with another. Pure `helm template` + assertions: no cluster, no
+# images. This chart is not part of the umbrella, so nothing else renders it.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/preview/**"
+      - ".github/workflows/preview-helm.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  helm-contract:
+    name: render contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Pinned to full SHAs (mutable tags are repointable — supply-chain
+      # hardening, same as the other helm-contract lanes).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install test deps
+        run: pip install --quiet pytest pyyaml
+
+      - name: helm lint
+        run: |
+          helm lint deploy/preview \
+            --set experiment=widget-alpha \
+            --set image.tag=0.0.0-test \
+            --set ingress.host=preview.test
+
+      - name: Render-contract tests (prefix-strip route, per-experiment naming)
+        run: python -m pytest deploy/preview/tests/ -q

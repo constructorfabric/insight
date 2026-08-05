@@ -1,12 +1,10 @@
 //! HTTP API layer — routes and handlers.
 
-pub(crate) mod admin;
-pub(crate) mod canonical_json;
-mod catalog;
 pub(crate) mod error;
-mod handlers;
 mod metric_definitions;
+mod metric_drilldown;
 mod metric_results;
+mod saved_queries;
 
 #[cfg(test)]
 mod http_live_tests;
@@ -18,20 +16,20 @@ use axum::http::StatusCode;
 use axum::{Extension, Router};
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
-use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationBuilder};
+use toolkit::api::{
+    OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationBuilder, ResponseSpec,
+};
+use utoipa::openapi::RefOr;
+use utoipa::openapi::content::ContentBuilder;
+use utoipa::openapi::header::HeaderBuilder;
+use utoipa::openapi::schema::{
+    KnownFormat, ObjectBuilder, Schema, SchemaFormat, SchemaType, Type as OpenApiType,
+};
 
 use crate::config::GearConfig;
-use crate::domain::admin_threshold::AdminThresholdService;
-use crate::domain::admin_threshold::dto as admin_dto;
-use crate::domain::auth::TenantAuthorization;
-use crate::domain::catalog::CatalogReader;
-use crate::domain::catalog::response as catalog_response;
-use crate::domain::metric;
 use crate::domain::metric_definitions::listing as metric_definitions_listing;
-use crate::domain::query;
-use crate::domain::schema_validator::SchemaValidator;
-use crate::domain::threshold;
-use crate::infra::identity::{IdentityClient, Person};
+use crate::domain::saved_query;
+use crate::infra::identity::IdentityClient;
 
 /// Shared application state.
 #[derive(Clone)]
@@ -41,28 +39,12 @@ pub struct AppState {
     pub identity: IdentityClient,
     #[allow(dead_code)] // will be used for runtime config access (rate limits, feature flags)
     pub config: GearConfig,
-    /// Schema-validator (Refs #521). Held in `AppState` so admin-crud (#525)
-    /// calls `validator.validate(metric_key)` after a successful threshold
-    /// write. Kept on `AppState` for the legacy /v1/metrics handlers'
-    /// future use too; admin-crud receives its own clone via
-    /// [`AdminThresholdService::new`].
-    #[allow(dead_code)] // admin-crud holds its own clone; #521 only exposes the function
-    pub validator: SchemaValidator,
-    /// Catalog auth-trait. Resolves session-bound tenant against the
-    /// operator-configured single-tenant fallback per
-    /// `cpt-metric-cat-constraint-tenant-default` (Refs #522). The
-    /// `AdminThresholdService` holds its own clone for `is_tenant_admin` /
-    /// `actor_subject`; this field retains the handle for future per-request
-    /// authz wiring once auth is re-enabled on this host.
-    #[allow(dead_code)] // admin-crud holds its own clone; retained for re-enabling auth
-    pub tenant_auth: Arc<dyn TenantAuthorization>,
-    /// Catalog read pipeline (Refs #524) — cache + resolver wired together.
-    /// Cheap to clone (internally `Arc`s the cache + resolver).
-    pub catalog_reader: CatalogReader,
-    /// Admin-CRUD service (Refs #525) — owns the 5 `/v1/admin/metric-thresholds/*`
-    /// endpoints, the validation gauntlet, the `lock-enforcer` SQL, and the
-    /// `audit-emitter` dual-sink contract.
-    pub admin_threshold: AdminThresholdService,
+}
+
+pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
 }
 
 /// Register all analytics routes onto the host's stateless router.
@@ -100,10 +82,10 @@ fn openapi_info() -> OpenApiInfo {
         title: "Analytics API".to_owned(),
         version: "1.0.0".to_owned(),
         description: Some(
-            "Read-only query service over predefined ClickHouse metrics. Admins \
-             define metrics (named SQL queries) in MariaDB; the frontend queries \
-             them by UUID with OData-style filtering. The API Gateway mounts this \
-             service at /api/analytics."
+            "Read-only query service over ClickHouse. Serves declarative metric \
+             definitions, computed metric results and their evidence, plus \
+             tenant-authored saved queries. The API Gateway mounts this service \
+             at /api/analytics."
                 .to_owned(),
         ),
         servers: Vec::new(),
@@ -119,98 +101,13 @@ fn openapi_info() -> OpenApiInfo {
 /// registers routes without touching any backend — which also makes the full
 /// route table unit-testable without constructing an `AppState`/DB.
 ///
-/// `OperationBuilder::register` merges method routers per path, so the
-/// shared-path endpoints (`/v1/metrics`, `/v1/admin/metric-thresholds*`) are
-/// registered as independent operations.
+/// `OperationBuilder::register` merges method routers per path, so endpoints
+/// sharing a path across methods are registered as independent operations.
 // One `OperationBuilder` chain per endpoint makes this a long-but-flat route
 // table; splitting it further would only obscure the 1:1 route↔handler map.
 #[allow(clippy::too_many_lines)]
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let mut router: Router = router;
-
-    // Metric CRUD
-    router = OperationBuilder::get("/v1/metrics")
-        .operation_id("analytics_api.metrics.list")
-        .summary("List metrics")
-        .authenticated()
-        .no_license_required()
-        .json_response_with_schema::<metric::MetricListResponse>(
-            openapi,
-            StatusCode::OK,
-            "List of metrics",
-        )
-        .standard_errors(openapi)
-        .handler(handlers::list_metrics)
-        .register(router, openapi);
-
-    router = OperationBuilder::post("/v1/metrics")
-        .operation_id("analytics_api.metrics.create")
-        .summary("Create a metric")
-        .authenticated()
-        .no_license_required()
-        .json_request::<metric::CreateMetricRequest>(openapi, "Metric to create")
-        .json_response_with_schema::<metric::Metric>(openapi, StatusCode::CREATED, "Created metric")
-        .standard_errors(openapi)
-        .handler(handlers::create_metric)
-        .register(router, openapi);
-
-    router = OperationBuilder::get("/v1/metrics/{id}")
-        .operation_id("analytics_api.metrics.get")
-        .summary("Get a metric by id")
-        .authenticated()
-        .no_license_required()
-        .json_response_with_schema::<metric::Metric>(openapi, StatusCode::OK, "Metric")
-        .standard_errors(openapi)
-        .handler(handlers::get_metric)
-        .register(router, openapi);
-
-    router = OperationBuilder::put("/v1/metrics/{id}")
-        .operation_id("analytics_api.metrics.update")
-        .summary("Update a metric")
-        .authenticated()
-        .no_license_required()
-        .json_request::<metric::UpdateMetricRequest>(openapi, "Metric fields to update")
-        .json_response_with_schema::<metric::Metric>(openapi, StatusCode::OK, "Updated metric")
-        .standard_errors(openapi)
-        .handler(handlers::update_metric)
-        .register(router, openapi);
-
-    router = OperationBuilder::delete("/v1/metrics/{id}")
-        .operation_id("analytics_api.metrics.delete")
-        .summary("Delete a metric")
-        .authenticated()
-        .no_license_required()
-        .no_content_response(StatusCode::NO_CONTENT, "Metric deleted")
-        .standard_errors(openapi)
-        .handler(handlers::delete_metric)
-        .register(router, openapi);
-
-    // Query
-    router = OperationBuilder::post("/v1/metrics/{id}/query")
-        .operation_id("analytics_api.metrics.query")
-        .summary("Query a single metric")
-        .authenticated()
-        .no_license_required()
-        .json_request::<query::QueryRequest>(openapi, "OData-style query parameters")
-        .json_response_with_schema::<query::QueryResponse>(openapi, StatusCode::OK, "Query result")
-        .standard_errors(openapi)
-        .handler(handlers::query_metric)
-        .register(router, openapi);
-
-    router = OperationBuilder::post("/v1/metrics/queries")
-        .operation_id("analytics_api.metrics.query_batch")
-        .summary("Query metrics in batch")
-        .authenticated()
-        .no_license_required()
-        .json_request::<query::BatchQueryRequest>(openapi, "Batch of per-metric queries")
-        .json_response_with_schema::<query::BatchQueryResponse>(
-            openapi,
-            StatusCode::OK,
-            "Batch query result",
-        )
-        .standard_errors(openapi)
-        .handler(handlers::query_metrics_batch)
-        .register(router, openapi);
 
     router = OperationBuilder::post("/v1/metric-results")
         .operation_id("analytics_api.metric_results.create")
@@ -226,126 +123,146 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             StatusCode::OK,
             "Metric results",
         )
-        .standard_errors(openapi)
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_415(openapi)
+        .error_500(openapi)
         .handler(metric_results::query_metric_results)
         .register(router, openapi);
 
-    // Thresholds (legacy)
-    router = OperationBuilder::get("/v1/metrics/{id}/thresholds")
-        .operation_id("analytics_api.thresholds.list")
-        .summary("List thresholds for a metric")
+    // Saved-query CRUD + run (#1965) — the presentation-layer "Data Analytics"
+    // surface. CRUD is service-DB metadata; only `/run` reaches ClickHouse.
+    router = OperationBuilder::get("/v1/queries")
+        .operation_id("analytics_api.queries.list")
+        .summary("List saved queries")
         .authenticated()
         .no_license_required()
-        .json_response_with_schema::<threshold::ThresholdListResponse>(
+        .json_response_with_schema::<saved_query::SavedQueryListResponse>(
             openapi,
             StatusCode::OK,
-            "List of thresholds",
+            "List of saved queries",
         )
         .standard_errors(openapi)
-        .handler(handlers::list_thresholds)
+        .handler(saved_queries::list_saved_queries)
         .register(router, openapi);
 
-    router = OperationBuilder::post("/v1/metrics/{id}/thresholds")
-        .operation_id("analytics_api.thresholds.create")
-        .summary("Create a threshold for a metric")
+    router = OperationBuilder::post("/v1/queries")
+        .operation_id("analytics_api.queries.create")
+        .summary("Create a saved query")
         .authenticated()
         .no_license_required()
-        .json_request::<threshold::CreateThresholdRequest>(openapi, "Threshold to create")
-        .json_response_with_schema::<threshold::Threshold>(
+        .json_request::<saved_query::CreateSavedQueryRequest>(openapi, "Saved query to create")
+        .json_response_with_schema::<saved_query::SavedQuery>(
             openapi,
             StatusCode::CREATED,
-            "Created threshold",
+            "Created saved query",
         )
         .standard_errors(openapi)
-        .handler(handlers::create_threshold)
+        .handler(saved_queries::create_saved_query)
         .register(router, openapi);
 
-    router = OperationBuilder::put("/v1/metrics/{id}/thresholds/{tid}")
-        .operation_id("analytics_api.thresholds.update")
-        .summary("Update a threshold")
+    router = OperationBuilder::get("/v1/queries/{id}")
+        .operation_id("analytics_api.queries.get")
+        .summary("Get a saved query by id")
         .authenticated()
         .no_license_required()
-        .json_request::<threshold::UpdateThresholdRequest>(openapi, "Threshold fields to update")
-        .json_response_with_schema::<threshold::Threshold>(
+        .json_response_with_schema::<saved_query::SavedQuery>(
             openapi,
             StatusCode::OK,
-            "Updated threshold",
+            "Saved query",
         )
         .standard_errors(openapi)
-        .handler(handlers::update_threshold)
+        .handler(saved_queries::get_saved_query)
         .register(router, openapi);
 
-    router = OperationBuilder::delete("/v1/metrics/{id}/thresholds/{tid}")
-        .operation_id("analytics_api.thresholds.delete")
-        .summary("Delete a threshold")
+    router = OperationBuilder::put("/v1/queries/{id}")
+        .operation_id("analytics_api.queries.update")
+        .summary("Update a saved query")
         .authenticated()
         .no_license_required()
-        .no_content_response(StatusCode::NO_CONTENT, "Threshold deleted")
-        .standard_errors(openapi)
-        .handler(handlers::delete_threshold)
-        .register(router, openapi);
-
-    // Person lookup (delegates to Identity service)
-    router = OperationBuilder::get("/v1/persons/{email}")
-        .operation_id("analytics_api.persons.get")
-        .summary("Resolve a person by email")
-        .authenticated()
-        .no_license_required()
-        .json_response_with_schema::<Person>(openapi, StatusCode::OK, "Person")
-        .standard_errors(openapi)
-        .handler(handlers::get_person)
-        .register(router, openapi);
-
-    // Column catalog
-    router = OperationBuilder::get("/v1/columns")
-        .operation_id("analytics_api.columns.list")
-        .summary("List queryable columns")
-        .authenticated()
-        .no_license_required()
-        .json_response_with_schema::<metric::ColumnListResponse>(
+        .json_request::<saved_query::UpdateSavedQueryRequest>(
+            openapi,
+            "Saved query fields to update",
+        )
+        .json_response_with_schema::<saved_query::SavedQuery>(
             openapi,
             StatusCode::OK,
-            "List of columns",
+            "Updated saved query",
         )
         .standard_errors(openapi)
-        .handler(handlers::list_columns)
+        .handler(saved_queries::update_saved_query)
         .register(router, openapi);
 
-    router = OperationBuilder::get("/v1/columns/{table}")
-        .operation_id("analytics_api.columns.list_for_table")
-        .summary("List queryable columns for a table")
+    router = OperationBuilder::delete("/v1/queries/{id}")
+        .operation_id("analytics_api.queries.delete")
+        .summary("Delete a saved query")
         .authenticated()
         .no_license_required()
-        .json_response_with_schema::<metric::ColumnListResponse>(
-            openapi,
-            StatusCode::OK,
-            "List of columns",
-        )
+        .no_content_response(StatusCode::NO_CONTENT, "Saved query deleted")
         .standard_errors(openapi)
-        .handler(handlers::list_columns_for_table)
+        .handler(saved_queries::delete_saved_query)
         .register(router, openapi);
 
-    // Metric catalog read (Refs #524) — DESIGN §3.3 "Catalog Read".
-    // POST chosen so request-context fields (role_slug, team_id) never
-    // appear in HTTP access logs / proxy captures, and so HTTP / CDN
-    // intermediaries cannot cache the response (server-side cache is the
-    // single canonical cache layer per `cpt-metric-cat-principle-server-cache`).
-    router = OperationBuilder::post("/v1/catalog/get_metrics")
-        .operation_id("analytics_api.catalog.get_metrics")
-        .summary("Read the metric catalog for the request context")
+    router = OperationBuilder::post("/v1/queries/{id}/run")
+        .operation_id("analytics_api.queries.run")
+        .summary("Run a saved query")
         .authenticated()
         .no_license_required()
-        .json_request::<catalog_response::GetMetricsRequest>(
+        .json_request::<saved_query::RunSavedQueryRequest>(
             openapi,
-            "Catalog read request context (role, team)",
+            "Optional named parameters (`period`); `tenant` is always injected from context",
         )
-        .json_response_with_schema::<catalog_response::CatalogResponse>(
+        .request_optional()
+        .json_response_with_schema::<saved_query::RunResponse>(
             openapi,
             StatusCode::OK,
-            "Resolved metric catalog",
+            "Query result rows",
         )
         .standard_errors(openapi)
-        .handler(catalog::get_metrics)
+        .handler(saved_queries::run_saved_query)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/v1/metric-drilldown")
+        .operation_id("analytics_api.metric_drilldown.create")
+        .summary("List metric evidence")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::metric_drilldown::MetricDrilldownRequest>(
+            openapi,
+            "Metric evidence selection",
+        )
+        .json_response_with_schema::<crate::domain::metric_drilldown::MetricDrilldownResponse>(
+            openapi,
+            StatusCode::OK,
+            "Metric evidence",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_415(openapi)
+        .error_429(openapi)
+        .error_500(openapi)
+        .handler(metric_drilldown::query_metric_drilldown)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/v1/metric-drilldown/export")
+        .operation_id("analytics_api.metric_drilldown.export")
+        .summary("Export metric evidence")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::metric_drilldown::MetricDrilldownExportRequest>(
+            openapi,
+            "Metric evidence export selection",
+        )
+        .response(ResponseSpec {
+            status: StatusCode::OK.as_u16(),
+            content_type: "text/csv",
+            description: "Complete metric evidence export".to_owned(),
+            schema_name: None,
+        })
+        .standard_errors(openapi)
+        .handler(metric_drilldown::export_metric_drilldown)
         .register(router, openapi);
 
     // Unified metric definitions listing — display fields only, tenant
@@ -361,81 +278,9 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             StatusCode::OK,
             "Metric definitions",
         )
-        .standard_errors(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
         .handler(metric_definitions::list_metric_definitions)
-        .register(router, openapi);
-
-    // Admin threshold CRUD (Refs #525) — DESIGN §3.2 admin-crud.
-    // Bearer-token-only auth at the gateway (Q1 ack); the catalog
-    // surface enforces canonical envelopes + CSRF closure via the
-    // `CanonicalJson` extractor (Content-Type: application/json
-    // required, deny_unknown_fields on every body shape).
-    router = OperationBuilder::get("/v1/admin/metric-thresholds")
-        .operation_id("analytics_api.admin.thresholds.list")
-        .summary("List admin metric thresholds")
-        .authenticated()
-        .no_license_required()
-        .json_response_with_schema::<admin_dto::ListResponse>(
-            openapi,
-            StatusCode::OK,
-            "List of metric thresholds",
-        )
-        .standard_errors(openapi)
-        .handler(admin::list)
-        .register(router, openapi);
-
-    router = OperationBuilder::post("/v1/admin/metric-thresholds")
-        .operation_id("analytics_api.admin.thresholds.create")
-        .summary("Create an admin metric threshold")
-        .authenticated()
-        .no_license_required()
-        .json_request::<admin_dto::CreateRequest>(openapi, "Metric threshold to create")
-        .json_response_with_schema::<admin_dto::ThresholdView>(
-            openapi,
-            StatusCode::CREATED,
-            "Created metric threshold",
-        )
-        .standard_errors(openapi)
-        .handler(admin::create)
-        .register(router, openapi);
-
-    router = OperationBuilder::get("/v1/admin/metric-thresholds/{id}")
-        .operation_id("analytics_api.admin.thresholds.get")
-        .summary("Get an admin metric threshold by id")
-        .authenticated()
-        .no_license_required()
-        .json_response_with_schema::<admin_dto::ThresholdView>(
-            openapi,
-            StatusCode::OK,
-            "Metric threshold",
-        )
-        .standard_errors(openapi)
-        .handler(admin::get_one)
-        .register(router, openapi);
-
-    router = OperationBuilder::put("/v1/admin/metric-thresholds/{id}")
-        .operation_id("analytics_api.admin.thresholds.update")
-        .summary("Update an admin metric threshold")
-        .authenticated()
-        .no_license_required()
-        .json_request::<admin_dto::UpdateRequest>(openapi, "Metric threshold fields to update")
-        .json_response_with_schema::<admin_dto::ThresholdView>(
-            openapi,
-            StatusCode::OK,
-            "Updated metric threshold",
-        )
-        .standard_errors(openapi)
-        .handler(admin::update)
-        .register(router, openapi);
-
-    router = OperationBuilder::delete("/v1/admin/metric-thresholds/{id}")
-        .operation_id("analytics_api.admin.thresholds.delete")
-        .summary("Delete an admin metric threshold")
-        .authenticated()
-        .no_license_required()
-        .no_content_response(StatusCode::NO_CONTENT, "Metric threshold deleted")
-        .standard_errors(openapi)
-        .handler(admin::delete)
         .register(router, openapi);
 
     // `/health` + `/healthz` are provided by the api-gateway host gear (its
@@ -452,9 +297,44 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
 pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     let openapi = OpenApiRegistryImpl::new();
     let _ = build_operations(Router::new(), &openapi);
-    openapi
+    let mut document = openapi
         .build_openapi(&openapi_info())
-        .map_err(|e| anyhow::anyhow!("failed to build analytics OpenAPI document: {e}"))
+        .map_err(|e| anyhow::anyhow!("failed to build analytics OpenAPI document: {e}"))?;
+    let response = document
+        .paths
+        .paths
+        .get_mut("/v1/metric-drilldown/export")
+        .and_then(|path| path.post.as_mut())
+        .and_then(|operation| operation.responses.responses.get_mut("200"))
+        .ok_or_else(|| anyhow::anyhow!("metric drilldown export response is missing"))?;
+    let RefOr::T(response) = response else {
+        return Err(anyhow::anyhow!(
+            "metric drilldown export response must be inline"
+        ));
+    };
+    let schema = Schema::Object(
+        ObjectBuilder::new()
+            .schema_type(SchemaType::Type(OpenApiType::String))
+            .format(Some(SchemaFormat::KnownFormat(KnownFormat::Binary)))
+            .build(),
+    );
+    for media_type in [
+        "text/csv",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ] {
+        response.content.insert(
+            media_type.to_owned(),
+            ContentBuilder::new().schema(Some(schema.clone())).build(),
+        );
+    }
+    response.headers.insert(
+        "Content-Disposition".to_owned(),
+        HeaderBuilder::new()
+            .schema(ObjectBuilder::new().schema_type(OpenApiType::String))
+            .description(Some("Attachment filename"))
+            .build(),
+    );
+    Ok(document)
 }
 
 #[cfg(test)]
@@ -470,5 +350,35 @@ mod tests {
     fn build_operations_registers_the_full_table_without_state() {
         let openapi = OpenApiRegistryImpl::new();
         let _router: Router = build_operations(Router::new(), &openapi);
+    }
+
+    #[test]
+    fn export_response_advertises_both_file_media_types_and_the_filename_header() {
+        let document =
+            openapi_document().unwrap_or_else(|error| panic!("document must build: {error}"));
+        let response = document
+            .paths
+            .paths
+            .get("/v1/metric-drilldown/export")
+            .and_then(|path| path.post.as_ref())
+            .and_then(|operation| operation.responses.responses.get("200"))
+            .unwrap_or_else(|| panic!("export 200 response must be registered"));
+        let RefOr::T(response) = response else {
+            panic!("export response must be inline, not a $ref");
+        };
+
+        for media_type in [
+            "text/csv",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ] {
+            assert!(
+                response.content.contains_key(media_type),
+                "export must advertise {media_type}"
+            );
+        }
+        assert!(
+            response.headers.contains_key("Content-Disposition"),
+            "export must advertise the attachment filename header"
+        );
     }
 }

@@ -39,12 +39,13 @@
 
 ### 1.1 Purpose
 
-`insight-identity` is a .NET 9 / ASP.NET Core minimal-API service that
+`insight-identity-resolution` is a Rust service on the gears-rust host
+(ported from the retired .NET service, epic #1602) that
 serves person lookups over the multi-source observation log stored in
 the MariaDB `persons` table. It owns its database (per ADR-0006),
-applies its own DbUp migrations at startup, and exposes a small
-read-only HTTP surface to api-gateway and internal workflows
-(`GET /v1/persons/{email}`, `/health`, `/healthz`).
+applies its own SeaORM migrations via its `migrate` subcommand, and
+exposes a small read-only HTTP surface to api-gateway and internal
+workflows (`POST /v1/profiles`, `/health`, `/healthz`).
 
 The service is the first synchronous consumer of the append-only
 observation log seeded from `identity.identity_inputs`. It enriches
@@ -63,8 +64,8 @@ value_type, value_hash)`). The platform needs a synchronous lookup
 path on top of that log that (a) sees every source
 the seed pipeline writes, (b) returns live data without a pod restart,
 (c) is tenant-safe by construction, and (d) follows the cyberfabric
-ASP.NET Core / Serilog / RFC 7807 conventions established for other
-.NET services in the platform.
+gears-rust host / structured-JSON-logging / RFC 7807 conventions
+established for the other Rust services in the platform.
 
 ### 1.3 Goals (Business Outcomes)
 
@@ -89,8 +90,8 @@ ASP.NET Core / Serilog / RFC 7807 conventions established for other
 | `insight_tenant_id` | `BINARY(16)` tenant UUID; part of every query and every index. |
 | Latest-per-source | The projection `ROW_NUMBER() OVER (PARTITION BY source_type, source_id, value_type ORDER BY created_at DESC)` — picks the most recent observation per attribute per source. |
 | Assembler | `PersonAssembler` — collapses latest-per-source rows into a single `PersonResponse` by picking the latest value across sources per `value_type`. |
-| DbUp | The .NET migration library; tracks applied SQL scripts in a `SchemaVersions` table inside the service's own database. |
-| Seed | The one-shot Bash + Python pipeline at `src/backend/services/identity/seed/` that materialises `persons` rows from ClickHouse `identity.identity_inputs`. Not a schema migration. |
+| SeaORM migrator | The service's migration mechanism (run via the `migrate` subcommand); tracks applied steps in a `seaql_migrations` table inside the service's own database. (Replaced the retired .NET service's DbUp.) |
+| Seed | The one-shot Bash + Python pipeline at `src/backend/services/identity-resolution/seed/` that materialises `persons` rows from ClickHouse `identity.identity_inputs`. Not a schema migration. |
 
 ## 2. Actors
 
@@ -127,9 +128,9 @@ without breaking existing callers.
 **ID**: `cpt-insightspec-actor-api-gateway`
 
 **Role**: External-facing reverse proxy. Calls
-`GET /v1/persons/{email}` to enrich analytics responses with
-display-name, supervisor, and org-unit fields. Sends
-`X-Insight-Tenant-Id` derived from the resolved JWT principal.
+`POST /v1/profiles` to enrich analytics responses with
+display-name, supervisor, and org-unit fields. The tenant travels
+as the `tenant_id` claim of the signed gateway JWT.
 
 #### dbt-runner / Argo Workflows
 
@@ -144,8 +145,9 @@ the tenant context via the same header.
 **ID**: `cpt-insightspec-actor-mariadb`
 
 **Role**: Stores the `persons` and `account_person_map` tables that
-the service reads and that DbUp migrates on startup. Connection
-target named by `IDENTITY__mariadb__url`.
+the service reads and that the SeaORM migrator migrates. Connection
+target named by the gear config's `database_url`
+(`APP__gears__identity-resolution__config__database_url`).
 
 #### Seed pipeline
 
@@ -160,29 +162,31 @@ visible row is well-formed per the routing rules in ADR-0007.
 
 ### 3.1 Module-Specific Environment Constraints
 
-- **.NET 9 runtime.** Service binary is published as
-  `linux/amd64` self-contained; Kubernetes pod runs as UID 1000
-  non-root.
-- **MariaDB reachability at startup.** DbUp connects, runs
-  `EnsureDatabase`, applies migrations, then opens the HTTP listener.
-  If MariaDB is unreachable, the pod crashes early — kubelet retries.
-  There is no "start without DB and reconnect later" mode.
+- **Rust / gears-rust host.** Service ships as a static
+  `linux/amd64` binary in the `insight-identity-resolution` image;
+  Kubernetes pod runs as UID 1000 non-root.
+- **MariaDB reachability at migrate time.** The `migrate` subcommand
+  (run as an initContainer) connects and applies migrations before
+  the serving container starts. If MariaDB is unreachable, the pod
+  fails early — kubelet retries. There is no "start without DB and
+  reconnect later" mode.
 - **No in-memory cache.** Every lookup hits MariaDB. Memory budget
   (NFR-2) reflects the absence of cache, not its presence.
-- **Tenant header mandatory in prod.** With `tenant_default_id`
-  unset, every request must carry `X-Insight-Tenant-Id`. Dev / local
-  clusters pin a default tenant in values; production overlays leave
-  it empty (the validator in api-gateway derives it from the JWT
-  principal before forwarding).
+- **Tenant claim mandatory in prod.** With `tenant_default_id`
+  unset, every request must carry a verified gateway JWT with a
+  `tenant_id` claim (oidc-authn-plugin). Dev / local clusters may pin
+  a default tenant in values; production overlays leave it empty.
 
 ## 4. Scope
 
 ### 4.1 In Scope
 
-- `GET /v1/persons/{email}` (Phase 1) returning a single
-  `PersonResponse` with parent attributes (`parent_email`,
-  `parent_id`, `parent_person_id`) but no recursive subordinate
-  expansion. Preserved unchanged by Phase 2.
+- The `PersonResponse` shape (Phase 1) with parent attributes
+  (`parent_email`, `parent_id`, `parent_person_id`). The Phase-1
+  `GET /v1/persons/{email}` endpoint that carried it was retired with
+  the .NET service (zero callers); `POST /v1/profiles` is the
+  successor and an internal-only
+  `GET /internal/persons/by-email/{email}` remains for in-cluster use.
 - `POST /v1/profiles` (Phase 2, constructorfabric/insight#347)
   — single-profile lookup by either email (across all sources) or
   source-native id (within one source instance), returning a
@@ -191,22 +195,22 @@ visible row is well-formed per the routing rules in ADR-0007.
   multiple matches surface as `422 urn:insight:error:ambiguous_profile`.
 - `GET /health` — DB ping (200 if reachable, 503 otherwise).
 - `GET /healthz` — process liveness (200 `text/plain "ok"`).
-- Tenant resolution by `X-Insight-Tenant-Id` header with optional
-  fallback to `IDENTITY__identity__tenant_default_id` config.
-  Same `CompositeTenantContext` used by both endpoints.
+- Tenant resolution from the verified gateway JWT's `tenant_id`
+  claim, with optional fallback to the `tenant_default_id` config.
+  Same resolution used by every endpoint.
 - Lowercase-email lookup against `value_type = 'email'`.
 - Display-name split fallback when explicit `first_name` /
   `last_name` observations are absent.
-- DbUp-applied schema (`001_persons.sql`, `002_account_person_map.sql`)
-  per ADR-0006.
+- SeaORM-migrator-applied schema (`001_persons.sql`,
+  `002_account_person_map.sql`, ...) per ADR-0006.
 
 ### 4.2 Out of Scope
 
 - Recursive subordinate expansion via `parent_person_id` —
   constructorfabric/insight#348 (GET subchart) lands separately.
-- Real JWT-claim validation (Phase 2.5 — `JwtTenantContext` is wired
-  in DI as a stub, returns `null`; api-gateway BFF forwarding lands
-  this).
+- Permission/role semantics beyond the admin gate — JWT verification
+  itself is in scope (the oidc-authn-plugin validates the ES256
+  gateway JWT and supplies the tenant claim).
 - Batch (multi-lookup) profile resolution — Phase 2 surfaces a single
   lookup per request; multi-lookup body shape is a possible Phase 3
   extension.
@@ -222,10 +226,10 @@ visible row is well-formed per the routing rules in ADR-0007.
 ## 5. Functional Requirements
 
 > **Testing strategy**: All functional requirements verified via
-> automated tests — unit tests cover domain logic (`PersonAssembler`,
-> `DisplayNameSplitter`, `MariaDbConnectionFactory`); integration
-> tests cover SQL + endpoint behaviour against a Testcontainers
-> MariaDB.
+> automated tests (`cargo test -p identity-resolution`) — unit tests
+> cover domain logic (profile assembly, display-name split);
+> integration tests cover SQL + endpoint behaviour against a
+> Testcontainers MariaDB.
 
 ### 5.1 Lookup contract
 
@@ -281,12 +285,13 @@ error; callers must distinguish it from server failures.
 
 The system **MUST** return `400 Bad Request` with an RFC 7807
 problem-details body of type
-`urn:insight:error:tenant_unresolved` when the request carries no
-`X-Insight-Tenant-Id` header and no `tenant_default_id` is configured.
+`urn:insight:error:tenant_unresolved` when no tenant resolves from the
+verified JWT's `tenant_id` claim and no `tenant_default_id` is
+configured.
 
 **Rationale**: Silently defaulting a tenant in a multi-tenant
-deployment is a data-leak risk. The composite resolver lets the header
-win; the default is opt-in for single-tenant clusters.
+deployment is a data-leak risk. The signed claim wins; the config
+default is opt-in for single-tenant clusters.
 
 **Actors**: `cpt-insightspec-actor-platform-sre`
 
@@ -298,8 +303,8 @@ The system **MUST** surface `supervisor_email`, `supervisor_name`, and
 the legacy alias triple `parent_email` / `parent_id` /
 `parent_person_id` on the response. All five fields **MUST** be
 hydrated from the parent edge in `org_chart` filtered to a single
-configured source (default `bamboohr`, controlled by
-`IDENTITY__identity__org_chart_source_type`). Stale
+configured source (default `bamboohr`, controlled by the gear
+config's `org_chart_source_type`). Stale
 `value_type='parent_*'` observations in `persons` **MUST NOT** be
 projected onto the response — the org-tree source of truth is
 `org_chart`.
@@ -325,7 +330,7 @@ edge. Recursion **MUST** stop on:
         of the seeder's two-hop check),</item>
   <item>missing observations — a `child_person_id` with no rows in
         `persons` is skipped (no hollow leaves),</item>
-  <item>depth cap — `IDENTITY__identity__max_subordinate_depth`
+  <item>depth cap — the gear config's `max_depth`
         (default 16, well above any realistic org tree).</item>
 </list>
 Subordinates **MUST** use the same wire shape as the top-level
@@ -482,11 +487,12 @@ a connector backfill.
 
 - [x] `p1` - **ID**: `cpt-insightspec-fr-identity-migrations-startup`
 
-The service **MUST** apply its own DbUp migrations (plain SQL files
-under `Insight.Identity.Infrastructure/Migrations/`) against the
-configured MariaDB before opening the HTTP listener. Migration history
-**MUST** be tracked in a `SchemaVersions` table inside the service's
-own database.
+The service **MUST** apply its own SeaORM migrations (steps under
+`src/backend/services/identity-resolution/src/migration/`, SQL under
+`src/migration/sql/`) against the configured MariaDB before serving
+traffic — via the `migrate` subcommand, run as an initContainer in
+Kubernetes. Migration history **MUST** be tracked in a
+`seaql_migrations` table inside the service's own database.
 
 **Rationale**: Per ADR-0006 each service owns its schema; serial
 startup ordering prevents requests from ever hitting an unmigrated
@@ -709,14 +715,14 @@ every read hits MariaDB; the memory budget reflects that.
 
 - [x] `p1` - **ID**: `cpt-insightspec-nfr-identity-logging-pii`
 
-The system **MUST** emit structured JSON logs via Serilog
-`CompactJsonFormatter` with the enricher `service=identity`.
-Request-logging middleware **MUST** record only an allow-listed
-property set (`RequestMethod`, `RequestPath` template, `StatusCode`,
-`Elapsed`, `RequestId`, `ConnectionId`, `@tr`/`@sp` trace+span IDs)
-and **MUST** redact the raw email path segment to
-`/v1/persons/<redacted>`. Unhandled-exception payloads **MUST**
-include exception type + message + sanitised `db_target`
+The system **MUST** emit structured JSON logs via the gears-rust
+host's tracing subscriber with `service=identity-resolution`.
+Request logging **MUST** record only an allow-listed
+property set (method, route template, status code,
+elapsed time, request id, trace+span IDs)
+and **MUST** never log a raw email path segment (route templates
+only). Unhandled-error payloads **MUST**
+include error type + message + sanitised `db_target`
 (`host:port/db`, no credentials) and **MUST NOT** include the
 connection string.
 
@@ -732,11 +738,11 @@ project-wide PII handling policy.
 - [x] `p1` - **ID**: `cpt-insightspec-nfr-identity-uuid-roundtrip`
 
 All UUIDs (`insight_tenant_id`, `insight_source_id`, `person_id`,
-`author_person_id`) **MUST** round-trip as `BINARY(16)` via
-`Guid.ToByteArray()` / `new Guid(byte[])`. The repository
-**MUST NOT** rely on MySqlConnector's default `ToString()` fallback,
-which produces a 36-char form that the `BINARY(16)` column silently
-truncates to 16 ASCII bytes.
+`author_person_id`) **MUST** round-trip as `BINARY(16)` via the
+UUID's canonical 16 bytes (big-endian RFC 4122 order). The repository
+**MUST NOT** rely on a driver's string fallback, which produces a
+36-char form that the `BINARY(16)` column silently truncates to 16
+ASCII bytes.
 
 **Threshold**: An integration test seeds a row by bytes and reads it
 back by Guid; equality holds byte-for-byte.
@@ -764,7 +770,7 @@ this NFR forces the explicit bytes binding everywhere.
 
 **Type**: HTTP/REST endpoint.
 
-**Stability**: **deprecated** — new integrations must use [`POST /v1/profiles`](#post-v1profiles--profile-resolution) instead. The path-form lookup keeps the caller's email in the URL, which leaks into observability surfaces this service does not control (api-gateway access logs, ingress logs, browser history, CDN/proxy logs) even though our own request-logging redacts the segment to `/v1/persons/<redacted>`. Existing callers continue to work; the service emits `Deprecation: true` and `Link: <…/v1/profiles>; rel="successor-version"` on every response per RFC 8594. Removal is scheduled with the cyber-insight v1 release cut.
+**Stability**: **retired** — the public endpoint was removed together with the retired .NET service (approved removal, zero callers); [`POST /v1/profiles`](#post-v1profiles--profile-resolution) is the successor. The path-form lookup kept the caller's email in the URL, which leaked into observability surfaces this service does not control (api-gateway access logs, ingress logs, browser history, CDN/proxy logs). An internal-only `GET /internal/persons/by-email/{email}` remains for in-cluster use. The description below is kept for historical traceability of the response shape, which lives on in `POST /v1/profiles`.
 
 **Stability history**: Phase 2 of #348 added `supervisor_email`,
 `supervisor_name`, and the `subordinates[]` recursion onto the existing
@@ -774,8 +780,8 @@ shape — both are additive (non-breaking) per the policy below.
 body with the org-tree projection from the BambooHR slice of
 `org_chart` (`identity.org_chart_source_type` config knob — defaults
 to `bamboohr`). Comparison is case-insensitive at the storage layer
-(ADR-0011). Tenant supplied via `X-Insight-Tenant-Id` header
-(preferred) or config default.
+(ADR-0011). Tenant supplied via the verified JWT's `tenant_id` claim
+or config default.
 Returns 200 + body on hit, 404 + RFC 7807 on miss, 400 + RFC 7807 on
 missing tenant, 5xx on service error.
 
@@ -874,7 +880,7 @@ minor versions.
 ```http
 POST /v1/profiles
 Content-Type: application/json
-X-Insight-Tenant-Id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+Authorization: Bearer <gateway JWT carrying tenant_id>
 
 {
   "value_type": "email",
@@ -889,7 +895,7 @@ X-Insight-Tenant-Id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
 ```http
 POST /v1/profiles
 Content-Type: application/json
-X-Insight-Tenant-Id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+Authorization: Bearer <gateway JWT carrying tenant_id>
 
 {
   "value_type": "id",
@@ -1071,10 +1077,10 @@ is intentionally not applied — the visibility CTE is closed under
 descendant is already in their visible set. Matches the Phase-2
 behaviour of `subordinates[]` on `/v1/persons`.
 
-**Tenant scoping**: via the same `ITenantContext` composite chain as
-the other endpoints (header → JWT → config default). The
-`org_chart.insight_source_type` filter is pinned to
-`IDENTITY__identity__org_chart_source_type`, identical to the Phase-2
+**Tenant scoping**: via the same tenant resolution as
+the other endpoints (verified JWT `tenant_id` claim → config
+default). The `org_chart.insight_source_type` filter is pinned to
+the gear config's `org_chart_source_type`, identical to the Phase-2
 endpoints.
 
 **Errors**:
@@ -1093,23 +1099,30 @@ endpoints.
 
 - [x] `p1` - **ID**: `cpt-insightspec-contract-identity-env-config`
 
+(The `IDENTITY__*` prefix of the retired .NET service is gone; the
+contract is now the gears-rust host config.)
+
 **Direction**: required from operator (Helm umbrella or BYO Secret).
 
-**Protocol/Format**: ASP.NET Core configuration with double-underscore
-section delimiter. YAML overlay supported via `appsettings.yaml`.
+**Protocol/Format**: gears-rust host configuration — YAML section
+`gears.identity-resolution.config`, with double-underscore env
+overrides `APP__gears__identity-resolution__config__<field>`.
 
-Known keys (snake-case, all under `IDENTITY__identity__*` unless
-noted):
+Known fields (snake-case, env override
+`APP__gears__identity-resolution__config__<field>`):
 
-| Key | Type | Default | Meaning |
+| Field | Type | Default | Meaning |
 |---|---|---|---|
-| `IDENTITY__mariadb__url` | URL string | — | MariaDB connection (`mysql://user:pass@host:port/db`). One of `url`/`connection_string` is required. |
-| `IDENTITY__mariadb__connection_string` | KV string | — | MySqlConnector key/value form, used when the URL shape cannot express needed options. |
-| `IDENTITY__identity__bind_addr` | string | `0.0.0.0:8082` | Listener bind address. |
-| `IDENTITY__identity__tenant_default_id` | UUID | — | Fallback tenant when no `X-Insight-Tenant-Id` header arrives. Useful for single-tenant clusters and local dev. |
-| `IDENTITY__identity__expand_subordinates` | bool | `true` | Kill switch for the recursive org-tree walk on `/v1/persons` and `/v1/profiles`. |
-| `IDENTITY__identity__max_subordinate_depth` | int | `16` | Hard cap on the recursion depth. |
-| `IDENTITY__identity__org_chart_source_type` | string | `bamboohr` | Which `insight_source_type` drives the org-tree projection on `/v1/persons` and `/v1/profiles`. |
+| `database_url` | URL string | — | MariaDB connection (`mysql://user:pass@host:port/db`). Required. |
+| `tenant_default_id` | UUID | — | Fallback tenant when the JWT carries no resolvable tenant. Useful for single-tenant clusters and local dev; also scopes the bootstrap-admin seed. |
+| `expand_subordinates` | bool | `true` | Kill switch for the recursive org-tree walk on `/v1/profiles`. |
+| `max_depth` | int | `16` | Hard cap on the recursion depth. |
+| `org_chart_source_type` | string | `bamboohr` | Which `insight_source_type` drives the org-tree projection on `/v1/profiles`. |
+| `clickhouse_url` / `clickhouse_database` / `clickhouse_user` / `clickhouse_password` | strings | — / `identity` / — / — | ClickHouse HTTP coordinates (port 8123) for the persons-seed reader. |
+| `bootstrap_admin_person_id` | UUID | — | Optional migrate-time first-admin bootstrap. |
+
+The listener bind address (`0.0.0.0:8082`) lives in the host's
+`api-gateway` gear config, supplied by the deployment's config layer.
 
 **Compatibility**: Backward-compatible field additions only; renames
 require a major version bump of the chart's umbrella schema.
@@ -1118,14 +1131,15 @@ require a major version bump of the chart's umbrella schema.
 
 - [x] `p2` - **ID**: `cpt-insightspec-contract-identity-config-secret`
 
+(Now named `insight-identity-resolution-config`; the heading keeps
+the historical name for anchor stability.)
+
 **Direction**: provided by umbrella chart, consumed by the service
 pod via `envFrom`.
 
-**Protocol/Format**: Kubernetes `Secret` (string data) containing
-the `IDENTITY__*` keys. URL form preferred
-(`IDENTITY__mariadb__url`); MySqlConnector KV form supported
-(`IDENTITY__mariadb__connection_string`) for callers needing options
-the URL shape cannot express.
+**Protocol/Format**: Kubernetes `Secret` (string data) containing the
+`APP__gears__identity-resolution__config__*` keys
+(`...__database_url` etc.).
 
 **Compatibility**: Stable across chart minor versions; additive fields
 non-breaking.
@@ -1141,15 +1155,16 @@ non-breaking.
 **Preconditions**:
 - Seed pipeline has populated at least one `value_type='email'`
   observation for the target tenant.
-- Caller's request carries `X-Insight-Tenant-Id` or the service is
-  configured with a `tenant_default_id`.
+- Caller's request carries a verified gateway JWT with a `tenant_id`
+  claim, or the service is configured with a `tenant_default_id`.
 
 **Main Flow**:
 1. api-gateway receives an analytics request that needs person
    enrichment.
-2. api-gateway resolves the JWT principal and derives the email +
-   tenant header.
-3. api-gateway issues `GET /v1/persons/{email}` to the service.
+2. api-gateway resolves the JWT principal and derives the email; the
+   tenant travels in the signed JWT.
+3. api-gateway issues `POST /v1/profiles`
+   (`{"value_type":"email","value":"..."}`) to the service.
 4. The service resolves the `person_id` via the latest-per-source
    email observation (case-insensitive comparison per ADR-0011),
    hydrates all attributes, and returns 200 + JSON.
@@ -1193,16 +1208,17 @@ non-breaking.
 - [ ] The same integration test returns 404 + RFC 7807 body for an
       unknown email.
 - [ ] The same integration test returns 400 +
-      `urn:insight:error:tenant_unresolved` when the request omits
-      the tenant header and no default is configured.
-- [ ] `dotnet test` passes for both unit and integration projects on
-      a fresh checkout.
+      `urn:insight:error:tenant_unresolved` when the request carries
+      no resolvable tenant and no default is configured.
+- [ ] `cargo test -p identity-resolution` passes (unit + integration)
+      on a fresh checkout.
 - [ ] Helm template renders `Service`, `Deployment`, `Secret`, and
       `_helpers.tpl` host references with the canonical
-      `insight-identity` name.
-- [ ] DbUp creates `persons` and `account_person_map` against an
-      empty `identity` MariaDB on first pod start; re-running the
-      pod is a no-op against `SchemaVersions`.
+      `insight-identity-resolution` name.
+- [ ] The `migrate` subcommand creates `persons` and
+      `account_person_map` against an empty `identity` MariaDB on
+      first pod start; re-running the pod is a no-op against
+      `seaql_migrations`.
 - [ ] `cfs validate --skip-code --artifact docs/components/backend/identity-resolution/identity`
       reports zero errors.
 
@@ -1210,7 +1226,7 @@ non-breaking.
 
 | Dependency | Description | Criticality |
 |------------|-------------|-------------|
-| MariaDB `identity` database | Read target + DbUp migration target. | p1 |
+| MariaDB `identity` database | Read target + SeaORM migration target. | p1 |
 | Seed pipeline (`seed-persons-from-identity-input.py`) | Populates the rows the reader returns. | p1 |
 | BambooHR `bamboohr__identity_inputs` dbt model | Source of identity observations for the first connector to land on the new schema. | p1 |
 | Reconciliation service (future) | Writes `parent_person_id` observations consumed by Phase 2 org-tree expansion. | p2 |
@@ -1234,7 +1250,7 @@ non-breaking.
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| `persons` schema evolves under us | Reader SQL drifts and silently returns wrong fields. | Centralise SQL in `Insight.Identity.Infrastructure/MariaDb/Sql.cs`; integration tests pin column names. |
-| Misconfigured `tenant_default_id` in multi-tenant cluster | Wrong-tenant data leaks to a header-less caller. | Composite resolver always lets header win; helm validator warns when `tenantDefaultId` is set with `identity.deploy=true` in a production overlay (planned). |
+| `persons` schema evolves under us | Reader SQL drifts and silently returns wrong fields. | Centralise SQL with the repositories in `src/infra/db/`; integration tests pin column names. |
+| Misconfigured `tenant_default_id` in multi-tenant cluster | Wrong-tenant data served to a caller whose JWT lacks a tenant. | The signed JWT claim always wins; helm validator warns when `tenantDefaultId` is set with `identityResolution.deploy=true` in a production overlay (planned). |
 | Seed pipeline never runs on a fresh cluster | Every lookup returns 404 indefinitely. | `/health` only checks DB reachability — the operator sees green pods and an empty `persons` table; document the post-install seed step in the README. |
 | BambooHR connector evolves the `value_type` set | New observations are silently ignored. | Hardcoded routing in ADR-0007 + integration test that asserts the projection of each known `value_type`. |

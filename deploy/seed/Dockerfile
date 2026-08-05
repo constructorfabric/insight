@@ -6,7 +6,9 @@
 # pyproject.toml or the packaged sources change.
 
 # Python 3.13 to match this seeder's pyproject (ruff target-version /
-# mypy python_version = 3.13).
+# mypy python_version = 3.13). dbt's dependency chain (dbt-common ->
+# mashumaro) does not import on 3.14 yet, and dependabot.yml ignores that
+# bump until it does.
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -35,6 +37,9 @@ COPY pyproject.toml .
 COPY *.py ./
 COPY generators ./generators/
 RUN pip install .
+
+RUN useradd -U -u 1000 -m appuser
+USER 1000
 
 ENTRYPOINT ["python", "seed.py"]
 CMD ["all"]

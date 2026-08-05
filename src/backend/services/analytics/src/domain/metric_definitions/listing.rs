@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::domain::metric_definitions::definition::{MetricDirection, MetricFormat};
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 use crate::domain::metric_definitions::repository::fetch_dimensions;
+use crate::domain::metric_drilldown::{MetricDrilldownCapability, load_capabilities};
 
 /// Response body for `GET /v1/metric-definitions`. Metrics are sorted by
 /// `metric_key` ascending so the payload is byte-stable for caching and
@@ -51,6 +52,8 @@ pub struct MetricDefinitionView {
     /// measures; absent when no observation has ever been seen. Freshness
     /// signal, orthogonal to `schema_status`.
     pub last_observed_date: Option<chrono::NaiveDate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drilldown: Option<MetricDrilldownCapability>,
 }
 
 impl toolkit::api::api_dto::ResponseApiDto for MetricDefinitionListResponse {}
@@ -81,6 +84,17 @@ pub async fn list_definition_views(
         .await
         .map_err(|error| db_error(&error))?;
     let selected = select_rows(rows);
+    let metric_keys = selected
+        .iter()
+        .map(|row| row.metric_key.clone())
+        .collect::<Vec<_>>();
+    let mut capabilities = match load_capabilities(db, tenant_id, &metric_keys).await {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            tracing::warn!(error = ?error, "metric drilldown capability load failed");
+            HashMap::new()
+        }
+    };
 
     let definition_ids = selected
         .iter()
@@ -90,7 +104,10 @@ pub async fn list_definition_views(
         .await
         .map_err(|error| db_error(&error))?;
 
-    let metrics = build_views(selected, dimensions)?;
+    let mut metrics = build_views(selected, dimensions)?;
+    for metric in &mut metrics {
+        metric.drilldown = capabilities.remove(&metric.metric_key);
+    }
     Ok(MetricDefinitionListResponse { metrics })
 }
 
@@ -148,6 +165,7 @@ fn build_views(
             schema_status,
             schema_error_code,
             last_observed_date: row.last_observed_date,
+            drilldown: None,
         });
     }
     Ok(metrics)

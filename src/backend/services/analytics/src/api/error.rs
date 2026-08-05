@@ -14,42 +14,9 @@ use toolkit_canonical_errors::resource_error;
 #[resource_error("gts.cf.insight.analytics_api.metric.v1~")]
 pub struct MetricError;
 
-#[resource_error("gts.cf.insight.analytics_api.threshold.v1~")]
-pub struct ThresholdError;
-
-#[resource_error("gts.cf.insight.analytics_api.person.v1~")]
-pub struct PersonError;
-
-/// Resource namespace for the metric-catalog domain (Refs #524, #525).
-///
-/// Distinct from [`MetricError`] (which scopes the legacy `/v1/metrics` CRUD
-/// surface) so catalog endpoints see the catalog's own GTS namespace per
-/// DESIGN §3.3 ("Resource GTS namespaces introduced for the catalog …
-/// `gts.cf.insight.metric_catalog.metric.v1~`").
-///
-/// `POST /v1/catalog/get_metrics` doesn't currently use this — its body-parse
-/// errors flow through [`super::canonical_json::CanonicalJson`], which emits a
-/// resource-less envelope because body parse failures fire before the
-/// request's target resource is known. Admin-crud (#525) uses
-/// [`ThresholdAdminError`] for threshold-row failures; this namespace is
-/// reserved for future `not_found` / 404 paths that target `metric_catalog`
-/// rows directly.
-#[allow(dead_code)] // first consumer lands with admin-crud (#525)
-#[resource_error("gts.cf.insight.metric_catalog.metric.v1~")]
-pub struct MetricCatalogError;
-
-/// Resource namespace for `/v1/admin/metric-thresholds/*` failures (Refs #525).
-///
-/// Every 4xx / 5xx the admin-crud handler emits carries this `resource_type`
-/// in `context.resource_type`, per DESIGN §3.3's resource-GTS table
-/// (`gts.cf.insight.metric_catalog.threshold.v1~`). Distinct from the legacy
-/// `ThresholdError` namespace, which scopes the older
-/// `/v1/metrics/{id}/thresholds/*` CRUD surface — both must coexist while
-/// the legacy endpoints remain wired, but they describe different resource
-/// shapes (legacy: `(metric_id, level, operator)`; catalog: scoped per-tenant
-/// `(scope, role_slug, team_id)` row with lock metadata).
-#[resource_error("gts.cf.insight.metric_catalog.threshold.v1~")]
-pub struct ThresholdAdminError;
+/// Resource namespace for `/v1/queries*` (saved-query CRUD + run, #1965).
+#[resource_error("gts.cf.insight.analytics_api.saved_query.v1~")]
+pub struct SavedQueryError;
 
 /// Resource namespace for tenant-resolution failures
 /// (`cpt-metric-cat-constraint-tenant-default`). The middleware surfaces an
@@ -134,77 +101,24 @@ mod tests {
     }
 
     #[test]
-    fn threshold_update_invalid_operator_only() -> Result<(), Box<dyn std::error::Error>> {
-        // PUT /v1/metrics/{id}/thresholds/{tid} with a bad operator. The
-        // handler attaches the threshold id as the resource and reports a
-        // single field violation against `operator` — NOT a double violation.
-        let err = ThresholdError::invalid_argument()
-            .with_resource("tid-xyz")
-            .with_field_violation("operator", "invalid operator", "INVALID")
+    fn saved_query_invalid_sql_envelope() -> Result<(), Box<dyn std::error::Error>> {
+        // POST/PUT /v1/queries with SQL the single-SELECT gate rejects: a 400
+        // pinning the `sql` field under the saved-query resource namespace.
+        let err = SavedQueryError::invalid_argument()
+            .with_resource("q-123")
+            .with_field_violation("sql", "query must be a single SELECT statement", "INVALID")
             .create();
         let p = problem(err)?;
         assert_eq!(p["status"], 400);
         assert_eq!(
             p["context"]["resource_type"],
-            "gts.cf.insight.analytics_api.threshold.v1~"
+            "gts.cf.insight.analytics_api.saved_query.v1~"
         );
-        assert_eq!(p["context"]["resource_name"], "tid-xyz");
         let violations = p["context"]["field_violations"]
             .as_array()
             .ok_or("field_violations must be an array")?;
         assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0]["field"], "operator");
-        Ok(())
-    }
-
-    #[test]
-    fn threshold_create_both_fields_invalid() -> Result<(), Box<dyn std::error::Error>> {
-        // POST /v1/metrics/{id}/thresholds with both operator AND level bad.
-        // Envelope MUST carry one entry per offending field — no duplication,
-        // no cross-talk where the operator's diagnostic gets pinned to `level`.
-        let err = ThresholdError::invalid_argument()
-            .with_field_violation(
-                "operator",
-                "operator must be one of: gt, ge, lt, le, eq",
-                "INVALID",
-            )
-            .with_field_violation(
-                "level",
-                "level must be one of: good, warning, critical",
-                "INVALID",
-            )
-            .create();
-        let p = problem(err)?;
-        let violations = p["context"]["field_violations"]
-            .as_array()
-            .ok_or("field_violations must be an array")?;
-        assert_eq!(violations.len(), 2);
-        assert_eq!(violations[0]["field"], "operator");
-        assert_eq!(violations[1]["field"], "level");
-        // Each diagnostic names its own field — the operator message MUST
-        // NOT appear under the `level` violation (the previous buggy code
-        // duplicated the same message under both fields).
-        assert!(
-            violations[1]["description"]
-                .as_str()
-                .is_some_and(|s| s.starts_with("level must be one of")),
-            "level violation must carry the level-specific message",
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn person_not_found_envelope() -> Result<(), Box<dyn std::error::Error>> {
-        let err = PersonError::not_found("person not found")
-            .with_resource("alice@example.com")
-            .create();
-        let p = problem(err)?;
-        assert_eq!(p["status"], 404);
-        assert_eq!(
-            p["context"]["resource_type"],
-            "gts.cf.insight.analytics_api.person.v1~"
-        );
-        assert_eq!(p["context"]["resource_name"], "alice@example.com");
+        assert_eq!(violations[0]["field"], "sql");
         Ok(())
     }
 

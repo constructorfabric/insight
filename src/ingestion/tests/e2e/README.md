@@ -39,7 +39,6 @@ cd src/ingestion/tests/e2e
 
 ./e2e.sh build              # build the runner image (one-time, ~3-5 min cold)
 ./e2e.sh test               # full suite (api + metrics + meta)
-./e2e.sh test api/          # api suite: endpoint contract tests only (seconds)
 ./e2e.sh test metrics/      # metrics suite: the yaml fixture rig
 ./e2e.sh test meta/         # rig framework self-tests (local-only; CI skips them)
 ./e2e.sh test -k collab_emails_sent -v   # one test
@@ -48,7 +47,9 @@ cd src/ingestion/tests/e2e
 ./e2e.sh down               # tear down compose stack + volumes
 ```
 
-The same image is used in CI, which builds it ONCE in a shared upstream `build` job and hands it to two independent lanes (`e2e-api`, `e2e-metrics`) as a saved image artifact — each lane loads the image, boots its own stack, runs its own suite (meta/ is local-only: it tests the harness, not the product), and uploads its own coverage artifact (`coverage-inputs-api` / `coverage-inputs-metrics`) — see `.github/workflows/e2e-bronze-to-api.yml`. The lanes share nothing at runtime (only the build is shared); each gate consumes only its own lane's artifact.
+The same image is used in CI, which builds it ONCE in a shared upstream `build` job and hands it to the `e2e-metrics` lane as a saved image artifact — the lane loads the image, boots its stack, runs the suite (meta/ is local-only: it tests the harness, not the product), and uploads `coverage-inputs-metrics` for the metric gate — see `.github/workflows/e2e-bronze-to-api.yml`.
+
+**The `api/` and `identity/` HTTP contract suites have retired from this rig.** Those contracts are asserted against a deployed stand in [`tests/stand/`](../../../../tests/stand/), which crosses a real gateway with a real Keycloak session and can therefore prove the 401/403 behaviour an in-process rig structurally cannot. Their endpoint gate moved with them, to `tests/lib/insight_stand/coverage.py`. What remains here is what only this rig does: bronze → dbt → ClickHouse → analytics response, over fixtures it seeds itself.
 
 First session bootstraps `cargo build --release -p analytics` (~3-5 min). Subsequent sessions reuse the named volume so cargo is incremental (~10s).
 
@@ -103,7 +104,7 @@ Locally, after a run:
 ./e2e.sh gates metrics    # metric gate only, against .artifacts/ (in the runner image; no DB)
 ```
 
-`./e2e.sh gates` with no argument runs both gates (handy after running both suites locally; see [API endpoint coverage gate](#api-endpoint-coverage-gate) below for the api/-only equivalent). `gates api` / `gates metrics` run one gate against one artifact each — that per-lane shape is what mirrors the two independent CI jobs, each of which only ever needs its own lane's artifact.
+`./e2e.sh gates` runs the metric gate against `.artifacts/`. The api and identity endpoint gates that used to live here moved to the stand suite with the contracts they measured.
 
 Missing views, unknown asserted keys, unknown requested keys, and stale fixtures fail. There are no legacy suffix mappings or skip lists.
 
@@ -114,11 +115,9 @@ The suite records which analytics routes it exercises: an httpx response hook on
 Locally, after a run:
 
 ```bash
-./e2e.sh test api/    # runs the api/ suite (emits both .artifacts files; only observed_endpoints.json feeds this gate)
-./e2e.sh gates api    # endpoint gate only, against .artifacts/ (in the runner image; no DB)
 ```
 
-Per-status-code coverage is **reported, not enforced**: the report renders an endpoints × registered-status-codes table (`✓` observed · `✗` declared but not yet observed · `·` excluded · blank = not declared) and an overall coverage percentage. A code is *coverable* — and so counts toward the percentage — only if a black-box rig can produce it: `coverable(op) = declared(op) − {codes ≥ 500} − UNIVERSAL_BOILERPLATE{401,429} − BLOCKED[op]`. `BLOCKED` absorbs the committed spec's `.standard_errors` over-declaration (#1669) plus pinned rig/product limits, and a `·` code that becomes observed (or a `BLOCKED` op dropped from the spec) is surfaced as a non-blocking advisory so the list stays honest.
+Per-status-code coverage is **reported, not enforced**: the report renders an endpoints × registered-status-codes table (`✓` observed · `✗` declared but not yet observed · `·` excluded · blank = not declared) and an overall coverage percentage. A code is *coverable* — and so counts toward the percentage — only if a black-box rig can produce it: `coverable(op) = declared(op) − {codes ≥ 500} − UNIVERSAL_BOILERPLATE{429} − BLOCKED[op]` (401 is coverable — the rig runs auth-ENABLED and `api/test_unauthorized.py` observes it on every operation). `BLOCKED` absorbs the committed spec's `.standard_errors` over-declaration (#1669) plus pinned rig/product limits, and a `·` code that becomes observed (or a `BLOCKED` op dropped from the spec) is surfaced as a non-blocking advisory so the list stays honest.
 
 The [`api/`](api/) contract suite covers all 21 spec operations — one module per path group (`test_metrics.py`, `test_metric_thresholds.py`, `test_admin_thresholds.py`, `test_catalog.py`, `test_columns.py`, `test_persons.py`, `test_metric_results.py`), one test per (path, method, status-code) case, from self-cleaning fixtures (`api/conftest.py`). The declarative metrics suite covers successful `/v1/metric-results` computation for every builtin metric.
 

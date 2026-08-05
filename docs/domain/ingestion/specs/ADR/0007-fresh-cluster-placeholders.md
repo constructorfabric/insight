@@ -8,12 +8,13 @@ date: 2026-05-05
 
 > **Superseded (2026-07, issue #1831).** Hand-written minimum-viable
 > placeholders are gone. `scripts/create-bronze-placeholders.sh` now applies
-> `scripts/connectors-ddl/*.sql` — a CI-generated `SHOW CREATE` snapshot of
+> `scripts/connectors-ddl/*.sql` — a committed `SHOW CREATE` snapshot of
 > every relation the full bootstrap-db pipeline (real connector `discover`,
 > real destination-clickhouse, real dbt models) produces on a throwaway
-> ClickHouse (see `.github/workflows/connectors-ddl.yml` and
-> `scripts/bootstrap-db/`). Schemas can no longer drift from the connectors:
-> the snapshot is regenerated whenever connector/dbt sources change. The
+> ClickHouse (see `scripts/bootstrap-db/`). Schemas can no longer drift from
+> the connectors: the snapshot is regenerated whenever connector/dbt sources
+> change, and `.github/workflows/connectors-ddl.yml` re-runs the pipeline on
+> every PR and fails when the committed snapshot no longer matches. The
 > "extend the placeholder list by hand" rule below and the
 > drop-before-first-sync caveat no longer apply; the historical context and
 > the marker/drop mechanism for pre-snapshot clusters remain documented

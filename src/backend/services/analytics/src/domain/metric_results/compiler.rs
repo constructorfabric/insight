@@ -97,8 +97,8 @@ pub(crate) fn compile_period_batch_query(
     let mut params = Vec::new();
     let selects = item_value_selects(defs, &mut params, period_alias);
     let metric_scope = shared_observation_where(defs, req, filters, &mut params);
-    params.extend(req.entity_ids.iter().cloned());
-    let entities = placeholders(req.entity_ids.len());
+    params.extend(req.entity.entity_ids());
+    let entity_id_params = placeholders(req.entity.len());
     let observation_table = batch_observation_table(defs);
     let limit = query_row_limit();
     let inner = format!(
@@ -107,7 +107,7 @@ pub(crate) fn compile_period_batch_query(
             entity_id{selects}
         FROM {observation_table}
         WHERE {metric_scope}
-          AND entity_id IN ({entities})
+          AND entity_id IN ({entity_id_params})
         GROUP BY entity_id
         LIMIT {limit}
         "
@@ -129,8 +129,8 @@ pub(crate) fn compile_timeseries_query(
     }
     let mut params = metric_params(def, req);
     let filter_where = dimension_filter_where(filters, &mut params);
-    params.extend(req.entity_ids.iter().cloned());
-    let entities = placeholders(req.entity_ids.len());
+    params.extend(req.entity.entity_ids());
+    let entity_id_params = placeholders(req.entity.len());
     let bucket = bucket_expr(bucket);
     let (dim_select, dim_group) = dimension_select_group(dimensions);
     let bucket_group = if dim_group.is_empty() {
@@ -159,12 +159,12 @@ pub(crate) fn compile_timeseries_query(
         FROM {observation_table}
         WHERE {metric_where}
           {filter_where}
-          AND entity_id IN ({entities})
+          AND entity_id IN ({entity_id_params})
         GROUP BY GROUPING SETS (({bucket_group}), ({total_group}))
         ORDER BY entity_id, is_total, bucket_start
         LIMIT {limit}
         ",
-        metric_where = metric_where(def),
+        metric_where = metric_where(def, req.enforce_tenant_scope),
     );
     let sql = transformed_single(def, inner);
     CompiledQuery { sql, params }
@@ -180,8 +180,8 @@ pub(crate) fn compile_group_ranking_query(
     let mut params = grouped_value_params(def);
     params.extend(metric_where_params(def, req));
     let filter_where = dimension_filter_where(filters, &mut params);
-    params.extend(req.entity_ids.iter().cloned());
-    let entities = placeholders(req.entity_ids.len());
+    params.extend(req.entity.entity_ids());
+    let entity_id_params = placeholders(req.entity.len());
     let (dim_select, dim_group, dim_order) = ranking_dimension_select_group(dimensions);
     let observation_table = observation_table(def.observation_relation());
     let value_expr = grouped_value_expr(def);
@@ -193,10 +193,10 @@ pub(crate) fn compile_group_ranking_query(
         FROM {observation_table}
         WHERE {metric_where}
           {filter_where}
-          AND entity_id IN ({entities})
+          AND entity_id IN ({entity_id_params})
         GROUP BY {dim_group}
         ",
-        metric_where = metric_where(def),
+        metric_where = metric_where(def, req.enforce_tenant_scope),
     );
     let transformed = transformed_single(def, inner);
     let sql = format!(
@@ -221,8 +221,8 @@ fn compile_capped_timeseries_query(
 ) -> CompiledQuery {
     let mut params = metric_where_params(def, req);
     let filter_where = dimension_filter_where(filters, &mut params);
-    params.extend(req.entity_ids.iter().cloned());
-    let entities = placeholders(req.entity_ids.len());
+    params.extend(req.entity.entity_ids());
+    let entity_id_params = placeholders(req.entity.len());
     let bucket = bucket_expr(bucket);
     let raw_dimensions = dimensions.iter().enumerate().fold(
         String::new(),
@@ -257,7 +257,7 @@ fn compile_capped_timeseries_query(
             FROM {observation_table}
             WHERE {metric_where}
               {filter_where}
-              AND entity_id IN ({entities})
+              AND entity_id IN ({entity_id_params})
         ),
         ranked AS (
             SELECT
@@ -296,7 +296,7 @@ fn compile_capped_timeseries_query(
         ORDER BY entity_id, group_rank, is_total, bucket_start
         LIMIT {limit}
         ",
-        metric_where = metric_where(def),
+        metric_where = metric_where(def, req.enforce_tenant_scope),
     );
     CompiledQuery { sql, params }
 }
@@ -383,8 +383,8 @@ pub(crate) fn compile_breakdown_query(
 ) -> CompiledQuery {
     let mut params = metric_params(def, req);
     let filter_where = dimension_filter_where(filters, &mut params);
-    params.extend(req.entity_ids.iter().cloned());
-    let entities = placeholders(req.entity_ids.len());
+    params.extend(req.entity.entity_ids());
+    let entity_id_params = placeholders(req.entity.len());
     let (dim_select, dim_group) = dimension_select_group(dimensions);
     let group = if dim_group.is_empty() {
         "entity_id".to_owned()
@@ -402,12 +402,12 @@ pub(crate) fn compile_breakdown_query(
         FROM {observation_table}
         WHERE {metric_where}
           {filter_where}
-          AND entity_id IN ({entities})
+          AND entity_id IN ({entity_id_params})
         GROUP BY {group}
         ORDER BY entity_id
         LIMIT {limit}
         ",
-        metric_where = metric_where(def),
+        metric_where = metric_where(def, req.enforce_tenant_scope),
     );
     let sql = transformed_single(def, inner);
     CompiledQuery { sql, params }
@@ -446,8 +446,8 @@ pub(crate) fn compile_histogram_query(
 ) -> CompiledQuery {
     let mut params = metric_params(def, req);
     let filter_where = dimension_filter_where(filters, &mut params);
-    params.extend(req.entity_ids.iter().cloned());
-    let entities = placeholders(req.entity_ids.len());
+    params.extend(req.entity.entity_ids());
+    let entity_id_params = placeholders(req.entity.len());
     let observation_table = observation_table(def.observation_relation());
     let bins = HISTOGRAM_BINS;
     let max_bin = HISTOGRAM_BINS - 1;
@@ -461,7 +461,7 @@ pub(crate) fn compile_histogram_query(
             FROM {observation_table}
             WHERE {metric_where}
               {filter_where}
-              AND entity_id IN ({entities})
+              AND entity_id IN ({entity_id_params})
               AND value IS NOT NULL
         ),
         events AS (
@@ -473,7 +473,7 @@ pub(crate) fn compile_histogram_query(
             FROM raw_events
         )
         SELECT
-            events.entity_id AS entity_id,
+            toString(assumeNotNull(events.entity_id)) AS entity_id,
             if(
                 events.entity_hi = events.entity_lo,
                 0,
@@ -489,18 +489,17 @@ pub(crate) fn compile_histogram_query(
         ORDER BY entity_id, bin_idx
         LIMIT {limit}
         ",
-        metric_where = metric_where(def),
+        metric_where = metric_where(def, req.enforce_tenant_scope),
         event_value = transformed(def, "value".to_owned()),
     );
     CompiledQuery { sql, params }
 }
 
-// The cohort join shape relies on the gold contract that a person has at
-// most one cohort row per (entity_type, cohort_key): the model ends in
-// `LIMIT 1 BY tenant_id, entity_id` and assert_metric_entity_cohorts_unique
-// asserts it at every dbt build. If that contract ever loosened (multi-cohort
-// membership), the GROUP BY below would blend pools and double-weight shared
-// peers — a state the dbt test exists to catch loudly; no SQL hardening here.
+// No collapsing here: cohort membership arrives as one row per
+// (tenant, entity_id, cohort_key) — the cohort relation
+// is canonical-grained and drops a person whose several HR emails claim
+// different org units, so nothing here collapses or tie-breaks. Keep it that
+// way: a pool that repairs its own input hides the input being wrong.
 pub(crate) fn compile_peer_batch_query(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
@@ -508,19 +507,76 @@ pub(crate) fn compile_peer_batch_query(
     filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = Vec::new();
-    params.push(req.entity_type.clone());
-    params.push(cohort_key.to_owned());
-    params.extend(req.entity_ids.iter().cloned());
-    params.push(req.entity_type.clone());
-    params.push(cohort_key.to_owned());
+    // The targets and cohort CTEs each scope by tenant/entity_type/cohort_key;
+    // the targets CTE additionally filters person ids, bound between them.
+    push_cohort_scope(&mut params, req, cohort_key);
+    params.extend(req.entity.entity_ids());
+    push_cohort_scope(&mut params, req, cohort_key);
     let value_selects = item_value_selects(defs, &mut params, period_alias);
     let metric_scope = shared_observation_where(defs, req, filters, &mut params);
 
-    let entities = placeholders(req.entity_ids.len());
+    let entity_id_params = placeholders(req.entity.len());
     let observation_table = batch_observation_table(defs);
     let cohort_table = cohort_table(CohortSource::MetricEntityCohortsCurrent);
     let limit = query_row_limit();
 
+    let (carried, stats_selects, target_group) = peer_item_selects(defs);
+
+    // Same switch as every other read (#1967): peer pools staying tenant-scoped
+    // while the rest of the query bypasses would answer empty peers, which is
+    // the failure the config flag exists to avoid.
+    let tenant = tenant_predicate(req.enforce_tenant_scope);
+
+    let sql = format!(
+        r"
+        WITH
+        targets AS (
+            SELECT entity_id, cohort_id
+            FROM {cohort_table}
+            WHERE {tenant} AND entity_type = ?
+              AND cohort_key = ?
+              AND entity_id IN ({entity_id_params})
+        ),
+        cohort AS (
+            SELECT entity_id, cohort_id
+            FROM {cohort_table}
+            WHERE {tenant} AND entity_type = ?
+              AND cohort_key = ?
+              AND cohort_id IN (SELECT cohort_id FROM targets)
+        ),
+        metric_values AS (
+            SELECT
+                entity_id{value_selects}
+            FROM {observation_table}
+            WHERE {metric_scope}
+            GROUP BY entity_id
+        ),
+        entity_values AS (
+            SELECT
+                cohort.entity_id AS entity_id,
+                cohort.cohort_id AS cohort_id{carried}
+            FROM cohort
+            LEFT JOIN metric_values
+                ON metric_values.entity_id = cohort.entity_id
+        )
+        SELECT
+            targets.entity_id AS entity_id{stats_selects}
+        FROM targets
+        LEFT JOIN entity_values AS target_values
+            ON target_values.entity_id = targets.entity_id
+        LEFT JOIN entity_values AS peer
+            ON peer.cohort_id = targets.cohort_id
+        GROUP BY targets.entity_id{target_group}
+        LIMIT {limit}
+        SETTINGS join_use_nulls = 1
+        "
+    );
+    CompiledQuery { sql, params }
+}
+
+// Per-item select fragments of the peer query: the carried (transformed)
+// value column, the guarded stats block, and the GROUP BY tail.
+fn peer_item_selects(defs: &[&MetricDefinition]) -> (String, String, String) {
     let mut carried = String::new();
     let mut stats_selects = String::new();
     let mut target_group = String::new();
@@ -564,57 +620,7 @@ pub(crate) fn compile_peer_batch_query(
         );
         let _ = write!(target_group, ", target_values.{value}");
     }
-
-    let sql = format!(
-        r"
-        WITH
-        targets AS (
-            SELECT DISTINCT
-                entity_id,
-                cohort_id
-            FROM {cohort_table}
-            WHERE entity_type = ?
-              AND cohort_key = ?
-              AND entity_id IN ({entities})
-              AND cohort_id IS NOT NULL
-        ),
-        cohort AS (
-            SELECT DISTINCT
-                entity_id,
-                cohort_id
-            FROM {cohort_table}
-            WHERE entity_type = ?
-              AND cohort_key = ?
-              AND cohort_id IN (SELECT cohort_id FROM targets)
-        ),
-        metric_values AS (
-            SELECT
-                entity_id{value_selects}
-            FROM {observation_table}
-            WHERE {metric_scope}
-            GROUP BY entity_id
-        ),
-        entity_values AS (
-            SELECT
-                cohort.entity_id AS entity_id,
-                cohort.cohort_id AS cohort_id{carried}
-            FROM cohort
-            LEFT JOIN metric_values
-                ON metric_values.entity_id = cohort.entity_id
-        )
-        SELECT
-            targets.entity_id AS entity_id{stats_selects}
-        FROM targets
-        LEFT JOIN entity_values AS target_values
-            ON target_values.entity_id = targets.entity_id
-        LEFT JOIN entity_values AS peer
-            ON peer.cohort_id = targets.cohort_id
-        GROUP BY targets.entity_id{target_group}
-        LIMIT {limit}
-        SETTINGS join_use_nulls = 1
-        "
-    );
-    CompiledQuery { sql, params }
+    (carried, stats_selects, target_group)
 }
 
 fn item_value_selects(
@@ -750,13 +756,26 @@ fn transformed_batch(
     )
 }
 
+/// Push the `tenant_id`, `entity_type`, `cohort_key` values a cohort CTE's
+/// `WHERE` binds, in that order. Called once per CTE (targets, cohort).
+fn push_cohort_scope(
+    params: &mut Vec<String>,
+    req: &ValidatedMetricResultsRequest,
+    cohort_key: &str,
+) {
+    params.push(req.tenant_id.to_string());
+    params.push(req.entity.entity_type().to_owned());
+    params.push(cohort_key.to_owned());
+}
+
 fn shared_observation_where(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
     filters: &[ValidatedDimensionFilter],
     params: &mut Vec<String>,
 ) -> String {
-    params.push(req.entity_type.clone());
+    params.push(req.tenant_id.to_string());
+    params.push(req.entity.entity_type().to_owned());
     params.push(req.from.to_string());
     params.push(req.to.to_string());
     let pairs = measure_pairs(defs);
@@ -765,8 +784,9 @@ fn shared_observation_where(
         params.push(measure_key.clone());
     }
     let pair_placeholders = vec!["(?, ?)"; pairs.len()].join(", ");
+    let tenant = tenant_predicate(req.enforce_tenant_scope);
     let mut where_clause = format!(
-        "entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND (source_key, measure_key) IN ({pair_placeholders})"
+        "{tenant} AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND (source_key, measure_key) IN ({pair_placeholders})"
     );
     where_clause.push_str(&dimension_filter_where(filters, params));
     where_clause
@@ -819,21 +839,40 @@ fn batch_observation_table(defs: &[&MetricDefinition]) -> String {
     observation_table(def.observation_relation())
 }
 
-// No tenant_id predicate: warehouse tenant isolation is not implemented
-// platform-wide (the legacy query engine also queries without it), and the
-// control-plane tenant UUID has no defined mapping to the warehouse
-// tenant_id strings stamped at ingestion. The observation and cohort
-// contracts keep the tenant_id column so isolation can be added here in one
-// place once the platform defines that mapping.
-fn metric_where(def: &MetricDefinition) -> &'static str {
+// INVARIANT: every observation read leads with the tenant predicate, bound from
+// the request's SecurityContext (never client SQL), so an enforced request
+// scoped to tenant A cannot read tenant B's rows. `tenant_id` is the column the
+// gold observation and cohort contract exposes; the value is the raw tenant
+// UUID, the same representation the metric lineage stamps. The placeholder is
+// first here and its value first in `metric_where_params` — keep the two in
+// lockstep. When enforcement is off (the default until the ingest tenant is
+// aligned, #1829) the term is a tautology that still binds the same one
+// placeholder, so the param order is identical in both modes.
+pub(crate) fn tenant_predicate(enforce: bool) -> &'static str {
+    if enforce {
+        "tenant_id = ?"
+    } else {
+        // Bypass: still consumes the bound tenant param (String = String, so no
+        // type coercion), but `OR 1 = 1` makes it match every row — the
+        // pre-#1967 behavior, without changing placeholder arity.
+        "(tenant_id = ? OR 1 = 1)"
+    }
+}
+
+fn metric_where(def: &MetricDefinition, enforce_tenant_scope: bool) -> String {
+    let tenant = tenant_predicate(enforce_tenant_scope);
     match &def.spec {
         ComputationSpec::Sum { .. }
         | ComputationSpec::Median { .. }
         | ComputationSpec::DistinctCount { .. } => {
-            "source_key = ? AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND measure_key = ?"
+            format!(
+                "{tenant} AND source_key = ? AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND measure_key = ?"
+            )
         }
         ComputationSpec::Ratio { .. } => {
-            "source_key = ? AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND measure_key IN (?, ?)"
+            format!(
+                "{tenant} AND source_key = ? AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND measure_key IN (?, ?)"
+            )
         }
     }
 }
@@ -865,8 +904,9 @@ fn metric_where_params(def: &MetricDefinition, req: &ValidatedMetricResultsReque
         ComputationSpec::Sum { value }
         | ComputationSpec::Median { value }
         | ComputationSpec::DistinctCount { value } => vec![
+            req.tenant_id.to_string(),
             value.source_key.clone(),
-            req.entity_type.clone(),
+            req.entity.entity_type().to_owned(),
             req.from.to_string(),
             req.to.to_string(),
             value.measure_key.clone(),
@@ -876,8 +916,9 @@ fn metric_where_params(def: &MetricDefinition, req: &ValidatedMetricResultsReque
             denominator,
             ..
         } => vec![
+            req.tenant_id.to_string(),
             numerator.source_key.clone(),
-            req.entity_type.clone(),
+            req.entity.entity_type().to_owned(),
             req.from.to_string(),
             req.to.to_string(),
             numerator.measure_key.clone(),
@@ -998,8 +1039,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
+
     use crate::domain::metric_definitions::definition::ValueTransform;
     use crate::domain::metric_results::batch::{RankedDimension, RankedGroup};
+    use crate::domain::metric_results::validation::ValidatedEntitySelection;
     use chrono::NaiveDate;
 
     use crate::domain::metric_definitions::definition::{
@@ -1074,13 +1118,19 @@ mod tests {
         }
     }
 
+    const TEST_TENANT: uuid::Uuid = uuid::Uuid::from_u128(0x1967);
+    const TEST_TENANT_STR: &str = "00000000-0000-0000-0000-000000001967";
+
     fn request() -> ValidatedMetricResultsRequest {
         ValidatedMetricResultsRequest {
-            entity_type: "person".to_owned(),
-            entity_ids: vec!["a@x.io".to_owned(), "b@x.io".to_owned()],
+            tenant_id: TEST_TENANT,
+            entity: ValidatedEntitySelection::Person {
+                ids: vec![Uuid::from_u128(0xa), Uuid::from_u128(0xb)],
+            },
             from: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap_or_default(),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).unwrap_or_default(),
             metrics: Vec::new(),
+            enforce_tenant_scope: true,
         }
     }
 
@@ -1089,7 +1139,11 @@ mod tests {
         let (sum, ratio) = (sum_metric(), ratio_metric());
         let query = compile_period_batch_query(&[&sum, &ratio], &request(), &[]);
         assert!(query.sql.contains("FROM insight.ai_metric_observations"));
-        assert!(!query.sql.contains("tenant_id"));
+        assert!(
+            query
+                .sql
+                .contains("WHERE tenant_id = ? AND entity_type = ?")
+        );
         assert!(query.sql.contains("AS m0"));
         assert!(query.sql.contains("AS m1"));
         assert!(
@@ -1115,7 +1169,8 @@ mod tests {
                 "accepted_edit_actions",
                 "ai_usage",
                 "tool_use_offered",
-                // shared scope
+                // shared scope (tenant predicate leads)
+                TEST_TENANT_STR,
                 "person",
                 "2026-01-01",
                 "2026-01-31",
@@ -1126,9 +1181,9 @@ mod tests {
                 "accepted_lines",
                 "ai_usage",
                 "tool_use_offered",
-                // entities
-                "a@x.io",
-                "b@x.io",
+                // person ids
+                "00000000-0000-0000-0000-00000000000a",
+                "00000000-0000-0000-0000-00000000000b",
             ]
         );
     }
@@ -1154,6 +1209,7 @@ mod tests {
                 "accepted_edit_actions",
                 "ai_usage",
                 "tool_use_offered",
+                TEST_TENANT_STR,
                 "person",
                 "2026-01-01",
                 "2026-01-31",
@@ -1161,10 +1217,67 @@ mod tests {
                 "accepted_edit_actions",
                 "ai_usage",
                 "tool_use_offered",
-                "a@x.io",
-                "b@x.io",
+                "00000000-0000-0000-0000-00000000000a",
+                "00000000-0000-0000-0000-00000000000b",
             ]
         );
+    }
+
+    #[test]
+    fn tenant_predicate_leads_and_binds_context_tenant_on_every_contract_read() {
+        let sum = sum_metric();
+
+        let ts = compile_timeseries_query(&sum, &request(), Bucket::Day, &[], &[], None);
+        assert!(ts.sql.contains("WHERE tenant_id = ?"), "timeseries read");
+        assert_eq!(ts.params.first().map(String::as_str), Some(TEST_TENANT_STR));
+        assert_eq!(ts.sql.matches('?').count(), ts.params.len());
+
+        let rank = compile_group_ranking_query(&sum, &request(), &["tool".to_owned()], &[], 5);
+        assert!(rank.sql.contains("WHERE tenant_id = ?"), "ranking read");
+        assert_eq!(
+            rank.params.first().map(String::as_str),
+            Some(TEST_TENANT_STR)
+        );
+
+        // The peer query reads the contract three times (targets, cohort,
+        // metric_values); each must carry the tenant predicate and its value.
+        let peer = compile_peer_batch_query(&[&sum], &request(), "org_unit", &[]);
+        assert_eq!(peer.sql.matches("tenant_id = ?").count(), 3);
+        assert_eq!(
+            peer.params
+                .iter()
+                .filter(|p| p.as_str() == TEST_TENANT_STR)
+                .count(),
+            3
+        );
+        assert_eq!(peer.sql.matches('?').count(), peer.params.len());
+    }
+
+    #[test]
+    fn tenant_scope_disabled_bypasses_the_filter_but_keeps_param_arity() {
+        let sum = sum_metric();
+        let mut req = request();
+        req.enforce_tenant_scope = false;
+
+        // With enforcement off, every contract read swaps the exact-match term
+        // for the tautology, so nothing filters by tenant — yet the placeholder
+        // (and its bound value) stays in place, so param arity is unchanged.
+        let ts = compile_timeseries_query(&sum, &req, Bucket::Day, &[], &[], None);
+        assert!(
+            ts.sql.contains("(tenant_id = ? OR 1 = 1)"),
+            "timeseries uses the bypass term"
+        );
+        assert!(
+            !ts.sql.contains("WHERE tenant_id = ?"),
+            "no exact-match tenant term when bypassed"
+        );
+        assert_eq!(ts.sql.matches('?').count(), ts.params.len());
+        assert_eq!(ts.params.first().map(String::as_str), Some(TEST_TENANT_STR));
+
+        // All three peer reads (targets, cohort, metric_values) bypass together.
+        let peer = compile_peer_batch_query(&[&sum], &req, "org_unit", &[]);
+        assert_eq!(peer.sql.matches("(tenant_id = ? OR 1 = 1)").count(), 3);
+        assert_eq!(peer.sql.matches('?').count(), peer.params.len());
     }
 
     #[test]
@@ -1318,14 +1431,21 @@ mod tests {
         assert_eq!(
             query.params,
             vec![
+                // targets CTE (tenant predicate leads every read)
+                TEST_TENANT_STR,
                 "person",
                 "org_unit",
-                "a@x.io",
-                "b@x.io",
+                "00000000-0000-0000-0000-00000000000a",
+                "00000000-0000-0000-0000-00000000000b",
+                // cohort CTE
+                TEST_TENANT_STR,
                 "person",
                 "org_unit",
+                // item value selects
                 "ai_usage",
                 "accepted_lines",
+                // metric_values shared scope
+                TEST_TENANT_STR,
                 "person",
                 "2026-01-01",
                 "2026-01-31",
@@ -1373,8 +1493,19 @@ mod tests {
             )));
         }
         assert!(!query.sql.contains("quantileExactIf(0.25)"));
-        // Duplicate cohort membership must not fan out the pool.
-        assert_eq!(query.sql.matches("SELECT DISTINCT").count(), 2);
+        // The cohort relation is canonical-grained (one row per person and
+        // cohort_key, contested membership already dropped), so the pool reads
+        // it straight. A collapse here would repair a broken input silently.
+        assert!(
+            !query.sql.contains("HAVING"),
+            "no collapsing: the cohort relation already arrives at person grain"
+        );
+        assert!(
+            query
+                .sql
+                .contains("AND cohort_id IN (SELECT cohort_id FROM targets)"),
+            "the pool is exactly the target cohorts' membership"
+        );
         // Honest-null must not depend on server config or column typing.
         assert!(query.sql.contains("SETTINGS join_use_nulls = 1"));
         assert!(

@@ -1,0 +1,15 @@
+# Keep build contexts free of host-only artefacts.
+#
+# Two of these are load-bearing rather than tidiness: a host `.venv` carries
+# macOS binaries that are useless (and large) inside a Linux image, and a stale
+# `__pycache__` makes pytest inside the container report HOST file paths.
+#
+# The `**/` prefix matters — Docker's ignore patterns are anchored at the
+# context root, so a bare `__pycache__/` would only match one at the top level.
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/*.egg-info/

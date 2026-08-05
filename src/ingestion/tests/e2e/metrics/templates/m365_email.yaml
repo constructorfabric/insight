@@ -14,7 +14,7 @@ templates:
     _airbyte_extracted_at: "2026-01-05T00:00:00"
     _airbyte_meta: "{}"
     _airbyte_generation_id: 0
-    tenant_id: "00000000-0000-0000-0000-000000000000"
+    tenant_id: "11111111-1111-1111-1111-111111111111"
     source_id: "m365-test"
     unique_key: null
     userPrincipalName: null

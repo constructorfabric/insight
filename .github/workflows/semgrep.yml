@@ -35,9 +35,11 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
+          # `--baseline-commit` builds a worktree at the base commit.
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Semgrep scan (report-only — ratchet to blocking with --error once baseline is clean)
+      - name: Semgrep scan (full tree — owns the SARIF upload, never blocks)
         # `docker run` rather than a `container:` job so the JS actions keep the runner's Node.
         # `--config auto` needs metrics on to select rules, so `--metrics off` is omitted.
         run: |
@@ -51,6 +53,26 @@ jobs:
               --config p/csharp \
               --exclude-rule generic.secrets.security.detected-generic-secret \
               --sarif --output semgrep.sarif
+
+      - name: Semgrep scan — findings added by this pull request (BLOCKING)
+        # Scoped to the PR's own findings; plain `--error` would fail on the existing baseline.
+        # No SARIF from this pass — a baseline-scoped report would mark the baseline fixed.
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -w /src \
+            -e BASE_SHA \
+            semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d \
+            semgrep scan \
+              --config auto \
+              --config p/rust \
+              --config p/csharp \
+              --exclude-rule generic.secrets.security.detected-generic-secret \
+              --error \
+              --baseline-commit "$BASE_SHA"
 
       - name: Summarize findings in the job summary
         if: always()

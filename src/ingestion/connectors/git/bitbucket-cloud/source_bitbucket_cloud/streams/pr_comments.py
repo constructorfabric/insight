@@ -6,6 +6,24 @@ from typing import Any
 from source_bitbucket_cloud.streams.base import repo_scope, schema, truncate, unique_key
 from source_bitbucket_cloud.streams.pr_base import PullRequestStateStream
 
+PR_COMMENT_FIELDS = ",".join(
+    [
+        "values.id",
+        "values.content.raw",
+        "values.created_on",
+        "values.updated_on",
+        "values.user.display_name",
+        "values.user.uuid",
+        "values.user.account_id",
+        "values.inline.path",
+        "values.inline.from",
+        "values.inline.to",
+        "values.parent.id",
+        "values.deleted",
+        "next",
+    ]
+)
+
 
 class PRCommentsStream(PullRequestStateStream):
     name = "pull_request_comments"
@@ -17,7 +35,9 @@ class PRCommentsStream(PullRequestStateStream):
         generation = self.generation(repo.uuid, pr_id, "comments")
         entity_keys: set[str] = set()
         path = self._client.repo_path(repo, f"pullrequests/{pr_id}/comments")
-        present, comments = self._client.paginate_optional(path, params={"pagelen": "100"})
+        present, comments = self._client.paginate_optional(
+            path, params={"pagelen": "100", "fields": PR_COMMENT_FIELDS}
+        )
         for comment in comments:
             comment_id = comment.get("id")
             if comment_id is None:

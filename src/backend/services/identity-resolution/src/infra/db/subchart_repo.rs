@@ -122,6 +122,133 @@ pub async fn is_target_in_visible_set(
     Ok(row.is_some())
 }
 
+/// True if `viewer_person_id` currently holds a whole-tenant (wildcard) grant,
+/// meaning the CTEs below would union the whole tenant and a caller may skip the
+/// traversal. Lives here because its validity window must stay identical to
+/// their wildcard arm; `visibility_repo`'s `valid_to IS NULL` would also accept
+/// a future-dated grant.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub async fn has_wildcard_grant(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    viewer_person_id: Uuid,
+) -> anyhow::Result<bool> {
+    const SQL: &str = r"
+        SELECT 1
+        FROM visibility
+        WHERE insight_tenant_id = ?
+          AND viewer_person_id  = ?
+          AND viewed_person_id  IS NULL
+          AND valid_from <= UTC_TIMESTAMP(6)
+          AND (valid_to IS NULL OR valid_to > UTC_TIMESTAMP(6))
+        LIMIT 1
+    ";
+
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [bytes(tenant_id), bytes(viewer_person_id)],
+    );
+
+    Ok(db.query_one(stmt).await?.is_some())
+}
+
+/// Batch form of [`is_target_in_visible_set`]: the same union, computed once and
+/// joined against `candidates` instead of traversed per candidate. Authorization
+/// has no point-in-time lens, so `valid_at` is fixed at `UTC_TIMESTAMP(6)`.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn visible_targets(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    viewer_person_id: Uuid,
+    candidates: &[Uuid],
+    org_source_type: &str,
+) -> anyhow::Result<Vec<Uuid>> {
+    const SQL: &str = r"
+        WITH RECURSIVE visible_set (person_id) AS (
+            SELECT @viewer_person_id
+            UNION
+            SELECT viewed_person_id
+            FROM visibility
+            WHERE insight_tenant_id = @tenant_id
+              AND viewer_person_id  = @viewer_person_id
+              AND viewed_person_id  IS NOT NULL
+              AND valid_from <= UTC_TIMESTAMP(6)
+              AND (valid_to IS NULL OR valid_to > UTC_TIMESTAMP(6))
+            UNION
+            SELECT DISTINCT person_id
+            FROM persons
+            WHERE insight_tenant_id = @tenant_id
+              AND EXISTS (
+                  SELECT 1 FROM visibility
+                  WHERE insight_tenant_id = @tenant_id
+                    AND viewer_person_id  = @viewer_person_id
+                    AND viewed_person_id  IS NULL
+                    AND valid_from <= UTC_TIMESTAMP(6)
+                    AND (valid_to IS NULL OR valid_to > UTC_TIMESTAMP(6))
+              )
+            UNION
+            SELECT oc.child_person_id
+            FROM visible_set vs
+            JOIN org_chart oc
+              ON  oc.parent_person_id    = vs.person_id
+              AND oc.insight_tenant_id   = @tenant_id
+              AND oc.insight_source_type = @org_source_type
+              AND oc.valid_from <= UTC_TIMESTAMP(6)
+              AND (oc.valid_to IS NULL OR oc.valid_to > UTC_TIMESTAMP(6))
+        )
+        SELECT person_id FROM visible_set WHERE person_id IN (@candidates)
+    ";
+
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let names = (0..candidates.len())
+        .map(|i| format!("cand_{i}"))
+        .collect::<Vec<_>>();
+    let list = names
+        .iter()
+        .map(|name| format!("@{name}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut params: Vec<(&str, Value)> = vec![
+        ("viewer_person_id", bytes(viewer_person_id)),
+        ("tenant_id", bytes(tenant_id)),
+        ("org_source_type", org_source_type.into()),
+    ];
+    params.extend(
+        names
+            .iter()
+            .zip(candidates)
+            .map(|(name, id)| (name.as_str(), bytes(*id))),
+    );
+
+    let (sql, values) = bind_named(&SQL.replace("@candidates", &list), &params)?;
+
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            &sql,
+            values,
+        ))
+        .await?;
+
+    rows.iter()
+        .map(|r| {
+            let person_id: Vec<u8> = r.try_get("", "person_id")?;
+            Ok(Uuid::from_slice(&person_id)?)
+        })
+        .collect()
+}
+
 /// Depth-bounded subtree rooted at `root_person_id`. Ported verbatim from
 /// `SqlSubchart.GetSubchart`: a recursive descent over `org_chart` (anchor =
 /// the root with a NULL parent) joined to a `ROW_NUMBER()` latest-observation

@@ -26,9 +26,9 @@ SELECT
     parseDateTimeBestEffortOrNull(updated_at) AS updated_on,
     parseDateTimeBestEffortOrNull(closed_at) AS closed_on,
     COALESCE(merge_commit_sha, '') AS merge_commit_hash,
-    COALESCE(changed_files, 0) AS files_changed,
-    COALESCE(additions, 0) AS lines_added,
-    COALESCE(deletions, 0) AS lines_removed,
+    toNullable(COALESCE(changed_files, 0)) AS files_changed,
+    toNullable(COALESCE(additions, 0)) AS lines_added,
+    toNullable(COALESCE(deletions, 0)) AS lines_removed,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at

@@ -45,6 +45,28 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS identity.identity_persons
+(
+    `id` UInt64,
+    `value_type` String,
+    `insight_source_type` String,
+    `insight_source_id` UUID,
+    `insight_tenant_id` UUID,
+    `value_id` Nullable(String),
+    `value_full_text` Nullable(String),
+    `value` Nullable(String),
+    `value_effective` Nullable(String),
+    `person_id` UUID,
+    `author_person_id` UUID,
+    `reason` Nullable(String),
+    `created_at` DateTime64(6, 'UTC'),
+    `_synced_at` DateTime64(3, 'UTC')
+)
+ENGINE = MergeTree
+ORDER BY id
+SETTINGS index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS identity.seed_aliases_from_claude_admin
 (
     `id` UUID,

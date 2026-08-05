@@ -27,13 +27,22 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("paths object missing"))?;
     for expected in [
-        "/v1/metrics",
-        "/v1/metrics/queries",
-        "/v1/catalog/get_metrics",
+        "/v1/metric-definitions",
+        "/v1/metric-drilldown",
+        "/v1/metric-drilldown/export",
         "/v1/metric-results",
+        "/v1/queries",
+        "/v1/queries/{id}",
+        "/v1/queries/{id}/run",
     ] {
         assert!(paths.contains_key(expected), "missing path {expected}");
     }
+    assert_eq!(
+        paths.len(),
+        7,
+        "the contract must carry exactly the surviving paths, got {:?}",
+        paths.keys().collect::<Vec<_>>()
+    );
 
     // Typed request/response bodies register real component schemas instead of
     // the pre-migration generic `object`.
@@ -45,7 +54,10 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         "expected the typed contract to register many schemas, got {}",
         schemas.len()
     );
-    assert!(schemas.contains_key("Metric"), "Metric schema missing");
+    assert!(
+        schemas.contains_key("SavedQuery"),
+        "SavedQuery schema missing"
+    );
     assert!(
         schemas.contains_key("MetricResultsRequest"),
         "MetricResultsRequest schema missing"

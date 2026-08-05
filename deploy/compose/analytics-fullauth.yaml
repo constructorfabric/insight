@@ -95,5 +95,4 @@ gears:
       clickhouse_database: "insight"
       identity_url: ""
       redis_url: ""
-      metric_catalog:
-        tenant_default_id: ~
+      metric_catalog: {}

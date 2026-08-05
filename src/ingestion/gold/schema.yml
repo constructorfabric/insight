@@ -1,6 +1,108 @@
 version: 2
 
 models:
+  - name: ai_metric_evidence
+    description: >
+      Materialized MergeTree evidence serving table for AI source measures.
+      AI silver retains daily usage summaries, so rows use source_summary
+      granularity except active-day population rows.
+    columns: &metric_evidence_columns
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source family"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ai_usage', 'collab', 'git', 'task', 'wiki']
+      - name: entity_type
+        description: "Measured entity type"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['person']
+      - name: entity_id
+        description: >
+          Canonical person id, resolved ONCE per gold build ('' when identity
+          does not know the source email — those rows stay for coverage and
+          reach no serving relation). The same snapshot every downstream
+          relation answers for.
+        tests:
+          - not_null
+      - name: source_entity_id
+        description: >
+          Source-native email the row was resolved from — provenance and the
+          coverage denominator; never a serving key.
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Date used by metric period filtering"
+        tests:
+          - not_null
+      - name: observed_at
+        description: "Optional event timestamp"
+      - name: measure_key
+        description: "Source measure key"
+        tests:
+          - not_null
+      - name: record_id
+        description: "Deterministic total-order key within the measure scope"
+        tests:
+          - not_null
+      - name: record_kind
+        description: "Source record classification"
+        tests:
+          - not_null
+      - name: granularity
+        description: "Evidence grain: event, source_summary, or derived_population"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['event', 'source_summary', 'derived_population']
+      - name: record_label
+        description: "Human-readable record label"
+      - name: contribution
+        description: "Nullable numeric contribution to the source measure"
+      - name: subject_key
+        description: "Nullable subject for distinct-count computations"
+      - name: dimensions
+        description: "Typed metric dimensions inherited by filtering and grouping"
+      - name: details
+        description: "Additional display fields keyed by stable field name"
+
+  - name: git_metric_evidence
+    description: >
+      Materialized MergeTree evidence serving table for Git source measures.
+      Median inputs retain event grain; additive measures retain their
+      established daily and dimension summaries.
+    columns: *metric_evidence_columns
+
+  - name: collab_metric_evidence
+    description: >
+      Materialized MergeTree evidence serving table for collaboration source
+      measures. Connector class contracts retain daily summaries; focus,
+      activity, and meeting-free populations are marked as derived.
+    columns: *metric_evidence_columns
+
+  - name: task_metric_evidence
+    description: >
+      Materialized MergeTree evidence serving table for task source measures.
+      Issue duration inputs retain event grain; lifecycle ratios, snapshots,
+      and daily flows are marked as derived populations.
+    columns: *metric_evidence_columns
+
+  - name: wiki_metric_evidence
+    description: >
+      Materialized MergeTree evidence serving table for wiki source measures.
+      Page creation rows retain event grain; edits and engagement expose the
+      established daily summaries retained by the silver contracts.
+    columns: *metric_evidence_columns
+
   - name: ai_metric_observations
     description: >
       Source measure observations for the unified metrics runtime. One row per
@@ -30,7 +132,13 @@ models:
               arguments:
                 values: ['person']
       - name: entity_id
-        description: "Normalized entity identifier (lowercased email for person)"
+        description: >
+          Canonical person id — `entity_type + entity_id` identifies the
+          measured entity, and for a person that identity IS the person id,
+          stamped into the evidence relations once per gold build. Source rows
+          whose email identity cannot resolve never reach this relation;
+          identity_resolution_coverage counts them from evidence, which keeps
+          the source email as source_entity_id.
         tests:
           - not_null
       - name: metric_date
@@ -107,10 +215,12 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Normalized entity identifier: lowercased email from the commit
-          author or the pull-request identity resolution tiers (direct
-          email, PR-commit dominant email, name bridge). Rows that resolve
-          to no email are excluded upstream.
+          Canonical person id — `entity_type + entity_id` identifies the
+          measured entity, and for a person that identity IS the person id,
+          stamped into the evidence relations once per gold build. Source rows
+          whose email identity cannot resolve never reach this relation;
+          identity_resolution_coverage counts them from evidence, which keeps
+          the source email as source_entity_id.
         tests:
           - not_null
       - name: metric_date
@@ -192,9 +302,12 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Normalized entity identifier: the class person_key (lowercased
-          email, falling back to lowercased user id where a source has no
-          email). Rows with an empty person_key are excluded upstream.
+          Canonical person id — `entity_type + entity_id` identifies the
+          measured entity, and for a person that identity IS the person id,
+          stamped into the evidence relations once per gold build. Source rows
+          whose email identity cannot resolve never reach this relation;
+          identity_resolution_coverage counts them from evidence, which keeps
+          the source email as source_entity_id.
         tests:
           - not_null
       - name: metric_date
@@ -286,9 +399,12 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Normalized entity identifier: the assignee's (or worklog author's)
-          lowercased email, resolved through class_task_users. Accounts that do
-          not resolve to an email are excluded upstream.
+          Canonical person id — `entity_type + entity_id` identifies the
+          measured entity, and for a person that identity IS the person id,
+          stamped into the evidence relations once per gold build. Source rows
+          whose email identity cannot resolve never reach this relation;
+          identity_resolution_coverage counts them from evidence, which keeps
+          the source email as source_entity_id.
         tests:
           - not_null
       - name: metric_date
@@ -408,9 +524,12 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Normalized entity identifier: the author's lowercased email as
-          resolved in the wiki staging models. Accounts that do not resolve
-          to an email are excluded upstream.
+          Canonical person id — `entity_type + entity_id` identifies the
+          measured entity, and for a person that identity IS the person id,
+          stamped into the evidence relations once per gold build. Source rows
+          whose email identity cannot resolve never reach this relation;
+          identity_resolution_coverage counts them from evidence, which keeps
+          the source email as source_entity_id.
         tests:
           - not_null
       - name: metric_date
@@ -448,12 +567,14 @@ models:
 
   - name: metric_entity_cohorts_current
     description: >
-      Current cohort membership per entity for peer comparison. One row per
+      Current cohort membership per person for peer comparison. One row per
       (tenant, entity_type, entity_id, cohort_key) — uniqueness is asserted by
-      tests/gold/assert_metric_entity_cohorts_unique.sql and relied on by the
-      analytics service peer view (join fan-out would corrupt percentiles). The
-      column set is a published contract probed by the analytics service schema
-      validator (`COHORT_COLUMNS`).
+      tests/gold/assert_metric_entity_cohorts_unique.sql, and since entity_id is
+      the canonical person id that uniqueness is per PERSON: the model collapses
+      a person's several HR emails itself and EXCLUDES anyone whose emails claim
+      different org units, so the peer query reads it straight instead of
+      repairing the grain per request. The column set is a published contract
+      probed by the analytics service schema validator (`COHORT_COLUMNS`).
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -467,7 +588,13 @@ models:
               arguments:
                 values: ['person']
       - name: entity_id
-        description: "Normalized entity identifier (lowercased email for person)"
+        description: >
+          Canonical person id — `entity_type + entity_id` identifies the
+          measured entity, and for a person that identity IS the person id,
+          stamped into the evidence relations once per gold build. Source rows
+          whose email identity cannot resolve never reach this relation;
+          identity_resolution_coverage counts them from evidence, which keeps
+          the source email as source_entity_id.
         tests:
           - not_null
       - name: cohort_key
@@ -481,3 +608,29 @@ models:
         description: >
           Cohort membership value: org unit id when present, department name
           fallback otherwise. NULL when the person has neither.
+
+  - name: identity_resolution_coverage
+    description: >
+      Identity-resolution match rate measured over ACTIVITY (evidence source
+      rows), one row per source (git/ai_usage/collab/task/wiki) plus
+      hr_cohorts for the peer-membership relation. A TABLE materialized in
+      the same gold build as the serving relations, reading the resolution
+      snapshot stamped into evidence — so coverage answers for exactly what
+      is served, never a fresher map. Row-weighted on purpose —
+      unresolved_rows counts what the dashboards actually lose;
+      unresolved_people counts the distinct unknown emails behind the gap
+      (roughly the operator decisions that would close it). The "match rate
+      is reported" surface of the identity epic for the metrics pipeline.
+    columns:
+      - name: source_key
+        description: "Observation source_key, or 'hr_cohorts' for the cohort membership"
+        tests:
+          - not_null
+      - name: observation_rows
+        description: "Total observation rows for the source"
+      - name: unresolved_rows
+        description: "Source rows whose email identity cannot resolve"
+      - name: unresolved_people
+        description: "Distinct entity_id (emails) behind the unresolved rows"
+      - name: match_rate_pct
+        description: "Share of source rows that resolve to a person, percent (1 decimal)"

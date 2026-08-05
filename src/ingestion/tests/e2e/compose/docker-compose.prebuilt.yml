@@ -1,0 +1,16 @@
+# CI-only overlay: source each baked-in binary from a pre-built image instead
+# of compiling it. The e2e workflow loads/pulls these local tags first (PR
+# artifacts from build-images.yml, or the published :latest for path-skipped
+# components) — see .github/workflows/e2e-bronze-to-api.yml.
+#
+# `docker-image://` refs resolve from the local daemon store only with the
+# DEFAULT buildx driver; the docker-container driver the gha-cache overlays
+# need cannot see daemon images. Never combine this overlay with
+# docker-compose.cache*.yml.
+services:
+  runner:
+    build:
+      additional_contexts:
+        jira-enrich: "docker-image://insight-jira-enrich:e2e-prebuilt"
+        analytics: "docker-image://insight-analytics:e2e-prebuilt"
+        identity-resolution: "docker-image://insight-identity-resolution:e2e-prebuilt"

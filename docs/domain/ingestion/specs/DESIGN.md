@@ -25,7 +25,7 @@ date: 2026-03-23
   - [3.8 Connector Package Structure](#38-connector-package-structure)
 - [4. Deployment](#4-deployment)
   - [4.1 Production (Kubernetes + Helm)](#41-production-kubernetes--helm)
-  - [4.2 Local Development (Kind K8s Cluster)](#42-local-development-kind-k8s-cluster)
+  - [4.2 Local Development (local Kubernetes cluster)](#42-local-development-local-kubernetes-cluster)
   - [4.3 Ultra-Light Connector Debugging](#43-ultra-light-connector-debugging)
   - [4.4 Schema Migrations](#44-schema-migrations)
 - [5. Additional Context](#5-additional-context)
@@ -812,15 +812,15 @@ migrations inside the service codebase and applies them at startup.
   `src/backend/services/analytics/src/migration/`; tracker table
   `seaql_migrations` in the database referenced by
   `mariadb.database` (umbrella chart, default `insight`).
-- **identity** (.NET 9): DbUp at
-  `src/backend/services/identity/src/Insight.Identity.Infrastructure/Migrations/`
-  (plain SQL files, applied via `MigrationRunner`); tracker table
-  `SchemaVersions` (DbUp default) in the database referenced by
-  `identity.databaseName` (umbrella chart, default `identity`).
+- **identity-resolution** (Rust): SeaORM migrator at
+  `src/backend/services/identity-resolution/src/migration/`, applied
+  via the service's `migrate` subcommand (run as an initContainer in
+  Kubernetes); tracker table `seaql_migrations` in the database
+  referenced by the service's configuration (default `identity`).
 - **Future backend services**: follow the same pattern — own
-  `Migrations/` folder co-located with the service code, own tracker
+  migrations co-located with the service code, own tracker
   table in own database. Tooling flavour follows the service's
-  language (SeaORM for Rust, DbUp for .NET).
+  language (SeaORM for Rust).
 
 All services invoke their migrator at startup before opening the HTTP
 listener. This provides:
@@ -855,7 +855,7 @@ scripts and are invoked explicitly by operators after migrations run
 and the underlying data source is populated.
 
 Currently:
-- `src/backend/services/identity/seed/seed-persons.sh` + `seed-persons-from-identity-input.py` — identity-resolution's one-shot seed.
+- `src/backend/services/identity-resolution/seed/seed-persons.sh` + `seed-persons-from-identity-input.py` — identity-resolution's one-shot seed.
 
 ## 5. Additional Context
 

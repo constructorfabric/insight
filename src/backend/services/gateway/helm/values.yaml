@@ -55,7 +55,7 @@ gateway:
       timeoutMs: 60000
       stripPrefix: true
     - prefix: /api/identity
-      upstream: 'http://{{ .Release.Name }}-identity:8082'
+      upstream: 'http://{{ .Release.Name }}-identity-resolution:8082'
       stripPrefix: true
 
   # Trusted ingress-hop CIDRs for X-Forwarded-For (set_real_ip_from). Empty =

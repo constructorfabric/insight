@@ -19,7 +19,6 @@ sources:
       - name: pull_requests
       - name: pull_request_diffstat
       - name: pull_request_activity
-      - name: pull_request_tasks
       - name: pull_request_comments
       - name: pull_request_commits
       # Optional streams: permission- or feature-gated endpoints (Pipelines,
@@ -44,6 +43,10 @@ sources:
       - name: issue_comments
         freshness: null
       - name: issue_changes
+        freshness: null
+      # Not wired into the source right now (no model reads it), so its table
+      # has no newest row to be fresh.
+      - name: pull_request_tasks
         freshness: null
 
 models:

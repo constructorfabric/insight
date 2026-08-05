@@ -2,7 +2,6 @@
 
 pub mod check_probe;
 pub mod entities;
-pub mod product_default_probe;
 
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 

@@ -40,7 +40,7 @@ SELECT
         toString(toDate(parseDateTimeBestEffortOrNull(m.created_at)))
     )) AS unique_key,
     lower(u.email) AS user_id,
-    coalesce(any(u.full_name), '') AS user_name,
+    toNullable(coalesce(any(u.full_name), '')) AS user_name,
     lower(u.email) AS email,
     lower(u.email) AS person_key,
     toDate(parseDateTimeBestEffortOrNull(m.created_at)) AS date,

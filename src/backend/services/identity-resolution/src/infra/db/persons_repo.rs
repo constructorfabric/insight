@@ -10,7 +10,7 @@
 
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
-    QueryResult, Statement,
+    QueryResult, QuerySelect, Statement,
 };
 use uuid::Uuid;
 
@@ -66,13 +66,16 @@ pub async fn resolve_person_ids_by_email(
     person_ids_from_rows(rows)
 }
 
-/// Tenant-AGNOSTIC email → `person_id` resolution for the login bootstrap (the
-/// authenticator's service-only `GET /internal/persons/by-email/{email}` call):
-/// at login the caller's tenant is not yet known, so the tenant filter is
-/// dropped and any matching tenant's latest observation wins. Returns the single
-/// winning `person_id`, or `None` when the email is unknown. Ported verbatim from
-/// `Sql.cs::ResolvePersonIdByEmailAnyTenant` (window `ROW_NUMBER()` → raw SQL,
-/// see `infra::db` module docs + constructorfabric/gears-rust#4239).
+/// Tenant-AGNOSTIC email → `person_id` resolution for the authenticator's
+/// admin `__override` (view-as) service-only lookup
+/// (`GET /internal/persons/by-email-override`) ONLY — the login bootstrap
+/// resolves by external id (see `resolve_person_id_by_source_any_tenant`
+/// below), NEVER by email. At override time neither the target's tenant is
+/// yet known, so the tenant filter is dropped and any matching tenant's
+/// latest observation wins. Returns the single winning `person_id`, or
+/// `None` when the email is unknown. Ported
+/// verbatim from `Sql.cs::ResolvePersonIdByEmailAnyTenant` (window `ROW_NUMBER()`
+/// → raw SQL, see `infra::db` module docs + constructorfabric/gears-rust#4239).
 ///
 /// # Errors
 ///
@@ -104,6 +107,76 @@ pub async fn resolve_person_id_by_email_any_tenant(
 
     let stmt =
         Statement::from_sql_and_values(DbBackend::MySql, SQL, [email.trim().to_owned().into()]);
+
+    match db.query_one(stmt).await? {
+        Some(row) => {
+            let bytes: Vec<u8> = row.try_get("", "person_id")?;
+            Ok(Some(Uuid::from_slice(&bytes)?))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Tenant-AGNOSTIC `(source_type, external_id)` → `person_id` resolution for the
+/// login bootstrap ONLY (the authenticator's service-only
+/// `GET /internal/persons/by-external-id?source_type=...&external_id=...`
+/// call — a SEPARATE route from the email-override lookup above): at login
+/// the caller's tenant is not yet known, so unlike
+/// `resolve_person_ids_by_source_id` this does not scope by a per-tenant
+/// `insight_source_id` (connector instance) — only the source **type** (e.g.
+/// `ms-entra`) and the source-native external id are known ahead of tenant
+/// resolution. Returns the single winning `person_id`, or `None` when the pair
+/// is unknown. Same latest-observation-wins semantics as
+/// `resolve_person_id_by_email_any_tenant`.
+///
+/// SECURITY INVARIANT this relies on (same one email-based any-tenant lookup
+/// already relied on): `(source_type, external_id)` must be unique across
+/// every tenant sharing this database, or the wrong tenant's person could
+/// win. This holds today because `idp.source_type`/`issuer_url` are ONE
+/// value per authenticator deployment — every login for every tenant behind
+/// it goes through the SAME real external IdP, so `external_id` is only as
+/// unique as that one IdP's own id space (Entra `oid` / Keycloak's internal
+/// user id are effectively globally unique within their own directory).
+/// Revisit this comment when multi-IdP config lands (constructorfabric/insight#1960
+/// follow-ups) — that's the point where two DIFFERENT real `IdPs` could
+/// plausibly share a `source_type` label and this invariant needs an
+/// explicit uniqueness check, not just "it happens to hold today".
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn resolve_person_id_by_source_any_tenant(
+    db: &DatabaseConnection,
+    source_type: &str,
+    external_id: &str,
+) -> anyhow::Result<Option<Uuid>> {
+    const SQL: &str = r"
+        WITH ranked AS (
+            SELECT
+                person_id,
+                id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, value_type, value_id
+                    ORDER BY created_at DESC, id DESC
+                ) AS rn,
+                created_at
+            FROM persons
+            WHERE value_type = 'id'
+              AND insight_source_type = ?
+              AND value_id = ?
+        )
+        SELECT person_id
+        FROM ranked
+        WHERE rn = 1
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+    ";
+
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [source_type.to_owned().into(), external_id.to_owned().into()],
+    );
 
     match db.query_one(stmt).await? {
         Some(row) => {
@@ -164,6 +237,60 @@ pub async fn resolve_person_ids_by_source_id(
 
     let rows = db.query_all(stmt).await?;
     person_ids_from_rows(rows)
+}
+
+/// Whether the tenant's persons log holds any observation for `person_id`.
+///
+/// The existence question the `value_type='person_id'` profile lookup needs:
+/// the log is the person registry, so "has at least one row" IS "the person
+/// exists in this tenant". Kept as a bounded EXISTS-shaped probe rather than
+/// reusing `fetch_person_observations`, which pulls every row of the person.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+/// The subset of `person_ids` with at least one observation in the tenant's
+/// persons log — the batch form of [`person_exists`], for the wildcard branch
+/// of the visible-persons filter: a wildcard grant covers everyone IN THE
+/// TENANT, so ids from another tenant (or from nowhere) must not be echoed
+/// back as visible.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn persons_in_tenant(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_ids: &[Uuid],
+) -> anyhow::Result<Vec<Uuid>> {
+    if person_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let rows = persons::Entity::find()
+        .select_only()
+        .column(persons::Column::PersonId)
+        .filter(persons::Column::InsightTenantId.eq(tenant_id.as_bytes().to_vec()))
+        .filter(persons::Column::PersonId.is_in(person_ids.iter().map(|id| id.as_bytes().to_vec())))
+        .distinct()
+        .into_tuple::<Vec<u8>>()
+        .all(db)
+        .await?;
+
+    rows.iter().map(|raw| Ok(Uuid::from_slice(raw)?)).collect()
+}
+
+pub async fn person_exists(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_id: Uuid,
+) -> anyhow::Result<bool> {
+    let found = persons::Entity::find()
+        .filter(persons::Column::InsightTenantId.eq(tenant_id.as_bytes().to_vec()))
+        .filter(persons::Column::PersonId.eq(person_id.as_bytes().to_vec()))
+        .one(db)
+        .await?;
+    Ok(found.is_some())
 }
 
 /// Fetch every observation row for a person within the tenant (all value types,

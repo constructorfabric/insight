@@ -10,11 +10,11 @@ RDS / Cloud SQL, …); this Job dials `mariadb.host` directly, waits for
 it to accept connections, then runs the SQL.
 
 Hook timing: `pre-install,pre-upgrade`. The DB must exist BEFORE the
-application pods (identity, etc.) start — otherwise their migration
-init-containers / DbUp loops fail and helm's `--wait` blocks on
+application pods (identity-resolution, etc.) start — otherwise their
+migration init-containers fail and helm's `--wait` blocks on
 CrashLoopBackOff'd pods until the timeout, never reaching post-*
 hooks. Pre-* fires BEFORE main resources apply, so by the time the
-identity pod is scheduled, the database already exists.
+identity-resolution pod is scheduled, the database already exists.
 
 Prerequisite: `insight-db-creds` must exist in the namespace BEFORE
 helm install/upgrade runs. In gitops mode (`apply-app-secrets` step
@@ -33,27 +33,7 @@ gated block below following the identity pattern: read the service's
 The list lives HERE; do not mirror it elsewhere.
 ==============================================================================
 */}}
-{{- /*
-Transition guard (identity .NET → identity-resolution Rust, epic #1602):
-while both services deploy side-by-side they MUST share one database —
-identity-resolution's migrate initContainer owns the schema (idempotent
-over what the .NET DbUp applied), and diverging names would silently
-split them onto different databases. Rust-only installs are fine: the
-migrate initContainer brings a fresh database up from scratch.
-*/}}
-{{- if and .Values.identity.deploy .Values.identityResolution.deploy (ne .Values.identity.databaseName .Values.identityResolution.databaseName) }}
-{{- fail (printf "identity.databaseName (%q) and identityResolution.databaseName (%q) must be equal: both identity services must share one database." .Values.identity.databaseName .Values.identityResolution.databaseName) }}
-{{- end }}
-{{- /*
-Single bootstrap OWNER: the .NET BootstrapAdminRunner takes no advisory
-lock, so two configured bootstrap admins racing across the two services
-could insert two active assignments (nothing constrains the active
-(tenant, person, role) triple). Exactly one side may carry the config.
-*/}}
-{{- if and .Values.identity.deploy .Values.identityResolution.deploy .Values.identity.bootstrapAdminPersonId .Values.identityResolution.bootstrapAdminPersonId }}
-{{- fail "identity.bootstrapAdminPersonId and identityResolution.bootstrapAdminPersonId are both set — the first-admin bootstrap must have exactly ONE owner while the services run side-by-side (the .NET runner takes no lock, so a cross-service race can mint two active assignments). Clear one of them." }}
-{{- end }}
-{{- if or .Values.identity.deploy .Values.identityResolution.deploy }}
+{{- if .Values.identityResolution.deploy }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -120,9 +100,8 @@ spec:
               done
 
               echo "Provisioning per-service databases..."
-              {{- if or .Values.identity.deploy .Values.identityResolution.deploy }}
-              {{- $identityDb := ternary .Values.identity.databaseName .Values.identityResolution.databaseName .Values.identity.deploy }}
-              IDENTITY_DB={{ required "identity(.Resolution).databaseName is required" $identityDb | quote }}
+              {{- if .Values.identityResolution.deploy }}
+              IDENTITY_DB={{ required "identityResolution.databaseName is required" .Values.identityResolution.databaseName | quote }}
               SQL=$(printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON `%s`.* TO `%s`@`%%`; FLUSH PRIVILEGES;' \
                 "$IDENTITY_DB" "$IDENTITY_DB" "$MARIADB_USER")
               mariadb -h"$MARIADB_HOST" -P"$MARIADB_PORT" -uroot -e "$SQL"

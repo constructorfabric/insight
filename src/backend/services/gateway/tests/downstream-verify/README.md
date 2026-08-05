@@ -11,17 +11,18 @@ The full chain with the **real** downstream services behind the OpenResty
 gateway:
 
 ```
-fakeidp ─▶ authenticator ─▶ gateway ─▶ {analytics (Rust), identity (.NET)}
+fakeidp ─▶ authenticator ─▶ gateway ─▶ {analytics, identity-resolution}
                               │                     ▲
                     cookie ─▶ JWT (ES256)           │ verifies the JWT via JWKS
 ```
 
 - `authenticator` resolves the login user via the **identity-stub** (a test seam
   so login works without seeding real identity).
-- `analytics` and `identity` are the real services; each verifies the gateway
+- `analytics` and `identity-resolution` are the real services; each verifies the gateway
   JWT against the authenticator's JWKS and then maps the claims (analytics via
-  the shared `authverify` layer; identity via its JwtBearer + `GatewayTenantContext`).
-- `MariaDB` backs analytics (migrations run at boot) and identity.
+  the shared oidc-authn-plugin layer).
+- `MariaDB` backs analytics (migrations run at boot) and identity-resolution
+  (a one-shot `migrate` service runs its migrations first).
 
 ## The five scenarios (`test_downstream.py`)
 
@@ -43,6 +44,6 @@ pip install pytest pyjwt cryptography
 src/backend/services/gateway/tests/downstream-verify/run-e2e.sh
 ```
 
-The suite builds the analytics / identity / authenticator / gateway / fakeidp
+The suite builds the analytics / identity-resolution / authenticator / gateway / fakeidp
 images, so the first run is slow; it is intended for CI and local verification,
 never a production image.

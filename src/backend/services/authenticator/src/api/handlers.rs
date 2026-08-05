@@ -25,7 +25,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::api::AppState;
-use crate::api::error::{OidcError, PersonError, SessionError};
+use crate::api::error::{OidcError, SessionError};
 use crate::audit::AuditEvent;
 use crate::cookie;
 use crate::identity::PersonResolution;
@@ -52,7 +52,28 @@ pub async fn login(
     Extension(state): Extension<Arc<AppState>>,
     Query(params): Query<LoginParams>,
 ) -> Response {
-    let return_to = sanitize_return_to(params.return_to.as_deref(), &state.cfg.default_return_to);
+    let return_to = sanitize_return_to(
+        params.return_to.as_deref(),
+        &state.cfg.default_return_to,
+        &state.cfg.return_to_prefix,
+    );
+
+    // Preview experiments (`/exp/<name>`) are a capability, off by default. A
+    // production stand leaves `experiments_enabled=false`, so a login can never
+    // return into the preview subtree — an experimental frontend cannot be
+    // driven against that stand's data. Dev/demo preview hosts opt in. A future
+    // per-user RBAC check replaces this environment-level gate.
+    let return_to = if state.cfg.experiments_enabled || !is_preview_return(&return_to) {
+        return_to
+    } else {
+        tracing::warn!(
+            target: "audit",
+            event = "experiment_return_ignored",
+            "return_to under the /exp/ preview prefix but experiments_enabled=false: \
+             falling back to default_return_to"
+        );
+        state.cfg.default_return_to.clone()
+    };
 
     // `__override` (view-as, #1941): carried into the login state only when
     // the environment opts in; otherwise the parameter is inert — and logged,
@@ -140,6 +161,33 @@ pub struct CallbackParams {
     state: Option<String>,
     #[serde(default)]
     error: Option<String>,
+    /// The IdP's human-readable detail (e.g. Entra's `AADSTS…` codes) — the
+    /// only place the failure cause survives now that the browser gets a
+    /// redirect instead of a problem body.
+    #[serde(default)]
+    error_description: Option<String>,
+}
+
+/// Bounce a failed callback back into the SPA (#2032). The browser arrives
+/// here on an IdP redirect with no page loaded, so problem+json would dead-end
+/// the login on raw JSON. Redirect to `default_return_to` with a fixed
+/// `auth_error=<reason>` instead — the SPA restarts the login (loop-guarded)
+/// or shows an error screen. `reason` must be one of the fixed codes; nothing
+/// IdP- or caller-supplied may reach the Location header.
+fn login_error_redirect(default_return_to: &str, reason: &str) -> Response {
+    let sep = if default_return_to.contains('?') {
+        '&'
+    } else {
+        '?'
+    };
+    build_response(
+        StatusCode::FOUND,
+        vec![(
+            LOCATION.clone(),
+            format!("{default_return_to}{sep}auth_error={reason}"),
+        )],
+        Body::empty(),
+    )
 }
 
 /// Complete login: validate state, exchange the code, guard against session
@@ -155,16 +203,19 @@ pub async fn callback(
     Query(params): Query<CallbackParams>,
 ) -> Response {
     if let Some(err) = params.error {
-        return OidcError::invalid_argument()
-            .with_field_violation("error", err, "IDP_ERROR")
-            .create()
-            .into_response();
+        // Client-reachable log path: strip control characters so the
+        // IdP-supplied values cannot forge log lines, and cap the lengths.
+        let sanitize =
+            |v: &str| -> String { v.chars().filter(|c| !c.is_control()).take(200).collect() };
+        tracing::warn!(
+            error = %sanitize(&err),
+            error_description = %sanitize(params.error_description.as_deref().unwrap_or("")),
+            "IdP reported an error at /auth/callback"
+        );
+        return login_error_redirect(&state.cfg.default_return_to, "idp_error");
     }
     let (Some(code), Some(oidc_state)) = (params.code, params.state) else {
-        return OidcError::invalid_argument()
-            .with_field_violation("state", "missing code or state", "MISSING")
-            .create()
-            .into_response();
+        return login_error_redirect(&state.cfg.default_return_to, "invalid_callback");
     };
 
     // Layer-2 bucket keyed by the presented `state`
@@ -187,10 +238,10 @@ pub async fn callback(
     let login_state = match state.sessions.take_login_state(&oidc_state).await {
         Ok(Some(ls)) => ls,
         Ok(None) => {
-            return OidcError::invalid_argument()
-                .with_field_violation("state", "unknown or expired state", "STATE_MISMATCH")
-                .create()
-                .into_response();
+            // Expired (the 300 s login-state TTL), unknown, or already-consumed
+            // (replayed callback) state. A fresh login fixes all three, so
+            // bounce to the SPA instead of dead-ending (#2032).
+            return login_error_redirect(&state.cfg.default_return_to, "state_expired");
         }
         Err(e) => return internal_problem("login_state_take", &e),
     };
@@ -212,10 +263,7 @@ pub async fn callback(
                 error = format!("{e:#}"),
                 "oidc code exchange / id_token validation failed"
             );
-            return OidcError::invalid_argument()
-                .with_field_violation("code", "token exchange failed", "EXCHANGE_FAILED")
-                .create()
-                .into_response();
+            return login_error_redirect(&state.cfg.default_return_to, "exchange_failed");
         }
     };
 
@@ -232,10 +280,7 @@ pub async fn callback(
             email = %idp.identity.email,
             "login denied: id_token carried no tenant and no default_tenant_id is set"
         );
-        return PersonError::permission_denied()
-            .with_reason("tenant_unresolved")
-            .create()
-            .into_response();
+        return login_error_redirect(&state.cfg.default_return_to, "access_denied");
     }
 
     // Session-fixation guard: never reuse an incoming session; revoke any live
@@ -275,10 +320,7 @@ pub async fn callback(
                     "idp_sub": idp.identity.sub,
                 }),
             });
-            return PersonError::permission_denied()
-                .with_reason("unknown_person")
-                .create()
-                .into_response();
+            return login_error_redirect(&state.cfg.default_return_to, "access_denied");
         }
         Err(e) => return internal_problem("person_resolution", &e),
     };
@@ -442,6 +484,7 @@ async fn resolve_override(
         sub: String::new(),
         email: target_email.to_owned(),
         tenant_id: idp.identity.tenant_id.clone(),
+        resolve_by: crate::identity::ResolveTarget::Email(target_email.to_owned()),
     };
     match state.resolver.resolve(&target).await {
         Ok(Some(t)) => {
@@ -488,12 +531,12 @@ async fn resolve_override(
                     "override_email": target_email,
                 }),
             });
-            Err(Box::new(
-                PersonError::permission_denied()
-                    .with_reason("override_unknown_person")
-                    .create()
-                    .into_response(),
-            ))
+            // Denied, never a fallback to the caller (PRD 5.16) — but still a
+            // browser-facing callback failure, so it bounces like the rest.
+            Err(Box::new(login_error_redirect(
+                &state.cfg.default_return_to,
+                "access_denied",
+            )))
         }
         Err(e) => Err(Box::new(internal_problem("person_resolution", &e))),
     }
@@ -1373,14 +1416,50 @@ fn refresh_at_for(cfg: &crate::config::AuthenticatorConfig, expires_at: u64) -> 
         .saturating_add_signed(jitter_seconds(cfg.refresh_jitter_seconds / 2))
 }
 
-/// Sanitize an SPA-supplied `return_to`: accept only a site-relative path (one
-/// leading `/`, not `//` — which would be protocol-relative / open-redirect).
+/// Sanitize an SPA-supplied `return_to`; `default` on rejection. A non-empty
+/// `prefix` (empty = any same-origin path) also confines the path to it.
 #[must_use]
-pub fn sanitize_return_to(candidate: Option<&str>, default: &str) -> String {
-    match candidate {
-        Some(p) if p.starts_with('/') && !p.starts_with("//") => p.to_owned(),
-        _ => default.to_owned(),
+pub fn sanitize_return_to(candidate: Option<&str>, default: &str, prefix: &str) -> String {
+    candidate
+        .filter(|p| is_safe_return_to(p, prefix))
+        .unwrap_or(default)
+        .to_owned()
+}
+
+/// Reserved path prefix that preview experiments (`/exp/<name>`) are served
+/// under. The single point the experiments capability keys on — a login return
+/// into this subtree is honored only when experiments are enabled.
+const PREVIEW_RETURN_PREFIX: &str = "/exp/";
+
+/// Whether a (already-sanitized, site-relative) `return_to` targets the preview
+/// experiments subtree. Case-folded so `/EXP/` cannot slip the gate.
+fn is_preview_return(return_to: &str) -> bool {
+    return_to
+        .to_ascii_lowercase()
+        .starts_with(PREVIEW_RETURN_PREFIX)
+}
+
+/// Same-origin and (when `prefix` is set) confined to it — checked on a form
+/// the browser cannot fold into an escape. `\`, `%5c`, `%2e`, `%2f`, and a
+/// literal `..` path segment are rejected, since the WHATWG URL parser turns
+/// them into `/` or `..` *after* this check (`/\host`, `/exp/%2e%2e/admin`).
+fn is_safe_return_to(p: &str, prefix: &str) -> bool {
+    if !p.starts_with('/') || p.starts_with("//") || p.starts_with("/\\") {
+        return false;
     }
+
+    let path = p.split(['?', '#']).next().unwrap_or(p).to_ascii_lowercase();
+    if ["\\", "%5c", "%2e", "%2f"]
+        .iter()
+        .any(|bad| path.contains(bad))
+    {
+        return false;
+    }
+    if path.split('/').any(|seg| seg == "..") {
+        return false;
+    }
+
+    prefix.is_empty() || p.starts_with(prefix)
 }
 
 /// Sanitize the client-supplied `__override` value before it is logged or
@@ -1558,7 +1637,72 @@ mod tests {
 
     #[test]
     fn return_to_accepts_site_relative_paths() {
-        assert_eq!(sanitize_return_to(Some("/dashboard"), "/"), "/dashboard");
+        assert_eq!(
+            sanitize_return_to(Some("/dashboard"), "/", ""),
+            "/dashboard"
+        );
+    }
+
+    #[test]
+    fn return_to_prefix_admits_only_matching_paths() {
+        assert_eq!(
+            sanitize_return_to(Some("/exp/widget-1/"), "/", "/exp/"),
+            "/exp/widget-1/"
+        );
+        // Outside the prefix, traversal, and open-redirect shapes all fall back.
+        assert_eq!(sanitize_return_to(Some("/dashboard"), "/", "/exp/"), "/");
+        assert_eq!(sanitize_return_to(Some("/exp/../admin"), "/", "/exp/"), "/");
+        assert_eq!(
+            sanitize_return_to(Some("//evil.example"), "/", "/exp/"),
+            "/"
+        );
+        assert_eq!(sanitize_return_to(None, "/", "/exp/"), "/");
+    }
+
+    #[test]
+    fn return_to_rejects_percent_encoded_traversal_out_of_prefix() {
+        // `%2e%2e` / `%2f` normalize to `../` in the browser and would escape
+        // the prefix after this check, so they are rejected up front.
+        for encoded in [
+            "/exp/%2e%2e/admin",
+            "/exp/%2E%2E/admin",
+            "/exp/%2e%2e%2fadmin",
+        ] {
+            assert_eq!(
+                sanitize_return_to(Some(encoded), "/", "/exp/"),
+                "/",
+                "should reject: {encoded:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn return_to_rejects_backslash_open_redirect() {
+        // Browsers fold `\` (and its `%5c` encoding) into `/`, so `/\host` and
+        // `/%5chost` resolve off-origin — rejected even with no prefix set.
+        for evil in ["/\\evil.example", "/%5cevil.example", "/%5Cevil.example"] {
+            assert_eq!(
+                sanitize_return_to(Some(evil), "/", ""),
+                "/",
+                "should reject: {evil:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_preview_return_matches_exp_subtree_case_folded() {
+        for hit in ["/exp/widget-1/", "/exp/", "/EXP/Widget/", "/Exp/x"] {
+            assert!(
+                is_preview_return(hit),
+                "should be a preview return: {hit:?}"
+            );
+        }
+        for miss in ["/", "/dashboard", "/expunge", "/experiments"] {
+            assert!(
+                !is_preview_return(miss),
+                "should not be a preview return: {miss:?}"
+            );
+        }
     }
 
     #[test]
@@ -1574,9 +1718,12 @@ mod tests {
     #[test]
     fn return_to_rejects_open_redirects() {
         // Protocol-relative and absolute URLs fall back to the default.
-        assert_eq!(sanitize_return_to(Some("//evil.example"), "/"), "/");
-        assert_eq!(sanitize_return_to(Some("https://evil.example"), "/"), "/");
-        assert_eq!(sanitize_return_to(None, "/home"), "/home");
+        assert_eq!(sanitize_return_to(Some("//evil.example"), "/", ""), "/");
+        assert_eq!(
+            sanitize_return_to(Some("https://evil.example"), "/", ""),
+            "/"
+        );
+        assert_eq!(sanitize_return_to(None, "/home", ""), "/home");
     }
 
     #[test]
@@ -1597,5 +1744,26 @@ mod tests {
         let payload = B64.encode(br#"{"exp":4000000000}"#);
         let token = format!("aGVhZGVy.{payload}.c2ln");
         assert_eq!(jwt_exp(&token), Some(4_000_000_000));
+    }
+
+    fn location_of(resp: &Response) -> String {
+        resp.headers()
+            .get(LOCATION)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    #[test]
+    fn login_error_redirect_bounces_into_the_spa() {
+        let resp = login_error_redirect("/", "state_expired");
+        assert_eq!(resp.status(), StatusCode::FOUND);
+        assert_eq!(location_of(&resp), "/?auth_error=state_expired");
+    }
+
+    #[test]
+    fn login_error_redirect_appends_to_an_existing_query() {
+        let resp = login_error_redirect("/app?tab=home", "access_denied");
+        assert_eq!(location_of(&resp), "/app?tab=home&auth_error=access_denied");
     }
 }

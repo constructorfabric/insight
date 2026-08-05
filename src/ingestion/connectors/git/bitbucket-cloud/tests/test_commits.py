@@ -1,6 +1,6 @@
 from airbyte_cdk.models import SyncMode
 from conftest import branch
-from source_bitbucket_cloud.streams.base import repo_state_key, repository_bucket
+from source_bitbucket_cloud.streams.base import MAX_TEXT_BYTES, repo_state_key, repository_bucket
 
 
 def commit(sha="c1", date="2026-06-01T00:00:00+00:00", **extra):
@@ -60,6 +60,6 @@ def test_start_date_filters_old_commits(commits_stream, client, repo):
 
 def test_message_truncation_and_raw_identity(commits_stream, repo):
     record = commits_stream._record(repo, commit(message="x" * 20_000, author={"raw": "buildbot", "user": None}))
-    assert len(record["message"].encode()) <= 16_384
+    assert len(record["message"].encode()) <= MAX_TEXT_BYTES
     assert record["author_name"] == "buildbot"
     assert record["author_email"] is None

@@ -119,7 +119,7 @@ ADR-0007 table.
 
 - `src/ingestion/connectors/hr-directory/bamboohr/dbt/bamboohr__identity_inputs.sql`
   is the canonical model.
-- `src/backend/services/identity/seed/seed-persons-from-identity-input.py`
+- `src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py`
   carries the matching routing constants.
 
 ## Traceability

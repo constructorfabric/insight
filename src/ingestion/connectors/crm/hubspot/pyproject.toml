@@ -22,6 +22,14 @@ dev = [
 [project.scripts]
 source-hubspot-insight = "source_hubspot.source:main"
 
+[tool.uv]
+# Do not resolve a version published in the last week: a freshly pushed release is
+# where a compromised maintainer account shows up first.
+exclude-newer = "7 days"
+# airbyte-cdk pins nltk==3.9.1 (fixed CRITICAL CVE-2025-14009); the image installs 3.10.0
+# over it (see Dockerfile), so keep the resolved dependency graph on the same version.
+override-dependencies = ["nltk>=3.10.0"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

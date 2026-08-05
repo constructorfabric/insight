@@ -33,7 +33,7 @@ dbg_macro = "deny"
 
 [workspace.dependencies]
 # ClickHouse client
-clickhouse = { version = "0.14", features = ["uuid"] }
+clickhouse = { version = "0.14", features = ["uuid", "chrono"] }
 
 sqlparser = "0.62"
 
@@ -65,6 +65,10 @@ sea-orm-migration = { version = "1.1", features = ["runtime-tokio", "sqlx-mysql"
 # IDs and time
 uuid = { version = "1.19", features = ["serde", "v7"] }
 chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+sha2 = "0.10"
+csv = "1.3"
+rust_xlsxwriter = "0.90"
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 
 # Logging
@@ -78,7 +82,7 @@ secrecy = { version = "0.10", features = ["serde"] }
 reqwest = { version = "0.12", features = ["json"] }
 
 # Caching
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "1.5", features = ["tokio-comp", "connection-manager"] }
 
 # JWT (gateway-JWT mint/verify, RFC 7523 assertions, fakeidp id_tokens).
 # One version + one crypto provider (aws_lc_rs) across the workspace: v10 needs
@@ -98,6 +102,7 @@ toolkit = { package = "cf-gears-toolkit", version = "=0.6.13" }
 toolkit-auth = { package = "cf-gears-toolkit-auth", version = "=0.7.2" }
 toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.7.2" }
 toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.7.4", features = ["axum", "sea-orm"] }
+toolkit-odata = { package = "cf-gears-toolkit-odata", version = "=0.8.2" }
 
 # gears-rust SDKs (crates.io)
 authn-resolver-sdk = { package = "cf-gears-authn-resolver-sdk", version = "0.3.18" }
@@ -126,4 +131,3 @@ authenticator-sdk = { path = "libs/authenticator-sdk" }
 
 # CI rebuild marker — bumped to retrigger the analytics
 # image build on the cf → gears crate migration (2026-06-12).
-

@@ -1,0 +1,1224 @@
+sources:
+  - source:
+      key: ai_usage
+      kind: managed_observation
+      source_ref: ai_metric_observations
+      evidence_ref: ai_metric_evidence
+    measures:
+      - key: accepted_lines
+        evidence_granularity: source_summary
+      - key: removed_lines
+        evidence_granularity: source_summary
+      - key: active_day
+        evidence_granularity: derived_population
+      - key: cost_usd
+        evidence_granularity: source_summary
+      - key: accepted_edit_actions
+        evidence_granularity: source_summary
+      - key: tool_use_offered
+        evidence_granularity: source_summary
+      - key: assistant_messages
+        evidence_granularity: source_summary
+      - key: assistant_actions
+        evidence_granularity: source_summary
+      - key: dev_conversations
+        evidence_granularity: source_summary
+      - key: chat_assistant_conversations
+        evidence_granularity: source_summary
+    dimensions:
+      - tool
+      - surface
+  - source:
+      key: git
+      kind: managed_observation
+      source_ref: git_metric_observations
+      evidence_ref: git_metric_evidence
+    measures:
+      - key: commit_count
+        evidence_granularity: event
+      - key: commit_day
+        evidence_granularity: source_summary
+      - key: commit_change_size
+        evidence_granularity: event
+      - key: code_lines_added
+        evidence_granularity: source_summary
+      - key: lines_added
+        evidence_granularity: source_summary
+      - key: lines_removed
+        evidence_granularity: source_summary
+      - key: pr_created
+        evidence_granularity: event
+      - key: pr_created_merged
+        evidence_granularity: event
+      - key: pr_merged
+        evidence_granularity: event
+      - key: pr_cycle_hours
+        evidence_granularity: event
+      - key: pr_change_size
+        evidence_granularity: event
+    dimensions:
+      - category
+      - change_type
+      - destination_branch
+      - file_extension
+      - project
+      - repository
+      - source
+  - source:
+      key: collab
+      kind: managed_observation
+      source_ref: collab_metric_observations
+      evidence_ref: collab_metric_evidence
+    measures:
+      - key: total_chat_messages
+        evidence_granularity: source_summary
+      - key: channel_posts
+        evidence_granularity: source_summary
+      - key: direct_and_group_messages
+        evidence_granularity: source_summary
+      - key: meeting_hours
+        evidence_granularity: source_summary
+      - key: meetings_attended
+        evidence_granularity: source_summary
+      - key: meetings_organized
+        evidence_granularity: source_summary
+      - key: adhoc_meetings_attended
+        evidence_granularity: source_summary
+      - key: scheduled_meetings_attended
+        evidence_granularity: source_summary
+      - key: emails_sent
+        evidence_granularity: source_summary
+      - key: emails_received
+        evidence_granularity: source_summary
+      - key: emails_read
+        evidence_granularity: source_summary
+      - key: files_engaged
+        evidence_granularity: source_summary
+      - key: files_shared_internal
+        evidence_granularity: source_summary
+      - key: files_shared_external
+        evidence_granularity: source_summary
+      - key: files_shared
+        evidence_granularity: source_summary
+      - key: active_day
+        evidence_granularity: derived_population
+      - key: active_modality
+        evidence_granularity: derived_population
+      - key: chat_active_day
+        evidence_granularity: source_summary
+      - key: meeting_free_day
+        evidence_granularity: derived_population
+      - key: focus_hours
+        evidence_granularity: derived_population
+      - key: working_hours
+        evidence_granularity: derived_population
+    dimensions:
+      - tool
+      - scope
+  - source:
+      key: task
+      kind: managed_observation
+      source_ref: task_metric_observations
+      evidence_ref: task_metric_evidence
+    measures:
+      - key: tasks_closed
+        evidence_granularity: event
+      - key: bugs_fixed
+        evidence_granularity: event
+      - key: due_date_on_time
+        evidence_granularity: event
+      - key: due_date_with_due
+        evidence_granularity: event
+      - key: slip_days_total
+        evidence_granularity: event
+      - key: late_count
+        evidence_granularity: event
+      - key: estimation_error_pct
+        evidence_granularity: derived_population
+      - key: estimation_samples
+        evidence_granularity: derived_population
+      - key: flow_dev_seconds
+        evidence_granularity: derived_population
+      - key: flow_lead_seconds
+        evidence_granularity: derived_population
+      - key: close_events
+        evidence_granularity: derived_population
+      - key: reopened_within_14d
+        evidence_granularity: derived_population
+      - key: worklog_seconds
+        evidence_granularity: derived_population
+      - key: in_progress_seconds
+        evidence_granularity: derived_population
+      - key: stale_in_progress
+        evidence_granularity: derived_population
+      - key: dev_time_hours
+        evidence_granularity: event
+      - key: resolution_days
+        evidence_granularity: event
+      - key: pickup_days
+        evidence_granularity: event
+    dimensions: []
+  - source:
+      key: wiki
+      kind: managed_observation
+      source_ref: wiki_metric_observations
+      evidence_ref: wiki_metric_evidence
+    measures:
+      - key: pages_created
+        evidence_granularity: event
+      - key: edits
+        evidence_granularity: source_summary
+      - key: pages_edited
+        evidence_granularity: source_summary
+      - key: comments
+        evidence_granularity: source_summary
+    dimensions: []
+metrics:
+  - metric_key: ai.accepted_lines
+    source_key: ai_usage
+    label: AI-added lines
+    short_label: AI lines +
+    description: Accepted added coding output
+    explanation: Accepted AI-generated added lines across coding AI tools.
+    unit: lines
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: accepted_lines
+    dimensions:
+      - tool
+  - metric_key: ai.removed_lines
+    source_key: ai_usage
+    label: AI-removed lines
+    short_label: AI lines −
+    description: Accepted deleted coding output
+    explanation: Accepted AI-generated removed lines across coding AI tools.
+    unit: lines
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: removed_lines
+    dimensions:
+      - tool
+  - metric_key: ai.active_days
+    source_key: ai_usage
+    label: AI active days
+    short_label: AI days
+    description: Days with any AI activity across dev and assistant tools
+    explanation: Distinct days with person-attributed AI activity across dev and assistant tools.
+    unit: days
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: active_day
+    dimensions: []
+  - metric_key: ai.cost
+    source_key: ai_usage
+    label: AI usage cost
+    description: AI usage priced at vendor token/usage rates
+    explanation: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person.
+    format: currency
+    direction: lower_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: cost_usd
+    dimensions:
+      - tool
+  - metric_key: ai.accepted_edit_actions
+    source_key: ai_usage
+    label: Accepted AI edits
+    short_label: AI edits
+    description: Accepted tool or edit suggestions
+    explanation: Accepted AI edit or tool suggestions across supported coding AI tools.
+    unit: actions
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: accepted_edit_actions
+    dimensions:
+      - tool
+  - metric_key: ai.tool_acceptance_rate
+    source_key: ai_usage
+    label: AI tool acceptance
+    short_label: AI accept %
+    description: Accepted divided by offered AI edits
+    explanation: Accepted AI edit or tool suggestions divided by offered suggestions.
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: accepted_edit_actions
+      - input_role: denominator
+        measure_key: tool_use_offered
+    dimensions:
+      - tool
+  - metric_key: ai.assistant_messages
+    source_key: ai_usage
+    label: AI assistant messages
+    short_label: AI msgs
+    description: Assistant messages
+    explanation: Person-attributed assistant messages from supported AI assistant tools.
+    unit: messages
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: assistant_messages
+    dimensions:
+      - tool
+      - surface
+  - metric_key: ai.assistant_actions
+    source_key: ai_usage
+    label: AI assistant actions
+    short_label: AI actions
+    description: Assistant actions
+    explanation: Person-attributed assistant actions from supported AI assistant tools.
+    unit: actions
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: assistant_actions
+    dimensions:
+      - tool
+      - surface
+  - metric_key: ai.dev_conversations
+    source_key: ai_usage
+    label: AI dev conversations
+    short_label: AI dev chats
+    description: Coding tool conversations where the source reports them
+    explanation: Person-attributed coding conversations from dev tools that report them.
+    unit: conversations
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: dev_conversations
+    dimensions:
+      - tool
+  - metric_key: ai.chat_assistant_conversations
+    source_key: ai_usage
+    label: AI chat conversations
+    short_label: AI chats
+    description: Chat assistant conversations
+    explanation: Person-attributed chat assistant conversations from supported AI chat tools.
+    unit: conversations
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: chat_assistant_conversations
+    dimensions:
+      - tool
+      - surface
+  - metric_key: git.commits
+    source_key: git
+    label: Commits
+    description: Authored commits
+    explanation: Distinct authored commits across connected git sources, excluding merge commits.
+    unit: commits
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: commit_count
+    dimensions:
+      - project
+      - repository
+      - source
+  - metric_key: git.code_lines
+    source_key: git
+    label: Code lines added
+    short_label: Code lines
+    description: Lines added to code files
+    explanation: Lines added to files classified as code — tests, configuration, and documentation excluded.
+    unit: lines
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: code_lines_added
+    dimensions:
+      - change_type
+      - file_extension
+      - project
+      - repository
+      - source
+  - metric_key: git.lines_added
+    source_key: git
+    label: Lines added
+    short_label: Lines +
+    description: All lines added, by file category
+    explanation: 'Lines added across all files, split by file category: code, tests, configuration, documentation.'
+    unit: lines
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: lines_added
+    dimensions:
+      - category
+      - change_type
+      - file_extension
+      - project
+      - repository
+      - source
+  - metric_key: git.lines_removed
+    source_key: git
+    label: Lines removed
+    short_label: Lines −
+    description: All lines removed, by file category
+    explanation: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available.
+    unit: lines
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: lines_removed
+    dimensions:
+      - category
+      - change_type
+      - file_extension
+      - project
+      - repository
+      - source
+  - metric_key: git.prs_created
+    source_key: git
+    label: Pull requests created
+    short_label: PRs opened
+    description: Authored pull requests
+    explanation: Pull requests opened, dated by creation.
+    unit: PRs
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_created
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.prs_merged
+    source_key: git
+    label: Pull requests merged
+    short_label: PRs merged
+    description: Authored pull requests merged
+    explanation: Authored pull requests that merged, dated by the merge.
+    unit: PRs
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_merged
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.merge_rate
+    source_key: git
+    label: PR merge rate
+    short_label: Merge %
+    description: Share of created pull requests that merged
+    explanation: Of the pull requests created in the period, the share that have merged. Requests opened near the end of the period may not have merged yet, which lowers the rate at period edges.
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: pr_created_merged
+      - input_role: denominator
+        measure_key: pr_created
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.commits_per_active_day
+    source_key: git
+    label: Commits per active day
+    short_label: Commits/day
+    description: Commit cadence on days with commits
+    explanation: Commits divided by the number of days with at least one commit.
+    format: decimal
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 1.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: commit_count
+      - input_role: denominator
+        measure_key: commit_day
+    dimensions: []
+  - metric_key: git.commit_size
+    source_key: git
+    label: Commit size
+    description: Typical diff size per commit
+    explanation: Median diff size of authored commits (lines added plus removed). Smaller commits are easier to review.
+    unit: lines
+    format: integer
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: commit_change_size
+    dimensions:
+      - project
+      - repository
+      - source
+  - metric_key: git.pr_size
+    source_key: git
+    label: PR size
+    description: Typical diff size per pull request
+    explanation: Median diff size of authored pull requests (lines added plus removed). Smaller requests are easier to review. Sources that do not report line counts contribute no values.
+    unit: lines
+    format: integer
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_change_size
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.pr_cycle_time_h
+    source_key: git
+    label: PR cycle time
+    short_label: PR cycle
+    description: Typical hours from open to merge
+    explanation: Median hours from opening a pull request to merging it, over requests merged in the period.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_cycle_hours
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: collab.messages_sent
+    source_key: collab
+    label: Messages Sent
+    short_label: Msgs
+    description: Chat messages sent
+    explanation: 'Chat messages a person sent across messaging tools. Counts are not directly comparable between tools: Slack includes thread replies, and Microsoft 365 combines private-chat and channel messages.'
+    unit: messages
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: total_chat_messages
+    dimensions:
+      - tool
+  - metric_key: collab.channel_posts
+    source_key: collab
+    label: Channel Posts
+    short_label: Channel posts
+    description: Messages posted to shared channels, including replies
+    explanation: Channel posts plus thread replies across messaging tools. Tools that report posts and replies separately are folded so counts stay comparable.
+    unit: messages
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: channel_posts
+    dimensions:
+      - tool
+  - metric_key: collab.dm_ratio
+    source_key: collab
+    label: DM Ratio
+    short_label: DM %
+    description: Share of messages sent in direct or group chats
+    explanation: Direct and group-chat messages divided by all chat messages. A lower ratio means more communication happens in open channels. Tools that do not distinguish message types report no value.
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: direct_and_group_messages
+      - input_role: denominator
+        measure_key: total_chat_messages
+    dimensions:
+      - tool
+  - metric_key: collab.msgs_per_active_day
+    source_key: collab
+    label: Messages per Active Day
+    short_label: Msgs/day
+    description: Chat messages divided by chat-active days
+    explanation: Chat messages sent divided by days with chat messages. Each tool's active days count separately.
+    unit: messages/day
+    format: decimal
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 1.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: total_chat_messages
+      - input_role: denominator
+        measure_key: chat_active_day
+    dimensions:
+      - tool
+  - metric_key: collab.active_days
+    source_key: collab
+    label: Active Days
+    description: Days with collaboration activity
+    explanation: Distinct days on which a person took a deliberate collaboration action — sending a message, sending email, engaging or sharing a file, or attending a meeting. Passive activity such as receiving or reading email is excluded.
+    unit: days
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: distinct_count
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: active_day
+    dimensions:
+      - tool
+  - metric_key: collab.emails_sent
+    source_key: collab
+    label: Emails Sent
+    short_label: Emails sent
+    description: Emails sent
+    explanation: Emails a person sent.
+    unit: emails
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: emails_sent
+    dimensions:
+      - tool
+  - metric_key: collab.emails_received
+    source_key: collab
+    label: Emails Received
+    short_label: Emails rcvd
+    description: Emails received
+    explanation: Emails a person received.
+    unit: emails
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: emails_received
+    dimensions:
+      - tool
+  - metric_key: collab.emails_read
+    source_key: collab
+    label: Emails Read
+    short_label: Emails read
+    description: Emails read
+    explanation: Emails a person read.
+    unit: emails
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: emails_read
+    dimensions:
+      - tool
+  - metric_key: collab.files_engaged
+    source_key: collab
+    label: Files Engaged
+    description: Files viewed or edited
+    explanation: Files a person viewed or edited.
+    unit: files
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: files_engaged
+    dimensions:
+      - tool
+  - metric_key: collab.files_shared_internal
+    source_key: collab
+    label: Files Shared (Internal)
+    short_label: Files (int)
+    description: Files shared inside the organization
+    explanation: Files a person shared with people inside the organization.
+    unit: files
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: files_shared_internal
+    dimensions:
+      - tool
+  - metric_key: collab.files_shared_external
+    source_key: collab
+    label: Files Shared (External)
+    short_label: Files (ext)
+    description: Files shared outside the organization
+    explanation: Files a person shared with people outside the organization.
+    unit: files
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: files_shared_external
+    dimensions:
+      - tool
+  - metric_key: collab.files_shared
+    source_key: collab
+    label: Files Shared
+    short_label: Files shared
+    description: Files shared with any recipient
+    explanation: Files a person shared with recipients inside or outside the organization.
+    unit: files
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: files_shared
+    dimensions:
+      - scope
+  - metric_key: collab.meeting_hours
+    source_key: collab
+    label: Meeting Hours
+    short_label: Mtg hrs
+    description: Hours spent in meetings
+    explanation: Hours spent in meetings, taking the longest active modality (audio, video, or screen share) per meeting. Zoom reports modality durations as full-session estimates, so its figures may run higher than Microsoft Teams.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: meeting_hours
+    dimensions:
+      - tool
+  - metric_key: collab.meetings_count
+    source_key: collab
+    label: Meetings Attended
+    short_label: Mtgs
+    description: Distinct meetings attended
+    explanation: Distinct meetings a person attended across meeting tools.
+    unit: meetings
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: meetings_attended
+    dimensions:
+      - tool
+  - metric_key: collab.meeting_free_days
+    source_key: collab
+    label: Meeting-Free Days
+    short_label: Mtg-free days
+    description: Active days with no meeting time
+    explanation: Days on which a person was actively collaborating but spent no time in meetings — a proxy for uninterrupted working days.
+    unit: days
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: meeting_free_day
+    dimensions: []
+  - metric_key: collab.focus_time_pct
+    source_key: collab
+    label: Focus Time
+    short_label: Focus %
+    description: Share of the workday outside meetings
+    explanation: 'Share of the workday not spent in meetings: meeting-free hours divided by scheduled working hours. Scheduled hours default to a nominal eight-hour day where an HR source does not provide them.'
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: focus_hours
+      - input_role: denominator
+        measure_key: working_hours
+    dimensions: []
+  - metric_key: collab.breadth
+    source_key: collab
+    label: Collaboration Breadth
+    short_label: Breadth
+    description: Distinct collaboration modalities used
+    explanation: Distinct collaboration modalities — chat, meetings, email, documents — a person was deliberately active in during the period.
+    unit: modalities
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: distinct_count
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: active_modality
+    dimensions: []
+  - metric_key: collab.meetings_organized
+    source_key: collab
+    label: Meetings Organized
+    short_label: Mtgs hosted
+    description: Meetings organized
+    explanation: Meetings a person organized. Reported only by tools that expose organizer counts.
+    unit: meetings
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: meetings_organized
+    dimensions:
+      - tool
+  - metric_key: collab.adhoc_meetings
+    source_key: collab
+    label: Ad-hoc Meetings
+    short_label: Ad-hoc mtgs
+    description: Unscheduled meetings attended
+    explanation: Unscheduled meetings a person attended. Reported only by tools that distinguish ad-hoc from scheduled meetings.
+    unit: meetings
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: adhoc_meetings_attended
+    dimensions:
+      - tool
+  - metric_key: collab.scheduled_meetings
+    source_key: collab
+    label: Scheduled Meetings
+    short_label: Sched. mtgs
+    description: Scheduled meetings attended
+    explanation: Scheduled meetings a person attended. Reported only by tools that distinguish ad-hoc from scheduled meetings.
+    unit: meetings
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: scheduled_meetings_attended
+    dimensions:
+      - tool
+  - metric_key: tasks.closed
+    source_key: task
+    label: Tasks closed
+    short_label: Tasks
+    description: Tasks moved to a closed status
+    explanation: Tasks a person moved into a closed status during the period.
+    unit: tasks
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: tasks_closed
+    dimensions: []
+  - metric_key: tasks.bugs_fixed
+    source_key: task
+    label: Bugs fixed
+    short_label: Bugs
+    description: Bug-type tasks closed
+    explanation: Bug-type tasks a person closed during the period.
+    unit: tasks
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: bugs_fixed
+    dimensions: []
+  - metric_key: tasks.dev_time
+    source_key: task
+    label: Development time
+    short_label: Dev time
+    description: Time a task spends in active development
+    explanation: Median time closed tasks spent in in-progress statuses, from first pickup to close.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: dev_time_hours
+    dimensions: []
+  - metric_key: tasks.resolution_time
+    source_key: task
+    label: Time to resolution
+    short_label: Resolution
+    description: Task lifetime from creation to close
+    explanation: Median time from task creation to close.
+    unit: d
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: resolution_days
+    dimensions: []
+  - metric_key: tasks.pickup_time
+    source_key: task
+    label: Pickup time
+    short_label: Pickup
+    description: Wait before work starts on a task
+    explanation: Median time from task creation to first entering an in-progress status.
+    unit: d
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pickup_days
+    dimensions: []
+  - metric_key: tasks.flow_efficiency
+    source_key: task
+    label: Flow efficiency
+    short_label: Flow %
+    description: Active development share of task lifetime
+    explanation: Time in active development as a share of total task lifetime, across closed tasks.
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    transform:
+      clamp_max: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: flow_dev_seconds
+      - input_role: denominator
+        measure_key: flow_lead_seconds
+    dimensions: []
+  - metric_key: tasks.reopen_rate
+    source_key: task
+    label: Reopen rate
+    short_label: Reopen %
+    description: Closed tasks reopened shortly after
+    explanation: Share of task closes followed by a reopen within 14 days.
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: reopened_within_14d
+      - input_role: denominator
+        measure_key: close_events
+    dimensions: []
+  - metric_key: tasks.due_date_compliance
+    source_key: task
+    label: Due date compliance
+    short_label: Due date %
+    description: On-time share of tasks with a due date
+    explanation: Share of tasks that had a due date and were closed on or before it.
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: due_date_on_time
+      - input_role: denominator
+        measure_key: due_date_with_due
+    dimensions: []
+  - metric_key: tasks.on_time_delivery
+    source_key: task
+    label: On-time delivery
+    short_label: On-time %
+    description: On-time share of all closed tasks
+    explanation: Share of all closed tasks that were closed on or before their due date.
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: due_date_on_time
+      - input_role: denominator
+        measure_key: tasks_closed
+    dimensions: []
+  - metric_key: tasks.avg_slip
+    source_key: task
+    label: Average slip
+    short_label: Avg slip
+    description: How late overdue tasks close
+    explanation: Average days past the due date for tasks closed late.
+    unit: d
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 1.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: slip_days_total
+      - input_role: denominator
+        measure_key: late_count
+    dimensions: []
+  - metric_key: tasks.estimation_accuracy
+    source_key: task
+    label: Estimation accuracy
+    short_label: Estimate %
+    description: How close estimates land to time spent
+    explanation: 100 minus the average deviation between original estimates and time spent, over days whose estimated work stayed within twice the estimate. 100 means estimates matched reality; over- and under-estimation count equally.
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 1.0
+    transform:
+      multiplier: -1.0
+      offset: 100.0
+      clamp_min: 0.0
+      clamp_max: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: estimation_error_pct
+      - input_role: denominator
+        measure_key: estimation_samples
+    dimensions: []
+  - metric_key: tasks.worklog_accuracy
+    source_key: task
+    label: Worklog accuracy
+    short_label: Worklog %
+    description: Logged time versus tracked development
+    explanation: Logged work time as a share of time tasks spent in in-progress statuses.
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    transform:
+      clamp_max: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: worklog_seconds
+      - input_role: denominator
+        measure_key: in_progress_seconds
+    dimensions: []
+  - metric_key: tasks.bugs_ratio
+    source_key: task
+    label: Bug ratio
+    short_label: Bug %
+    description: Bugs as a share of closed tasks
+    explanation: Bug-type tasks as a share of all closed tasks.
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: bugs_fixed
+      - input_role: denominator
+        measure_key: tasks_closed
+    dimensions: []
+  - metric_key: tasks.stale_in_progress
+    source_key: task
+    label: Stale in progress
+    short_label: Stale WIP
+    description: Open tasks idle for over two weeks
+    explanation: Open tasks with no status change in more than 14 days.
+    unit: tasks
+    format: integer
+    direction: lower_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: stale_in_progress
+    dimensions: []
+  - metric_key: wiki.pages_created
+    source_key: wiki
+    label: Pages created
+    short_label: New pages
+    description: Wiki pages authored
+    explanation: Wiki pages the person created during the period, counted on the page's creation date.
+    unit: pages
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pages_created
+    dimensions: []
+  - metric_key: wiki.edits
+    source_key: wiki
+    label: Page edits
+    short_label: Edits
+    description: Wiki edit sessions
+    explanation: Logical wiki edits the person made during the period. Consecutive saves of the same page within a short window count as one edit, so autosaves do not inflate the number.
+    unit: edits
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: edits
+    dimensions: []
+  - metric_key: wiki.pages_edited
+    source_key: wiki
+    label: Pages edited
+    short_label: Pages edited
+    description: Distinct wiki pages edited
+    explanation: Distinct wiki pages the person edited during the period, counted per day the page was touched.
+    unit: pages
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pages_edited
+    dimensions: []
+  - metric_key: wiki.comments
+    source_key: wiki
+    label: Comments received
+    short_label: Comments
+    description: Comments on the person's wiki pages
+    explanation: Comments and replies other people left on wiki pages the person authored — a signal of how much their documentation is read and discussed.
+    unit: comments
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: comments
+    dimensions: []

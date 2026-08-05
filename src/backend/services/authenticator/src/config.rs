@@ -37,6 +37,20 @@ pub struct IdpConfig {
     /// array is tolerated: first entry wins). fakeidp/Keycloak emit
     /// `tenant_id`; Entra emits `tid`.
     pub tenant_claim: String,
+    /// The `insight_source_type` this IdP is known to identity-resolution as
+    /// (e.g. `ms-entra`) — the connector whose `identity_inputs` seed the
+    /// matching `persons` rows. Login resolution calls
+    /// `GET /internal/persons/by-external-id?source_type=<this>&external_id=<external_id>`;
+    /// required (the login-bootstrap has no other way to know which source
+    /// the caller authenticated against).
+    pub source_type: String,
+    /// id_token claim carrying the IdP's stable external user id for
+    /// `source_type` — the join key `identity_inputs` seeded it under (e.g.
+    /// Entra's `oid`; the generic OIDC `sub` is NOT the same thing for
+    /// directory-backed IdPs, see the `ms-entra` connector schema). Defaults
+    /// to `sub` (fine for IdPs, like fakeidp, where `sub` IS the stable
+    /// directory id).
+    pub external_id_claim: String,
     /// Fallback tenant when the id_token carries no tenant claim at all (e.g.
     /// Okta). Empty = no fallback: the gateway JWT gets an empty `tenant_id`
     /// and downstream services fail closed. Interim until the Identity
@@ -71,6 +85,8 @@ impl Default for IdpConfig {
             client_id: String::new(),
             client_secret: String::new(),
             tenant_claim: "tenant_id".to_owned(),
+            source_type: String::new(),
+            external_id_claim: "sub".to_owned(),
             default_tenant_id: String::new(),
             extra_ca_cert_path: String::new(),
             refresh_enabled: true,
@@ -186,7 +202,7 @@ impl Default for AuditConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RateLimitConfig {
-    /// Cap on concurrent live `asm:login_state:*` entries; excess
+    /// Cap on concurrent live `{asm}:login_state:*` entries; excess
     /// `/auth/login` gets 429 before any state is written (stops a
     /// slow-trickle Redis-exhaustion attack the edge cannot see).
     pub login_state_max: u64,
@@ -257,6 +273,17 @@ pub struct AuthenticatorConfig {
     /// Where to send the browser after a successful login when the request
     /// named no (or an unsafe) `return_to`. A site-relative path.
     pub default_return_to: String,
+    /// `return_to` prefix honored at login time; must be site-relative and end
+    /// in `/`. Empty (default) = any same-origin path. A preview host sets
+    /// `/exp/` to confine logins to `/exp/<name>`.
+    pub return_to_prefix: String,
+    /// Master switch for the preview experiments capability (`/exp/<name>`
+    /// tier-3 frontends). Default `false`: a login can never return into the
+    /// `/exp/` subtree, so a production stand cannot host experimental
+    /// frontends against its data. Dev/demo preview hosts set `true` and serve
+    /// experiments over that stand's own data. A per-user RBAC capability will
+    /// supersede this environment-level gate.
+    pub experiments_enabled: bool,
 
     // NOTE: first-admin bootstrap (DD-AUTH-08) and RBAC/ACL are deliberately
     // NOT in step 04 — deferred to a separate universe-admin initiative. Local
@@ -354,6 +381,8 @@ impl Default for AuthenticatorConfig {
                 "profile".to_owned(),
             ],
             default_return_to: "/".to_owned(),
+            return_to_prefix: String::new(),
+            experiments_enabled: false,
             csrf_origins: Vec::new(),
             janitor_interval_seconds: 30,
             rate_limit: RateLimitConfig::default(),
@@ -403,9 +432,33 @@ impl AuthenticatorConfig {
             ("identity_url", &self.identity_url),
             ("idp.issuer_url", &self.idp.issuer_url),
             ("idp.client_id", &self.idp.client_id),
+            ("idp.source_type", &self.idp.source_type),
+            ("idp.external_id_claim", &self.idp.external_id_claim),
         ] {
             anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
         }
+
+        // `default_return_to` lands verbatim in Location headers (login
+        // fallback and every `auth_error` bounce). A non-site-relative value
+        // would open-redirect on our own config, and a `#` fragment would hide
+        // `auth_error=` from the SPA's query parsing — defeating its login
+        // retry loop guard.
+        anyhow::ensure!(
+            self.default_return_to.starts_with('/')
+                && !self.default_return_to.starts_with("//")
+                && !self.default_return_to.contains('#')
+                && !self.default_return_to.chars().any(char::is_control),
+            "default_return_to must be a site-relative path without a fragment"
+        );
+
+        // Trailing `/` keeps prefix matching on a path boundary: `/exp/` admits
+        // `/exp/<name>`, not `/expunge`.
+        let prefix = &self.return_to_prefix;
+        anyhow::ensure!(
+            prefix.is_empty()
+                || (prefix.starts_with('/') && !prefix.starts_with("//") && prefix.ends_with('/')),
+            "return_to_prefix {prefix:?} must be a site-relative path prefix ending in '/'"
+        );
 
         // Service tokens: if any service is registered, the token endpoint must
         // know the `aud` it expects on assertions (its own URL). A registry
@@ -458,6 +511,45 @@ mod tests {
     #[derive(serde::Deserialize)]
     struct GearSection {
         config: AuthenticatorConfig,
+    }
+
+    /// `Default` plus the required fields, so a test can `validate()` in isolation.
+    fn valid_config() -> AuthenticatorConfig {
+        AuthenticatorConfig {
+            gateway_issuer: "https://gw.example".to_owned(),
+            redirect_uri: "https://gw.example/auth/callback".to_owned(),
+            signing_keys_path: "/keys".to_owned(),
+            identity_url: "https://identity.example".to_owned(),
+            idp: IdpConfig {
+                issuer_url: "https://idp.example".to_owned(),
+                client_id: "client".to_owned(),
+                // Required since the login bootstrap resolves by external id:
+                // `IdpConfig::default()` leaves it empty, so a helper that
+                // omitted it would build a config `validate()` refuses.
+                source_type: "ms-entra".to_owned(),
+                ..IdpConfig::default()
+            },
+            ..AuthenticatorConfig::default()
+        }
+    }
+
+    #[test]
+    fn return_to_prefix_must_be_site_relative_and_boundaried() {
+        for ok in ["", "/exp/"] {
+            let cfg = AuthenticatorConfig {
+                return_to_prefix: ok.to_owned(),
+                ..valid_config()
+            };
+            assert!(cfg.validate().is_ok(), "should accept prefix {ok:?}");
+        }
+
+        for bad in ["/exp", "exp/", "//evil/", "https://evil/"] {
+            let cfg = AuthenticatorConfig {
+                return_to_prefix: bad.to_owned(),
+                ..valid_config()
+            };
+            assert!(cfg.validate().is_err(), "should reject prefix {bad:?}");
+        }
     }
 
     /// The dev `config/insight.yaml` must deserialize into the config struct

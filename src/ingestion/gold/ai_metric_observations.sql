@@ -1,132 +1,24 @@
-{{ config(
-    materialized='table',
-    engine='MergeTree',
-    order_by=['source_key', 'measure_key', 'entity_id', 'metric_date'],
-    schema='insight',
-    alias='ai_metric_observations',
-    tags=['gold'],
-    query_settings={
-        'max_memory_usage': 3221225472,
-        'max_threads': 4,
-        'max_bytes_before_external_group_by': 805306368,
-        'max_bytes_before_external_sort': 805306368,
-        'join_algorithm': 'grace_hash,hash'
-    }
-) }}
+{{ metric_observations_table() }}
 
--- Source measure observations for the unified metrics runtime. Reads only
--- class-contract fields: activity is row existence (the class contract
--- guarantees rows exist only for real activity — see silver/ai/schema.yml),
--- display labels derive from the tool / surface discriminator codes via the
--- shared vocabulary macros (macros/ai_labels.sql — static product
--- vocabulary, never denormalized into silver rows), and conversation
--- semantics come from data presence (conversation_count is NULL for sources
--- without a conversation concept). Discriminator columns are non-null
--- non-empty by the class contract (enforced by silver schema tests); this
--- model consumes them as-is. No vendor mapping is inlined in this model —
--- labels go through the macros only. Every measure is emitted through the
--- shape macros in macros/metric_observation_measures.sql; filter predicates
--- may reference only class-contract dimension values.
-
-WITH
-ai_dev_usage_source AS (
-    SELECT
-        insight_tenant_id AS tenant_id,
-        lower(email) AS entity_id,
-        day AS metric_date,
-        CAST(
-            [tuple('tool', tool, {{ ai_tool_label('tool') }})]
-            AS Array(Tuple(key String, value String, label Nullable(String)))
-        ) AS tool_dimensions,
-        conversation_count,
-        lines_added,
-        lines_removed,
-        tool_use_offered,
-        tool_use_accepted,
-        cost_cents
-    FROM {{ ref('class_ai_dev_usage') }}
-    WHERE email IS NOT NULL
-      AND email != ''
-),
-ai_assistant_usage_source AS (
-    SELECT
-        insight_tenant_id AS tenant_id,
-        lower(email) AS entity_id,
-        day AS metric_date,
-        surface,
-        CAST(
-            [tuple('tool', tool, {{ ai_tool_label('tool') }})]
-            AS Array(Tuple(key String, value String, label Nullable(String)))
-        ) AS tool_dimensions,
-        CAST(
-            [
-                tuple('tool', tool, {{ ai_tool_label('tool') }}),
-                tuple('surface', surface, {{ ai_surface_label('surface') }})
-            ] AS Array(Tuple(key String, value String, label Nullable(String)))
-        ) AS tool_surface_dimensions,
-        conversation_count,
-        message_count,
-        action_count,
-        cost_cents
-    FROM {{ ref('class_ai_assistant_usage') }}
-    WHERE email IS NOT NULL
-      AND email != ''
-),
-measure_observations AS (
-    {{ sum_measure('accepted_lines', 'ai_dev_usage_source', 'lines_added', 'tool_dimensions') }}
-
-    UNION ALL
-
-    {{ sum_measure('removed_lines', 'ai_dev_usage_source', 'lines_removed', 'tool_dimensions') }}
-
-    UNION ALL
-
-    {{ presence_measure('active_day', ['ai_dev_usage_source', 'ai_assistant_usage_source']) }}
-
-    UNION ALL
-
-    {{ sum_measure('cost_usd', 'ai_dev_usage_source', 'cost_cents / 100', 'tool_dimensions') }}
-
-    UNION ALL
-
-    {{ sum_measure('cost_usd', 'ai_assistant_usage_source', 'cost_cents / 100', 'tool_dimensions') }}
-
-    UNION ALL
-
-    {{ sum_measure('accepted_edit_actions', 'ai_dev_usage_source', 'tool_use_accepted', 'tool_dimensions') }}
-
-    UNION ALL
-
-    {{ sum_measure('tool_use_offered', 'ai_dev_usage_source', 'tool_use_offered', 'tool_dimensions') }}
-
-    UNION ALL
-
-    {{ sum_measure('dev_conversations', 'ai_dev_usage_source', 'conversation_count', 'tool_dimensions') }}
-
-    UNION ALL
-
-    {{ sum_measure('assistant_messages', 'ai_assistant_usage_source', 'message_count', 'tool_surface_dimensions') }}
-
-    UNION ALL
-
-    {{ sum_measure('assistant_actions', 'ai_assistant_usage_source', 'action_count', 'tool_surface_dimensions') }}
-
-    UNION ALL
-
-    {{ sum_measure('chat_assistant_conversations', 'ai_assistant_usage_source', 'conversation_count', 'tool_surface_dimensions', where="surface = 'chat'") }}
-)
 SELECT
-    assumeNotNull(tenant_id) AS tenant_id,
-    'ai_usage' AS source_key,
-    'person' AS entity_type,
-    assumeNotNull(entity_id) AS entity_id,
-    assumeNotNull(metric_date) AS metric_date,
+    tenant_id,
+    source_key,
+    entity_type,
+    -- entity_id arrives ALREADY canonical from evidence (resolved once per
+    -- build); '' marks a row identity could not resolve, which stays out of
+    -- every serving relation and is counted by identity_resolution_coverage.
+    entity_id,
+    metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     measure_key,
-    value,
-    CAST(NULL AS Nullable(String)) AS subject_key,
+    -- Grouped to CANONICAL grain: a person's several source accounts land in
+    -- ONE row per (person, day, measure, subject, dims). Additive measures sum
+    -- across accounts; day flags collapse by their own semantics (max — active
+    -- under any account; min for meeting_free_day — free only if every account
+    -- was); distinct subjects stay their own rows via subject_key in the key.
+    toNullable({{ collapsed_value('contribution', max_keys=['active_day']) }}) AS value,
+    subject_key,
     dimensions
-FROM measure_observations
-WHERE tenant_id IS NOT NULL
-  AND entity_id IS NOT NULL
-  AND metric_date IS NOT NULL
+FROM {{ ref('ai_metric_evidence') }}
+WHERE entity_id != ''
+GROUP BY tenant_id, source_key, entity_type, entity_id, metric_date, measure_key, subject_key, dimensions

@@ -110,15 +110,15 @@ SELECT
     toUInt32(1)                                                            AS session_count,
     CAST(NULL AS Nullable(UInt32))                                         AS conversation_count,
     toUInt32(coalesce(m.loc_added_sum, 0))                                 AS lines_added,
-    toUInt32(coalesce(m.loc_deleted_sum, 0))                               AS lines_removed,
+    toNullable(toUInt32(coalesce(m.loc_deleted_sum, 0)))                   AS lines_removed,
     -- See header comment — Copilot reports AI-accepted lines only.
     CAST(NULL AS Nullable(UInt32))                                         AS total_lines_added,
     CAST(NULL AS Nullable(UInt32))                                         AS total_lines_removed,
     -- code_generation_activity_count = number of code generation events
     -- (a proxy for "suggestions offered"). The API does not split offered
     -- from rejected, so this is the closest mappable signal.
-    toUInt32(coalesce(m.code_generation_activity_count, 0))                AS tool_use_offered,
-    toUInt32(coalesce(m.code_acceptance_activity_count, 0))                AS tool_use_accepted,
+    toNullable(toUInt32(coalesce(m.code_generation_activity_count, 0)))    AS tool_use_offered,
+    toNullable(toUInt32(coalesce(m.code_acceptance_activity_count, 0)))    AS tool_use_accepted,
     -- #262: `completions_count` dropped from class_ai_dev_usage — it was numerically identical
     -- to tool_use_accepted (code_acceptance_activity_count). Same drop applied to cursor and
     -- claude_enterprise in PR #262; copilot now aligned.
@@ -144,12 +144,12 @@ SELECT
     -- column slot) and re-surfaces the chat/agent flags for downstream
     -- consumers that want raw boolean state rather than the marker
     -- counts above.
-    concat(
+    toNullable(concat(
         '{"used_chat":',  if(coalesce(m.used_chat,  false), 'true', 'false'),
         ',"used_agent":', if(coalesce(m.used_agent, false), 'true', 'false'),
         ',"used_cli":',   if(coalesce(m.used_cli,   false), 'true', 'false'),
         '}'
-    )                                                                      AS tool_action_breakdown_json,
+    ))                                                                     AS tool_action_breakdown_json,
     'copilot'                                                              AS source,
     'insight_github_copilot'                                               AS data_source,
     parseDateTime64BestEffortOrNull(coalesce(m.collected_at, ''), 3)       AS collected_at,

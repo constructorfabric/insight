@@ -56,14 +56,14 @@ SELECT
     toUInt32(coalesce(code_session_count, 0))                          AS session_count,
     toUInt32OrNull(toString(code_session_count))                       AS conversation_count,
     toUInt32(coalesce(code_lines_added, 0))                            AS lines_added,
-    toUInt32(coalesce(code_lines_removed, 0))                          AS lines_removed,
+    toNullable(toUInt32(coalesce(code_lines_removed, 0)))              AS lines_removed,
     -- Enterprise reports AI-accepted lines only — no view of total user keystrokes.
     -- ai_loc_share_pct downstream filters to tool='cursor' precisely because of this gap.
     CAST(NULL AS Nullable(UInt32))                                     AS total_lines_added,
     CAST(NULL AS Nullable(UInt32))                                     AS total_lines_removed,
-    toUInt32(coalesce(code_tool_accepted_count, 0)
-           + coalesce(code_tool_rejected_count, 0))                    AS tool_use_offered,
-    toUInt32(coalesce(code_tool_accepted_count, 0))                    AS tool_use_accepted,
+    toNullable(toUInt32(coalesce(code_tool_accepted_count, 0)
+           + coalesce(code_tool_rejected_count, 0)))                   AS tool_use_offered,
+    toNullable(toUInt32(coalesce(code_tool_accepted_count, 0)))        AS tool_use_accepted,
     -- #262: `completions_count` dropped from class_ai_dev_usage — it was
     -- numerically identical to tool_use_accepted (both = code_tool_accepted_count).
     -- agent_sessions := no direct Enterprise equivalent. Enterprise's cowork_dispatch_turn_count
@@ -78,8 +78,8 @@ SELECT
     -- Cost is not surfaced per-user in Enterprise; tied to org subscription, not consumption.
     CAST(NULL AS Nullable(UInt32))                                     AS cost_cents,
     -- Enterprise exposes commit and PR counts per user per day via core_metrics.
-    toUInt32(coalesce(code_commit_count, 0))                           AS commits_count,
-    toUInt32(coalesce(code_pull_request_count, 0))                     AS pull_requests_count,
+    toNullable(toUInt32(coalesce(code_commit_count, 0)))               AS commits_count,
+    toNullable(toUInt32(coalesce(code_pull_request_count, 0)))         AS pull_requests_count,
     -- prs_with_cc_count / prs_total_count: Claude Team-only (Anthropic GitHub-app attribution).
     -- Enterprise exposes code_pull_request_count (above, → pull_requests_count) but not the
     -- GitHub-app split between "PRs with CC active" and "total PRs in window".

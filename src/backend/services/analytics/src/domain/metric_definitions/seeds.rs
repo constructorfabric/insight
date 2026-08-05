@@ -2,20 +2,20 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr, Statement, Value};
 use uuid::Uuid;
 
 use crate::domain::metric_definitions::builtin::{
-    BUILTIN_METRICS, BUILTIN_SOURCES, BuiltinSource, CohortKey, InputSeed, MetricSeed,
+    BuiltinSource, CohortKey, InputSeed, MetricSeed, builtin_metrics, builtin_sources,
 };
 
 pub async fn reconcile_builtin_definitions(db: &DatabaseConnection) -> Result<(), DbErr> {
-    for builtin_source in BUILTIN_SOURCES {
+    for builtin_source in builtin_sources() {
         reconcile_source(db, builtin_source).await?;
     }
 
-    for metric in BUILTIN_METRICS {
-        let source_id = fetch_source_id(db, metric.source_key).await?;
+    for metric in builtin_metrics() {
+        let source_id = fetch_source_id(db, &metric.source_key).await?;
         upsert_metric(db, metric).await?;
-        let metric_id = fetch_metric_id(db, metric.metric_key).await?;
-        replace_inputs(db, source_id, metric_id, metric.inputs).await?;
-        replace_dimensions(db, source_id, metric_id, metric.dimensions).await?;
+        let metric_id = fetch_metric_id(db, &metric.metric_key).await?;
+        replace_inputs(db, source_id, metric_id, &metric.inputs).await?;
+        replace_dimensions(db, source_id, metric_id, &metric.dimensions).await?;
     }
 
     disable_missing_builtin_rows(db).await?;
@@ -27,20 +27,22 @@ async fn reconcile_source(
     builtin_source: &BuiltinSource,
 ) -> Result<(), DbErr> {
     upsert_source(db, builtin_source).await?;
-    let source_id = fetch_source_id(db, builtin_source.source.key).await?;
+    let source_id = fetch_source_id(db, &builtin_source.source.key).await?;
 
-    for measure_key in builtin_source.measures {
+    for measure in &builtin_source.measures {
         db.execute(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_source_measures \
-                (id, source_id, measure_key, is_enabled) \
-             VALUES (?, ?, ?, TRUE) \
+                (id, source_id, measure_key, evidence_granularity, is_enabled) \
+             VALUES (?, ?, ?, ?, TRUE) \
              ON DUPLICATE KEY UPDATE \
+                evidence_granularity = VALUES(evidence_granularity), \
                 is_enabled = VALUES(is_enabled)",
             [
                 uuid_value(Uuid::now_v7()),
                 uuid_value(source_id),
-                Value::from(*measure_key),
+                Value::from(measure.key.as_str()),
+                Value::from(measure.evidence_granularity.as_db()),
             ],
         ))
         .await?;
@@ -57,7 +59,7 @@ async fn reconcile_source(
             [
                 uuid_value(Uuid::now_v7()),
                 uuid_value(source_id),
-                Value::from(*dimension_key),
+                Value::from(dimension_key.as_str()),
                 Value::from(order_value(idx)),
             ],
         ))
@@ -74,18 +76,20 @@ async fn upsert_source(
     db.execute(Statement::from_sql_and_values(
         db.get_database_backend(),
         "INSERT INTO metric_sources \
-            (id, tenant_id, source_key, source_kind, source_ref, origin, is_enabled) \
-         VALUES (?, NULL, ?, ?, ?, 'builtin', TRUE) \
+            (id, tenant_id, source_key, source_kind, source_ref, evidence_ref, origin, is_enabled) \
+         VALUES (?, NULL, ?, ?, ?, ?, 'builtin', TRUE) \
          ON DUPLICATE KEY UPDATE \
             source_kind = VALUES(source_kind), \
             source_ref = VALUES(source_ref), \
+            evidence_ref = VALUES(evidence_ref), \
             origin = VALUES(origin), \
             is_enabled = VALUES(is_enabled)",
         [
             uuid_value(Uuid::now_v7()),
-            Value::from(builtin_source.source.key),
+            Value::from(builtin_source.source.key.as_str()),
             Value::from(builtin_source.source.kind.as_db()),
-            Value::from(builtin_source.source.source_ref),
+            Value::from(builtin_source.source.source_ref.as_str()),
+            Value::from(builtin_source.source.evidence_ref.as_str()),
         ],
     ))
     .await?;
@@ -120,12 +124,12 @@ async fn upsert_metric(db: &DatabaseConnection, metric: &MetricSeed) -> Result<(
             is_enabled = VALUES(is_enabled)",
         [
             uuid_value(Uuid::now_v7()),
-            Value::from(metric.metric_key),
-            Value::from(metric.label),
-            nullable_str(metric.short_label),
-            nullable_str(metric.description),
-            nullable_str(metric.explanation),
-            nullable_str(metric.unit),
+            Value::from(metric.metric_key.as_str()),
+            Value::from(metric.label.as_str()),
+            nullable_str(metric.short_label.as_deref()),
+            nullable_str(metric.description.as_deref()),
+            nullable_str(metric.explanation.as_deref()),
+            nullable_str(metric.unit.as_deref()),
             Value::from(metric.format.as_db()),
             Value::from(metric.direction.as_db()),
             Value::from(metric.entity_type.as_db()),
@@ -159,7 +163,7 @@ async fn replace_inputs(
     .await?;
 
     for input in inputs {
-        let measure_id = fetch_measure_id(db, source_id, input.measure_key).await?;
+        let measure_id = fetch_measure_id(db, source_id, &input.measure_key).await?;
         db.execute(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_definition_inputs \
@@ -181,7 +185,7 @@ async fn replace_dimensions(
     db: &DatabaseConnection,
     source_id: Uuid,
     metric_id: Uuid,
-    dimensions: &[&str],
+    dimensions: &[String],
 ) -> Result<(), DbErr> {
     db.execute(Statement::from_sql_and_values(
         db.get_database_backend(),
@@ -210,9 +214,9 @@ async fn replace_dimensions(
 }
 
 async fn disable_missing_builtin_rows(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let metric_keys = BUILTIN_METRICS
+    let metric_keys = builtin_metrics()
         .iter()
-        .map(|metric| metric.metric_key)
+        .map(|metric| metric.metric_key.as_str())
         .collect::<Vec<_>>();
     disable_missing(
         db,
@@ -223,9 +227,9 @@ async fn disable_missing_builtin_rows(db: &DatabaseConnection) -> Result<(), DbE
     )
     .await?;
 
-    let source_keys = BUILTIN_SOURCES
+    let source_keys = builtin_sources()
         .iter()
-        .map(|builtin_source| builtin_source.source.key)
+        .map(|builtin_source| builtin_source.source.key.as_str())
         .collect::<Vec<_>>();
     disable_missing(
         db,
@@ -236,15 +240,23 @@ async fn disable_missing_builtin_rows(db: &DatabaseConnection) -> Result<(), DbE
     )
     .await?;
 
-    for builtin_source in BUILTIN_SOURCES {
-        let source_id = fetch_source_id(db, builtin_source.source.key).await?;
-        let measure_keys = builtin_source.measures.to_vec();
-        let placeholders = vec!["?"; measure_keys.len()].join(", ");
-        let sql = format!(
-            "UPDATE metric_source_measures SET is_enabled = FALSE \
-             WHERE source_id = ? AND is_enabled = TRUE \
-               AND measure_key NOT IN ({placeholders})"
-        );
+    for builtin_source in builtin_sources() {
+        let source_id = fetch_source_id(db, &builtin_source.source.key).await?;
+        let measure_keys = builtin_source
+            .measures
+            .iter()
+            .map(|measure| measure.key.as_str())
+            .collect::<Vec<_>>();
+
+        let base_sql = "UPDATE metric_source_measures SET is_enabled = FALSE \
+                        WHERE source_id = ? AND is_enabled = TRUE";
+        let sql = if measure_keys.is_empty() {
+            base_sql.to_owned()
+        } else {
+            let placeholders = vec!["?"; measure_keys.len()].join(", ");
+            format!("{base_sql} AND measure_key NOT IN ({placeholders})")
+        };
+
         let mut values = vec![uuid_value(source_id)];
         values.extend(measure_keys.iter().map(|key| Value::from(*key)));
         db.execute(Statement::from_sql_and_values(

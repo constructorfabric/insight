@@ -44,7 +44,22 @@ Rules:
 - Observations belong to source measures, not final metrics.
 - `source_key` identifies the logical source.
 - `measure_key` identifies the source measure.
-- `entity_type` and `entity_id` identify the measured entity.
+- `entity_type` and `entity_id` identify the measured entity — one
+  polymorphic pair, on the wire and in the relations alike.
+- For `entity_type = 'person'` that identity IS the canonical person id,
+  resolved from the identity log at build time (`resolve_person_id` dbt
+  macro). Gold therefore serves canonical grain: one row per person, with a
+  person's several source emails already summed together. A source row whose
+  email identity cannot resolve is ABSENT rather than guessed — with
+  `entity_id` being the person id there is nothing to serve it under.
+  Unresolved work is not lost from view: the evidence relations keep every
+  source row keyed by its source-native email, and
+  `insight.identity_resolution_coverage` reports the gap per source from
+  there.
+- The cohort relation is canonical-grained under the same rule, and a person
+  whose HR emails claim different org units is EXCLUDED from peer comparison
+  (contested membership is never tie-broken). The peer query reads that grain
+  straight; it does not repair it per request.
 - `observed_at` is reserved for future point-in-time semantics.
 - `subject_key` carries the counted subject for distinct-count measures (a
   date, a tool) and is NULL on every other measure's rows.
@@ -59,7 +74,8 @@ Rules:
 ## Managed Source Ownership
 
 Managed observation sources and the cohort view are dbt gold models
-(`src/ingestion/gold/`), materialized as views in the `insight` database:
+(`src/ingestion/gold/`), materialized as views or MergeTree serving tables in
+the `insight` database:
 
 - `insight.ai_metric_observations`
 - `insight.metric_entity_cohorts_current`
@@ -81,7 +97,7 @@ contract; a source that needs different columns is a different source kind.
 
 Gold models are built at deploy time by the ClickHouse migrate hook
 (`dbt run --select tag:gold`, final step of
-`src/ingestion/scripts/apply-ch-migrations.sh`), so the views exist before
+`src/ingestion/scripts/apply-ch-migrations.sh`), so the relations exist before
 any connector sync — bronze/silver placeholders guarantee the DDL
 type-checks on a fresh cluster. Per-connector scoped dbt runs keep them
 current afterwards.
@@ -89,6 +105,123 @@ current afterwards.
 The cohort view is unique per `(tenant_id, entity_type, entity_id,
 cohort_key)`. The peer query relies on this; a dbt build-integrity test
 asserts it.
+
+## Metric Evidence Contract
+
+Each managed source may expose `<family>_metric_evidence` in the `insight`
+database:
+
+```sql
+tenant_id String,
+source_key String,
+entity_type String,
+entity_id String,
+metric_date Date,
+observed_at Nullable(DateTime64(3)),
+measure_key String,
+record_id String,
+record_kind String,
+granularity String,
+record_label String,
+contribution Nullable(Float64),
+subject_key Nullable(String),
+dimensions Array(Tuple(key String, value String, label Nullable(String))),
+details Map(String, String)
+```
+
+Evidence relations are MergeTree serving tables built from silver. Their
+ordering follows the drilldown predicate and cursor access pattern, avoiding
+repeated silver reconstruction for every page and export. Observation models
+derive their values from these evidence tables. The registry stores one
+evidence relation per source and one granularity per measure:
+
+- `event`: one source event, such as a commit.
+- `source_summary`: the finest summary preserved by silver.
+- `derived_population`: a source entity participating in a derived metric.
+
+All managed evidence and observation tables use the shared
+`metric_evidence_table` and `metric_observations_table` dbt macros. They own
+materialization, storage keys, partitioning, tags, and bounded query settings.
+These settings apply uniformly; model-specific query settings are retained
+only when required by model semantics.
+
+The tables are partitioned by calendar month from `metric_date`. Evidence is
+ordered by tenant, source, entity type, entity, measure, date, and record ID;
+observations omit the final record ID. Monthly partitioning is physical
+storage only: it does not change metric dates, timestamps, row granularity, or
+drilldown results. Each insert block may address at most 512 partitions.
+
+dbt builds a replacement table and exchanges it only after the build
+succeeds. A failed or cancelled build therefore leaves the active table in
+place, and the next build removes abandoned temporary relations. Replacement
+is atomic per table, not across the complete gold DAG. Replacing evidence
+invalidates active evidence cursors through the existing snapshot-expired
+contract.
+
+Definitions do not declare a separate drilldown strategy. The runtime resolves
+the definition's existing input roles and source measures, requires every input
+to use the same evidence relation, and compiles the evidence selection from
+that metadata. A new metric over existing evidence-backed measures therefore
+inherits drilldown without metric-specific SQL, backend branches, or frontend
+configuration.
+
+The schema validator probes every standard column. Drilldown capability is
+absent until the probe is definitively healthy and every metric input has
+granularity metadata. Missing, unchecked, or invalid evidence fails closed.
+`POST /v1/metric-results` and `GET /v1/metric-definitions` expose that
+capability; consumers omit evidence actions when it is absent.
+
+The evidence runtime owns presentation. It projects the internal contract into
+typed human-facing columns rather than exposing `record_kind`, input role,
+dimensions, or other storage fields directly:
+
+- source-summary and derived-population measures default to date plus value.
+- event measures declare reusable detail keys by `(source_key, measure_key)`,
+  such as ref, title, repository, author, or issue type.
+- selected chart dimensions are added from the typed `dimensions` array.
+- ratio metrics return daily columns named after their numerator and
+  denominator measures instead of an ambiguous value column.
+- unknown detail keys are humanized and treated as strings; fields requiring
+  another label or type are added to the centralized presentation registry.
+
+Presentation is source-measure metadata in runtime code today. It is declared
+once per reusable measure shape, never once per metric and never in frontend
+configuration.
+
+`POST /v1/metric-drilldown` accepts one metric, one person entity, a period,
+declared dimension filters, and an encoded continuation cursor. It returns the
+canonical selection, typed server-owned columns, projected evidence rows, and
+a next cursor. Ordering is ascending over the complete evidence key. The
+cursor is versioned and bound to the normalized selection and request tenant.
+It is not an authorization token and modifying its ordering key cannot widen
+the server-owned relation or selection.
+
+`POST /v1/metric-drilldown/export` produces the complete selected population
+with the same projected columns as CSV or XLSX. Export is server-side and
+rejects results exceeding its row, byte, cell, execution-time, or concurrency
+limits. It never silently truncates.
+
+The evidence contract has these limitations:
+
+- Summary-grain silver cannot produce event-grain evidence. AI and
+  collaboration currently expose source summaries or derived populations.
+  Git exposes commit and pull-request events, task duration metrics expose
+  issue events, and wiki page creation exposes page events; their remaining
+  measures use the finest summary grain preserved by silver.
+- Metric results and evidence are not transactionally snapshot-isolated from
+  each other during a dbt rebuild. They reconcile after the complete gold
+  build because observations derive from evidence.
+- Pagination and each export are bound to the evidence table UUID. A rebuild
+  during the operation fails with `EVIDENCE_SNAPSHOT_EXPIRED`; the client must
+  restart the selection rather than mix rows from two builds. Previous table
+  snapshots are not retained.
+- Source links are omitted. Hosted services commonly use custom domains, and
+  the current silver contract does not preserve a canonical web base URL. A
+  future source registry can add a non-secret `web_base_url` keyed by source
+  instance and combine it with provider-specific record identifiers.
+- Drilldown preserves the existing metric entity and tenant behavior. This
+  change does not add identity-tree authorization or warehouse tenant
+  enforcement.
 
 ## Computations
 
@@ -221,10 +354,16 @@ Rules:
 
 ## Builtin Seed Reconciliation
 
-Builtin definitions are declared in one code registry
-(`src/backend/services/analytics/src/domain/metric_definitions/builtin.rs`)
-and converged into the DB by a startup reconciler, not by migrations.
-Migrations own schema only.
+Builtin definitions are declared in one declarative registry
+(`src/backend/services/analytics/src/domain/metric_definitions/registry.yaml`:
+one `sources` list and one `metrics` list) and converged into the DB by a
+startup reconciler, not by migrations. Migrations own schema only. The registry
+is embedded at build time (`include_str!`) and deserialized once into the seed
+types in `builtin.rs`; the reconciler reads it through `builtin_sources()` /
+`builtin_metrics()`. Registry invariants (key shape and uniqueness,
+input/measure references, computation field combinations, presentation-complete
+formats) are pinned by the `builtin.rs` tests, which parse the same embedded
+registry — a malformed or drifted registry fails the build.
 
 Rules:
 
@@ -277,10 +416,20 @@ type MetricResult = {
   format: "integer" | "decimal" | "currency" | "percent"
   direction: "higher_is_better" | "lower_is_better" | "neutral"
   views: MetricResultView[]
+  selection: {
+    metric_key: string
+    entity: { type: string; ids: string[] }
+    period: { from: string; to: string }
+    filters: Array<{ dimension: string; values: string[] }>
+  }
+  drilldown?: {
+    granularity: Array<"event" | "source_summary" | "derived_population">
+  }
 } & (
   | { computation: "sum" }
   | { computation: "ratio"; scale: number }
   | { computation: "median" }
+  | { computation: "distinct_count" }
 )
 ```
 
@@ -363,9 +512,15 @@ Request caps, checked before any per-request enumeration work:
 - at most 1000 entity ids per request.
 - at most 400 days per period.
 
-Entity id normalization is a property of the entity type: `person` ids are
-emails and are trimmed and lowercased to match observation sources, which
-emit lowercased emails; other entity types are trimmed only.
+Entity ids for `person` are canonical person UUIDs since the identity
+cutover: trimmed, parsed as UUIDs (any casing / hyphenless accepted,
+canonicalized on echo), deduplicated. A non-UUID value — including the
+pre-cutover email shape — is a client error, never a silent empty result, and
+so is the nil UUID, which is syntactically valid but never a person.
+
+The id cap counts SUBMITTED ids, before they are parsed: blanks are skipped
+and duplicates collapse, so capping the parsed count would let a padded
+request through and pay for the parse of every entry first.
 
 Reject with a client error when:
 
@@ -385,19 +540,33 @@ Reject with a client error when:
 
 ## Authorization
 
-v1 decision: any authenticated member of a tenant may query metric results
-for any entity ids in that tenant. Peer views expose aggregates only (no peer
-entity ids); period, timeseries, and breakdown views expose per-entity values.
-Entity-level scoping (self, reports, role-based) is deferred to the real
-authorization system; this endpoint must adopt it when it lands.
+Entity-level scoping is enforced, not deferred. The caller is resolved from
+the gateway JWT, and identity answers in one batch call which of the requested
+person ids that caller may see (`POST /v1/visible-persons`: self, active
+grants, a tenant-wide wildcard grant, and org-chart descendants). One id
+outside the answer refuses the WHOLE request with 403 — never a partial
+response, which is indistinguishable from absent data. The check runs before
+any ClickHouse work.
 
-Warehouse tenant isolation is not implemented platform-wide: compiled queries
-do not filter on the warehouse `tenant_id` column, matching the rest of the
-platform's single-tenant posture. The control-plane tenant id has no defined
-mapping to the warehouse `tenant_id` strings stamped at ingestion; defining
-that mapping and adding the predicate (one place: the compiler's shared WHERE
-clause) is the multi-tenant unlock. The observation and cohort contracts keep
-the column so that change needs no contract migration.
+Reaching identity is mandatory: an unconfigured or unreachable identity
+service is a server error, so an authorization backend that is down can never
+read as "permitted". Service principals bypass the gate. `person` is the only
+entity type with a rule; any other type fails closed.
+
+Peer views expose aggregates only (no peer entity ids); period, timeseries,
+and breakdown views expose per-entity values — for ids the caller is allowed
+to see.
+
+Warehouse tenant isolation is compiled into every observation and cohort
+read but is OFF BY DEFAULT: the predicate is `tenant_id = ?` only when
+`metric_catalog.enforce_tenant_scope` is set, and degrades to a match-all
+(`tenant_id = ? OR 1 = 1`) otherwise, because the `tenant_id` stamped at
+ingestion has no defined mapping to the control-plane tenant yet — an exact
+match would silently empty every metric. Until an environment aligns the
+stamp and flips the flag, this runtime is SINGLE-TENANT: with the filter
+degraded, a peer pool sharing a `cohort_id` across tenants would mix them,
+so multi-tenant deployment is unsupported rather than partially isolated.
+Defining the mapping and defaulting the flag on is the multi-tenant unlock.
 
 Schema validation checks:
 
@@ -424,65 +593,85 @@ one that applies.
 
 ### Case 1: metric over an existing measure
 
-The measure already appears in a managed observation source (check the
-`measures` list of the source in `builtin.rs` and the emitting gold model).
+The measure already appears in a managed source. Check the source's `measures`
+list in `registry.yaml`, the emitting evidence model, and the observation model
+derived from it.
 
-1. Add one `MetricSeed` to `BUILTIN_METRICS` in
-   `src/backend/services/analytics/src/domain/metric_definitions/builtin.rs`:
+1. Add one entry to the `metrics` list in
+   `src/backend/services/analytics/src/domain/metric_definitions/registry.yaml`:
    metric key (`namespace.metric_name`, lowercase snake case), label,
-   description, unit, format, direction, entity type, computation type,
-   input role mapping to the measure, allowed dimensions, peer cohort key.
+   description, unit, format, direction, entity type, computation, input role
+   mapping to the measure, allowed dimensions, peer cohort key.
 2. Run `cargo test -p analytics` — the registry invariant tests validate
    key shapes, input/measure references, and computation field combinations.
 
-The reconciler seeds the definition on the next deploy. No SQL, no migration,
-no dbt change.
+The reconciler seeds the definition on the next deploy. If every input measure
+has healthy evidence metadata, the metric automatically receives drilldown,
+table, and CSV/XLSX export support. No drilldown-specific SQL, frontend
+configuration, migration, or dbt change is required.
 
 ### Case 2: new measure from an existing source
 
 The source exists but does not emit the measure yet.
 
-1. Add the measure branch to the source's gold model in `src/ingestion/gold/`:
-   one `UNION ALL` entry calling a shape macro from
-   `src/ingestion/dbt/macros/metric_observation_measures.sql` —
-   `sum_measure(measure_key, relation, value_expr, dimensions_col,
-   where=none)` for aggregated numerics, `presence_measure(measure_key,
-   relations)` for row-existence markers, `event_measure(measure_key,
-   relation, value_expr, dimensions_col, where=none)` for per-event values
-   feeding median metrics. Every branch is a shape-macro call; a new macro
-   is added only when a new computation kind becomes executable.
-   Read only class-contract columns; never vendor-specific ones — if the fact
-   you need is not in the class contract, extend the class contract first
-   (staging models declare semantics, see the class `schema.yml`).
-2. Add the `measure_key` to the gold model's `schema.yml` `accepted_values`
-   test.
-3. Add the measure key to the source's `measures` list in `builtin.rs`.
-4. Add the `MetricSeed` as in case 1.
-5. Validate: `dbt parse` + `cargo test -p analytics` (see Validation
+1. Add the measure to the source's `<family>_metric_evidence` model in
+   `src/ingestion/gold/`. Summary measures use the shared shape macros from
+   `src/ingestion/dbt/macros/metric_observation_measures.sql`;
+   event measures select stable source records into the evidence contract.
+   Read only class-contract columns; never vendor-specific ones. If the fact
+   is absent from the class contract, extend that contract first (staging
+   models declare semantics in their `schema.yml`).
+2. Choose the evidence granularity deliberately:
+   - emit one stable row per source record for `event`.
+   - emit the finest source-retained grouping for `source_summary`.
+   - emit the reconstructed participating population for
+     `derived_population`.
+   Event rows need deterministic `record_id` values and should place reusable
+   grouping fields in `dimensions` and human-facing fields in `details`.
+3. Derive the matching observation measure from the evidence relation. The
+   observation remains the aggregate-ready runtime input; the evidence row is
+   the population that explains it.
+4. Add the `measure_key` to the observation model's `schema.yml`
+   `accepted_values` test.
+5. Add the measure key to the source's `measures` list in `registry.yaml` and
+   classify its evidence granularity.
+6. Add or reuse a source-measure presentation rule when the default
+   date-plus-value table is insufficient. Declare detail keys there and add
+   explicit column metadata only for fields that are not humanized strings.
+7. Add the metric entry as in case 1.
+8. Validate: `dbt parse` + `cargo test -p analytics` (see Validation
    commands).
 
 ### Case 3: new observation source
 
 The metric family reads data no managed source covers.
 
-1. Create a dbt gold model in `src/ingestion/gold/` named
-   `<family>_metric_observations`, emitting the source measure observation
-   contract, `schema=insight`, `ref()`-ing silver models (medallion layering
-   rules: `docs/domain/ingestion-data-flow/specs/DESIGN.md`). Document columns
-   and measure keys in `src/ingestion/gold/schema.yml`.
-2. Add a `BuiltinSource` (source + measures + dimensions) to `builtin.rs`,
-   with `source_ref` set to the relation name. No backend enum or table-name
-   code changes: the relation name is data, validated on load against the
-   `<family>_metric_observations` shape (`ObservationRelation`) and probed at
-   runtime by the schema validator.
-3. Add `MetricSeed`s as in case 1.
-4. Validate: `dbt parse` + `cargo test -p analytics` (see Validation
+1. Create `<family>_metric_evidence` and
+   `<family>_metric_observations` dbt gold models in
+   `src/ingestion/gold/`, `schema=insight`, `ref()`-ing silver models
+   (medallion layering rules:
+   `docs/domain/ingestion-data-flow/specs/DESIGN.md`). The evidence model emits
+   the evidence contract; the observation model derives the aggregate-ready
+   observation contract from it. Document both in
+   `src/ingestion/gold/schema.yml`.
+2. Add a source entry (source + measures + dimensions) to the `sources` list
+   in `registry.yaml`, with `source_ref` and `evidence_ref` set to their
+   relation names and every measure assigned an evidence granularity. No
+   backend enum or table-name code changes are required: relation names are
+   validated data and both contracts are probed by the runtime schema
+   validator.
+3. Add source-measure presentation rules for event shapes that need
+   human-facing detail columns.
+4. Add metric entries as in case 1.
+5. Validate: `dbt parse` + `cargo test -p analytics` (see Validation
    commands). The runtime schema validator probes the new relation at
    startup.
 
 ### Rules that hold for every case
 
 - No metric-key-specific branches in runtime code.
+- Evidence presentation branches may depend on source and measure, never on
+  final metric key.
 - No vendor names, vendor columns, or label mappings in gold models — labels
   and taxonomy come from class-contract columns declared by staging.
 - Measure filter predicates (`where=` on shape macros) may reference only
@@ -540,6 +729,14 @@ Until one exists, custom definitions can be stored but cannot produce new source
 Frontend collection rendering:
 
 - requests metric keys and views.
+- treats the optional `drilldown` capability as the only evidence-action
+  switch; there is no frontend metric allowlist.
+- forwards the canonical metric selection returned by `/v1/metric-results`,
+  narrowing period and dimension filters for chart-point interactions.
+- renders server-owned typed evidence columns and rows without interpreting
+  the internal evidence contract.
+- uses the same canonical selection for table pagination and server-side
+  CSV/XLSX export.
 - treats configured required views as required.
 - normalizes response arrays only for local lookup.
 - renders using returned label, description, explanation, unit, format,

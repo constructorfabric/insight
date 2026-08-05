@@ -39,7 +39,6 @@ jobs:
           - insight-analytics
           - insight-authenticator
           - insight-gateway
-          - insight-identity
           - insight-identity-resolution
           # Python tooling
           - insight-toolbox

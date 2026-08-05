@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Extension, Path};
+use axum::extract::{Extension, Query};
 use axum::response::IntoResponse;
 use serde::Serialize;
 use toolkit_canonical_errors::CanonicalError;
@@ -139,42 +139,128 @@ async fn visible_person_ids(
 /// object `{ value_type, value, insight_source_type, insight_source_id }`.
 #[derive(Debug, Serialize)]
 struct InternalPersonResponse {
-    value_type: &'static str,
+    value_type: String,
     value: String,
     insight_source_type: &'static str,
     insight_source_id: Uuid,
 }
 
-/// `GET /internal/persons/by-email/{email}` — SERVICE-ONLY email → `person_id`
-/// resolution for the login bootstrap. Deliberately bypasses the tenant +
-/// visibility gates the public `/v1/profiles` enforces: at login neither a
-/// tenant nor a caller identity exists yet. Still fail-closed — a valid gateway
-/// JWT is required (host authn), and a non-service principal
-/// (`subject_type != "service"`, the gears mapping of the .NET `sub_type` claim)
-/// gets 403. Registered as a raw route so it stays out of the public OpenAPI,
-/// matching the .NET `.ExcludeFromDescription()`. Ported from `PersonsEndpoints`.
-pub async fn internal_person_by_email(
+/// Query params for `GET /internal/persons/by-external-id`.
+#[derive(Debug, serde::Deserialize)]
+pub struct InternalByExternalIdQuery {
+    source_type: String,
+    external_id: String,
+}
+
+/// `GET /internal/persons/by-external-id?source_type=...&external_id=...` —
+/// SERVICE-ONLY any-tenant `person_id` resolution for the LOGIN BOOTSTRAP
+/// ONLY: scoped to the configured `IdP`'s `source_type` (e.g. `ms-entra`) +
+/// its source-native external user id (e.g. the Entra `oid` claim). NEVER
+/// resolves by email — that is a SEPARATE route
+/// ([`internal_person_by_email_override`]), so a login that somehow carries
+/// no external id has no path that silently falls through to email.
+///
+/// Deliberately bypasses the tenant + visibility gates the public
+/// `/v1/profiles` enforces: at login neither a tenant nor a caller identity
+/// exists yet. Still fail-closed — a valid gateway JWT is required (host
+/// authn), and a non-service principal (`subject_type != "service"`, the
+/// gears mapping of the .NET `sub_type` claim) gets 403. Registered as a raw
+/// route so it stays out of the public OpenAPI, matching the .NET
+/// `.ExcludeFromDescription()`. Supersedes the removed
+/// `GET /internal/persons/by-email/{email}` (ported from `PersonsEndpoints`)
+/// as the login-bootstrap lookup — same gate, resolves by external id instead
+/// of email.
+pub async fn internal_person_by_external_id(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    Path(email): Path<String>,
+    Query(query): Query<InternalByExternalIdQuery>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     require_service(&ctx)?;
 
-    let person_id = persons_repo::resolve_person_id_by_email_any_tenant(&state.db, &email)
+    let source_type = query.source_type.trim();
+    let external_id = query.external_id.trim();
+    if source_type.is_empty() {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation("source_type", "source_type must not be empty", "REQUIRED")
+            .create());
+    }
+    if external_id.is_empty() {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation("external_id", "external_id must not be empty", "REQUIRED")
+            .create());
+    }
+
+    let person_id =
+        persons_repo::resolve_person_id_by_source_any_tenant(&state.db, source_type, external_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "internal by-external-id lookup failed");
+                CanonicalError::internal("lookup failed").create()
+            })?
+            .ok_or_else(|| {
+                ProfileError::not_found(format!(
+                    "person with source_type '{source_type}' external_id '{external_id}' not found"
+                ))
+                .with_resource(external_id.to_owned())
+                .create()
+            })?;
+
+    Ok(Json(InternalPersonResponse {
+        value_type: "id".to_owned(),
+        value: external_id.to_owned(),
+        insight_source_type: "person",
+        insight_source_id: person_id,
+    }))
+}
+
+/// Query params for `GET /internal/persons/by-email-override`.
+#[derive(Debug, serde::Deserialize)]
+pub struct InternalByEmailOverrideQuery {
+    email: String,
+}
+
+/// `GET /internal/persons/by-email-override?email=...` — SERVICE-ONLY
+/// any-tenant `person_id` resolution for the authenticator's admin
+/// `__override` (view-as, #1941) feature ONLY: an operator types an email to
+/// become that person. NEVER used by the login bootstrap (see
+/// [`internal_person_by_external_id`], a separate route) — the two are
+/// distinct contracts so an empty/absent external id at login can never fall
+/// through to this one.
+///
+/// Same bypass-tenant-gates rationale and fail-closed service-only gate as
+/// `by-external-id`. This is the URL the OLD, now-removed
+/// `GET /internal/persons/by-email/{email}` login-bootstrap lookup would map
+/// to if it still existed — but it doesn't: this route is override-only by
+/// contract, never called from the login path.
+pub async fn internal_person_by_email_override(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    Query(query): Query<InternalByEmailOverrideQuery>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    require_service(&ctx)?;
+
+    let email = query.email.trim();
+    if email.is_empty() {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation("email", "email must not be empty", "REQUIRED")
+            .create());
+    }
+
+    let person_id = persons_repo::resolve_person_id_by_email_any_tenant(&state.db, email)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, "internal by-email lookup failed");
+            tracing::error!(error = %e, "internal by-email-override lookup failed");
             CanonicalError::internal("lookup failed").create()
         })?
         .ok_or_else(|| {
             ProfileError::not_found(format!("person with email '{email}' not found"))
-                .with_resource(email.clone())
+                .with_resource(email.to_owned())
                 .create()
         })?;
 
     Ok(Json(InternalPersonResponse {
-        value_type: "email",
-        value: email,
+        value_type: "email".to_owned(),
+        value: email.to_owned(),
         insight_source_type: "person",
         insight_source_id: person_id,
     }))
@@ -184,8 +270,9 @@ pub async fn internal_person_by_email(
 ///
 /// Validation mirrors the .NET `ResolveProfileRequestValidator`; resolution
 /// dispatches on `value_type` ("email" across all sources, "id" scoped to one
-/// source instance). Returns the (possibly empty or multi-element) match set —
-/// the caller maps 0 → 404, 1 → profile, >1 → 409.
+/// source instance, `person_id` the canonical person itself). Returns the
+/// (possibly empty or multi-element) match set — the caller maps 0 → 404,
+/// 1 → profile, >1 → 409.
 async fn resolve_person_ids(
     state: &AppState,
     tenant: Uuid,
@@ -200,11 +287,11 @@ async fn resolve_person_ids(
             .with_field_violation("value_type", "value_type is required", "REQUIRED")
             .create());
     }
-    if value_type != "email" && value_type != "id" {
+    if value_type != "email" && value_type != "id" && value_type != "person_id" {
         return Err(ProfileError::invalid_argument()
             .with_field_violation(
                 "value_type",
-                "value_type must be 'email' or 'id'",
+                "value_type must be 'email', 'id' or 'person_id'",
                 "INVALID",
             )
             .create());
@@ -218,6 +305,10 @@ async fn resolve_person_ids(
         return Err(ProfileError::invalid_argument()
             .with_field_violation("value", "value must be at most 320 characters", "INVALID")
             .create());
+    }
+
+    if value_type == "person_id" {
+        return resolve_person_id_mode(state, tenant, req).await;
     }
 
     if value_type == "id" {
@@ -269,6 +360,52 @@ async fn resolve_person_ids(
                 CanonicalError::internal("profile resolution failed").create()
             })
     }
+}
+
+/// The `value_type='person_id'` mode: the canonical person needs no resolution
+/// step, so this only validates the key and confirms the person exists in the
+/// tenant. Visibility still applies downstream, so name resolution and metric
+/// access answer to one rule.
+async fn resolve_person_id_mode(
+    state: &AppState,
+    tenant: Uuid,
+    req: &ResolveProfileRequest,
+) -> Result<Vec<Uuid>, CanonicalError> {
+    // Cross-field shape matches email's: a person id is tenant-wide, and
+    // source scoping is what selects the 'id' mode instead.
+    if req.insight_source_type.is_some() || req.insight_source_id.is_some() {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation(
+                "insight_source_type",
+                "insight_source_type / insight_source_id must be null for value_type='person_id'",
+                "INVALID",
+            )
+            .create());
+    }
+
+    let person_id = Uuid::parse_str(req.value.trim())
+        .ok()
+        .filter(|person_id| !person_id.is_nil())
+        .ok_or_else(|| {
+            ProfileError::invalid_argument()
+                .with_field_violation(
+                    "value",
+                    "value must be a person UUID for value_type='person_id'",
+                    "INVALID",
+                )
+                .create()
+        })?;
+
+    // A person exists iff the append-only log holds an observation for it; an
+    // unknown id yields no candidate, so the caller answers 404 — the same
+    // shape an unknown email takes, and no probe for which ids exist.
+    let exists = persons_repo::person_exists(&state.db, tenant, person_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "resolve by person id failed");
+            CanonicalError::internal("profile resolution failed").create()
+        })?;
+    Ok(if exists { vec![person_id] } else { Vec::new() })
 }
 
 /// Resolve the person's parent (supervisor) edge from `org_chart`, filtered to
@@ -419,12 +556,11 @@ mod tests {
     use super::*;
 
     /// Lock the internal S2S response wire shape (`snake_case` keys + constant
-    /// `value_type`/`insight_source_type`) — the login authenticator depends on
-    /// it verbatim.
+    /// `insight_source_type`) — the authenticator depends on it verbatim.
     #[test]
     fn internal_person_response_wire_shape() -> anyhow::Result<()> {
         let body = InternalPersonResponse {
-            value_type: "email",
+            value_type: "email".to_owned(),
             value: "a@b.com".to_owned(),
             insight_source_type: "person",
             insight_source_id: Uuid::from_u128(1),

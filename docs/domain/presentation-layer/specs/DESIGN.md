@@ -22,7 +22,7 @@
   - [4.1 Implementation Plan](#41-implementation-plan)
   - [4.2 Promotion Ladder (FE)](#42-promotion-ladder-fe)
   - [4.3 Open Decisions](#43-open-decisions)
-  - [4.4 Out of Scope (Phase B)](#44-out-of-scope-phase-b)
+  - [4.4 Phase B and Out of Scope](#44-phase-b-and-out-of-scope)
 - [5. Traceability](#5-traceability)
 
 <!-- /toc -->
@@ -50,21 +50,23 @@ Requirements that significantly influence architecture decisions.
 | `cpt-presentation-fr-single-select-gate` | `validate_single_select` in `query_gate.rs`, wired through `parse_query_ref` — the one chokepoint metric SQL crosses on write and run |
 | `cpt-presentation-fr-read-only-role` | Dedicated `presentation_ro` ClickHouse role: `SELECT` on the contract, `CREATE`/`INSERT` only in `presentation`, no `DROP`/`ALTER`/`TRUNCATE` |
 | `cpt-presentation-fr-namespace` | New empty `presentation` database for new gold, saved-query results, and scratch; legacy gold left read-only in `insight` |
-| `cpt-presentation-fr-saved-query-crud` | `presentation.queries` is a SeaORM entity in the service database (like metric definitions); CRUD mutates that metadata, not ClickHouse. Only `/run` reaches ClickHouse — it reuses the existing read path and executes the stored SQL as `presentation_ro`, so no write grant on the contract is ever needed |
+| `cpt-presentation-fr-saved-query-crud` | The saved query (`presentation.queries` logically; the `saved_queries` table physically) is a SeaORM entity in the analytics **service database (MariaDB)**, like metric definitions; CRUD mutates that metadata, not ClickHouse. Only `/run` reaches ClickHouse — it reuses the existing read path and executes the stored SQL as `presentation_ro`, so no write grant on the contract is ever needed. Shipped (#1965) |
 | `cpt-presentation-fr-query-params` | Named parameters, `tenant` always injected from context (not client SQL), `period` supported |
-| `cpt-presentation-fr-tenant-filter` | Literal `insight_tenant_id = <ctx.tenant>` injected in one place — the compiler's shared `WHERE` — replacing the no-op |
-| `cpt-presentation-fr-contract-surface-doc` | Contract surface documented as the read boundary (silver and identity objects) |
-| `cpt-presentation-fr-contract-version-stamp` | Contract version stamp so presentation detects the surface it was built against |
-| `cpt-presentation-fr-query-console` | Single stable FE app on the saved-query API: author, list, run, render table / auto-chart |
-| `cpt-presentation-fr-preview-envs` | Path-based `/exp/<name>` on one host, one shared read-only synthetic backend, FE-only variation |
-| `cpt-presentation-fr-preview-auth` | Single fixed callback with a Redis-backed opaque `state` return path, validated at store time |
+| `cpt-presentation-fr-tenant-filter` | Literal leading `tenant_id = <ctx.tenant>` injected in one place — the compiler's shared `WHERE` (and the peer-cohort CTE reads) — replacing the no-op. `tenant_id` is the column the gold observation and cohort contract exposes (silver's `insight_tenant_id`, aliased to `tenant_id` in gold); filtering on it sidesteps the #1596 name drift, which affects other tables, not this read surface. Shipped for the structured `metric_results` read path (#1967). The legacy per-metric `query_ref` path (`execute_metric_query`) remains unscoped and is explicitly outside this guarantee until protected — see the component boundaries below. |
+| `cpt-presentation-fr-contract-surface-doc` | Contract surface documented as the read boundary in [CONTRACT-SURFACE.md](./CONTRACT-SURFACE.md): the `class_*`/`fct_*`/`mtr_*`/`dim_*` silver families and `person.*`/`identity.*` objects, with the additive-only rules and the granted `insight` legacy gold. Shipped (#1968) |
+| `cpt-presentation-fr-contract-version-stamp` | Engineering stamps `silver.contract_version` (single-row constant view, ledgerless CH migration); analytics pins `PINNED_CONTRACT_VERSION` and verifies the stamp in a periodic post-boot sweep, logging a mismatch or missing stamp without gating boot. Shipped (#1969) |
+| `cpt-presentation-fr-query-console` | Single stable FE app on the saved-query API: author, list, run, render table / auto-chart. Shipped (#1970) |
+| `cpt-presentation-fr-preview-envs` | Path-based `/exp/<name>` on one host, one shared read-only backend, FE-only variation. Per-experiment bundle (`Deployment` + `Service` + one prefix-strip `Ingress`) shipped as the `insight-preview` chart at `deploy/preview/`, applied by hand (#1971). Experiments are a capability gated off on production by default (`cpt-presentation-constraint-experiments-off-prod`, #1973). Shipped |
+| `cpt-presentation-fr-preview-auth` | Single fixed callback with a Redis-backed opaque `state` return path (already stashing `state -> { return_to, pkce_verifier, nonce }`, delete-on-read), extended so `return_to` is validated at store time against a configurable `/exp/` prefix. Shipped (#1972) |
+| `cpt-presentation-fr-metric-registry` | Single declarative `registry.yaml` (a `sources` list and a `metrics` list) embedded at build time and reconciled into the service DB at boot; replaces the code-literal seed with no change to reconcile semantics; invariants pinned by tests that parse the same registry. Shipped (#1974) |
+| `cpt-presentation-fr-metric-passports` | `passport.rs` renders a source/formula/notes passport per metric from the embedded registry; the offline `analytics passports` subcommand emits the document, committed as `passports.md` next to `registry.yaml`. A Rust drift test compares the render against the committed file and fails on divergence, so a metric change without a passport regeneration breaks the build. Shipped (#1975) |
 
 #### NFR Allocation
 
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|--------------|-----------------|----------------------|
 | `cpt-presentation-nfr-source-immutability` | No presentation write reaches engineering-owned data | Single-SELECT gate + `presentation_ro` role | Two independent barriers: syntactic gate rejects non-`SELECT`; role grants forbid write/DDL on the contract | Adversarial SQL suite; verify no write/alter/drop on contract objects |
-| `cpt-presentation-nfr-tenant-isolation` | No cross-tenant rows returned | Compiler shared `WHERE` | Server-injected literal tenant predicate the client SQL cannot widen | Cross-tenant isolation test returns zero rows |
+| `cpt-presentation-nfr-tenant-isolation` | No cross-tenant rows returned from the structured `metric_results` reads | Compiler shared `WHERE` | Server-injected literal tenant predicate the client SQL cannot widen; sourced from `SecurityContext`, not the request body | Compiler unit tests assert the predicate and its bound value lead every observation and cohort read (#1967); cross-tenant e2e (#1359) returns zero rows. Not yet met for the legacy `execute_metric_query` path, which stays outside the guarantee until protected. |
 
 ### 1.3 Architecture Layers
 
@@ -86,12 +88,15 @@ Requirements that significantly influence architecture decisions.
 ├──────────────────────────────────── │ ──────────────────────────┤
 │                CONTRACT (read-only)  ▼      presentation (write)  │
 │  ┌───────────────────────────┐   ┌───────────────────────────┐  │
-│  │ silver class_*/fct_*/mtr_*│   │ presentation.queries      │  │
-│  │ identity person.*/identity│   │ new gold, results, scratch│  │
+│  │ silver class_*/fct_*/mtr_*│   │ new gold / query results  │  │
+│  │ identity person.*/identity│   │ scratch (presentation DB) │  │
 │  │ legacy gold in `insight`  │   └───────────────────────────┘  │
 │  └───────────────────────────┘                                  │
 └─────────────────────────────────────────────────────────────────┘
    ▲ produced by Engineering / ingestion layer (additive, versioned)
+   Saved-query metadata (`presentation.queries`) lives in the analytics
+   service DB (MariaDB), not the ClickHouse `presentation` namespace; only
+   `/run` reaches ClickHouse.
 ```
 
 | Layer | Responsibility | Technology |
@@ -115,7 +120,7 @@ The source is safe because two independent barriers make presentation-side write
 
 - [ ] `p2` - **ID**: `cpt-presentation-principle-additive-contract`
 
-Contract changes are additive — new tables and columns — never rewrites. Existing views keep working across contract evolution. A contract version stamp lets presentation detect the surface it was built against.
+Contract changes are additive — new tables and columns — never rewrites. Existing views keep working across contract evolution. The read surface and the additive-only rules are enumerated in [CONTRACT-SURFACE.md](./CONTRACT-SURFACE.md) (#1968). A contract version stamp lets presentation detect the surface it was built against.
 
 #### Server-Side Tenant Scoping
 
@@ -155,6 +160,12 @@ There is no Argo/GitOps in the platform. Preview provisioning is manual `kubectl
 
 One host serves all preview experiments, giving one Entra redirect URI (Entra has no reliable wildcard redirect). Addressing is path-based (`/exp/<name>`) with a same-origin session cookie and zero per-experiment Entra change.
 
+#### Experiments Off on Production by Default
+
+- [ ] `p2` - **ID**: `cpt-presentation-constraint-experiments-off-prod`
+
+Experimental frontends (`/exp/<name>`) are a capability, off by default, so a production stand cannot host them against customer data (PRD R1.4). The authenticator takes `experiments_enabled` (default `false`); a login return into the reserved `/exp/` subtree is honored only when it is `true`, otherwise the return falls back to `default_return_to` and the attempt is audit-logged. A production stand leaves it `false`; dev/demo preview hosts set `true` and serve experiments over that stand's own data (no synthetic requirement). This is the environment-level gate; a per-user RBAC capability supersedes it later, as the same surface becomes the analyst query builder. The gate lives on the authenticator (gitops); the `deploy/preview/` FE chart carries no auth env. The sanctioned saved-query console/CRUD is a separate, prod-safe surface and is not gated by this flag.
+
 #### No tenant_id on New Gold Outside the Coordinated Retrofit
 
 - [ ] `p2` - **ID**: `cpt-presentation-constraint-tenant-id-retrofit`
@@ -173,13 +184,13 @@ New gold does not add `insight_tenant_id` outside the coordinated engineering re
 
 | Entity | Description | Location |
 |--------|-------------|--------|
-| `presentation.queries` | Saved query: a single `SELECT`/`WITH` over the contract, tenant-scoped | ClickHouse `presentation` DB |
+| `presentation.queries` (`saved_queries` table) | Saved query: a single `SELECT`/`WITH` over the contract, tenant-scoped | Analytics service DB (MariaDB), like the metric CRUD entities |
 | Query gate | `validate_single_select` — the syntactic read-only barrier | [query_gate.rs](../../../../src/backend/services/analytics/src/domain/query_gate.rs) |
 | Metric compiler | Builds contract SQL; owns the shared `WHERE` where the tenant filter is injected | [metric_results/](../../../../src/backend/services/analytics/src/domain/metric_results/) |
 
 **Relationships**:
 - `presentation.queries.sql` → contract objects (silver, identity, legacy gold in `insight`): read-only `SELECT` validated by the gate.
-- `presentation.queries.insight_tenant_id` → the tenant predicate injected on run.
+- `presentation.queries.insight_tenant_id` → the tenant that owns the row; scopes all CRUD. It is also the source for the tenant predicate the run path will inject once #1967 replaces the compiler no-op.
 
 ### 3.2 Component Model
 
@@ -231,21 +242,22 @@ Makes the public query path incapable of anything but a single read, so a broken
 
 #### Read-Only Role
 
-- [ ] `p2` - **ID**: `cpt-presentation-component-read-only-role`
+- [x] `p2` - **ID**: `cpt-presentation-component-read-only-role`
 
 ##### Why this component exists
 
-The second, independent barrier behind the query gate: once analytics connects as the role, even a read that slips past the gate executes under grants that make writing, altering, or dropping the source impossible. Read-only enforced by construction, not convention. The role is **provisioned** by #1963; it is **not yet the active query-path identity** — analytics still connects as the admin until that wiring lands, so this barrier is dormant until then.
+The second, independent barrier behind the query gate: once analytics connects as the role, even a read that slips past the gate executes under grants that make writing, altering, or dropping the source impossible. Read-only enforced by construction, not convention. The role is **provisioned** by #1963; #1964 adds the grant-less `presentation` user that carries it and points analytics at that user, so the barrier is now active.
 
 ##### Responsibility scope
 
 - `presentation_ro` ClickHouse role: `SELECT` on the contract (silver, identity/person, legacy gold in `insight`); `SELECT`/`INSERT`/`CREATE` only in `presentation`; no `DROP`/`ALTER`/`TRUNCATE` anywhere.
-- Defined as idempotent DDL in [presentation-role.sql](../../../../src/ingestion/scripts/bootstrap-db/presentation-role.sql); provisioned by [apply-ch-migrations.sh](../../../../src/ingestion/scripts/apply-ch-migrations.sh) (the clickhouse-migrate hook, which bootstrap also runs), guarded so a ClickHouse admin without access-management is skipped with a warning rather than aborting.
+- Grant-less `presentation` user (#1964): every privilege comes from `presentation_ro` (a role only *adds* privileges, so activating it on a user with direct grants would not restrict anything). This is the user analytics connects as.
+- Defined as idempotent DDL in [presentation-role.sql](../../../../src/ingestion/scripts/bootstrap-db/presentation-role.sql) (role) plus [provision-presentation-access.sh](../../../../src/ingestion/scripts/bootstrap-db/provision-presentation-access.sh) (the user, which needs a password); provisioned by [apply-ch-migrations.sh](../../../../src/ingestion/scripts/apply-ch-migrations.sh) (the clickhouse-migrate hook, which bootstrap also runs), guarded so a ClickHouse admin without access-management — or a run without the user password — is skipped with a warning rather than aborting.
 
 ##### Responsibility boundaries
 
 - Does NOT parse SQL — that is the query gate.
-- Does NOT create the `presentation` database or wire the analytics connection to the role — those follow in #1964 and the connection wiring; until the connection wiring lands the role is provisioned but inactive.
+- Does NOT gate the switch behind a flag: analytics always connects as the `presentation` user, whose password is a required credential (like the admin one). The user is provisioned before analytics needs it — by the clickhouse-migrate Hook (gitops/chart) or the ClickHouse init scripts (compose) — so the deploy-side switch must land together with a release that carries that provisioning.
 
 ##### Related components (by ID)
 
@@ -256,23 +268,25 @@ The second, independent barrier behind the query gate: once analytics connects a
 
 #### Saved-Query API
 
-- [ ] `p2` - **ID**: `cpt-presentation-component-saved-query-api`
+- [x] `p2` - **ID**: `cpt-presentation-component-saved-query-api`
 
 ##### Why this component exists
 
-Plain CRUD over stored queries so a new analytics slice needs no engineering change and no re-ingest. The one new surface Phase A adds ("Data Analytics").
+Plain CRUD over stored queries so a new analytics slice needs no engineering change and no re-ingest. The one new surface Phase A adds ("Data Analytics"). CRUD + run shipped (#1965); named parameters (`tenant`/`period`) shipped (#1966).
 
 ##### Responsibility scope
 
-- CRUD over `presentation.queries`, tenant-scoped.
-- Validate SQL via the query gate on create and update.
-- Run: inject the tenant filter, execute read-only as `presentation_ro`, return untyped JSON rows (same shape as the existing metric query path).
-- Named parameters: `tenant` always injected from context, `period` supported.
+- CRUD over `presentation.queries` (the `saved_queries` service-DB table), tenant-scoped from the session `SecurityContext`. Handlers mirror the metric CRUD in `api::handlers`; delete is a hard delete.
+- Validate SQL via the query gate (`validate_single_select`) on create, update, **and** run — the run-side re-validation keeps a stored SQL from reaching ClickHouse as anything but a single read.
+- Run: execute the stored single-SELECT read-only as `presentation_ro` and return untyped JSON rows (`JSONEachRow`, same shape as the existing metric query path).
+- Bind named parameters on run (#1966): `{tenant}` is always bound from the session `SecurityContext` (never client-settable); `{period}` is bound when supplied on the run request body. Values are passed as ClickHouse server-side parameters (`Query::param` → `param_<name>`), so a value can never change query structure; the gate already tolerates `{name:Type}` placeholders. A query that references a parameter left unbound (e.g. `{period}` with no period supplied) fails as a 400, not a 5xx.
 
 ##### Responsibility boundaries
 
 - Does NOT carry metric metadata, thresholds, or passports — those are Phase B.
-- Does NOT bypass the gate or the tenant filter.
+- Does NOT bypass the gate.
+- Does NOT string-interpolate parameter values — binding is server-side only.
+- Does NOT yet inject the tenant-row filter (#1967) — the run path binds the `{tenant}` *value* but does not yet add an `insight_tenant_id = {tenant}` predicate to queries that omit it; that cross-cutting concern lands in its own sub-issue.
 
 ##### Related components (by ID)
 
@@ -283,7 +297,7 @@ Plain CRUD over stored queries so a new analytics slice needs no engineering cha
 
 #### Metric Compiler (Tenant Filter)
 
-- [ ] `p2` - **ID**: `cpt-presentation-component-metric-compiler`
+- [x] `p2` - **ID**: `cpt-presentation-component-metric-compiler`
 
 ##### Why this component exists
 
@@ -291,7 +305,7 @@ Builds contract SQL and owns the single shared `WHERE` where the tenant predicat
 
 ##### Responsibility scope
 
-- Inject a literal `insight_tenant_id = <ctx.tenant>` on every contract read, sourced from request context.
+- Inject a leading literal `tenant_id = <ctx.tenant>` on every read the compiler emits, sourced from the request's `SecurityContext` (carried on `ValidatedMetricResultsRequest`). `tenant_id` is the column the gold observation and cohort contract exposes; the value is the raw tenant UUID, the same representation the metric lineage stamps (no sipHash — that is identity-only). The predicate covers every observation read (`metric_where` / `shared_observation_where`) and both peer-cohort CTE reads.
 - Keep `FINAL` on silver `ReplacingMergeTree` reads.
 - Put `insight_tenant_id` first in `ORDER BY` for any new presentation gold that carries it.
 
@@ -299,6 +313,7 @@ Builds contract SQL and owns the single shared `WHERE` where the tenant predicat
 
 - Does NOT read the tenant value from client SQL.
 - Does NOT implement subtree/hierarchy scoping in Phase A (deferred to the benchmark).
+- Does NOT cover the legacy per-metric `query_ref` path (`execute_metric_query`, `/v1/metrics/{id}/query` and `/v1/metrics/queries`). That path runs arbitrary DB-stored `FROM` shapes (subqueries, bare bronze tables) where a flat `tenant_id = ?` cannot be injected safely, so it stays unscoped and outside the isolation guarantee until it is restricted to tenant-safe sources or given per-query enforcement. It predates this component; #1967 does not widen its exposure.
 
 ##### Related components (by ID)
 
@@ -307,19 +322,74 @@ Builds contract SQL and owns the single shared `WHERE` where the tenant predicat
 
 ---
 
-#### Preview Environment Router
+#### Contract Version Stamp
 
-- [ ] `p2` - **ID**: `cpt-presentation-component-preview-router`
+- [x] `p3` - **ID**: `cpt-presentation-component-contract-version`
 
 ##### Why this component exists
 
-Serves many experimental FE builds under one host against one shared read-only synthetic backend, so FE developers get a tier-3 authoring loop that cannot touch customer data.
+Additive-only evolution is only checkable against a named surface *version*. The stamp makes the deployed contract surface machine-detectable, so a presentation build knows whether the surface it was built against is the one it is running on. Shipped (#1969).
+
+##### Responsibility scope
+
+- Engineering side: `silver.contract_version`, a single-row constant view (`version UInt32`), created by the ledgerless ClickHouse migration `20260731000000_contract-version-stamp.sql` (`CREATE OR REPLACE VIEW`, re-applied on every deploy). Part of the contract surface; readable by `presentation_ro` via the existing `silver.*` grant. Bumped in place per [CONTRACT-SURFACE.md](./CONTRACT-SURFACE.md) §5.
+- Presentation side: the analytics service pins `PINNED_CONTRACT_VERSION` (`domain/contract_version.rs`) and verifies the stamp in a periodic post-boot sweep (same cadence rationale as the metric-definition validator: the stamp is created by the migrate hook after the service boots, and a later in-place bump must surface without a restart). State transitions are logged — match at info, a mismatch at error, a missing/unreadable stamp at warn — and the probe never gates readiness (a ClickHouse outage at boot must not delay boot).
+
+##### Responsibility boundaries
+
+- Does NOT enforce compatibility — additive-only evolution (the principle above) is what keeps an older pin working on a newer surface; the stamp only makes drift visible.
+- Does NOT version individual tables or columns — one version for the whole surface, bumped per the CONTRACT-SURFACE.md §5 procedure.
+
+##### Related components (by ID)
+
+- `cpt-presentation-component-read-only-role` — grants the read the probe uses
+- `cpt-presentation-component-metric-compiler` — the main consumer of the surface the version names
+
+---
+
+#### Query Console
+
+- [x] `p2` - **ID**: `cpt-presentation-component-query-console`
+
+##### Why this component exists
+
+Makes the saved-query API tangible: a single stable FE app (not a per-branch stand) where an analyst authors a query, picks one from their saved list, runs it, and reads the result. This is tiers 1-2 of the promotion ladder — author and eyeball, no deploy — and query-management v0. Shipped (#1970).
+
+##### Responsibility scope
+
+- One authenticated route in the existing FE app (the stable console; preview environments below are a separate tier-3 surface). Reached only through the existing auth shell, so it inherits the session `SecurityContext` and its tenant; the console never sends a tenant.
+- Reachable by direct URL only — no sidebar/nav entry — in Phase A. There is no role to gate it on yet (RBAC is deferred to the permissions service, `DD-AUTH-07`, so every human session carries only the default `user` role); surfacing it in the nav and restricting it to the right roles waits for that service.
+- Consumes **only** the saved-query API (`/v1/queries` CRUD + `/v1/queries/{id}/run`): list saved queries, author (name + SQL, optional description), save to get an id, select a saved query, and run it. Editing and deleting an existing query round out CRUD parity with the API.
+- Render the run result two ways from the untyped `{ rows }` payload: always a table (columns inferred from the row keys), plus an auto-chart when the row shape is chartable (one categorical/label column + at least one numeric column), otherwise table-only. Chart-type selection is heuristic, not authored.
+- Surface the API's typed errors as-is — a gate rejection (invalid SQL) and a missing-named-parameter `400` are shown to the author, not swallowed.
+
+##### Responsibility boundaries
+
+- Does NOT talk to ClickHouse or any contract object directly — every read is a `/run` through the service, so the gate, the `presentation_ro` role, and the tenant scoping all still apply.
+- Does NOT set or widen the tenant — `{tenant}` is server-injected; the console cannot pass one.
+- Does NOT pin a query as a dashboard card (tier-2 "promote") or build bespoke widgets (tier-3) — those are later ladder rungs; this component is author-and-run only.
+
+##### Related components (by ID)
+
+- `cpt-presentation-component-saved-query-api` — the only backend surface the console calls
+- `cpt-presentation-component-preview-router` — the tier-3 counterpart to this tier-1/2 console
+
+---
+
+#### Preview Environment Router
+
+- [x] `p2` - **ID**: `cpt-presentation-component-preview-router`
+
+##### Why this component exists
+
+Serves many experimental FE builds under one host against one shared read-only backend, gated so the capability is off on production and can never touch customer data there.
 
 ##### Responsibility scope
 
 - Path-based addressing `preview.insight…/exp/<name>/`: one host, one Entra redirect URI, same-origin session cookie. FE built with a relative asset base and a runtime router basepath so one image serves under any prefix; `/api/...` stays the shared absolute path.
-- Auth return path: login-initiation writes Redis `state → { return_to, pkce_verifier, nonce }` with a short TTL; Entra echoes the random `state` to the single fixed callback; the BFF looks it up (miss/expired ⇒ reject; delete-on-read), exchanges the code, sets the cookie, and `302`s to `return_to`. `return_to` is validated at store time (same-origin, `/exp/` allowlist).
-- Deployment: one route object per experiment applied by hand (`Deployment` + `Service` + one routing object with prefix-strip rewrite). The controller merges same-host route objects, so `apply` adds a path and `delete` removes it; no central config is rewritten. Controller-agnostic — nginx `Ingress` today, Gateway API `HTTPRoute` after the Envoy move.
+- Auth return path (shipped #1972): the authenticator's login-initiation already writes Redis `state → { return_to, pkce_verifier, nonce }` with a short TTL; Entra echoes the random `state` to the single fixed callback; the authenticator looks it up (miss/expired ⇒ reject; delete-on-read), exchanges the code, sets the cookie, and `302`s to `return_to`. #1972 adds the store-time `/exp/` prefix check: `sanitize_return_to` takes a configurable `return_to_prefix` (authenticator config) — empty keeps the permissive main-app posture; a preview-host deployment sets `/exp/` so a login can only return to an `/exp/<name>` path (same-origin already enforced by the site-relative check; `..`-traversal rejected), otherwise the configured default. The FE preview chart (`deploy/preview/`) still carries no auth env; the prefix is set on the preview-host authenticator deployment (gitops), which owns the single fixed Entra redirect URI.
+- Deployment: one route object per experiment applied by hand (`Deployment` + `Service` + one routing object with prefix-strip rewrite). The controller merges same-host route objects, so `apply` adds a path and `delete` removes it; no central config is rewritten. Portable by intent (Gateway API `HTTPRoute` after the Envoy move), but nginx-specific today: the route uses `pathType: ImplementationSpecific` with `nginx.ingress.kubernetes.io/{use-regex,rewrite-target}`. Shipped (#1971) as the `insight-preview` Helm chart at `deploy/preview/`: each experiment is one release named `preview-<name>`, the `Ingress` prefix-strips `/exp/<name>` (`rewrite-target: /$2`), and the experiment slug is validated as a DNS-1123 label of at most 55 characters at template time. Render-contract tests plus a `.github/workflows/preview-helm.yml` lane guard it. The auth return path above shipped (#1972).
+- Experiments-off-on-prod gate (shipped #1973): experiments are a capability, off by default, enforced at the authenticator's `/exp/` return path rather than the FE chart. The authenticator's `experiments_enabled` (default `false`) makes `login` honor a return into the reserved `/exp/` subtree only when `true`; otherwise it falls back to `default_return_to` and audit-logs `experiment_return_ignored`. A production stand leaves it `false`, so an experimental frontend cannot obtain a session there; dev/demo preview hosts set `true` and run over that stand's own data (`cpt-presentation-constraint-experiments-off-prod`). Enforced by `is_preview_return` + the `experiments_enabled` check in `login` (unit-tested), and set on the authenticator deployment behind the preview host (gitops). A future per-user RBAC capability replaces this single env-level check.
 
 ##### Responsibility boundaries
 
@@ -332,10 +402,63 @@ Serves many experimental FE builds under one host against one shared read-only s
 
 ---
 
+#### Metric Registry
+
+- [x] `p3` - **ID**: `cpt-presentation-component-metric-registry`
+
+##### Why this component exists
+
+Collapses the metric-definition seed into one declarative artifact so a metric can be added or changed without editing Rust, and so Phase B (semantic compiler, passports) has a single source of truth to build on. Shipped (#1974). The detailed metric contract is governed by the metrics DESIGN (`docs/domain/metrics/specs/DESIGN.md`).
+
+##### Responsibility scope
+
+- `registry.yaml` (`domain/metric_definitions/`): one `sources` list and one `metrics` list, embedded at build time (`include_str!`) and deserialized once into the seed types in `builtin.rs`, exposed as `builtin_sources()` / `builtin_metrics()`.
+- The startup reconciler converges the registry into the service DB (`metric_definitions` and its source/measure/dimension/input tables) idempotently: additive upserts plus disable-missing for builtins dropped from the registry; tenant-owned rows untouched. Unchanged from the prior code-literal seed except its source.
+- Registry invariants (key shape and uniqueness, input/measure references, computation field combinations, presentation-complete formats carry no unit) are pinned by tests that parse the same embedded registry, so a malformed or drifted registry fails the build.
+
+##### Responsibility boundaries
+
+- Does NOT define or drive the legacy `metric_catalog`/`metric_threshold` subsystem — that orphaned, frozen path is untouched; its retirement is tracked separately.
+- Does NOT add the semantic raw-to-derived compiler — that is a later Phase B sub-issue (#1976). Metric passports and their drift test ship on top of this registry (#1975); see the Metric Passports component below.
+- Does NOT change reconcile semantics or the metric-result runtime.
+
+##### Related components (by ID)
+
+- `cpt-presentation-component-metric-compiler` — consumes the reconciled definitions
+- `cpt-presentation-component-metric-passports` — renders the human-readable passport from the same registry
+
+---
+
+#### Metric Passports
+
+- [x] `p3` - **ID**: `cpt-presentation-component-metric-passports`
+
+##### Why this component exists
+
+Gives every metric a reviewable, plain-language derivation record — source, formula, notes — that cannot silently drift from the code that computes it, laying a stable, human-facing surface the Phase B semantic compiler and the FE metric rework build on. Shipped (#1975).
+
+##### Responsibility scope
+
+- `passport.rs` (`domain/metric_definitions/`): `render_passports()` folds `builtin_sources()` / `builtin_metrics()` into one Markdown document, one section per metric in registry order — source relation, the measures it reads, a rendered formula (sum/median/distinct-count/scaled ratio plus any affine-clamp transform), the display shape, and the authored notes.
+- The offline `analytics passports` subcommand emits the document (no database, no config, mirroring `analytics openapi`); it is committed as `passports.md` next to `registry.yaml`.
+- A Rust drift test (`metric_definitions::passport`) re-renders from the embedded registry and asserts byte-equality with the committed `passports.md`, failing the standard backend test job when the two disagree. Regenerate: `(cd src/backend && cargo run -p analytics -- passports) > …/passports.md`.
+
+##### Responsibility boundaries
+
+- Does NOT add a new runtime endpoint or change the metric-result path — passports are a build-time, developer-facing artifact.
+- Does NOT author notes independently — it renders the registry's existing labels, computations, and explanations, so the passport stays a projection of the single source of truth rather than a second one.
+
+##### Related components (by ID)
+
+- `cpt-presentation-component-metric-registry` — the single source of truth the passport is rendered from
+
+---
+
 ### 3.3 API Contracts
 
-- [ ] `p2` - **ID**: `cpt-presentation-interface-saved-query-endpoints`
+- [x] `p2` - **ID**: `cpt-presentation-interface-saved-query-endpoints`
 
+- **Implements**: `cpt-presentation-interface-saved-query-api` (PRD §7.1 Public API Surface)
 - **Contracts**: `cpt-presentation-contract-read-only-consumption`
 - **Technology**: REST / HTTP JSON
 - **Base path**: `/v1/queries`
@@ -351,9 +474,9 @@ Entity `presentation.queries`: `{ id, insight_tenant_id, name, description, sql,
 | `GET` | `/v1/queries/{id}` | Fetch one | unstable |
 | `PUT` | `/v1/queries/{id}` | Update (re-validates SQL) | unstable |
 | `DELETE` | `/v1/queries/{id}` | Delete | unstable |
-| `POST` | `/v1/queries/{id}/run` | Execute read-only, inject tenant filter, return rows | unstable |
+| `POST` | `/v1/queries/{id}/run` | Execute read-only as `presentation_ro`, return rows; optional body `{ "period": "<value>" }` binds `{period}`; `{tenant}` always bound from context (tenant-row *filter* deferred to #1967 — the run path binds the tenant value but adds no `insight_tenant_id` predicate yet) | unstable |
 
-`run` executes as `presentation_ro` and returns untyped JSON rows, the same shape as the existing metric query path. No metric metadata, thresholds, or passports in Phase A.
+`run` executes as `presentation_ro` and returns untyped JSON rows, the same shape as the existing metric query path. The request body is optional; named parameters (`tenant`/`period`, #1966) are bound as ClickHouse server-side parameters. No metric metadata, thresholds, or passports in Phase A.
 
 ### 3.4 Internal Dependencies
 
@@ -372,11 +495,12 @@ Entity `presentation.queries`: `{ id, insight_tenant_id, name, description, sql,
 
 | Aspect | Value |
 |--------|-------|
-| Contract | Read-only: silver (`class_*`, `fct_*`, `mtr_*`), identity (`person.*`, `identity.*`), legacy gold in `insight` |
+| Contract | Read-only: silver (`class_*`, `fct_*`, `mtr_*`, `dim_*`), identity (`person.*`, `identity.*`), legacy gold in `insight`. Full surface + additive-only rules: [CONTRACT-SURFACE.md](./CONTRACT-SURFACE.md) |
+| Contract version | `silver.contract_version` single-row view; analytics pins `PINNED_CONTRACT_VERSION` and verifies it in a periodic post-boot sweep (#1969) |
 | Presentation namespace | New `presentation` DB: `SELECT` + `CREATE`/`INSERT` for new gold, results, scratch |
-| Access | Executed as the `presentation_ro` role (SELECT on contract; CREATE/INSERT only in `presentation`) |
+| Access | Executed as the grant-less `presentation` user, whose only privileges come via the `presentation_ro` role (SELECT on contract; CREATE/INSERT only in `presentation`) |
 | Read semantics | `FINAL` on silver `ReplacingMergeTree` reads |
-| Bootstrap | Role defined in `src/ingestion/scripts/bootstrap-db/presentation-role.sql`, provisioned (guarded) by `apply-ch-migrations.sh`; the empty `presentation` DB follows in #1964 |
+| Bootstrap | `presentation` DB always created (`clickhouse.initDatabases` + the core-DB block of `apply-ch-migrations.sh`); role + grant-less user via `provision-presentation-access.sh` — the user only when its password is supplied (guarded). Role DDL in `presentation-role.sql` |
 
 #### Redis
 
@@ -450,19 +574,19 @@ sequenceDiagram
     BFF -->> Dev: 302 return_to (session cookie set)
 ```
 
-**Description**: Nothing tamperable rides in the URL; `return_to` is validated at store time (same-origin, `/exp/` allowlist); a `state` miss or expiry is rejected.
+**Description**: `return_to` is caller-supplied on `/auth/login`; it is sanitized and validated at store time (same-origin, `/exp/` prefix) before it enters the Redis login state, and never forwarded through the callback — only the opaque `state` rides the callback URL. A `state` miss or expiry is rejected.
 
 ### 3.7 Database Schemas & Tables
 
-- [ ] `p3` - **ID**: `cpt-presentation-db-schemas`
+- [x] `p3` - **ID**: `cpt-presentation-db-schemas`
 
-Only one new entity is added in Phase A. It lives in the `presentation` namespace; contract objects are unchanged (read-only).
+Only one new entity is added in Phase A. It lives in the analytics **service database (MariaDB)** alongside the metric CRUD entities — not in the ClickHouse `presentation` namespace — because CRUD is metadata management, not a contract read. Contract objects and the `presentation` ClickHouse namespace are unchanged by CRUD; only `/run` reaches ClickHouse.
 
-#### Table: `presentation.queries`
+#### Table: `saved_queries` (`presentation.queries`)
 
 **ID**: `cpt-presentation-dbtable-queries`
 
-Saved query authored by an analyst: a single `SELECT`/`WITH` over the contract, tenant-scoped.
+Saved query authored by an analyst: a single `SELECT`/`WITH` over the contract, tenant-scoped. Created by migration `m20260730_000001_saved_queries` (#1965).
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -476,7 +600,7 @@ Saved query authored by an analyst: a single `SELECT`/`WITH` over the contract, 
 
 **PK**: `id`
 
-**Additional info**: Lives in the `presentation` namespace; written via the `presentation_ro` role's `CREATE`/`INSERT` grant. Reads and runs are tenant-scoped by `insight_tenant_id`.
+**Additional info**: Lives in the analytics service DB (MariaDB), written by the service's own SeaORM connection — not the `presentation_ro` ClickHouse role, which is only the identity for `/run` reads. All CRUD reads/writes are tenant-scoped by `insight_tenant_id`.
 
 ## 4. Additional context
 
@@ -485,11 +609,12 @@ Saved query authored by an analyst: a single `SELECT`/`WITH` over the contract, 
 Ordered by quick win; each step ships value or safety on its own, and no step depends on physically moving gold.
 
 1. **Single-SELECT gate** (safety, done, #1962) — `validate_single_select`, applied on write and run via `parse_query_ref`. Shipped with no DB or infra change.
-2. **`presentation_ro` role + empty `presentation` DB** (safety, #1963/#1964) — add to CH bootstrap (`src/ingestion/scripts/bootstrap-db/`); point analytics at the role (`config.rs`, `gear.rs` `with_auth`).
-3. **Saved-query CRUD** (value, #1965/#1966) — new entity plus migration for `presentation.queries`; handlers and routes per section 3.3; reuse the existing run path for `/run`.
+2. **`presentation_ro` role + empty `presentation` DB** (safety, done, #1963/#1964) — role + grant-less `presentation` user in CH bootstrap (`bootstrap-db/provision-presentation-access.sh`); empty DB via `clickhouse.initDatabases` + `apply-ch-migrations.sh`; analytics connects as the `presentation` user (existing `clickhouse_user`/`clickhouse_password` config → `gear.rs` `with_auth`), its password a required credential provisioned before analytics needs it.
+3. **Saved-query CRUD** (value) — CRUD + run shipped (#1965): the `saved_queries` service-DB entity plus migration, handlers and routes per section 3.3, reusing the existing `JSONEachRow` read path for `/run`. Named parameters (#1966) extend the run path next.
 4. **Tenant filter** (correctness, #1967) — replace the no-op with the injected predicate in the compiler's shared `WHERE`; `insight_tenant_id` first in `ORDER BY` for new gold; cover with an e2e metric test (`src/ingestion/tests/e2e`). Coordinated with engineering #1829.
-5. **Query console** (value, FE, #1970) — thin stable app on the saved-query API: auth shell, author, list, run, render table / auto-chart. Tier-2 "promote to card" can follow.
-6. **Preview environments** (infra, FE, #1971-#1973) — path-based `/exp/<name>` on a shared read-only synthetic backend; Redis-`state` return path; one route object per experiment; manual `kubectl`/`helm`.
+5. **Contract surface + version stamp** (stability, done, #1968/#1969) — the surface and additive-only rules named in CONTRACT-SURFACE.md; `silver.contract_version` stamped by migration and pinned/verified by analytics in a periodic sweep.
+6. **Query console** (value, FE, #1970) — thin stable app on the saved-query API: auth shell, author, list, run, render table / auto-chart. Tier-2 "promote to card" can follow.
+7. **Preview environments** (infra, FE, #1971-#1973) — path-based `/exp/<name>` on a shared read-only backend; Redis-`state` return path; experiments gated off on production by default; one route object per experiment; manual `kubectl`/`helm`.
 
 Deferred: relocate legacy gold from `insight` to `presentation` (#1979-#1981); CI-driven preview provisioning (after the nginx-to-Envoy move).
 
@@ -509,9 +634,11 @@ Tiers 1-2 need no deploy — the unit of change is a query row. Tier 3 is the pr
 2. **CI-automated preview provisioning** — whether/when a CI job automates provisioning (best after the nginx-to-Envoy move), and whether tier-3 experiments live on branches of the real FE repo or a prototype repo.
 3. **Read-only on v1** — confirm the presentation layer is strictly read-only for v1 (write-back out of scope).
 
-### 4.4 Out of Scope (Phase B)
+### 4.4 Phase B and Out of Scope
 
-Declarative metric registry (collapse `builtin.rs` + MariaDB `metrics` + FE thresholds into one YAML catalog with passports and a drift test); semantic raw-to-derived compiler; FE metric rework (catalog-driven thresholds, honest NULL-to-ComingSoon). Named here so Phase A does not encode choices that block them.
+The declarative metric registry (`cpt-presentation-component-metric-registry`, #1974) lands as the first Phase B step: one YAML is the source of truth for the sanctioned metric-definition seed. The former "FE thresholds" collapse is already done — the FE renders from the `metric_definitions` catalog API and live peer percentiles, holding no per-metric thresholds.
+
+Metric passports plus their drift test (`cpt-presentation-component-metric-passports`, #1975) land as the next Phase B step on top of the registry: a source/formula/notes document rendered from the same YAML and pinned by a drift test. Still out of scope: the semantic raw-to-derived compiler (#1976); FE metric rework (#1977-#1978). Also deferred: retirement of the orphaned, frozen legacy `metric_catalog`/`metric_threshold` subsystem — no live consumer reads it, so it is left untouched and its removal is tracked separately rather than perpetuated in the new registry.
 
 ## 5. Traceability
 

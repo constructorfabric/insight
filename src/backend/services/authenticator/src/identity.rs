@@ -2,10 +2,16 @@
 //!
 //! The callback resolves the IdP-authenticated principal to an internal
 //! `person_id` + tenant memberships (DESIGN §3.4). Identity's internal
-//! `GET /internal/persons/by-email/{email}` (service-only) returns
-//! `insight_source_id` (the person id) but **no tenant memberships**, so:
+//! service-only endpoints return `insight_source_id` (the person id) but
+//! **no tenant memberships**, so:
 //!
-//! - `person_id` comes from `insight_source_id` when Identity knows the email;
+//! - `person_id` comes from `insight_source_id` — the login-bootstrap resolves
+//!   by `(idp.source_type, external_id)` (`GET /internal/persons/by-external-id`);
+//!   the admin `__override` view-as resolves by email
+//!   (`GET /internal/persons/by-email-override`). Which one applies is decided
+//!   by the EXPLICIT [`ResolveTarget`] the caller builds — never inferred from
+//!   an empty/absent value, so a login that lacks its external id fails closed
+//!   instead of silently falling through to email resolution;
 //! - the single `tenant_id` is sourced from the validated id_token claim
 //!   (fakeidp supplies
 //!   it; real-IdP tenant-membership resolution is a follow-up —
@@ -26,15 +32,35 @@ use uuid::Uuid;
 
 use crate::jwt::{GatewayClaims, KeyStore};
 
+/// How to resolve an [`IdpIdentity`] to a person — set explicitly by the
+/// caller, never inferred from field emptiness. This is the fix for the
+/// login/override confusion: a normal login MUST carry `ExternalId` (built
+/// from the validated id_token in `oidc::exchange_code_pkce`, which itself
+/// fails closed when the configured claim is absent — see its doc comment);
+/// only the admin `__override` synthetic identity carries `Email`.
+#[derive(Debug, Clone)]
+pub enum ResolveTarget {
+    /// Normal login: resolve by the configured `idp.source_type` + the IdP's
+    /// source-native external user id (e.g. Entra's `oid`).
+    ExternalId(String),
+    /// Admin `__override` (view-as, #1941): an operator typed an email —
+    /// resolve by email, NOT by external id.
+    Email(String),
+}
+
 /// The IdP-authenticated principal, distilled from the validated id_token.
 #[derive(Debug, Clone)]
 pub struct IdpIdentity {
+    /// The raw OIDC `sub` claim — logged/audited, but NOT necessarily what
+    /// resolves the person (see `resolve_by`).
     pub sub: String,
     pub email: String,
     /// The single tenant asserted by the id_token (`idp.tenant_claim`, or
     /// `idp.default_tenant_id`); empty when the IdP named none — downstream
     /// then fails closed. One and only one tenant per token (EPIC #1583).
     pub tenant_id: String,
+    /// Which person-resolution mode applies — see [`ResolveTarget`].
+    pub resolve_by: ResolveTarget,
 }
 
 /// The resolved internal author of a session.
@@ -59,12 +85,15 @@ pub trait PersonResolver: Send + Sync {
 ///
 /// Identity is fail-closed (NGINX_BFF R1), and its user-facing
 /// `/v1/persons/{email}` is tenant + caller + visibility gated — unusable for
-/// the login bootstrap (email → person, before any tenant/caller exists). So
-/// this calls the **internal, service-only** endpoint
-/// `GET /internal/persons/by-email/{email}`, authenticating with a short-lived
-/// **service gateway JWT** the authenticator mints with its own signing key
-/// (`sub_type = service`). Tenant-agnostic: the tenant comes from the id_token
-/// (see `resolve`), not from Identity.
+/// the login bootstrap (external id → person, before any tenant/caller
+/// exists). So this calls one of two **internal, service-only** endpoints —
+/// `GET /internal/persons/by-external-id` (login) or
+/// `GET /internal/persons/by-email-override` (admin `__override`) — kept as
+/// SEPARATE routes (not one endpoint dispatching on a shared parameter) so the
+/// two resolution modes can never be confused for one another. Both
+/// authenticate with a short-lived **service gateway JWT** the authenticator
+/// mints with its own signing key (`sub_type = service`). Tenant-agnostic: the
+/// tenant comes from the id_token (see `resolve`), not from Identity.
 #[derive(Clone)]
 pub struct IdentityPersonResolver {
     base_url: String,
@@ -72,6 +101,9 @@ pub struct IdentityPersonResolver {
     keystore: Arc<KeyStore>,
     issuer: String,
     audience: String,
+    /// `idp.source_type` — scopes the login-bootstrap's by-external-id
+    /// resolve. Not used by the `__override` email path.
+    source_type: String,
 }
 
 /// The internal resolution response — only the field we need.
@@ -83,15 +115,23 @@ struct ResolveProfile {
 impl IdentityPersonResolver {
     /// `base_url` is the Identity Service root, e.g. `http://identity:8082`.
     /// `keystore` / `issuer` / `audience` are used to mint the service JWT that
-    /// authenticates the internal lookup call.
+    /// authenticates the internal lookup call. `source_type` is `idp.source_type`
+    /// — the identity-resolution source the login-bootstrap resolve is scoped to.
     #[must_use]
-    pub fn new(base_url: &str, keystore: Arc<KeyStore>, issuer: String, audience: String) -> Self {
+    pub fn new(
+        base_url: &str,
+        keystore: Arc<KeyStore>,
+        issuer: String,
+        audience: String,
+        source_type: String,
+    ) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
             http: reqwest::Client::new(),
             keystore,
             issuer,
             audience,
+            source_type,
         }
     }
 
@@ -117,18 +157,22 @@ impl IdentityPersonResolver {
         self.keystore.sign(&claims)
     }
 
-    /// Look up the internal person id for an email via Identity's internal
-    /// service-only endpoint.
-    async fn lookup_person_id(&self, email: &str, tenant_id: &str) -> anyhow::Result<Option<Uuid>> {
+    /// Call an internal resolve endpoint with the given query params.
+    async fn resolve_query(
+        &self,
+        path: &str,
+        tenant_id: &str,
+        query: &[(&str, &str)],
+    ) -> anyhow::Result<Option<Uuid>> {
         if self.base_url.is_empty() {
             return Ok(None);
         }
-        let encoded = urlencoding_min(email);
-        let url = format!("{}/internal/persons/by-email/{encoded}", self.base_url);
+        let url = format!("{}{path}", self.base_url);
         let token = self.mint_service_token(tenant_id)?;
         let resp = self
             .http
             .get(&url)
+            .query(query)
             .bearer_auth(token)
             .send()
             .await
@@ -138,18 +182,61 @@ impl IdentityPersonResolver {
         }
         anyhow::ensure!(
             resp.status().is_success(),
-            "Identity returned {} for {email}",
+            "Identity returned {} for {path}?{query:?}",
             resp.status()
         );
         let profile: ResolveProfile = resp.json().await.context("decode ResolveProfile")?;
         Ok(profile.insight_source_id.filter(|id| !id.is_nil()))
+    }
+
+    /// Login-bootstrap lookup: resolve by the configured IdP `source_type` +
+    /// the IdP's source-native external user id.
+    async fn lookup_person_id_by_external_id(
+        &self,
+        external_id: &str,
+        tenant_id: &str,
+    ) -> anyhow::Result<Option<Uuid>> {
+        self.resolve_query(
+            "/internal/persons/by-external-id",
+            tenant_id,
+            &[
+                ("source_type", &self.source_type),
+                ("external_id", external_id),
+            ],
+        )
+        .await
+    }
+
+    /// Admin `__override` (view-as) lookup: resolve by email — an operator
+    /// types an email, not an IdP external id. A DISTINCT route from the
+    /// login-bootstrap lookup above (never dispatched from the same call).
+    async fn lookup_person_id_by_email(
+        &self,
+        email: &str,
+        tenant_id: &str,
+    ) -> anyhow::Result<Option<Uuid>> {
+        self.resolve_query(
+            "/internal/persons/by-email-override",
+            tenant_id,
+            &[("email", email)],
+        )
+        .await
     }
 }
 
 #[async_trait]
 impl PersonResolver for IdentityPersonResolver {
     async fn resolve(&self, id: &IdpIdentity) -> anyhow::Result<Option<PersonResolution>> {
-        let Some(person_id) = self.lookup_person_id(&id.email, &id.tenant_id).await? else {
+        let person_id = match &id.resolve_by {
+            ResolveTarget::ExternalId(external_id) => {
+                self.lookup_person_id_by_external_id(external_id, &id.tenant_id)
+                    .await?
+            }
+            ResolveTarget::Email(email) => {
+                self.lookup_person_id_by_email(email, &id.tenant_id).await?
+            }
+        };
+        let Some(person_id) = person_id else {
             return Ok(None);
         };
         Ok(Some(PersonResolution {
@@ -157,22 +244,4 @@ impl PersonResolver for IdentityPersonResolver {
             tenant_id: id.tenant_id.clone(),
         }))
     }
-}
-
-/// Minimal percent-encoding for an email in a path segment (encodes the few
-/// characters that actually appear / matter; avoids a dependency).
-fn urlencoding_min(s: &str) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'@' => {
-                out.push(b as char);
-            }
-            _ => {
-                let _ = write!(out, "%{b:02X}");
-            }
-        }
-    }
-    out
 }

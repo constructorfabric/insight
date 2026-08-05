@@ -1,0 +1,34 @@
+# Read-only variant of docker-compose.cache.yml for merge-queue runs: their
+# refs are deleted right after the run, so cache writes from them can never be
+# reused — read from the same scopes, export nothing. Must be kept in sync
+# with docker-compose.cache.yml.
+
+services:
+  jira-enrich:
+    build:
+      cache_from:
+        - type=gha,scope=e2e-jira-enrich
+        - type=gha,scope=insight-jira-enrich-amd64
+
+  analytics:
+    build:
+      cache_from:
+        - type=gha,scope=e2e-analytics
+        - type=gha,scope=analytics-amd64
+
+  identity:
+    build:
+      cache_from:
+        - type=gha,scope=e2e-identity
+        - type=gha,scope=identity-amd64
+
+  identity-resolution:
+    build:
+      cache_from:
+        - type=gha,scope=e2e-identity-resolution
+        - type=gha,scope=identity-resolution-amd64
+
+  runner:
+    build:
+      cache_from:
+        - type=gha,scope=e2e-runner

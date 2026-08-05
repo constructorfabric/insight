@@ -1,6 +1,6 @@
 //! IdP background token refresher (PRD 5.12, G5 — the decided design).
 //!
-//! One leader (Redis lock, DD-BFF-09) polls the `asm:idp_refresh_due` ZSET
+//! One leader (Redis lock, DD-BFF-09) polls the `{asm}:idp_refresh_due` ZSET
 //! every tick and spawns per-session refresh tasks behind a semaphore
 //! (`idp.refresh_concurrency` — politeness toward the customer IdP, not our
 //! capacity). Each task takes a per-session lock (refresh tokens are
@@ -34,7 +34,7 @@ use crate::api::AppState;
 use crate::oidc::RefreshOutcome;
 use crate::session::SessionManager;
 
-const LEADER_KEY: &str = "asm:leader:idp_refresher";
+const LEADER_KEY: &str = "{asm}:leader:idp_refresher";
 /// Per-session lock TTL — covers one grant round-trip with generous margin.
 const SESSION_LOCK_TTL_MS: u64 = 30_000;
 /// Wall-clock cap on the whole lock-holding critical section (grant + store

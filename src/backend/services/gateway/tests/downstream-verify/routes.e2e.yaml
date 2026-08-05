@@ -14,5 +14,5 @@ routes:
     strip_prefix: true
     timeout_ms: 60000
   - prefix: /api/identity
-    upstream: http://identity:8082
+    upstream: http://identity-resolution:8082
     strip_prefix: true

@@ -1,0 +1,20 @@
+# Scoped scanner waivers. Every entry names the exact path it applies to — a bare
+# rule id here would hide the same class of finding everywhere, including in code
+# that has not been looked at yet.
+#
+# Trivy reads this file relative to its working directory; the security workflows
+# pass `-w /src`, so it is picked up from the repository root.
+
+misconfigurations:
+  - id: AVD-DS-0002
+    paths:
+      - "src/ingestion/tests/e2e/compose/Dockerfile.runner"
+    statement: >-
+      Not applicable, decided by QA. This image is not part of the delivered
+      product: it is never published, never deployed to a cluster, never reachable
+      over a network, and exists only for the duration of a test run. The condition
+      the rule guards against — an over-privileged process exposed to untrusted
+      input — does not arise. It is also the only image here that bind-mounts the
+      repository writable, so a baked-in UID breaks writes whenever it differs from
+      the host's, taking the e2e gate with it. Revisit if the image is ever
+      published or run anywhere other than a test job.

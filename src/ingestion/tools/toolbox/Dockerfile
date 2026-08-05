@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Node.js (for JWT token generation)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
+    apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # yq (YAML processor)
@@ -24,3 +24,8 @@ RUN pip install --no-cache-dir dbt-clickhouse
 # Copy entire ingestion project
 COPY . /ingestion
 WORKDIR /ingestion
+
+# dbt writes logs/ and target/ under the project root, so the tree must belong
+# to the runtime user.
+RUN useradd -U -u 1000 -m appuser && chown -R 1000:1000 /ingestion
+USER 1000

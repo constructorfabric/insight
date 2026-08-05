@@ -3,17 +3,22 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import queue
 import re
+import threading
 import uuid
 from abc import ABC
+from collections import deque
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, NamedTuple
 
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams import CheckpointMixin, Stream
 
 from source_bitbucket_cloud.client import (
+    DENIED_STATUSES,
     BitbucketApiError,
     BitbucketClient,
     RepositoryCatalog,
@@ -23,14 +28,41 @@ from source_bitbucket_cloud.client import (
 logger = logging.getLogger("airbyte")
 
 BUCKET_COUNT = 8
-MAX_TEXT_BYTES = 16_384
+# Commit messages, PR descriptions and comment bodies are kept for display,
+# not parsed: nothing downstream reads past the opening lines, while generated
+# descriptions routinely run to tens of KB and multiply bronze storage.
+MAX_TEXT_BYTES = 2_048
 # Bumped from 2 when entity and state keys moved back to workspace/slug: a
 # version-2 state is keyed by repository uuid and no longer addresses anything.
 STATE_VERSION = 3
-# Statuses that mean "this token will never read this repository": no retry
-# helps, so the repository is skipped instead of failing the sync. 404 is here
-# too — a repository listed at the start of a sync can be deleted mid-run.
-DENIED_STATUSES = frozenset({403, 404})
+# Records a worker may run ahead of the consumer, per repository. Bounded so a
+# repository with a long history cannot buffer itself into memory.
+RECORD_BUFFER = 500
+# Records taken from one repository before moving to the next. A producer that
+# refills faster than the consumer emits would otherwise hold the floor until
+# its repository finished, leaving every other worker parked on a full buffer.
+DRAIN_BATCH = 64
+QUEUE_POLL_SECONDS = 0.5
+DEFAULT_CONCURRENCY = 4
+MAX_CONCURRENCY = 16
+_READ_DONE = object()
+
+
+class _PendingRead(NamedTuple):
+    repo: RepositoryRef
+    records: queue.Queue[Any]
+
+
+class _StagedState(NamedTuple):
+    """State a worker produced, travelling behind that worker's records.
+
+    A checkpoint may be taken between any two records the consumer emits, so
+    state must only claim a repository once its records have actually left —
+    otherwise a crash in that window loses them and the idle gate skips the
+    repository on the next sync.
+    """
+
+    entries: Mapping[str, Mapping[str, Any]]
 
 
 def now_iso() -> str:
@@ -161,10 +193,12 @@ class BitbucketStream(Stream, ABC):
         username: str = "",
         skip_forks: bool = True,
         start_date: str | None = None,
+        concurrency: int = 1,
         client: BitbucketClient | None = None,
         catalog: RepositoryCatalog | None = None,
     ) -> None:
         self._client = client or BitbucketClient(token, username)
+        self._concurrency = max(1, min(MAX_CONCURRENCY, concurrency))
         self._tenant_id = tenant_id
         self._source_id = source_id
         self._workspaces = tuple(workspaces)
@@ -197,46 +231,201 @@ class BitbucketStream(Stream, ABC):
     ) -> Iterable[Mapping[str, Any]]:
         del sync_mode, cursor_field, stream_state
         bucket_id, repositories = self.bucket(stream_slice)
+        read = self._read_serially if self._concurrency <= 1 else self._read_concurrently
+        yield from read(bucket_id, repositories)
+        self.finish_bucket(bucket_id, repositories)
+
+    def _read_serially(
+        self, bucket_id: int, repositories: Sequence[RepositoryRef]
+    ) -> Iterable[Mapping[str, Any]]:
         for repo in repositories:
-            if self._catalog.is_inaccessible(repo):
-                # Discovered by an earlier stream; still counts toward THIS
-                # stream's end-of-sync skipped summary.
-                self._skipped_repositories.append(f"{repo.workspace}/{repo.slug}")
+            if self.already_denied(repo):
                 continue
             try:
                 yield from self.repository_records(repo, bucket_id)
-            except BitbucketApiError as error:
-                if error.status_code == 401:
-                    # Credential failure is global, not per-repository: every
-                    # remaining repo would fail identically, drowning the log in
-                    # quarantine noise before a generic end-of-sync error. Abort
-                    # now with the actionable cause instead.
-                    raise RuntimeError(
-                        "Bitbucket authentication failed mid-sync (HTTP 401): the token was "
-                        "rejected. If bitbucket_username is unset, Atlassian API tokens are "
-                        "sent as Bearer and refused — set the username, or the token has "
-                        "expired/been rotated."
-                    ) from error
-                if error.status_code in DENIED_STATUSES:
-                    self.skip_repository(repo, error.status_code)
-                else:
-                    self.record_failure(repo)
-            except Exception:
-                self.record_failure(repo)
-        self.finish_bucket(bucket_id, repositories)
+            except BaseException as error:  # noqa: BLE001 - classified below
+                self.handle_repository_error(repo, error)
+
+    def _read_concurrently(
+        self, bucket_id: int, repositories: Sequence[RepositoryRef]
+    ) -> Iterable[Mapping[str, Any]]:
+        """Read several repositories at once, emit whatever is ready.
+
+        Fetching is the whole cost of a bucket and the per-repository reads are
+        independent. Consuming in submission order would let one repository
+        with a deep history park every other worker on a full buffer and block
+        new submissions behind it; records interleave across repositories
+        instead, which bronze does not mind (append-only, keyed). Failures stay
+        attributed: each repository has its own queue, and its error travels on
+        it.
+        """
+        stop = threading.Event()
+        pending: deque[_PendingRead] = deque()
+        waiting = iter(repositories)
+        with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
+            # Inside the pool: leaving the sync early (the consumer stops
+            # reading, or a worker raises) must release the workers parked on a
+            # full buffer before shutdown waits for them.
+            try:
+                while True:
+                    while len(pending) < self._concurrency:
+                        repo = next(waiting, None)
+                        if repo is None:
+                            break
+                        if self.already_denied(repo):
+                            continue
+                        pending.append(self._submit(pool, repo, bucket_id, stop))
+                    if not pending:
+                        return
+                    yield from self._drain_ready(pending)
+            finally:
+                stop.set()
+
+    def _drain_ready(self, pending: deque[_PendingRead]) -> Iterable[Mapping[str, Any]]:
+        drained_any = False
+        for read in list(pending):
+            for _ in range(DRAIN_BATCH):
+                try:
+                    item = read.records.get_nowait()
+                except queue.Empty:
+                    break
+                drained_any = True
+                if item is _READ_DONE:
+                    pending.remove(read)
+                    break
+                if isinstance(item, _StagedState):
+                    self.apply_staged_state(item.entries)
+                    continue
+                if isinstance(item, BaseException):
+                    self.handle_repository_error(read.repo, item)
+                    continue
+                yield item
+
+        if drained_any or not pending:
+            return
+        # Nothing ready anywhere: block briefly on the oldest read rather than
+        # spinning; the sweep resumes with whatever else arrived meanwhile.
+        oldest = pending[0]
+        try:
+            item = oldest.records.get(timeout=QUEUE_POLL_SECONDS)
+        except queue.Empty:
+            return
+        if item is _READ_DONE:
+            pending.remove(oldest)
+        elif isinstance(item, _StagedState):
+            self.apply_staged_state(item.entries)
+        elif isinstance(item, BaseException):
+            self.handle_repository_error(oldest.repo, item)
+        else:
+            yield item
+
+    def _submit(
+        self, pool: ThreadPoolExecutor, repo: RepositoryRef, bucket_id: int, stop: threading.Event
+    ) -> _PendingRead:
+        records: queue.Queue[Any] = queue.Queue(maxsize=RECORD_BUFFER)
+        pool.submit(self._collect, repo, bucket_id, records, stop)
+        return _PendingRead(repo, records)
+
+    def _collect(
+        self, repo: RepositoryRef, bucket_id: int, records: queue.Queue[Any], stop: threading.Event
+    ) -> None:
+        staged = self.stage_state()
+        try:
+            for record in self.repository_records(repo, bucket_id):
+                if not self._offer(records, record, stop):
+                    return
+        except BaseException as error:  # noqa: BLE001 - re-raised in the consumer
+            self._offer(records, error, stop)
+        finally:
+            self.stop_staging()
+            if staged:
+                self._offer(records, _StagedState(staged), stop)
+            self._offer(records, _READ_DONE, stop)
+
+    def stage_state(self) -> MutableMapping[str, Mapping[str, Any]]:
+        """Redirect this worker's state commits into a buffer it owns."""
+        return {}
+
+    def stop_staging(self) -> None:
+        return
+
+    def apply_staged_state(self, entries: Mapping[str, Mapping[str, Any]]) -> None:
+        del entries
+
+    @staticmethod
+    def _offer(records: queue.Queue[Any], item: Any, stop: threading.Event) -> bool:
+        """Park on a full buffer for as long as the read is still wanted.
+
+        No timeout: a full queue cannot tell an absent consumer from a slow
+        destination, and giving up on the second would abandon a repository
+        mid-read. `stop` belongs to the consumer, which sets it once it is
+        finished with the bucket — by which point nothing waits on these
+        records.
+        """
+        while not stop.is_set():
+            try:
+                records.put(item, timeout=QUEUE_POLL_SECONDS)
+            except queue.Full:
+                continue
+            return True
+        return False
+
+    def already_denied(self, repo: RepositoryRef) -> bool:
+        # Discovered by an earlier stream; still counts toward THIS stream's
+        # end-of-sync skipped summary.
+        if not self._catalog.is_inaccessible(repo):
+            return False
+        self._skipped_repositories.append(f"{repo.workspace}/{repo.slug}")
+        return True
+
+    def handle_repository_error(self, repo: RepositoryRef, error: BaseException) -> None:
+        if isinstance(error, BitbucketApiError):
+            if error.status_code == 401:
+                # Credential failure is global, not per-repository: every
+                # remaining repo would fail identically, drowning the log in
+                # quarantine noise before a generic end-of-sync error. Abort
+                # now with the actionable cause instead.
+                raise RuntimeError(
+                    "Bitbucket authentication failed mid-sync (HTTP 401): the token was "
+                    "rejected. If bitbucket_username is unset, Atlassian API tokens are "
+                    "sent as Bearer and refused — set the username, or the token has "
+                    "expired/been rotated."
+                ) from error
+            if error.status_code in DENIED_STATUSES:
+                self.skip_repository(repo, error.status_code)
+                return
+        if not isinstance(error, Exception):
+            raise error
+        self.record_failure(repo, error)
 
     def repository_records(self, repo: RepositoryRef, bucket_id: int) -> Iterable[Mapping[str, Any]]:
         raise NotImplementedError
+
+    def before_start_date(self, timestamp: Any) -> bool:
+        return bool(self._start_date and timestamp and str(timestamp)[:10] < self._start_date)
+
+    def out_of_window(self, repo: RepositoryRef) -> bool:
+        """True when nothing a push produces can fall inside the start window.
+
+        Commits, branches and tags only appear by being pushed, and a push
+        moves the repository's updated_on, so a repository last touched before
+        start_date holds nothing this sync is asked for.
+        """
+        updated_on = str(repo.raw.get("updated_on") or "")
+        return bool(self._start_date and updated_on and updated_on[:10] < self._start_date)
 
     def bucket(self, stream_slice: Mapping[str, Any] | None) -> tuple[int, list[RepositoryRef]]:
         bucket_id = int((stream_slice or {}).get("bucket_id", 0))
         return bucket_id, self.repositories_for_slice(stream_slice)
 
-    def record_failure(self, repo: RepositoryRef) -> None:
+    def record_failure(self, repo: RepositoryRef, error: BaseException | None = None) -> None:
         """A failure worth surfacing: transient, so retrying the sync may fix it."""
         name = f"{repo.workspace}/{repo.slug}"
         self._failed_repositories.append(name)
-        logger.exception(f"{self.name}: repository {name} failed; its state was not advanced, continuing")
+        logger.error(
+            f"{self.name}: repository {name} failed; its state was not advanced, continuing",
+            exc_info=error or True,
+        )
 
     def skip_repository(self, repo: RepositoryRef, status_code: int) -> None:
         """A repository the token cannot read: skip it without failing the sync.
@@ -261,12 +450,18 @@ class BitbucketStream(Stream, ABC):
 
     def finish_bucket(self, bucket_id: int, repositories: Sequence[RepositoryRef]) -> None:
         del repositories
-        if bucket_id == BUCKET_COUNT - 1 and self._skipped_repositories:
+        if bucket_id != BUCKET_COUNT - 1:
+            return
+
+        cached_repositories, cached_branches = self._catalog.branch_cache_size
+        logger.info(f"{self.name}: branch_cache repositories={cached_repositories} branches={cached_branches}")
+
+        if self._skipped_repositories:
             logger.info(
                 f"{self.name}: skipped {len(self._skipped_repositories)} inaccessible "
                 f"repositories: {', '.join(sorted(set(self._skipped_repositories))[:10])}"
             )
-        if bucket_id == BUCKET_COUNT - 1 and self._failed_repositories:
+        if self._failed_repositories:
             raise RuntimeError(
                 f"{self.name}: {len(self._failed_repositories)} repositories failed this sync: "
                 + ", ".join(self._failed_repositories[:10])
@@ -335,20 +530,38 @@ class BitbucketStream(Stream, ABC):
 
 
 class BitbucketIncrementalStream(BitbucketStream, CheckpointMixin, ABC):
+    # Emit state mid-bucket too: a bucket spans a large share of the fleet, and
+    # a pod that dies between bucket boundaries would otherwise re-read hours
+    # of finished repositories. The interval is coarse because each message
+    # carries the whole repositories map.
+    state_checkpoint_interval = 25_000
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._state: MutableMapping[str, Any] = {}
+        # Versioned from the start: state emitted without one reads back as
+        # pre-rewrite state and gets reshaped into something addressing nothing.
+        self._state: MutableMapping[str, Any] = self._empty_state()
+        self._state_lock = threading.Lock()
+        self._staging = threading.local()
 
     @property
     def state(self) -> MutableMapping[str, Any]:
-        return self._state
+        # A snapshot, not the live dict: the platform serialises this while
+        # workers commit repositories. Only finished repositories are ever in
+        # the map (each is committed whole), so any snapshot is a valid resume
+        # point.
+        with self._state_lock:
+            return {**self._state, "repositories": dict(self._state.get("repositories") or {})}
 
     @state.setter
     def state(self, value: MutableMapping[str, Any]) -> None:
         if not value:
             self._state = self._empty_state()
-        elif value.get("version") == STATE_VERSION and value.get("bucket_count") == BUCKET_COUNT:
-            self._state = value
+        elif value.get("version") == STATE_VERSION:
+            # bucket_count is not part of the address: keys are repository
+            # scoped and the bucket is derived by hash at read time, so state
+            # written under any bucket count resumes under any other.
+            self._state = {**value, "bucket_count": BUCKET_COUNT}
         elif "version" not in value:
             # Pre-rewrite state: a flat partition -> cursor map. Reshape it so
             # the sync resumes from those checkpoints (see migrate_legacy_state).
@@ -367,18 +580,37 @@ class BitbucketIncrementalStream(BitbucketStream, CheckpointMixin, ABC):
         return {"version": STATE_VERSION, "bucket_count": BUCKET_COUNT, "repositories": {}}
 
     def repository_state(self, repo: RepositoryRef) -> MutableMapping[str, Any]:
-        repositories = self._state.setdefault("repositories", {})
-        return dict(repositories.get(repo_state_key(repo)) or {})
+        with self._state_lock:
+            repositories = self._state.setdefault("repositories", {})
+            return dict(repositories.get(repo_state_key(repo)) or {})
 
     def commit_repository_state(self, repo: RepositoryRef, value: Mapping[str, Any]) -> None:
-        self._state.setdefault("repositories", {})[repo_state_key(repo)] = dict(value)
+        staged = getattr(self._staging, "entries", None)
+        if staged is not None:
+            staged[repo_state_key(repo)] = dict(value)
+            return
+        with self._state_lock:
+            self._state.setdefault("repositories", {})[repo_state_key(repo)] = dict(value)
+
+    def stage_state(self) -> MutableMapping[str, Mapping[str, Any]]:
+        self._staging.entries = {}
+        return self._staging.entries
+
+    def stop_staging(self) -> None:
+        self._staging.entries = None
+
+    def apply_staged_state(self, entries: Mapping[str, Mapping[str, Any]]) -> None:
+        with self._state_lock:
+            self._state.setdefault("repositories", {}).update(entries)
 
     def prune_bucket_state(self, bucket_id: int, repositories: Sequence[RepositoryRef]) -> None:
         current = {repo_state_key(repo) for repo in repositories}
-        state_repositories = self._state.setdefault("repositories", {})
-        stale = [key for key in state_repositories if repository_bucket(key) == bucket_id and key not in current]
-        for key in stale:
-            del state_repositories[key]
+
+        with self._state_lock:
+            state_repositories = self._state.setdefault("repositories", {})
+            stale = [key for key in state_repositories if repository_bucket(key) == bucket_id and key not in current]
+            for key in stale:
+                del state_repositories[key]
 
     def finish_bucket(self, bucket_id: int, repositories: Sequence[RepositoryRef]) -> None:
         self.prune_bucket_state(bucket_id, repositories)
@@ -386,9 +618,10 @@ class BitbucketIncrementalStream(BitbucketStream, CheckpointMixin, ABC):
         super().finish_bucket(bucket_id, repositories)
 
     def log_state_size(self) -> None:
-        encoded = json.dumps(self._state, separators=(",", ":")).encode("utf-8")
+        snapshot = self.state
+        encoded = json.dumps(snapshot, separators=(",", ":")).encode("utf-8")
         logger.info(
-            f"{self.name}: state_repositories={len(self._state.get('repositories', {}))} state_bytes={len(encoded)}"
+            f"{self.name}: state_repositories={len(snapshot.get('repositories', {}))} state_bytes={len(encoded)}"
         )
 
 

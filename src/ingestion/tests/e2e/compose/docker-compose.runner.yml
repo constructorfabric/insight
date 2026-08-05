@@ -37,19 +37,9 @@ services:
       dockerfile: services/analytics/Dockerfile
     image: insight-e2e-analytics:local
 
-  # Build-only helper: publishes the .NET identity service FROM ITS OWN
-  # Dockerfile. The runner bakes the published app (COPY --from=identity) and
-  # spawns it via the aspnetcore runtime — the identity contract suite
-  # (identity/, #1753) treats it as the system-under-test.
-  identity:
-    build:
-      context: ${INSIGHT_REPO_ROOT:-../../../..}/src/backend
-      dockerfile: services/identity/Dockerfile
-    image: insight-e2e-identity:local
-
   # Build-only helper: compiles the Rust identity-resolution service FROM ITS
-  # OWN Dockerfile — the successor implementation the same contract suite runs
-  # against via E2E_IDENTITY_IMPLEMENTATION=rust (the cutover parity proof).
+  # OWN Dockerfile — the identity contract suite (identity/, #1753) treats it
+  # as the system-under-test.
   identity-resolution:
     build:
       context: ${INSIGHT_REPO_ROOT:-../../../..}/src/backend
@@ -77,7 +67,6 @@ services:
       additional_contexts:
         jira-enrich: "service:jira-enrich"
         analytics: "service:analytics"
-        identity: "service:identity"
         identity-resolution: "service:identity-resolution"
     image: insight-e2e-runner:latest
     container_name: insight-e2e-runner
@@ -105,10 +94,9 @@ services:
       # (CREATE DATABASE + GRANT — lib/identity.py) before spawning it.
       E2E_MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
       # Which identity implementation the contract suite spawns (see
-      # lib/identity.py). Forwarded from the caller's shell so
-      # `E2E_IDENTITY_IMPLEMENTATION=rust ./e2e.sh test identity/` reaches
-      # the harness inside the container.
-      E2E_IDENTITY_IMPLEMENTATION: ${E2E_IDENTITY_IMPLEMENTATION:-dotnet}
+      # lib/identity.py; `rust` is the sole implementation). Forwarded from
+      # the caller's shell.
+      E2E_IDENTITY_IMPLEMENTATION: ${E2E_IDENTITY_IMPLEMENTATION:-rust}
       E2E_MARIADB_DATABASE: ${MARIADB_DATABASE:-analytics}
       RUST_BACKTRACE: "1"
     volumes:

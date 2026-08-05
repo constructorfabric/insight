@@ -34,7 +34,7 @@ templates:
   jira_user:
     unique_key: null
     source_id: jira-test
-    tenant_id: "00000000-0000-0000-0000-000000000000"
+    tenant_id: "11111111-1111-1111-1111-111111111111"
     account_id: null
     email: null
     display_name: null
@@ -79,7 +79,7 @@ templates:
   jira_history:
     unique_key: null
     source_id: jira-test
-    tenant_id: "00000000-0000-0000-0000-000000000000"
+    tenant_id: "11111111-1111-1111-1111-111111111111"
     id_readable: null
     changelog_id: null
     created_at: ""

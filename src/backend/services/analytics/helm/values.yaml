@@ -23,17 +23,8 @@ resources:
 # (injected via envFrom; they override the mounted config ConfigMap):
 #   APP__gears__analytics__config__database_url
 #   APP__gears__analytics__config__clickhouse_url|_database|_user|_password
-#   APP__gears__analytics__config__redis_url
 #   APP__gears__analytics__config__identity_url
-#   APP__gears__analytics__config__metric_catalog__tenant_default_id (optional)
-#
-# `..._metric_catalog__tenant_default_id` (UUID, optional): single-tenant
-# fallback for the Metric Catalog per DESIGN §2.2
-# `cpt-metric-cat-constraint-tenant-default`. The gateway JWT is the tenant
-# authority (verified here — NGINX_BFF R1); the oidc-authn-plugin sets the
-# request tenant from the token's single signed `tenant_id` claim. The
-# session-bound tenant ALWAYS wins over the configured default (security
-# invariant; see `domain::auth::TenantAuthorization`).
+#   APP__gears__analytics__config__redis_url
 #
 # The umbrella populates `insight-analytics-config` automatically; for
 # standalone installs the operator pre-creates an equivalent Secret and

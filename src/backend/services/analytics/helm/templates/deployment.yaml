@@ -54,6 +54,13 @@ spec:
               mountPath: /etc/insight/authn-ca
               readOnly: true
             {{- end }}
+            # The only two paths the process writes under a read-only root:
+            # the gears host creates `server.home_dir` at boot, and grpc-hub
+            # binds its UDS under /tmp (both set in the ConfigMap).
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -70,6 +77,9 @@ spec:
                 name: {{ required "existingSecret is required (umbrella provides `insight-analytics-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
@@ -91,15 +101,26 @@ spec:
               mountPath: /app/config/analytics.yaml
               subPath: analytics.yaml
               readOnly: true
+            # `migrate` builds the same host_dir but never starts grpc-hub,
+            # so it needs /app/data only.
+            - name: data
+              mountPath: /app/data
           envFrom:
             - secretRef:
                 name: {{ .Values.existingSecret | quote }}
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
       volumes:
         - name: analytics-config
           configMap:
             name: {{ include "insight-analytics.fullname" . }}-gears-config
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.gateway.caCertSecret }}
         - name: authn-ca
           secret:

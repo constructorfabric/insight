@@ -722,7 +722,7 @@ Identity-attribute observation history for persons, stored in MariaDB. Each row 
 
 **Database**: MariaDB, database `identity` — dedicated to identity-resolution-domain tables, reached via the service's `database_url` configuration. The service does not assume co-location with any other MariaDB database; any other service owning MariaDB tables configures its own connection independently. Each backend service owns and applies its own schema — see [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md).
 
-**DDL**: `src/backend/services/identity/src/Insight.Identity.Infrastructure/Migrations/001_persons.sql` (applied at service startup via DbUp)
+**DDL**: SeaORM migration in `src/backend/services/identity-resolution/src/migration/` (applied by the service's `migrate` subcommand)
 
 ##### Columns
 
@@ -789,7 +789,7 @@ Row 120 supersedes row 5 as the current `display_name` for person `p-1001` (late
 
 **SCD2 materialized cache** of the source-account → `person_id` binding, derived deterministically from `persons` rows where `value_type='id'`. Never the source of truth; rebuilt from scratch at the end of every seed run (and by future operator flows). Exists purely for fast lookup and temporal "as of date T" queries — equivalent to a window-function scan over `persons.value_type='id'`, but O(1)–O(rows-in-tenant) instead of O(observations-in-tenant).
 
-**Database**: MariaDB, database `identity` (same as `persons`). Defined in `src/backend/services/identity/src/Insight.Identity.Infrastructure/Migrations/002_account_person_map.sql` (applied at service startup via DbUp).
+**Database**: MariaDB, database `identity` (same as `persons`). Defined by a SeaORM migration in `src/backend/services/identity-resolution/src/migration/` (applied by the service's `migrate` subcommand).
 
 ##### Columns
 
@@ -850,7 +850,7 @@ See ADR-0002 for the full decision record (why a derived cache instead of a seco
 
 ##### Initial seed (idempotent upsert from `identity_inputs`)
 
-**Scripts** — two-file split by separation of concerns, colocated with the identity-resolution service at `src/backend/services/identity/seed/`:
+**Scripts** — two-file split by separation of concerns, colocated with the identity-resolution service at `src/backend/services/identity-resolution/seed/`:
 
 | File | Role | Responsibilities |
 |---|---|---|
@@ -863,10 +863,10 @@ See ADR-0002 for the full decision record (why a derived cache instead of a seco
 - The Python script is **testable in isolation** — the ClickHouse HTTP call and the pymysql connection are the only external dependencies and are trivially mockable; bash is not.
 
 **Schema ownership**: the `persons` and `account_person_map` table DDL
-lives inside the identity service at
-`src/backend/services/identity/src/Insight.Identity.Infrastructure/Migrations/`
-(`001_persons.sql`, `002_account_person_map.sql`) and is applied by the
-service's own DbUp migrator at startup. See
+lives inside the identity-resolution service at
+`src/backend/services/identity-resolution/src/migration/`
+and is applied by the service's own SeaORM migrator via the
+`migrate` subcommand. See
 [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)
 for the service-owned-migrations policy. The seed scripts here operate
 on the already-created tables; they never issue `CREATE`, `ALTER`,
@@ -907,7 +907,7 @@ See [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md) for the fu
 3. `./src/ingestion/reconcile-connectors.sh` — registers connectors, creates Airbyte connections + per-connector CronWorkflows. (ClickHouse migrations run via the `clickhouse-migrate` Helm Hook Job on helm install/upgrade in step 2, not from a host script.)
 4. Airbyte sync produces Bronze data (`./sync-all.sh` + wait).
 5. dbt models run to populate `identity.identity_inputs` (`dbt run --select +identity_inputs`).
-6. Seed run (`./src/backend/services/identity/seed/seed-persons.sh`) — invokes the Python seed.
+6. Seed run (`./src/backend/services/identity-resolution/seed/seed-persons.sh`) — invokes the Python seed.
 
 ---
 
@@ -1360,7 +1360,7 @@ This walkthrough demonstrates the min-propagation algorithm (§4.1) as a verific
 
 **identity-resolution** is a stateless Rust (axum) service. It owns the MariaDB `identity` database — `persons` (observation history) and `account_person_map` (SCD2 cache rebuilt from `persons.value_type='id'`) — with migrations applied at startup via SeaORM `Migrator` (see ADR-0006). The service does not read Bronze tables directly; observation history flows in through `identity.identity_inputs` (populated by the per-connector dbt models that use the `identity_inputs_from_history` macro), is projected into `persons` by the seed, and is consumed at runtime via the `account_person_map` cache. Horizontal scaling via Kubernetes replicas.
 
-**Initial `persons` seed** is a one-shot script (`src/backend/services/identity/seed/seed-persons-from-identity-input.py`) that reads ClickHouse `identity.identity_inputs` and writes MariaDB `persons` + `account_person_map`. Idempotent via `INSERT IGNORE`. See ADR-0002.
+**Initial `persons` seed** is a one-shot script (`src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py`) that reads ClickHouse `identity.identity_inputs` and writes MariaDB `persons` + `account_person_map`. Idempotent via `INSERT IGNORE`. See ADR-0002.
 
 **BootstrapJob** (Phase 2+) will run as an Argo Workflow, triggered post-connector-sync. Each run is idempotent — safe to retry on failure.
 

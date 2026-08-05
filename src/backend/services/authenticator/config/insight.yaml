@@ -137,6 +137,12 @@ gears:
         # tolerated — first entry wins). fakeidp/Keycloak emit `tenant_id`;
         # Entra emits `tid`.
         tenant_claim: "tenant_id"
+        # The identity-resolution source_type this IdP is seeded under (e.g.
+        # "ms-entra") — required, drives the login-bootstrap person lookup.
+        source_type: ""
+        # id_token claim carrying the IdP's stable external user id for
+        # source_type (e.g. Entra's "oid"). Defaults to "sub".
+        external_id_claim: "sub"
         # Fallback tenant for a claim-less IdP (e.g. Okta); empty = fail closed.
         default_tenant_id: ""
       # Service tokens (§10 G1 / DD-AUTH-05). The token endpoint runs on its own

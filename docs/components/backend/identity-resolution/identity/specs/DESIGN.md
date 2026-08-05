@@ -29,15 +29,15 @@
 
 ### 1.1 Architectural Vision
 
-`insight-identity` is a synchronous read path over the multi-source
-observation log in MariaDB `persons`. It collapses observations into a
-single `PersonResponse` per request by ranking rows per
-`(insight_source_type, insight_source_id, value_type)` partition and
+`insight-identity-resolution` is a synchronous read path over the
+multi-source observation log in MariaDB `persons`. It collapses
+observations into a single `PersonResponse` per request by ranking rows
+per `(insight_source_type, insight_source_id, value_type)` partition and
 picking the latest value per `value_type` across sources. The service
-is stateless beyond its connection pool, owns its database (DbUp
-migrations at startup), and follows the three-project Clean
-Architecture split (Api → Domain → Infrastructure) common across the
-cyberfabric .NET services.
+is stateless beyond its connection pool, owns its database (SeaORM
+migrations applied via the service's `migrate` subcommand), and follows
+the layered `api` → `domain` → `infra` module split of the gears-rust
+host (ported from the retired .NET service, epic #1602).
 
 The vision is **operational simplicity**: zero in-memory cache, every
 read hits MariaDB on a covered index; first-install behaviour is
@@ -61,6 +61,7 @@ Architecture-shaping decisions are captured as ADRs in
 - [`cpt-insightspec-adr-0010-org-chart-cache`](ADR/0010-org-chart-cache.md) — Materialised SCD2 cache for person parent/child edges (`org_chart`).
 - [`cpt-insightspec-adr-0011-persons-relax-uniqueness-and-collation`](ADR/0011-persons-relax-uniqueness-and-collation.md) — Persons relax UNIQUE + switch `value_id` to case-insensitive collation.
 - [`cpt-insightspec-adr-0012-admin-only-orgchart-visibility-reads`](ADR/0012-admin-only-orgchart-visibility-reads.md) — Admin-only reads on `/v1/visibility`, `/v1/roles`, `/v1/person-roles`.
+- [`cpt-insightspec-adr-0015-self-scoped-visibility-read-without-admin`](ADR/0015-self-scoped-visibility-read-without-admin.md) — `POST /v1/visible-persons` answers the caller's own visible set without the admin gate.
 - [`cpt-insightspec-adr-0013-roles-hard-delete-with-in-use-guard`](ADR/0013-roles-hard-delete-with-in-use-guard.md) — `roles` hard-DELETE guarded by active-assignment count (422 `urn:insight:error:role_in_use`).
 - [`cpt-insightspec-adr-0014-last-admin-protection`](ADR/0014-last-admin-protection.md) — Refuse to revoke the last active admin assignment in a tenant.
 
@@ -68,46 +69,47 @@ Architecture-shaping decisions are captured as ADRs in
 
 | Requirement | Design Response |
 |-------------|-----------------|
-| [`cpt-insightspec-fr-identity-lookup-resolve-by-email`](PRD.md#resolve-email-to-person_id) | `PersonsRepository.ResolvePersonIdByEmailAsync` issues a `SELECT person_id FROM persons WHERE value_type='email' AND value_id=@email AND insight_tenant_id=@t ORDER BY created_at DESC LIMIT 1` against the `idx_value_id` covered index. |
-| [`cpt-insightspec-fr-identity-lookup-hydrate`](PRD.md#hydrate-person-attributes) | `PersonsRepository.GetLatestObservationsAsync` runs a `ROW_NUMBER() OVER (PARTITION BY ...)` CTE returning one row per (source, value_type); `PersonAssembler.Assemble` then picks the latest across sources. |
-| [`cpt-insightspec-fr-identity-lookup-404`](PRD.md#not-found-returns-rfc-7807) | `PersonsEndpoints.GetByEmail` returns `Results.Problem(...)` with `type=urn:insight:error:person_not_found`, `status=404` when the resolve step returns null. |
-| [`cpt-insightspec-fr-identity-lookup-400-tenant`](PRD.md#missing-tenant-returns-rfc-7807) | `CompositeTenantContext.Resolve` returns null when no resolver fires; endpoint converts to `Results.Problem(type=urn:insight:error:tenant_unresolved, status=400)`. |
-| [`cpt-insightspec-fr-identity-lookup-parent`](PRD.md#surface-parent-attributes-when-present) | `PersonLookupService.ResolveParentAsync` reads the single CURRENT parent edge from `org_chart` filtered to the configured `OrgChartSourceType` (BambooHR by default — Phase 2 of #348), then hydrates the parent's own observations to fill `supervisor_email` (parent's email), `supervisor_name` (parent's display name), and the legacy `parent_*` triple (`parent_email` = parent's email, `parent_id` = parent's `value_type='id'` on the same source instance, `parent_person_id` = the edge's `parent_person_id`). The `ParentProjection` flows into `PersonAssembler.Assemble`; stale `value_type='parent_*'` observations in `persons` are ignored. |
-| [`cpt-insightspec-fr-identity-lookup-subordinates`](PRD.md#recursively-expand-subordinates) | `PersonLookupService.HydrateAsync` walks `IPersonsReader.GetCurrentChildrenAsync` recursively, filters edges to the configured `OrgChartSourceType`, hydrates each child with the same `HydrateAsync` call (depth-counted), and feeds the resulting list into `PersonAssembler.Subordinates`. Cycle protection is a `HashSet<Guid>` of visited `person_id`s; depth cap reads from `AppOptions.MaxSubordinateDepth`. Same recursion serves `/v1/profiles` via `HydrateForProfileAsync`. |
-| [`cpt-insightspec-fr-identity-routing-name-split`](PRD.md#display-name-split-fallback) | `DisplayNameSplitter` runs after assembly when both `first_name` and `last_name` observations are missing. |
-| [`cpt-insightspec-fr-identity-migrations-startup`](PRD.md#service-owned-migrations-at-startup) | `Program.cs` calls `MigrationRunner.Run` (DbUp + MySql adapter) before `app.RunAsync()`; embedded SQL resources under `Migrations/`. |
-| [`cpt-insightspec-fr-identity-schema-relax-uniqueness`](PRD.md#schema-allows-recording-state-transitions) | `Migrations/004_persons_relax_constraints.sql` drops `UNIQUE uq_person_observation` on `(..., value_hash)` and adds the same name on `(..., created_at)`. The seeder's `INSERT IGNORE` in step 7 now dedupes by `created_at` (re-runs idempotent) while genuine transitions on the same partition (Active->Inactive->Active) persist as separate rows. ADR-0011 documents the design decision. |
+| [`cpt-insightspec-fr-identity-lookup-resolve-by-email`](PRD.md#resolve-email-to-person_id) | `persons_repo::resolve_person_ids_by_email` issues a `SELECT person_id FROM persons WHERE value_type='email' AND value_id=? AND insight_tenant_id=? ORDER BY created_at DESC LIMIT 1` against the `idx_value_id` covered index. |
+| `cpt-insightspec-fr-identity-lookup-resolve-by-person-id` | `value_type='person_id'` needs no resolution step: `api/handlers.rs::resolve_person_id_mode` validates the UUID (nil and non-UUID are 400s, never a silent empty resolution), rejects the source fields (a person id is tenant-wide), and confirms the person exists in the tenant via `persons_repo::person_exists`; an unobserved id yields no candidate so the handler answers 404 like an unknown email. Visibility applies unchanged, so a person's name and their metrics answer to ONE permission — the SPA routes on `person_id` since the identity cutover, and a person without a current email is reachable only this way. |
+| [`cpt-insightspec-fr-identity-lookup-hydrate`](PRD.md#hydrate-person-attributes) | `persons_repo::fetch_person_observations` runs a `ROW_NUMBER() OVER (PARTITION BY ...)` CTE returning one row per (source, value_type); the assembler in `domain/profile.rs` then picks the latest across sources. |
+| [`cpt-insightspec-fr-identity-lookup-404`](PRD.md#not-found-returns-rfc-7807) | The profile handler returns an RFC 7807 body with `type=urn:insight:error:person_not_found`, `status=404` when the resolve step matches nothing. |
+| [`cpt-insightspec-fr-identity-lookup-400-tenant`](PRD.md#missing-tenant-returns-rfc-7807) | The tenant comes from the verified JWT's `tenant_id` claim (oidc-authn-plugin SecurityContext); when no tenant resolves the handler returns an RFC 7807 body (`type=urn:insight:error:tenant_unresolved`, `status=400`). |
+| [`cpt-insightspec-fr-identity-lookup-parent`](PRD.md#surface-parent-attributes-when-present) | `handlers::resolve_parent` reads the single CURRENT parent edge from `org_chart` filtered to the configured `org_chart_source_type` (BambooHR by default — Phase 2 of #348), then hydrates the parent's own observations to fill `supervisor_email` (parent's email), `supervisor_name` (parent's display name), and the legacy `parent_*` triple (`parent_email` = parent's email, `parent_id` = parent's `value_type='id'` on the same source instance, `parent_person_id` = the edge's `parent_person_id`). The `ParentProjection` flows into the profile assembler; stale `value_type='parent_*'` observations in `persons` are ignored. |
+| [`cpt-insightspec-fr-identity-lookup-subordinates`](PRD.md#recursively-expand-subordinates) | `handlers::resolve_subordinates` walks `persons_repo::current_children_for_parent` recursively via `hydrate_children`, filters edges to the configured `org_chart_source_type`, hydrates each child with the same recursion (depth-counted), and feeds the resulting list into the response's `subordinates`. Cycle protection is a visited-set of `person_id`s; depth cap reads from the gear config's `max_depth`. The same recursion serves `/v1/profiles`. |
+| [`cpt-insightspec-fr-identity-routing-name-split`](PRD.md#display-name-split-fallback) | The display-name split fallback runs after assembly when both `first_name` and `last_name` observations are missing. |
+| [`cpt-insightspec-fr-identity-migrations-startup`](PRD.md#service-owned-migrations-at-startup) | The service's `migrate` subcommand runs the SeaORM migrator (`src/migration/`, SQL embedded from `src/migration/sql/`) before the service serves traffic; in Kubernetes it runs as an initContainer. |
+| [`cpt-insightspec-fr-identity-schema-relax-uniqueness`](PRD.md#schema-allows-recording-state-transitions) | Migration `004_persons_relax_constraints.sql` drops `UNIQUE uq_person_observation` on `(..., value_hash)` and adds the same name on `(..., created_at)`. The seeder's `INSERT IGNORE` in step 7 now dedupes by `created_at` (re-runs idempotent) while genuine transitions on the same partition (Active->Inactive->Active) persist as separate rows. ADR-0011 documents the design decision. |
 | [`cpt-insightspec-fr-identity-schema-case-insensitive-value-id`](PRD.md#value-comparisons-are-case-insensitive) | The same migration `ALTER COLUMN value_id MODIFY ... COLLATE utf8mb4_unicode_ci`. `idx_value_id` rebuilds under the new collation; existing SQL (`WHERE value_id = @x`) is now case-insensitive without code changes. `value_full_text` is already `utf8mb4_unicode_ci`; `value` (TEXT) uses table default `utf8mb4_unicode_ci`; `value_hash` (CHAR ascii) stays `ascii_bin` as it is a SHA-256 digest. |
-| [`cpt-insightspec-fr-identity-profile-resolve`](PRD.md#resolve-profile-by-email-or-source-native-id) | New `PersonsEndpoints.MapPost("/v1/profiles")` handler dispatches to `ProfileLookupService.ResolveAsync` which routes by `ResolveProfileKind` (`Email` or `SourceId`) to `IPersonsReader.ResolvePersonIdsByEmailAsync` / `ResolvePersonIdsBySourceIdAsync`. Both reader methods execute CTE queries (`SqlProfiles.cs`) with partition `(insight_tenant_id, person_id, insight_source_type, insight_source_id, value_type)` and `rn=1` filter — the canonical latest-per-source-instance projection. |
-| [`cpt-insightspec-fr-identity-profile-ambiguous-422`](PRD.md#surface-single-result-invariant-via-422) | `ProfileLookupService.ResolveAsync` returns a tagged `ProfileLookupResult` (`Found` / `NotFound` / `Ambiguous`). When the reader returns `>1` distinct `person_id`, the endpoint emits an `AmbiguousProfileProblemResponse` (RFC 7807 extension carrying the lookup body + the matched `person_ids` list) with status 422. |
-| [`cpt-insightspec-fr-identity-profile-ids-list`](PRD.md#project-full-alias-list-on-response) | `IPersonsReader.GetCurrentSourceIdsAsync` runs `SqlProfiles.CurrentSourceIdsForPerson` returning latest `value_type='id'` per source instance; `ProfileAssembler.Assemble` ships the list unchanged into the response shape; `ProfileResponse.From(Profile)` maps the domain record to the wire DTO. |
-| [`cpt-insightspec-fr-identity-profile-org-tree`](PRD.md#project-the-same-org-tree-shape-as-v1persons) | `ProfileLookupService.ResolveAsync` calls `PersonLookupService.HydrateForProfileAsync(tenantId, personId, options)` to build the same `Person` tree the GET endpoint returns, then hands it off to `ProfileAssembler.Assemble` which copies `SupervisorEmail` / `SupervisorName` / `ParentEmail` / `ParentId` / `ParentPersonId` / `Subordinates` straight off the projection. Identical `Person` shape for both endpoints — guaranteed by reusing the recursion. |
-| [`cpt-insightspec-fr-identity-profile-validation`](PRD.md#validate-request-body-via-fluentvalidation) | `ResolveProfileCommandValidator` (FluentValidation `AbstractValidator<ResolveProfileCommandModel>`) expresses cross-field rules via `When(value_type=='id', ...)` / `When(value_type=='email', ...)`; registered via `AddValidatorsFromAssemblyContaining<…>` in `Program.cs`; endpoint awaits `validator.ValidateAsync` before resolving tenant; first-error wins on `urn:insight:error:*` URN. |
-| [`cpt-insightspec-fr-identity-org-chart-table`](PRD.md#materialised-parentchild-edge-cache) | `Migrations/003_org_chart.sql` adds the SCD2 edge table with PK `(tenant, source_type, source_id, child, valid_from)`, CHECK `no_self_loop`, and indexes on current-parent / current-children / cross-source views; ADR-0010 records the design decision. |
+| [`cpt-insightspec-fr-identity-profile-resolve`](PRD.md#resolve-profile-by-email-or-source-native-id) | The `POST /v1/profiles` handler (`api/handlers.rs::resolve_profile`) routes by the request's `value_type` (`email` or `id`) to `persons_repo::resolve_person_ids_by_email` / `resolve_person_ids_by_source_id`. Both queries are CTEs with partition `(insight_tenant_id, person_id, insight_source_type, insight_source_id, value_type)` and `rn=1` filter — the canonical latest-per-source-instance projection. |
+| `cpt-insightspec-fr-identity-visible-persons-batch` | `POST /v1/visible-persons` (`api/visible_persons.rs::filter_visible_persons`) answers which of the requested canonical person ids (UUIDs) the caller may see. `subchart_repo::visible_targets` materialises the visible-set union once — caller, active grants, the whole tenant on a wildcard grant, `org_chart` descendants — and joins the requested ids against it; `has_wildcard_grant` short-circuits the traversal (echoing the request, so its answer is a subset of the input rather than a tenant-existence check). No email resolution step exists: the metrics runtime keys on `person_id` since the identity cutover, so the ids arrive canonical. Roles are absent from the predicate, so the `admin` role confers no visibility (ADR-0015). |
+| [`cpt-insightspec-fr-identity-profile-ambiguous-422`](PRD.md#surface-single-result-invariant-via-422) | The resolve step distinguishes found / not-found / ambiguous. When the reader returns `>1` distinct `person_id`, the handler emits an RFC 7807 extension body carrying the lookup body + the matched `person_ids` list with status 422. |
+| [`cpt-insightspec-fr-identity-profile-ids-list`](PRD.md#project-full-alias-list-on-response) | `persons_repo::current_source_ids_for_person` returns the latest `value_type='id'` per source instance; the profile assembler ships the list unchanged into the `ProfileResponse` wire shape (`domain/profile.rs::ProfileIdEntry`). |
+| [`cpt-insightspec-fr-identity-profile-org-tree`](PRD.md#project-the-same-org-tree-shape-as-v1persons) | The profile handler hydrates the same `Person` tree (`hydrate_person`) that the retired GET endpoint returned, copying `supervisor_email` / `supervisor_name` / `parent_email` / `parent_id` / `parent_person_id` / `subordinates` straight off the projection. Identical `Person` shape across callers — guaranteed by reusing the recursion. |
+| [`cpt-insightspec-fr-identity-profile-validation`](PRD.md#validate-request-body-via-fluentvalidation) | Request-body validation in the handler expresses the cross-field rules (`value_type=='id'` requires source coordinates; `value_type=='email'` forbids them) before resolving the tenant; first-error wins on `urn:insight:error:*` URN. (Ported from the retired .NET FluentValidation validator.) |
+| [`cpt-insightspec-fr-identity-org-chart-table`](PRD.md#materialised-parentchild-edge-cache) | Migration `003_org_chart.sql` adds the SCD2 edge table with PK `(tenant, source_type, source_id, child, valid_from)`, CHECK `no_self_loop`, and indexes on current-parent / current-children / cross-source views; ADR-0010 records the design decision. |
 | [`cpt-insightspec-fr-identity-org-chart-rebuild`](PRD.md#rebuild-edges-from-persons-deterministically) | `seed-persons-from-identity-input.py` step 9 builds `org_chart_next` from a UNION of `value_type='parent_person_id'` (Source 1, future reconciliation) and `value_type='parent_email'` JOINed to the latest `value_type='email'` observation per `(tenant, value_id)` partition (Source 2, current pipeline); Source 1 wins via NOT EXISTS guard. Step 5 sorts accounts BambooHR-first so the canonical `supervisorEmail` source establishes `person_id`s before downstream connectors. Source 2 intersects each `parent_email` period with the child's **active intervals** derived from `value_type='status'` observations (Active/Inactive/Terminated, with LAG to collapse duplicates and LEAD to compute interval ends); children without any status observation get a synthetic [-inf,+inf) interval. Re-activation (Inactive -> Active) produces a fresh row rather than reopening the closed one — SCD2 history is preserved. Two-table swap via `RENAME` mirrors step 8. Parent_emails with no email-bearer in `persons` are skipped and counted in the seeder log (no stubs created — see ADR-0010). Post-swap two-hop cycle detection self-joins CURRENT edges and emits a WARN line if `(A->B)` and `(B->A)` co-exist; deeper cycles are bounded structurally by the Phase-3 subchart endpoint's depth parameter. |
-| [`cpt-insightspec-fr-identity-org-chart-read`](PRD.md#read-current-parent-and-children-edges) | `IPersonsReader.GetCurrentParentsAsync` / `GetCurrentChildrenAsync` issue `SELECT ... WHERE child_person_id=@c AND valid_to IS NULL` (respectively `parent_person_id=@p`); `SqlOrgChart` holds both query strings, `PersonsRepository.ReadEdgesAsync` is the shared row→`OrgChartEdge` reader. |
+| [`cpt-insightspec-fr-identity-org-chart-read`](PRD.md#read-current-parent-and-children-edges) | `persons_repo::current_parents_for_child` / `current_children_for_parent` issue `SELECT ... WHERE child_person_id=? AND valid_to IS NULL` (respectively `parent_person_id=?`); the query strings live with the repository, materialised as `OrgChartEdge` rows. |
 
 #### NFR Allocation
 
 | Requirement | Design Response |
 |-------------|-----------------|
-| [`cpt-insightspec-nfr-identity-latency`](PRD.md#p95-lookup-latency) | Single-row covered-index lookup (`idx_value_id`) + connection pooling via MySqlConnector; pool max size tuned to 16 (smaller than the analytics service per design review). |
-| [`cpt-insightspec-nfr-identity-memory`](PRD.md#memory-budget-without-caching) | No in-memory cache; helm `resources.limits.memory: 384Mi`; query results streamed via `DbDataReader`. |
-| [`cpt-insightspec-nfr-identity-logging-pii`](PRD.md#structured-json-logs-with-pii-redaction) | Serilog `CompactJsonFormatter`; `UseSerilogRequestLogging` `EnrichDiagnosticContext` callback rewrites `RequestPath` for `/v1/persons/*` to `/v1/persons/<redacted>`; exception handler emits sanitised `db_target` for DB exceptions only. |
-| [`cpt-insightspec-nfr-identity-uuid-roundtrip`](PRD.md#binary16-uuid-round-trip) | All `Guid` parameters bound via `MySqlParameter { MySqlDbType = MySqlDbType.Binary, Size = 16, Value = guid.ToByteArray() }`; reads use `reader.GetBytes` → `new Guid(byte[])`. Integration test pins the round-trip. |
+| [`cpt-insightspec-nfr-identity-latency`](PRD.md#p95-lookup-latency) | Single-row covered-index lookup (`idx_value_id`) + the SeaORM (SQLx) connection pool; pool max size tuned to 16 (smaller than the analytics service per design review). |
+| [`cpt-insightspec-nfr-identity-memory`](PRD.md#memory-budget-without-caching) | No in-memory cache; helm `resources.limits.memory: 384Mi`; query results materialised row-by-row from the driver. |
+| [`cpt-insightspec-nfr-identity-logging-pii`](PRD.md#structured-json-logs-with-pii-redaction) | Structured JSON logs via the gears host's tracing subscriber; email-bearing path segments are logged as route templates, never raw values; the error layer emits a sanitised `db_target` for DB errors only. |
+| [`cpt-insightspec-nfr-identity-uuid-roundtrip`](PRD.md#binary16-uuid-round-trip) | All UUID parameters are bound as 16-byte `BINARY(16)` values (big-endian RFC 4122 order) and read back the same way. Integration test pins the round-trip. |
 
 ### 1.3 Architecture Layers
 
-| Layer | Responsibility | Project |
-|-------|----------------|---------|
-| **Api** | HTTP surface — minimal-API endpoints, request/response DTOs, auth (tenant context), exception → RFC 7807 mapping, Serilog wiring. | `Insight.Identity.Api` |
-| **Domain** | Lookup orchestration + observation collapse — `PersonLookupService`, `PersonAssembler`, `DisplayNameSplitter`, `ValueTypes`, ports (`IPersonsReader`, `ITenantContext`). Pure C#, no DB or HTTP types. | `Insight.Identity.Domain` |
-| **Infrastructure** | Persistence + migrations — `MariaDbConnectionFactory`, `PersonsRepository`, `Sql` (centralised CTE), `MigrationRunner` + embedded `Migrations/*.sql`. | `Insight.Identity.Infrastructure` |
+| Layer | Responsibility | Module |
+|-------|----------------|--------|
+| **Api** | HTTP surface — route handlers, request/response DTOs, auth (JWT-derived tenant), error → RFC 7807 mapping. | `src/api/` |
+| **Domain** | Lookup orchestration + observation collapse — profile assembly, display-name split fallback, subchart tree building, seed logic. Pure Rust, no DB or HTTP types. | `src/domain/` |
+| **Infrastructure** | Persistence + migrations — SeaORM pool, `persons_repo` and sibling repositories, centralised named SQL (`sql_named.rs`), the SeaORM migrator + `src/migration/sql/*.sql`. | `src/infra/` |
 
-Dependency direction is strict: Api → Domain → Infrastructure; Domain
-does not reference MySqlConnector or ASP.NET Core. The
-`IPersonsReader` port lives in Domain; `PersonsRepository` (in
-Infrastructure) implements it and is registered as singleton in DI.
+Dependency direction is strict: api → domain → infra; domain
+does not reference SeaORM or HTTP framework types. Repository
+functions in `infra/db/` materialise rows into the domain shapes.
 
 ## 2. Principles & Constraints
 
@@ -129,82 +131,88 @@ reconciliation service's job.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-identity-centralised-sql`
 
-Every `SELECT` lives in `Insight.Identity.Infrastructure/MariaDb/Sql.cs`.
-A schema evolution (column rename, index addition) touches one file;
+SQL statements live with the repositories under
+`src/infra/db/` (named statements centralised in `sql_named.rs`).
+A schema evolution (column rename, index addition) touches one place;
 the repository is purely binding + materialisation. This keeps the
 "how" of the latest-per-source CTE auditable in one place.
 
-#### Composite tenant resolver, header-first
+#### Tenant from the verified JWT, config default opt-in
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-identity-tenant-composite`
 
-`CompositeTenantContext` walks `HeaderTenantContext` → `JwtTenantContext`
-(stub) → `ConfigTenantContext` and returns the first non-null. Header
-always wins — config default is opt-in for single-tenant clusters.
-Multi-tenant production overlays leave the default empty.
+The tenant is the `tenant_id` claim of the gateway JWT verified by the
+oidc-authn-plugin (mapped to `subject_tenant_id` in the
+SecurityContext). The config `tenant_default_id` is an opt-in default
+for single-tenant clusters (and the bootstrap-admin seed).
+Multi-tenant production overlays leave the default empty. (The .NET
+service's header-first composite resolver is retired — a tenant from
+the outside world never passes.)
 
 #### Fail fast at startup, not at first request
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-identity-fail-fast`
 
-DbUp runs before the HTTP listener opens. A bad connection string or
-a failed migration crashes the pod immediately; kubelet retries. The
-service never serves traffic against an unmigrated database.
+The SeaORM migrator (the `migrate` subcommand, run as an initContainer
+in Kubernetes) completes before the service serves traffic. A bad
+connection string or a failed migration fails the pod immediately;
+kubelet retries. The service never serves traffic against an
+unmigrated database.
 
 #### PII boundary at the logger
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-identity-pii-boundary`
 
 Every log enrichment that touches the request goes through an
-allow-list. The email path segment is rewritten to `<redacted>` at the
-`UseSerilogRequestLogging` diagnostic-context callback. There is no
-log line outside the structured framework — no `Console.WriteLine`,
-no raw `ILogger.LogInformation("...{email}", email)`.
+allow-list. Email-bearing path segments are logged as route templates,
+never raw values. There is no log line outside the structured tracing
+framework — no `println!`, no raw email interpolation.
 
 ### 2.2 Constraints
 
-#### .NET 9 / net9.0 target
+#### gears-rust host / workspace Rust toolchain
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-identity-dotnet-9`
 
-The Domain project's value types use record-struct features and
-collection expressions that target `net9.0`. Backporting to `net8.0`
-is out of scope until the platform-wide runtime moves.
+The service is a gear on the gears-rust host and builds with the
+workspace-pinned Rust toolchain (ported from the retired .NET 9
+implementation, epic #1602). It ships in the shared backend workspace
+at `src/backend/services/identity-resolution/`.
 
-#### MySqlConnector, not Microsoft.Data.SqlClient
+#### SeaORM MySQL backend for MariaDB
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-identity-mysqlconnector`
 
-MariaDB-flavoured wire protocol requires MySqlConnector. The package
-is pinned in `Insight.Identity.Infrastructure.csproj` and surfaced via
-the `MariaDbConnectionFactory` abstraction; no other code path in
-Domain or Api touches it.
+The MariaDB-flavoured wire protocol is served by SeaORM's MySQL
+(SQLx) backend. The dependency is pinned in the service's
+`Cargo.toml` and surfaced via the `infra/db` module; no other code
+path in domain or api touches the driver.
 
-#### DbUp 6.x for migrations
+#### SeaORM migrator for migrations
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-identity-dbup-version`
 
-DbUp 6.x is the migrator (see ADR-0006). Embedded SQL resources under
-`Insight.Identity.Infrastructure/Migrations/` are surfaced via
-`WithScriptsEmbeddedInAssembly(... contains ".Migrations." ...)`.
-Earlier 5.x lacked the `IUpgradeLog` adapter used by `MigrationRunner`;
-6.0.4+ is the floor.
+The SeaORM migrator is the migration mechanism (see ADR-0006; it
+replaced the retired .NET service's DbUp). Migration steps live in
+`src/migration/` (one Rust file per step) and embed their SQL from
+`src/migration/sql/`. They are applied via the service's `migrate`
+subcommand, which also runs the migrate-time first-admin bootstrap.
 
 #### `BINARY(16)` for every UUID
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-identity-binary16-uuid`
 
-`Guid.ToByteArray()` round-trip is required (NFR-uuid-roundtrip). No
+A byte-exact UUID round-trip is required (NFR-uuid-roundtrip). No
 column may store a UUID as a 36-char `CHAR(36)` — the schema, the
 parameter binding, and the read path all enforce 16-byte bytes.
 
-#### Serilog `CompactJsonFormatter` only
+#### Structured JSON logging only
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-identity-serilog-compact-json`
 
 No console plain-text logging is allowed in production builds.
-Local-dev YAML overlay may enable the Console sink for readability,
-but the formatter stays compact-JSON for log aggregation parity.
+A local-dev config overlay may enable human-readable console output,
+but production stays structured JSON for log aggregation parity.
 
 ## 3. Technical Architecture
 
@@ -212,20 +220,20 @@ but the formatter stays compact-JSON for log aggregation parity.
 
 | Concept | Representation | Notes |
 |---------|---------------|-------|
-| `Person` | `Insight.Identity.Domain.Person` (immutable record). Fields: `person_id`, `email`, `display_name`, `first_name`, `last_name`, `department`, `division`, `job_title`, `status`, `supervisor_email`, `supervisor_name`, `parent_email`, `parent_id`, `parent_person_id`, `subordinates`. The `supervisor_*` pair and the legacy `parent_*` triple are both populated from the single `org_chart` edge filtered to `AppOptions.OrgChartSourceType`; `subordinates` is the recursive BambooHR-only subtree (empty list = leaf). | Wire shape — see [`PRD.md#get-v1personsemail--person-lookup`](PRD.md#get-v1personsemail--person-lookup). |
-| `Profile` | `Insight.Identity.Domain.Profile` — superset of `Person` for `POST /v1/profiles`. Adds `insight_tenant_id`, `username`, `employee_id`, and `ids[]` (all current `value_type='id'` observations, one per source instance). Optional fields are nullable rather than empty strings; the API layer drops nulls from JSON. | Wire shape — see [`PRD.md#post-v1profiles--profile-resolution`](PRD.md#post-v1profiles--profile-resolution). |
-| `PersonObservation` | `Insight.Identity.Domain.PersonObservation` — one row from `persons` projected into `(insight_source_type, insight_source_id, value_type, value_effective, created_at)`. | Domain-level shape; `value_effective` is the DB-generated coalesce. |
-| `OrgChartEdge` | One CURRENT parent->child edge from `org_chart`. Fields: `insight_source_type`, `insight_source_id`, `child_person_id`, `parent_person_id`, `valid_from`. | Domain-level; not part of the wire surface. |
-| `ParentProjection` | `Insight.Identity.Domain.Services.ParentProjection` — the parent edge resolved into the fields the assembler writes: parent's `person_id`, `email`, `display_name`, and source-native id (on the same source instance as the edge). | Internal contract between `PersonLookupService` (producer) and `PersonAssembler` (consumer). |
+| `Person` | `domain::profile::PersonResponse` (immutable). Fields: `person_id`, `email`, `display_name`, `first_name`, `last_name`, `department`, `division`, `job_title`, `status`, `supervisor_email`, `supervisor_name`, `parent_email`, `parent_id`, `parent_person_id`, `subordinates`. The `supervisor_*` pair and the legacy `parent_*` triple are both populated from the single `org_chart` edge filtered to the configured `org_chart_source_type`; `subordinates` is the recursive BambooHR-only subtree (empty list = leaf). | Wire shape — see [`PRD.md#get-v1personsemail--person-lookup`](PRD.md#get-v1personsemail--person-lookup). |
+| `Profile` | `domain::profile::ProfileResponse` — superset of `Person` for `POST /v1/profiles`. Adds `insight_tenant_id`, `username`, `employee_id`, and `ids[]` (all current `value_type='id'` observations, one per source instance). Optional fields are nullable rather than empty strings; the API layer drops nulls from JSON. | Wire shape — see [`PRD.md#post-v1profiles--profile-resolution`](PRD.md#post-v1profiles--profile-resolution). |
+| `PersonObservation` | One row from `persons` projected into `(insight_source_type, insight_source_id, value_type, value_effective, created_at)` by `infra/db/persons_repo.rs`. | Domain-level shape; `value_effective` is the DB-generated coalesce. |
+| `OrgChartEdge` | One CURRENT parent->child edge from `org_chart` (`infra/db/persons_repo.rs::OrgChartEdge`). Fields: `insight_source_type`, `insight_source_id`, `child_person_id`, `parent_person_id`, `valid_from`. | Domain-level; not part of the wire surface. |
+| `ParentProjection` | `domain::profile::ParentProjection` — the parent edge resolved into the fields the assembler writes: parent's `person_id`, `email`, `display_name`, and source-native id (on the same source instance as the edge). | Internal contract between parent resolution (producer) and profile assembly (consumer). |
 | `PersonSourceId` | One source-native id binding for the `ids[]` projection on the profile response. Fields: `insight_source_type`, `insight_source_id`, `value`. | Domain-level shape; wire form is `ProfileIdEntry`. |
-| `ValueTypes` | Static class enumerating canonical `value_type` strings. | Free-form on the DB side; the enumeration documents the set the assembler projects. |
-| `IPersonsReader` | Port — `ResolvePersonIdByEmailAsync` / `GetLatestObservationsAsync` (Phase 1 lookup), `ResolvePersonIdsByEmailAsync` / `ResolvePersonIdsBySourceIdAsync` / `GetCurrentSourceIdsAsync` (profile resolution), `GetCurrentParentsAsync` / `GetCurrentChildrenAsync` (org_chart reads). | Infrastructure provides `PersonsRepository`. |
-| `ITenantContext` | Port — `Guid? Resolve(HttpContext)`. | Implementations: `HeaderTenantContext`, `JwtTenantContext` (stub), `ConfigTenantContext`, `CompositeTenantContext`. |
-| `LookupOptions` | `Insight.Identity.Domain.Services.LookupOptions` — passed from the API layer into both lookup services. Fields: `ExpandSubordinates`, `MaxDepth`, `OrgChartSourceType`. Parent hydration is unconditional (always populated when an `org_chart` edge exists); only the subordinates recursion is gated. | Bound from `AppOptions` per request via `PersonsEndpoints.BuildLookupOptions`. `LookupOptions.Default` (`ExpandSubordinates: true`, `MaxDepth: 16`, `OrgChartSourceType: "bamboohr"`) is a test-only convenience — production paths never read it. |
+| `ValueTypes` | Constants enumerating canonical `value_type` strings. | Free-form on the DB side; the enumeration documents the set the assembler projects. |
+| Persons reader | Repository functions in `infra/db/persons_repo.rs` — `resolve_person_ids_by_email` / `fetch_person_observations` (lookup), `resolve_person_ids_by_source_id` / `current_source_ids_for_person` (profile resolution), `current_parents_for_child` / `current_children_for_parent` (org_chart reads). | The infra layer's read surface over `persons` / `org_chart`. |
+| Tenant context | The verified JWT's `tenant_id` claim, mapped by the oidc-authn-plugin into the SecurityContext (`subject_tenant_id`). | Config `tenant_default_id` is an opt-in default for single-tenant clusters. |
+| `LookupOptions` | Lookup options passed from the API layer into hydration: `expand_subordinates`, `max_depth`, `org_chart_source_type`. Parent hydration is unconditional (always populated when an `org_chart` edge exists); only the subordinates recursion is gated. | Bound from the gear config (`GearConfig`) per request. Defaults: `expand_subordinates: true`, `max_depth: 16`, `org_chart_source_type: "bamboohr"`. |
 
 ### 3.2 Component Model
 
-#### Insight.Identity.Api
+#### api module (`src/api/`)
 
 - [ ] `p1` - **ID**: `cpt-insightspec-component-identity-api`
 
@@ -233,31 +241,36 @@ but the formatter stays compact-JSON for log aggregation parity.
 
 To translate HTTP requests into domain calls and domain results into
 RFC 7807 responses, owning every concern that is HTTP- or
-hosting-specific so that Domain and Infrastructure remain free of
-ASP.NET Core types.
+hosting-specific so that domain and infra remain free of HTTP
+framework types.
 
 ##### Responsibility scope
 
-- Hosts the ASP.NET Core minimal-API app + endpoint mapping.
-- Parses configuration from `appsettings.yaml` + `IDENTITY__*` env vars.
-- Wires DI: `MariaDbConnectionFactory`, `PersonsRepository`,
-  `IPersonsReader`, tenant resolvers, `CompositeTenantContext`,
-  `PersonLookupService`.
-- Configures Serilog (`CompactJsonFormatter`, `service=identity`
-  enricher, PII-redacting request-logging callback).
-- Runs `MigrationRunner.Run` before opening the listener.
-- Maps `/v1/persons/{email}` (**deprecated** — emits RFC 8594 `Deprecation: true` + `Link: </v1/profiles>; rel="successor-version"`; new callers use `POST /v1/profiles`), `POST /v1/profiles`, `/health`, `/healthz`.
-- Implements the global exception handler that emits RFC 7807
-  bodies with sanitised `db_target` for DB exceptions only.
+- Registers the route handlers on the gears-rust host's router.
+- Consumes configuration from the gear config
+  (`gears.identity-resolution.config` in the host YAML) +
+  `APP__gears__identity-resolution__config__*` env overrides.
+- Wires the SeaORM pool, the repositories, and the seed worker into
+  the handler state.
+- Structured JSON logging via the host's tracing subscriber
+  (`service=identity-resolution`, PII-redacting request logging).
+- Migrations are applied by the service's `migrate` subcommand
+  (initContainer in Kubernetes) before the serving process starts.
+- Maps `POST /v1/profiles` (the successor of the retired
+  `GET /v1/persons/{email}` — dropped together with the .NET service,
+  zero callers), `GET /internal/persons/by-email/{email}`
+  (internal-only), `/health`, `/healthz`.
+- Implements the error mapping that emits RFC 7807
+  bodies with sanitised `db_target` for DB errors only.
 
 ##### Responsibility boundaries
 
-- Does **not** issue SQL. Repository access is via `IPersonsReader`
-  only.
+- Does **not** issue SQL. Repository access is via the `infra/db`
+  repositories only.
 - Does **not** parse `persons` rows. Materialisation is in
-  `PersonsRepository`.
-- Does **not** apply migrations directly — delegates to
-  `MigrationRunner` in Infrastructure.
+  `persons_repo`.
+- Does **not** apply migrations at request time — the SeaORM migrator
+  runs in the `migrate` subcommand.
 
 ##### Related components (by ID)
 
@@ -265,42 +278,42 @@ ASP.NET Core types.
 - `cpt-insightspec-component-identity-infra` — persistence + migrations.
 - `cpt-insightspec-actor-api-gateway` — sole external caller in Phase 1.
 
-#### Insight.Identity.Domain
+#### domain module (`src/domain/`)
 
 - [ ] `p1` - **ID**: `cpt-insightspec-component-identity-domain`
 
 ##### Why this component exists
 
 To carry the lookup orchestration and observation-collapse logic in
-a layer that has zero compile-time coupling to ASP.NET Core,
-MySqlConnector, or DbUp. This is what makes unit tests of
-`PersonAssembler` and `DisplayNameSplitter` fast (~20 tests run in
-~20 ms) and what makes the algorithm legible in isolation from the
+a layer that has zero compile-time coupling to the HTTP framework or
+SeaORM. This keeps unit tests of the assembly and display-name-split
+logic fast and makes the algorithm legible in isolation from the
 SQL strings.
 
 ##### Responsibility scope
 
-- `PersonLookupService.GetByEmailAsync(tenant, email)` —
-  trims the email, resolves `person_id` (case-insensitive via
-  the column collation per ADR-0011), fetches latest-per-source
-  observations, hands them to the assembler.
-- `PersonAssembler.Assemble(observations)` — collapses per-`value_type`
+- Email lookup — trims the email, resolves `person_id`
+  (case-insensitive via the column collation per ADR-0011), fetches
+  latest-per-source observations, hands them to the assembler.
+- Profile assembly (`domain/profile.rs`) — collapses per-`value_type`
   observations across sources by latest `created_at`, falls back to
-  `DisplayNameSplitter` when `first_name`/`last_name` are absent.
-- `DisplayNameSplitter.Split(displayName)` — handles `"Last, First"`
+  the display-name split when `first_name`/`last_name` are absent.
+- Display-name split — handles `"Last, First"`
   and `"First Last"` formats; single-token names yield
   `(token, "")`.
-- `ValueTypes` — canonical attribute constants used by the assembler.
-- Ports: `IPersonsReader`, `ITenantContext`.
+- Canonical `value_type` constants used by the assembler.
+- Subchart tree building (`domain/subchart.rs`) and the persons-seed
+  logic (`domain/seed.rs`, `domain/seed_service.rs`).
 
 ##### Responsibility boundaries
 
-- Does **not** open MariaDB connections — that's
-  `MariaDbConnectionFactory` in Infrastructure.
+- Does **not** open MariaDB connections — that's the SeaORM pool in
+  infra.
 - Does **not** know which `value_type` routes to which physical
   column — that's the seed pipeline's contract (ADR-0007) and the
   repository's SQL.
-- Does **not** map results to JSON — that's Api's serialiser.
+- Does **not** map results to JSON — that's the api layer's
+  serialiser.
 
 ##### Related components (by ID)
 
@@ -309,33 +322,36 @@ SQL strings.
 - `cpt-insightspec-component-identity-infra` — implements
   `IPersonsReader`.
 
-#### Insight.Identity.Infrastructure
+#### infra module (`src/infra/`)
 
 - [ ] `p1` - **ID**: `cpt-insightspec-component-identity-infra`
 
 ##### Why this component exists
 
-To isolate every MariaDB-specific detail (connection-string parsing,
-`BINARY(16)` parameter binding, `ROW_NUMBER()` CTE, DbUp migration
-runner) in one project so the Domain code stays portable and so a
+To isolate every MariaDB-specific detail (connection handling,
+`BINARY(16)` parameter binding, `ROW_NUMBER()` CTE, the SeaORM
+migrator) in one module so the domain code stays portable and so a
 future read replica or backup target can be swapped in without
 touching the lookup algorithm.
 
 ##### Responsibility scope
 
-- `MariaDbConnectionFactory` — parses `mysql://user:pass@host:port/db`
-  with an explicit regex (deliberately avoiding `System.Uri`'s
-  generic-scheme rewrites), exposes the resolved `ConnectionString`
-  and the sanitised `Target` (`host:port/db`, no creds) for log
-  context.
-- `PersonsRepository` — implements `IPersonsReader`; binds Guids as
-  `BINARY(16)` bytes; materialises `PersonObservation` rows.
-- `Sql` — centralised constants for the two queries
-  (`ResolvePersonIdByEmail`, `LatestObservationsByPersonId`); the CTE
+- SeaORM connection pool over the configured `database_url`
+  (`mysql://user:pass@host:port/db`); log context uses a sanitised
+  target (`host:port/db`, no creds).
+- `persons_repo` and sibling repositories (`roles_repo`,
+  `person_roles_repo`, `visibility_repo`, `subchart_repo`,
+  `seed_repo`, `ops_repo`) — bind UUIDs as `BINARY(16)` bytes and
+  materialise domain rows.
+- `sql_named.rs` — centralised named SQL; the latest-per-source CTE
   is one of the documented SQL artefacts (see §3.7).
-- `MigrationRunner` — DbUp 6.x adapter, embeds SQL via
-  `WithScriptsEmbeddedInAssembly`, bridges DbUp's `IUpgradeLog` to
-  `Microsoft.Extensions.Logging.ILogger`.
+- The SeaORM migrator (`src/migration/`) — one Rust step per change,
+  SQL embedded from `src/migration/sql/`, run by the `migrate`
+  subcommand together with the first-admin bootstrap
+  (`infra/db/bootstrap.rs`).
+- The ClickHouse `identity_inputs` reader
+  (`infra/identity_inputs.rs`) over the shared HTTP ClickHouse client
+  (port 8123).
 
 ##### Responsibility boundaries
 
@@ -343,7 +359,7 @@ touching the lookup algorithm.
   that's Domain.
 - Does **not** emit HTTP responses — that's Api.
 - Does **not** orchestrate the seed pipeline — that's
-  `src/backend/services/identity/seed/`.
+  `src/backend/services/identity-resolution/seed/`.
 
 ##### Related components (by ID)
 
@@ -359,38 +375,40 @@ implementation details.
 
 | PRD Interface | Implementation | Notes |
 |---------------|----------------|-------|
-| [`cpt-insightspec-interface-identity-person-lookup`](PRD.md#get-v1personsemail--person-lookup) | `PersonsEndpoints.GetByEmail` in `Insight.Identity.Api/Endpoints/PersonsEndpoints.cs`. Snake-case JSON via configured `JsonSerializerOptions`. | Phase 2 will add a POST counterpart; the GET stays. |
-| [`cpt-insightspec-interface-identity-health`](PRD.md#get-health--database-readiness) | `PersonsEndpoints.Health` — opens a connection, runs `SELECT 1`. | 200 / 503. |
-| [`cpt-insightspec-interface-identity-healthz`](PRD.md#get-healthz--process-liveness) | Inline `MapGet("/healthz", ...)` returning `"ok"`. | Never touches DB. |
+| [`cpt-insightspec-interface-identity-person-lookup`](PRD.md#get-v1personsemail--person-lookup) | **Retired** together with the .NET service (approved removal, zero callers). `POST /v1/profiles` (`api/handlers.rs::resolve_profile`) is the successor; an internal-only `GET /internal/persons/by-email/{email}` remains for in-cluster use. Snake-case JSON. | Kept for historical traceability. |
+| [`cpt-insightspec-interface-identity-health`](PRD.md#get-health--database-readiness) | Health handler — opens a connection, runs `SELECT 1`. | 200 / 503. |
+| [`cpt-insightspec-interface-identity-healthz`](PRD.md#get-healthz--process-liveness) | Liveness handler returning `"ok"`. | Never touches DB. |
 
 External contracts:
 
 - [`cpt-insightspec-contract-identity-env-config`](PRD.md#identity_-env-var-contract) —
-  honoured by `Microsoft.Extensions.Configuration.EnvironmentVariables`
-  with prefix `IDENTITY__` and `__` section delimiter; bound to
-  strongly-typed `AppOptions` / `MariaDbOptions` records.
+  honoured by the gears-rust host's config loader: YAML section
+  `gears.identity-resolution.config` with
+  `APP__gears__identity-resolution__config__<field>` env overrides;
+  bound to the strongly-typed `GearConfig` struct.
 - [`cpt-insightspec-contract-identity-config-secret`](PRD.md#insight-identity-config-secret) —
-  consumed via `envFrom: secretRef: insight-identity-config` in the
-  Deployment template (see `src/backend/services/identity/helm/`).
+  consumed via `envFrom: secretRef: insight-identity-resolution-config`
+  in the Deployment template (see
+  `src/backend/services/identity-resolution/helm/`).
 
 ### 3.4 Internal Dependencies
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|----------------|---------|
-| `Insight.Identity.Domain` | `IPersonsReader`, `ITenantContext`, `PersonLookupService`, `PersonAssembler`, `ValueTypes` | Lookup orchestration + observation collapse. |
-| `Insight.Identity.Infrastructure` | `PersonsRepository`, `MariaDbConnectionFactory`, `MigrationRunner` | MariaDB persistence + DbUp migrations. |
-| `charts/insight/templates/secrets.yaml` (umbrella) | Emits `insight-identity-config` with `IDENTITY__mariadb__url` etc. | Runtime config supply. |
-| `charts/insight/templates/mariadb-initdb-scripts.yaml` (umbrella) | Provisions empty `identity` database + grants on first MariaDB pod boot. | Empty DB substrate for DbUp to migrate. |
+| `src/domain/` | Profile assembly, display-name split, subchart + seed logic | Lookup orchestration + observation collapse. |
+| `src/infra/` | `persons_repo` + sibling repositories, SeaORM pool, SeaORM migrator | MariaDB persistence + migrations. |
+| `charts/insight/templates/secrets.yaml` (umbrella) | Emits `insight-identity-resolution-config` with `APP__gears__identity-resolution__config__database_url` etc. | Runtime config supply. |
+| `charts/insight/templates/mariadb-initdb-scripts.yaml` (umbrella) | Provisions empty `identity` database + grants on first MariaDB pod boot. | Empty DB substrate for the SeaORM migrator. |
 
 ### 3.5 External Dependencies
 
 | Dependency | Version | Why | Failure mode |
 |------------|---------|-----|--------------|
-| MySqlConnector (NuGet) | 2.4.0 | MariaDB-flavoured wire protocol; `MySqlDbType.Binary` for `BINARY(16)` Guid binding. | Pool exhaustion → 503 on `/health`; pod restart on transient connectivity loss. |
-| dbup-core + dbup-mysql (NuGet) | 6.0.4 | Schema migration applied at startup; tracks `SchemaVersions`. | Failed migration → exception thrown, pod crashes before listener opens. |
-| Serilog + Serilog.Formatting.Compact + Serilog.AspNetCore (NuGet) | 9.x | Structured JSON logs with `CompactJsonFormatter`, request-logging middleware, PII redaction. | Logger init failure → pod crashes; no fallback. |
-| Microsoft.AspNetCore.Mvc.Testing | 9.0.0 (test only) | `WebApplicationFactory` for integration tests. | n/a — test-only. |
-| Testcontainers.MariaDb | 4.11.0 (test only) | Spins up a real MariaDB per integration test collection. | Test failure when Docker unavailable; not a runtime concern. |
+| sea-orm (MySQL/SQLx backend) | workspace-pinned | MariaDB-flavoured wire protocol; `BINARY(16)` UUID binding; connection pool. | Pool exhaustion → 503 on `/health`; pod restart on transient connectivity loss. |
+| sea-orm-migration | workspace-pinned | Schema migration applied via the `migrate` subcommand; tracks `seaql_migrations`. | Failed migration → the `migrate` subcommand exits non-zero, the initContainer fails and the pod never serves. |
+| tracing (gears-rust host subscriber) | workspace-pinned | Structured JSON logs, request logging, PII redaction. | Logger init failure → process exits; no fallback. |
+| insight-clickhouse (HTTP client) | workspace | Reads `identity.identity_inputs` over ClickHouse HTTP (port 8123) for the persons-seed worker. | Seed run fails with a bounded timeout; the read API is unaffected. |
+| testcontainers (Rust, test only) | workspace-pinned | Spins up a real MariaDB for integration tests (`cargo test -p identity-resolution`). | Test failure when Docker unavailable; not a runtime concern. |
 
 ### 3.6 Interactions & Sequences
 
@@ -399,59 +417,62 @@ External contracts:
 - [ ] `p1` - **ID**: `cpt-insightspec-seq-identity-lookup-happy`
 
 ```
-api-gateway  →  identity-api  →  CompositeTenantContext  →  PersonLookupService
+api-gateway  →  identity-resolution  →  oidc-authn-plugin (tenant from JWT)
                                                               │
                                                               ▼
-                              IPersonsReader.ResolvePersonIdByEmailAsync
+                              persons_repo::resolve_person_ids_by_email
                                                               │
                                               (covered idx_value_id)
                                                               ▼
-                              IPersonsReader.GetLatestObservationsAsync
+                              persons_repo::fetch_person_observations
                                                               │
                                           (ROW_NUMBER OVER PARTITION)
                                                               ▼
-                                              PersonAssembler.Assemble
+                                              profile assembly (domain)
                                                               │
                                                               ▼
-                                                  PersonResponse (JSON)
+                                                  ProfileResponse (JSON)
                                                               │
                                                               ▼
                                                        api-gateway merges
 ```
 
-1. api-gateway calls `GET /v1/persons/alice@example.com` with
-   `X-Insight-Tenant-Id: 01933a40-...` (UUID).
-2. `CompositeTenantContext.Resolve` reads the header → `Guid`.
-3. `PersonLookupService.GetByEmailAsync` trims the email (case
-   handled at the storage layer per ADR-0011).
-4. `PersonsRepository.ResolvePersonIdByEmailAsync` issues
-   `SELECT person_id FROM persons WHERE insight_tenant_id=@t AND
-   value_type='email' AND value_id=@email ORDER BY created_at DESC,
+1. api-gateway calls `POST /v1/profiles`
+   (`{"value_type":"email","value":"alice@example.com"}`) with the
+   ES256 gateway JWT.
+2. The oidc-authn-plugin verifies the JWT and maps its `tenant_id`
+   claim into the SecurityContext.
+3. The handler trims the email (case handled at the storage layer per
+   ADR-0011).
+4. `persons_repo::resolve_person_ids_by_email` issues
+   `SELECT person_id FROM persons WHERE insight_tenant_id=? AND
+   value_type='email' AND value_id=? ORDER BY created_at DESC,
    id DESC LIMIT 1` on the `idx_value_id` covered index.
-5. `PersonsRepository.GetLatestObservationsAsync` runs the
+5. `persons_repo::fetch_person_observations` runs the
    `ROW_NUMBER()` CTE, returning one row per (source, value_type).
-6. `PersonAssembler.Assemble` collapses across sources by latest
-   `created_at`, runs `DisplayNameSplitter` if first/last absent.
-7. `PersonsEndpoints` serialises to snake-case JSON; returns 200.
+6. The profile assembler collapses across sources by latest
+   `created_at`, running the display-name split if first/last absent.
+7. The handler serialises to snake-case JSON; returns 200.
 
 #### Tenant unresolved
 
 - [ ] `p1` - **ID**: `cpt-insightspec-seq-identity-tenant-unresolved`
 
 ```
-caller  →  identity-api  →  CompositeTenantContext.Resolve()
+caller  →  identity-resolution  →  tenant resolution
                                        │
-                                  (all return null)
+                            (no tenant_id claim, no default)
                                        │
                                        ▼
-                            Results.Problem(...)
+                            RFC 7807 problem body
                                        │
                                        ▼
                        400 + RFC 7807 problem-details
 ```
 
-The composite walks header → JWT stub → config default; if all return
-null, the endpoint returns
+The tenant comes from the verified JWT's `tenant_id` claim, with the
+config `tenant_default_id` as an opt-in fallback; if neither yields a
+tenant, the endpoint returns
 `urn:insight:error:tenant_unresolved` with status 400.
 
 #### Startup with migration
@@ -459,29 +480,32 @@ null, the endpoint returns
 - [ ] `p1` - **ID**: `cpt-insightspec-seq-identity-startup`
 
 ```
-kubelet  →  pod start  →  Program.cs Configuration bind
+kubelet  →  initContainer: identity-resolution migrate
                                     │
                                     ▼
-                          MariaDbConnectionFactory init
+                          gear config bind (GearConfig)
                                     │
                                     ▼
-                          MigrationRunner.Run
-                            │      EnsureDatabase.For.MySqlDatabase
-                            │      DeployChanges.To.MySqlDatabase
-                            │      WithScriptsEmbeddedInAssembly("*.Migrations.*.sql")
+                          SeaORM Migrator::up
+                            │      (steps in src/migration/,
+                            │       SQL from src/migration/sql/)
                             ▼
-                          PerformUpgrade()
-                            │      (failure → throw, pod restart)
+                          first-admin bootstrap (infra/db/bootstrap.rs)
+                            │      (failure → non-zero exit, pod restart)
                             ▼
-                          app.RunAsync()
+                          main container: serve
                                     │
                                     ▼
-                          /health, /healthz, /v1/persons/{email}
+                          /health, /healthz, /v1/profiles
 ```
 
-DbUp's `SchemaVersions` table guarantees each script applies once
+SeaORM's `seaql_migrations` table guarantees each step applies once
 across pod restarts; idempotency is at the script level (every DDL
-uses `CREATE TABLE IF NOT EXISTS`).
+uses `CREATE TABLE IF NOT EXISTS`). When `bootstrap_admin_person_id`
+is configured, the `migrate` subcommand also seeds the first active
+`admin` assignment in `tenant_default_id` unless one already exists
+(the migrate-time first-admin bootstrap, ported from the .NET
+`BootstrapAdminRunner`).
 
 ### 3.7 Database schemas & tables
 
@@ -492,12 +516,13 @@ The service is a **reader** of `persons` and the migrator of the
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-identity-persons`
 
-Defined in `Insight.Identity.Infrastructure/Migrations/001_persons.sql`
-(applied at service startup via DbUp). Canonical column reference:
+Defined in `src/migration/sql/001_persons.sql`
+(applied by the SeaORM migrator via the `migrate` subcommand).
+Canonical column reference:
 [docs/domain/identity-resolution/specs/DESIGN.md §"Table: persons"](../../../../../domain/identity-resolution/specs/DESIGN.md#table-persons-mariadb).
 
-The service reads it via two queries (both in
-`Insight.Identity.Infrastructure/MariaDb/Sql.cs`):
+The service reads it via two queries (centralised with the
+repository in `src/infra/db/`):
 
 ```sql
 -- Sql.ResolvePersonIdByEmail
@@ -538,8 +563,8 @@ hydrate CTE bounded by per-person observation count (typically
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-identity-account-person-map`
 
-Defined in `Insight.Identity.Infrastructure/Migrations/002_account_person_map.sql`.
-The service migrates the table at startup but does **not** read it in
+Defined in `src/migration/sql/002_account_person_map.sql`.
+The service migrates the table but does **not** read it in
 Phase 1 — the seed pipeline rebuilds it as an SCD2 cache from
 `persons` (see
 [domain DESIGN §"Table: account_person_map"](../../../../../domain/identity-resolution/specs/DESIGN.md#table-account_person_map-mariadb)).
@@ -550,7 +575,7 @@ binding queries.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-identity-org-chart`
 
-Defined in `Insight.Identity.Infrastructure/Migrations/003_org_chart.sql`
+Defined in `src/migration/sql/003_org_chart.sql`
 (see ADR-0010). The service migrates and reads the table — the
 seed pipeline (`seed-persons-from-identity-input.py` step 9)
 rebuilds it as an SCD2 cache of direct parent->child edges
@@ -568,11 +593,11 @@ orgs) becomes a Phase-1.5 change that adds `parent_person_id` to
 the PK.
 
 Read paths in Phase 1:
-- `IPersonsReader.GetCurrentParentsAsync(tenant, child)` —
-  `WHERE child_person_id=@c AND valid_to IS NULL` against
+- `persons_repo::current_parents_for_child(tenant, child)` —
+  `WHERE child_person_id=? AND valid_to IS NULL` against
   `idx_current_parent`.
-- `IPersonsReader.GetCurrentChildrenAsync(tenant, parent)` —
-  `WHERE parent_person_id=@p AND valid_to IS NULL` against
+- `persons_repo::current_children_for_parent(tenant, parent)` —
+  `WHERE parent_person_id=? AND valid_to IS NULL` against
   `idx_current_children`.
 
 Phase 2 callers project these onto the `/v1/persons` and
@@ -586,19 +611,20 @@ MariaDB's `cte_max_recursion_depth = 1000`) against a derived
 `latest_obs` CTE that picks the latest `(person, value_type)`
 observation per partition via `ROW_NUMBER() OVER (...)`. Tenant +
 source-type scoping is bound on both CTEs. The result is a flat
-row set ordered by depth; the C# service layer (`SubchartService`)
+row set ordered by depth; the service layer (`domain/subchart.rs`)
 assembles the tree by indexing on `parent_person_id`. Visibility is
-applied via `VisibilityService.CanSeeAsync` on the root only — the
+applied to the root only — the
 visibility CTE is closed under `org_chart` descent, so once the
 viewer can see the root every descendant is already in their
 visible set.
 
-#### Table: `SchemaVersions` (MariaDB, DbUp-managed)
+#### Table: `seaql_migrations` (MariaDB, SeaORM-managed)
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-identity-schema-versions`
 
-DbUp's tracker table. Created automatically on first
-`PerformUpgrade()` if absent; the service does not interact with it
+SeaORM's migration tracker table (it replaced the retired .NET
+service's DbUp `SchemaVersions`). Created automatically on the first
+`migrate` run if absent; the service does not interact with it
 directly. Provides idempotency for pod restarts.
 
 ### 3.8 Schema + Naming Conventions
@@ -630,8 +656,8 @@ touch (per the project-wide "consistency over scope" rule).
    doesn't supply `valid_from` (POST body field omitted / null), the
    INSERT statement substitutes `UTC_TIMESTAMP(6)` server-side via
    `IFNULL(@valid_from, UTC_TIMESTAMP(6))`. The repository binds
-   `DBNull` for the parameter rather than passing C#'s
-   `DateTime.UtcNow`; both timestamps in a subsequent
+   SQL NULL for the parameter rather than passing the client
+   clock's now; both timestamps in a subsequent
    `valid_to = UTC_TIMESTAMP(6)` soft-delete then come from the same
    clock (the DB server) and the CHECK constraint cannot fail under
    client/server clock skew.
@@ -644,12 +670,12 @@ touch (per the project-wide "consistency over scope" rule).
 
 4. **Boolean existence probes** use `SELECT EXISTS (SELECT 1 FROM …)`,
    not `SELECT 1 … LIMIT 1` + null-check. EXISTS returns 0/1
-   (never NULL), short-circuits at the planner, and reads as
-   `Convert.ToBoolean(scalar)` in C#.
+   (never NULL), short-circuits at the planner, and reads as a
+   boolean scalar.
 
 5. **BINARY(16) UUID round-trip** uses big-endian RFC 4122 wire
-   order: `guid.ToByteArray(bigEndian: true)` when binding, and
-   `new Guid(bytes, bigEndian: true)` when reading. Established
+   order: the UUID's canonical bytes (`uuid::Uuid::as_bytes`) when
+   binding, and the same order when reading. Established
    by the persons table (see ADR-0002) and mirrored everywhere.
 
 #### Domain entity naming
@@ -681,29 +707,37 @@ separate aggregate concept, use the suffix exception.
 
 ### 4.1 Configuration surface
 
-| Env var | Default | Notes |
+Configuration is the gears-rust host config: YAML section
+`gears.identity-resolution.config` in `config/insight.yaml`, with
+`APP__gears__identity-resolution__config__<field>` env overrides
+(bound to `GearConfig`). The listener address lives in the host's
+`api-gateway` gear config (`bind_addr: 0.0.0.0:8082` — the same port
+the retired .NET service used, so consumers only flipped hostname).
+
+| Config field (env override `APP__gears__identity-resolution__config__<field>`) | Default | Notes |
 |---------|---------|-------|
-| `IDENTITY__mariadb__url` | _none_ (required) | `mysql://user:pass@host:port/db`; percent-encoding allowed for users / passwords. Mutually exclusive with `connection_string`. |
-| `IDENTITY__mariadb__connection_string` | _none_ | Raw MySqlConnector KV form for callers needing options the URL shape cannot express. |
-| `IDENTITY__mariadb__min_pool_size` | 0 | Lazily opens connections. |
-| `IDENTITY__mariadb__max_pool_size` | 16 | Smaller than the analytics service per design review. |
-| `IDENTITY__identity__bind_addr` | `0.0.0.0:8082` | Listener address. |
-| `IDENTITY__identity__tenant_default_id` | _empty_ | Optional; opt-in for single-tenant clusters. |
-| `IDENTITY__identity__expand_subordinates` | `false` | Phase 2 toggle (recursive supervisor walk). |
+| `database_url` | _none_ (required) | `mysql://user:pass@host:port/db`; percent-encoding allowed for users / passwords. |
+| `org_chart_source_type` | `bamboohr` | Source instance whose `org_chart` edges populate supervisor/parent fields. |
+| `expand_subordinates` | `true` | Recursive subordinates subtree on profile responses. |
+| `max_depth` | `16` | Max org-tree recursion depth (cycle-safe). |
+| `clickhouse_url`, `clickhouse_database`, `clickhouse_user`, `clickhouse_password` | `""` / `identity` / `""` / `""` | ClickHouse HTTP coordinates (port 8123) for reading `identity_inputs` (persons-seed input). |
+| `tenant_default_id` | _empty_ | Optional; opt-in for single-tenant clusters and the bootstrap-admin seed. |
+| `bootstrap_admin_person_id` | _empty_ | Optional; migrate-time first-admin bootstrap. |
 
 ### 4.2 Logging shape
 
-Every log line is structured JSON via `CompactJsonFormatter` with:
+Every log line is structured JSON via the gears-rust host's tracing
+subscriber with:
 
-- `@t` — RFC 3339 timestamp.
-- `@l` — level.
-- `@mt` — message template (e.g. `"HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms"`).
-- `@tr` / `@sp` — W3C trace and span IDs (when present).
-- `service` — `identity` (Serilog enricher).
-- `RequestPath` — route template, never the raw email path.
-- For unhandled exceptions: `@x` carries the full stack;
-  `db_target` is set on the diagnostic context only when the
-  exception is a `MySqlException` / `DbException`.
+- an RFC 3339 timestamp and level.
+- the request method, route template, status code, and elapsed time
+  on request-logging lines.
+- W3C trace and span IDs (when present).
+- `service` — `identity-resolution`.
+- the route template, never the raw email path segment.
+- For unhandled errors: the error chain; `db_target` (sanitised
+  `host:port/db`, no creds) is attached only when the error is a
+  database error.
 
 ## 5. Traceability
 
@@ -713,16 +747,16 @@ Every log line is structured JSON via `CompactJsonFormatter` with:
 | `cpt-insightspec-fr-identity-lookup-hydrate` | §1.2 Functional Drivers; §3.7 SQL `LatestObservationsByPersonId`. |
 | `cpt-insightspec-fr-identity-lookup-404` | §1.2 Functional Drivers; §3.3 API Contracts. |
 | `cpt-insightspec-fr-identity-lookup-400-tenant` | §1.2 Functional Drivers; §3.6 Sequence "Tenant unresolved". |
-| `cpt-insightspec-fr-identity-lookup-parent` | §1.2 Functional Drivers; `PersonLookupService.ResolveParentAsync` + `PersonAssembler.Assemble`. |
-| `cpt-insightspec-fr-identity-lookup-subordinates` | §1.2 Functional Drivers; `PersonLookupService.HydrateAsync` recursion + `IPersonsReader.GetCurrentChildrenAsync`. |
-| `cpt-insightspec-fr-identity-routing-name-split` | §1.2 Functional Drivers; §3.2 Domain `DisplayNameSplitter`. |
+| `cpt-insightspec-fr-identity-lookup-parent` | §1.2 Functional Drivers; `handlers::resolve_parent` + profile assembly. |
+| `cpt-insightspec-fr-identity-lookup-subordinates` | §1.2 Functional Drivers; `handlers::resolve_subordinates` recursion + `persons_repo::current_children_for_parent`. |
+| `cpt-insightspec-fr-identity-routing-name-split` | §1.2 Functional Drivers; §3.2 domain display-name split. |
 | `cpt-insightspec-fr-identity-migrations-startup` | §1.2 Functional Drivers; §3.6 Sequence "Startup with migration". |
 | `cpt-insightspec-fr-identity-schema-relax-uniqueness` | §1.2 Functional Drivers; ADR-0011 §Decision Outcome (new UNIQUE on `created_at`). |
 | `cpt-insightspec-fr-identity-schema-case-insensitive-value-id` | §1.2 Functional Drivers; ADR-0011 §Decision Outcome (collation switch to `utf8mb4_unicode_ci`). |
 | `cpt-insightspec-fr-identity-org-chart-table` | §1.2 Functional Drivers; §3.7 Table `org_chart`; ADR-0010. |
 | `cpt-insightspec-fr-identity-org-chart-rebuild` | §1.2 Functional Drivers; rebuild step in seeder (`seed-persons-from-identity-input.py` step 9). |
-| `cpt-insightspec-fr-identity-org-chart-read` | §1.2 Functional Drivers; §3.7 read paths note; `SqlOrgChart` + `PersonsRepository.ReadEdgesAsync`. |
-| `cpt-insightspec-fr-identity-profile-org-tree` | §1.2 Functional Drivers; `ProfileLookupService.ResolveAsync` → `PersonLookupService.HydrateForProfileAsync` → `ProfileAssembler.Assemble`. |
+| `cpt-insightspec-fr-identity-org-chart-read` | §1.2 Functional Drivers; §3.7 read paths note; `persons_repo::current_parents_for_child` / `current_children_for_parent`. |
+| `cpt-insightspec-fr-identity-profile-org-tree` | §1.2 Functional Drivers; `handlers::resolve_profile` → `hydrate_person` → profile assembly. |
 | `cpt-insightspec-nfr-identity-latency` | §1.2 NFR Allocation; §3.7 covered index. |
 | `cpt-insightspec-nfr-identity-memory` | §1.2 NFR Allocation; §2.1 Principle "Observation log, not relational tree". |
 | `cpt-insightspec-nfr-identity-logging-pii` | §1.2 NFR Allocation; §4.2 Logging shape. |

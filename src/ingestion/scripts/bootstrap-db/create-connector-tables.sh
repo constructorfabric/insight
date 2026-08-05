@@ -22,18 +22,37 @@ NAMESPACE="$(yq -r '.connection.namespace' "${DESCRIPTOR}")"
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "${WORKDIR}"' EXIT
+# The images run as their own non-root user, while `mktemp -d` is 0700 owned by
+# the invoking user — so on a Linux host the bind-mounted /work is unreadable
+# inside the container and every connector dies with "Permission denied:
+# '/work/config.json'". macOS Docker Desktop hides this (its file sharing
+# ignores uid and mode), so the failure only appears on Linux, e.g. in the
+# connectors-ddl CI lane.
+#
+# The fix differs per image class:
+#   * SOURCE images (nocode runtime and every CDK connector) tolerate an
+#     arbitrary uid, so they run as the invoking user (--user + HOME=/tmp for
+#     the CDK cache paths) and config.json — the file holding the connector
+#     credentials — stays 0600 inside a 0755 directory.
+#   * DESTINATION-clickhouse does NOT start under a foreign uid (its entrypoint
+#     sources /airbyte/base.sh, readable only by its baked-in user), so its two
+#     inputs are made world-readable below instead. They carry no connector
+#     secrets — only the ClickHouse password for a throwaway localhost instance.
+chmod 0755 "${WORKDIR}"
 cp "${CONFIG_JSON}" "${WORKDIR}/config.json"
+chmod 0600 "${WORKDIR}/config.json"
+RUN_AS="$(id -u):$(id -g)"
 
 echo "[${NAME}] discover"
 if [[ "${CONNECTOR_TYPE}" == "cdk" ]]; then
   SOURCE_IMAGE="$(yq -r '.images.cdk.image' "${DESCRIPTOR}")"
-  docker run --rm -v "${WORKDIR}:/work:ro" "${SOURCE_IMAGE}" \
+  docker run --rm --user "${RUN_AS}" -e HOME=/tmp -v "${WORKDIR}:/work:ro" "${SOURCE_IMAGE}" \
     discover --config /work/config.json \
     > "${WORKDIR}/discover.jsonl" \
     || { tail -n 3 "${WORKDIR}/discover.jsonl" >&2; exit 1; }
 else
   : "${SOURCE_DECLARATIVE_MANIFEST_IMAGE:?SOURCE_DECLARATIVE_MANIFEST_IMAGE must be set}"
-  docker run --rm -v "${WORKDIR}:/work:ro" -v "${CONNECTOR_DIR}:/manifest:ro" \
+  docker run --rm --user "${RUN_AS}" -e HOME=/tmp -v "${WORKDIR}:/work:ro" -v "${CONNECTOR_DIR}:/manifest:ro" \
     "${SOURCE_DECLARATIVE_MANIFEST_IMAGE}" \
     discover --config /work/config.json --manifest-path /manifest/connector.yaml \
     > "${WORKDIR}/discover.jsonl" \
@@ -81,6 +100,9 @@ jq -n '{
   }' > "${WORKDIR}/destination_config.json"
 
 echo "[${NAME}] create tables in ${NAMESPACE}"
+# World-readable is deliberate: destination-clickhouse cannot run under our uid
+# (see the WORKDIR comment), and these two files hold no connector secrets.
+chmod 0644 "${WORKDIR}/destination_config.json" "${WORKDIR}/configured_catalog.json"
 docker run --rm -i -v "${WORKDIR}:/work:ro" "${DESTINATION_CLICKHOUSE_IMAGE}" \
   write --config /work/destination_config.json --catalog /work/configured_catalog.json \
   < "${WORKDIR}/traces.jsonl" \

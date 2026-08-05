@@ -1,6 +1,6 @@
 name: Trivy SCA
 
-# Dependency and misconfiguration scanning, report-only (#2020).
+# Dependency and misconfiguration scanning (#2020). The `critical` pass BLOCKS.
 #
 #   critical — CRITICAL only; the one pass that also scans secrets, so its output stays in the
 #              log and never reaches a SARIF upload.
@@ -8,7 +8,9 @@ name: Trivy SCA
 #              YAML uploads as `trivy-helm` to keep synthetic paths out of `trivy-fs`.
 #
 # Do not change without reading why:
-#   - keep `-w /src`; do not switch to `--ignorefile` — it exits FATAL when the file is absent.
+#   - waivers live in `.trivyignore.yaml`, passed explicitly: Trivy auto-detects the plain
+#     `.trivyignore` but NOT the YAML form, and only the YAML form can scope a waiver to a
+#     path. The file is committed, so `--ignorefile` cannot hit its absent-file FATAL.
 #   - the report pass must not run the secret scanner: its SARIF is world-readable here.
 
 on:
@@ -33,7 +35,7 @@ env:
 
 jobs:
   gate:
-    name: critical (report-only)
+    name: critical (blocking)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -41,18 +43,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Trivy fs scan — CRITICAL only (report-only)
+      - name: Trivy fs scan — CRITICAL only (blocking)
         # Waivers: `.trivyignore` at the repo root, date-scoped — `CVE-... exp:YYYY-MM-DD # <issue>`.
-        # Keep `-w /src`; `--ignorefile` exits FATAL when the file is absent.
+        # `.trivyignore.yaml` must be passed explicitly — the YAML form is not auto-detected.
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/src:ro" \
             -w /src \
             "$TRIVY_IMAGE" fs \
+              --ignorefile /src/.trivyignore.yaml \
               --scanners vuln,secret,misconfig \
               --severity CRITICAL \
               --ignore-unfixed \
-              --exit-code 0 \
+              --exit-code 1 \
               --no-progress \
               /src
 
@@ -96,6 +99,7 @@ jobs:
             -v /tmp/trivy-cache:/root/.cache \
             -w /src \
             "$TRIVY_IMAGE" fs \
+              --ignorefile /src/.trivyignore.yaml \
               --scanners vuln,misconfig \
               --severity CRITICAL,HIGH,MEDIUM,LOW \
               --include-dev-deps \
@@ -212,6 +216,7 @@ jobs:
             -v /tmp/trivy-cache:/root/.cache \
             -w /src \
             "$TRIVY_IMAGE" fs \
+              --ignorefile /src/.trivyignore.yaml \
               --scanners misconfig \
               --severity CRITICAL,HIGH,MEDIUM,LOW \
               --exit-code 0 \

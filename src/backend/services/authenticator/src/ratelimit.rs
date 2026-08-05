@@ -9,7 +9,7 @@
 //!   precise layer.
 //! - a **global live login-state cap** for `/auth/login`: pre-auth there is
 //!   no per-caller key, so the guarded resource is the store itself —
-//!   `asm:login_state_live` (ZSET, score = expiry) counts live entries and
+//!   `{asm}:login_state_live` (ZSET, score = expiry) counts live entries and
 //!   excess logins get 429 before any state is written, stopping a
 //!   slow-trickle Redis-exhaustion attack the edge cannot see.
 
@@ -70,7 +70,7 @@ impl BucketSpec {
     }
 }
 
-/// Take one token from `asm:rl:{class}:{key-digest}`. `Ok(true)` = allowed.
+/// Take one token from `{asm}:rl:{class}:{key-digest}`. `Ok(true)` = allowed.
 /// A zero/absent spec (burst 0) disables the bucket (always allowed).
 ///
 /// The key component is SHA-256-hashed (hex) before use, so an attacker-chosen
@@ -95,7 +95,7 @@ pub async fn take(
     let mut conn = conn.clone();
     let script = redis::Script::new(TOKEN_BUCKET_LUA);
     let allowed: i64 = script
-        .key(format!("asm:rl:{class}:{key_hex}"))
+        .key(format!("{{asm}}:rl:{class}:{key_hex}"))
         .arg(spec.burst)
         .arg(spec.refill_per_second())
         .arg(now)

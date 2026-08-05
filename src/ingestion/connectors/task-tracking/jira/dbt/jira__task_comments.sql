@@ -22,7 +22,7 @@ SELECT
     parseDateTime64BestEffortOrNull(c.created, 3)       AS created_at,
     parseDateTime64BestEffortOrNull(c.updated, 3)       AS updated_at,
     c.body                                              AS body,
-    toUInt8(0)                                          AS is_deleted,
+    toNullable(toUInt8(0))                              AS is_deleted,
     toUnixTimestamp64Milli(now64(3))                    AS _version
 FROM (
     SELECT * FROM {{ source('bronze_jira', 'jira_comments') }}

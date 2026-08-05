@@ -211,8 +211,7 @@ See `src/ingestion/tools/declarative-connector/README.md` for the full Builder-U
 
 ```yaml
 name: <connector_name>
-version: "1.0"
-
+version: "1.0.0"                   # THREE components — see the warning below
 schedule: "0 2 * * *"
 dbt_select: "tag:<slug>+"          # <slug> = this descriptor's `name`, hyphen and all (see §3.5 NAMING)
 workflow: sync
@@ -220,6 +219,19 @@ workflow: sync
 connection:
   namespace: "bronze_<snake>"      # <snake> = <slug> with '-' → '_'
 ```
+
+> **`version:` MUST be strict semver `MAJOR.MINOR.PATCH` — three components, no
+> leading zeros.** `"1.0"` and `"2026.05.04"` are FATAL for any descriptor that
+> also declares an `images:` block (§3.7): the CI `bump-descriptors` job feeds
+> such descriptors to `bump-descriptor-version.sh`, which hard-fails on them.
+>
+> That job runs **only on the push to `main`, never on the PR** — so a bad
+> version passes review green and breaks *after* merge, where nobody is
+> watching. This is exactly how issue #2048 happened: the active-directory
+> connector shipped `version: "1.0"` copied from an older revision of this very
+> template, `bump-descriptors` aborted post-merge, `images.cdk.image` was never
+> patched, and the connector stayed undeployable. A PR that is green is NOT
+> evidence your descriptor is on-spec — run the local guard in §3.8.
 
 All streams from the manifest are synced. Sync mode is auto-detected by Airbyte discover (`incremental` if supported, otherwise `full_refresh`).
 
@@ -467,6 +479,18 @@ metric ids for a genuinely new section):
   your model at SQL level once its table exists; this edge makes a
   `tag:<slug>+` prod run rebuild the class (and the e2e rig's `derive_selectors`
   build it from the `silver:` tag).
+
+  Two ways this edge bites back, both of which break the class for EVERY source:
+  1. **Column types must match the siblings exactly.** `union_by_tag` UNION ALLs
+     the branches, so one differently-typed column raises `Code: 386
+     NO_COMMON_TYPE` and the shared class stops building. Check first:
+     `grep -rn '<col>' src/ingestion/connectors/*/*/dbt/*__<class>.sql`.
+     See §3.8 step 2.
+  2. **The `depends_on` is hard.** Once added, the class model cannot build
+     unless your staging model does — and your staging model cannot build
+     unless your bronze database exists, which requires the
+     `connectors-config.yaml` entry from §3.8 step 1. Adding this edge without
+     that entry is precisely the #2048 failure.
 - **Layer A — gold view branch.** In the CH migration that defines
   `insight.<section>_bullet_rows`
   (`src/ingestion/scripts/migrations/*-bullet-rewrite.sql`; idempotent
@@ -601,13 +625,17 @@ for entry in discover.matrix:
 
 # then dedupe by connector_dir and bump version once per descriptor:
 for connector_dir in unique(discover.matrix[].connector_dir):
-  python3 .github/workflows/scripts/bump-descriptor-version.py \
+  .github/workflows/scripts/bump-descriptor-version.sh \
     --descriptor "${connector_dir}/descriptor.yaml"
 ```
 
 The minor version bump makes reconcile classify the diff as `bump_kind: minor` per ADR-0015 → catalog re-discovery on the next deploy, no `dbt --full-refresh`.
 
-**Strict-semver gate (FATAL)**: `bump-descriptor-version.py` rejects values that aren't strict semver `MAJOR.MINOR.PATCH` — no leading zeros, no `v` prefix, no pre-release suffix, no two-segment forms. Date-style legacy values like `2026.05.04` and two-segment like `1.0` fail loud, halting the CI job. Your descriptor's `version:` MUST be on-spec before the first CI run; the `cfs validate` rule `connector-images-triad` covers this. If it slips through, the operator fixes the version manually and re-pushes.
+**Strict-semver gate (FATAL)**: `bump-descriptor-version.sh` rejects values that aren't strict semver `MAJOR.MINOR.PATCH` — no leading zeros, no `v` prefix, no pre-release suffix, no two-segment forms. Date-style legacy values like `2026.05.04` and two-segment like `1.0` fail loud, halting the CI job.
+
+Because that job runs **only on the push to `main`**, a bad version does not fail your PR — it fails after merge and leaves `images.<key>.image` empty, so reconcile WARN+skips the connector and it never deploys (issue #2048). Verify locally before merge with the guard in §3.8; do NOT rely on a green PR.
+
+Existing descriptors that carry legacy non-semver values (`ai/openai`, `collaboration/slack`, `hr-directory/bamboohr` — all `2026.05.04`) are tolerated in place per ADR-0015 §"Legacy non-semver values": they declare no `images:` block, so `bump-descriptors` never sees them. Do NOT "fix" them as drive-by work — reconcile classifies legacy→semver as `bump_kind: migration`, and churning a live connector's version buys nothing.
 
 No per-connector wiring in `bump-descriptors` itself. Your descriptor declaring `images:` plus a strict-semver `version:` IS your wiring.
 
@@ -621,7 +649,73 @@ yq '.images' src/ingestion/connectors/<category>/<name>/descriptor.yaml   # conf
 yq '.cdk_image, .enrich_image' src/ingestion/connectors/<category>/<name>/descriptor.yaml   # MUST return null (no top-level legacy fields)
 ```
 
-The deterministic rule `connector-images-triad` (see `workflows/validate.md`) checks the descriptor and the paths-filter together.
+`connector-images-triad` is the *named intent* in ADR-0016 for checking the descriptor and paths-filter together; it is documented in `workflows/validate.md` but has no standalone implementation. The executable gate is `scripts/ci/connector_wiring.py` (§3.8) — use that, and treat the triad wording as the spec it enforces.
+
+## Phase 3.8: Repo-wide wiring (EVERY connector, nocode and cdk)
+
+A connector package can be complete and still be *half-landed*: correct on its
+own, but not registered in the repo-wide files that other machinery iterates.
+Issue #2048 is the worked example — the package was fine, two registry edits
+were missing, and the result was a broken `bootstrap-db.sh` for every developer
+plus an undeployable connector.
+
+### 1. Register in `connectors-config.yaml` (REQUIRED — no exceptions)
+
+`src/ingestion/scripts/bootstrap-db/connectors-config.yaml` is a tracked,
+generated file that drives `bootstrap-db.sh` — the script that builds a full
+ClickHouse from scratch and regenerates the committed `connectors-ddl` snapshot.
+A connector missing from it never gets its bronze database created, so its dbt
+models fail with `Code: 81 UNKNOWN_DATABASE`, `bootstrap-db.sh` trips `set -e`,
+and every model downstream of the failure is skipped.
+
+Generate ONLY your fragment and merge it in by hand, keeping the file's
+domain grouping:
+
+```bash
+cd src/ingestion/scripts/bootstrap-db
+./generate-connectors-config.sh '<category>/<name>'
+```
+
+**NEVER regenerate the whole file** (`./generate-connectors-config.sh` with no
+argument): it overwrites the four `env:` credential references
+(`HUBSPOT_ACCESS_TOKEN`, `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET`,
+`SALESFORCE_INSTANCE_URL`) with fake `value:` entries.
+
+Fake credentials in your own fragment are fine — bootstrap only calls
+`discover`, which reads the static spec, not the live API.
+
+### 2. Keep shared silver class column types identical
+
+If your connector contributes a `silver:class_<X>`-tagged staging model (§3.6c
+Layer 0), `union_by_tag` UNION ALLs your view with every sibling source's. A
+column you type differently from the others raises `Code: 386 NO_COMMON_TYPE`
+and takes the whole shared class table down — for all sources, not just yours.
+
+Before writing a `CAST(NULL AS <type>) AS <col>` placeholder, check what the
+siblings use:
+
+```bash
+grep -rn '<col>' src/ingestion/connectors/*/*/dbt/*__<class>.sql
+```
+
+In #2048 active-directory used `CAST(NULL AS Nullable(UUID)) AS manager_person_id`
+while ms-entra used `Nullable(String)` — `silver.class_people` failed to build at
+all. Note that agreement is per column: `org_unit_id` legitimately IS
+`Nullable(UUID)` in all four HR sources.
+
+### 3. Run the wiring guard before you open the PR
+
+```bash
+python3 scripts/ci/connector_wiring.py
+```
+
+Checks strict semver on image-bearing descriptors, `connectors-config.yaml`
+registration, the `class_<X>.sql` `depends_on` edge, and cross-source column-type
+agreement. Exit 0 = clean; warnings are allowed (an empty `images.*.image` on a
+brand-new connector is expected — the first `main` build patches it). This runs
+in CI as the `connector-wiring-guard` job in `.github/workflows/ci.yml`, so a
+failure here blocks the PR — which is the point: it is the only one of these
+checks that fires *before* merge.
 
 ## Phase 4: Validate Package Structure
 
@@ -884,6 +978,18 @@ Completed:
   ✓ Streams discovered, schema generated from real data
   ✓ Data read locally — all mandatory fields present
   ✓ Mock-server tests written in tests/ and green (coverage matrix satisfied)
+
+Repo-wide wiring (EVERY connector — per Phase 3.8; skipping these is how
+issue #2048 broke bootstrap-db for everyone):
+  ✓ `descriptor.yaml` `version:` is strict semver MAJOR.MINOR.PATCH
+       (three components — "1.0" is FATAL and only fails AFTER merge)
+  ✓ Entry added to scripts/bootstrap-db/connectors-config.yaml via
+       `./generate-connectors-config.sh '<category>/<name>'` (fragment only —
+       never regenerate the whole file, it clobbers the env: credential refs)
+  ✓ If contributing a `silver:class_<X>` model: column types identical to the
+       sibling sources (Code 386 NO_COMMON_TYPE otherwise) AND the
+       `-- depends_on:` edge added to class_<X>.sql
+  ✓ `python3 scripts/ci/connector_wiring.py` exits 0
 
 If your connector ships a Dockerfile (CDK or enrich sidecar), also verify
 the descriptor + CI wiring (per Phase 3.7 and ADR-0016):

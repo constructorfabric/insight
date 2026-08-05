@@ -1,0 +1,101 @@
+{{- if .Values.seed.enabled }}
+# Scheduled persons-seed (#1690): rebuilds the identity org projection
+# (`persons` / `account_person_map` / `org_chart`) from ClickHouse
+# `identity.identity_inputs` so ingested manager/org changes reach the Team
+# view — the projection is materialized and only a seed run refreshes it.
+#
+# Same image/config/secret wiring as the deployment; the `seed` subcommand
+# runs one seed and exits (exit codes: 0 ok / 1 failed / 2 lock busy /
+# 3 input guard). Runs serialize on a per-tenant MariaDB advisory lock, so
+# `concurrencyPolicy: Forbid` is belt-and-braces for cron-vs-cron only —
+# manual Jobs and other Insight instances are serialized by the lock itself.
+#
+# Manual run:
+#   kubectl create job --from=cronjob/{{ include "insight-identity-resolution.fullname" . }}-seed seed-manual-$USER
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "insight-identity-resolution.fullname" . }}-seed
+  labels:
+    {{- include "insight-identity-resolution.labels" . | nindent 4 }}
+    app.kubernetes.io/component: persons-seed
+spec:
+  schedule: {{ .Values.seed.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.seed.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.seed.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      # A couple of retries for transient connect blips; the advisory lock +
+      # the operations journal make a repeated run safe. The deadline caps a
+      # wedged pod well past the in-binary 10-minute seed timeout.
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          # NOT the shared selectorLabels: the Service selects on
+          # name+instance alone, and a seed pod carrying them would enter the
+          # Service's endpoints (it listens on nothing).
+          labels:
+            app.kubernetes.io/name: identity-resolution-seed
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: persons-seed
+        spec:
+          {{- with .Values.global }}
+          {{- with .imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- end }}
+          enableServiceLinks: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+          containers:
+            - name: persons-seed
+              image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["/app/identity-resolution"]
+              args: ["-c", "/app/config/insight.yaml", "seed"]
+              volumeMounts:
+                - name: identity-resolution-config
+                  mountPath: /app/config/insight.yaml
+                  subPath: insight.yaml
+                  readOnly: true
+                # The gears host creates `server.home_dir` at boot; the `seed`
+                # subcommand never starts grpc-hub, so /app/data is the only
+                # writable path it needs under a read-only root.
+                - name: data
+                  mountPath: /app/data
+              envFrom:
+                # Same Secret as the deployment: database_url, clickhouse_*,
+                # tenant_default_id — everything the seed needs.
+                - secretRef:
+                    name: {{ required "existingSecret is required (umbrella provides `insight-identity-resolution-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
+              {{- with .Values.seed.tenantDefaultId }}
+              env:
+                # Explicit tenant for the seed run — the single source when
+                # set (in Kubernetes `env` entries override `envFrom`, so
+                # this wins over any tenant_default_id the Secret carries).
+                # Standalone installs that don't carry the tenant in their
+                # Secret set this; the umbrella wires the Secret from
+                # global.tenantDefaultId instead and validates it at render.
+                - name: APP__gears__identity_resolution__config__tenant_default_id
+                  value: {{ . | quote }}
+              {{- end }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                {{- toYaml .Values.seed.resources | nindent 16 }}
+          volumes:
+            - name: identity-resolution-config
+              configMap:
+                name: {{ include "insight-identity-resolution.fullname" . }}-gears-config
+            - name: data
+              emptyDir: {}
+{{- end }}

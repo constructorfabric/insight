@@ -37,7 +37,8 @@ SERVICES = [
     "authenticator",
     "authn-tls",
     "analytics",
-    "identity",
+    "identity-resolution-migrate",
+    "identity-resolution",
     "echo",
     "gateway",
 ]
@@ -192,7 +193,7 @@ def stack():
     keys = HERE / "keys"
     keys.mkdir(exist_ok=True)
     # ES256 gateway signing key (EC P-256): the downstream verifiers — the
-    # oidc-authn-plugin (analytics) and .NET JwtBearer (identity) — validate the
+    # oidc-authn-plugin in analytics and identity-resolution — validate the
     # ES256 gateway JWT the authenticator signs.
     _genpkey_ec(keys / "current.pem")
     (keys / "current.pem").chmod(0o644)

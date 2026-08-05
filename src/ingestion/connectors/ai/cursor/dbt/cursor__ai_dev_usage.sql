@@ -87,18 +87,18 @@ SELECT
     toUInt32(1)                                     AS session_count,
     CAST(NULL AS Nullable(UInt32))                  AS conversation_count,
     toUInt32(coalesce(d.acceptedLinesAdded, 0))     AS lines_added,
-    toUInt32(coalesce(d.acceptedLinesDeleted, 0))   AS lines_removed,
+    toNullable(toUInt32(coalesce(d.acceptedLinesDeleted, 0)))   AS lines_removed,
     -- total_lines_added/removed = ALL lines the user wrote/deleted that day
     -- (not just AI-accepted ones). Needed by gold metrics like
     -- ai_loc_share = accepted/total to express AI contribution percentage.
-    toUInt32(coalesce(d.totalLinesAdded, 0))        AS total_lines_added,
-    toUInt32(coalesce(d.totalLinesDeleted, 0))      AS total_lines_removed,
+    toNullable(toUInt32(coalesce(d.totalLinesAdded, 0)))        AS total_lines_added,
+    toNullable(toUInt32(coalesce(d.totalLinesDeleted, 0)))      AS total_lines_removed,
     toUInt32OrNull(toString(d.totalTabsShown))      AS tool_use_offered,
     toUInt32OrNull(toString(d.totalTabsAccepted))   AS tool_use_accepted,
     -- #262: `completions_count` was numerically identical to tool_use_accepted
     -- (both = totalTabsAccepted) and dropped from class_ai_dev_usage.
     toUInt32OrNull(toString(d.agentRequests))       AS agent_sessions,
-    toUInt32(coalesce(d.chatRequests, 0) + coalesce(d.composerRequests, 0))
+    toNullable(toUInt32(coalesce(d.chatRequests, 0) + coalesce(d.composerRequests, 0)))
                                                     AS chat_requests,
     -- Rank guard: cost is aggregated per (tenant, source, email, day) because
     -- Cursor's events carry only userEmail, while a row is identified by userId.

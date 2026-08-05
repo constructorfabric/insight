@@ -28,7 +28,7 @@ SELECT
     syncedFileCount AS synced_count,
     sharedInternallyFileCount AS shared_internally_count,
     sharedExternallyFileCount AS shared_externally_count,
-    visitedPageCount AS visited_page_count,
+    CAST(visitedPageCount AS Nullable(Int64)) AS visited_page_count,
     reportPeriod AS report_period,
     now() AS collected_at,
     'insight_m365' AS data_source,

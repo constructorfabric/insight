@@ -1,0 +1,112 @@
+# Automated dependency refresh. Pinning an action to a commit digest removes the
+# risk of a moving tag being repointed, but a digest never ages out on its own —
+# this file is the other half of that trade.
+#
+# Scanner images are NOT covered: they are invoked as `docker run <image>@sha256:…`
+# inside workflow shell steps rather than as `FROM` lines, which the docker
+# ecosystem cannot see. They are refreshed by hand — see
+# docs/components/deployment/specs/sop/scanner-image-refresh.md.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # Review routing comes from .github/CODEOWNERS, so it follows ownership
+    # rather than naming one person here.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Base images only. A bumped base is a rebuild that can change runtime
+  # behaviour, so it is grouped apart from the actions above: one red build must
+  # not hold back an unrelated action bump.
+  - package-ecosystem: docker
+    directories: ["/src/**", "/deploy/**"]
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      base-images:
+        patterns: ["*"]
+    ignore:
+      # dbt's dependency chain (dbt-common -> mashumaro) does not import on
+      # Python 3.14 yet; deploy/seed stays on 3.13 until it does.
+      - dependency-name: python
+        versions: [">=3.14"]
+
+  - package-ecosystem: cargo
+    directory: /src/backend
+    schedule:
+      interval: daily
+      time: "21:00"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 7
+    groups:
+      rust-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    # reqwest 0.13 breaks the authenticator: openidconnect 4 / oauth2 5 implement
+    # their HTTP-client traits only for reqwest 0.12. Lift when a released
+    # openidconnect supports reqwest 0.13.
+    ignore:
+      - dependency-name: reqwest
+        versions: [">=0.13"]
+
+  - package-ecosystem: pip
+    directory: /deploy/seed
+    schedule:
+      interval: daily
+      time: "21:30"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 7
+    groups:
+      seed-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directories: ["/src/ingestion/connectors/*/*"]
+    schedule:
+      interval: daily
+      time: "22:00"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 7
+    groups:
+      connector-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /src/ingestion/scripts
+    schedule:
+      interval: daily
+      time: "22:30"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 7
+    groups:
+      scripts-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directories: ["/src/ingestion/tests/connectors", "/src/ingestion/tests/e2e"]
+    schedule:
+      interval: daily
+      time: "23:00"
+      timezone: Etc/UTC
+    cooldown:
+      default-days: 7
+    groups:
+      tests-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]

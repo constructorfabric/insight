@@ -17,6 +17,39 @@ Before executing any workflow, read the connector specification:
 - **TESTS**: `docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md` — test ladder (L0 static → L1 mock → L2 live smoke), coverage matrix, harness
 - **README**: `src/ingestion/README.md` — commands, project structure
 
+## Non-negotiable wiring invariants
+
+A connector package can be internally perfect and still be **half-landed** —
+missing an entry in a repo-wide file that other machinery iterates. That failure
+mode does not show up on the PR, so it cannot be caught by review alone.
+
+| Invariant | Where | Why it bites after merge |
+|-----------|-------|--------------------------|
+| `descriptor.yaml` `version:` is strict semver `MAJOR.MINOR.PATCH` | descriptor | `bump-descriptors` runs ONLY on push to `main`. `"1.0"` passes the PR, then aborts that job, so `images.<key>.image` is never patched and reconcile WARN+skips the connector forever. |
+| Entry in `scripts/bootstrap-db/connectors-config.yaml` | bootstrap registry | Without it `bootstrap-db.sh` never creates `bronze_<snake>` → dbt `Code: 81 UNKNOWN_DATABASE` → `set -e` aborts before gold migrations → regenerated `connectors-ddl` snapshot silently loses downstream tables. |
+| Shared `silver:class_<X>` column types identical across sources | staging model | `union_by_tag` UNION ALLs the branches; one mismatched type raises `Code: 386 NO_COMMON_TYPE` and the shared class fails for ALL sources. |
+
+ALWAYS run the guard before opening a PR — it is the only one of these that
+fails *before* merge (CI job `connector-wiring-guard`):
+
+```bash
+python3 scripts/ci/connector_wiring.py
+```
+
+Worked example of getting all three wrong at once: issue
+[#2048](https://github.com/constructorfabric/insight/issues/2048) (active-directory).
+Details and fixes in [create.md](workflows/create.md) §3.8.
+
+NEVER regenerate `connectors-config.yaml` wholesale — it overwrites the
+`env:` credential references (HubSpot/Salesforce) with fake `value:` entries.
+Generate one fragment:
+`cd src/ingestion/scripts/bootstrap-db && ./generate-connectors-config.sh '<category>/<name>'`.
+
+NEVER "fix" a legacy non-semver version on a connector that declares no
+`images:` block (`ai/openai`, `collaboration/slack`, `hr-directory/bamboohr` —
+all `2026.05.04`). ADR-0015 §"Legacy non-semver values" tolerates them by
+design; they never reach `bump-descriptors`.
+
 ## Command Routing
 
 Parse the user's command and route to the appropriate workflow:

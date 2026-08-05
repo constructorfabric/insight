@@ -28,7 +28,7 @@ SELECT
     COALESCE(p.repo_slug, '') AS repo_slug,
     COALESCE(mc.mr_iid, 0) AS pr_id,
     COALESCE(mc.id, '') AS commit_hash,
-    0 AS commit_order,
+    toInt64(0) AS commit_order,
     'insight_gitlab' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     mc._airbyte_extracted_at

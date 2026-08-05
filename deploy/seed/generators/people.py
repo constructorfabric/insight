@@ -29,6 +29,7 @@ re-runs stay clean. `class_people` is a versionless RMT (its dbt model
 
 from __future__ import annotations
 
+import datetime as _dt
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -41,27 +42,27 @@ if TYPE_CHECKING:
 
 _TEAM_DEPARTMENT = {
     "development": "Development",
-    "sales":       "Sales",
-    "hr":          "HR",
-    "support":     "Support",
+    "sales": "Sales",
+    "hr": "HR",
+    "support": "Support",
 }
 
 _TEAM_DIVISION = {
     "development": "Engineering",
-    "sales":       "Go-to-Market",
-    "hr":          "People Ops",
-    "support":     "Customer Success",
+    "sales": "Go-to-Market",
+    "hr": "People Ops",
+    "support": "Customer Success",
 }
 
 _JOB_TITLES = {
-    ("development", "lead"):  "Engineering Manager",
-    ("development", "ic"):    "Software Engineer",
-    ("sales", "lead"):        "Sales Manager",
-    ("sales", "ic"):          "Account Executive",
-    ("hr", "lead"):           "HR Lead",
-    ("hr", "ic"):             "People Partner",
-    ("support", "lead"):      "Support Lead",
-    ("support", "ic"):        "Support Engineer",
+    ("development", "lead"): "Engineering Manager",
+    ("development", "ic"): "Software Engineer",
+    ("sales", "lead"): "Sales Manager",
+    ("sales", "ic"): "Account Executive",
+    ("hr", "lead"): "HR Lead",
+    ("hr", "ic"): "People Partner",
+    ("support", "lead"): "Support Lead",
+    ("support", "ic"): "Support Engineer",
 }
 
 
@@ -95,6 +96,19 @@ def _supervisor_email(roster: Sequence[Person], p: Person) -> str | None:
     return None
 
 
+def _measured_persons(roster: Sequence[Person]) -> list[Person]:
+    """The people the product measures — the organisation, not its operators.
+
+    The admin operator is in the roster so it can log in and administer the
+    API, but it is not an employee: including it would add a headcount and a
+    BambooHR employee record for an account nobody works at. Every other
+    generator excludes it implicitly by filtering on `team`; these two iterate
+    the whole roster (the CEO is teamless and must stay in), so the exclusion
+    has to be explicit.
+    """
+    return [p for p in roster if p.role != "admin"]
+
+
 def seed_class_people(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
@@ -111,15 +125,77 @@ def seed_class_people(
     # the dbt-materialised table, which has no such column.
     cols = ["unique_key", "email", "department_name", "workspace_id"]
     rows: list[tuple[object, ...]] = []
-    for p in roster:
+    for p in _measured_persons(roster):
         dept = _TEAM_DEPARTMENT.get(p.team or "", "Executive")
-        rows.append((
-            deterministic_uuid("class_people", p.email),
-            p.email.lower(),
-            dept,
-            tenant_uuid,
-        ))
+        rows.append(
+            (
+                deterministic_uuid("class_people", p.email),
+                p.email.lower(),
+                dept,
+                tenant_uuid,
+            )
+        )
     return bulk_insert(client, "silver", "class_people", cols, rows)
+
+
+def seed_identity_persons(
+    client: clickhouse_connect.driver.client.Client,
+    roster: Sequence[Person],
+    tenant_uuid: str,
+) -> int:
+    """The `email -> person_id` map every gold observation model resolves through.
+
+    Since the metrics identity cutover (#2098) the gold models join
+    `dbt/macros/resolve_person_id.sql` over this table and DROP any row that
+    does not resolve (`resolved_only()`), because `entity_id` in gold IS the
+    canonical person id now. Without these rows every observation family builds
+    EMPTY — dbt reports success, the tables exist, and nothing is in them.
+
+    Not written by any connector: in a deployment this log is filled by the
+    identity service's persons-sync. The stand runs no sync, so the seed has to
+    stand in for it, exactly as it stands in for the connectors upstream.
+
+    `value_effective` is what the macro reads (lowercased and trimmed on both
+    sides of the join); `id` is the resolution tiebreak, so it must be distinct
+    and stable per person or which row wins becomes arbitrary.
+    """
+    truncate(client, "identity", "identity_persons")
+
+    cols = [
+        "id",
+        "value_type",
+        "insight_source_type",
+        "insight_source_id",
+        "insight_tenant_id",
+        "value_effective",
+        "person_id",
+        "author_person_id",
+        "created_at",
+        "_synced_at",
+    ]
+    source_id = deterministic_uuid("identity_persons", "source")
+    author = deterministic_uuid("identity_persons", "author")
+    stamped = _dt.datetime(2026, 1, 1, tzinfo=_dt.UTC)
+
+    rows: list[tuple[object, ...]] = [
+        (
+            index + 1,
+            "email",
+            "seed",
+            source_id,
+            tenant_uuid,
+            p.email.lower(),
+            p.uuid,
+            author,
+            stamped,
+            stamped,
+        )
+        # The whole roster, not `_measured_persons`: the admin operator holds no
+        # activity but still has to RESOLVE, or any request naming them reads as
+        # an unknown person rather than a person with nothing.
+        for index, p in enumerate(roster)
+    ]
+    return bulk_insert(client, "identity", "identity_persons", cols, rows)
 
 
 def seed_bamboohr_employees(
@@ -141,7 +217,7 @@ def seed_bamboohr_employees(
         "supervisor",
     ]
     rows: list[tuple[object, ...]] = []
-    for p in roster:
+    for p in _measured_persons(roster):
         full = _display_name(p)
         first, _, last = full.partition(" ")
         sup_email = _supervisor_email(roster, p)
@@ -149,19 +225,21 @@ def seed_bamboohr_employees(
         if sup_email is not None:
             sup = next(q for q in roster if q.email == sup_email)
             sup_name = _display_name(sup)
-        rows.append((
-            deterministic_uuid("bamboohr.employee", p.email),
-            "Active",
-            first or full,
-            last or "",
-            full,
-            p.email,
-            _TEAM_DEPARTMENT.get(p.team or "", "Executive"),
-            _TEAM_DIVISION.get(p.team or "", "Executive"),
-            _job_title(p),
-            (sup_email or ""),
-            sup_name,
-        ))
+        rows.append(
+            (
+                deterministic_uuid("bamboohr.employee", p.email),
+                "Active",
+                first or full,
+                last or "",
+                full,
+                p.email,
+                _TEAM_DEPARTMENT.get(p.team or "", "Executive"),
+                _TEAM_DIVISION.get(p.team or "", "Executive"),
+                _job_title(p),
+                (sup_email or ""),
+                sup_name,
+            )
+        )
     return bulk_insert(client, "bronze_bamboohr", "employees", cols, rows)
 
 
@@ -171,6 +249,7 @@ def generate(
     tenant_uuid: str,
 ) -> dict[str, int]:
     return {
-        "silver.class_people":           seed_class_people(client, roster, tenant_uuid),
-        "bronze_bamboohr.employees":     seed_bamboohr_employees(client, roster),
+        "silver.class_people": seed_class_people(client, roster, tenant_uuid),
+        "identity.identity_persons": seed_identity_persons(client, roster, tenant_uuid),
+        "bronze_bamboohr.employees": seed_bamboohr_employees(client, roster),
     }

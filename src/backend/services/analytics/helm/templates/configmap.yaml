@@ -6,8 +6,8 @@ metadata:
     {{- include "insight-analytics.labels" . | nindent 4 }}
 data:
   # gears-rust host config. Structural only — the deployment-specific leaf
-  # values (database_url / clickhouse_* / redis_url / identity_url /
-  # tenant_default_id) are injected as APP__* env vars from the
+  # values (database_url / clickhouse_* / redis_url / identity_url) are
+  # injected as APP__* env vars from the
   # `insight-analytics-config` Secret (see deployment.yaml `envFrom`),
   # which override this YAML at load time.
   #
@@ -117,7 +117,7 @@ data:
           vendor: "hyperspot"
           priority: 20
 
-      # Leaf values (database_url, clickhouse_*, redis_url, identity_url,
-      # metric_catalog.tenant_default_id) come from the Secret via envFrom.
+      # Leaf values (database_url, clickhouse_*, redis_url, identity_url)
+      # come from the Secret via envFrom.
       analytics:
         config: {}

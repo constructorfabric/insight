@@ -12,12 +12,20 @@
 # names it (the E2E workflow sets that on the build step).
 #
 # Distinct `scope` per image keeps the caches from clobbering one another.
+#
+# Each service also reads (never writes) the scope build-images.yml seeds from
+# pushes to main — same context/Dockerfile/platform, so the layers hit. Those
+# main-branch caches are visible to every PR and merge-queue run, which is what
+# keeps a NEW PR's first build warm; the e2e-* scopes only help re-pushes to
+# the same branch. The seeded scope names must track build-images.yml
+# (`<image>-amd64`; connectors use the descriptor image name).
 
 services:
   jira-enrich:
     build:
       cache_from:
         - type=gha,scope=e2e-jira-enrich
+        - type=gha,scope=insight-jira-enrich-amd64
       cache_to:
         - type=gha,mode=max,scope=e2e-jira-enrich
 
@@ -25,6 +33,7 @@ services:
     build:
       cache_from:
         - type=gha,scope=e2e-analytics
+        - type=gha,scope=analytics-amd64
       cache_to:
         - type=gha,mode=max,scope=e2e-analytics
 
@@ -32,6 +41,7 @@ services:
     build:
       cache_from:
         - type=gha,scope=e2e-identity
+        - type=gha,scope=identity-amd64
       cache_to:
         - type=gha,mode=max,scope=e2e-identity
 
@@ -39,6 +49,7 @@ services:
     build:
       cache_from:
         - type=gha,scope=e2e-identity-resolution
+        - type=gha,scope=identity-resolution-amd64
       cache_to:
         - type=gha,mode=max,scope=e2e-identity-resolution
 

@@ -105,7 +105,7 @@ gears:
   identity-resolution:
     config:
       # MariaDB connection URL. Injected per-deployment via env override
-      # APP__gears__identity-resolution__config__database_url. Left empty
+      # APP__gears__identity_resolution__config__database_url. Left empty
       # here so no credential is committed.
       database_url: ""
       # Source instance whose org_chart edges drive the parent/supervisor +
@@ -118,7 +118,7 @@ gears:
       max_depth: 16
       # ClickHouse (persons-seed input: identity.identity_inputs). URL/creds are
       # injected per-deployment via env overrides
-      # APP__gears__identity-resolution__config__clickhouse_*. Empty here so no
+      # APP__gears__identity_resolution__config__clickhouse_*. Empty here so no
       # endpoint/credential is committed.
       clickhouse_url: ""
       clickhouse_database: "identity"

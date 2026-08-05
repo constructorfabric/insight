@@ -17,6 +17,15 @@ on:
       - "src/ingestion/connectors/**"
       - "scripts/ci/**"
       - ".github/workflows/ci.yml"
+      # Inputs to connector-wiring-guard beyond the connector tree itself: the
+      # bootstrap connector registry and the shared class_people union.
+      - "src/ingestion/scripts/bootstrap-db/connectors-config.yaml"
+      - "src/ingestion/silver/_shared/**"
+  # Merge-queue builds. paths filters don't apply to merge_group, so every queue
+  # entry runs this workflow — the `changes` job still scopes the heavy jobs to
+  # the batch's actual diff (changed.py diffs origin/main...HEAD, and on a queue
+  # branch that is exactly the batched PRs' combined change set).
+  merge_group:
   workflow_dispatch:
     inputs:
       full:
@@ -51,15 +60,15 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
-      dotnet: ${{ steps.detect.outputs.dotnet }}
       python: ${{ steps.detect.outputs.python }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Fetch base branch
         run: git fetch --no-tags origin main:refs/remotes/origin/main
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
       - id: detect
@@ -73,7 +82,6 @@ jobs:
           fi
           echo "changed: $changed"
           echo "rust=$(echo "$changed" | jq -c .rust)" >> "$GITHUB_OUTPUT"
-          echo "dotnet=$(echo "$changed" | jq -c .dotnet)" >> "$GITHUB_OUTPUT"
           echo "python=$(echo "$changed" | jq -c .python)" >> "$GITHUB_OUTPUT"
 
   # Guard the jsonwebtoken crypto-provider invariant: >1 backend active makes
@@ -83,10 +91,10 @@ jobs:
     name: JWT crypto-provider invariant
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: "1.95.0"
       - name: Exactly one jsonwebtoken crypto provider
@@ -102,6 +110,27 @@ jobs:
             exit 1
           fi
 
+  # Catches half-landed connectors on the PR instead of after the merge.
+  # bump-descriptors runs only on the push to main, so a non-semver
+  # descriptor.version passes the PR and then aborts that job post-merge,
+  # leaving images.<key>.image unpatched — which is how #2048 also took
+  # silver.class_people out of every bootstrap-db run. Cheap and dependency-
+  # light: pure file inspection, no ClickHouse and no dbt.
+  connector-wiring-guard:
+    name: Connector wiring invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+      - name: Connector wiring invariants
+        run: python3 scripts/ci/connector_wiring.py
+
   # One unified job per Rust crate: fmt + clippy (when entry.lint) and coverage
   # (when entry.cover). Replaces the old standalone workspace rust-lint — fmt and
   # clippy now run per crate, gated by the lint flag from changed.py (a shared
@@ -116,7 +145,7 @@ jobs:
       matrix:
         entry: ${{ fromJson(needs.changes.outputs.rust) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false # don't leave the token in .git/config
 
@@ -127,13 +156,13 @@ jobs:
         # even with WITH_CURL=0.
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: "1.95.0"
           # rustfmt + clippy for the lint steps; llvm-tools-preview for cargo-llvm-cov.
           components: rustfmt, clippy, llvm-tools-preview
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           # Both possible workspaces declared; only the relevant one is used per
           # crate. Per-component cache key so jobs don't thrash a shared target.
@@ -159,7 +188,7 @@ jobs:
           if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
           cargo clippy -p ${{ matrix.entry.package }} --all-targets $feats
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2
         if: ${{ matrix.entry.cover }}
         with:
           tool: cargo-llvm-cov
@@ -180,6 +209,7 @@ jobs:
             -e MARIADB_USER=insight -e MARIADB_PASSWORD=insight \
             -e MARIADB_ROOT_PASSWORD=root \
             -p 3306:3306 mariadb:11.4
+          docker run -d --name insight-redis -p 6379:6379 redis:7-alpine
           for i in $(seq 1 60); do
             if docker exec insight-maria healthcheck.sh --connect --innodb_initialized 2>/dev/null; then
               echo "MariaDB ready"; break
@@ -250,88 +280,12 @@ jobs:
 
       - name: Upload Cobertura
         if: ${{ matrix.entry.cover }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cobertura-rust-${{ matrix.entry.name }}
           path: coverage/*.xml
           # cargo-llvm-cov always emits a report when the build succeeds, so a
           # missing file means something went wrong — fail rather than ignore.
-          if-no-files-found: error
-
-  # One producer job per changed .NET component (Identity today). Runs unit +
-  # integration tests; coverage is collected only for entries with cover=true —
-  # identity is cover=false (see components.py): its tests still gate the
-  # pipeline, but no Cobertura is produced and the coverage gates skip it.
-  dotnet:
-    name: .NET — ${{ matrix.entry.name }}
-    needs: changes
-    if: ${{ needs.changes.outputs.dotnet != '[]' }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        entry: ${{ fromJson(needs.changes.outputs.dotnet) }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false # don't leave the token in .git/config
-
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: "9.0.x"
-
-      - name: NuGet cache
-        uses: actions/cache@v5
-        with:
-          path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ hashFiles(format('{0}/**/*.csproj', matrix.entry.root)) }}
-          restore-keys: |
-            nuget-${{ runner.os }}-
-
-      - name: Install dotnet-coverage
-        if: ${{ matrix.entry.cover }}
-        run: |
-          dotnet tool install --global dotnet-coverage
-          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
-
-      # Restores, builds, runs unit + integration (Testcontainers MariaDB) tests
-      # under coverage, and merges the per-project Cobertura files into one.
-      - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
-        if: ${{ matrix.entry.cover }}
-        working-directory: ${{ matrix.entry.root }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/coverage"
-          dotnet restore "${{ matrix.entry.solution }}"
-          dotnet build "${{ matrix.entry.solution }}" --no-restore -c Release
-          for proj in tests/*/*.csproj; do
-            dotnet test "$proj" --no-build -c Release \
-              --collect:"XPlat Code Coverage" --results-directory coverage-raw
-          done
-          dotnet-coverage merge -f cobertura \
-            -o "$GITHUB_WORKSPACE/coverage/dotnet-${{ matrix.entry.name }}.cobertura.xml" \
-            coverage-raw/*/coverage.cobertura.xml
-
-      # cover=false entries: same restore/build/test cycle, no collection —
-      # a test failure still fails this job and therefore the coverage-gate's
-      # "Guard against incomplete reports" step.
-      - name: Test (${{ matrix.entry.name }}, no coverage)
-        if: ${{ !matrix.entry.cover }}
-        working-directory: ${{ matrix.entry.root }}
-        run: |
-          set -euo pipefail
-          dotnet restore "${{ matrix.entry.solution }}"
-          dotnet build "${{ matrix.entry.solution }}" --no-restore -c Release
-          for proj in tests/*/*.csproj; do
-            dotnet test "$proj" --no-build -c Release
-          done
-
-      - name: Upload Cobertura
-        if: ${{ matrix.entry.cover }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: cobertura-dotnet-${{ matrix.entry.name }}
-          path: coverage/*.xml
           if-no-files-found: error
 
   # One producer job per changed Python connector. Collects inline with
@@ -346,15 +300,15 @@ jobs:
       matrix:
         entry: ${{ fromJson(needs.changes.outputs.python) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false # don't leave the token in .git/config
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           # Per-connector cache key so parallel setup-uv jobs don't race to
           # reserve one shared key ("Unable to reserve cache …").
@@ -386,7 +340,7 @@ jobs:
           exit "$rc"
 
       - name: Upload Cobertura
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cobertura-python-${{ matrix.entry.name }}
           path: coverage/*.xml
@@ -398,7 +352,7 @@ jobs:
   # and judges only the components that actually produced a report.
   coverage-gate:
     name: Coverage gate
-    needs: [changes, rust, dotnet, python]
+    needs: [changes, rust, python]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -408,20 +362,21 @@ jobs:
       # unchanged language) report 'skipped', not 'failure', so they're fine.
       - name: Guard against incomplete reports
         if: >-
-          needs.changes.result != 'success' || needs.rust.result == 'failure' || needs.dotnet.result == 'failure' || needs.python.result == 'failure'
+          needs.changes.result != 'success' || needs.rust.result == 'failure' || needs.python.result == 'failure'
         run: |
-          echo "changes=${{ needs.changes.result }} rust=${{ needs.rust.result }} dotnet=${{ needs.dotnet.result }} python=${{ needs.python.result }}"
+          echo "changes=${{ needs.changes.result }} rust=${{ needs.rust.result }} python=${{ needs.python.result }}"
           echo "::error::Change detection or a producer job failed — refusing to gate on an incomplete report set."
           exit 1
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          persist-credentials: false
           fetch-depth: 0 # diff-cover needs history + source present for path resolution
 
       - name: Fetch base branch (for the new-code gate)
         run: git fetch --no-tags origin main:refs/remotes/origin/main
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -432,7 +387,7 @@ jobs:
         run: pip install "diff-cover==10.3.0" "defusedxml==0.7.1"
 
       - name: Download all Cobertura reports
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: cobertura-*
           merge-multiple: true
@@ -446,17 +401,16 @@ jobs:
       - name: Run coverage gate
         env:
           RUST_CHANGED: ${{ needs.changes.outputs.rust }}
-          DOTNET_CHANGED: ${{ needs.changes.outputs.dotnet }}
           PYTHON_CHANGED: ${{ needs.changes.outputs.python }}
           FULL: ${{ github.event.inputs.full }}
         run: |
           # Only components that actually produce coverage are "required" —
-          # rust entries may be lint-only, dotnet entries test-only (identity),
-          # and python entries may measure lines that bucket to another
-          # component (connector-mock-tests); cover=false filters all of these.
+          # rust entries may be lint-only, and python entries may measure
+          # lines that bucket to another component (connector-mock-tests);
+          # cover=false filters all of these.
           required=$(jq -rn \
-            --argjson r "$RUST_CHANGED" --argjson d "$DOTNET_CHANGED" --argjson p "$PYTHON_CHANGED" \
-            '[($r[] | select(.cover)), ($d[] | select(.cover)), ($p[] | select(.cover))] | map(.name) | join(",")')
+            --argjson r "$RUST_CHANGED" --argjson p "$PYTHON_CHANGED" \
+            '[($r[] | select(.cover)), ($p[] | select(.cover))] | map(.name) | join(",")')
           echo "required components: ${required:-<none>}"
           # A full/baseline run measures overall coverage; skip the new-code gate
           # (there is no meaningful "patch" for a manual all-components run).

@@ -56,5 +56,6 @@ repos:
           (?x)^(
             .*/helm/templates/.*|
             charts/.*/templates/.*|
-            charts/.*/charts/.*
+            charts/.*/charts/.*|
+            deploy/.*/templates/.*
           )

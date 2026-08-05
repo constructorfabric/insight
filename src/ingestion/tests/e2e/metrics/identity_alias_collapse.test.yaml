@@ -1,0 +1,87 @@
+spec_version: 1
+description: >
+  One person, two source accounts — the shape the identity cutover creates and
+  the one that silently doubles day-flag metrics if gold does not collapse it.
+
+  alice has a second Cursor account under alice.dev@example.com. Both are
+  active on the SAME day (2026-01-05), and `identity_aliases` binds them to one
+  person, exactly as identity would after linking the accounts.
+
+  What must hold:
+    • ai.active_days = 1, not 2. It is a DAY FLAG: each account contributes
+      value=1 for that day, so summing across accounts counts one day twice.
+      Gold collapses the aliases with max().
+    • ai.accepted_lines = 30, the SUM of both accounts (10 + 20). Additive
+      measures must keep adding across accounts — collapsing them would lose
+      the second account's work.
+    • the peer pool counts alice ONCE (n = 3, not 4): a person with two
+      accounts is one peer.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_cursor.cursor_daily_usage:
+    # date 1767571200000 ms = 2026-01-05.
+    - $ref: templates/cursor_usage.yaml#/templates/alice
+      unique_key: cursor-alice-20260105
+      date: 1767571200000
+      acceptedLinesAdded: 10
+    # alice's SECOND account, active the same day.
+    - $ref: templates/cursor_usage.yaml#/templates/cursor_usage
+      unique_key: cursor-alice-dev-20260105
+      email: alice.dev@example.com
+      userId: cursor-alice-dev
+      date: 1767571200000
+      acceptedLinesAdded: 20
+    - $ref: templates/cursor_usage.yaml#/templates/bob
+      unique_key: cursor-bob-20260105
+      date: 1767571200000
+    - $ref: templates/cursor_usage.yaml#/templates/carol
+      unique_key: cursor-carol-20260105
+      date: 1767571200000
+
+# Both spellings are one human: the aliases resolve to alice's person id, the
+# way identity answers once the accounts are linked.
+identity_aliases:
+  alice@example.com:
+    - alice.dev@example.com
+
+cases:
+  - name: Two accounts of one person count as one active day
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - metric_key: ai.active_days
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+          - metric_key: ai.accepted_lines
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      # The day flag: one day, however many accounts were active in it.
+      - metric: ai.active_days
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 1 }
+      # One person is one peer, so the pool is alice + bob + carol.
+      - metric: ai.active_days
+        view: peer
+        find: { entity_id: alice@example.com }
+        equal: { target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3 }
+      - metric: ai.active_days
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 1.0))"
+      # Additive measures still add across the accounts: 10 + 20.
+      - metric: ai.accepted_lines
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 30 }

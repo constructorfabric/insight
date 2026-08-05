@@ -49,7 +49,7 @@ WITH src AS (
         -- "2025-10-23T08:49:39Z"). `toDateOrNull` only handles
         -- YYYY-MM-DD; we parse via `parseDateTime64BestEffortOrNull`
         -- first then truncate to Date.
-        toDate(parseDateTime64BestEffortOrNull(properties_closedate)) AS close_date,
+        toDate32(parseDateTime64BestEffortOrNull(properties_closedate)) AS close_date,
         properties_hubspot_owner_id                     AS owner_id,
         -- Rep who logged / created the deal — distinct from owner_id, which
         -- can be the contact owner. Resolves to silver.class_crm_users
@@ -58,8 +58,8 @@ WITH src AS (
         nullIf(arrayElement(
             JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1
         ), '')                                          AS account_id,
-        toInt64(coalesce(properties_hs_is_closed, 'false') = 'true')     AS is_closed,
-        toInt64(coalesce(properties_hs_is_closed_won, 'false') = 'true') AS is_won,
+        toNullable(toInt64(coalesce(properties_hs_is_closed, 'false') = 'true'))     AS is_closed,
+        toNullable(toInt64(coalesce(properties_hs_is_closed_won, 'false') = 'true')) AS is_won,
         properties_hs_analytics_source                  AS lead_source,
         toFloat64OrNull(properties_hs_deal_stage_probability) AS probability,
         properties_dealtype                             AS deal_type,

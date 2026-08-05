@@ -1,11 +1,11 @@
 # Downstream-verification e2e (dev/CI ONLY) -- NGINX_BFF §6 R1, step-07 §D.
 #
 # The full chain with the REAL downstream services behind the OpenResty gateway:
-#   fakeidp -> authenticator -> gateway -> {analytics, identity}
-# Both analytics (Rust) and identity (.NET) verify the gateway JWT themselves
+#   fakeidp -> authenticator -> gateway -> {analytics, identity-resolution}
+# Both analytics and identity-resolution (Rust) verify the gateway JWT themselves
 # (fail-closed, no disable knob). The authenticator resolves the login user via
 # the identity-stub (a test seam so login works without seeding real identity);
-# the real analytics + identity are the downstream verification targets.
+# the real analytics + identity-resolution are the downstream verification targets.
 #
 # Everything runs on one compose network so DNS names resolve for both the nginx
 # upstreams and the Lua cosocket, and the OIDC redirect flow works. Driven by
@@ -117,7 +117,7 @@ services:
       # dead-ClickHouse setup).
       APP__gears__analytics__config__clickhouse_url: "http://clickhouse.invalid:8123"
       APP__gears__analytics__config__clickhouse_database: "insight"
-      APP__gears__analytics__config__identity_url: "http://identity:8082"
+      APP__gears__analytics__config__identity_url: "http://identity-resolution:8082"
     # The oidc-authn-plugin verification config is nested/list-shaped, so it
     # comes from a bind-mounted host config (concrete issuer + CA), not env. The
     # self-signed CA for authn-tls is mounted at /certs.
@@ -128,23 +128,39 @@ services:
     ports:
       - "${ANALYTICS_E2E_PORT:-18081}:8081"
 
-  identity:
+  # One-shot schema migration: the Rust service does not migrate at server
+  # start, so run its `migrate` subcommand first. Exits 0 and stays exited;
+  # the server below gates on it.
+  identity-resolution-migrate:
     build:
       context: ../../../..
-      dockerfile: services/identity/Dockerfile
+      dockerfile: services/identity-resolution/Dockerfile
+    depends_on:
+      mariadb: {condition: service_healthy}
+    environment:
+      APP__gears__identity-resolution__config__database_url: "mysql://insight:insight-local@mariadb:3306/identity"
+    volumes:
+      - ./identity-resolution.e2e.yaml:/app/config/insight.yaml:ro
+      - ./certs:/certs:ro
+    command: ["/app/identity-resolution", "-c", "/app/config/insight.yaml", "migrate"]
+    restart: "no"
+
+  identity-resolution:
+    build:
+      context: ../../../..
+      dockerfile: services/identity-resolution/Dockerfile
     depends_on:
       mariadb: {condition: service_healthy}
       authenticator: {condition: service_started}
+      authn-tls: {condition: service_started}
+      identity-resolution-migrate: {condition: service_completed_successfully}
     environment:
-      IDENTITY__mariadb__url: "mysql://insight:insight-local@mariadb:3306/identity"
-      IDENTITY__identity__bind_addr: "0.0.0.0:8082"
-      IDENTITY__identity__tenant_default_id: "00000000-df51-5b42-9538-d2b56b7ee953"
-      # `iss` must equal the token's (authn-tls). identity is .NET (not the
-      # gears plugin) and fetches JWKS from an explicit URL with RequireHttps
-      # off, so it keeps the plain-http JWKS endpoint directly — no TLS front,
-      # no CA trust needed here.
-      IDENTITY__identity__auth_gateway_issuer: "https://authn-tls:8443"
-      IDENTITY__identity__auth_gateway_jwks_url: "http://authenticator:8083/.well-known/jwks.json"
+      APP__gears__identity-resolution__config__database_url: "mysql://insight:insight-local@mariadb:3306/identity"
+    # The oidc-authn-plugin verification config is nested/list-shaped, so it
+    # comes from a bind-mounted host config (concrete issuer + CA), not env.
+    volumes:
+      - ./identity-resolution.e2e.yaml:/app/config/insight.yaml:ro
+      - ./certs:/certs:ro
     # Published so a driver can hit identity DIRECTLY (the R1 "no JWT -> 401" proof).
     ports:
       - "${IDENTITY_E2E_PORT:-18082}:8082"
@@ -163,7 +179,7 @@ services:
     depends_on:
       authenticator: {condition: service_started}
       analytics: {condition: service_started}
-      identity: {condition: service_started}
+      identity-resolution: {condition: service_started}
       echo: {condition: service_started}
     environment:
       GATEWAY_AUTHENTICATOR_URL: "http://authenticator:8083"

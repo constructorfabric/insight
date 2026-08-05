@@ -2,7 +2,7 @@
 //!
 //! Loaded via `GearCtx::config::<GearConfig>()` from the
 //! `gears.identity-resolution.config` YAML section. Env overrides are
-//! `APP__gears__identity-resolution__config__<field>`.
+//! `APP__gears__identity_resolution__config__<field>`.
 
 use serde::Deserialize;
 

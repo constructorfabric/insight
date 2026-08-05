@@ -1,0 +1,121 @@
+{{/*
+==============================================================================
+ Keycloak realm configuration (broker realms as code)
+==============================================================================
+
+Helm Hook Job that applies the versioned broker realm YAML against the
+environment's Keycloak with keycloak-config-cli (ADR-0003
+cpt-insightspec-adr-auth-0003-keycloak-identity-broker: realm content is
+configuration-as-code only — no admin-UI channel).
+
+The realm YAML lives in the gitops tree
+(deploy/gitops/environments/<env>/keycloak/realms/*.yaml) and is applied as
+the `<release>-keycloak-config-realms` ConfigMap by the gitops
+`keycloak-broker-realms` Makefile target before this chart deploys — the
+same pre-created-ConfigMap contract the insight-keycloak subchart uses for
+its imported dev realm. This Job only mounts and applies it.
+
+Hook timing: `post-install,post-upgrade`, so the Job re-runs on EVERY
+deploy (every gitops sync is a `helm upgrade`), re-asserting the versioned
+realm content and reverting any drift. `IMPORT_CACHE_ENABLED=false` is
+load-bearing for that: with the cache on, config-cli skips
+checksum-unchanged files, so hand-made drift on the server would survive
+until the next realm-YAML change (Phase-0 finding on #2194; `IMPORT_FORCE`
+alone does not bypass the skip). hook-weight "10" orders it after the
+clickhouse-migrate hook ("5") within the post-* phase; there is no
+dependency between them.
+
+The Keycloak this applies to is selected by `keycloakConfig.url`: the
+shared pre-provisioned Keycloak on deployed stands (ADR-0002), or the
+in-cluster insight-keycloak subchart service where that is deployed.
+
+Credentials and realm-YAML substitution values come from ONE existing
+Secret (`keycloakConfig.existingSecret`, envFrom): it must define
+KEYCLOAK_USER + KEYCLOAK_PASSWORD (the config-cli admin login) and every
+VAR the realm YAML references as $(env:VAR). Secret material never appears
+in realm YAML, values files, or images — the Secret is sealed in the
+gitops tree (SealedSecrets).
+
+Failure behavior: loud. Helm blocks on the hook Job, so a rejected import
+fails `helm upgrade` (and `--atomic` rolls the release back). backoffLimit
+is low because import errors are deterministic (bad YAML, unresolvable
+$(env:VAR)), not transient.
+
+Gated on `keycloakConfig.enabled` (default false — environments opt in as
+they are migrated behind the broker, EPIC #2193 Phase 4).
+*/}}
+{{- if .Values.keycloakConfig.enabled }}
+{{- $kcUrl := tpl (required "keycloakConfig.url is required when keycloakConfig.enabled" .Values.keycloakConfig.url) . }}
+{{- if and (not (hasPrefix "https://" $kcUrl)) (not .Values.keycloakConfig.allowInsecureUrl) }}
+{{- fail (printf "keycloakConfig.url %q must be https:// — the Job sends the config-cli admin credentials to it. For an in-cluster dev/CI Keycloak reached over plain HTTP on the cluster network, set keycloakConfig.allowInsecureUrl=true explicitly." $kcUrl) }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "insight.fullname" . }}-keycloak-config
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-config
+spec:
+  # Low on purpose: import errors are deterministic (see header). A couple
+  # of attempts still absorbs a transient Keycloak blip mid-apply.
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "insight.fullname" . }}-keycloak-config
+        app.kubernetes.io/component: keycloak-config
+    spec:
+      # Suppress the legacy `<SVC>_SERVICE_HOST/PORT/…` Docker-link env-vars
+      # kubelet auto-injects for every Service in the namespace at pod-start.
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: keycloak-config-cli
+          image: "{{ .Values.keycloakConfig.image.repository }}:{{ .Values.keycloakConfig.image.tag }}"
+          imagePullPolicy: {{ .Values.keycloakConfig.image.pullPolicy }}
+          env:
+            - name: KEYCLOAK_URL
+              value: {{ $kcUrl | quote }}
+            - name: IMPORT_FILES_LOCATIONS
+              value: "/config/*.yaml"
+            # Substitute $(env:VAR) placeholders from the environment — the
+            # only channel secret material may enter realm content through.
+            - name: IMPORT_VARSUBSTITUTION_ENABLED
+              value: "true"
+            # Never checksum-skip an unchanged file: re-applying on every
+            # sync is what reverts server-side drift (see header).
+            - name: IMPORT_CACHE_ENABLED
+              value: "false"
+            # Wait for Keycloak to answer before importing, instead of
+            # failing the first attempts while it boots (the in-cluster
+            # subchart case) or a stand's shared IdP blips.
+            - name: KEYCLOAK_AVAILABILITYCHECK_ENABLED
+              value: "true"
+            - name: KEYCLOAK_AVAILABILITYCHECK_TIMEOUT
+              value: "120s"
+          envFrom:
+            - secretRef:
+                name: {{ tpl (required "keycloakConfig.existingSecret is required when keycloakConfig.enabled" .Values.keycloakConfig.existingSecret) . | quote }}
+          volumeMounts:
+            - name: realms
+              mountPath: /config
+              readOnly: true
+          {{- with .Values.keycloakConfig.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: realms
+          configMap:
+            name: {{ default (printf "%s-keycloak-config-realms" (include "insight.fullname" .)) .Values.keycloakConfig.realmsConfigMap | quote }}
+{{- end }}

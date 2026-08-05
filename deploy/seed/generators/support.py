@@ -36,10 +36,7 @@ SOURCE = "zendesk-placeholder"
 
 def _eligible(roster: Sequence[Person]) -> list[Person]:
     """Support-team members with a non-zero zendesk-placeholder weight."""
-    return [
-        p for p in roster
-        if p.team and TEAM_PROFILES[p.team].weights.get(SOURCE, 0) > 0
-    ]
+    return [p for p in roster if p.team and TEAM_PROFILES[p.team].weights.get(SOURCE, 0) > 0]
 
 
 def seed_class_support_activity(
@@ -50,9 +47,17 @@ def seed_class_support_activity(
 ) -> int:
     truncate(client, "silver", "class_support_activity")
     cols = [
-        "insight_tenant_id", "person_key", "date", "data_source",
-        "updates", "public_comments", "private_comments", "solved",
-        "csat_good", "csat_total", "_version",
+        "tenant_id",
+        "person_key",
+        "date",
+        "data_source",
+        "updates",
+        "public_comments",
+        "private_comments",
+        "solved",
+        "csat_good",
+        "csat_total",
+        "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
@@ -71,11 +76,21 @@ def seed_class_support_activity(
             csat_good = sum(1 for _ in range(csat_total) if rng.random() < 0.75)
             if (updates + pub_comm + prv_comm + solved + csat_total) == 0:
                 continue
-            rows.append((
-                tenant_uuid, p.email, d, SOURCE,
-                float(updates), float(pub_comm), float(prv_comm), float(solved),
-                float(csat_good), float(csat_total), version,
-            ))
+            rows.append(
+                (
+                    tenant_uuid,
+                    p.email,
+                    d,
+                    SOURCE,
+                    float(updates),
+                    float(pub_comm),
+                    float(prv_comm),
+                    float(solved),
+                    float(csat_good),
+                    float(csat_total),
+                    version,
+                )
+            )
     return bulk_insert(client, "silver", "class_support_activity", cols, rows)
 
 
@@ -87,6 +102,9 @@ def generate(
 ) -> dict[str, int]:
     return {
         "silver.class_support_activity": seed_class_support_activity(
-            client, roster, tenant_uuid, days,
+            client,
+            roster,
+            tenant_uuid,
+            days,
         ),
     }

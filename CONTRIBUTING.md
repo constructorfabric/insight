@@ -83,7 +83,7 @@ team; CEO sees the whole org tree. To use CEO more set email to `email_ceo@compa
 | docker compose v2 | 2.20+ | bundled with Docker Desktop/OrbStack |
 | git | any | xcode-select / apt / winget |
 
-No Rust / .NET / Node / pnpm on the host — every build runs in a
+No Rust / Node / pnpm on the host — every build runs in a
 builder container.
 
 **K8s path** — also `kubectl`, `helm`, `kubeseal`, `yq`, `jq`, plus a
@@ -122,6 +122,23 @@ dev-email answers are identical across them.
 Covered by the [Quick start](#quick-start). See also
 [Compose configuration](#compose-configuration) for the post-wizard
 knobs and [Daily workflow](#daily-workflow) for the edit-build loop.
+
+Use an explicit instance when worktrees may contain different database
+migrations:
+
+```bash
+./dev-compose.sh up --instance=main
+./dev-compose.sh up --instance=metric-drilldown
+./dev-compose.sh up --instance=worktree
+```
+
+The instance scopes Compose containers, networks, and named volumes under
+`insight-<name>`. Pass the same option to `down`, `build`, `seed`, and
+`prune`. `worktree` derives the name from the checkout directory, so the
+same command can be used in every worktree. The default remains `insight`.
+Instances do not isolate published host ports, so stop the active instance
+before starting another. Standard Compose commands target an instance with
+`docker compose -p insight-<name> …`.
 
 ### Kubernetes — interactive
 
@@ -207,7 +224,7 @@ every Deployment is Ready before the chain returns.
 ├──────────────────────────────────────────────────────────────────────┤
 │  Backend                                                              │
 │  gateway (nginx :8080)  analytics (Rust :8081)                       │
-│  identity (.NET 9 :8082)                                              │
+│  identity-resolution (Rust :8086)                                    │
 │  authenticator (Rust :8083/:8093)  fakeidp (Rust :8084, dev-only)    │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Infra                                                                │
@@ -306,11 +323,11 @@ an external IdP).
 
 ### Backend image fallback (ghcr)
 
-Skip the local Rust/dotnet build for one or more services:
+Skip the local Rust build for one or more services:
 
 ```bash
-# Per-run flags (recognised services: analytics, identity)
-./dev-compose.sh up --from-ghcr=analytics,identity
+# Per-run flags (recognised services: analytics, identity-resolution)
+./dev-compose.sh up --from-ghcr=analytics,identity-resolution
 ./dev-compose.sh up --build-only=analytics     # invert: build only this
 
 # Or pin in .env.compose
@@ -341,7 +358,7 @@ or an image override. Currently supported: `analytics`.
 
 - **Auto-reload** — `ENABLE_AUTO_RELOAD` (compose-only, never in k8s)
 - **Frontend** — `FRONTEND_MODE`, `INSIGHT_FRONT_PATH`, `FRONTEND_IMAGE`
-- **Backend image overrides** — `ANALYTICS_IMAGE`, `IDENTITY_IMAGE`
+- **Backend image overrides** — `ANALYTICS_IMAGE`, `IDENTITY_RESOLUTION_IMAGE`
 - **Host ports** — every published port is configurable
 - **Database mode** — `MARIADB_EXTERNAL`/`_HOST`/`_INTERNAL_PORT`/…, ClickHouse equivalents (see [External DBs](#external-mariadb--clickhouse))
 - **Credentials** — local-only, kept in dotenv per project policy
@@ -358,11 +375,11 @@ or an image override. Currently supported: `analytics`.
 | Edit | Then | Picked up by |
 | --- | --- | --- |
 | Watched Rust source | save | cargo-watch rebuild + restart |
-| Other Rust / C# source | `./dev-compose.sh build <service>` | watchexec → ~1s restart |
+| Other Rust source | `./dev-compose.sh build <service>` | watchexec → ~1s restart |
 | `deploy/compose/gateway/routes.yaml` (gateway route table) | `docker compose restart gateway` | nginx.conf regenerated at startup |
 | `src/backend/services/authenticator/config/*.yaml` | save | watchexec → ~1s restart (bind-mounted) |
 | `deploy/compose/analytics-fullauth.yaml` (analytics plugin config) | save | watchexec → ~1s restart (bind-mounted) |
-| identity / analytics env | edit `docker-compose.yml`, `up -d <svc>` | container respawn |
+| identity-resolution / analytics env | edit `docker-compose.yml`, `up -d <svc>` | container respawn |
 | Frontend (`dev` mode) | save | Vite HMR |
 | Frontend (`built` mode) | `./dev-compose.sh build frontend` | nginx auto |
 | Frontend (`ghcr` mode) | switch modes | — |
@@ -370,11 +387,11 @@ or an image override. Currently supported: `analytics`.
 Build targets:
 
 ```bash
-./dev-compose.sh build analytics       # Rust analytics
-./dev-compose.sh build authenticator   # Rust authenticator
-./dev-compose.sh build identity        # .NET 9 publish
-./dev-compose.sh build frontend        # pnpm build → dist/
-./dev-compose.sh build rust            # all Rust services (analytics + authenticator)
+./dev-compose.sh build analytics            # Rust analytics
+./dev-compose.sh build authenticator        # Rust authenticator
+./dev-compose.sh build identity-resolution  # Rust identity-resolution
+./dev-compose.sh build frontend             # pnpm build → dist/
+./dev-compose.sh build rust                 # all Rust services
 ./dev-compose.sh build all             # everything
 ./dev-compose.sh up --skip-build       # bounce without rebuilding
 ```
@@ -405,7 +422,7 @@ watchexec wants, and `useradd -m` ensures `appuser` has a usable
 
 ```bash
 # Tail logs
-docker compose logs -f gateway authenticator analytics identity fakeidp
+docker compose logs -f gateway authenticator analytics identity-resolution fakeidp
 
 # Inspect databases
 docker compose exec mariadb mariadb -uinsight -pinsight-local identity
@@ -567,11 +584,11 @@ external IdP.
                http://localhost.)
 4. Gateway   → on every subsequent /api/* request it runs auth_request
                against the authenticator, mints/attaches the ES256
-               gateway JWT, and proxies to analytics / identity + the SPA.
-5. Downstream→ analytics verifies the JWT via cf-gears-oidc-authn-plugin
-               (JWKS over the authn-tls discovery front); identity
-               verifies it with .NET JwtBearer against the authenticator's
-               JWKS endpoint. Both resolve the caller person from the
+               gateway JWT, and proxies to analytics /
+               identity-resolution + the SPA.
+5. Downstream→ analytics and identity-resolution verify the JWT via
+               cf-gears-oidc-authn-plugin (JWKS over the authn-tls
+               discovery front). Both resolve the caller person from the
                token claims.
 ```
 
@@ -664,7 +681,6 @@ Compose stack doesn't ship Airbyte / Argo. Use the
   manages the `pre-commit` hook, so any personal `prepare-commit-msg` (e.g. DCO
   sign-off) is left untouched.
 - Rust: `cargo fmt` + `cargo clippy --all-targets -- -D warnings`
-- C#: `dotnet format`
 - Frontend: `pnpm lint` + `pnpm tsc --noEmit`
 - Always sign your commits: `git commit -s ...`
 - Push to your fork (`origin`), not to `cf` upstream

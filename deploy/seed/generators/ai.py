@@ -9,11 +9,11 @@ so we honour those exact strings.
 
 from __future__ import annotations
 
-import datetime as _dt
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from generators.base import (
+    anchor_datetime,
     bulk_insert,
     days_window,
     deterministic_uuid,
@@ -169,7 +169,7 @@ def seed_ai_assistant_usage(
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
-    now = _dt.datetime.now(_dt.UTC).replace(tzinfo=None)
+    now = anchor_datetime()
     for p in roster:
         if not p.team:
             continue

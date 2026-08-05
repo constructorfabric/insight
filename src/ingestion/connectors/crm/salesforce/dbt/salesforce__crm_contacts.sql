@@ -27,7 +27,7 @@ WITH src AS (
             'LeadSource', coalesce(toString(LeadSource), ''),
             'IsDeleted',  toString(coalesce(IsDeleted, false))
         ))                                              AS metadata,
-        custom_fields,
+        coalesce(custom_fields, '{}')                   AS custom_fields,
         CreatedDate                                     AS created_at,
         LastModifiedDate                                AS updated_at,
         data_source,

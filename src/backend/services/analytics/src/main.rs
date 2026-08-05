@@ -25,6 +25,7 @@
 //! analytics --config config.yaml          # run the host
 //! analytics --config config.yaml migrate  # run migrations + probes and exit
 //! analytics openapi                        # print the OpenAPI document and exit
+//! analytics passports                      # print the metric passports and exit
 //! ```
 
 mod api;
@@ -90,6 +91,10 @@ enum Commands {
     /// regenerate docs/components/backend/analytics/openapi.json and to
     /// drift-check it in CI.
     Openapi,
+    /// Print the metric passports document to stdout and exit. Built offline
+    /// from the embedded registry — no database, no config. Used to regenerate
+    /// the committed passports.md next to the registry; a drift test guards it.
+    Passports,
 }
 
 #[tokio::main]
@@ -114,6 +119,11 @@ async fn main() -> Result<()> {
         Commands::Check => gear::check_config(&config),
         // Emit the OpenAPI document offline (no backends) — see `print_openapi`.
         Commands::Openapi => print_openapi(),
+        // Emit the metric passports offline (no backends) — see `print_passports`.
+        Commands::Passports => {
+            print_passports();
+            Ok(())
+        }
     }
 }
 
@@ -126,6 +136,16 @@ fn print_openapi() -> Result<()> {
     Ok(())
 }
 
+/// Print the metric passports document rendered from the embedded registry.
+/// Offline — no config or backends. Regenerates the committed `passports.md`
+/// pinned by the `metric_definitions::passport` drift test.
+fn print_passports() {
+    print!(
+        "{}",
+        domain::metric_definitions::passport::render_passports()
+    );
+}
+
 #[cfg(test)]
 mod tests {
     /// The `openapi` subcommand's happy path: build the document offline and
@@ -133,5 +153,12 @@ mod tests {
     #[test]
     fn print_openapi_writes_the_document() -> anyhow::Result<()> {
         super::print_openapi()
+    }
+
+    /// The `passports` subcommand's happy path: render the passports offline
+    /// and write them to stdout (captured by the harness).
+    #[test]
+    fn print_passports_writes_the_document() {
+        super::print_passports();
     }
 }

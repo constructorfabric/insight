@@ -1,0 +1,42 @@
+# Versions the deployed-stand test suite pins.
+#
+# Scoped to tests/ deliberately: everything here belongs to this suite, so it
+# lives beside it rather than at the repo root pretending to speak for the
+# whole project.
+#
+# Exact dependency pins are resolved by tests/pyproject.toml + tests/uv.lock;
+# the entries below are the ones that must agree with something OUTSIDE that
+# pair — another component's floor, or an image tag in a Dockerfile.
+
+# Deployed-stand test suite: tests/lib (shared library) + tests/stand (API and
+# browser journeys). One project, one lockfile, installed with uv — so the host
+# runner and the ui-tests container resolve to byte-identical versions.
+#
+#   uv sync --project tests
+#   uv run --project tests playwright install chromium   # host runs only
+#   ./dev-compose.sh test-stand test
+#
+# Exact pins live in tests/pyproject.toml and tests/uv.lock; the entries below
+# are the ones another component has to agree with.
+tests_stand:
+  python: ">=3.13"
+  playwright: "1.61.0"
+  pytest_playwright: "0.8.0"
+  dependency_manager: "uv"
+  lockfile: "tests/uv.lock"
+  notes: >-
+    The Python floor matches deploy/seed/pyproject.toml, whose manifest and PROFILE renderer this suite reads. uv provisions that interpreter in every runner, including inside the ui-tests image whose own system Python is older, so the floor holds everywhere rather than being a host-only aspiration. Still outstanding: every GitHub Actions workflow pins python-version "3.12", below this floor — reconciling that is CI enablement's job, not a reason to lower the suite. #magic___^_^___line
+# Browser runner image for tests/stand — deploy/compose/ui-tests.Dockerfile.
+# Both images pinned by tag AND digest so a rebuild cannot drift. Resolved
+# 2026-07-31 from the registry tag lists, cross-checked against the
+# microsoft/playwright-python v1.61.0 release and PyPI.
+ui_tests:
+  base_image: "mcr.microsoft.com/playwright/python:v1.61.0-noble"
+  base_image_digest: "sha256:a9731514f24121d1dcd25d58d0a38146646d290a5998fd80d3e533e7b5e21c69"
+  uv_image: "ghcr.io/astral-sh/uv:0.12.0"
+  uv_image_digest: "sha256:606e70c71c852d03f611b1e56a195d08648507018a7057fab82c4974c4eae105"
+  # The base image's own system Python. NOT what the suite runs on — recorded
+  # because it is the reason uv provisions an interpreter instead of using it.
+  base_image_python: "3.12.3"
+  notes: >-
+    Browsers (chromium 1228) are baked into the base image and used as-is; there is no `playwright install` step. The pip playwright pin must equal the image's Playwright version or the package looks for a browser build the image does not contain — the build asserts that, along with the interpreter satisfying the >=3.13 floor and tests/lib importing on it, so a mismatch fails the image rather than a journey.

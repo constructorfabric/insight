@@ -34,23 +34,17 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 source "$SCRIPT_DIR/lib/ch-exec.sh"
 
-echo "=== Creating core databases (staging, silver, ${CLICKHOUSE_DATABASE}) ==="
+echo "=== Creating core databases (staging, silver, ${CLICKHOUSE_DATABASE}, presentation) ==="
+# `presentation` (#1964): writable namespace for new gold / results / scratch.
 run_ch <<SQL
 CREATE DATABASE IF NOT EXISTS staging;
 CREATE DATABASE IF NOT EXISTS silver;
 CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DATABASE};
+CREATE DATABASE IF NOT EXISTS presentation;
 SQL
 
-echo "=== Provisioning presentation_ro role (#1963) ==="
-# Read-only role for the presentation query path (bootstrap-db/presentation-role.sql).
-# Guarded + non-fatal: creating a role needs access_management on the admin, so an
-# admin without it is skipped with a warning rather than aborting the deploy.
-if printf 'CREATE ROLE IF NOT EXISTS presentation_ro' | _ch_http_query >/dev/null 2>&1; then
-  run_ch < "$SCRIPT_DIR/bootstrap-db/presentation-role.sql"
-  echo "  presentation_ro ready"
-else
-  echo "  WARN: admin lacks access_management; skipping presentation_ro (see bootstrap-db/README.md)"
-fi
+echo "=== Provisioning presentation access (role + grant-less user) (#1963/#1964) ==="
+bash "$SCRIPT_DIR/bootstrap-db/provision-presentation-access.sh"
 
 echo "=== Creating bronze/silver placeholders (ADR-0007) ==="
 bash "$SCRIPT_DIR/create-bronze-placeholders.sh"

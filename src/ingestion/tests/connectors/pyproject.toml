@@ -12,19 +12,38 @@ requires-python = ">=3.10,<3.13"
 dependencies = [
     # Pinned to the line matching the `version:` header of the nocode connector
     # manifests (currently 6.60.9). Bump in lockstep with manifest version bumps.
-    "airbyte-cdk>=6.60.9,<6.61",
+    "airbyte-cdk>=6.60.9,<7.24",
     "pytest>=8.0",
     "freezegun>=1.5",
     # HttpMocker's transport backend — an optional extra of the CDK, required here.
     "requests-mock>=1.11",
-    # airbyte-cdk 6.60.x itself pins jsonschema >=4.17.3,<4.18 — stay inside it.
-    "jsonschema>=4.17.3,<4.18",
+    # airbyte-cdk 6.60.x itself pins jsonschema >=4.17.3,<4.27 — stay inside it.
+    "jsonschema>=4.17.3,<4.27",
     "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest-cov>=5.0",
+]
+
+[tool.uv]
+# Do not resolve a version published in the last week: a freshly pushed release is
+# where a compromised maintainer account shows up first.
+exclude-newer = "7 days"
+# airbyte-cdk 6.60.x pins nltk and langchain-core to exact versions carrying fixed
+# CRITICALs (CVE-2025-14009, CVE-2025-68664). Neither is reachable from the mock
+# harness: nltk serves the file-based unstructured parser and langchain-core the
+# vector-db sink, and no nocode manifest uses either.
+override-dependencies = [
+    "nltk>=3.9.3",
+    "langchain-core>=0.3.81",
+    # airbyte-cdk 6.60.x resolves cryptography 44.0.3, which carries a Bleichenbacher
+    # timing oracle in PKCS#1 v1.5 decryption (CVE-2026-26007) and GHSA-537c-gmf6-5ccf.
+    # The harness never handles a key or a TLS handshake of its own -- requests-mock
+    # intercepts every call before the transport -- but the CDK's connector-builder
+    # secret handling imports it, so the version still ships.
+    "cryptography>=48.0.1",
 ]
 
 [tool.pytest.ini_options]

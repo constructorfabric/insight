@@ -13,13 +13,17 @@ class BranchesStream(BitbucketIncrementalStream):
     that is denied (403) or fails simply produces no marker this sync, so dbt
     keeps its previous branch generation, while every other repository updates
     independently. A bucket-scoped generation would freeze branch updates for a
-    whole bucket over one denied repository — and workspaces where unreadable
-    repositories are common (observed in production) would freeze every bucket.
+    whole bucket over one denied repository — and in a workspace where
+    unreadable repositories are common, every bucket would freeze.
 
     Incremental only in the cheapest sense: the per-repository state holds the
     repository's updated_on from the workspace listing, and a repository that
     has not been pushed to since the last pass is skipped without a request —
     its previous generation simply stays the newest complete one.
+
+    start_date does not apply here. Branches are current state, not dated
+    history, so a repository last pushed before the window still has branches
+    worth reporting; the idle gate already keeps it at one listing ever.
 
     Trade-off: a repository deleted from the workspace stops producing
     generations, so its last branch snapshot lingers in silver. That is bounded
@@ -34,9 +38,22 @@ class BranchesStream(BitbucketIncrementalStream):
         repo_updated_on = str(repo.raw.get("updated_on") or "")
         if repo_updated_on and prior.get("repo_updated_on") == repo_updated_on:
             return
+        branches = self._catalog.branches(repo)
+        if not branches and prior.get("branch_count") != 0:
+            # A snapshot replaces the previous one, so publishing an empty one
+            # deletes every branch this repository had. One empty answer is
+            # never enough to do that — including the first one seen, since
+            # state written before this rule existed carries no count. Record
+            # the observation and hold the cursor; a second consecutive empty
+            # listing is the repository, not the API, and publishes normally.
+            self.commit_repository_state(
+                repo, {"repo_updated_on": str(prior.get("repo_updated_on") or ""), "branch_count": 0}
+            )
+            return
+
         generation = self.generation("branches", *repo_scope(repo))
         entity_keys: set[str] = set()
-        for branch in self._catalog.branches(repo):
+        for branch in branches:
             entity_key = unique_key(self._tenant_id, self._source_id, *repo_scope(repo), branch.name)
             entity_keys.add(entity_key)
             yield self.item(
@@ -65,7 +82,9 @@ class BranchesStream(BitbucketIncrementalStream):
             workspace=repo.workspace,
             repo_slug=repo.slug,
         )
-        self.commit_repository_state(repo, {"repo_updated_on": repo_updated_on})
+        self.commit_repository_state(
+            repo, {"repo_updated_on": repo_updated_on, "branch_count": len(entity_keys)}
+        )
 
     def get_json_schema(self) -> Mapping[str, Any]:
         nullable_string = {"type": ["null", "string"]}

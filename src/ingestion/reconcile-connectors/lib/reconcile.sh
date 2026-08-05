@@ -617,7 +617,7 @@ reconcile_connections() {
     if ! destination_id="$(reconcile_resolve_destination_id "${connector_name}")"; then
       return 1
     fi
-    local discover_json sync_catalog
+    local discover_json sync_catalog source_catalog_id
     # disable_cache=true: bootstrap discover for a source whose definition may
     # have just been (re)created at a new image. Avoid a stale cached catalog.
     if ! discover_json="$(ab_discover_schema "${source_id}" true)"; then
@@ -631,6 +631,11 @@ reconcile_connections() {
         "normalize_catalog_to_append failed for source ${source_id}"
       return 1
     fi
+    # catalogId → sourceCatalogId: anchor schema-change detection to the
+    # catalog this connection is being created with (see
+    # reconcile_refresh_catalog for the stale-banner failure mode).
+    source_catalog_id="$(printf '%s' "${discover_json}" \
+      | python3 -c 'import sys,json;print(json.load(sys.stdin).get("catalogId") or "")')"
     # Airbyte connection is created with scheduleType=manual; Argo
     # CronWorkflow drives sync timing (reconcile_compute_schedule feeds the
     # CronWorkflow render in _reconcile_one_connector). Without this,
@@ -656,7 +661,8 @@ reconcile_connections() {
     # invalid/mismatched DB name (e.g. bronze_bitbucket-cloud).
     if ! new_conn_json="$(ab_create_connection "${workspace_id}" "${source_id}" \
               "${destination_id}" "${conn_name}" "${schedule_json}" \
-              "${tags_json}" "${sync_catalog}" "${namespace_format}")"; then
+              "${tags_json}" "${sync_catalog}" "${namespace_format}" \
+              "${source_catalog_id}")"; then
       reconcile__log ERROR "${connector_name}" \
         "ab_create_connection failed for source ${source_id}"
       return 1
@@ -665,6 +671,42 @@ reconcile_connections() {
       | python3 -c 'import sys,json;print(json.load(sys.stdin).get("connectionId",""))')"
     reconcile__log CHANGE "${connector_name}" \
       "connection ${new_conn_id} created"
+    # Duplicate-guard for the check-then-create window above. The list at
+    # line ~573 and the create here are not atomic, so two reconcile
+    # executions overlapping on the same freshly-sourced connector can both
+    # pass the empty-check and each create a connection (concurrencyPolicy:
+    # Forbid on the CronWorkflow only serializes SCHEDULED runs, not
+    # out-of-band / manually-triggered Workflow objects). Converge to one by
+    # re-listing after the create and, if more than one connection now binds
+    # this source, keeping a single deterministic winner and deleting the
+    # rest. The winner is the lexicographically-smallest connectionId: every
+    # racer computes the same one from the same set, so whichever execution
+    # runs this block last leaves exactly one connection regardless of
+    # ordering. Best-effort — a failed prune is logged, not fatal (the next
+    # reconcile tick re-runs this same convergence).
+    local post_list post_ids keep_id
+    post_list="$(ab_list_connections "${workspace_id}" \
+      | python3 "${_RECONCILE_PY_DIR}/select_connections_by_source.py" "${source_id}")"
+    post_ids="$(printf '%s' "${post_list}" \
+      | python3 -c 'import sys,json
+ids=[json.loads(l)["connectionId"] for l in sys.stdin if l.strip()]
+print("\n".join(sorted(i for i in ids if i)))')"
+    if [[ "$(printf '%s\n' "${post_ids}" | grep -c .)" -gt 1 ]]; then
+      keep_id="$(printf '%s\n' "${post_ids}" | head -n1)"
+      reconcile__log CHANGE "${connector_name}" \
+        "duplicate connections detected for source ${source_id}; keeping ${keep_id}, pruning others"
+      while IFS= read -r dup_id; do
+        [[ -n "${dup_id}" && "${dup_id}" != "${keep_id}" ]] || continue
+        if ab_delete_connection "${dup_id}" >/dev/null 2>&1; then
+          reconcile__log CHANGE "${connector_name}" \
+            "pruned duplicate connection ${dup_id}"
+        else
+          reconcile__log ERROR "${connector_name}" \
+            "failed to prune duplicate connection ${dup_id} (will retry next tick)"
+        fi
+      done <<< "${post_ids}"
+      new_conn_id="${keep_id}"
+    fi
     _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
     printf 'created\t%s\n' "${new_conn_id}"
     return 0
@@ -725,7 +767,7 @@ reconcile_refresh_catalog() {
       "would refresh sync_catalog on connection ${connection_id} (re-discover; new streams/fields auto-enabled)"
     return 0
   fi
-  local discover_json sync_catalog
+  local discover_json sync_catalog source_catalog_id
   # disable_cache=true: this refresh runs on republish (definition/image
   # changed). Airbyte's discover cache is keyed by source config — unchanged
   # on an image-only bump — so a cached discover would return the OLD schema
@@ -741,7 +783,18 @@ reconcile_refresh_catalog() {
       "normalize_catalog_to_append failed during catalog refresh for source ${source_id}"
     return 1
   fi
-  if ! ab_update_connection_sync_catalog "${connection_id}" "${sync_catalog}" >/dev/null; then
+  # catalogId anchors the connection's sourceCatalogId to the catalog we just
+  # applied — without it Airbyte keeps comparing new discovers against the
+  # bootstrap-era catalog and shows "Schema changes detected" forever.
+  # Missing catalogId (older Airbyte) degrades to the previous behaviour.
+  source_catalog_id="$(printf '%s' "${discover_json}" \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin).get("catalogId") or "")')"
+  if [[ -z "${source_catalog_id}" ]]; then
+    reconcile__log WARN "${connector_name}" \
+      "discover_schema returned no catalogId — sourceCatalogId not updated (schema-change banner may persist)"
+  fi
+  if ! ab_update_connection_sync_catalog "${connection_id}" "${sync_catalog}" \
+        "${source_catalog_id}" >/dev/null; then
     reconcile__log ERROR "${connector_name}" \
       "ab_update_connection_sync_catalog failed for connection ${connection_id}"
     return 1
