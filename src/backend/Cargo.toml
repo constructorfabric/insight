@@ -59,7 +59,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 axum = "0.8"
 
 # Database (MariaDB via SeaORM)
-sea-orm = { version = "1.1", features = ["runtime-tokio", "sqlx-mysql", "with-uuid", "with-chrono", "with-json", "macros"] }
+sea-orm = { version = "2.0", features = ["runtime-tokio", "sqlx-mysql", "with-uuid", "with-chrono", "with-json", "macros"] }
 sea-orm-migration = { version = "2.0", features = ["runtime-tokio", "sqlx-mysql"] }
 
 # IDs and time
@@ -101,7 +101,9 @@ clap = { version = "4.5", features = ["derive"] }
 toolkit = { package = "cf-gears-toolkit", version = "=0.6.13" }
 toolkit-auth = { package = "cf-gears-toolkit-auth", version = "=0.7.2" }
 toolkit-security = { package = "cf-gears-toolkit-security", version = "=0.7.2" }
-toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.7.4", features = ["axum", "sea-orm"] }
+# The `sea-orm` feature stays off: it targets sea-orm 1.x and this workspace
+# is on 2.x; DbErr -> CanonicalError mapping is done by local helpers.
+toolkit-canonical-errors = { package = "cf-gears-toolkit-canonical-errors", version = "=0.7.4", features = ["axum"] }
 toolkit-odata = { package = "cf-gears-toolkit-odata", version = "=0.8.2" }
 
 # gears-rust SDKs (crates.io)

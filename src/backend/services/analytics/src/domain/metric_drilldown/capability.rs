@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, FromQueryResult, Statement, Value};
+use sea_orm::{DatabaseConnection, FromQueryResult, Statement, Value};
 use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
@@ -56,7 +56,7 @@ pub async fn load_capabilities(
          ORDER BY d.metric_key, i.input_role, m.measure_key"
     );
     let mut values = metric_keys.iter().map(Value::from).collect::<Vec<_>>();
-    values.push(Value::Bytes(Some(Box::new(tenant_id.as_bytes().to_vec()))));
+    values.push(Value::Bytes(Some(tenant_id.as_bytes().to_vec())));
     let rows = CapabilityRow::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
         sql,

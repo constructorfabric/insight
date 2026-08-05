@@ -118,11 +118,11 @@ impl MigrationTrait for Migration {
 
         for row in SEEDS {
             let catalog_id = Uuid::now_v7();
-            conn.execute(Statement::from_sql_and_values(
+            conn.execute_raw(Statement::from_sql_and_values(
                 backend,
                 INSERT_CATALOG_SQL,
                 [
-                    Value::Bytes(Some(Box::new(catalog_id.as_bytes().to_vec()))),
+                    Value::Bytes(Some(catalog_id.as_bytes().to_vec())),
                     Value::from(row.metric_key),
                     Value::from(row.label),
                     nullable_str_value(row.sublabel),
@@ -136,11 +136,11 @@ impl MigrationTrait for Migration {
             .await?;
 
             let threshold_id = Uuid::now_v7();
-            conn.execute(Statement::from_sql_and_values(
+            conn.execute_raw(Statement::from_sql_and_values(
                 backend,
                 INSERT_THRESHOLD_SQL,
                 [
-                    Value::Bytes(Some(Box::new(threshold_id.as_bytes().to_vec()))),
+                    Value::Bytes(Some(threshold_id.as_bytes().to_vec())),
                     Value::from(row.metric_key),
                     Value::from(row.good),
                     Value::from(row.warn),
@@ -148,7 +148,7 @@ impl MigrationTrait for Migration {
             ))
             .await?;
 
-            conn.execute(Statement::from_sql_and_values(
+            conn.execute_raw(Statement::from_sql_and_values(
                 backend,
                 INSERT_LINK_SQL,
                 [

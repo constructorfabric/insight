@@ -20,7 +20,7 @@ impl DrilldownFixture {
         let source_ref = format!("test_{suffix}_metric_observations");
         let evidence_ref = format!("test_{suffix}_metric_evidence");
 
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_sources \
                 (id, tenant_id, source_key, source_kind, source_ref, evidence_ref, origin, \
@@ -35,7 +35,7 @@ impl DrilldownFixture {
             ],
         ))
         .await?;
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_source_measures \
                 (id, source_id, measure_key, evidence_granularity, schema_status) \
@@ -47,7 +47,7 @@ impl DrilldownFixture {
         let source_dimensions = insert_dimensions(db, source_id, dimensions).await?;
         insert_definitions(db, tenant_id, measure_id, metric_keys, &source_dimensions).await?;
 
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "UPDATE metric_sources \
              SET schema_status = 'ok', schema_error_code = NULL, \
@@ -65,13 +65,13 @@ impl DrilldownFixture {
     }
 
     pub(crate) async fn delete(self, db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "DELETE FROM metric_definitions WHERE tenant_id = ?",
             [uuid_value(self.tenant_id)],
         ))
         .await?;
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "DELETE FROM metric_sources WHERE id = ?",
             [uuid_value(self.source_id)],
@@ -85,7 +85,7 @@ impl DrilldownFixture {
         db: &DatabaseConnection,
     ) -> Result<String, sea_orm::DbErr> {
         let row = db
-            .query_one(Statement::from_sql_and_values(
+            .query_one_raw(Statement::from_sql_and_values(
                 db.get_database_backend(),
                 "SELECT DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f') AS config_revision \
                  FROM metric_sources WHERE id = ?",
@@ -101,7 +101,7 @@ impl DrilldownFixture {
         db: &DatabaseConnection,
     ) -> Result<(String, String, Option<String>), sea_orm::DbErr> {
         let row = db
-            .query_one(Statement::from_sql_and_values(
+            .query_one_raw(Statement::from_sql_and_values(
                 db.get_database_backend(),
                 "SELECT schema_status, evidence_schema_status, evidence_schema_error_code \
                  FROM metric_sources WHERE id = ?",
@@ -126,7 +126,7 @@ async fn insert_dimensions(
     for (display_order, dimension) in dimensions.iter().enumerate() {
         let display_order = checked_display_order(display_order)?;
         let dimension_id = Uuid::now_v7();
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_source_dimensions \
                 (id, source_id, dimension_key, display_order) \
@@ -153,7 +153,7 @@ async fn insert_definitions(
 ) -> Result<(), sea_orm::DbErr> {
     for metric_key in metric_keys {
         let definition_id = Uuid::now_v7();
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_definitions \
                 (id, tenant_id, metric_key, label, format, direction, entity_type, \
@@ -168,7 +168,7 @@ async fn insert_definitions(
             ],
         ))
         .await?;
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_definition_inputs \
                 (id, metric_definition_id, input_role, source_measure_id) \
@@ -192,7 +192,7 @@ async fn insert_definition_dimensions(
 ) -> Result<(), sea_orm::DbErr> {
     for (display_order, dimension_id) in source_dimensions.iter().enumerate() {
         let display_order = checked_display_order(display_order)?;
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_definition_dimensions \
                 (id, metric_definition_id, source_dimension_id, display_order) \
@@ -214,5 +214,5 @@ fn checked_display_order(value: usize) -> Result<i32, sea_orm::DbErr> {
 }
 
 fn uuid_value(value: Uuid) -> Value {
-    Value::Bytes(Some(Box::new(value.as_bytes().to_vec())))
+    Value::Bytes(Some(value.as_bytes().to_vec()))
 }

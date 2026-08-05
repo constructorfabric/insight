@@ -52,7 +52,7 @@ pub async fn bootstrap_admin(db: &DatabaseConnection, config: &GearConfig) -> an
 
     let person_role_id = Uuid::now_v7();
     let result = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [

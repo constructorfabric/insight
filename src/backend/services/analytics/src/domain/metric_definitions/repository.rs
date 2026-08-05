@@ -228,7 +228,7 @@ async fn fetch_definition_rows(
     );
 
     let mut values = metric_keys.iter().map(Value::from).collect::<Vec<_>>();
-    values.push(Value::Bytes(Some(Box::new(tenant_id.as_bytes().to_vec()))));
+    values.push(Value::Bytes(Some(tenant_id.as_bytes().to_vec())));
 
     DefinitionRow::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
@@ -268,7 +268,7 @@ async fn fetch_input_rows(
     );
     let values = definition_ids
         .iter()
-        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .map(|id| Value::Bytes(Some(id.as_bytes().to_vec())))
         .collect::<Vec<_>>();
 
     InputRow::find_by_statement(Statement::from_sql_and_values(
@@ -418,7 +418,7 @@ pub(super) async fn fetch_dimensions(
     );
     let values = definition_ids
         .iter()
-        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .map(|id| Value::Bytes(Some(id.as_bytes().to_vec())))
         .collect::<Vec<_>>();
 
     DimensionRow::find_by_statement(Statement::from_sql_and_values(
@@ -606,7 +606,7 @@ pub async fn update_evidence_status(
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
     let result = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "UPDATE metric_sources \
          SET evidence_schema_status = ?, \
@@ -643,7 +643,7 @@ pub async fn update_source_status(
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
     let result = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "UPDATE metric_sources \
          SET schema_status = ?, \
@@ -678,7 +678,7 @@ pub async fn update_definitions_for_source_status(
     status: SchemaStatus,
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
@@ -697,7 +697,7 @@ pub async fn update_definitions_for_source_status(
                 Some(code) => Value::from(code.as_db()),
                 None => Value::String(None),
             },
-            Value::Bytes(Some(Box::new(source_id.as_bytes().to_vec()))),
+            Value::Bytes(Some(source_id.as_bytes().to_vec())),
         ],
     ))
     .await?;
@@ -719,7 +719,7 @@ pub async fn update_definition_status(
         Some(date) => Value::from(date.to_string()),
         None => Value::String(None),
     };
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
@@ -748,7 +748,7 @@ pub async fn update_definition_status(
 }
 
 fn uuid_value(value: Uuid) -> Value {
-    Value::Bytes(Some(Box::new(value.as_bytes().to_vec())))
+    Value::Bytes(Some(value.as_bytes().to_vec()))
 }
 
 fn unavailable(metric_key: &str) -> CanonicalError {
