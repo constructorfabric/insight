@@ -231,29 +231,28 @@ for the seven required keys.
 
 ## Keycloak broker realms as code
 
-Environments whose Keycloak realm content is managed as code (ADR-0003,
-EPIC constructorfabric/insight#2193) keep their realm definitions as
-plain [keycloak-config-cli](https://github.com/adorsys/keycloak-config-cli)
-YAML files under `environments/<env>/keycloak/realms/*.yaml` — a realm
-change is a reviewable pull request, never an admin-UI session.
+Realm content is versioned keycloak-config-cli YAML under
+`environments/<env>/keycloak/realms/` (ADR-0003,
+constructorfabric/insight#2193) — a realm change is a pull request,
+never an admin-UI session. With `keycloakConfig.enabled: true` and
+`keycloakConfig.url` set in the env values, every `make deploy` packs
+the files into the `<release>-keycloak-config-realms` ConfigMap and the
+umbrella's hook Job re-applies them (cache off — drift reverts on sync).
 
-Flip `keycloakConfig.enabled: true` in the env's `values.yaml` and set
-`keycloakConfig.url` to the Keycloak the realms belong on (the shared
-pre-provisioned stand IdP, or the in-cluster dev subchart). The URL must
-be `https://` — the config-cli Job authenticates to it with admin
-credentials; only an in-cluster dev/CI Keycloak on the cluster network
-may use plain HTTP, behind the explicit
-`keycloakConfig.allowInsecureUrl: true` opt-in. On every
-`make deploy`, the `keycloak-broker-realms` target applies the files as
-the `<release>-keycloak-config-realms` ConfigMap, and the umbrella's
-post-upgrade hook Job runs keycloak-config-cli against that ConfigMap —
-idempotently, with the import cache off, so every sync re-asserts the
-versioned content and reverts drift.
+Secrets enter only as `$(env:VAR)` placeholders, resolved from the
+sealed `insight-keycloak-config` Secret (shape:
+[`environments/local/sealed-secrets/insight/insight-keycloak-config-sealedsecret.yaml.template`](environments/local/sealed-secrets/insight/insight-keycloak-config-sealedsecret.yaml.template))
+or from other existing Secrets via `keycloakConfig.extraEnv`. Never put
+placeholder syntax in realm YAML comments — config-cli substitution
+scans comments and fails the import.
 
-Secrets never go in realm YAML: reference them as `$(env:VAR)` and
-provide the values (plus `KEYCLOAK_USER`/`KEYCLOAK_PASSWORD`, the
-config-cli login) through the sealed `insight-keycloak-config` Secret
-(`keycloakConfig.existingSecret`).
+The tenant is pinned per environment: `global.tenantDefaultId` reaches
+the import as `INSIGHT_TENANT_ID` (e.g.
+`033dcbad-2374-4548-a9fa-04e2d5e0889a`), stamped by each IdP's
+`hardcoded-attribute-idp-mapper` — never derived from upstream claims,
+so an IdP swap or upstream drift cannot change the tenant. Canonical
+realm shape to copy:
+[`environments/local/keycloak/realms/insight-broker.yaml`](environments/local/keycloak/realms/insight-broker.yaml).
 
 ## Secret management
 

@@ -1,6 +1,6 @@
 # HubSpot Connector
 
-CDK-based Python connector for HubSpot CRM. Pulls live data via CRM v3 Search API with v4 associations and archived data via list + batch_read; only an allowlisted subset of `hubspotDefined` standard properties (the curated `ALLOWED_PROPERTIES_BY_OBJECT`) surfaces as typed Bronze columns. Tenant-defined (`hubspotDefined=false`) properties are folded into a single `custom_fields` JSON column so Bronze stays stable across portals and bounded in width regardless of customization depth.
+CDK-based Python connector for HubSpot CRM. Pulls live data via CRM v3 Search API with v4 associations and archived data via list + batch_read; the allowlist in `ALLOWED_PROPERTIES_BY_OBJECT` surfaces as dedicated Bronze columns and defines the advertised schema statically, so the table shape is identical across portals. Every other property still ships in the `raw_data` JSON column, keeping Bronze width bounded without losing values.
 
 Streams sync sequentially. HubSpot's search endpoint is rate-limited to 4 rps portal-wide so a single thread saturates the cap; concurrency would only redistribute the same 4 rps across more 429 retries.
 
@@ -114,7 +114,9 @@ HubSpot's CRM Search endpoint caps at `after = 10,000`. The connector sorts ever
 - `5xx`, chunked-encoding, connection resets — retried with exponential backoff.
 
 ### Property scope
-Bronze advertises **only the curated `ALLOWED_PROPERTIES_BY_OBJECT` allowlist** of `hubspotDefined` standard properties as typed `properties_*` columns; standard properties outside the allowlist are skipped. Tenant-defined (`hubspotDefined=False`) properties land in the `custom_fields` JSON column with null/empty values dropped and per-value byte cap applied (see envelope). This keeps Bronze width bounded regardless of portal customization depth — typical width is 5–15 typed columns per object plus `custom_fields`, instead of the 50–250+ you'd get from projecting every standard property. To project a new standard column, add it to `ALLOWED_PROPERTIES_BY_OBJECT[object_type]` in `constants.py`.
+Bronze advertises **exactly the `ALLOWED_PROPERTIES_BY_OBJECT` allowlist** as `properties_*` columns. The advertised schema is static — derived from `constants.py`, not from a portal describe — so every portal produces the same table shape and an allowlisted property the portal doesn't define is simply NULL. To project a new column, add it to `ALLOWED_PROPERTIES_BY_OBJECT[object_type]` in `constants.py`.
+
+Syncs still request **every** property the portal defines. Nothing is discarded: the full record — nested `properties` object plus association ids — is serialized into the `raw_data` JSON column, so a property with no dedicated column stays recoverable downstream. The per-value byte cap (see envelope) applies before serializing, so the blob itself stays parseable. This keeps the typed width bounded regardless of portal customization depth.
 
 ### Deleted / archived records
 Each archived stream runs as **client-side incremental on `archivedAt`** — page the full archived set, drop records at-or-below the prior cursor state, batch_read full properties for the survivors. After the first sync, only newly-archived rows write to Bronze. Silver UNIONs the live and archived sources and ranks rows by `greatest(updatedAt, archivedAt)` so an archive event outranks the prior live update. The `archived: true` flag is still surfaced on Silver rows via the `metadata` JSON column.

@@ -70,8 +70,6 @@ WITH src AS (
             'deal_type',      coalesce(toString(properties_dealtype), ''),
             'archived',       toString(coalesce(archived, false))
         ))                                              AS metadata,
-        -- Envelope parity with salesforce__crm_* (no HubSpot custom-fields blob).
-        '{}'                                            AS custom_fields,
         createdAt                                       AS created_at,
         updatedAt                                       AS updated_at,
         data_source,

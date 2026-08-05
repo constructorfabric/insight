@@ -361,12 +361,9 @@ keycloak-realm: kube-ctx values-present
 	echo "$(C_GRN)applied$(C_RST) configmap $(RELEASE)-keycloak-realm → $(NS_APP)"
 
 .PHONY: keycloak-broker-realms
-# Apply the environment's versioned broker realm YAML
-# (environments/$(ENV)/keycloak/realms/*.yaml) as the
-# `$(RELEASE)-keycloak-config-realms` ConfigMap that the umbrella's
-# keycloak-config-cli hook Job mounts and re-applies on every deploy
-# (ADR-0003: realm content is configuration-as-code; drift reverts on sync).
-# Chained into deploy-insight. No-op unless keycloakConfig.enabled=true.
+# Pack environments/$(ENV)/keycloak/realms/*.yaml into the ConfigMap the
+# umbrella's keycloak-config-cli hook Job applies (ADR-0003). Chained into
+# deploy-insight; no-op unless keycloakConfig.enabled=true.
 keycloak-broker-realms: kube-ctx values-present
 	@if [ "$$(yq -r '.keycloakConfig.enabled // false' $(VALUES))" != "true" ]; then \
 	  echo "$(C_YEL)skip$(C_RST) keycloak-broker-realms (keycloakConfig.enabled != true)"; exit 0; fi; \

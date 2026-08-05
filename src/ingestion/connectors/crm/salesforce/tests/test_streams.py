@@ -1,9 +1,10 @@
 """Tests for source_salesforce.streams: SOQL construction, pagination,
-property chunking and record reassembly, envelope injection, substream batching.
+property chunking and record reassembly, envelope injection.
 """
 
 from __future__ import annotations
 
+import json
 import urllib.parse
 from unittest.mock import Mock
 
@@ -12,21 +13,16 @@ from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams.http import HttpStream
 from requests import exceptions
 from source_salesforce.streams import (
-    BatchedSubStream,
     PropertyChunk,
     RestSalesforceStream,
-    RestSalesforceSubStream,
     SalesforceStream,
 )
-from tests.conftest import ACCOUNT_SCHEMA, INSTANCE_URL, FakeResponse, make_sf, make_stream
+from tests.conftest import ACCOUNT_FIELDS, INSTANCE_URL, FakeResponse, make_sf, make_stream
 
 
-def big_schema(n_fields: int = 4000):
-    """Schema wide enough to trip the SOQL length limit (forces chunking)."""
-    props = {"Id": {"type": ["string", "null"]}}
-    for i in range(n_fields):
-        props[f"Field{i:05d}"] = {"type": ["string", "null"]}
-    return {"type": "object", "properties": props}
+def big_field_list(n_fields: int = 4000) -> tuple[str, ...]:
+    """Field list wide enough to trip the SOQL length limit (forces chunking)."""
+    return ("Id",) + tuple(f"Field{i:05d}" for i in range(n_fields))
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +47,7 @@ class TestSalesforceStreamBasics:
 
     def test_too_many_properties(self):
         assert make_stream().too_many_properties is False
-        assert make_stream(schema=big_schema()).too_many_properties is True
+        assert make_stream(sf_fields=big_field_list()).too_many_properties is True
 
     def test_parse_response_yields_records(self, stream):
         response = FakeResponse({"records": [{"Id": "1"}, {"Id": "2"}], "done": True})
@@ -62,31 +58,37 @@ class TestSalesforceStreamBasics:
         assert "network error" in message
         assert stream.get_error_display_message(ValueError("x")) is None
 
-    def test_sf_properties_lazily_generated(self):
+    def test_sf_properties_fetched_once_from_describe(self):
         sf = make_sf()
-        sf.generate_schema = Mock(return_value=ACCOUNT_SCHEMA)
-        stream = make_stream(sf=sf, schema=None)
-        assert stream._sf_properties() == ACCOUNT_SCHEMA["properties"]
-        sf.generate_schema.assert_called_once_with("Account")
+        sf.field_names = Mock(return_value=ACCOUNT_FIELDS)
+        stream = make_stream(sf=sf, sf_fields=None)
+        assert stream._sf_properties() == ACCOUNT_FIELDS
+        assert stream._sf_properties() == ACCOUNT_FIELDS
+        sf.field_names.assert_called_once_with("Account")
 
 
 class TestGetJsonSchema:
-    def test_strips_custom_fields_and_injects_envelope(self, stream):
+    def test_schema_is_the_static_file_plus_envelope(self, stream):
         schema = stream.get_json_schema()
-        # Custom __c fields are routed into the custom_fields blob instead.
-        assert "Custom__c" not in schema["properties"]
         assert "Id" in schema["properties"]
-        for envelope_field in ("tenant_id", "source_id", "unique_key", "data_source", "collected_at", "custom_fields"):
+        assert schema["additionalProperties"] is False
+        for envelope_field in (
+            "tenant_id",
+            "source_id",
+            "unique_key",
+            "data_source",
+            "collected_at",
+            "raw_data",
+        ):
             assert envelope_field in schema["properties"]
 
-    def test_generates_schema_when_missing(self):
-        sf = make_sf()
-        sf.generate_schema = Mock(return_value=dict(ACCOUNT_SCHEMA))
-        stream = make_stream(sf=sf)
-        stream.schema = None  # force the lazy describe path
-        schema = stream.get_json_schema()
-        sf.generate_schema.assert_called_once_with("Account")
-        assert "unique_key" in schema["properties"]
+    def test_schema_needs_no_describe_call(self, stream):
+        stream.sf_api.field_names = Mock(side_effect=AssertionError("describe must not be called"))
+        assert "unique_key" in stream.get_json_schema()["properties"]
+
+    def test_schema_is_isolated_between_callers(self, stream):
+        stream.get_json_schema()["properties"].pop("Id")
+        assert "Id" in stream.get_json_schema()["properties"]
 
 
 class TestReadRecordsEnvelope:
@@ -99,9 +101,26 @@ class TestReadRecordsEnvelope:
         )
         out = list(stream.read_records(SyncMode.full_refresh))
         assert out[0]["unique_key"] == "T-S-001"
-        assert out[0]["custom_fields"] == '{"Custom__c":"x"}'
         assert "Custom__c" not in out[0]
+        assert json.loads(out[0]["raw_data"])["Custom__c"] == "x"
         assert out[1] is state_marker
+
+    def test_unavailable_sobject_yields_no_records_and_warns_once(self, stream, caplog):
+        stream.sf_api.is_queryable = Mock(return_value=False)
+        with caplog.at_level("WARNING"):
+            assert list(stream.read_records(SyncMode.full_refresh)) == []
+            assert list(stream.read_records(SyncMode.full_refresh)) == []
+        assert len([r for r in caplog.records if "not exposed by this org" in r.getMessage()]) == 1
+
+    def test_undeclared_field_reaches_raw_data_only(self, stream, monkeypatch):
+        monkeypatch.setattr(
+            HttpStream,
+            "read_records",
+            lambda self, *args, **kwargs: iter([{"Id": "001", "NotInStaticSchema": "v"}]),
+        )
+        record = next(iter(stream.read_records(SyncMode.full_refresh)))
+        assert "NotInStaticSchema" not in record
+        assert json.loads(record["raw_data"])["NotInStaticSchema"] == "v"
 
 
 # ---------------------------------------------------------------------------
@@ -110,9 +129,15 @@ class TestReadRecordsEnvelope:
 
 
 class TestChunkingGuard:
-    def test_too_many_properties_without_pk_raises(self):
+    def test_too_many_properties_without_pk_raises_at_read(self):
+        stream = make_stream(sf_fields=big_field_list(), pk=None)
         with pytest.raises(RuntimeError, match="no primary key"):
-            make_stream(schema=big_schema(), pk=None)
+            list(stream._read_pages(_records_generator))
+
+    def test_construction_makes_no_api_call(self):
+        sf = make_sf()
+        sf.field_names = Mock(side_effect=AssertionError("describe must not be called"))
+        assert make_stream(sf=sf, sf_fields=None, pk=None).pk is None
 
     def test_small_schema_without_pk_is_fine(self):
         assert make_stream(pk=None).pk is None
@@ -138,7 +163,7 @@ class TestNextPageToken:
 
 class TestRequestParams:
     def test_soql_select_with_order_by(self, stream):
-        params = stream.request_params(stream_state={}, property_chunk={"Id": {}, "Name": {}})
+        params = stream.request_params(stream_state={}, property_chunk=("Id", "Name"))
         assert params == {"q": "SELECT Id,Name FROM Account  ORDER BY Id ASC"}
 
     def test_next_page_token_suppresses_params(self, stream):
@@ -146,26 +171,18 @@ class TestRequestParams:
 
     def test_unsupported_filtering_stream_has_no_order_by(self):
         stream = make_stream(stream_name="TabDefinition")
-        params = stream.request_params(stream_state={}, property_chunk={"Id": {}})
+        params = stream.request_params(stream_state={}, property_chunk=("Id",))
         assert "ORDER BY" not in params["q"]
-
-    def test_parent_object_gets_where_in_clause(self):
-        stream = make_stream(cls=RestSalesforceStream, stream_name="ContentDocumentLink")
-        params = stream.request_params(
-            stream_state={}, stream_slice={"parents": [{"Id": "069A"}, {"Id": "069B"}]}, property_chunk={"Id": {}}
-        )
-        # ContentDocumentLink is both parent-scoped and unsupported-filtering.
-        assert params["q"] == ("SELECT Id FROM ContentDocumentLink  WHERE ContentDocumentId IN ('069A','069B')")
 
 
 class TestChunkProperties:
     def test_single_chunk_for_small_schema(self, stream):
         chunks = list(stream.chunk_properties())
         assert len(chunks) == 1
-        assert set(chunks[0]) == set(ACCOUNT_SCHEMA["properties"])
+        assert set(chunks[0]) == set(ACCOUNT_FIELDS)
 
     def test_wide_schema_split_with_pk_in_every_chunk(self):
-        stream = make_stream(schema=big_schema())
+        stream = make_stream(sf_fields=big_field_list())
         chunks = list(stream.chunk_properties())
         assert len(chunks) > 1
         for chunk in chunks:
@@ -183,18 +200,18 @@ class TestChunkProperties:
 
 class TestNextChunkId:
     def test_picks_least_read_non_exhausted(self):
-        chunk_a = PropertyChunk({"Id": {}})
+        chunk_a = PropertyChunk(("Id",))
         chunk_a.first_time = False
         chunk_a.next_page = {"next_token": "/q"}
         chunk_a.record_counter = 10
-        chunk_b = PropertyChunk({"Id": {}})
+        chunk_b = PropertyChunk(("Id",))
         chunk_b.first_time = False
         chunk_b.next_page = {"next_token": "/q"}
         chunk_b.record_counter = 3
         assert RestSalesforceStream._next_chunk_id({0: chunk_a, 1: chunk_b}) == 1
 
     def test_none_when_all_exhausted(self):
-        chunk = PropertyChunk({"Id": {}})
+        chunk = PropertyChunk(("Id",))
         chunk.first_time = False
         chunk.next_page = None
         assert RestSalesforceStream._next_chunk_id({0: chunk}) is None
@@ -225,7 +242,7 @@ class TestReadPages:
 
     def test_chunked_records_reassembled_by_pk(self, monkeypatch):
         """Wide schema: each chunk returns a partial record; parts merge on Id."""
-        stream = make_stream(schema=big_schema())
+        stream = make_stream(sf_fields=big_field_list())
         n_chunks = len(list(stream.chunk_properties()))
         assert n_chunks > 1
         calls = []
@@ -245,7 +262,7 @@ class TestReadPages:
 
     def test_inconsistent_records_skipped_with_warning(self, monkeypatch, caplog):
         """A record seen by only one chunk is dropped, not emitted half-empty."""
-        stream = make_stream(schema=big_schema())
+        stream = make_stream(sf_fields=big_field_list())
         calls = []
 
         def fake_fetch(stream_slice, stream_state, next_page, properties):
@@ -271,50 +288,8 @@ class TestFetchNextPageForChunk:
             return "req", FakeResponse({"records": []})
 
         stream._http_client = Mock(send_request=send_request)
-        request, response = stream._fetch_next_page_for_chunk(property_chunk={"Id": {}, "Name": {}})
+        request, response = stream._fetch_next_page_for_chunk(property_chunk=("Id", "Name"))
         assert request == "req"
         assert sent["http_method"] == "GET"
         assert sent["url"].startswith(INSTANCE_URL)
         assert sent["params"]["q"].startswith("SELECT Id,Name FROM Account")
-
-
-# ---------------------------------------------------------------------------
-# BatchedSubStream
-# ---------------------------------------------------------------------------
-
-
-class FakeParentStream:
-    """Duck-typed parent: HttpSubStream.stream_slices only calls read_only_records."""
-
-    def __init__(self, records):
-        self._records = records
-
-    def read_only_records(self, stream_state=None):
-        yield from self._records
-
-
-class TestBatchedSubStream:
-    def _substream(self, parent_records, batch_size=2):
-        stream = make_stream(
-            cls=RestSalesforceSubStream, stream_name="ContentDocumentLink", parent=FakeParentStream(parent_records)
-        )
-        stream.SLICE_BATCH_SIZE = batch_size
-        return stream
-
-    def test_parents_batched_into_slices(self):
-        parents = [{"Id": f"069{i}"} for i in range(5)]
-        stream = self._substream(parents, batch_size=2)
-        slices = list(stream.stream_slices(SyncMode.full_refresh))
-        assert [len(s["parents"]) for s in slices] == [2, 2, 1]
-        assert slices[0]["parents"][0] == {"Id": "0690"}
-
-    def test_exact_multiple_has_no_empty_tail(self):
-        parents = [{"Id": "A"}, {"Id": "B"}]
-        slices = list(self._substream(parents, batch_size=2).stream_slices(SyncMode.full_refresh))
-        assert len(slices) == 1
-
-    def test_no_parents_yields_nothing(self):
-        assert list(self._substream([]).stream_slices(SyncMode.full_refresh)) == []
-
-    def test_default_batch_size(self):
-        assert BatchedSubStream.SLICE_BATCH_SIZE == 200

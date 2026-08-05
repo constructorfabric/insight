@@ -94,17 +94,25 @@ class TestSchema:
         schema = deals_stream.get_json_schema()
         props = schema["properties"]
         assert props["properties_amount"] == {"type": ["string", "null"]}
-        for field in ("tenant_id", "source_id", "unique_key", "data_source", "collected_at", "custom_fields"):
-            assert field in props
+        for field in (
+            "tenant_id",
+            "source_id",
+            "unique_key",
+            "data_source",
+            "collected_at",
+            "raw_data",
+        ):
+            assert field in props, f"missing envelope column: {field}"
+        assert "custom_fields" not in props
         # deals registry declares [companies, contacts]
         assert props["associations_companies"]["type"] == ["array", "null"]
         assert props["associations_contacts"]["items"] == {"type": "string"}
 
-    def test_schema_does_not_mutate_describe_cache(self, deals_stream):
-        cached = deals_stream._hubspot.generate_schema("deals")
-        before = dict(cached["properties"])
+    def test_schema_does_not_mutate_the_api_result(self, deals_stream):
+        source = deals_stream._hubspot.generate_schema("deals")
+        before = dict(source["properties"])
         deals_stream.get_json_schema()
-        assert cached["properties"] == before  # deepcopy protects the cache
+        assert source["properties"] == before  # deepcopy keeps mutations local
 
     def test_no_association_columns_without_associations(self, companies_stream):
         props = companies_stream.get_json_schema()["properties"]
@@ -153,9 +161,9 @@ class TestReadRecordsBatching:
         flushed: list[int] = []
         original = companies_stream._finalize_batch
 
-        def spy(batch, custom_names):
+        def spy(batch):
             flushed.append(len(batch))
-            return original(batch, custom_names)
+            return original(batch)
 
         companies_stream._finalize_batch = spy
         records = [{"id": str(i), "updatedAt": f"2024-06-0{i}T00:00:00Z", "properties": {}} for i in (1, 2, 3)]

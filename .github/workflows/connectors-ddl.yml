@@ -22,11 +22,9 @@ name: connectors-ddl
 # are each green apart — one adding a gold table, one regenerating the snapshot —
 # can still leave main drifted, and only a run on the merged tree sees that.
 #
-# PRs are gated on the branch living in this repository: the job runs PR code and
-# needs the HubSpot / Salesforce credentials whose CDK `discover` calls a live
-# API, and secrets are not available to fork PRs. The trigger is `pull_request`,
-# never `pull_request_target` — that would run fork code with access to those
-# secrets. Pushes always carry secrets, so they need no such guard.
+# Every connector's `discover` runs on fake config values, so the gate needs no
+# secrets and fork PRs validate like any other. The trigger is `pull_request`,
+# never `pull_request_target`.
 #
 # The gate job validates; it never commits. On PR drift the separate regen-pr
 # job delivers the regenerated snapshot as a reviewable stacked PR against the
@@ -54,10 +52,6 @@ permissions:
 jobs:
   connectors-ddl:
     name: connectors-ddl snapshot + field parity
-    # Fork PR: no secrets, so `discover` for hubspot/salesforce cannot run. Skip
-    # up front instead of dying 20 minutes into the bootstrap. A push to main is
-    # always in-repo, so it has no head repository to compare.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -95,28 +89,6 @@ jobs:
           yq --version
           jq --version
 
-      - name: Require connector credentials
-        env:
-          HUBSPOT_ACCESS_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
-          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
-          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
-          SALESFORCE_INSTANCE_URL: ${{ secrets.SALESFORCE_INSTANCE_URL }}
-        run: |
-          set -euo pipefail
-          # HubSpot and Salesforce build their catalogue from a live API, so their
-          # `discover` cannot run on fake values. Without them seed-connectors.sh
-          # skips both connectors, their bronze never lands, and dbt dies — 20
-          # minutes later, with a confusing error. Fail in 5 seconds instead,
-          # naming exactly what is missing.
-          missing=()
-          for var in HUBSPOT_ACCESS_TOKEN SALESFORCE_CLIENT_ID SALESFORCE_CLIENT_SECRET SALESFORCE_INSTANCE_URL; do
-            [[ -n "${!var:-}" ]] || missing+=("$var")
-          done
-          if (( ${#missing[@]} > 0 )); then
-            echo "::error title=Missing repository secrets::${missing[*]} — hubspot/salesforce discover calls a live API and cannot run on fake values. Add them as repository secrets, or narrow connectors-config.yaml."
-            exit 1
-          fi
-
       - name: Start an empty ClickHouse
         run: |
           set -euo pipefail
@@ -131,11 +103,6 @@ jobs:
 
       - name: Bootstrap from connectors + dbt + migrations
         id: bootstrap
-        env:
-          HUBSPOT_ACCESS_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
-          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
-          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
-          SALESFORCE_INSTANCE_URL: ${{ secrets.SALESFORCE_INSTANCE_URL }}
         run: |
           set -euo pipefail
           "${BOOTSTRAP_DIR}/bootstrap-db.sh" "${BOOTSTRAP_DIR}/connectors-config.yaml"
@@ -198,11 +165,10 @@ jobs:
         run: docker logs --tail 200 "${CLICKHOUSE_CONTAINER}" 2>&1 || true
 
   # On snapshot drift in a PR, deliver the regenerated snapshot as a REVIEWABLE
-  # stacked pull request against the PR's own branch, instead of telling the
-  # author to regenerate locally — which requires the HubSpot/Salesforce
-  # credentials most contributors do not have. The author reviews the DDL diff
-  # and merges it; that merge is a human push, so the required checks re-run
-  # normally (a bot push with GITHUB_TOKEN would not trigger them).
+  # stacked pull request against the PR's own branch, saving the author a local
+  # bootstrap run. The author reviews the DDL diff and merges it; that merge is
+  # a human push, so the required checks re-run normally (a bot push with
+  # GITHUB_TOKEN would not trigger them).
   #
   # This job never executes code from the PR: it checks out the head branch only
   # as a git base and replaces the snapshot directory with the artifact the gate
@@ -214,8 +180,11 @@ jobs:
   regen-pr:
     name: Open a regen PR on snapshot drift
     needs: connectors-ddl
+    # Same-repo only: this job pushes a branch and opens a PR, neither of which
+    # it can do against a fork's head. A fork PR still gets the gate result and
+    # the regenerated snapshot as a downloadable artifact.
     if: >-
-      always() && github.event_name == 'pull_request' && needs.connectors-ddl.result == 'failure' && needs.connectors-ddl.outputs.drift == 'true'
+      always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.connectors-ddl.result == 'failure' && needs.connectors-ddl.outputs.drift == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

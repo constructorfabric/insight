@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.companies
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.companies_archived
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.contacts
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_deals` Nullable(String)
 )
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.contacts_archived
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_deals` Nullable(String)
 )
@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.deals
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_contacts` Nullable(String)
 )
@@ -225,7 +225,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.deals_archived
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_contacts` Nullable(String)
 )
@@ -258,7 +258,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_calls
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_contacts` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_deals` Nullable(String)
@@ -292,7 +292,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_calls_archived
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_contacts` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_deals` Nullable(String)
@@ -324,7 +324,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_emails
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_contacts` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_deals` Nullable(String)
@@ -356,7 +356,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_emails_archived
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_contacts` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_deals` Nullable(String)
@@ -392,7 +392,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_meetings
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_contacts` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_deals` Nullable(String)
@@ -426,7 +426,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_tasks
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_contacts` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_deals` Nullable(String)
@@ -460,7 +460,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.engagements_tasks_archived
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_contacts` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_deals` Nullable(String)
@@ -486,7 +486,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.leads
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_contacts` Nullable(String),
     `associations_companies` Nullable(String)
 )
@@ -511,7 +511,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.leads_archived
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_contacts` Nullable(String),
     `associations_companies` Nullable(String)
 )
@@ -540,7 +540,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.owners
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -567,7 +567,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.owners_archived
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -590,7 +590,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.tickets
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_contacts` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_deals` Nullable(String)
@@ -616,7 +616,7 @@ CREATE TABLE IF NOT EXISTS bronze_hubspot.tickets_archived
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String),
+    `raw_data` Nullable(String),
     `associations_contacts` Nullable(String),
     `associations_companies` Nullable(String),
     `associations_deals` Nullable(String)

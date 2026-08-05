@@ -191,7 +191,7 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.05.04.14-ae25cb2" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.05.06.56-dad7798" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -414,40 +414,33 @@ keycloak:
   ingress:
     enabled: false
 # ─── keycloakConfig (broker realms as code — ADR-0003, EPIC #2193) ──────────
-# Applies the environment's versioned broker realm YAML against its Keycloak
-# with keycloak-config-cli, as a post-install/post-upgrade hook Job that
-# re-runs on every deploy (reverting server-side drift). Realm content is
-# configuration-as-code ONLY: no admin-UI channel. The realm YAML lives in the
-# gitops tree (deploy/gitops/environments/<env>/keycloak/realms/) and reaches
-# the Job as a pre-created ConfigMap (gitops `keycloak-broker-realms` target).
-# Independent of `keycloak.deploy`: the target may be the shared
-# pre-provisioned Keycloak of a deployed stand (ADR-0002) or the in-cluster
-# dev subchart.
+# Hook Job applying the env's versioned realm YAML (pre-created ConfigMap from
+# the gitops `keycloak-broker-realms` target) with keycloak-config-cli on every
+# deploy. Independent of `keycloak.deploy`.
 keycloakConfig:
   enabled: false
   image:
     repository: adorsys/keycloak-config-cli
-    # config-cli release line must match the Keycloak server major (this tag
-    # is config-cli 6.5.1 built against Keycloak 26.1; server runs 26.x).
+    # Release line must match the Keycloak server major.
     tag: "6.5.1-26.1.0"
     pullPolicy: IfNotPresent
-  # Base URL of the Keycloak the realm YAML is applied to (rendered with
-  # `tpl`), e.g. a stand's shared Keycloak `https://idp.example.com/kc` or the
-  # in-cluster subchart `http://{{ .Release.Name }}-keycloak:8085/kc`. MUST be
-  # https:// — the Job sends the config-cli admin credentials to it. Rendering
-  # fails on a plain-http URL unless `allowInsecureUrl` is set.
+  # Keycloak base URL (tpl-rendered). Must be https; plain http only with
+  # allowInsecureUrl=true (in-cluster dev/CI Keycloak only).
   url: ""
-  # Escape hatch for the in-cluster dev/CI Keycloak, which serves plain HTTP
-  # over the cluster network (like the rest of the local stack). NEVER set
-  # this for a Keycloak reached across the cluster boundary.
   allowInsecureUrl: false
-  # Existing Secret (envFrom) providing KEYCLOAK_USER + KEYCLOAK_PASSWORD (the
-  # config-cli login) and every VAR the realm YAML references as $(env:VAR)
-  # (client secrets etc.). Sealed in the gitops tree — secret material never
-  # appears in realm YAML or values files.
+  # envFrom Secret: KEYCLOAK_USER/KEYCLOAK_PASSWORD + any $(env:VAR) the realm
+  # YAML references. Sealed in gitops — never a value in realm YAML.
   existingSecret: "insight-keycloak-config"
-  # Pre-created ConfigMap holding the realm YAML files (empty =
-  # <release>-keycloak-config-realms).
+  # Extra env entries for placeholders resolving from OTHER Secrets (single
+  # sealed source of truth; also the only way to reach non-C-identifier keys,
+  # which envFrom drops silently):
+  #   - name: INSIGHT_AUTHENTICATOR_CLIENT_SECRET
+  #     valueFrom:
+  #       secretKeyRef: {name: insight-oidc, key: oidc-client-secret}
+  # The Job also injects INSIGHT_TENANT_ID from global.tenantDefaultId (set):
+  # realm IdP mappers pin the tenant per environment, never from IdP claims.
+  extraEnv: []
+  # Pre-created realms ConfigMap (empty = <release>-keycloak-config-realms).
   realmsConfigMap: ""
   resources:
     requests: {cpu: 100m, memory: 256Mi}

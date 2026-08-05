@@ -68,6 +68,10 @@ This table maps non-functional requirements from the PRD to specific design resp
 | `cpt-semantic-layer-nfr-executor-consistency` | Cutover parity | Compiler + e2e suite | Shadow-compare per family; divergence classes resolved before flip | 100% of existing e2e expectations green against the compiler |
 | `cpt-semantic-layer-nfr-query-guardrails` | Every query bounded | Compiler | Row caps, timeout classes, memory bounds on every emitted query and cache rebuild | Every compiled query bounded; a pathological definition fails loudly |
 
+#### ADR Links
+
+- `cpt-semantic-layer-adr-adopt-compiler-over-datasets` — records the decision to adopt one compiler over datasets (definitions-as-data) as the Phase B target, over incremental dual-authoring or an external semantic layer, and the per-family shadow-compare-then-delete cutover that governs it.
+
 ### 1.3 Architecture Layers
 
 ```text
@@ -668,6 +672,8 @@ sequenceDiagram
 - [ ] `p3` - **ID**: `cpt-semantic-layer-db-schemas`
 
 The store rewrite is additive tables plus seed repopulation, never in-place mutation of the old schema; migration burden is near zero because builtin rows are seed-reconciled from code and any `origin = 'custom'` rows get a one-shot mapping. Tables live in the analytics service database (MySQL via sea-orm, forward-only migrations). Column-level types are implementation detail; the tables and their roles are below.
+
+**Implementation status (#2208, Phase 1 slice 1):** the four definition-core tables below — `datasets`, `measures`, `metrics`, `definition_revisions` — are shipped by migration `m20260805_000001_semantic_definition_core`, physically prefixed `semantic_` so the store coexists with the untouched legacy `metric_*` store until cutover. Their key-shape and aggregation/expression CHECK constraints are registered in the startup CHECK probe. This slice is schema only: no entities, seed reconciliation, or serving change yet (later Phase 1 slices), and `measure_cache` is deferred to Phase 2 materialization.
 
 #### Table: `datasets`
 

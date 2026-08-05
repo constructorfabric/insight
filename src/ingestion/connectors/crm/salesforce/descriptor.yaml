@@ -1,5 +1,5 @@
 name: salesforce
-version: "2.8.0"
+version: "2.10.0"
 type: cdk
 schedule: "0 5 * * *"
 workflow: sync
@@ -11,7 +11,7 @@ images:
     name: source-salesforce-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-salesforce-insight:2026.08.03.17.18-87bf1e2"
+    image: "ghcr.io/constructorfabric/source-salesforce-insight:2026.08.05.06.52-0ee0fad"
 dbt_select: "tag:salesforce+"
 connection:
   namespace: "bronze_salesforce"

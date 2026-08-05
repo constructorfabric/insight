@@ -1,8 +1,8 @@
 """Stream classes: REST API (``/queryAll``), incremental via ``ConcurrentCursor``.
 
 Each stream emits records through :func:`envelope.envelope` so Bronze rows
-carry ``tenant_id`` / ``source_id`` / ``unique_key`` / ``custom_fields`` in
-addition to the raw SF fields.
+carry ``tenant_id`` / ``source_id`` / ``unique_key`` / ``raw_data`` in addition
+to the stream's declared SF fields.
 """
 
 import logging
@@ -11,6 +11,7 @@ from abc import ABC
 from typing import (
     Any,
     Callable,
+    FrozenSet,
     Iterable,
     List,
     Mapping,
@@ -32,12 +33,13 @@ from airbyte_cdk.sources.streams.concurrent.state_converters.datetime_stream_sta
     IsoMillisConcurrentStreamStateConverter,
 )
 from airbyte_cdk.sources.streams.core import CheckpointMixin, StreamData
-from airbyte_cdk.sources.streams.http import HttpClient, HttpStream, HttpSubStream
+from airbyte_cdk.sources.streams.http import HttpClient, HttpStream
 from airbyte_cdk.sources.utils.transform import TransformConfig, TypeTransformer
 
 from source_salesforce.api import Salesforce
-from source_salesforce.constants import PARENT_SALESFORCE_OBJECTS, UNSUPPORTED_FILTERING_STREAMS
-from source_salesforce.envelope import envelope, inject_envelope_properties
+from source_salesforce.constants import UNSUPPORTED_FILTERING_STREAMS
+from source_salesforce.envelope import envelope
+from source_salesforce.schema_loader import declared_field_names, stream_schema
 from source_salesforce.rate_limiting import (
     SalesforceErrorHandler,
     default_backoff_handler,
@@ -60,26 +62,24 @@ class SalesforceStream(HttpStream, ABC):
         stream_name: str,
         message_repository: MessageRepository,
         sobject_options: Mapping[str, Any] = None,
-        schema: dict = None,
         start_date=None,
         tenant_id: str = "",
         source_id: str = "",
-        custom_field_names: Optional[frozenset] = None,
         **kwargs,
     ):
         self.stream_name = stream_name
         self.pk = pk
         self.sf_api = sf_api
         super().__init__(**kwargs)
-        self.schema: Mapping[str, Any] = schema  # type: ignore[assignment]
         self.sobject_options = sobject_options
         self.start_date = self.format_start_date(start_date)
         self._message_repository = message_repository
+        self._sf_field_names: Optional[Tuple[str, ...]] = None
+        self._unavailable_warned = False
         # Insight envelope context — used in read_records() to inject tenant /
-        # source / unique_key / custom_fields onto every emitted record.
+        # source / unique_key / raw_data onto every record.
         self._tenant_id = tenant_id
         self._source_id = source_id
-        self._custom_field_names: frozenset = custom_field_names or frozenset()
         # Tracks envelope-key collisions so we only warn once per offender
         # per stream instead of every record.
         self._envelope_collisions_seen: set = set()
@@ -105,57 +105,59 @@ class SalesforceStream(HttpStream, ABC):
 
         Every record yielded by the upstream reader is passed through
         :func:`envelope.envelope` so Bronze gets tenant_id / source_id /
-        unique_key / data_source / collected_at / custom_fields.
+        unique_key / data_source / collected_at / raw_data.
         """
+        if not self._sobject_available():
+            return
+
         for record in super().read_records(sync_mode, cursor_field, stream_slice, stream_state):
             if isinstance(record, Mapping):
                 yield envelope(
                     record,
                     tenant_id=self._tenant_id,
                     source_id=self._source_id,
-                    custom_field_names=self._custom_field_names,
+                    declared_fields=self.declared_fields,
                     collision_seen=self._envelope_collisions_seen,
                 )
             else:
                 # State / log / trace messages pass through untouched.
                 yield record
 
-    def _sf_properties(self) -> Mapping[str, Any]:
+    @property
+    def declared_fields(self) -> FrozenSet[str]:
+        """SF fields this stream emits as Bronze columns; the rest ride in ``raw_data``."""
+        return declared_field_names(self.name)
+
+    def _sobject_available(self) -> bool:
+        """Whether this org exposes the sobject, warning once when it does not.
+
+        The catalog is org-independent, so a stream can be advertised on an org
+        that does not license or expose its object. That is a per-org fact, not
+        a failure: the stream completes empty and the rest of the sync runs.
+        The answer comes off the describe the stream already needs for SOQL.
+        """
+        available = self.sf_api.is_queryable(self.name)
+        if not available and not self._unavailable_warned:
+            self._unavailable_warned = True
+            self.logger.warning(
+                "Stream %s is not exposed by this org; syncing it as empty.", self.name
+            )
+        return available
+
+    def _sf_properties(self) -> Tuple[str, ...]:
         """All describe-reported fields (standard + custom). Used for SOQL.
 
-        SOQL needs every field present on the sobject so custom values can
-        reach :func:`envelope.envelope`, which routes them into the
-        ``custom_fields`` blob.
+        SOQL needs every field present on the sobject so custom and undeclared
+        standard values can reach :func:`envelope.envelope`, which preserves
+        them in ``raw_data``.
         """
-        if not self.schema:
-            self.schema = self.sf_api.generate_schema(self.name)
-        return self.schema.get("properties", {})
+        if self._sf_field_names is None:
+            self._sf_field_names = self.sf_api.field_names(self.name)
+        return self._sf_field_names
 
     def get_json_schema(self) -> Mapping[str, Any]:
-        """Advertise schema to the destination.
-
-        - Start from describe-generated properties.
-        - Strip ``__c`` custom fields — their values are routed into the
-          ``custom_fields`` JSON blob by :func:`envelope.envelope`, so top-level
-          columns would always be NULL and create per-org schema drift in
-          Bronze. This is the main reason our Bronze stays stable across orgs.
-        - Add the Insight envelope fields (``tenant_id`` / ``source_id`` /
-          ``unique_key`` / ``data_source`` / ``collected_at`` / ``custom_fields``).
-        """
-        if not self.schema:
-            self.schema = self.sf_api.generate_schema(self.name)
-        schema = {
-            "$schema": self.schema.get("$schema", "http://json-schema.org/draft-07/schema#"),
-            "type": self.schema.get("type", "object"),
-            "additionalProperties": self.schema.get("additionalProperties", True),
-            "properties": {
-                k: v
-                for k, v in self.schema.get("properties", {}).items()
-                if k not in self._custom_field_names
-            },
-        }
-        inject_envelope_properties(schema)
-        return schema
+        """Advertise the stream's static schema to the destination."""
+        return stream_schema(self.name)
 
     @staticmethod
     def format_start_date(start_date: Optional[str]) -> Optional[str]:
@@ -187,14 +189,11 @@ class SalesforceStream(HttpStream, ABC):
     @property
     def too_many_properties(self):
         # Size check uses the full SF field list (what actually goes into SOQL).
-        selected_properties = self._sf_properties()
-        properties_length = len(urllib.parse.quote(",".join(p for p in selected_properties)))
+        properties_length = len(urllib.parse.quote(",".join(self._sf_properties())))
         return properties_length > self.max_properties_length
 
     def parse_response(self, response: requests.Response, **kwargs) -> Iterable[Mapping]:
         yield from response.json()["records"]
-
-    # get_json_schema() is overridden above to inject envelope fields.
 
     def get_error_display_message(self, exception: BaseException) -> Optional[str]:
         if isinstance(exception, exceptions.ConnectionError):
@@ -206,12 +205,12 @@ class PropertyChunk:
     Object that is used to keep track of the current state of a chunk of properties for the stream of records being synced.
     """
 
-    properties: Mapping[str, Any]
+    properties: Tuple[str, ...]
     first_time: bool
     record_counter: int
     next_page: Optional[Mapping[str, Any]]
 
-    def __init__(self, properties: Mapping[str, Any]):
+    def __init__(self, properties: Tuple[str, ...]):
         self.properties = properties
         self.first_time = True
         self.record_counter = 0
@@ -221,12 +220,16 @@ class PropertyChunk:
 class RestSalesforceStream(SalesforceStream):
     state_converter = IsoMillisConcurrentStreamStateConverter(is_sequential_state=False)
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Property chunking needs a natural key (self.pk, i.e. SF Id) to
-        # reassemble split records before envelope runs. Raise rather than
-        # assert so the failure survives `python -O` and gives operators a
-        # clear message instead of a bare AssertionError.
+    def _check_chunking_is_reassemblable(self) -> None:
+        """Guard the chunked-read precondition, at read time.
+
+        Property chunking needs a natural key (self.pk, i.e. SF Id) to
+        reassemble split records before envelope runs. Checked here rather than
+        in ``__init__`` because the field count comes from describe, and
+        constructing a stream must stay free of API calls. Raise rather than
+        assert so the failure survives ``python -O`` and gives operators a clear
+        message instead of a bare AssertionError.
+        """
         if self.too_many_properties and not self.pk:
             raise RuntimeError(
                 f"Stream '{self.name}' has too many properties for REST "
@@ -253,7 +256,7 @@ class RestSalesforceStream(SalesforceStream):
         stream_state: Mapping[str, Any],
         stream_slice: Mapping[str, Any] = None,
         next_page_token: Mapping[str, Any] = None,
-        property_chunk: Mapping[str, Any] = None,
+        property_chunk: Tuple[str, ...] = (),
     ) -> MutableMapping[str, Any]:
         """
         Salesforce SOQL Query: https://developer.salesforce.com/docs/atlas.en-us.232.0.api_rest.meta/api_rest/dome_queryall.htm
@@ -262,14 +265,8 @@ class RestSalesforceStream(SalesforceStream):
             # If `next_page_token` is set, subsequent requests use `nextRecordsUrl`, and do not include any parameters.
             return {}
 
-        property_chunk = property_chunk or {}
-        query = f"SELECT {','.join(property_chunk.keys())} FROM {self.name} "
-
-        if self.name in PARENT_SALESFORCE_OBJECTS:
-            # add where clause: " WHERE ContentDocumentId IN ('06905000000NMXXXXX', ...)"
-            parent_field = PARENT_SALESFORCE_OBJECTS[self.name]["field"]
-            parent_ids = [f"'{parent_record[parent_field]}'" for parent_record in stream_slice["parents"]]
-            query += f" WHERE ContentDocumentId IN ({','.join(parent_ids)})"
+        property_chunk = property_chunk or ()
+        query = f"SELECT {','.join(property_chunk)} FROM {self.name} "
 
         if self.pk and self.name not in UNSUPPORTED_FILTERING_STREAMS:
             # ORDER BY the SF natural key (Id), not the Insight unique_key —
@@ -279,31 +276,32 @@ class RestSalesforceStream(SalesforceStream):
 
         return {"q": query}
 
-    def chunk_properties(self) -> Iterable[Mapping[str, Any]]:
-        # Use the full describe-derived field list (standard + custom). Custom
-        # fields are NOT in the destination schema but we still need them in
-        # SOQL so envelope() can route them into the ``custom_fields`` blob.
-        selected_properties = dict(self._sf_properties())
+    def chunk_properties(self) -> Iterable[Tuple[str, ...]]:
+        # Use the full describe-derived field list (standard + custom). Fields
+        # outside the static schema are NOT destination columns but we still
+        # need them in SOQL so envelope() can preserve them in ``raw_data``.
+        selected_properties = self._sf_properties()
 
-        def empty_props_with_pk_if_present():
+        def empty_props_with_pk_if_present() -> List[str]:
             # Chunk reassembly keys by SF Id (self.pk), not the Insight
             # unique_key which doesn't exist on the SF response.
-            return {self.pk: selected_properties[self.pk]} if self.pk else {}
+            return [self.pk] if self.pk and self.pk in selected_properties else []
 
         summary_length = 0
         local_properties = empty_props_with_pk_if_present()
-        for property_name, value in selected_properties.items():
+        for property_name in selected_properties:
             current_property_length = len(urllib.parse.quote(f"{property_name},"))
             if current_property_length + summary_length >= self.max_properties_length:
-                yield local_properties
+                yield tuple(local_properties)
                 local_properties = empty_props_with_pk_if_present()
                 summary_length = 0
 
-            local_properties[property_name] = value
+            if property_name not in local_properties:
+                local_properties.append(property_name)
             summary_length += current_property_length
 
         if local_properties:
-            yield local_properties
+            yield tuple(local_properties)
 
     @staticmethod
     def _next_chunk_id(property_chunks: Mapping[int, PropertyChunk]) -> Optional[int]:
@@ -336,6 +334,7 @@ class RestSalesforceStream(SalesforceStream):
         stream_state: Mapping[str, Any] = None,
     ) -> Iterable[StreamData]:
         stream_state = stream_state or {}
+        self._check_chunking_is_reassemblable()
         records_by_primary_key = {}
         property_chunks: Mapping[int, PropertyChunk] = {
             index: PropertyChunk(properties=properties) for index, properties in enumerate(self.chunk_properties())
@@ -407,7 +406,7 @@ class RestSalesforceStream(SalesforceStream):
         stream_slice: Mapping[str, Any] = None,
         stream_state: Mapping[str, Any] = None,
         next_page_token: Mapping[str, Any] = None,
-        property_chunk: Mapping[str, Any] = None,
+        property_chunk: Tuple[str, ...] = (),
     ) -> Tuple[requests.PreparedRequest, requests.Response]:
         request_headers = self.request_headers(
             stream_state=stream_state,
@@ -443,34 +442,6 @@ class RestSalesforceStream(SalesforceStream):
             ),
             request_kwargs={},
         )
-
-
-class BatchedSubStream(HttpSubStream):
-    state_converter = IsoMillisConcurrentStreamStateConverter(is_sequential_state=False)
-    SLICE_BATCH_SIZE = 200
-
-    def stream_slices(
-        self,
-        sync_mode: SyncMode,
-        cursor_field: Optional[List[str]] = None,
-        stream_state: Optional[Mapping[str, Any]] = None,
-    ) -> Iterable[Optional[Mapping[str, Any]]]:
-        """Instead of yielding one parent record at a time, make stream slice contain a batch of parent records.
-
-        It allows to get <SLICE_BATCH_SIZE> records by one requests (instead of only one).
-        """
-        batched_slice = []
-        for stream_slice in super().stream_slices(sync_mode, cursor_field, stream_state):
-            if len(batched_slice) == self.SLICE_BATCH_SIZE:
-                yield {"parents": batched_slice}
-                batched_slice = []
-            batched_slice.append(stream_slice["parent"])
-        if batched_slice:
-            yield {"parents": batched_slice}
-
-
-class RestSalesforceSubStream(BatchedSubStream, RestSalesforceStream):
-    pass
 
 
 class IncrementalRestSalesforceStream(RestSalesforceStream, CheckpointMixin, ABC):
@@ -513,7 +484,7 @@ class IncrementalRestSalesforceStream(RestSalesforceStream, CheckpointMixin, ABC
         stream_state: Mapping[str, Any],
         stream_slice: Mapping[str, Any] = None,
         next_page_token: Mapping[str, Any] = None,
-        property_chunk: Mapping[str, Any] = None,
+        property_chunk: Tuple[str, ...] = (),
     ) -> MutableMapping[str, Any]:
         if next_page_token:
             """
@@ -521,8 +492,8 @@ class IncrementalRestSalesforceStream(RestSalesforceStream, CheckpointMixin, ABC
             """
             return {}
 
-        property_chunk = property_chunk or {}
-        select_fields = ",".join(property_chunk.keys())
+        property_chunk = property_chunk or ()
+        select_fields = ",".join(property_chunk)
         table_name = self.name
 
         if not self._stream_slicer_cursor:

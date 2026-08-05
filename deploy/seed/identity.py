@@ -389,6 +389,7 @@ def run() -> None:
         # subject. An edge would put them in somebody's subtree, and a role
         # would make the refusal ambiguous — is it the tenant or the grant?
         n_persons += seed_persons(cur, TENANT_OTHER, other_roster)
+        n_login_id += seed_login_ids(cur, TENANT_OTHER, other_roster)
         n_names += seed_person_names(cur, TENANT_OTHER, other_roster)
         n_acct += seed_account_person_map(cur, TENANT_OTHER, other_roster)
 

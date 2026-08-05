@@ -1,0 +1,65 @@
+# Canonical broker realm shape (ADR-0003, EPIC insight#2193) — copy per env.
+# Applied by the umbrella's keycloak-config-cli hook Job from the ConfigMap
+# the gitops `keycloak-broker-realms` target packs; inert until the env sets
+# keycloakConfig.enabled=true.
+#
+# Rules: credential fields hold env placeholders only (resolved at apply time
+# from sealed Secrets); no placeholder syntax in comments — config-cli
+# substitution scans comments and an unresolvable placeholder fails the import.
+realm: insight-broker
+enabled: true
+
+clientScopes:
+  # The claim allow-list: tokens carry exactly email + single-string tenant_id
+  # (plus protocol-level sub). tenant_id is a user attribute stamped per IdP by
+  # a hardcoded-attribute-idp-mapper from the INSIGHT_TENANT_ID placeholder
+  # (global.tenantDefaultId) — pinned per env, never from an upstream claim.
+  - name: insight
+    description: Canonical Insight claim allow-list (email + single-string tenant_id)
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+    protocolMappers:
+      # email is a built-in UserModel property — property mapper, not attribute.
+      - name: email
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-property-mapper
+        consentRequired: false
+        config:
+          user.attribute: email
+          claim.name: email
+          jsonType.label: String
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+      - name: tenant_id
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-attribute-mapper
+        consentRequired: false
+        config:
+          user.attribute: tenant_id
+          claim.name: tenant_id
+          jsonType.label: String
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+clients:
+  # Authenticator client: full-scope off, exactly [basic, insight] — `basic`
+  # carries sub/session claims in access tokens on KC 24+, no identity claims.
+  - clientId: insight-authenticator
+    protocol: openid-connect
+    publicClient: false
+    secret: $(env:INSIGHT_AUTHENTICATOR_CLIENT_SECRET)
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    fullScopeAllowed: false
+    defaultClientScopes:
+      - basic
+      - insight
+    optionalClientScopes: []
+    redirectUris:
+      - $(env:INSIGHT_AUTHENTICATOR_REDIRECT_URI)
+    webOrigins: []

@@ -1,6 +1,6 @@
 # Salesforce Connector
 
-CDK-based Python connector for Salesforce CRM. Pulls data via the REST `/queryAll` API; describe-driven field discovery means no SOQL maintenance as SF orgs evolve; custom (`__c`) fields are captured into a single `custom_fields` JSON column so Bronze stays stable across orgs.
+CDK-based Python connector for Salesforce CRM. Pulls data via the REST `/queryAll` API; describe-driven field discovery means no SOQL maintenance as SF orgs evolve; static per-stream schemas keep Bronze identical across orgs, and every field outside a stream's schema — custom (`__c`) fields included — is preserved in the `raw_data` JSON column.
 
 ## Prerequisites
 
@@ -102,7 +102,7 @@ Every stream's Bronze table has:
 - **`unique_key`** — `{tenant_id}-{source_id}-{Id}` — stable surrogate PK.
 - **`data_source`** — literal `"salesforce"`.
 - **`collected_at`** — UTC ISO-8601 timestamp of the sync.
-- **`custom_fields`** — JSON string containing every `__c` field. Access in dbt via `JSONExtractString(custom_fields, 'MyField__c')`.
+- **`raw_data`** — JSON string containing the whole source record, including every field with no dedicated column. Access in dbt via `JSONExtractString(raw_data, 'MyField__c')`.
 
 ## Silver targets
 

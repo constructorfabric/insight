@@ -54,8 +54,6 @@ WITH src AS (
             'userId',   coalesce(toString(userId), ''),
             'archived', toString(coalesce(archived, false))
         ))                                              AS metadata,
-        -- Envelope parity with salesforce__crm_* (no HubSpot custom-fields blob).
-        '{}'                                            AS custom_fields,
         collected_at,
         data_source,
         greatest(

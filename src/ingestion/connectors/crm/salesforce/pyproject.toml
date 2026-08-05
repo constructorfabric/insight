@@ -37,4 +37,4 @@ where = ["."]
 include = ["source_salesforce*"]
 
 [tool.setuptools.package-data]
-"source_salesforce" = ["spec.json"]
+"source_salesforce" = ["spec.json", "stream_schemas/*.schema.json"]

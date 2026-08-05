@@ -93,13 +93,32 @@ heal_ai_dev_staging chatgpt_team__ai_dev_usage
 heal_ai_assistant_staging claude_enterprise__ai_assistant_usage
 heal_ai_assistant_staging chatgpt_team__ai_assistant_usage
 
-echo "=== Healing collab-chat and CRM contract schemas ==="
+echo "=== Healing CRM staging contract schemas ==="
+# The CRM overflow blob left the contract — the connectors carry the
+# unabridged record in raw_data — so the column must leave the physical
+# tables too, or the positional incremental insert misaligns. The silver
+# side drops in migrations/*.sql; staging drops here because these tables
+# exist only after the connector's first run. Idempotent.
+heal_crm_staging() {
+  local table="$1"
+  ch_table_exists staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} DROP COLUMN IF EXISTS custom_fields;
+SQL
+}
+
+for _crm_grain in accounts activities contacts deals users; do
+  heal_crm_staging "salesforce__crm_${_crm_grain}"
+  heal_crm_staging "hubspot__crm_${_crm_grain}"
+done
+
+echo "=== Healing collab-chat contract schema ==="
 # Same positional invariant: collab chat's direct_and_group_messages
-# (#266) was added mid-SELECT without a rebuild; CRM's hubspot members
-# lacked the custom_fields column the salesforce members project. Healed
-# here rather than in migrations/*.sql because the AFTER anchors do not
-# exist on the minimal gold-view placeholders — heals run only on real
-# tables (placeholders are replaced with the real schema at first build).
+# (#266) was added mid-SELECT without a rebuild. Healed here rather than
+# in migrations/*.sql because the AFTER anchors do not exist on the
+# minimal gold-view placeholders — heals run only on real tables
+# (placeholders are replaced with the real schema at first build).
 ch_table_is_real() {
   local db="$1" table="$2"
   ch_table_exists "$db" "$table" || return 1
@@ -122,30 +141,10 @@ ALTER TABLE ${db}.${table} MODIFY COLUMN direct_and_group_messages Nullable(Int6
 SQL
 }
 
-heal_crm_table() {
-  local db="$1" table="$2"
-  ch_table_is_real "$db" "$table" || return 0
-  echo "  ${db}.${table}"
-  run_ch <<SQL
-ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS custom_fields String DEFAULT '{}' AFTER metadata;
-ALTER TABLE ${db}.${table} MODIFY COLUMN custom_fields String DEFAULT '{}' AFTER metadata;
-SQL
-}
-
 heal_collab_chat_table staging m365__collab_chat_activity
 heal_collab_chat_table staging slack__collab_chat_activity
 heal_collab_chat_table staging zulip_proxy__collab_chat_activity
 heal_collab_chat_table silver class_collab_chat_activity
-heal_crm_table staging hubspot__crm_accounts
-heal_crm_table staging hubspot__crm_activities
-heal_crm_table staging hubspot__crm_contacts
-heal_crm_table staging hubspot__crm_deals
-heal_crm_table staging hubspot__crm_users
-heal_crm_table silver class_crm_accounts
-heal_crm_table silver class_crm_activities
-heal_crm_table silver class_crm_contacts
-heal_crm_table silver class_crm_deals
-heal_crm_table silver class_crm_users
 
 # Same positional invariant: the task-users staging views gained tenant_id
 # mid-SELECT (after unique_key) for the task observation attribution, and

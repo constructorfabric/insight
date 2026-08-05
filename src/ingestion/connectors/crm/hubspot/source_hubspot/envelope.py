@@ -2,9 +2,9 @@
 
 Every record emitted to Bronze is augmented with tenant / source scope and a
 deterministic ``unique_key`` so downstream dbt models can key off a single
-stable identifier. HubSpot custom properties (``hubspotDefined=false``) are
-pulled out into a single JSON blob so the Bronze schema stays stable across
-portals with different customizations.
+stable identifier. Only allowlisted properties get a top-level column, so the
+Bronze schema stays identical across portals with different customizations;
+everything else the portal returns survives inside ``raw_data``.
 """
 
 import hashlib
@@ -21,7 +21,14 @@ DATA_SOURCE = "hubspot"
 # (unlikely but possible with custom flat-top properties) would otherwise be
 # silently overwritten; we log and drop it instead.
 _RESERVED_FIELD_NAMES = frozenset(
-    {"tenant_id", "source_id", "unique_key", "data_source", "collected_at", "custom_fields"}
+    {
+        "tenant_id",
+        "source_id",
+        "unique_key",
+        "data_source",
+        "collected_at",
+        "raw_data",
+    }
 )
 
 # Per-property string truncation cap. Bounds the worst-case row width
@@ -50,6 +57,15 @@ def _truncate(value: Any) -> Any:
     return encoded[:allowed].decode("utf-8", errors="ignore") + _TRUNCATED_SUFFIX
 
 
+def _truncate_deep(value: Any) -> Any:
+    """Copy ``value``, truncating every string it contains."""
+    if isinstance(value, Mapping):
+        return {k: _truncate_deep(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_truncate_deep(v) for v in value]
+    return _truncate(value)
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -59,7 +75,7 @@ def envelope(
     *,
     tenant_id: str,
     source_id: str,
-    custom_property_names: frozenset,
+    allowed_property_names: frozenset,
     collision_seen: Optional[MutableSet[str]] = None,
 ) -> MutableMapping[str, Any]:
     """Return a copy of ``record`` with Insight metadata injected.
@@ -70,11 +86,13 @@ def envelope(
          "properties": {...}, "associations": {...}}
 
     The envelope:
-    - Flattens ``properties`` into top-level ``properties_{name}`` columns.
-    - Splits custom properties (names in ``custom_property_names``) into the
-      ``custom_fields`` JSON blob, keeping Bronze schema stable across portals.
+    - Flattens the properties named in ``allowed_property_names`` into
+      top-level ``properties_{name}`` columns — and only those, so the emitted
+      key set matches the advertised schema on every portal.
     - Keeps ``associations`` as-is (already flattened to id-array form by the
       association helper before this call).
+    - Serializes the whole incoming record into ``raw_data`` so properties
+      outside the advertised schema are still recoverable downstream.
     - Adds ``tenant_id`` / ``source_id`` / ``unique_key`` / ``data_source`` /
       ``collected_at``.
 
@@ -82,7 +100,6 @@ def envelope(
     collisions.
     """
     out: MutableMapping[str, Any] = {}
-    customs: dict = {}
     properties = record.get("properties") or {}
 
     for key, value in record.items():
@@ -94,23 +111,18 @@ def envelope(
         out[key] = value
 
     for prop_name, prop_value in properties.items():
-        # HubSpot property names always land under a ``properties_`` prefix so
-        # they can't collide with the unprefixed envelope reserved names; no
-        # collision check needed here.
-        if prop_name in custom_property_names:
-            # Drop null/empty values — HubSpot returns every defined custom
-            # property on every record, so a portal with hundreds of custom
-            # fields (mostly empty per row) would otherwise bloat the JSON
-            # blob 10–20× with dead keys.
-            if prop_value is None or prop_value == "":
-                continue
-            customs[prop_name] = _truncate(prop_value)
-        else:
-            out[f"properties_{prop_name}"] = _truncate(prop_value)
+        # A column the advertised schema never declared would be drift;
+        # ``raw_data`` carries what the allowlist leaves out.
+        if prop_name not in allowed_property_names:
+            continue
+        # The ``properties_`` prefix rules out collision with the unprefixed
+        # reserved names, so no collision check is needed here.
+        out[f"properties_{prop_name}"] = _truncate(prop_value)
 
-    # ClickHouse stores JSON blobs as strings; serialize once.
-    out["custom_fields"] = (
-        json.dumps(customs, separators=(",", ":"), default=str) if customs else "{}"
+    # Truncation is per value, never on the blob — clipping the serialized
+    # JSON would leave it unparseable.
+    out["raw_data"] = json.dumps(
+        _truncate_deep(record), separators=(",", ":"), default=str
     )
 
     hs_id = record.get("id")
@@ -154,7 +166,7 @@ ENVELOPE_FIELDS_SCHEMA = {
     "unique_key": {"type": "string"},
     "data_source": {"type": "string"},
     "collected_at": {"type": "string", "format": "date-time"},
-    "custom_fields": {"type": "string"},
+    "raw_data": {"type": "string"},
 }
 
 

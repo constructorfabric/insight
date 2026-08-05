@@ -56,6 +56,7 @@ mod m20260721_000001_metric_definition_short_label;
 mod m20260722_000001_metric_definition_last_observed;
 mod m20260727_000001_metric_evidence;
 mod m20260730_000001_saved_queries;
+mod m20260805_000001_semantic_definition_core;
 
 use sea_orm_migration::prelude::*;
 
@@ -121,6 +122,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260722_000001_metric_definition_last_observed::Migration),
             Box::new(m20260727_000001_metric_evidence::Migration),
             Box::new(m20260730_000001_saved_queries::Migration),
+            Box::new(m20260805_000001_semantic_definition_core::Migration),
         ]
     }
 }
@@ -162,6 +164,22 @@ pub const REQUIRED_CHECKS_BY_TABLE: &[(&str, &[&str])] = &[
     (
         "metric_definition_dimensions",
         m20260625_000001_metric_definitions::REQUIRED_DIMENSION_CHECKS,
+    ),
+    (
+        "semantic_datasets",
+        m20260805_000001_semantic_definition_core::REQUIRED_DATASET_CHECKS,
+    ),
+    (
+        "semantic_measures",
+        m20260805_000001_semantic_definition_core::REQUIRED_MEASURE_CHECKS,
+    ),
+    (
+        "semantic_metrics",
+        m20260805_000001_semantic_definition_core::REQUIRED_METRIC_CHECKS,
+    ),
+    (
+        "semantic_definition_revisions",
+        m20260805_000001_semantic_definition_core::REQUIRED_REVISION_CHECKS,
     ),
 ];
 
@@ -218,6 +236,22 @@ mod tests {
             (
                 "metric_definition_dimensions",
                 m20260625_000001_metric_definitions::REQUIRED_DIMENSION_CHECKS,
+            ),
+            (
+                "semantic_datasets",
+                m20260805_000001_semantic_definition_core::REQUIRED_DATASET_CHECKS,
+            ),
+            (
+                "semantic_measures",
+                m20260805_000001_semantic_definition_core::REQUIRED_MEASURE_CHECKS,
+            ),
+            (
+                "semantic_metrics",
+                m20260805_000001_semantic_definition_core::REQUIRED_METRIC_CHECKS,
+            ),
+            (
+                "semantic_definition_revisions",
+                m20260805_000001_semantic_definition_core::REQUIRED_REVISION_CHECKS,
             ),
         ];
 

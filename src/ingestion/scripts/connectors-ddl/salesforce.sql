@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS bronze_salesforce.Account
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS bronze_salesforce.Case
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -211,7 +211,7 @@ CREATE TABLE IF NOT EXISTS bronze_salesforce.Contact
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -278,7 +278,7 @@ CREATE TABLE IF NOT EXISTS bronze_salesforce.Event
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -353,7 +353,7 @@ CREATE TABLE IF NOT EXISTS bronze_salesforce.Lead
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -412,7 +412,7 @@ CREATE TABLE IF NOT EXISTS bronze_salesforce.Opportunity
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -441,7 +441,7 @@ CREATE TABLE IF NOT EXISTS bronze_salesforce.OpportunityContactRole
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -473,7 +473,7 @@ CREATE TABLE IF NOT EXISTS bronze_salesforce.OpportunityHistory
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -530,7 +530,7 @@ CREATE TABLE IF NOT EXISTS bronze_salesforce.Task
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -733,7 +733,7 @@ CREATE TABLE IF NOT EXISTS bronze_salesforce.User
     `unique_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `custom_fields` Nullable(String)
+    `raw_data` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

@@ -833,6 +833,11 @@ path = "docs/domain/semantic-layer/specs/PRD.md"
 name = "Semantic Layer PRD"
 traceability = "DOCS-ONLY"
 
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/semantic-layer/specs/ADR/ADR-001-adopt-compiler-over-datasets.md"
+name = "Semantic Layer ADR-001: Adopt One Compiler Over Datasets"
+
 [[systems]]
 name = "Ingestion Data Flow"
 slug = "dataflow"

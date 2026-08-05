@@ -95,15 +95,11 @@ class FakeHttpClient:
 class FakeHubspot:
     """Describe-time api stub: canned property descriptors, no HTTP."""
 
-    def __init__(self, names: Iterable[str] = ("amount", "my_custom"), custom: Iterable[str] = ("my_custom",)):
+    def __init__(self, names: Iterable[str] = ("amount", "my_custom")):
         self._names = tuple(names)
-        self._custom = frozenset(custom)
 
     def property_names(self, object_type: str) -> tuple:
         return self._names
-
-    def custom_property_names(self, object_type: str) -> frozenset:
-        return self._custom
 
     def generate_schema(self, object_type: str) -> Mapping[str, Any]:
         return {

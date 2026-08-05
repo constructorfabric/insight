@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "unique_key"
+  ],
+  "properties": {
+    "Id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "OpportunityId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ContactId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsPrimary": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "CreatedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "CreatedById": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "LastModifiedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "LastModifiedById": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "SystemModstamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "IsDeleted": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    }
+  }
+}

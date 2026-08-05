@@ -1,0 +1,1131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "unique_key"
+  ],
+  "properties": {
+    "Id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Username": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "LastName": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "FirstName": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "CompanyName": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Division": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Department": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Street": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "City": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "State": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "PostalCode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Country": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "StateCode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "CountryCode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Latitude": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "Longitude": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "GeocodeAccuracy": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Address": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Email": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "EmailPreferencesAutoBcc": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "EmailPreferencesAutoBccStayInTouch": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "EmailPreferencesStayInTouchReminder": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "SenderEmail": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "SenderName": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Signature": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "StayInTouchSubject": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "StayInTouchSignature": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "StayInTouchNote": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Phone": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Fax": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "MobilePhone": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Alias": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "CommunityNickname": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "BadgeText": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsActive": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "TimeZoneSidKey": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "UserRoleId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "LocaleSidKey": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ReceivesInfoEmails": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ReceivesAdminInfoEmails": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "EmailEncodingKey": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ProfileId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "UserType": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "StartDay": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "EndDay": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "LanguageLocaleKey": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "EmployeeNumber": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "DelegatedApproverId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ManagerId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "LastLoginDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "LastPasswordChangeDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "CreatedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "CreatedById": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "LastModifiedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "LastModifiedById": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "SystemModstamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "PasswordExpirationDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "NumberOfFailedLogins": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "SuAccessExpirationDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "OfflineTrialExpirationDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "OfflinePdaTrialExpirationDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "UserPermissionsMarketingUser": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPermissionsOfflineUser": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPermissionsCallCenterAutoLogin": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPermissionsSFContentUser": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPermissionsKnowledgeUser": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPermissionsInteractionUser": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPermissionsSupportUser": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPermissionsJigsawProspectingUser": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPermissionsSiteforceContributorUser": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPermissionsSiteforcePublisherUser": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPermissionsWorkDotComUserFeature": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ForecastEnabled": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesActivityRemindersPopup": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesEventRemindersCheckboxDefault": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesTaskRemindersCheckboxDefault": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesReminderSoundOff": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableAllFeedsEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableFollowersEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableProfilePostEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableChangeCommentEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableLaterCommentEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisProfPostCommentEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesContentNoEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesContentEmailAsAndWhen": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesApexPagesDeveloperMode": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesReceiveNoNotificationsAsApprover": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesReceiveNotificationsAsDelegatedApprover": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHideCSNGetChatterMobileTask": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableMentionsPostEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisMentionsCommentEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHideCSNDesktopTask": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHideChatterOnboardingSplash": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHideSecondChatterOnboardingSplash": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisCommentAfterLikeEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableLikeEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesSortFeedByComment": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableMessageEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesJigsawListUser": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableBookmarkEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableSharePostEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesActionLauncherEinsteinGptConsent": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesAssistiveActionsEnabledInActionLauncher": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesEnableAutoSubForFeeds": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableFileShareNotificationsForApi": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowTitleToExternalUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowManagerToExternalUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowEmailToExternalUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowWorkPhoneToExternalUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowMobilePhoneToExternalUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowFaxToExternalUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowStreetAddressToExternalUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowCityToExternalUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowStateToExternalUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowPostalCodeToExternalUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowCountryToExternalUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowProfilePicToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowTitleToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowCityToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowStateToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowPostalCodeToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowCountryToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowForecastingChangeSignals": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesLiveAgentMiawSetupDeflection": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHideS1BrowserUI": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesDisableEndorsementEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesPathAssistantCollapsed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesCacheDiagnostics": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowEmailToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowManagerToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowWorkPhoneToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowMobilePhoneToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowFaxToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowStreetAddressToGuestUsers": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesLightningExperiencePreferred": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesPreviewLightning": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHideEndUserOnboardingAssistantModal": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHideLightningMigrationModal": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHideSfxWelcomeMat": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHideBiggerPhotoCallout": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesGlobalNavBarWTShown": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesGlobalNavGridMenuWTShown": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesCreateLEXAppsWTShown": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesFavoritesWTShown": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesRecordHomeSectionCollapseWTShown": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesRecordHomeReservedWTShown": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesFavoritesShowTopFavorites": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesExcludeMailAppAttachments": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesSuppressTaskSFXReminders": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesSuppressEventSFXReminders": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesPreviewCustomTheme": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHasCelebrationBadge": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesUserDebugModePref": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesSRHOverrideActivities": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesNewLightningReportRunPageEnabled": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesReverseOpenActivitiesView": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowTerritoryTimeZoneShifts": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHasSentWarningEmail": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHasSentWarningEmail238": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesHasSentWarningEmail240": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesNativeEmailClient": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "UserPreferencesShowForecastingRoundedAmounts": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ContactId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "AccountId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "CallCenterId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Extension": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "FederationIdentifier": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "AboutMe": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "FullPhotoUrl": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "SmallPhotoUrl": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsExtIndicatorVisible": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "OutOfOfficeMessage": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "MediumPhotoUrl": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "DigestFrequency": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "DefaultGroupNotificationFrequency": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "JigsawImportLimitOverride": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "LastViewedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "LastReferencedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "BannerPhotoUrl": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "SmallBannerPhotoUrl": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "MediumBannerPhotoUrl": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsProfilePhotoActive": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "IndividualId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

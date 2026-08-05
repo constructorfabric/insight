@@ -676,13 +676,11 @@ cd src/ingestion/scripts/bootstrap-db
 ./generate-connectors-config.sh '<category>/<name>'
 ```
 
-**NEVER regenerate the whole file** (`./generate-connectors-config.sh` with no
-argument): it overwrites the four `env:` credential references
-(`HUBSPOT_ACCESS_TOKEN`, `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET`,
-`SALESFORCE_INSTANCE_URL`) with fake `value:` entries.
+Regenerate only your own fragment: a whole-file regeneration rewrites every
+connector's entry and buries your change in unrelated churn.
 
-Fake credentials in your own fragment are fine — bootstrap only calls
-`discover`, which reads the static spec, not the live API.
+Fake credentials are fine — bootstrap only calls `discover`, which builds the
+catalog from the connector's static schemas, not from the live API.
 
 ### 2. Keep shared silver class column types identical
 

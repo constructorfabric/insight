@@ -55,7 +55,6 @@ WITH src AS (
             'Type',      coalesce(toString(Type), ''),
             'IsDeleted', if(coalesce(IsDeleted, false), 'true', 'false')
         ))                                              AS metadata,
-        coalesce(custom_fields, '{}')                   AS custom_fields,
         CreatedDate                                     AS created_at,
         LastModifiedDate                                AS updated_at,
         data_source,
