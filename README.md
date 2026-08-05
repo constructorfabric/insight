@@ -127,7 +127,7 @@ Source code for all platform components.
 src/
 ├── ingestion/        ← Data pipeline (Airbyte + Argo + ClickHouse + dbt)
 ├── backend/          ← REST API server (Rust + cyberfabric-core)
-└── frontend/         ← SPA deployment (Dockerfile + Helm; source in separate repo)
+└── frontend/         ← SPA (React + TanStack source, Dockerfile, Helm)
 ```
 
 ### `docs/`
@@ -320,10 +320,10 @@ For cluster deployments image tags flow through automatically: the umbrella char
 | `insight-analytics` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-analytics |
 | `insight-identity-resolution` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-identity-resolution |
 | `insight-toolbox` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-toolbox |
-| `insight-front` | **separate** `constructorfabric/insight-front` | https://github.com/constructorfabric/insight/pkgs/container/insight-front |
+| `insight-front` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-front |
 | `insight-jira-enrich` | **separate** `constructorfabric/insight-jira-enrich` | https://github.com/constructorfabric/insight/pkgs/container/insight-jira-enrich |
 
-> **Note**: frontend and jira-enrich live in their own repos with independent release cadences — a backend tag (e.g. `2026.04.28.10.34-b08b460`) does **not** exist for `insight-front`. Pick the latest tag in the frontend's repo separately.
+> **Note**: jira-enrich lives in its own repo with an independent release cadence — a tag from this repo (e.g. `2026.04.28.10.34-b08b460`) does **not** exist for `insight-jira-enrich`. Pick the latest tag in that repo separately.
 
 ### CI/CD
 
@@ -342,8 +342,8 @@ cargo run --bin insight-api-gateway -- run -c services/api-gateway/config/no-aut
 # → http://localhost:8080/api/v1
 
 # Frontend
-cd ../insight-front       # or via the insight-front_symlink at repo root
-npm install && npm run dev
+cd src/frontend
+pnpm install && pnpm dev
 # → http://localhost:5173
 ```
 

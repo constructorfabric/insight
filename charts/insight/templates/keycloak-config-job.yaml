@@ -19,7 +19,7 @@ metadata:
   name: {{ include "insight.fullname" . }}-keycloak-config
   annotations:
     helm.sh/hook: post-install,post-upgrade
-    helm.sh/hook-weight: "10"
+    helm.sh/hook-weight: "100"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
   labels:
     {{- include "insight.labels" . | nindent 4 }}
@@ -47,8 +47,10 @@ spec:
           env:
             - name: KEYCLOAK_URL
               value: {{ $kcUrl | quote }}
+            # config-cli errors on a glob with no matches, so list only the
+            # patterns the env's realms dir actually contains.
             - name: IMPORT_FILES_LOCATIONS
-              value: "/config/*.yaml"
+              value: {{ .Values.keycloakConfig.filesLocations | quote }}
             # Resolves $(env:VAR) placeholders — how secrets reach realms.
             - name: IMPORT_VARSUBSTITUTION_ENABLED
               value: "true"

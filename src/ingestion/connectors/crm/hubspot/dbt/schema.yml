@@ -4,7 +4,7 @@ version: 2
 # Table names match the HubSpot CRM object path segment (lowercase plural)
 # as emitted by the Airbyte ClickHouse destination. Every table has the
 # Insight envelope columns:
-#   tenant_id, source_id, unique_key, data_source, collected_at, custom_fields
+#   tenant_id, source_id, unique_key, data_source, collected_at, raw_data
 # (JSON blob of all properties where hubspotDefined=false).
 
 sources:

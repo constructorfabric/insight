@@ -89,6 +89,7 @@ class ApiResponse:
 
     status_code: int
     headers: Mapping[str, str]
+    content: bytes
     text: str
     url: str
 
@@ -224,6 +225,7 @@ class ApiClient:
         return ApiResponse(
             status_code=response.status_code,
             headers={k.lower(): v for k, v in response.headers.items()},
+            content=response.content,
             text=response.text,
             url=str(response.url),
         )

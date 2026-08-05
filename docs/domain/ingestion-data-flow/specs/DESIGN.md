@@ -276,7 +276,7 @@ Raw API ingestion. Connector writes minimally-transformed JSON-decoded rows into
 
 ##### Why this component exists
 
-Per-connector cleanup, type coercion, projection, and dedup. Staging models hide bronze idiosyncrasies (Airbyte JSON envelopes, raw timestamp strings, custom_fields blobs) behind a normalized per-connector schema that silver can union without further per-source logic.
+Per-connector cleanup, type coercion, projection, and dedup. Staging models hide bronze idiosyncrasies (Airbyte JSON envelopes, raw timestamp strings, raw_data blobs) behind a normalized per-connector schema that silver can union without further per-source logic.
 
 ##### Responsibility scope
 

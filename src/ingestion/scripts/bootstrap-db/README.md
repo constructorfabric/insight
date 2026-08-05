@@ -2,14 +2,13 @@
 
 Creates all connector bronze tables in ClickHouse without running Airbyte, then promotes them to ReplacingMergeTree and builds the dbt/gold layers. Table schemas come from the connectors themselves (`discover`), so they never drift from what a real sync would create.
 
-How it works: for every connector the source image runs `discover` (schemas are static for most connectors, so fake credentials work), the resulting catalog is fed to the same `destination-clickhouse` connector Airbyte uses with a zero-record input, which creates every stream table empty.
+How it works: for every connector the source image runs `discover` (every connector's stream schemas are static, so fake credentials work), the resulting catalog is fed to the same `destination-clickhouse` connector Airbyte uses with a zero-record input, which creates every stream table empty.
 
 ## Prerequisites
 
 - `docker`, `jq`, `yq` (mikefarah v4)
 - `python3.12` or `python3.11` on `PATH` — `run-dbt.sh` builds a local `.venv` with the pinned dbt from it (parity with the toolbox image; dbt-core 1.10 does not run on newer pythons). A `python -m venv`-capable interpreter is required (uv-managed pythons lack `ensurepip`; with those, pre-build the venv via `uv venv --seed .venv && .venv/bin/pip install dbt-core==<pin> dbt-clickhouse==<pin>`).
 - ClickHouse reachable under `CLICKHOUSE_HOST` both from this machine (dbt) and from inside docker containers (destination connector). For a ClickHouse running on this machine use the machine's LAN IP (`ipconfig getifaddr en0`) — `host.docker.internal` resolves inside containers but not on the macOS host itself.
-- Real HubSpot and Salesforce credentials in `.env` — their CDK `discover` calls the live APIs, so fake values fail. Without credentials, seed their bronze from the committed snapshot instead: apply `../connectors-ddl/{hubspot,salesforce}.sql` (paths relative to this directory), run `./run-dbt.sh --select hubspot__bronze_promoted salesforce__bronze_promoted`, and continue from the dbt step.
 
 ## Local ClickHouse for testing
 
@@ -44,19 +43,10 @@ Throw it away with `docker rm -f bootstrap-db-clickhouse`.
    ./generate-connectors-config.sh 'bitbucket-cloud' > one.yaml
    ```
 
-2. Review the file. Every required config field gets a fake value; that is enough for connectors with static stream schemas. Connectors that build schemas from a live API (`hubspot`, `salesforce`) need real credentials — replace `value` with `env` to take the value from an environment variable at run time, so secrets never land in the file:
+2. Review the file. Every required config field gets a fake value, which is all `discover` needs. Should a future connector build its catalog from a live API, replace `value` with `env` to take that field from an environment variable at run time, so secrets never land in the file:
 
    ```yaml
 connectors:
-  hubspot:
-    path: crm/hubspot
-    config:
-      hubspot_access_token:
-        env: HUBSPOT_ACCESS_TOKEN
-      insight_source_id:
-        value: hubspot-acme-prod
-      insight_tenant_id:
-        value: fake
   salesforce:
     path: crm/salesforce
     config:
@@ -65,13 +55,18 @@ connectors:
       insight_tenant_id:
         value: fake
       salesforce_client_id:
-        env: SALESFORCE_CLIENT_ID
+        value: fake
       salesforce_client_secret:
-        env: SALESFORCE_CLIENT_SECRET
+        value: fake
       salesforce_instance_url:
-        env: SALESFORCE_INSTANCE_URL
+        value: https://mycompany.my.salesforce.com
       salesforce_start_date:
         value: "2024-01-01"
+  example-live-catalog-connector:
+    path: category/name
+    config:
+      api_token:
+        env: EXAMPLE_API_TOKEN
    ```
 
    The file contains no secrets and can be committed to the repository.
@@ -88,13 +83,10 @@ connectors:
 
 ## Everything from scratch, one block
 
-The full cycle — throwaway ClickHouse, fresh `.env`, bootstrap, snapshot re-dump, field-parity audit, cleanup — as a single copy-paste. Only prerequisite: `HUBSPOT_ACCESS_TOKEN`, `SALESFORCE_INSTANCE_URL`, `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET` exported in the current shell (their `discover` calls the live APIs). **Overwrites `.env`** next to the scripts.
+The full cycle — throwaway ClickHouse, fresh `.env`, bootstrap, snapshot re-dump, field-parity audit, cleanup — as a single copy-paste. No credentials needed: every connector discovers on fake config values. **Overwrites `.env`** next to the scripts.
 
 ```bash
 cd src/ingestion/scripts/bootstrap-db
-
-: "${HUBSPOT_ACCESS_TOKEN:?export real credentials first}"
-: "${SALESFORCE_INSTANCE_URL:?}" "${SALESFORCE_CLIENT_ID:?}" "${SALESFORCE_CLIENT_SECRET:?}"
 
 source pins.env
 docker rm -f bootstrap-db-clickhouse 2>/dev/null
@@ -114,10 +106,6 @@ CLICKHOUSE_PROTOCOL=http
 CLICKHOUSE_USER=insight
 CLICKHOUSE_PASSWORD=insight
 CLICKHOUSE_DATABASE=insight
-HUBSPOT_ACCESS_TOKEN=${HUBSPOT_ACCESS_TOKEN}
-SALESFORCE_INSTANCE_URL=${SALESFORCE_INSTANCE_URL}
-SALESFORCE_CLIENT_ID=${SALESFORCE_CLIENT_ID}
-SALESFORCE_CLIENT_SECRET=${SALESFORCE_CLIENT_SECRET}
 EOF
 
 until curl -sf "http://localhost:8123/ping" >/dev/null; do sleep 1; done
@@ -161,7 +149,7 @@ Contributors whose physical table is not owned by dbt are covered too. `jira__ta
 | `bootstrap-db.sh <config.yaml>` | Sources `pins.env` and `.env` (if present), runs `seed-connectors.sh`, runs all dbt models, runs `../apply-ch-migrations.sh`. |
 | `run-dbt.sh [dbt args]` | Helper: generates a profiles.yml from the `CLICKHOUSE_*` variables and runs `dbt run` in `src/ingestion/dbt`. |
 | `check-field-parity.py [--manifest PATH]` | Audits every staging contributor against its silver union target (column set, positional order, exact type) plus manifest-vs-warehouse coverage. Same `CLICKHOUSE_*` env contract as the other scripts. Non-zero exit on any finding. |
-| `dump-ddl.sh` | Dumps `SHOW CREATE` for every `bronze_*` table, the `person`/`identity`/`silver`/`insight` databases (tables and views), and the gold-referenced `staging` tables into `../connectors-ddl/*.sql` — the committed snapshot that `../create-bronze-placeholders.sh` applies on fresh clusters. **Run it manually** after `bootstrap-db.sh` (see step above) whenever a schema changes, and commit the diff. `.github/workflows/connectors-ddl.yml` re-runs the whole pipeline on every same-repository PR and on every commit to `main`, and fails when the committed snapshot no longer matches. On PR drift its `regen-pr` job opens a stacked PR against the PR's branch with the regenerated snapshot (and links it in a sticky comment) — review the DDL diff there and merge, no local regeneration or CRM credentials needed. Drift on `main` stays a red run. |
+| `dump-ddl.sh` | Dumps `SHOW CREATE` for every `bronze_*` table, the `person`/`identity`/`silver`/`insight` databases (tables and views), and the gold-referenced `staging` tables into `../connectors-ddl/*.sql` — the committed snapshot that `../create-bronze-placeholders.sh` applies on fresh clusters. **Run it manually** after `bootstrap-db.sh` (see step above) whenever a schema changes, and commit the diff. `.github/workflows/connectors-ddl.yml` re-runs the whole pipeline on every PR and on every commit to `main`, and fails when the committed snapshot no longer matches. On PR drift its `regen-pr` job opens a stacked PR against the PR's branch with the regenerated snapshot (and links it in a sticky comment) — review the DDL diff there and merge, no local regeneration needed. That job is same-repository only; a fork PR gets the regenerated snapshot as a downloadable artifact instead. Drift on `main` stays a red run. |
 
 ## Image pins (pins.env)
 

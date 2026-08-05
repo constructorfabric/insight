@@ -191,7 +191,7 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.05.04.41-25ca9bd" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.05.10.51-5290fb8" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -393,24 +393,27 @@ fakeidp:
   issuer: ""
   defaultAudience: "insight-authenticator"
   devUserEmail: "dev@company.nonpresent"
-# ─── keycloak (real-OIDC dev/e2e IdP — NEVER a real environment) ────────────
-# The heavier, real-login counterpart to fakeidp. Off by default; local k8s
-# flips keycloak.deploy=true + fakeidp.deploy=false and points the authenticator
-# at the pre-seeded `insight-authenticator` confidential client. The realm is
-# generated (deploy/compose/keycloak/gen-realm.py) into a ConfigMap the deploy
-# flow applies as `<release>-keycloak-realm` before this chart.
+# ─── keycloak ────────────────────────────────────────────────────────────────
+# The stack's Keycloak (identity broker, ADR-0003): start, MariaDB-backed,
+# admin from a Secret; realm content via keycloakConfig only.
 keycloak:
   deploy: false
   image:
     repository: quay.io/keycloak/keycloak
     tag: "26.4"
     pullPolicy: IfNotPresent
-  # Advertised issuer BASE (must end in /kc). Both the browser and the in-cluster
-  # authenticator reach it here, so it's the ingress-LB URL (e.g. http://<lb-ip>/kc).
-  # `authenticator.oidc.issuerUrl` MUST equal `${hostname}/realms/insight`.
+  # Advertised issuer BASE (must end in /kc) — the URL browser AND
+  # authenticator reach, e.g. https://<host>/kc.
   hostname: ""
-  # Pre-created realm ConfigMap (empty = <release>-keycloak-realm).
-  realmConfigMap: ""
+  # Bootstrap-admin Secret (keys username/password) and DB connection.
+  admin:
+    existingSecret: ""
+  database:
+    host: ""
+    port: 3306
+    name: "keycloak"
+    username: ""
+    passwordSecret: {name: "", key: ""}
   ingress:
     enabled: false
 # ─── keycloakConfig (broker realms as code — ADR-0003, EPIC #2193) ──────────
@@ -428,8 +431,10 @@ keycloakConfig:
   # allowInsecureUrl=true (in-cluster dev/CI Keycloak only).
   url: ""
   allowInsecureUrl: false
-  # envFrom Secret: KEYCLOAK_USER/KEYCLOAK_PASSWORD + any $(env:VAR) the realm
-  # YAML references. Sealed in gitops — never a value in realm YAML.
+  # envFrom Secret: any $(env:VAR) the realm YAML references; the config-cli
+  # login (KEYCLOAK_USER/KEYCLOAK_PASSWORD) is mapped from the same Secret's
+  # username/password keys via extraEnv. Sealed in gitops — never a value in
+  # realm YAML.
   existingSecret: "insight-keycloak-config"
   # Extra env entries for placeholders resolving from OTHER Secrets (single
   # sealed source of truth; also the only way to reach non-C-identifier keys,
@@ -440,6 +445,10 @@ keycloakConfig:
   # The Job also injects INSIGHT_TENANT_ID from global.tenantDefaultId (set):
   # realm IdP mappers pin the tenant per environment, never from IdP claims.
   extraEnv: []
+  # Glob(s) config-cli imports, comma-separated. config-cli FAILS on any
+  # glob with zero matches — list only patterns the env's realms dir
+  # always contains. Local adds ',/config/*.json' for the generated realm.
+  filesLocations: "/config/*.yaml"
   # Pre-created realms ConfigMap (empty = <release>-keycloak-config-realms).
   realmsConfigMap: ""
   resources:

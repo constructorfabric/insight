@@ -15,10 +15,7 @@ use crate::domain::metric_definitions::repository::{
     source_evidence_granularities, update_definition_status, update_definitions_for_source_status,
     update_evidence_status, update_source_status,
 };
-use crate::domain::metric_drilldown::{
-    EVIDENCE_QUERY_MEMORY_BYTES, EVIDENCE_QUERY_READ_BYTES, EVIDENCE_QUERY_RESULT_BYTES,
-    EVIDENCE_QUERY_TIMEOUT_SECS,
-};
+use crate::domain::metric_drilldown::with_evidence_query_limits;
 
 // Dimension coverage is checked over a trailing window anchored at the
 // newest observed row, not at today(): rows predating a dimension's
@@ -502,17 +499,8 @@ impl MetricDefinitionValidator {
         let (observation_database, observation_table) = observation_relation.table_ref();
         let observation_sql =
             evidence_observation_dates_sql(observation_database, observation_table, expected.len());
-        let mut observation_query = self
-            .ch
-            .query(&observation_sql)
-            .with_option(
-                "max_execution_time",
-                EVIDENCE_QUERY_TIMEOUT_SECS.to_string(),
-            )
-            .with_option("max_memory_usage", EVIDENCE_QUERY_MEMORY_BYTES.to_string())
-            .with_option("max_bytes_to_read", EVIDENCE_QUERY_READ_BYTES.to_string())
-            .with_option("max_result_bytes", EVIDENCE_QUERY_RESULT_BYTES.to_string())
-            .bind(source_key);
+        let mut observation_query =
+            with_evidence_query_limits(self.ch.query(&observation_sql)).bind(source_key);
         for (measure_key, _) in expected {
             observation_query = observation_query.bind(measure_key);
         }
@@ -522,17 +510,7 @@ impl MetricDefinitionValidator {
 
         let (database, table) = relation.table_ref();
         let sql = evidence_granularity_sql(database, table, expected.len(), window_start.is_some());
-        let mut query = self
-            .ch
-            .query(&sql)
-            .with_option(
-                "max_execution_time",
-                EVIDENCE_QUERY_TIMEOUT_SECS.to_string(),
-            )
-            .with_option("max_memory_usage", EVIDENCE_QUERY_MEMORY_BYTES.to_string())
-            .with_option("max_bytes_to_read", EVIDENCE_QUERY_READ_BYTES.to_string())
-            .with_option("max_result_bytes", EVIDENCE_QUERY_RESULT_BYTES.to_string())
-            .bind(source_key);
+        let mut query = with_evidence_query_limits(self.ch.query(&sql)).bind(source_key);
         for (measure_key, _) in expected {
             query = query.bind(measure_key);
         }
@@ -662,6 +640,7 @@ struct ColumnProbeRow {
 }
 
 #[derive(Row, Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
 struct MeasureLastDateProbeRow {
     measure_key: String,
     last_date: String,
@@ -675,6 +654,7 @@ struct DimensionCoverageProbeRow {
 }
 
 #[derive(Row, Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
 struct EvidenceGranularityProbeRow {
     measure_key: String,
     granularities: Vec<String>,
@@ -1235,5 +1215,37 @@ mod tests {
             matching_rows: 4,
         }];
         assert!(!all_measures_covered(&windows, missing));
+    }
+
+    // Drives the two-probe granularity check (observation dates, then
+    // granularities) against an in-process mock server, so the bounded query
+    // paths run end-to-end.
+    #[tokio::test]
+    async fn granularity_probe_matches_against_a_mock_server() {
+        use clickhouse::test::{Mock, handlers};
+
+        let mock = Mock::new();
+        mock.add(handlers::provide(vec![MeasureLastDateProbeRow {
+            measure_key: "accepted_lines".to_owned(),
+            last_date: "2026-07-01".to_owned(),
+        }]));
+        mock.add(handlers::provide(vec![EvidenceGranularityProbeRow {
+            measure_key: "accepted_lines".to_owned(),
+            granularities: vec!["event".to_owned()],
+        }]));
+
+        let validator = MetricDefinitionValidator::new(
+            sea_orm::DatabaseConnection::Disconnected,
+            insight_clickhouse::Client::new(insight_clickhouse::Config::new(mock.url(), "silver")),
+        );
+        let evidence = EvidenceRelation::parse("git_metric_evidence")
+            .unwrap_or_else(|| panic!("evidence relation must parse"));
+        let expected = vec![("accepted_lines".to_owned(), Some("event".to_owned()))];
+
+        let matched = validator
+            .evidence_granularities_match(&evidence, &relation(), "git", &expected)
+            .await
+            .unwrap_or_else(|error| panic!("probe queries must succeed: {error}"));
+        assert!(matched, "single observed granularity must match");
     }
 }

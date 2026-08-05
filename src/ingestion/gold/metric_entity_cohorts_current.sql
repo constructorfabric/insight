@@ -2,7 +2,7 @@
     materialized='table',
     engine='MergeTree',
     order_by=['tenant_id', 'entity_type', 'cohort_key', 'entity_id'],
-    schema='insight',
+    schema=var('gold_database'),
     alias='metric_entity_cohorts_current',
     tags=['gold']
 ) }}

@@ -337,39 +337,45 @@ local-wizard:
 	bash "$$WIZARD" --target=k8s-local
 
 .PHONY: keycloak-realm
-# Generate the Keycloak dev realm from the seed roster (deploy/compose/keycloak/
-# gen-realm.py) and apply it as the `$(RELEASE)-keycloak-realm` ConfigMap that the
-# insight-keycloak subchart mounts + imports. Runs before deploy-app in local-up.
-# No-op unless keycloak.deploy=true (fakeidp installs need nothing here).
+# ENV=local sandbox inputs for the in-stack Keycloak: generate the roster
+# realm (gen-realm.py) into the env realms dir — keycloak-broker-realms packs
+# it with the rest — and ensure the sandbox admin/placeholder Secret.
+# No-op unless keycloak.deploy=true.
 keycloak-realm: kube-ctx values-present
-	@if [ "$$(yq -r '.keycloak.deploy // false' $(VALUES))" != "true" ]; then \
-	  echo "$(C_YEL)skip$(C_RST) keycloak-realm (keycloak.deploy != true)"; exit 0; fi
-	@GEN="$$(cd ../.. && pwd)/deploy/compose/keycloak/gen-realm.py"; \
-	OUT="$(RENDER_DIR)/realm-insight-$(ENV).json"; mkdir -p "$(RENDER_DIR)"; \
+	@set -e; \
+	if [ "$$(yq -r '.keycloak.deploy // false' $(VALUES))" != "true" ]; then \
+	  echo "$(C_YEL)skip$(C_RST) keycloak-realm (keycloak.deploy != true)"; exit 0; fi; \
+	GEN="$$(cd ../.. && pwd)/deploy/compose/keycloak/gen-realm.py"; \
+	DIR=environments/$(ENV)/keycloak/realms; mkdir -p "$$DIR"; \
+	OUT="$$DIR/realm-insight.generated.json"; \
 	DEV_EMAIL="$$(yq -r '.fakeidp.devUserEmail // "dev@company.nonpresent"' $(VALUES))"; \
 	REDIRECT="$$(yq -r '.authenticator.oidc.redirectUri // "http://localhost/auth/callback"' $(VALUES))"; \
+	AUTH_SECRET="$$(yq -r '.authenticator.oidc.clientSecret // "insight-authenticator-dev-secret"' $(VALUES))"; \
 	KC_BASE="$$(yq -r '.keycloak.hostname // ""' $(VALUES))"; \
 	LB_REDIRECT="$${KC_BASE%/kc}/auth/callback"; \
 	echo "$(C_GRN)→$(C_RST) generating Keycloak realm (dev-lead $$DEV_EMAIL; redirects $$REDIRECT, $$LB_REDIRECT)"; \
 	python3 "$$GEN" --dev-email "$$DEV_EMAIL" \
 	  --authenticator-redirect "$$REDIRECT" \
 	  --authenticator-redirect "$$LB_REDIRECT" \
+	  --authenticator-secret "$$AUTH_SECRET" \
 	  --out "$$OUT"; \
-	kubectl --context $(KUBE_CTX) -n $(NS_APP) create configmap $(RELEASE)-keycloak-realm \
-	  --from-file=realm-insight.json="$$OUT" --dry-run=client -o yaml | \
-	  kubectl --context $(KUBE_CTX) -n $(NS_APP) apply -f -; \
-	echo "$(C_GRN)applied$(C_RST) configmap $(RELEASE)-keycloak-realm → $(NS_APP)"
+	kubectl --context $(KUBE_CTX) -n $(NS_APP) create secret generic insight-keycloak-config \
+	  --from-literal=username=admin --from-literal=password=admin \
+	  --from-literal=INSIGHT_AUTHENTICATOR_CLIENT_SECRET="$$AUTH_SECRET" \
+	  --from-literal=INSIGHT_AUTHENTICATOR_REDIRECT_URI="$$REDIRECT" \
+	  --dry-run=client -o yaml | kubectl --context $(KUBE_CTX) -n $(NS_APP) apply -f -; \
+	echo "$(C_GRN)generated$(C_RST) $$OUT + sandbox secret insight-keycloak-config"
 
 .PHONY: keycloak-broker-realms
-# Pack environments/$(ENV)/keycloak/realms/*.yaml into the ConfigMap the
+# Pack environments/$(ENV)/keycloak/realms/* into the ConfigMap the
 # umbrella's keycloak-config-cli hook Job applies (ADR-0003). Chained into
 # deploy-insight; no-op unless keycloakConfig.enabled=true.
 keycloak-broker-realms: kube-ctx values-present
 	@if [ "$$(yq -r '.keycloakConfig.enabled // false' $(VALUES))" != "true" ]; then \
 	  echo "$(C_YEL)skip$(C_RST) keycloak-broker-realms (keycloakConfig.enabled != true)"; exit 0; fi; \
 	DIR=environments/$(ENV)/keycloak/realms; \
-	ls $$DIR/*.yaml >/dev/null 2>&1 \
-	  || { echo "$(C_RED)ERROR$(C_RST): keycloakConfig.enabled=true but no realm YAML in $$DIR/"; exit 1; }; \
+	ls $$DIR/* >/dev/null 2>&1 \
+	  || { echo "$(C_RED)ERROR$(C_RST): keycloakConfig.enabled=true but no realm files in $$DIR/"; exit 1; }; \
 	kubectl --context $(KUBE_CTX) -n $(NS_APP) create configmap $(RELEASE)-keycloak-config-realms \
 	  --from-file="$$DIR" --dry-run=client -o yaml | \
 	  kubectl --context $(KUBE_CTX) -n $(NS_APP) apply -f -; \

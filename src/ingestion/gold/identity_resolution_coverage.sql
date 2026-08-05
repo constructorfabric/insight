@@ -2,7 +2,7 @@
     materialized='table',
     engine='MergeTree',
     order_by=['source_key'],
-    schema='insight',
+    schema=var('gold_database'),
     alias='identity_resolution_coverage',
     tags=['gold']
 ) }}

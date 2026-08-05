@@ -1,0 +1,316 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "unique_key"
+  ],
+  "properties": {
+    "Id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "WhoId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "WhatId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Subject": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Location": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsAllDayEvent": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ActivityDateTime": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "ActivityDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "DurationInMinutes": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "StartDateTime": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "EndDateTime": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "EndDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "Description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "AccountId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "OwnerId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsPrivate": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ShowAs": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsDeleted": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "IsChild": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "IsGroupEvent": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "GroupEventType": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "CreatedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "CreatedById": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "LastModifiedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "LastModifiedById": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "SystemModstamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "IsArchived": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "RecurrenceActivityId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsRecurrence": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "RecurrenceStartDateTime": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "RecurrenceEndDateOnly": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "RecurrenceTimeZoneSidKey": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "RecurrenceType": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "RecurrenceInterval": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "RecurrenceDayOfWeekMask": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "RecurrenceDayOfMonth": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "RecurrenceInstance": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "RecurrenceMonthOfYear": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ReminderDateTime": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "IsReminderSet": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "EventSubtype": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsRecurrence2Exclusion": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "Recurrence2PatternText": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Recurrence2PatternVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsRecurrence2": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "IsRecurrence2Exception": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "Recurrence2PatternStartDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "Recurrence2PatternTimeZone": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ServiceAppointmentId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

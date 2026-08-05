@@ -35,7 +35,7 @@
         engine='MergeTree',
         order_by=order_by,
         partition_by='toYYYYMM(metric_date)',
-        schema='insight',
+        schema=var('gold_database'),
         tags=['gold'],
         query_settings=metric_serving_query_settings(join_use_nulls=join_use_nulls)
     ) }}

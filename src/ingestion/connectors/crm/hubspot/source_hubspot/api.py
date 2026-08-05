@@ -20,11 +20,7 @@ from airbyte_cdk.models import FailureType
 from airbyte_cdk.sources.streams.http import HttpClient
 from airbyte_cdk.utils import AirbyteTracedException
 
-from source_hubspot.constants import (
-    ALLOWED_PROPERTIES_BY_OBJECT,
-    BASE_URL,
-    HUBSPOT_TYPE_TO_JSON_SCHEMA,
-)
+from source_hubspot.constants import ALLOWED_PROPERTIES_BY_OBJECT, BASE_URL
 from source_hubspot.rate_limiting import HubspotErrorHandler
 
 
@@ -75,8 +71,8 @@ class Hubspot:
         )
 
         # Per-entity describe cache: {object_type: (property dict, ...)}.
-        # Populated by ``properties_for()`` so ``custom_property_names()`` and
-        # schema generation share a single describe call per object.
+        # Populated by ``properties_for()`` so repeated lookups share a single
+        # describe call per object.
         self._properties_cache: Dict[str, Tuple[Mapping[str, Any], ...]] = {}
 
     # ------- Check connection (scope validation) -----------------------------
@@ -154,32 +150,14 @@ class Hubspot:
         self._properties_cache[object_type] = payload
         return payload
 
-    def custom_property_names(self, object_type: str) -> frozenset:
-        """Names of properties where ``hubspotDefined`` is False.
+    def property_names(self, object_type: str) -> Tuple[str, ...]:
+        """Every property the portal defines for ``object_type``.
 
-        These get routed into the ``custom_fields`` JSON blob by the envelope,
-        keeping Bronze schema stable across portals with different customizations.
+        Both consumers send this list in a JSON request body (search, archived
+        batch_read), so there's no URL-length ceiling to ration against.
         """
         props = self.properties_for(object_type)
-        return frozenset(
-            p["name"]
-            for p in props
-            if p.get("name") and not p.get("hubspotDefined")
-        )
-
-    def property_names(self, object_type: str) -> Tuple[str, ...]:
-        """Curated standard properties + all custom (tenant-defined) properties."""
-        props = self.properties_for(object_type)
-        curated = ALLOWED_PROPERTIES_BY_OBJECT.get(object_type, frozenset())
-        selected = []
-        for p in props:
-            name = p.get("name")
-            if not name:
-                continue
-            if p.get("hubspotDefined") and name not in curated:
-                continue
-            selected.append(name)
-        return tuple(selected)
+        return tuple(p["name"] for p in props if p.get("name"))
 
     def probe_association_scope(self) -> Optional[str]:
         """Verify the token has association read scope.
@@ -211,8 +189,12 @@ class Hubspot:
         return None
 
     def generate_schema(self, object_type: str) -> Mapping[str, Any]:
-        """Build a JSON schema from the curated property descriptors."""
-        props = self.properties_for(object_type)
+        """Build the advertised JSON schema for ``object_type``.
+
+        Derived entirely from ``ALLOWED_PROPERTIES_BY_OBJECT`` — no describe
+        call — so the Bronze table shape is identical across portals. An
+        allowlisted property a portal doesn't define simply stays NULL.
+        """
         schema: Dict[str, Any] = {
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
@@ -225,37 +207,10 @@ class Hubspot:
                 "archivedAt": {"type": ["string", "null"], "format": "date-time"},
             },
         }
-        curated = ALLOWED_PROPERTIES_BY_OBJECT.get(object_type, frozenset())
-        warned_unknown: set = set()
-        for prop in props:
-            name = prop.get("name")
-            if not name or not prop.get("hubspotDefined"):
-                continue
-            if name not in curated:
-                continue
-            schema["properties"][f"properties_{name}"] = _prop_to_json_schema(
-                prop, warned_unknown
-            )
+        # Every property column is a string: HubSpot returns all property
+        # values as JSON strings, so a typed column would make the destination
+        # NULL every row it can't deserialize. dbt coerces downstream.
+        for name in sorted(ALLOWED_PROPERTIES_BY_OBJECT.get(object_type, frozenset())):
+            schema["properties"][f"properties_{name}"] = {"type": ["string", "null"]}
+
         return schema
-
-
-def _prop_to_json_schema(
-    prop: Mapping[str, Any], warned_unknown: set
-) -> Mapping[str, Any]:
-    """Map a HubSpot property descriptor to a JSON-schema property."""
-    hs_type = (prop.get("type") or "string").lower()
-    mapped = HUBSPOT_TYPE_TO_JSON_SCHEMA.get(hs_type)
-    if not mapped:
-        if hs_type not in warned_unknown:
-            logger.warning(
-                "Unknown HubSpot property type %r on %r; falling back to string",
-                hs_type,
-                prop.get("name"),
-            )
-            warned_unknown.add(hs_type)
-        mapped = ("string", None)
-    json_type, fmt = mapped
-    out: Dict[str, Any] = {"type": [json_type, "null"]}
-    if fmt:
-        out["format"] = fmt
-    return out

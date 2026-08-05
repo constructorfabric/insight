@@ -1,13 +1,11 @@
-"""Salesforce REST client, OAuth token provider, and describe-based schema generation.
+"""Salesforce REST client, OAuth token provider, and describe-based field discovery.
 
 The ``Salesforce`` class handles auth via OAuth 2.0 Client Credentials flow
 (operator supplies ``instance_url``, ``client_id``, ``client_secret``) and
-exposes ``describe()`` plus ``generate_schema()`` used by streams to build
-SOQL and advertise shapes to the destination. ``SalesforceTokenProvider``
-keeps the access token fresh across long syncs.
+exposes ``describe()`` plus ``field_names()`` used by streams to build SOQL.
+``SalesforceTokenProvider`` keeps the access token fresh across long syncs.
 """
 
-import concurrent.futures
 import logging
 import threading
 import time
@@ -15,9 +13,8 @@ from typing import Any, List, Mapping, Optional, Tuple
 
 import requests
 from requests import adapters as request_adapters
-from requests.exceptions import RequestException
 
-from airbyte_cdk.models import ConfiguredAirbyteCatalog, FailureType, StreamDescriptor
+from airbyte_cdk.models import FailureType, StreamDescriptor
 from airbyte_cdk.sources.declarative.auth.token_provider import TokenProvider
 from airbyte_cdk.sources.streams.http import HttpClient
 from airbyte_cdk.sources.streams.http.requests_native_auth.abstract_token import (
@@ -28,18 +25,14 @@ from airbyte_cdk.utils import AirbyteTracedException
 from source_salesforce.constants import (
     API_VERSION,
     CRM_STREAMS,
-    DATE_TYPES,
-    LOOSE_TYPES,
-    NUMBER_TYPES,
     PARALLEL_TASKS_SIZE,
     QUERY_INCOMPATIBLE_SALESFORCE_OBJECTS,
     QUERY_RESTRICTED_SALESFORCE_OBJECTS,
-    STRING_TYPES,
     TOKEN_REFRESH_INTERVAL_SECONDS,
     UNSUPPORTED_STREAMS,
 )
-from source_salesforce.exceptions import TypeSalesforceException
 from source_salesforce.rate_limiting import SalesforceErrorHandler
+from source_salesforce.schema_loader import available_stream_names
 
 logger = logging.getLogger("airbyte")
 
@@ -66,6 +59,16 @@ class SalesforceTokenProvider(TokenProvider):
         self._lock = threading.Lock()
 
     def get_token(self) -> str:
+        if self._sf_api.access_token is None:
+            # Authenticate on demand: discover advertises static schemas and
+            # issues no request, so nothing should log in until a caller
+            # actually needs a bearer token. A failure here has no previous
+            # token to fall back on and must surface.
+            with self._lock:
+                if self._sf_api.access_token is None:
+                    self._sf_api.login()
+                    self._last_refresh_time = time.monotonic()
+
         elapsed = time.monotonic() - self._last_refresh_time
         if elapsed >= TOKEN_REFRESH_INTERVAL_SECONDS:
             with self._lock:
@@ -175,15 +178,16 @@ class Salesforce:
             error_handler=SalesforceErrorHandler(token_provider=self._token_provider),
         )
 
-        # Cache of full describe() responses per sobject. Populated by
-        # generate_schemas(); read by get_custom_field_names() so callers can
-        # split records into (standard, custom) without a second describe call.
+        # Cache of full describe() responses per sobject, so building a
+        # stream's SOQL field list costs one describe call.
         self._sobject_describes: dict = {}
 
     # ------- Auth ------------------------------------------------------------
 
     def _get_standard_headers(self) -> Mapping[str, str]:
-        return {"Authorization": f"Bearer {self.access_token}"}
+        # Through the provider, not the raw attribute: describe is often the
+        # first authenticated call of a sync, and nothing has logged in for it.
+        return {"Authorization": f"Bearer {self._token_provider.get_token()}"}
 
     def login(self) -> None:
         """Obtain an access token via OAuth 2.0 Client Credentials flow.
@@ -250,17 +254,22 @@ class Salesforce:
         self,
         sobject: Optional[str] = None,
         sobject_options: Optional[Mapping[str, Any]] = None,
-    ) -> Mapping[str, Any]:
+        allow_missing: bool = False,
+    ) -> Optional[Mapping[str, Any]]:
         """Describe all sobjects (``sobject`` None) or a specific sobject.
 
         Raises on 404 for a named sobject rather than returning a bad payload —
-        callers depend on ``fields``/``sobjects`` keys being present.
+        callers depend on ``fields``/``sobjects`` keys being present. With
+        ``allow_missing`` a 404 returns None instead, for callers that treat an
+        absent sobject as a per-org fact rather than a failure.
         """
         headers = self._get_standard_headers()
         endpoint = "sobjects" if not sobject else f"sobjects/{sobject}/describe"
         url = f"{self.instance_url}/services/data/{self.version}/{endpoint}"
         resp = self._make_request("GET", url, headers=headers)
         if resp.status_code == 404 and sobject:
+            if allow_missing:
+                return None
             raise AirbyteTracedException(
                 message=(
                     f"Salesforce sobject '{sobject}' not found. Check the "
@@ -278,85 +287,33 @@ class Salesforce:
             )
         return resp.json()
 
-    def generate_schema(
-        self,
-        stream_name: Optional[str] = None,
-        stream_options: Optional[Mapping[str, Any]] = None,
-    ) -> Mapping[str, Any]:
-        response = self.describe(stream_name, stream_options)
-        if stream_name:
-            self._sobject_describes[stream_name] = response
-        schema = {
-            "$schema": "http://json-schema.org/draft-07/schema#",
-            "type": "object",
-            "additionalProperties": True,
-            "properties": {},
-        }
-        for field in response["fields"]:
-            schema["properties"][field["name"]] = self.field_to_property_schema(field)
-        return schema
+    def sobject_describe(self, sobject: str) -> Optional[Mapping[str, Any]]:
+        """Cached describe for one sobject; None when the org does not expose it.
 
-    def get_custom_field_names(self, sobject: str) -> frozenset:
-        """Return the set of field names for which describe reports ``custom=True``.
-
-        Requires that ``generate_schema(sobject)`` (or ``generate_schemas``
-        bulk-parallel variant) has been called first; results come from the
-        per-sobject describe cache populated by :meth:`generate_schema`.
+        A 404 means the sobject is absent from this org or the Run-As user has
+        no object access. Both are per-org facts the connector reports and
+        works around, not errors that should fail a sync.
         """
-        desc = self._sobject_describes.get(sobject)
-        if not desc:
-            # Fallback: fetch on demand. Keeps the call site simple even if
-            # generate_schemas wasn't called for this sobject for any reason.
-            desc = self.describe(sobject)
-            self._sobject_describes[sobject] = desc
-        return frozenset(
-            f["name"] for f in desc.get("fields", []) if f.get("custom") is True
-        )
+        if sobject not in self._sobject_describes:
+            self._sobject_describes[sobject] = self.describe(sobject, allow_missing=True)
+        return self._sobject_describes[sobject]
 
-    def generate_schemas(
-        self, stream_objects: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
-        """Describe-driven schema generation, parallelized via ThreadPoolExecutor.
+    def is_queryable(self, sobject: str) -> bool:
+        """Whether this org exposes ``sobject`` to SOQL."""
+        desc = self.sobject_describe(sobject)
+        return bool(desc) and bool(desc.get("queryable", True))
 
-        Chunks stream names into batches of ``parallel_tasks_size`` so we don't
-        open more sockets than our connection pool can hold.
+    def field_names(self, sobject: str) -> Tuple[str, ...]:
+        """Every field the org exposes on ``sobject``, standard and custom.
+
+        SOQL selects the full set so custom and undeclared standard values still
+        reach the record envelope, which preserves them in ``raw_data``. Empty
+        when the org does not expose the sobject.
         """
-
-        def load_schema(
-            name: str, stream_options: Mapping[str, Any]
-        ) -> Tuple[str, Optional[Mapping[str, Any]], Optional[str]]:
-            try:
-                result = self.generate_schema(
-                    stream_name=name, stream_options=stream_options
-                )
-            except RequestException as e:
-                return name, None, str(e)
-            return name, result, None
-
-        stream_names = list(stream_objects.keys())
-        stream_schemas: dict = {}
-        for i in range(0, len(stream_names), self.parallel_tasks_size):
-            chunk = stream_names[i : i + self.parallel_tasks_size]
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(len(chunk), self.parallel_tasks_size)
-            ) as executor:
-                for name, schema, err in executor.map(
-                    lambda args: load_schema(*args),
-                    [(n, stream_objects[n]) for n in chunk],
-                ):
-                    if err:
-                        self.logger.error(f"Loading error for {name} schema: {err}")
-                        raise AirbyteTracedException(
-                            message=(
-                                f"Schema could not be extracted for stream {name}. "
-                                "Please retry later."
-                            ),
-                            internal_message=str(err),
-                            failure_type=FailureType.system_error,
-                            stream_descriptor=StreamDescriptor(name=name),
-                        )
-                    stream_schemas[name] = schema
-        return stream_schemas
+        desc = self.sobject_describe(sobject)
+        if desc is None:
+            return ()
+        return tuple(f["name"] for f in desc.get("fields", []) if f.get("name"))
 
     # ------- Stream discovery -----------------------------------------------
 
@@ -369,54 +326,39 @@ class Salesforce:
     def filter_streams(self, stream_name: str) -> bool:
         if stream_name.endswith("ChangeEvent") or stream_name in self.get_streams_black_list():
             return False
+        if stream_name not in available_stream_names():
+            self.logger.warning(
+                "Stream %s has no static schema and is skipped.", stream_name
+            )
+            return False
         return True
 
-    def get_validated_streams(
-        self,
-        catalog: Optional[ConfiguredAirbyteCatalog] = None,
-    ) -> Mapping[str, Any]:
-        """Return ``{stream_name: sobject_options}`` for streams to sync.
+    def syncable_streams(self) -> List[str]:
+        """The curated stream set, minus anything this connector cannot sync.
 
-        Selection precedence:
-        1. If catalog is provided (incremental sync), honor it intersected with
-           queryable sobjects.
-        2. Else use :data:`CRM_STREAMS` (curated list; changing it is a code
-           change so Silver/dbt coverage ships alongside).
-
-        In every case the full global describe is used to filter out sobjects
-        that are not queryable, are ChangeEvents, or are on our blocklists.
+        Org-independent by construction: :data:`CRM_STREAMS` is a code-level
+        contract and the remaining filters read only local state, so the
+        advertised catalog costs no API call. Whether a given org exposes a
+        sobject is settled per stream at read time, off the describe the stream
+        already makes to build its SOQL field list.
         """
-        stream_objects: dict = {}
-        for so in self.describe()["sobjects"]:
-            if so["name"] in UNSUPPORTED_STREAMS:
-                self.logger.warning(
-                    f"Stream {so['name']} needs an object ID and is skipped."
-                )
-                continue
-            if so["queryable"]:
-                stream_objects[so.pop("name")] = so
-            else:
-                self.logger.warning(f"Stream {so['name']} is not queryable; skipped.")
+        return [
+            name
+            for name in CRM_STREAMS
+            if name not in UNSUPPORTED_STREAMS and self.filter_streams(name)
+        ]
 
-        if catalog:
-            return {
-                cs.stream.name: stream_objects[cs.stream.name]
-                for cs in catalog.streams
-                if cs.stream.name in stream_objects
-            }
+    def unavailable_streams(self) -> List[str]:
+        """Curated streams this org does not expose to SOQL, from one describe.
 
-        requested: List[str] = list(CRM_STREAMS)
-        missing = [n for n in requested if n not in stream_objects]
-        if missing:
-            self.logger.warning(
-                "Requested streams not queryable in this org (skipped): %s",
-                ", ".join(missing),
-            )
-
-        validated = [n for n in requested if n in stream_objects and self.filter_streams(n)]
-        return {name: stream_objects[name] for name in validated}
-
-    # ------- Field-type -> JSON-schema mapping -------------------------------
+        Reported by ``check`` so an operator sees the gaps while configuring the
+        connection instead of discovering them in sync logs.
+        """
+        global_describe = self.describe() or {}
+        queryable = {
+            so["name"] for so in global_describe.get("sobjects", []) if so.get("queryable")
+        }
+        return [name for name in self.syncable_streams() if name not in queryable]
 
     @staticmethod
     def get_pk_and_replication_key(
@@ -434,50 +376,3 @@ class Salesforce:
                 return pk, cand
         return pk, None
 
-    @staticmethod
-    def field_to_property_schema(field_params: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Map a describe() field entry to a JSON-schema property."""
-        sf_type = field_params["type"]
-
-        if sf_type in STRING_TYPES:
-            return {"type": ["string", "null"]}
-        if sf_type in DATE_TYPES:
-            return {
-                "type": ["string", "null"],
-                "format": "date-time" if sf_type == "datetime" else "date",
-            }
-        if sf_type in NUMBER_TYPES:
-            return {"type": ["number", "null"]}
-        if sf_type == "int":
-            return {"type": ["integer", "null"]}
-        if sf_type == "boolean":
-            return {"type": ["boolean", "null"]}
-        if sf_type == "base64":
-            return {"type": ["string", "null"], "format": "base64"}
-        if sf_type == "address":
-            return {
-                "type": ["object", "null"],
-                "properties": {
-                    "street": {"type": ["null", "string"]},
-                    "state": {"type": ["null", "string"]},
-                    "postalCode": {"type": ["null", "string"]},
-                    "city": {"type": ["null", "string"]},
-                    "country": {"type": ["null", "string"]},
-                    "longitude": {"type": ["null", "number"]},
-                    "latitude": {"type": ["null", "number"]},
-                    "geocodeAccuracy": {"type": ["null", "string"]},
-                },
-            }
-        if sf_type == "location":
-            return {
-                "type": ["object", "null"],
-                "properties": {
-                    "longitude": {"type": ["null", "number"]},
-                    "latitude": {"type": ["null", "number"]},
-                },
-            }
-        if sf_type in LOOSE_TYPES:
-            # >99% of values are strings; normalize to string to avoid
-            # destination type conflicts.
-            return {"type": ["string", "null"]}
-        raise TypeSalesforceException(f"Unsupported Salesforce field type: {sf_type}")

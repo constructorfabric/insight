@@ -2,7 +2,7 @@
     materialized='table',
     engine='MergeTree',
     order_by=['tenant_id', 'entity_id', 'metric_date'],
-    schema='insight',
+    schema=var('gold_database'),
     alias='task_worklog_flow',
     tags=['gold'],
     query_settings={

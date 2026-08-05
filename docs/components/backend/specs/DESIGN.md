@@ -1284,7 +1284,7 @@ Tenant Admin can trigger Silver/Gold rebuild from Bronze via Connector Manager â
 
 ## 6. CI/CD
 
-**Repository structure**: Monorepo -- all backend services, shared crates, and Helm charts live in a single repository (`insight`), consistent with cyberfabric-core conventions. Frontend (React SPA) lives in a separate repository.
+**Repository structure**: Monorepo -- all backend services, shared crates, Helm charts, and the frontend (React SPA, under `src/frontend/`) live in a single repository (`insight`), consistent with cyberfabric-core conventions.
 
 ```text
 insight/
@@ -1322,7 +1322,7 @@ insight/
 
 Each service has its own Helm chart (`services/{name}/helm/`). Infrastructure charts live in `infra/`. This enables independent release cycles per service -- ArgoCD manages each as a separate Application.
 
-Frontend (React SPA) lives in a **separate repository**. Shared crates in `libs/` may be moved to cyberfabric-core later if they prove generally useful beyond Insight.
+The frontend (React SPA) lives under `src/frontend/` with its own CI lane and image. Shared crates in `libs/` may be moved to cyberfabric-core later if they prove generally useful beyond Insight.
 
 **Build** (GitHub Actions CI):
 - Single pipeline for the monorepo

@@ -33,7 +33,8 @@ gated block below following the identity pattern: read the service's
 The list lives HERE; do not mirror it elsewhere.
 ==============================================================================
 */}}
-{{- if .Values.identityResolution.deploy }}
+{{- $kcdb := .Values.keycloak.deploy }}
+{{- if or .Values.identityResolution.deploy $kcdb }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -106,6 +107,14 @@ spec:
                 "$IDENTITY_DB" "$IDENTITY_DB" "$MARIADB_USER")
               mariadb -h"$MARIADB_HOST" -P"$MARIADB_PORT" -uroot -e "$SQL"
               echo "Provisioned ${IDENTITY_DB} (granted to ${MARIADB_USER}@%)."
+              {{- end }}
+              {{- if $kcdb }}
+              KC_DB={{ .Values.keycloak.database.name | quote }}
+              KC_DB_USER={{ required "keycloak.database.username is required" .Values.keycloak.database.username | quote }}
+              SQL=$(printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL PRIVILEGES ON `%s`.* TO `%s`@`%%`; FLUSH PRIVILEGES;' \
+                "$KC_DB" "$KC_DB" "$KC_DB_USER")
+              mariadb -h"$MARIADB_HOST" -P"$MARIADB_PORT" -uroot -e "$SQL"
+              echo "Provisioned ${KC_DB} (granted to ${KC_DB_USER}@%)."
               {{- end }}
               echo "Done."
 {{- end }}

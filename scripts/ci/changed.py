@@ -5,9 +5,10 @@ per-component collection params from components.py (the shared registry) — so 
 globs are duplicated in YAML and there is one source of truth. Runs no tests.
 
 Usage: python3 scripts/ci/changed.py [--all]
-Output: {"rust": [<entry>...], "python": [...]}
+Output: {"rust": [<entry>...], "python": [...], "js": [...]}
         rust entries carry name/root/package/all_features plus lint+cover flags
-        (a crate may be lint-only); python carries cov_package.
+        (a crate may be lint-only); python carries cov_package; js carries cover
+        (the producer runs its package.json scripts from `root`).
 """
 
 from __future__ import annotations
@@ -49,6 +50,10 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True, test: b
         # Exclude dependency-crate files from this component's coverage report so
         # a service never counts a library it merely links (each lib self-reports).
         entry["cover_ignore_regex"] = comp.get("cover_ignore_regex", "")
+    elif comp["lang"] == "js":
+        # The gate's --require set selects on cover, so omitting it would let a
+        # producer that emitted an unusable report pass as "not changed".
+        entry["cover"] = comp.get("cover", True)
     elif comp["lang"] == "python":
         entry["cov_package"] = comp.get("cov_package", "")
         entry["pytest_args"] = comp.get("pytest_args", "")
@@ -96,7 +101,7 @@ def changed_components(compare_branch: str, components: list[dict]) -> dict[str,
         if any(t in directly_changed for t in comp.get("triggered_by", ())):
             changed.add(comp["name"])
 
-    result: dict[str, list] = {lang: [] for lang in ("rust", "python")}
+    result: dict[str, list] = {lang: [] for lang in ("rust", "python", "js")}
     for comp in components:  # registry order → deterministic matrix
         name, lang = comp["name"], comp["lang"]
         if lang == "rust":
@@ -108,7 +113,7 @@ def changed_components(compare_branch: str, components: list[dict]) -> dict[str,
             lint = name in changed or (fanout_lint and is_backend)
             if lint or cover:
                 result["rust"].append(_matrix_entry(comp, lint=lint, cover=cover, test=name in changed))
-        elif name in changed:  # python: in the matrix iff changed
+        elif name in changed:  # python / js: in the matrix iff changed
             result[lang].append(_matrix_entry(comp))
     return result
 
@@ -116,7 +121,7 @@ def changed_components(compare_branch: str, components: list[dict]) -> dict[str,
 def all_components(components: list[dict]) -> dict[str, list]:
     """Emit EVERY component as a matrix entry (rust = lint+cover) — for a manual
     full/baseline run (workflow_dispatch with full=true), independent of the diff."""
-    result: dict[str, list] = {lang: [] for lang in ("rust", "python")}
+    result: dict[str, list] = {lang: [] for lang in ("rust", "python", "js")}
     for comp in components:
         if comp["lang"] == "rust":
             result["rust"].append(_matrix_entry(comp, lint=True, cover=comp.get("cover", True), test=True))

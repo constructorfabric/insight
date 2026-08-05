@@ -70,8 +70,6 @@ WITH calls AS (
             'direction',      coalesce(toString(properties_hs_call_direction), ''),
             'archived',       toString(coalesce(archived, false))
         ))                                              AS metadata,
-        -- Envelope parity with salesforce__crm_* (no HubSpot custom-fields blob).
-        '{}'                                            AS custom_fields,
         createdAt                                       AS created_at,
         data_source,
         greatest(
@@ -114,7 +112,6 @@ emails AS (
             'direction',      coalesce(toString(properties_hs_email_direction), ''),
             'archived',       toString(coalesce(archived, false))
         ))                                              AS metadata,
-        '{}'                                            AS custom_fields,
         createdAt                                       AS created_at,
         data_source,
         greatest(
@@ -170,7 +167,6 @@ meetings AS (
             'location',       coalesce(toString(properties_hs_meeting_location), ''),
             'archived',       toString(coalesce(archived, false))
         ))                                              AS metadata,
-        '{}'                                            AS custom_fields,
         createdAt                                       AS created_at,
         data_source,
         coalesce(
@@ -212,7 +208,6 @@ tasks AS (
             'type',           coalesce(toString(properties_hs_task_type), ''),
             'archived',       toString(coalesce(archived, false))
         ))                                              AS metadata,
-        '{}'                                            AS custom_fields,
         createdAt                                       AS created_at,
         data_source,
         greatest(

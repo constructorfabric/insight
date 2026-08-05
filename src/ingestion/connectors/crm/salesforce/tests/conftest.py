@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 import requests
@@ -31,19 +32,9 @@ CONFIG = {
     "insight_source_id": SOURCE,
 }
 
-# Small describe-derived schema: standard fields + one custom (``__c``) field.
-ACCOUNT_SCHEMA = {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "additionalProperties": True,
-    "properties": {
-        "Id": {"type": ["string", "null"]},
-        "Name": {"type": ["string", "null"]},
-        "SystemModstamp": {"type": ["string", "null"], "format": "date-time"},
-        "Custom__c": {"type": ["string", "null"]},
-    },
-}
-CUSTOM_FIELDS = frozenset({"Custom__c"})
+# Fields describe reports for the Account sobject in these tests: declared
+# standard fields plus one custom (``__c``) field.
+ACCOUNT_FIELDS = ("Id", "Name", "SystemModstamp", "Custom__c")
 
 
 class FakeResponse:
@@ -102,29 +93,37 @@ def make_sf(**overrides: Any) -> Salesforce:
     return Salesforce(**kwargs)
 
 
-_DEFAULT_SCHEMA = object()  # sentinel: allows passing schema=None explicitly
+_DEFAULT_FIELDS = object()  # sentinel: allows passing sf_fields=None explicitly
 
 
 def make_stream(
     cls=RestSalesforceStream,
     stream_name: str = "Account",
-    schema: Any = _DEFAULT_SCHEMA,
+    sf_fields: Any = _DEFAULT_FIELDS,
     pk: str = "Id",
     sf: Salesforce | None = None,
     **extra: Any,
 ):
-    """Construct a stream with a real (offline) Salesforce client."""
+    """Construct a stream with a real (offline) Salesforce client.
+
+    ``sf_fields`` stubs the describe-reported field list the stream builds SOQL
+    from, and marks the sobject available; ``None`` leaves the real
+    (network-bound) lookups in place.
+    """
     sf = sf or make_sf()
+    if sf_fields is not None:
+        fields = ACCOUNT_FIELDS if sf_fields is _DEFAULT_FIELDS else tuple(sf_fields)
+        sf.field_names = Mock(return_value=fields)
+        sf.is_queryable = Mock(return_value=True)
+
     kwargs = dict(
         sf_api=sf,
         pk=pk,
         stream_name=stream_name,
         message_repository=InMemoryMessageRepository(),
-        schema=dict(ACCOUNT_SCHEMA) if schema is _DEFAULT_SCHEMA else schema,
         authenticator=SalesforceAuthenticator(sf._token_provider),
         tenant_id=TENANT,
         source_id=SOURCE,
-        custom_field_names=CUSTOM_FIELDS,
     )
     kwargs.update(extra)
     return cls(**kwargs)

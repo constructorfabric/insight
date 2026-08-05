@@ -25,17 +25,42 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - start-dev
-            - --import-realm
+            - start
             - --http-relative-path=/kc
           env:
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
-              value: {{ .Values.admin.username | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "admin.existingSecret is required" .Values.admin.existingSecret | quote }}
+                  key: username
             - name: KC_BOOTSTRAP_ADMIN_PASSWORD
-              value: {{ .Values.admin.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.admin.existingSecret | quote }}
+                  key: password
+            - name: KC_DB
+              value: mariadb
+            - name: KC_DB_URL_HOST
+              value: {{ tpl (required "database.host is required" .Values.database.host) . | quote }}
+            - name: KC_DB_URL_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: KC_DB_URL_DATABASE
+              value: {{ .Values.database.name | quote }}
+            - name: KC_DB_USERNAME
+              value: {{ required "database.username is required" .Values.database.username | quote }}
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "database.passwordSecret.name is required" .Values.database.passwordSecret.name | quote }}
+                  key: {{ required "database.passwordSecret.key is required" .Values.database.passwordSecret.key | quote }}
+            # TLS terminates at the ingress; trust its X-Forwarded-* headers.
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: KC_HEALTH_ENABLED
+              value: "true"
             # Advertised (browser + authenticator) issuer base. MUST include /kc.
             - name: KC_HOSTNAME
-              value: {{ tpl (required "keycloak.hostname is required (the ingress-LB URL both the browser and the authenticator reach, e.g. http://<lb-ip>/kc)" .Values.hostname) . | quote }}
+              value: {{ tpl (required "keycloak.hostname is required (the URL both the browser and the authenticator reach, e.g. https://<host>/kc)" .Values.hostname) . | quote }}
             # Serve back-channel (token/JWKS) on the reached host too, so an
             # in-cluster caller works alongside the advertised issuer.
             - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
@@ -49,28 +74,26 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
+            - name: mgmt
+              containerPort: 9000
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            # No readOnlyRootFilesystem: `start-dev` re-augments Quarkus into
-            # /opt/keycloak/lib/quarkus on every boot, and an emptyDir there hides
+            # No readOnlyRootFilesystem: Keycloak re-augments Quarkus into
+            # /opt/keycloak/lib/quarkus on boot, and an emptyDir there hides
             # quarkus-application.dat from the image. See #2084.
-          volumeMounts:
-            - name: realm
-              mountPath: /opt/keycloak/data/import
-              readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          # Health lives on the management interface (KC 25+); its path
+          # inherits --http-relative-path.
           startupProbe:
-            {{- toYaml .Values.startupProbe | nindent 12 }}
+            httpGet: {path: /kc/health/started, port: mgmt}
+            periodSeconds: 5
+            failureThreshold: 60
           livenessProbe:
-            {{- toYaml .Values.livenessProbe | nindent 12 }}
+            httpGet: {path: /kc/health/live, port: mgmt}
+            periodSeconds: 15
           readinessProbe:
-            {{- toYaml .Values.readinessProbe | nindent 12 }}
-      volumes:
-        - name: realm
-          configMap:
-            # Pre-created by the deploy flow (gen-realm.py -> ConfigMap). The realm
-            # JSON lands under /opt/keycloak/data/import, which --import-realm reads.
-            name: {{ include "insight-keycloak.realmConfigMap" . }}
+            httpGet: {path: /kc/health/ready, port: mgmt}
+            periodSeconds: 10

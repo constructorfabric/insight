@@ -13,13 +13,12 @@ use toolkit_security::SecurityContext;
 use super::AppState;
 use crate::api::error::MetricError;
 use crate::domain::metric_drilldown::{
-    EVIDENCE_QUERY_MEMORY_BYTES, EVIDENCE_QUERY_READ_BYTES, EVIDENCE_QUERY_RESULT_BYTES,
     EVIDENCE_QUERY_TIMEOUT_SECS, EvidenceQueryRow, MAX_EXPORT_BYTES, MAX_EXPORT_ROWS,
     MetricDrilldownColumn, MetricDrilldownExportFormat, MetricDrilldownExportRequest,
     MetricDrilldownRequest, MetricDrilldownResponse, MetricDrilldownRow, ValidatedMetricDrilldown,
     build_export, build_response, compile_query, decode_evidence_rows, evidence_unavailable,
     export_filename, export_internal, export_limit, presentation, validate_export_request,
-    validate_request, verify_evidence_snapshot,
+    validate_request, verify_evidence_snapshot, with_evidence_query_limits,
 };
 use crate::domain::person_visibility::authorize_entity_ids;
 
@@ -218,15 +217,11 @@ async fn fetch_rows(
         .map_err(|_| query_busy())?
         .map_err(|_| query_busy())?;
     let (sql, params) = compile_query(req)?;
-    let mut query = state
+    let base = state
         .ch
         .query(&sql)
-        .with_option("log_comment", log_comment)
-        .with_option("max_execution_time", QUERY_TIMEOUT.as_secs().to_string())
-        .with_option("max_threads", "2")
-        .with_option("max_memory_usage", EVIDENCE_QUERY_MEMORY_BYTES.to_string())
-        .with_option("max_bytes_to_read", EVIDENCE_QUERY_READ_BYTES.to_string())
-        .with_option("max_result_bytes", EVIDENCE_QUERY_RESULT_BYTES.to_string());
+        .with_setting("log_comment", log_comment);
+    let mut query = with_evidence_query_limits(base).with_setting("max_threads", "2");
     for param in params {
         query = query.bind(param);
     }

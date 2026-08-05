@@ -395,53 +395,27 @@ write_compose() {
   ask_shared
 
   # ── Frontend mode (compose-only) ──────────────────────────────────
-  local fe_mode fe_path default_fe_path="../insight-front"
+  # Both modes read src/frontend from this checkout, so there is no path to
+  # ask for and nothing to clone.
+  local fe_mode
   if [[ "$NO_FRONTEND" == "true" ]]; then
     fe_mode="ghcr"
-    fe_path="$default_fe_path"
   else
     echo "--- Frontend ---" >&2
     echo "  How should the frontend run?" >&2
-    echo "    1) ghcr   — pull the pre-built image (no source needed)" >&2
-    echo "    2) local  — Vite + HMR against an existing insight-front checkout" >&2
-    echo "    3) clone  — git clone insight-front, then run Vite + HMR" >&2
+    echo "    1) ghcr   — pull the pre-built image (nothing built locally)" >&2
+    echo "    2) dev    — Vite + HMR against src/frontend" >&2
     local fe_choice
     while true; do
       fe_choice=$(ask "  Choice" "1")
       case "$fe_choice" in
         1|ghcr)
           fe_mode="ghcr"
-          fe_path="$default_fe_path"
           break ;;
-        2|local|dev)
-          fe_mode="dev"
-          fe_path=$(ask "  Path to insight-front checkout" "$default_fe_path")
-          if [[ -z "$fe_path" || ! -d "$ROOT_DIR/$fe_path" && ! -d "$fe_path" ]]; then
-            echo "  ERROR: '$fe_path' does not exist. Pick option 3 to clone." >&2
-            exit 1
-          fi
-          break ;;
-        3|clone)
-          if ! command -v git >/dev/null 2>&1; then
-            echo "  ERROR: git is not installed; pick 1 or 2." >&2
-            continue
-          fi
-          fe_path=$(ask "  Clone insight-front into" "$default_fe_path")
-          local clone_target
-          if [[ "$fe_path" = /* ]]; then clone_target="$fe_path"
-          else clone_target="$ROOT_DIR/$fe_path"; fi
-          if [[ -e "$clone_target" ]]; then
-            echo "  ERROR: '$clone_target' already exists; refusing to clone over it." >&2
-            echo "         Remove it first, or pick 2 to reuse the existing checkout." >&2
-            exit 1
-          fi
-          if ! git clone https://github.com/constructorfabric/insight-front.git "$clone_target" >&2; then
-            echo "  ERROR: clone failed." >&2
-            exit 1
-          fi
+        2|dev|local)
           fe_mode="dev"
           break ;;
-        *) echo "  Please answer 1, 2, or 3." >&2 ;;
+        *) echo "  Please answer 1 or 2." >&2 ;;
       esac
     done
     echo "" >&2
@@ -497,7 +471,6 @@ write_compose() {
   update_env_var "$env_file" TENANT_DEFAULT_ID             "$TENANT_DEFAULT_ID"
   update_env_var "$env_file" DEV_USER_EMAIL                "$DEV_USER_EMAIL"
   update_env_var "$env_file" FRONTEND_MODE                 "$fe_mode"
-  update_env_var "$env_file" INSIGHT_FRONT_PATH            "$fe_path"
   update_env_var "$env_file" AUTH_MODE                     "$auth_mode"
 
   # SEEDED_LOCAL_* gates the first-run auto-seed in dev-compose.sh.

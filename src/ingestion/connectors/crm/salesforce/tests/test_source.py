@@ -18,9 +18,10 @@ from airbyte_cdk.models import (
 )
 from airbyte_cdk.utils.traced_exception import AirbyteTracedException
 from requests import exceptions
+from source_salesforce.schema_loader import stream_schema
 from source_salesforce.source import SourceSalesforce
-from source_salesforce.streams import IncrementalRestSalesforceStream, RestSalesforceStream, RestSalesforceSubStream
-from tests.conftest import ACCOUNT_SCHEMA, CONFIG, make_http_response, make_sf
+from source_salesforce.streams import IncrementalRestSalesforceStream, RestSalesforceStream
+from tests.conftest import CONFIG, make_http_response, make_sf
 
 logger = logging.getLogger("test")
 
@@ -191,10 +192,20 @@ class TestGetSfObject:
 class TestCheckConnection:
     def test_success(self, monkeypatch):
         sf = Mock()
+        sf.unavailable_streams.return_value = []
         monkeypatch.setattr(SourceSalesforce, "_get_sf_object", staticmethod(lambda config: sf))
         source = make_source()
         assert source.check_connection(logger, CONFIG) == (True, None)
-        sf.describe.assert_called_once()
+        sf.unavailable_streams.assert_called_once()
+
+    def test_reports_streams_the_org_does_not_expose(self, monkeypatch, caplog):
+        sf = Mock()
+        sf.unavailable_streams.return_value = ["Case", "Lead"]
+        monkeypatch.setattr(SourceSalesforce, "_get_sf_object", staticmethod(lambda config: sf))
+        source = make_source()
+        with caplog.at_level("WARNING"):
+            assert source.check_connection(logger, CONFIG) == (True, None)
+        assert "Case, Lead" in caplog.text
 
     def test_invalid_slice_step_fails_before_login(self, monkeypatch):
         get_sf = Mock()
@@ -219,23 +230,16 @@ class TestCheckConnection:
 
 
 class TestGetStreamType:
-    def test_substream_for_parented_object(self):
-        full_refresh, incremental = SourceSalesforce._get_stream_type("ContentDocumentLink")
-        assert full_refresh is RestSalesforceSubStream
-        assert incremental is IncrementalRestSalesforceStream
-
-    def test_plain_rest_otherwise(self):
-        full_refresh, _ = SourceSalesforce._get_stream_type("Account")
+    def test_rest_classes_for_every_stream(self):
+        full_refresh, incremental = SourceSalesforce._get_stream_type("Account")
         assert full_refresh is RestSalesforceStream
+        assert incremental is IncrementalRestSalesforceStream
 
 
 def _sf_stub():
     """Real Salesforce client with describe-time HTTP monkeypatched out."""
     sf = make_sf()
-    sf.generate_schemas = Mock(
-        side_effect=lambda stream_objects: {name: dict(ACCOUNT_SCHEMA) for name in stream_objects}
-    )
-    sf.get_custom_field_names = Mock(return_value=frozenset({"Custom__c"}))
+    sf.field_names = Mock(return_value=("Id", "Name", "SystemModstamp", "Custom__c"))
     return sf
 
 
@@ -243,14 +247,13 @@ class TestPrepareStream:
     def test_incremental_when_replication_key_present(self):
         source = make_source()
         stream_class, kwargs = source.prepare_stream(
-            "Account", ACCOUNT_SCHEMA, {"queryable": True}, _sf_stub(), Mock(), CONFIG
+            "Account", stream_schema("Account"), {"queryable": True}, _sf_stub(), Mock(), CONFIG
         )
         assert stream_class is IncrementalRestSalesforceStream
         assert kwargs["replication_key"] == "SystemModstamp"
         assert kwargs["stream_slice_step"] == "P30D"
         assert kwargs["tenant_id"] == CONFIG["insight_tenant_id"]
         assert kwargs["source_id"] == CONFIG["insight_source_id"]
-        assert kwargs["custom_field_names"] == frozenset({"Custom__c"})
 
     def test_full_refresh_without_replication_key(self):
         source = make_source()
@@ -261,13 +264,13 @@ class TestPrepareStream:
 
     def test_unsupported_filtering_forces_full_refresh(self):
         source = make_source()
-        stream_class, _ = source.prepare_stream("LoginEvent", ACCOUNT_SCHEMA, {}, _sf_stub(), Mock(), CONFIG)
+        stream_class, _ = source.prepare_stream("LoginEvent", stream_schema("Account"), {}, _sf_stub(), Mock(), CONFIG)
         assert stream_class is RestSalesforceStream
 
     def test_slice_step_from_config(self):
         source = make_source()
         _, kwargs = source.prepare_stream(
-            "Account", ACCOUNT_SCHEMA, {}, _sf_stub(), Mock(), {**CONFIG, "salesforce_stream_slice_step": "P7D"}
+            "Account", stream_schema("Account"), {}, _sf_stub(), Mock(), {**CONFIG, "salesforce_stream_slice_step": "P7D"}
         )
         assert kwargs["stream_slice_step"] == "P7D"
 
@@ -279,15 +282,6 @@ class TestGenerateStreams:
         assert [s.name for s in streams] == ["Account"]
         # Facade wraps the legacy stream; the slicer cursor must be attached.
         assert streams[0].cursor_field == "SystemModstamp"
-
-    def test_substream_gets_parent_stream(self):
-        sf = _sf_stub()
-        source = make_source()
-        streams = source.generate_streams(
-            CONFIG, {"ContentDocumentLink": {}, "ContentDocument": {"queryable": True}}, sf
-        )
-        names = {s.name for s in streams}
-        assert names == {"ContentDocumentLink", "ContentDocument"}
 
     def test_full_refresh_catalog_disables_cursor(self):
         source = make_source(catalog=make_catalog("Account", SyncMode.full_refresh))
@@ -306,8 +300,8 @@ class TestGenerateStreams:
 class TestStreams:
     def test_streams_injects_default_start_date(self, monkeypatch):
         sf = Mock()
-        sf.get_validated_streams.return_value = {}
-        monkeypatch.setattr(SourceSalesforce, "_get_sf_object", staticmethod(lambda config: sf))
+        sf.syncable_streams.return_value = []
+        monkeypatch.setattr(SourceSalesforce, "_build_sf_client", staticmethod(lambda config: sf))
         seen = {}
 
         def fake_generate(config, stream_objects, sf_object):
@@ -325,12 +319,26 @@ class TestStreams:
 
     def test_streams_keeps_explicit_start_date(self, monkeypatch):
         sf = Mock()
-        sf.get_validated_streams.return_value = {}
-        monkeypatch.setattr(SourceSalesforce, "_get_sf_object", staticmethod(lambda config: sf))
+        sf.syncable_streams.return_value = ["Account"]
+        monkeypatch.setattr(SourceSalesforce, "_build_sf_client", staticmethod(lambda config: sf))
+        source = make_source()
+        seen = {}
+        monkeypatch.setattr(
+            source, "generate_streams", lambda config, objs, sf_obj: seen.update(objs=objs) or []
+        )
+        source.streams(CONFIG)
+        assert seen["objs"] == {"Account": {}}
+
+    def test_streams_never_authenticates(self, monkeypatch):
+        """Discover advertises static schemas, so it must issue no API call."""
+        sf = Mock()
+        sf.syncable_streams.return_value = []
+        sf.login.side_effect = AssertionError("login must not be called")
+        sf.describe.side_effect = AssertionError("describe must not be called")
+        monkeypatch.setattr(SourceSalesforce, "_build_sf_client", staticmethod(lambda config: sf))
         source = make_source()
         monkeypatch.setattr(source, "generate_streams", lambda config, objs, sf_obj: [])
-        source.streams(CONFIG)
-        sf.get_validated_streams.assert_called_once_with(catalog=None)
+        assert source.streams(CONFIG) == []
 
 
 class TestCreateStreamSlicerCursor:

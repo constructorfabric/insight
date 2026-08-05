@@ -1,0 +1,50 @@
+map $sent_http_content_type $csp_header {
+    default "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'";
+}
+
+server {
+    listen 8080;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml;
+    gzip_min_length 256;
+
+    # Security headers — applied at server level and re-included in any
+    # location block that declares its own add_header (nginx replaces rather
+    # than merges across levels). CSP: 'unsafe-inline' for style-src is
+    # required for React inline styles + recharts; tighten via nonce in a
+    # later iteration. The SPA is same-origin only (it calls /api/* and
+    # /auth/* through the gateway that fronts this container), so connect-src
+    # and frame-src stay at 'self'.
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # MSW service worker ships in dist/ from public/ but is inert without
+    # an explicit start() call. Block direct access so it can't be
+    # registered as a post-XSS persistence vector.
+    location = /mockServiceWorker.js {
+        return 404;
+    }
+
+    # `index.html` names the content-hashed assets below, so it must revalidate
+    # or the browser pins an old build to old asset URLs until a cache clear.
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache" always;
+        # Re-include security headers — see comment above for why.
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        # Re-include security headers — see comment above for why.
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+
+    location /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok";
+    }
+}

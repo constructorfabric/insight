@@ -74,13 +74,13 @@ impl Client {
     pub fn query(&self, sql: &str) -> clickhouse::query::Query {
         let mut q = self.inner.query(sql);
         if let Some(timeout) = self.config.query_timeout {
-            q = q.with_option("max_execution_time", timeout.as_secs().to_string());
+            q = q.with_setting("max_execution_time", timeout.as_secs().to_string());
         }
         if let Some(max_threads) = self.config.query_max_threads {
-            q = q.with_option("max_threads", max_threads.to_string());
+            q = q.with_setting("max_threads", max_threads.to_string());
         }
         if let Some(max_memory_bytes) = self.config.query_max_memory_bytes {
-            q = q.with_option("max_memory_usage", max_memory_bytes.to_string());
+            q = q.with_setting("max_memory_usage", max_memory_bytes.to_string());
         }
         q
     }

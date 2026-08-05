@@ -40,7 +40,7 @@ pub(super) fn selection_fingerprint(
     selection: &MetricDrilldownSelection,
 ) -> Result<String, CanonicalError> {
     let bytes = serde_json::to_vec(&(tenant_id, selection)).map_err(|_| config_error())?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(hex::encode(Sha256::digest(bytes)))
 }
 
 pub async fn verify_evidence_snapshot(

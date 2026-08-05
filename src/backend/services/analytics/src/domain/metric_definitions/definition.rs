@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
 
+/// ClickHouse database holding the legacy gold serving relations (observations,
+/// evidence, entity cohorts). Single source of truth for the read side so the
+/// deferred `insight` -> `presentation` relocation (#1979) is one atomic flip.
+pub(crate) const GOLD_DATABASE: &str = "insight";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricDirection {
@@ -244,7 +249,7 @@ impl MetricDefinition {
 }
 
 impl ObservationRelation {
-    pub const DATABASE: &'static str = "insight";
+    pub const DATABASE: &'static str = GOLD_DATABASE;
 
     /// Accepts exactly the managed-observation naming shape:
     /// lowercase `snake_case` ending in `_metric_observations`, with a
@@ -265,7 +270,7 @@ impl ObservationRelation {
 }
 
 impl EvidenceRelation {
-    pub const DATABASE: &'static str = "insight";
+    pub const DATABASE: &'static str = GOLD_DATABASE;
 
     pub fn parse(value: &str) -> Option<Self> {
         parse_relation(value, "_metric_evidence").map(Self)
@@ -291,7 +296,7 @@ fn parse_relation(value: &str, suffix: &str) -> Option<String> {
 impl CohortSource {
     pub fn table_ref(self) -> (&'static str, &'static str) {
         match self {
-            Self::MetricEntityCohortsCurrent => ("insight", "metric_entity_cohorts_current"),
+            Self::MetricEntityCohortsCurrent => (GOLD_DATABASE, "metric_entity_cohorts_current"),
         }
     }
 }
@@ -473,6 +478,13 @@ mod tests {
             .unwrap_or_else(|| panic!("builtin evidence must parse"));
         assert_eq!(evidence.table_ref(), ("insight", "ai_metric_evidence"));
         assert_eq!(evidence.source_ref(), "ai_metric_evidence");
+
+        // The cohort source resolves to the same gold database as observations
+        // and evidence — the single flip point for the #1979 relocation.
+        assert_eq!(
+            CohortSource::MetricEntityCohortsCurrent.table_ref(),
+            (GOLD_DATABASE, "metric_entity_cohorts_current")
+        );
     }
 
     #[test]

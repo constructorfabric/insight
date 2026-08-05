@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist
+dist-ssr
+
+# Storybook
+storybook-static
+
+# Env files
+.env
+.env.local
+.env.*.local
+*.local
+
+# Vite
+.vite/
+
+# TanStack Router (auto-generated)
+.tanstack/
+
+# Claude Code
+.claude/scheduled_tasks.lock
+.claude/launch.json
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Caches
+.eslintcache
+coverage/
+
+# Security scanner output (CI writes these into the workspace; trufflehog's
+# report holds raw secret values, so it must never be committed)
+semgrep.sarif
+trivy-fs.json
+trivy-fs.sarif
+trivy-image.sarif
+trufflehog-findings.jsonl
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+**/.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+
+# Tracked despite the repo-root `.env.*` rule — the root negation
+# `!.env.*.example` does not match this name.
+!.env.example

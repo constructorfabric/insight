@@ -2,7 +2,7 @@
     materialized='table',
     engine='MergeTree',
     order_by=['insight_source_id', 'issue_id', 'interval_start'],
-    schema='insight',
+    schema=var('gold_database'),
     alias='task_status_spans',
     tags=['gold'],
     query_settings={

@@ -1,4 +1,4 @@
-"""Envelope: property flattening, custom-field routing, truncation, unique_key."""
+"""Envelope: allowlisted property flattening, truncation, raw_data, unique_key."""
 
 from __future__ import annotations
 
@@ -6,11 +6,13 @@ import json
 import logging
 
 from source_hubspot import envelope as envelope_mod
+from source_hubspot.api import Hubspot
+from source_hubspot.constants import ALLOWED_PROPERTIES_BY_OBJECT
 from source_hubspot.envelope import _truncate, envelope, inject_envelope_properties
 
 
-def wrap(record, custom=frozenset(), seen=None):
-    return envelope(record, tenant_id="T", source_id="S", custom_property_names=custom, collision_seen=seen)
+def wrap(record, allowed=frozenset({"amount"}), seen=None):
+    return envelope(record, tenant_id="T", source_id="S", allowed_property_names=allowed, collision_seen=seen)
 
 
 class TestEnvelope:
@@ -26,18 +28,33 @@ class TestEnvelope:
         # collected_at is a UTC second-precision ISO timestamp.
         assert out["collected_at"].endswith("Z")
 
-    def test_custom_properties_go_to_json_blob(self):
-        out = wrap({"id": "1", "properties": {"amount": "10", "my_custom": "x"}}, custom=frozenset({"my_custom"}))
+    def test_property_outside_allowlist_reaches_raw_data_only(self):
+        out = wrap({"id": "1", "properties": {"amount": "10", "my_custom": "x", "uncurated_std": "y"}})
+        assert out["properties_amount"] == "10"
         assert "properties_my_custom" not in out
-        assert json.loads(out["custom_fields"]) == {"my_custom": "x"}
+        assert "properties_uncurated_std" not in out
+        raw_properties = json.loads(out["raw_data"])["properties"]
+        assert raw_properties["my_custom"] == "x"
+        assert raw_properties["uncurated_std"] == "y"
 
-    def test_empty_custom_values_dropped(self):
-        out = wrap({"id": "1", "properties": {"a": None, "b": "", "c": "kept"}}, custom=frozenset({"a", "b", "c"}))
-        assert json.loads(out["custom_fields"]) == {"c": "kept"}
+    def test_allowlisted_property_keeps_its_column_when_empty(self):
+        out = wrap({"id": "1", "properties": {"amount": None, "dealname": ""}}, allowed=frozenset({"amount", "dealname"}))
+        assert out["properties_amount"] is None
+        assert out["properties_dealname"] == ""
 
-    def test_no_customs_serializes_empty_object(self):
-        out = wrap({"id": "1", "properties": {}})
-        assert out["custom_fields"] == "{}"
+    def test_allowlisted_property_absent_from_record_gets_no_column(self):
+        out = wrap({"id": "1", "properties": {"amount": "10"}}, allowed=frozenset({"amount", "dealname"}))
+        assert "properties_dealname" not in out
+
+    def test_emitted_property_keys_are_a_subset_of_the_declared_schema(self):
+        hubspot = Hubspot("pat-test-token")
+        for object_type, allowlist in ALLOWED_PROPERTIES_BY_OBJECT.items():
+            declared = set(hubspot.generate_schema(object_type)["properties"])
+            record = {"id": "1", "properties": {name: "v" for name in allowlist} | {"undeclared": "v"}}
+            emitted = {k for k in wrap(record, allowed=allowlist) if k.startswith("properties_")}
+
+            assert emitted == {f"properties_{name}" for name in allowlist}, f"object: {object_type}"
+            assert emitted <= declared, f"object: {object_type}"
 
     def test_missing_properties_key_tolerated(self):
         out = wrap({"id": "1"})
@@ -104,11 +121,47 @@ class TestTruncation:
         monkeypatch.setattr(envelope_mod, "_VALUE_MAX_BYTES", 5)
         assert _truncate("x" * 100) == "…[truncated]"
 
-    def test_applied_to_flat_and_custom_properties(self):
+    def test_applied_to_property_columns(self):
         long = "y" * 5000
-        out = wrap({"id": "1", "properties": {"amount": long, "my_custom": long}}, custom=frozenset({"my_custom"}))
+        out = wrap({"id": "1", "properties": {"amount": long}})
         assert out["properties_amount"].endswith("…[truncated]")
-        assert json.loads(out["custom_fields"])["my_custom"].endswith("…[truncated]")
+
+
+class TestRawData:
+    def test_keeps_record_shape_as_received(self):
+        record = {
+            "id": "1",
+            "updatedAt": "2024-06-01T00:00:00Z",
+            "properties": {"amount": "10", "uncurated_std": "kept", "my_custom": "x"},
+            "associations_companies": ["7", "8"],
+        }
+        raw = json.loads(wrap(record)["raw_data"])
+        assert raw["id"] == "1"
+        assert raw["properties"] == {"amount": "10", "uncurated_std": "kept", "my_custom": "x"}
+        assert raw["associations_companies"] == ["7", "8"]
+
+    def test_present_without_properties_or_associations(self):
+        assert json.loads(wrap({"id": "1"})["raw_data"]) == {"id": "1"}
+
+    def test_truncates_values_not_the_blob(self):
+        long = "y" * 5000
+        out = wrap({"id": "1", "properties": {"amount": long}, "note": long})
+        raw = json.loads(out["raw_data"])  # must stay parseable
+        assert raw["properties"]["amount"].endswith("…[truncated]")
+        assert raw["note"].endswith("…[truncated]")
+        # Two capped values plus the record scaffolding exceed the per-value cap.
+        assert len(out["raw_data"].encode("utf-8")) > 2048
+
+    def test_source_record_left_unmodified(self):
+        record = {"id": "1", "properties": {"amount": "y" * 5000}}
+        wrap(record)
+        assert record["properties"]["amount"] == "y" * 5000
+
+    def test_colliding_source_field_still_captured(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="airbyte"):
+            out = wrap({"id": "1", "raw_data": "SOURCE"})
+        assert json.loads(out["raw_data"])["raw_data"] == "SOURCE"
+        assert "collides with Insight envelope field" in caplog.text
 
 
 class TestInjectEnvelopeProperties:
@@ -116,8 +169,16 @@ class TestInjectEnvelopeProperties:
         schema = {"type": "object", "properties": {"id": {"type": "string"}}}
         out = inject_envelope_properties(schema)
         assert out is schema  # mutates and returns the same mapping
-        for field in ("tenant_id", "source_id", "unique_key", "data_source", "collected_at", "custom_fields"):
-            assert field in schema["properties"]
+        for field in (
+            "tenant_id",
+            "source_id",
+            "unique_key",
+            "data_source",
+            "collected_at",
+            "raw_data",
+        ):
+            assert field in schema["properties"], f"missing envelope field: {field}"
+        assert "custom_fields" not in schema["properties"]
         assert schema["properties"]["id"] == {"type": "string"}
 
     def test_creates_properties_when_absent(self):

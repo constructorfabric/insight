@@ -1,0 +1,341 @@
+{
+  "common": {
+    "app_name": "Insight",
+    "em_dash": "—",
+    "metrics": {
+      "ai_adoption": "AI adoption",
+      "ai_pct": "AI %",
+      "avg_pr_cycle": "Avg PR Cycle",
+      "bugs": "Bugs",
+      "build_pct": "Build %",
+      "build_success": "Build success",
+      "commits": "Commits",
+      "focus_pct": "Focus %",
+      "focus_time": "Focus time",
+      "headcount": "Headcount",
+      "pr_cycle_h": "PR Cycle (h)",
+      "prs": "PRs",
+      "prs_merged": "PRs merged",
+      "prs_merged_label": "PRs Merged",
+      "tasks": "Tasks",
+      "tasks_closed": "Tasks closed",
+      "teams": "Teams"
+    },
+    "status": {
+      "good": "good",
+      "warn": "warn",
+      "bad": "bad",
+      "neutral": "neutral",
+      "no_data": "no data"
+    },
+    "table": {
+      "member": "Member",
+      "person": "Person",
+      "role": "Role",
+      "status": "Status",
+      "team": "Team"
+    },
+    "cohort": {
+      "org": "org",
+      "team": "team"
+    },
+    "sections": {
+      "task_delivery": "Task delivery",
+      "git_output": "Git output",
+      "code_quality": "Code quality",
+      "collaboration": "Collaboration",
+      "ai_adoption": "AI adoption"
+    },
+    "section_blocks": {
+      "counters": "Counters",
+      "distribution": "Distribution",
+      "distributions": "Distributions"
+    },
+    "actions": {
+      "back": "Back",
+      "close": "Close",
+      "collapse": "Collapse",
+      "expand": "Expand",
+      "try_again": "Try again",
+      "reload": "Reload",
+      "retry": "Retry"
+    },
+    "ui_components": {
+      "sidebar": {
+        "title": "Sidebar",
+        "description": "Displays the mobile sidebar.",
+        "toggle": "Toggle Sidebar"
+      }
+    },
+    "period_presets": {
+      "7d": "7d",
+      "14d": "14d",
+      "30d": "30d",
+      "90d": "90d"
+    },
+    "ic_sections_meta": {
+      "kpis": "KPI strip",
+      "loc_trend": "LOC breakdown",
+      "delivery_trend": "Delivery trends",
+      "ai_dev_tools": "AI dev tools"
+    },
+    "team_sections_meta": {
+      "team_summary": "Team summary",
+      "attention": "Attention needed",
+      "members": "Members"
+    }
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
+  },
+  "settings": {
+    "focus_mode": {
+      "label": "Focus",
+      "all": "All",
+      "critical": "Critical",
+      "rewards": "Rewards",
+      "neutral": "Calm"
+    },
+    "explanations": {
+      "label": "Explanations"
+    }
+  },
+  "whats_new": {
+    "nav_label": "What's new",
+    "eyebrow": "Insight · What's new",
+    "title": "What's new · 31 July 2026",
+    "stamp": {
+      "release_label": "Release",
+      "release": "0.4.69",
+      "highlights_label": "Highlights",
+      "highlights": "5 improvements",
+      "focus_label": "Focus",
+      "focus": "the new interface, two new pages"
+    },
+    "improvements_label": "Improvements you'll notice",
+    "sections": {
+      "new_ui": {
+        "title": "New UI"
+      },
+      "dashboards": {
+        "title": "Dashboards"
+      },
+      "connectors": {
+        "title": "Platform"
+      }
+    },
+    "items": {
+      "new_interface": {
+        "title": "We've moved to the new interface for good",
+        "description_html": "Until now the new interface was an option in the sidebar. Now it's what Insight looks like."
+      },
+      "activity_over_time": {
+        "title": "Activity over time, by repository",
+        "description_html": "A new table and chart in Git output: commits, merged pull requests and lines, <strong>split by repository</strong> and grouped by day, week or month to match the period you picked. The 10 busiest repositories are listed, the rest roll up into “Other”, and the totals always add up. Switch between chart and table, and <strong>download it as CSV or Excel.</strong>"
+      },
+      "metric_catalog": {
+        "title": "Metric catalog",
+        "description_html": "A new page in the sidebar lists every metric we report: what it means, its unit, which breakdowns it supports, and <strong>when it last had data.</strong> If a chart looks empty, that last column usually explains why."
+      },
+      "honest_no_data": {
+        "title": "“No data” instead of a misleading zero",
+        "description_html": "Collaboration, task delivery and wiki now measure the same way as Git and AI. Where something isn't measured yet, <strong>you'll see “no data” rather than a zero that looks like a real result.</strong>"
+      },
+      "steadier_data": {
+        "title": "Steadier data across your connectors",
+        "description_html": "Connector fixes across <strong>Jira, Bitbucket, Zoom, Claude and Microsoft 365</strong>, plus the data preparation behind them, so syncs finish and resume where they stopped instead of stalling."
+      }
+    },
+    "coming": {
+      "label": "Coming next",
+      "sections": {
+        "trust": {
+          "title": "Trust"
+        },
+        "platform": {
+          "title": "Platform"
+        }
+      },
+      "items": {
+        "drill_down": {
+          "title": "See the records behind a number",
+          "description_html": "Right now a metric group shows trends, distributions and peer standing, but not the records themselves. We're building the next step: the actual commits, pull requests and tasks behind a number, with a link straight to the source."
+        },
+        "people_matching": {
+          "title": "Better people matching",
+          "description_html": "Work by someone whose email doesn't match still isn't attributed, which can leave some Git and Jira metrics incomplete. Better matching is in flight."
+        },
+        "role_cohorts": {
+          "title": "Compare like with like",
+          "description_html": "A person is currently compared against their whole department. Role-based comparison is planned: peers whose role is expected to do the same kind of work."
+        }
+      }
+    },
+    "history_label": "Earlier releases",
+    "history": {
+      "release_2026_07_13": {
+        "title": "What's new — 13 July 2026",
+        "release": "0.3.42",
+        "summary": "9 improvements · data accuracy & completeness",
+        "sections": {
+          "team_dashboards": {
+            "title": "Team dashboards"
+          },
+          "git": {
+            "title": "Git & code reviews"
+          },
+          "task_delivery": {
+            "title": "Task delivery"
+          },
+          "collaboration": {
+            "title": "Collaboration"
+          },
+          "ai_adoption": {
+            "title": "AI adoption"
+          }
+        },
+        "items": {
+          "direct_reports_toggle": {
+            "title": "“Direct reports only” toggle is back",
+            "description_html": "Filter a team down to just your direct reports — members, heatmap and metrics all update together. <strong>On by default,</strong> and hidden automatically for teams without sub-teams, where it had no effect."
+          },
+          "member_expand_full_metrics": {
+            "title": "Full metrics when you expand a team member",
+            "description_html": "Expanding a person now opens their <strong>complete metric set</strong> instead of a trimmed subset — so you can assess someone without switching screens."
+          },
+          "bitbucket_prs": {
+            "title": "Bitbucket pull requests now counted",
+            "description_html": "Pull-request activity from Bitbucket is attributed to the right person. <strong>Review metrics that used to show zero</strong> now reflect real work."
+          },
+          "consistent_git_metrics": {
+            "title": "Consistent commit & lines-of-code metrics",
+            "description_html": "Commit and LOC figures now come from a single shared source, so <strong>Git activity is reported the same way across connectors.</strong>"
+          },
+          "readable_git_charts": {
+            "title": "Readable quarterly & yearly Git charts",
+            "description_html": "Long-range charts no longer repeat the same label over and over. <strong>Quarterly and annual trends are now legible.</strong>"
+          },
+          "jira_task_delivery": {
+            "title": "Jira Task Delivery metrics now populate",
+            "description_html": "Closed tasks are detected by their status <i>category</i> rather than English-only status names, so <strong>non-English and custom “Done” workflows report correctly.</strong>"
+          },
+          "zoom_data": {
+            "title": "Zoom meeting data restored",
+            "description_html": "The Zoom sync was hitting an API limit and stalled for about ten days. It's fixed, so <strong>meeting activity repopulates</strong> going forward."
+          },
+          "ai_adoption_graphs": {
+            "title": "AI adoption graphs fixed",
+            "description_html": "AI-adoption graphs now show <strong>real distributions with honest “no data” states</strong> instead of blanks or misleading zeros."
+          },
+          "claude_code_cost": {
+            "title": "Claude Code cost shown as currency",
+            "description_html": "The “Claude Code Cost” metric now displays as <strong>money</strong> instead of a raw number of cents — no more figures that looked inflated."
+          }
+        }
+      }
+    },
+    "footer": "Insight · what's new · 31 July 2026"
+  },
+  "auth": {
+    "loginFailedAccessDenied": "Your account is not authorized to access this application. Contact your administrator if you believe this is a mistake.",
+    "loginFailedRetryable": "Your sign-in could not be completed. This can happen when signing in takes too long — please try again.",
+    "loginFailedTitle": "Sign-in failed",
+    "loginFailedTryAgain": "Try again",
+    "redirecting": "Redirecting to sign in…"
+  },
+  "error_boundary": {
+    "title": "Something went wrong"
+  },
+  "mock_banner": {
+    "title": "Synthetic data",
+    "description_html": "UI is rendering using mock data."
+  },
+  "view_as_banner": {
+    "title": "Viewing as {{email}}",
+    "description": "You are signed in as {{impersonator}} and seeing the portal as this person.",
+    "exit": "Exit view-as"
+  },
+  "ic_route": {
+    "personal_view_label": "Personal",
+    "team_view_label": "Team"
+  },
+  "metric_definitions": {
+    "nav_label": "Metric catalog",
+    "title": "Metric catalog",
+    "error_title": "Failed to load the metric catalog",
+    "error_description": "Try reloading the page. If the problem persists, contact your administrator.",
+    "search_placeholder": "Search metrics…",
+    "no_results_title": "No metrics found",
+    "no_results_description": "Nothing matches \"{{query}}\".",
+    "columns": {
+      "metric": "Metric",
+      "description": "Description",
+      "format": "Format",
+      "better_when": "Better when",
+      "dimensions": "Dimensions",
+      "last_data": "Last data",
+      "status": "Status"
+    },
+    "last_data_help": "The most recent date this metric observed any data. An old date isn't an error — it just means there's been no recent activity of this kind.",
+    "format": {
+      "integer": "Integer",
+      "decimal": "Decimal",
+      "currency": "Currency",
+      "percent": "Percent"
+    },
+    "better_when": {
+      "higher_is_better": "Higher",
+      "lower_is_better": "Lower",
+      "neutral": "—"
+    },
+    "status": {
+      "active": "Active",
+      "disabled": "Disabled",
+      "schema_error": "Schema error",
+      "unchecked": "Unchecked"
+    },
+    "error_code": {
+      "table_not_found": "The source table was not found in the warehouse.",
+      "column_not_found": "A required column is missing from the source table.",
+      "dimension_not_covered": "A declared dimension is not present on the source rows.",
+      "unknown": "The schema check failed for an unknown reason."
+    }
+  },
+  "query_console": {
+    "nav_label": "Query console",
+    "title": "Query console",
+    "new_query": "New query",
+    "empty_list": "No saved queries yet. Create one to get started.",
+    "no_selection": "No query selected",
+    "no_selection_description": "Pick a saved query on the left, or create a new one.",
+    "list_error": "Failed to load saved queries",
+    "list_error_description": "Try reloading the page. If the problem persists, contact your administrator.",
+    "delete_error": "Could not delete the query. Try again.",
+    "editor": {
+      "create_title": "New query",
+      "edit_title": "Edit query",
+      "name_label": "Name",
+      "description_label": "Description",
+      "sql_label": "SQL",
+      "sql_placeholder": "SELECT ... FROM ... WHERE ...",
+      "cancel": "Cancel",
+      "save": "Save",
+      "save_failed": "Could not save the query. Check the SQL and try again."
+    },
+    "detail": {
+      "edit": "Edit",
+      "delete": "Delete",
+      "run": "Run",
+      "period_label": "Period",
+      "period_placeholder": "e.g. 2026-01",
+      "load_error": "Failed to load this query",
+      "run_error": "Query failed",
+      "run_error_generic": "The query could not be run. Check the SQL and any required parameters."
+    },
+    "results": {
+      "empty": "The query returned no rows."
+    }
+  }
+}

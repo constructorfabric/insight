@@ -18,6 +18,11 @@ clean-targets:
   - dbt_packages
 
 vars:
+  # ClickHouse database gold serving relations materialize into. Single flip
+  # point for the deferred `insight` -> `presentation` relocation (#1979): the
+  # gold macros and per-model configs read this rather than a literal.
+  gold_database: insight
+
   # Path patterns (ClickHouse `match` / RE2 regex fragments, matched
   # case-insensitively) that mark a git file as vendored/generated rather than
   # authored. Files matching any pattern are classified `vendored` by the

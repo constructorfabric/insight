@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from source_hubspot import streams as streams_mod
 from source_hubspot.constants import BASE_URL
 from tests.conftest import SOURCE, TENANT, FakeResponse, wire
@@ -129,15 +131,17 @@ class TestArchivedReadRecords:
                 list_page([stub(1, archived_at="2024-06-05T00:00:00Z"), stub(2, archived_at="2024-06-07T00:00:00Z")]),
                 batch_result(
                     [
-                        {"id": "1", "properties": {"amount": "5", "my_custom": "c"}},
-                        {"id": "2", "properties": {"amount": "6"}},
+                        {"id": "1", "properties": {"name": "Example Corp", "my_custom": "c"}},
+                        {"id": "2", "properties": {"name": "Other Corp"}},
                     ]
                 ),
             ],
         )
         out = list(companies_archived_stream.read_records(sync_mode=None))
         assert out[0]["unique_key"] == f"{TENANT}-{SOURCE}-1"
-        assert out[0]["properties_amount"] == "5"
-        assert out[0]["custom_fields"] == '{"my_custom":"c"}'
+        assert out[0]["properties_name"] == "Example Corp"
+        # ``my_custom`` is outside the companies allowlist — raw_data only.
+        assert "properties_my_custom" not in out[0]
+        assert json.loads(out[0]["raw_data"])["properties"]["my_custom"] == "c"
         # State advanced to max archivedAt (from the Pass-1 overlay).
         assert companies_archived_stream.state == {"archivedAt": "2024-06-07T00:00:00Z"}

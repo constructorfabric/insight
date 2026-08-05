@@ -1,0 +1,6 @@
+# Minimum number of minutes that must pass after a version is published before pnpm will install it.
+# This applies to all dependencies, including transitive ones.
+minimumReleaseAge: 10080
+
+# Save exact versions when installing dependencies.
+saveExact: true

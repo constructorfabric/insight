@@ -1,6 +1,6 @@
 apiVersion: v2
 name: insight-keycloak
-description: Keycloak dev/e2e IdP (real-OIDC counterpart to fakeidp) for the nginx+auth stack — LOCAL/CI only, never production
+description: The stack's Keycloak — identity broker per ADR-0003, MariaDB-backed, realm content as code
 version: 0.1.0
 appVersion: "26.4"
 type: application

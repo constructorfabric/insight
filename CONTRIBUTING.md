@@ -93,17 +93,9 @@ frontend checkout needed — the umbrella chart pulls
 
 **Frontend checkout** — only needed for compose with
 `FRONTEND_MODE=dev` (Vite HMR) or `built` (host-built dist). The
-default mode (`ghcr`) pulls the published image, so a fresh laptop with
-only Docker can run the full compose stack. When you do need the
-checkout, the wizard's "clone" option offers to git-clone it for you;
-otherwise it expects a sibling repo (override `INSIGHT_FRONT_PATH` in
-`.env.compose` to point elsewhere):
-
-```text
-cf/
-├── insight/         (this repo)
-└── insight-front/   (only for FRONTEND_MODE=dev or built)
-```
+default mode (`ghcr`) pulls the published image and builds nothing. Both
+other modes run against `src/frontend` in this checkout, and neither needs
+Node on the host — the `dev` and `build` containers run pnpm themselves.
 
 ---
 
@@ -276,10 +268,9 @@ and bounce the stack.
 | Mode | Wizard does | What runs | Auto-reload? | When |
 | --- | --- | --- | --- | --- |
 | `ghcr` | `FRONTEND_MODE=ghcr` | published image | no | Backend-only work; save laptop CPU. |
-| `dev` (local) | `FRONTEND_MODE=dev` + checks `INSIGHT_FRONT_PATH` exists | `pnpm dev` in node:24 | Vite HMR | Active FE work on an existing checkout. |
-| `dev` (clone) | `git clone insight-front` then same as above | `pnpm dev` in node:24 | Vite HMR | First-time setup, no checkout yet. |
+| `dev` | `FRONTEND_MODE=dev` | `pnpm dev` in node:24 against `src/frontend` | Vite HMR | Active FE work. |
 
-A fourth `built` mode (nginx + host-built dist) is undocumented in the
+A third `built` mode (nginx + host-built dist) is undocumented in the
 wizard. To use it, hand-edit `FRONTEND_MODE=built` in `.env.compose`,
 `./dev-compose.sh build frontend`, then bounce.
 
@@ -357,7 +348,7 @@ or an image override. Currently supported: `analytics`.
 `.env.compose.example` documents every knob. Blocks:
 
 - **Auto-reload** — `ENABLE_AUTO_RELOAD` (compose-only, never in k8s)
-- **Frontend** — `FRONTEND_MODE`, `INSIGHT_FRONT_PATH`, `FRONTEND_IMAGE`
+- **Frontend** — `FRONTEND_MODE`, `FRONTEND_IMAGE`
 - **Backend image overrides** — `ANALYTICS_IMAGE`, `IDENTITY_RESOLUTION_IMAGE`
 - **Host ports** — every published port is configurable
 - **Database mode** — `MARIADB_EXTERNAL`/`_HOST`/`_INTERNAL_PORT`/…, ClickHouse equivalents (see [External DBs](#external-mariadb--clickhouse))

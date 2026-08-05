@@ -12,9 +12,63 @@ so roles and accessible names are the only stable handles.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import quote
 
 from playwright.sync_api import Locator, Page
+
+
+class MetricEvidenceDialog:
+    def __init__(self, page: Page, metric: str) -> None:
+        self.page = page
+        self.dialog = page.get_by_role("dialog", name=metric)
+
+    def table(self) -> Locator:
+        return self.dialog.get_by_role("table")
+
+    def export(self) -> Locator:
+        return self.dialog.get_by_role("button", name="Export")
+
+    def copy_ref(self) -> Locator:
+        return self.dialog.get_by_role("button", name=re.compile(r"^Copy "))
+
+
+class GitOutputDetails:
+    def __init__(self, page: Page) -> None:
+        self.page = page
+        self.dialog = page.get_by_role("dialog", name="Git output")
+
+    def repository_table(self) -> Locator:
+        return self.dialog.get_by_role("table").filter(has_text="PRs merged")
+
+    def table(self) -> Locator:
+        return self.repository_table()
+
+    def chart_view(self) -> Locator:
+        return (
+            self.table()
+            .locator('xpath=ancestor::*[@data-slot="card"][1]')
+            .get_by_role("button", name="Chart view")
+        )
+
+    def export(self) -> Locator:
+        return (
+            self.table()
+            .locator('xpath=ancestor::*[@data-slot="card"][1]')
+            .get_by_role("button", name="Export")
+        )
+
+    def metric_selector(self) -> Locator:
+        return self.dialog.get_by_role("combobox", name="Metric").filter(has_text="Commits")
+
+    def close(self) -> Locator:
+        return self.dialog.get_by_role("button", name="Close")
+
+    def open_first_commit_bucket(self) -> MetricEvidenceDialog:
+        table = self.repository_table()
+        data_row = table.get_by_role("rowgroup").nth(1).get_by_role("row").first
+        data_row.get_by_role("cell").nth(1).get_by_role("button").click()
+        return MetricEvidenceDialog(self.page, "Commits")
 
 
 class PersonView:
@@ -47,3 +101,7 @@ class PersonView:
         return self.page.locator("[data-slot='card']").filter(
             has=self.page.get_by_text(label, exact=True)
         )
+
+    def open_git_output(self) -> GitOutputDetails:
+        self.populated_domain_card("Git output").click()
+        return GitOutputDetails(self.page)

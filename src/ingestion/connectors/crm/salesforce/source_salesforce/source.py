@@ -43,15 +43,12 @@ from pathlib import Path
 from airbyte_cdk.models import ConnectorSpecification
 
 from source_salesforce.api import Salesforce, SalesforceAuthenticator
-from source_salesforce.constants import (
-    PARENT_SALESFORCE_OBJECTS,
-    UNSUPPORTED_FILTERING_STREAMS,
-)
+from source_salesforce.constants import UNSUPPORTED_FILTERING_STREAMS
+from source_salesforce.schema_loader import stream_schema
 from source_salesforce.streams import (
     DEFAULT_LOOKBACK_SECONDS,
     IncrementalRestSalesforceStream,
     RestSalesforceStream,
-    RestSalesforceSubStream,
 )
 
 
@@ -90,18 +87,24 @@ class SourceSalesforce(ConcurrentSourceAdapter):
         return ConnectorSpecification(**json.loads(spec_path.read_text()))
 
     @staticmethod
-    def _get_sf_object(config: Mapping[str, Any]) -> Salesforce:
-        """Instantiate the Salesforce client and authenticate.
+    def _build_sf_client(config: Mapping[str, Any]) -> Salesforce:
+        """Instantiate the Salesforce client without contacting Salesforce.
 
         Config keys are prefixed to avoid collisions in shared K8s Secrets.
-        Only the ``salesforce_*`` keys are passed to the client.
+        Only the ``salesforce_*`` keys are passed to the client. The client
+        authenticates on demand, when a caller first needs a bearer token.
         """
-        sf = Salesforce(
+        return Salesforce(
             instance_url=config["salesforce_instance_url"],
             client_id=config["salesforce_client_id"],
             client_secret=config["salesforce_client_secret"],
             start_date=config.get("salesforce_start_date"),
         )
+
+    @staticmethod
+    def _get_sf_object(config: Mapping[str, Any]) -> Salesforce:
+        """Instantiate the Salesforce client and authenticate eagerly."""
+        sf = SourceSalesforce._build_sf_client(config)
         sf.login()
         return sf
 
@@ -163,38 +166,39 @@ class SourceSalesforce(ConcurrentSourceAdapter):
         self._validate_stream_slice_step(config.get("salesforce_stream_slice_step"))
         self._validate_lookback_window(config.get("salesforce_lookback_window"))
         salesforce = self._get_sf_object(config)
-        salesforce.describe()
+        unavailable = salesforce.unavailable_streams()
+        if unavailable:
+            # Surfaced here rather than failing: an org that does not license or
+            # expose an object still syncs the rest. Reporting at check time is
+            # what keeps the gap visible now that discover is org-independent.
+            logger.warning(
+                "Streams not exposed by this org (they will sync as empty): %s",
+                ", ".join(unavailable),
+            )
         return True, None
 
     @classmethod
     def _get_stream_type(cls, stream_name: str):
-        """Get proper stream class: full_refresh, incremental or substream.
+        """Get proper stream class: full_refresh or incremental.
 
-        Every stream uses the REST ``/queryAll`` API. SubStreams (like
-        ContentDocumentLink) do not support incremental sync because of query
-        restrictions: https://developer.salesforce.com/docs/atlas.en-us.object_reference.meta/object_reference/sforce_api_objects_contentdocumentlink.htm
+        Every stream uses the REST ``/queryAll`` API.
         """
-        parent_name = PARENT_SALESFORCE_OBJECTS.get(stream_name, {}).get("parent_name")
-        full_refresh = RestSalesforceSubStream if parent_name else RestSalesforceStream
-        incremental = IncrementalRestSalesforceStream
-        return full_refresh, incremental
+        return RestSalesforceStream, IncrementalRestSalesforceStream
 
     def prepare_stream(self, stream_name: str, json_schema, sobject_options, sf_object, authenticator, config):
-        """Choose proper stream class: syncMode (full_refresh/incremental), REST API, SubStream."""
+        """Choose proper stream class by sync mode (full_refresh / incremental)."""
         pk, replication_key = sf_object.get_pk_and_replication_key(json_schema)
         stream_kwargs = {
             "stream_name": stream_name,
-            "schema": json_schema,
             "pk": pk,
             "sobject_options": sobject_options,
             "sf_api": sf_object,
             "authenticator": authenticator,
             "start_date": config.get("salesforce_start_date"),
             "message_repository": self.message_repository,
-            # Envelope context — tenant_id / source_id / custom_fields split.
+            # Envelope context — tenant / source scope on every record.
             "tenant_id": config["insight_tenant_id"],
             "source_id": config["insight_source_id"],
-            "custom_field_names": sf_object.get_custom_field_names(stream_name),
         }
 
         full_refresh, incremental = self._get_stream_type(stream_name)
@@ -217,26 +221,13 @@ class SourceSalesforce(ConcurrentSourceAdapter):
     ) -> List[Stream]:
         """Generates a list of stream by their names. It can be used for different tests too"""
         authenticator = SalesforceAuthenticator(sf_object._token_provider)
-        schemas = sf_object.generate_schemas(stream_objects)
         default_args = [sf_object, authenticator, config]
         streams = []
         state_manager = ConnectorStateManager(state=self.state)
         for stream_name, sobject_options in stream_objects.items():
-            json_schema = schemas.get(stream_name, {})
+            json_schema = stream_schema(stream_name)
 
             stream_class, kwargs = self.prepare_stream(stream_name, json_schema, sobject_options, *default_args)
-
-            parent_name = PARENT_SALESFORCE_OBJECTS.get(stream_name, {}).get("parent_name")
-            if parent_name:
-                # Minimal schema + sobject_options specific to the parent (not
-                # the child's). Child-specific permission flags should not
-                # shape the parent stream.
-                parent_schema = PARENT_SALESFORCE_OBJECTS.get(stream_name, {}).get("schema_minimal")
-                parent_sobject_options = stream_objects.get(parent_name) or {}
-                parent_class, parent_kwargs = self.prepare_stream(
-                    parent_name, parent_schema, parent_sobject_options, *default_args
-                )
-                kwargs["parent"] = parent_class(**parent_kwargs)
 
             stream = stream_class(**kwargs)
             streams.append(self._wrap_for_concurrency(config, stream, state_manager))
@@ -270,15 +261,21 @@ class SourceSalesforce(ConcurrentSourceAdapter):
         return StreamFacade.create_from_stream(stream, self, logger, state, cursor)
 
     def streams(self, config: Mapping[str, Any]) -> List[Stream]:
+        """Build the stream set without contacting Salesforce.
+
+        Every stream's schema is a repository artifact and the stream set is a
+        code-level contract, so the catalog is the same for every org and costs
+        no API call. The client authenticates lazily, when a read issues its
+        first request.
+        """
         if not config.get("salesforce_start_date"):
             config = dict(config)
             config["salesforce_start_date"] = (
                 datetime.now() - relativedelta(years=self.START_DATE_OFFSET_IN_YEARS)
             ).strftime(self.DATETIME_FORMAT)
-        sf = self._get_sf_object(config)
-        stream_objects = sf.get_validated_streams(catalog=self.catalog)
-        streams = self.generate_streams(config, stream_objects, sf)
-        return streams
+        sf = self._build_sf_client(config)
+        stream_objects = {name: {} for name in sf.syncable_streams()}
+        return self.generate_streams(config, stream_objects, sf)
 
     def _create_stream_slicer_cursor(
         self, config: Mapping[str, Any], state_manager: ConnectorStateManager, stream: Stream

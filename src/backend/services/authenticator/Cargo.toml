@@ -74,7 +74,7 @@ time = { workspace = true }
 # assertions (RFC 7523), whose keys are the services' own EC identity keys.
 jsonwebtoken = { workspace = true }
 p256 = { version = "0.14", features = ["pkcs8", "pem", "ecdsa", "getrandom"] }
-sha2 = "0.10"
+sha2 = "0.11"
 base64 = "0.22"
 rand = "0.8"
 

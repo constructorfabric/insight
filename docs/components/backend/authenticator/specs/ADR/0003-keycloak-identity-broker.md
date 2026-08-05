@@ -7,6 +7,16 @@ date: 2026-08-04
 
 **ID**: `cpt-insightspec-adr-auth-0003-keycloak-identity-broker`
 
+**Status history**:
+
+- 2026-08-05: AMENDED -- of the instance-deployment options this ADR left open, the umbrella
+  subchart is chosen: the broker runs **in-stack** (production-mode `insight-keycloak`,
+  MariaDB-backed) as part of each environment's auth services, amending ADR-0002's shared
+  external instance. The compose Keycloak remains the local-machine dev counterpart and MUST
+  keep the same token contract as the broker realms (the canonical `insight` client scope:
+  allow-listed `email` + single-string `tenant_id`); the tenant is pinned per provider
+  registration from environment values, never imported from upstream claims.
+
 <!-- toc -->
 
 - [Context and Problem Statement](#context-and-problem-statement)

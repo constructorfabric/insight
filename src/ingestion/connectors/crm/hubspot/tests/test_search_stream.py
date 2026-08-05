@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from source_hubspot.constants import BASE_URL, SEARCH_PAGE_LIMIT
@@ -161,9 +162,9 @@ class TestReadRecordsPipeline:
         assert first["unique_key"] == f"{TENANT}-{SOURCE}-1"
         assert first["data_source"] == "hubspot"
         assert first["properties_amount"] == "10"
-        # custom property routed into the JSON blob, not a flat column
+        # property outside the allowlist gets no column — raw_data carries it
         assert "properties_my_custom" not in first
-        assert first["custom_fields"] == '{"my_custom":"x"}'
+        assert json.loads(first["raw_data"])["properties"]["my_custom"] == "x"
         assert first["associations_companies"] == ["900", "901"]
         assert first["associations_contacts"] == []
         # record 2 absent from the association response keeps empty arrays

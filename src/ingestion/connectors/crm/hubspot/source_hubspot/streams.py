@@ -43,6 +43,7 @@ from airbyte_cdk.sources.streams.http import HttpClient
 from source_hubspot.api import Hubspot, _TimeoutSession
 from source_hubspot.associations import AssociationFetcher
 from source_hubspot.constants import (
+    ALLOWED_PROPERTIES_BY_OBJECT,
     BASE_URL,
     BATCH_READ_LIMIT,
     LIST_PAGE_LIMIT,
@@ -84,6 +85,11 @@ class HubspotStream(Stream, ABC):
         self._hubspot = hubspot_api
         self._registry = STREAM_REGISTRY[stream_name]
         self._object_type = self._registry["object_type"]
+        # Same allowlist ``generate_schema`` declares columns from, so the
+        # ``properties_*`` keys a record carries can't drift from the schema.
+        self._allowed_property_names = ALLOWED_PROPERTIES_BY_OBJECT.get(
+            self._object_type, frozenset()
+        )
         self._tenant_id = tenant_id
         self._source_id = source_id
         self._start_date = start_date
@@ -194,13 +200,14 @@ class HubspotStream(Stream, ABC):
     def get_json_schema(self) -> Mapping[str, Any]:
         """Advertise per-stream schema to the destination.
 
-        - Start from describe-generated schema (every hubspotDefined property).
+        - Start from the static allowlist schema (no portal describe involved,
+          so every portal advertises the same columns).
         - Add the envelope fields so ClickHouse creates columns for them.
         - Add ``associations_{to_object_type}`` arrays when applicable.
-        - ``custom_fields`` JSON blob is added by inject_envelope_properties.
+        - The ``raw_data`` blob is added by inject_envelope_properties.
         """
-        # Deep copy so envelope and association-props loop don't mutate the
-        # describe cache shared across streams.
+        # Deep copy so the mutations below can't reach anything the api client
+        # might hand out more than once.
         schema = copy.deepcopy(self._hubspot.generate_schema(self._object_type))
         schema = inject_envelope_properties(schema)
         props = schema.setdefault("properties", {})
@@ -226,8 +233,6 @@ class HubspotStream(Stream, ABC):
         if stream_state and self.cursor_field:
             self.state = stream_state  # type: ignore[assignment]
 
-        custom_names = self._hubspot.custom_property_names(self._object_type)
-
         latest_cursor: Optional[pendulum.DateTime] = None
         batch: List[MutableMapping[str, Any]] = []
         for record in self._generate_records(sync_mode, stream_slice, stream_state):
@@ -238,17 +243,16 @@ class HubspotStream(Stream, ABC):
                 latest_cursor = cursor_value
             batch.append(dict(record))
             if len(batch) >= SEARCH_PAGE_LIMIT:
-                yield from self._finalize_batch(batch, custom_names)
+                yield from self._finalize_batch(batch)
                 batch = []
         if batch:
-            yield from self._finalize_batch(batch, custom_names)
+            yield from self._finalize_batch(batch)
 
         self._advance_state(latest_cursor)
 
     def _finalize_batch(
         self,
         batch: List[MutableMapping[str, Any]],
-        custom_names: frozenset,
     ) -> Iterable[MutableMapping[str, Any]]:
         if self._associations is not None:
             self._associations.enrich(batch)
@@ -257,7 +261,7 @@ class HubspotStream(Stream, ABC):
                 record,
                 tenant_id=self._tenant_id,
                 source_id=self._source_id,
-                custom_property_names=custom_names,
+                allowed_property_names=self._allowed_property_names,
                 collision_seen=self._envelope_collisions_seen,
             )
 
@@ -489,15 +493,12 @@ class OwnersStream(HubspotStream):
         stream_slice: Optional[Mapping[str, Any]] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
     ) -> Iterable[StreamData]:
-        """Envelope owners without touching the CRM properties endpoint.
+        """Envelope owners one at a time, without the batch buffer.
 
-        Owners have no ``/crm/v3/properties/owners`` endpoint and no
-        custom-field surface, so the base :class:`HubspotStream.read_records`
-        path (which calls ``self._hubspot.custom_property_names`` and batches
-        through :func:`_finalize_batch`) doesn't apply. Stream directly from
-        :meth:`_generate_records`, envelope with an empty custom-field set,
-        and skip association enrichment (owners have none). State advance is
-        applied at the end via the same cursor-tracking pattern.
+        Owners carry no associations, so there is nothing to batch-enrich;
+        records stream straight from :meth:`_generate_records` to the
+        envelope. State advance follows the same cursor-tracking pattern as
+        the base class.
         """
         if stream_state and self.cursor_field:
             self.state = stream_state  # type: ignore[assignment]
@@ -513,7 +514,7 @@ class OwnersStream(HubspotStream):
                 record,
                 tenant_id=self._tenant_id,
                 source_id=self._source_id,
-                custom_property_names=frozenset(),
+                allowed_property_names=self._allowed_property_names,
                 collision_seen=self._envelope_collisions_seen,
             )
         self._advance_state(latest_cursor)

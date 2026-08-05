@@ -575,7 +575,7 @@ services:
       # frontend container, so we use the compose service name.
       VITE_API_PROXY_TARGET: "${VITE_API_PROXY_TARGET:-http://gateway:8080}"
     volumes:
-      - ${INSIGHT_FRONT_PATH:-../insight-front}:/app
+      - ./src/frontend:/app
       - frontend-node-modules:/app/node_modules
     command:
       - "sh"
@@ -596,21 +596,18 @@ services:
       CSP_REMOTE: ${CSP_REMOTE:-}
     volumes:
       # Host-built dist/ — produced by dev-compose.sh build (build-frontend)
-      # or by running `pnpm build` directly in the insight-front repo.
-      - ${INSIGHT_FRONT_PATH:-../insight-front}/dist:/usr/share/nginx/html:ro
-      - ${INSIGHT_FRONT_PATH:-../insight-front}/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
-      - ${INSIGHT_FRONT_PATH:-../insight-front}/nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
+      # or by running `pnpm build` in src/frontend.
+      - ./src/frontend/dist:/usr/share/nginx/html:ro
+      - ./src/frontend/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./src/frontend/nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
     ports:
       - "${FRONTEND_PORT:-3000}:80"
 
   insight-front-ghcr:
     !!merge <<: *restart-policy
     profiles: ["front-ghcr"]
-    # Ghcr images are amd64-only for now (arm64 builds are tracked
-    # separately). Pin the platform so Apple-silicon hosts pull the
-    # amd64 manifest and run it under Rosetta instead of erroring out
-    # with "no matching manifest for linux/arm64/v8".
-    platform: linux/amd64
+    # No platform pin: the published tags are multi-arch manifests covering
+    # linux/amd64 and linux/arm64, so Apple-silicon hosts pull arm64 natively.
     image: ${FRONTEND_IMAGE:-ghcr.io/constructorfabric/insight-front:latest}
     container_name: ${COMPOSE_PROJECT_NAME:-insight}-front
     networks:
@@ -688,7 +685,7 @@ services:
     networks: [insight]
     working_dir: /app
     volumes:
-      - ${INSIGHT_FRONT_PATH:-../insight-front}:/app
+      - ./src/frontend:/app
       - frontend-node-modules:/app/node_modules
     command:
       - "sh"

@@ -162,7 +162,7 @@ The third driver is reproducibility for the development team itself: a developer
 - Helm 3.14+ required for OCI chart pulls and registry authentication.
 - Docker (Engine 24+, compose v2) is required for the Docker Compose dev stack. The local gitops path additionally needs a local Kubernetes cluster (Kind / OrbStack / k3d / minikube) with working containerd image load.
 - Bitnami chart dependencies (MariaDB, Redis) are pinned to the `bitnamilegacy` registry variants with `global.security.allowInsecureImages: true`, because Bitnami moved free images off `docker.io/bitnami/*` in 2025.
-- Frontend image is currently published as `linux/amd64` only. On Apple Silicon hosts the Docker Compose stack can rebuild the frontend from the sibling `insight-front` checkout (`FRONTEND_MODE=dev` / `built`) instead of pulling the upstream image; the default `ghcr` mode and production installs rely on QEMU emulation or a customer-side multi-arch mirror.
+- Frontend image is published as a multi-arch manifest (`linux/amd64` + `linux/arm64`), so Apple Silicon hosts and arm64 clusters pull natively.
 - The umbrella chart assumes release name `insight` for its internal DNS references inside `values.yaml`. Using a non-default release name requires overriding the affected URL fields.
 - For gitops production, each cluster carries exactly one Insight install; the cluster's identity (which env it represents) lives in the kube-context name (`insight-<env>`) and the gitops repo's `environments/<env>/` directory — not in the namespace. The two well-known namespaces (`insight-infra` for L2, `insight` for L3) are the same across every install.
 - The local gitops path (`make deploy ENV=local`) targets a developer-supplied Kind 0.22+ / OrbStack cluster; the operator brings their own cluster and `$KUBECONFIG`.
@@ -559,7 +559,7 @@ Every merge to `main` of `constructorfabric/insight` **MUST** publish a new umbr
 
 **Alternative Flows**:
 
-- **Apple Silicon host**: the default `ghcr` frontend mode pulls the published linux/amd64 image and runs it under QEMU; for active frontend work the operator sets `FRONTEND_MODE=dev` to build from the sibling `insight-front` checkout natively.
+- **Apple Silicon host**: the default `ghcr` frontend mode pulls the arm64 manifest natively; for active frontend work the operator sets `FRONTEND_MODE=dev` to run Vite against `src/frontend`.
 - **Cluster-shape eval**: to evaluate the real Kubernetes topology (Airbyte / Argo / the umbrella chart) instead of compose, the operator runs `cd deploy/gitops && make deploy ENV=local` against a local Kind/OrbStack cluster.
 
 ### 8.2 Constructor Platform tenant install
@@ -611,7 +611,7 @@ Every merge to `main` of `constructorfabric/insight` **MUST** publish a new umbr
 - [ ] `cd deploy/gitops && make deploy ENV=local` on a local Kind/OrbStack cluster installs the L2 system services (Airbyte, Argo, infra in `insight-infra`) and the L3 umbrella (app services in `insight`); all pods reach Ready.
 - [ ] Two concurrent installs in namespaces `insight-a` and `insight-b` on the same Kind cluster do not observe each other's Workflow objects.
 - [ ] With `clickhouse.deploy: false` + a complete `clickhouse.host` / `.port` / `.passwordSecret` block, the resulting pods read from that external ClickHouse via the platform ConfigMap without modification to any subchart.
-- [ ] `./dev-compose.sh up` on Apple Silicon succeeds end-to-end with the default `ghcr` frontend mode (linux/amd64 image under QEMU) and builder-container backend builds — no manual architecture flags.
+- [ ] `./dev-compose.sh up` on Apple Silicon succeeds end-to-end with the default `ghcr` frontend mode (native arm64 manifest) and builder-container backend builds — no manual architecture flags.
 
 ## 10. Dependencies
 
@@ -631,7 +631,7 @@ Every merge to `main` of `constructorfabric/insight` **MUST** publish a new umbr
 
 - Cluster operators (Cyberfabric SRE for gitops, customer SREs for external installs) provide a working default StorageClass and an ingress controller; the Deployment subsystem does not provision either.
 - Operators consuming the chart are comfortable with Helm values files, kubectl, and at least one of (helm, ArgoCD, Flux, Terraform Helm provider); the chart is not targeted at non-technical operators.
-- The sibling repository `insight-front` is present on developer machines only when the Docker Compose stack runs with `FRONTEND_MODE=dev` or `built`; the default `ghcr` mode pulls the published frontend image, so a fresh laptop with only Docker can run the full stack.
+- Frontend source is part of this repository, so `FRONTEND_MODE=dev` and `built` need no extra checkout; the default `ghcr` mode pulls the published frontend image, so a fresh laptop with only Docker can run the full stack without building it.
 - The bundled Airbyte and Argo Workflows versions remain viable for the next release cycle; upgrades to newer minors are handled in dedicated PRs with regression tests over ingestion workflows.
 - On a shared cluster, tenant isolation is acceptable at the Kubernetes namespace boundary — workloads within a tenant namespace are mutually trusted. On a Cyberfabric-operated cluster, tenant isolation is at the cluster boundary (one customer per cluster).
 - The Constructor Platform provides stable Secret resource references; tenants receive them out-of-band (not created by the consumer's chart install).
@@ -643,7 +643,6 @@ Every merge to `main` of `constructorfabric/insight` **MUST** publish a new umbr
 |------|--------|------------|
 | Chart Publishing CI auto-commit-back fails on branch protection. | A merge that should publish a new umbrella tag publishes the chart but fails to bump `Chart.yaml` on `main`, leaving the repo state out of sync with what was published. | Track in repo settings: fine-grained PAT in `RELEASE_PUSH_PAT` with bypass on protected branch, or a GitHub App with bypass rights. Until either is in place, the auto-commit step is replayed manually after merge. |
 | Inline infra passwords previously had to be duplicated into app-service DSNs. | Drift between infra password and DSN produced a silently-broken install. | Resolved: `credentials.autoGenerate=true` writes `insight-db-creds` once and the umbrella derives all app-service Secrets (`insight-analytics-config`, `insight-identity-resolution-config`) from the same passwords. BYO mode reads the customer-supplied `insight-db-creds` instead. |
-| Frontend image is `linux/amd64` only — Apple Silicon hosts rely on QEMU emulation or local rebuild. | Slow first pull and occasional emulation bugs on dev machines. | The Docker Compose stack can build the frontend from source (`FRONTEND_MODE=dev` / `built`) as a workaround; infra team to publish multi-arch images. |
 | Identity Resolution subchart ships as MVP stub that crashloops on empty bronze. | If operator flips `identityResolution.deploy: true` before any BambooHR sync, the release looks broken. | Keep default `identityResolution.deploy: false`; document the prerequisite in README; surface a clearer error message in the service itself (Backend concern). |
 | Airbyte chart 1.9.x was deliberately skipped because its bundled app 2.0.x-alpha is not production-grade. | Consumer asking for 1.9 gets a "no". | Document the policy in the Airbyte README; revisit when 2.0 GA ships. |
 | Bitnami's late-2025 registry change means the MariaDB / Redis subcharts rely on `bitnamilegacy` + `global.security.allowInsecureImages`. | If Bitnami deprecates `bitnamilegacy`, both subcharts break. | Monitor Bitnami's policy; plan a migration to a vendored or self-hosted registry; enterprise customers are expected to use their own internal registry. |

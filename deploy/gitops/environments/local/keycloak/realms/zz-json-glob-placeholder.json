@@ -1,0 +1,5 @@
+{
+  "realm": "zz-json-glob-placeholder",
+  "enabled": false,
+  "displayName": "Satisfies the /config/*.json import glob when the generated roster realm is absent; inert"
+}

@@ -1,4 +1,4 @@
-"""HubSpot stream registry, property-type mapping, and API limits."""
+"""HubSpot stream registry, Bronze column allowlist, and API limits."""
 
 from typing import FrozenSet, Mapping
 
@@ -26,39 +26,6 @@ BATCH_READ_LIMIT = 100
 # v4 associations batch_read accepts up to 1000 ids per call, but 100 keeps
 # request bodies small enough that a 429 retry doesn't replay a big payload.
 ASSOCIATIONS_BATCH_SIZE = 100
-
-# ------- Property-type mapping (describe -> JSON schema) ---------------------
-
-# HubSpot property type -> (json-schema type, optional format).
-# Any type not listed falls back to string with a one-time warning.
-HUBSPOT_TYPE_TO_JSON_SCHEMA: Mapping[str, tuple] = {
-    # HubSpot's CRM v3 Search API returns every property value as a JSON
-    # string — booleans come back as "true"/"false", numbers as "1234.56",
-    # datetimes as ISO strings (sometimes epoch-millis strings on legacy
-    # properties). Declaring anything other than ("string", None) makes
-    # the destination build a typed column (Bool/Decimal/DateTime64) and
-    # silently NULL every row whose value can't deserialize, with
-    # _airbyte_meta.changes recording DESTINATION_SERIALIZATION_ERROR.
-    # Observed losses: ~100% on deals.hs_is_closed/won, all values on
-    # companies.numberofemployees range strings ("500-1000"), tasks
-    # legacy completion dates, etc.
-    #
-    # Bronze stays as Nullable(String) for every property; dbt coerces
-    # downstream (toInt64OrNull, toFloat64OrNull,
-    # parseDateTime64BestEffortOrNull). Lossless storage,
-    # parser-failure isolation per row instead of silent NULL.
-    "string": ("string", None),
-    "bool": ("string", None),
-    "boolean": ("string", None),
-    "enumeration": ("string", None),
-    "date": ("string", None),
-    "datetime": ("string", None),
-    "date-time": ("string", None),
-    "number": ("string", None),
-    "json": ("string", None),
-    "object_coordinates": ("string", None),
-    "phone_number": ("string", None),
-}
 
 # ------- Cloudflare oddity ---------------------------------------------------
 
@@ -212,10 +179,11 @@ CURATED_STREAMS = list(_LIVE_STREAM_REGISTRY.keys())
 # Stream-name suffix used by the source to derive archived siblings.
 ARCHIVED_STREAM_SUFFIX = _ARCHIVED_STREAM_SUFFIX
 
-# Property scope: standard (``hubspotDefined``) properties are filtered
-# through ``ALLOWED_PROPERTIES_BY_OBJECT`` so Bronze width stays bounded.
-# Tenant-defined (``hubspotDefined=False``) properties always pass through
-# and ride in ``custom_fields`` JSON.
+# Bronze column scope: these properties get a dedicated
+# ``properties_{name}`` column, and they alone define the advertised schema —
+# it is identical for every portal, and a property the portal doesn't define
+# stays NULL. Every other property the portal returns still ships, inside
+# ``raw_data``.
 ALLOWED_PROPERTIES_BY_OBJECT: Mapping[str, FrozenSet[str]] = {
     "contacts": frozenset({
         "email", "firstname", "lastname", "hubspot_owner_id", "lifecyclestage",

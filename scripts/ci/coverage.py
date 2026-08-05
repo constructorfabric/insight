@@ -145,7 +145,7 @@ def _icon(ok: bool) -> str:
 
 
 # (lang key, section heading) — controls the order of report sections.
-LANG_SECTIONS = [("rust", "Rust"), ("python", "Python")]
+LANG_SECTIONS = [("rust", "Rust"), ("python", "Python"), ("js", "JS/TS")]
 
 
 def markdown_report(

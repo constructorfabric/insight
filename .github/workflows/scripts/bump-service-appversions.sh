@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bump each backend service subchart's appVersion to $BUILD_TAG when that
+# Bump each service subchart's appVersion to $BUILD_TAG when that
 # service's image was (re)built this run: its paths-filter flag is 'true', or
 # this is a manual full rebuild (FULL_REBUILD=true).
 #
@@ -8,8 +8,12 @@
 # untouched — it keeps its previous appVersion, which still resolves to an
 # image that exists.
 #
+# Every service listed here MUST have a build job whose `if` condition matches
+# this script's flag for that service, including on workflow_dispatch. Bumping an
+# appVersion for an image that was not pushed publishes a chart that cannot pull.
+#
 # Env: BUILD_TAG (required), FULL_REBUILD (default false), and one flag per
-# service (ANALYTICS/AUTHENTICATOR/GATEWAY/IDENTITY_RESOLUTION)
+# service (ANALYTICS/AUTHENTICATOR/GATEWAY/IDENTITY_RESOLUTION/FRONTEND)
 # carrying the paths-filter output ('true' when that service changed).
 set -euo pipefail
 
@@ -22,6 +26,7 @@ services=(
   "AUTHENTICATOR:src/backend/services/authenticator/helm/Chart.yaml"
   "GATEWAY:src/backend/services/gateway/helm/Chart.yaml"
   "IDENTITY_RESOLUTION:src/backend/services/identity-resolution/helm/Chart.yaml"
+  "FRONTEND:src/frontend/helm/Chart.yaml"
 )
 
 for entry in "${services[@]}"; do

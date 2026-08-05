@@ -1,0 +1,360 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "unique_key"
+  ],
+  "properties": {
+    "Id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsDeleted": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "MasterRecordId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "LastName": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "FirstName": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Salutation": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Company": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Street": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "City": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "State": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "PostalCode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Country": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "StateCode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "CountryCode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Latitude": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "Longitude": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "GeocodeAccuracy": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Address": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Phone": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "MobilePhone": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Fax": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Email": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Website": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "PhotoUrl": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "LeadSource": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Status": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Industry": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "Rating": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "AnnualRevenue": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "NumberOfEmployees": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "OwnerId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsConverted": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ConvertedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "ConvertedAccountId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ConvertedContactId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ConvertedOpportunityId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsUnreadByOwner": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "CreatedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "CreatedById": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "LastModifiedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "LastModifiedById": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "SystemModstamp": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "LastActivityDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "LastViewedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "LastReferencedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "Jigsaw": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "JigsawContactId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "CleanStatus": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "CompanyDunsNumber": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "DandbCompanyId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "EmailBouncedReason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "EmailBouncedDate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "IndividualId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "IsPriorityRecord": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    }
+  }
+}

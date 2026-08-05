@@ -221,14 +221,6 @@ Airbyte chart pinned to 1.8.5+ (app 1.8.5+) at the consumer side. Chart 1.9.x wa
 
 **ADRs**: none.
 
-#### Frontend is linux/amd64 only (for now)
-
-- [ ] `p3` - **ID**: `cpt-insightspec-constraint-dep-frontend-amd64`
-
-The published `ghcr.io/constructorfabric/insight-front` image ships only a linux/amd64 manifest. The Docker Compose dev stack works around this on arm64 hosts by rebuilding from the sibling `insight-front` checkout (`FRONTEND_MODE=dev` / `built`); the default `ghcr` mode runs the amd64 image under QEMU. Production installs on amd64 clusters are unaffected; the publish workflow does not bump frontend image tags automatically (the frontend source lives in a separate repo).
-
-**ADRs**: none.
-
 #### Release name default is `insight`
 
 - [ ] `p3` - **ID**: `cpt-insightspec-constraint-dep-release-name-default`
@@ -362,7 +354,6 @@ A Helm chart without a publishing pipeline is just source in a repo — operator
 
 - Does not deploy anything. The cluster never knows the CI exists.
 - Does not bump the gitops `.insight-version` — that's the gitops poller's job (cron `0 * * * *` against GHCR's tag list).
-- Does not bump the frontend image tag — frontend source lives in a separate repo; env overlays pin the frontend tag manually (tracked SPEC §8 follow-up).
 - Does not sign images or charts — cosign signing is a tracked follow-up (see the [gitops SPEC §8 open items](../gitops/README.md#8-open-items)).
 
 ##### Related components (by ID)
@@ -530,7 +521,7 @@ Per-tag artifacts are immutable; the Chart Publishing CI does not overwrite. GHC
 | Variable | Description | Stability |
 |----------|-------------|-----------|
 | `ENABLE_AUTO_RELOAD` | Wraps each backend entrypoint in `watchexec --restart` for ~1s reload. Compose-only — never set in a Kubernetes manifest. | stable |
-| `FRONTEND_MODE` | `ghcr` (published image, default), `dev` (Vite HMR from `INSIGHT_FRONT_PATH`), or `built` (host-built dist). | stable |
+| `FRONTEND_MODE` | `ghcr` (published image, default), `dev` (Vite HMR from `src/frontend`), or `built` (host-built dist). | stable |
 | `AUTH_MODE` | `fakeidp` (default, in-repo test IdP) or `keycloak` (real login via a bundled Keycloak container — see [`deploy/compose/keycloak/README.md`](../../../../deploy/compose/keycloak/README.md)). Persisted here; a per-run `--auth` flag overrides it. | stable |
 | `<SVC>_IMAGE` | Pull a published image for a backend service instead of building it (e.g. `API_GATEWAY_IMAGE`). | stable |
 | `*_PORT` | Host port for each published service (Frontend :3000, gateway :8080, …); override on conflict. | stable |
@@ -737,16 +728,14 @@ Not applicable. The Deployment subsystem stores no data; it produces a chart art
 
 1. Airbyte auth was off in the curated values. Now `global.auth.enabled: true`; the Airbyte L2 release generates a random admin password on first install into `airbyte-auth-secrets/instance-admin-password`, which consumers read from that Secret.
 2. DB passwords are not auto-generated for local use. Canonical `values.yaml` intentionally leaves infra credentials empty; local development supplies eval values out-of-band (`.env.compose` for the compose stack; wizard-generated values for a local gitops cluster). This is a deliberate choice over `randAlphaNum` hooks because reproducibility across local runs beats marginal "security" on a throwaway environment.
-3. Frontend image is linux/amd64 only. The Docker Compose stack can build the frontend from the sibling `insight-front` checkout on arm64 hosts (`FRONTEND_MODE=dev` / `built`); the default `ghcr` mode runs the amd64 image under QEMU. Follow-up is to publish multi-arch images (infra team).
-4. Argo's chart expects `controller.instanceID` as a sub-object (`enabled` + `explicitID`), not a plain string. The gitops Argo (L2) install uses the dotted-key form.
-5. Argo's supplemental RBAC requires a namespace-scoped Role + Binding for the workflow service account. The gitops path ships `bootstrap/argo-rbac.yaml.tmpl` with `${NAMESPACE}` / `${WORKFLOW_SA}` placeholders substituted via `envsubst`.
-6. The umbrella chart's internal DNS references are keyed off `.Release.Name`; a non-default release name breaks inline URLs in `values.yaml`. Acknowledged as tech debt; the planned follow-up migrates all app services to read the platform ConfigMap via `envFrom` so inline URLs disappear from values.
+3. Argo's chart expects `controller.instanceID` as a sub-object (`enabled` + `explicitID`), not a plain string. The gitops Argo (L2) install uses the dotted-key form.
+4. Argo's supplemental RBAC requires a namespace-scoped Role + Binding for the workflow service account. The gitops path ships `bootstrap/argo-rbac.yaml.tmpl` with `${NAMESPACE}` / `${WORKFLOW_SA}` placeholders substituted via `envsubst`.
+5. The umbrella chart's internal DNS references are keyed off `.Release.Name`; a non-default release name breaks inline URLs in `values.yaml`. Acknowledged as tech debt; the planned follow-up migrates all app services to read the platform ConfigMap via `envFrom` so inline URLs disappear from values.
 
 **Known gaps (post-consolidation)**:
 
 - **Chart publishing auto-commit-back branch-protection token.** The default `GITHUB_TOKEN` cannot bypass branch protection on `main`; until a fine-grained PAT in `RELEASE_PUSH_PAT` or a GitHub App with bypass rights is configured, the version-bump auto-commit must be replayed manually after merge. Tracked.
-- **Frontend image tag in publish CI.** The publish-chart workflow does not bump the frontend image tag because frontend source lives in the separate `constructorfabric/insight-front` repo. Env overlays pin frontend's tag manually. Fix: emit a workflow-dispatch hook in the publish-chart job that accepts a `frontend_tag` input. Tracked as a chart-side SPEC §8 follow-up.
-- **`required` short-circuits subchart `image.tag` defaulting.** Despite the umbrella's design saying "image.tag empty → use chart appVersion", subchart deployment templates use `required` without `default`, so env overlays must pin `image.tag` explicitly for api-gateway / analytics / identity-resolution / frontend. Replace `required` with `default .Chart.AppVersion`. Tracked as a chart-side SPEC §8 follow-up.
+- **`required` short-circuits subchart `image.tag` defaulting.** Despite the umbrella's design saying "image.tag empty → use chart appVersion", subchart deployment templates use `required` without `default`, so env overlays must pin `image.tag` explicitly for api-gateway / analytics / identity-resolution. Replace `required` with `default .Chart.AppVersion` (the frontend subchart already does). Tracked as a chart-side SPEC §8 follow-up.
 - **Per-service DB provisioning Helm hook for layered mode.** The chart's `identity-db-init-job.yaml` runs only when `mariadb.deploy: true` (single-namespace fat mode). In the layered model (`mariadb.deploy: false` + external L2 MariaDB), engineers run a one-time `CREATE DATABASE identity` + `GRANT` against L2 mariadb. Fix: pre-install/pre-upgrade Helm hook that works for both bundled and external MariaDB, reading `mariadb-root-password` from `insight-db-creds`. Tracked as a chart-side SPEC §8 follow-up.
 - **`insight-{analytics,identity-resolution}-config` composability.** The chart validator forbids `gitops + autoGenerate=true`, so the two composed Secrets are only emitted under `autoGenerate=true`. In gitops production, engineers run `scripts/compose-app-secrets.sh` (in the gitops repo) to derive them from `insight-db-creds` + env values. Fix: either (a) compose them in a separate Helm hook job that ALWAYS runs, reading the db-creds Secret; or (b) document the engineer-side composition as the supported path. Tracked.
 - **Airbyte cross-namespace URL.** The chart's `insight.airbyte.url` helper currently uses `.Release.Namespace` (`insight`). In the layered model Airbyte runs in `insight-infra`, so analytics would 404 on real ingestion calls. Parameterise `airbyte.namespace` (or compute the FQDN from a values field). Tracked as a chart-side SPEC §8 follow-up.

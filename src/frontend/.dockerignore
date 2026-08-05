@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+cypilot
+docs
+.ai
+*.md
+.env
+.env.*

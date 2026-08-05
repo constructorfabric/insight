@@ -13,6 +13,15 @@ date: 2026-07-30
   survival clause is retired (Keycloak becomes the issuer in compose and the in-process rig too),
   and the deferred production IdP/broker question is decided (adopt Keycloak as broker). The
   shared pre-provisioned Keycloak and realm-generation decisions stand unchanged.
+- 2026-08-05: AMENDED -- the Keycloak instance is deployed **in-stack**: the umbrella's
+  `insight-keycloak` subchart gains a production mode (`start`, MariaDB-backed via the existing
+  L2 MariaDB -- no second DBMS -- bootstrap admin from a sealed Secret, no realm import), so each
+  environment runs its own broker as part of its auth services. This supersedes Option A's
+  "externally operated, stands never administer it" property: realm content is administered as
+  code (ADR-0003 config-cli Job) with a sealed per-environment admin credential; the admin UI
+  remains a non-channel. Option B's per-stand footprint objection is answered by reusing the
+  stack's MariaDB and by the broker being production auth infrastructure, not test scaffolding.
+  The one-realm-per-environment and realm-generation decisions stand.
 
 <!-- toc -->
 

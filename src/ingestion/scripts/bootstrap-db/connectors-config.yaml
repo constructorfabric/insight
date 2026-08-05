@@ -126,7 +126,7 @@ connectors:
     path: crm/hubspot
     config:
       hubspot_access_token:
-        env: HUBSPOT_ACCESS_TOKEN
+        value: fake
       insight_source_id:
         value: hubspot-acme-prod
       insight_tenant_id:
@@ -139,11 +139,11 @@ connectors:
       insight_tenant_id:
         value: fake
       salesforce_client_id:
-        env: SALESFORCE_CLIENT_ID
+        value: fake
       salesforce_client_secret:
-        env: SALESFORCE_CLIENT_SECRET
+        value: fake
       salesforce_instance_url:
-        env: SALESFORCE_INSTANCE_URL
+        value: https://mycompany.my.salesforce.com
       salesforce_start_date:
         value: "2024-01-01"
   bitbucket-cloud:

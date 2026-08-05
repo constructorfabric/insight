@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from source_hubspot.constants import BASE_URL
 from tests.conftest import SOURCE, TENANT, FakeResponse, wire
 
@@ -22,7 +24,9 @@ class TestOwnersSchema:
         props = owners_stream.get_json_schema()["properties"]
         assert props["email"] == {"type": ["string", "null"]}
         assert props["archivedAt"]["format"] == "date-time"
-        assert "unique_key" in props and "custom_fields" in props
+        for field in ("unique_key", "raw_data"):
+            assert field in props, f"missing envelope column: {field}"
+        assert "custom_fields" not in props
 
     def test_archived_stream_inherits_schema(self, owners_archived_stream):
         assert "userId" in owners_archived_stream.get_json_schema()["properties"]
@@ -84,7 +88,7 @@ class TestOwnersReadRecords:
         out = list(owners_stream.read_records(sync_mode=None))
         assert out[0]["unique_key"] == f"{TENANT}-{SOURCE}-1"
         assert out[0]["tenant_id"] == TENANT
-        assert out[0]["custom_fields"] == "{}"  # owners have no custom fields
+        assert json.loads(out[0]["raw_data"])["email"] == "o1@x"
         assert owners_stream.state == {"updatedAt": "2024-06-03T00:00:00Z"}
 
     def test_incoming_stream_state_applied(self, owners_stream):

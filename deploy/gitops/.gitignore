@@ -29,6 +29,7 @@ secrets-store.yaml
 #   *-sealedsecret.yaml    — `make seal` writes via kubeseal
 environments/local/inventory.yaml
 environments/local/values.yaml
+environments/local/keycloak/realms/realm-insight.generated.json
 environments/local/pub-cert.pem
 environments/local/sealed-secrets/*/*-sealedsecret.yaml
 

@@ -29,7 +29,6 @@ WITH src AS (
             'AnnualRevenue',     coalesce(toString(AnnualRevenue), ''),
             'IsDeleted',         toString(coalesce(IsDeleted, false))
         ))                                              AS metadata,
-        coalesce(custom_fields, '{}')                   AS custom_fields,
         CreatedDate                                     AS created_at,
         LastModifiedDate                                AS updated_at,
         data_source,

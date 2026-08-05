@@ -19,8 +19,17 @@ __pycache__/
 
 # --- Node / frontend build & deps ---
 node_modules/
+.pnpm-store/
 dist/
+dist-ssr/
 build/
+storybook-static/
+coverage/
+.vite/
+.tanstack/
+
+# --- Generated vendor code (MSW writes this file, `msw.workerDirectory`) ---
+src/frontend/public/mockServiceWorker.js
 
 # --- VCS / editor noise ---
 .git/

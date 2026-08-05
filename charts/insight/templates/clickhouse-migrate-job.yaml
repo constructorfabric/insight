@@ -21,9 +21,9 @@ main release (so the `clickhouse-init-svcdbs` pre-install Hook has created
 the app database and the app pods have rolled). post-* over pre-* is safe
 because gold-view consumers (analytics) resolve VIEW source tables
 lazily at query time, so views materialising shortly after pod startup is
-fine. (hook-weight "5" is inert today — it only orders hooks within the
-same phase, and this is currently the only post-* hook; kept as a
-placeholder for ordering future post-* hooks.)
+fine. (hook-weight 200 runs this AFTER the keycloak-config hook (100): helm
+executes same-phase hooks serially, and the quick realm import should
+not queue behind the dbt gold build.)
 
 Failure behavior: a failed migration is NOT silently tolerated. Helm blocks
 on the hook Job, so a non-zero exit fails `helm upgrade` (and, under the
@@ -53,7 +53,7 @@ metadata:
   name: {{ include "insight.fullname" . }}-clickhouse-migrate
   annotations:
     helm.sh/hook: post-install,post-upgrade
-    helm.sh/hook-weight: "5"
+    helm.sh/hook-weight: "200"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
   labels:
     {{- include "insight.labels" . | nindent 4 }}

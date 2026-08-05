@@ -8,9 +8,8 @@ import pytest
 import requests
 from airbyte_cdk.models import FailureType
 from airbyte_cdk.utils import AirbyteTracedException
-from source_hubspot import api as api_mod
-from source_hubspot.api import Hubspot, _prop_to_json_schema, _TimeoutSession
-from source_hubspot.constants import BASE_URL
+from source_hubspot.api import Hubspot, _TimeoutSession
+from source_hubspot.constants import ALLOWED_PROPERTIES_BY_OBJECT, BASE_URL
 from tests.conftest import FakeHttpClient, FakeResponse
 
 
@@ -118,77 +117,43 @@ class TestPropertiesFor:
 
 class TestPropertySelection:
     DESCRIPTORS = [
-        prop("amount"),  # hubspotDefined + curated → kept
-        prop("uncurated_std"),  # hubspotDefined, not curated → dropped
-        prop("my_custom", hubspot_defined=False),  # custom → always kept
+        prop("amount"),  # allowlisted standard
+        prop("uncurated_std"),  # standard outside the allowlist
+        prop("my_custom", hubspot_defined=False),
         {"hubspotDefined": True},  # nameless → dropped
     ]
 
-    def test_property_names_curated_plus_custom(self):
+    def test_every_named_portal_property_is_requested(self):
         hs = make_client([FakeResponse({"results": self.DESCRIPTORS})])
-        assert hs.property_names("deals") == ("amount", "my_custom")
+        assert hs.property_names("deals") == ("amount", "uncurated_std", "my_custom")
 
-    def test_custom_property_names(self):
-        hs = make_client([FakeResponse({"results": self.DESCRIPTORS})])
-        assert hs.custom_property_names("deals") == frozenset({"my_custom"})
-
-    def test_unknown_object_has_no_curated_names(self):
+    def test_property_names_independent_of_allowlist(self):
         hs = make_client([FakeResponse({"results": [prop("anything")]})])
-        assert hs.property_names("unknown_object") == ()
+        assert hs.property_names("unknown_object") == ("anything",)
 
 
 class TestGenerateSchema:
-    def test_curated_props_added_with_string_type(self):
-        hs = make_client(
-            [
-                FakeResponse(
-                    {
-                        "results": [
-                            prop("amount", type_="number"),
-                            prop("uncurated_std"),
-                            prop("my_custom", hubspot_defined=False),
-                        ]
-                    }
-                )
-            ]
-        )
-        schema = hs.generate_schema("deals")
-        props = schema["properties"]
-        # Base record fields always present.
+    def test_allowlist_is_the_whole_property_column_set(self):
+        props = make_client().generate_schema("deals")["properties"]
+        expected = {f"properties_{name}" for name in ALLOWED_PROPERTIES_BY_OBJECT["deals"]}
+        assert {k for k in props if k.startswith("properties_")} == expected
+        assert all(props[k] == {"type": ["string", "null"]} for k in expected)
+
+    def test_schema_needs_no_portal_describe(self):
+        hs = make_client()  # no queued responses: any HTTP call raises
+        hs.generate_schema("deals")
+        assert hs._http_client.calls == []
+
+    def test_base_record_fields_always_present(self):
+        props = make_client().generate_schema("leads")["properties"]
         assert props["id"] == {"type": ["string", "null"]}
+        assert props["archived"] == {"type": ["boolean", "null"]}
         assert props["archivedAt"]["format"] == "date-time"
-        # number maps to string on purpose (Bronze stays Nullable(String)).
-        assert props["properties_amount"] == {"type": ["string", "null"]}
-        assert "properties_uncurated_std" not in props
-        assert "properties_my_custom" not in props  # customs ride in custom_fields
 
-    def test_unknown_type_warns_once(self, caplog):
-        hs = make_client(
-            [
-                FakeResponse(
-                    {
-                        "results": [
-                            {"name": "amount", "hubspotDefined": True, "type": "alien"},
-                            {"name": "closedate", "hubspotDefined": True, "type": "alien"},
-                        ]
-                    }
-                )
-            ]
-        )
-        with caplog.at_level(logging.WARNING, logger="airbyte"):
-            schema = hs.generate_schema("deals")
-        assert schema["properties"]["properties_amount"] == {"type": ["string", "null"]}
-        assert caplog.text.count("Unknown HubSpot property type") == 1
-
-    def test_prop_to_json_schema_format_passthrough(self, monkeypatch):
-        # No current mapping carries a format — patch one in to cover the
-        # format branch.
-        monkeypatch.setitem(api_mod.HUBSPOT_TYPE_TO_JSON_SCHEMA, "datetime", ("string", "date-time"))
-        out = _prop_to_json_schema({"name": "x", "type": "datetime"}, set())
-        assert out == {"type": ["string", "null"], "format": "date-time"}
-
-    def test_prop_to_json_schema_defaults_missing_type_to_string(self):
-        assert _prop_to_json_schema({"name": "x"}, set()) == {"type": ["string", "null"]}
+    @pytest.mark.parametrize("object_type", ["leads", "unknown_object"])
+    def test_empty_allowlist_yields_base_fields_only(self, object_type):
+        props = make_client().generate_schema(object_type)["properties"]
+        assert not [k for k in props if k.startswith("properties_")], f"object: {object_type}"
 
 
 class TestProbeAssociationScope:

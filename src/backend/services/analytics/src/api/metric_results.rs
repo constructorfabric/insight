@@ -244,7 +244,7 @@ where
     let mut ch_query = state
         .ch
         .query(&query.sql)
-        .with_option("log_comment", log_comment);
+        .with_setting("log_comment", log_comment);
     for param in &query.params {
         ch_query = ch_query.bind(param.as_str());
     }

@@ -40,6 +40,8 @@ jobs:
           - insight-authenticator
           - insight-gateway
           - insight-identity-resolution
+          # Frontend (nginx + the Vite bundle)
+          - insight-front
           # Python tooling
           - insight-toolbox
           - insight-jira-enrich

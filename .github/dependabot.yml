@@ -110,3 +110,16 @@ updates:
       tests-minor-patch:
         patterns: ["*"]
         update-types: [minor, patch]
+
+  # Frontend package tree. Grouped so a week's worth of bumps arrives as one
+  # reviewable change rather than one pull request per package.
+  - package-ecosystem: npm
+    directory: /src/frontend
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ["*"]

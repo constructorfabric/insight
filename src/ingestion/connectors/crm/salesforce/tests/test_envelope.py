@@ -10,9 +10,16 @@ TENANT = "T"
 SOURCE = "S"
 
 
-def _wrap(record, custom=frozenset(), collision_seen=None):
+DECLARED = frozenset({"Id", "Name"})
+
+
+def _wrap(record, collision_seen=None, declared=DECLARED):
     return envelope(
-        record, tenant_id=TENANT, source_id=SOURCE, custom_field_names=custom, collision_seen=collision_seen
+        record,
+        tenant_id=TENANT,
+        source_id=SOURCE,
+        declared_fields=declared,
+        collision_seen=collision_seen,
     )
 
 
@@ -30,15 +37,10 @@ class TestEnvelope:
         out = _wrap({"Id": "001", "attributes": {"type": "Account"}})
         assert "attributes" not in out
 
-    def test_custom_fields_packed_into_json_blob(self):
-        out = _wrap(
-            {"Id": "001", "Name": "Acme", "Custom__c": "x", "Other__c": 5}, custom=frozenset({"Custom__c", "Other__c"})
-        )
+    def test_custom_field_is_not_a_column(self):
+        out = _wrap({"Id": "001", "Name": "Acme", "Custom__c": "x", "Other__c": 5})
         assert "Custom__c" not in out and "Other__c" not in out
-        assert json.loads(out["custom_fields"]) == {"Custom__c": "x", "Other__c": 5}
-
-    def test_no_custom_fields_yields_empty_blob(self):
-        assert _wrap({"Id": "001"})["custom_fields"] == "{}"
+        assert json.loads(out["raw_data"])["Custom__c"] == "x"
 
     def test_reserved_field_collision_dropped_and_warned_once(self, caplog):
         seen: set = set()
@@ -74,6 +76,45 @@ class TestEnvelope:
         # Different content, different hash.
         other = _wrap({"Name": "Other"})
         assert other["unique_key"] != out["unique_key"]
+
+
+class TestRawData:
+    def test_holds_every_source_field(self):
+        out = _wrap({"Id": "001", "Name": "Acme", "Undeclared": "u", "Custom__c": "c"})
+        assert json.loads(out["raw_data"]) == {
+            "Id": "001",
+            "Name": "Acme",
+            "Undeclared": "u",
+            "Custom__c": "c",
+        }
+
+    def test_undeclared_field_is_not_a_column(self):
+        out = _wrap({"Id": "001", "Undeclared": "u"})
+        assert "Undeclared" not in out
+        assert json.loads(out["raw_data"])["Undeclared"] == "u"
+
+    def test_excludes_attributes_metadata_and_envelope_collisions(self):
+        out = _wrap({"Id": "001", "attributes": {"type": "Account"}, "tenant_id": "EVIL"})
+        assert json.loads(out["raw_data"]) == {"Id": "001"}
+
+    def test_record_without_source_fields_yields_empty_blob(self):
+        assert _wrap({"attributes": {"type": "Account"}})["raw_data"] == "{}"
+
+    def test_long_values_truncated_but_blob_stays_valid_json(self):
+        out = _wrap({"Id": "001", "Description": "x" * 5000})
+        raw = json.loads(out["raw_data"])
+        assert raw["Description"].endswith("…[truncated]")
+        assert len(raw["Description"].encode("utf-8")) <= 2048
+
+    def test_truncation_reaches_nested_values(self):
+        out = _wrap({"Id": "001", "Nested": {"Inner": ["y" * 5000]}})
+        inner = json.loads(out["raw_data"])["Nested"]["Inner"][0]
+        assert inner.endswith("…[truncated]")
+
+    def test_source_record_not_mutated(self):
+        record = {"Id": "001", "Description": "x" * 5000}
+        _wrap(record)
+        assert len(record["Description"]) == 5000
 
 
 class TestInjectEnvelopeProperties:

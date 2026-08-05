@@ -1,4 +1,4 @@
-"""Salesforce sobject and field-type constants.
+"""Salesforce sobject constants.
 
 The blocklists (``QUERY_RESTRICTED_SALESFORCE_OBJECTS`` etc.) reflect
 platform-wide API limitations maintained by Salesforce; our curated
@@ -8,36 +8,6 @@ platform-wide API limitations maintained by Salesforce; our curated
 # ------- SF API version -------------------------------------------------------
 
 API_VERSION = "v62.0"
-
-# ------- Field-type buckets used in describe -> JSON-schema mapping -----------
-
-STRING_TYPES = [
-    "byte",
-    "combobox",
-    "complexvalue",
-    "datacategorygroupreference",
-    "email",
-    "encryptedstring",
-    "id",
-    "json",
-    "masterrecord",
-    "multipicklist",
-    "phone",
-    "picklist",
-    "reference",
-    "string",
-    "textarea",
-    "time",
-    "url",
-]
-NUMBER_TYPES = ["currency", "double", "long", "percent"]
-DATE_TYPES = ["date", "datetime"]
-LOOSE_TYPES = [
-    "anyType",
-    # A calculated field's type can be any formula data type. Docs:
-    # https://developer.salesforce.com/docs/atlas.en-us.api.meta/api/field_types.htm
-    "calculated",
-]
 
 # ------- Sobject blocklists ---------------------------------------------------
 
@@ -148,18 +118,6 @@ UNSUPPORTED_FILTERING_STREAMS = [
 
 UNSUPPORTED_STREAMS = ["ActivityMetric", "ActivityMetricRollup"]
 
-PARENT_SALESFORCE_OBJECTS = {
-    "ContentDocumentLink": {
-        "parent_name": "ContentDocument",
-        "field": "Id",
-        "schema_minimal": {
-            "properties": {
-                "Id": {"type": ["string", "null"]},
-                "SystemModstamp": {"type": ["string", "null"], "format": "date-time"},
-            }
-        },
-    }
-}
 
 # ------- Token / request limits -----------------------------------------------
 

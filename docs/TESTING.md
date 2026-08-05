@@ -55,6 +55,10 @@ A build is **promoted up** (CI → Test → Beta); a proven check is **gated dow
 - Enforced by `scripts/ci/coverage.py` over Cobertura reports: per-language jobs upload reports, the `coverage-gate`
   job judges them and writes a job-summary. `coverage-gate` **must** be the required status check.
 - Only **changed** components are measured on a PR (`scripts/ci/changed.py`).
+- Both gates only see files present in a Cobertura report. A path excluded from a component's own coverage
+  config is invisible to the new-code gate too — it is not scored zero, it is omitted. For the frontend that
+  exemption covers the vendored `src/components/ui/**` primitives, the thin `src/routes/**` wrappers,
+  generated files, and stories (`src/frontend/vitest.config.ts`).
 
 ---
 
@@ -132,7 +136,7 @@ still unmeasured.
 
 ## 8. Before you open a PR
 
-- [ ] `cargo test` / `pytest` green for touched components
+- [ ] `cargo test` / `pytest` green for touched components; `cd src/frontend && pnpm test:coverage:ci` for the frontend
 - [ ] `cargo fmt --check` + `cargo clippy --all-targets` clean
 - [ ] `./e2e.sh test` green if you touched a metric, gold-view, or the API
 - [ ] new / changed code stays **≥ 80 %** covered

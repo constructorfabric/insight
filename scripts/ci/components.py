@@ -7,6 +7,7 @@ Per component: name, lang, root (collection cwd), paths (repo-relative prefixes
 for bucketing), plus per-language extras consumed by the CI producer jobs:
   rust   -> package (cargo package name); all_features (default True)
   python -> cov_package (the source_* package to measure)
+  js     -> none (the package.json scripts under `root` carry the collection)
 
 Nocode (declarative-YAML) connectors are excluded — no first-party code to
 line-cover.
@@ -236,6 +237,14 @@ COMPONENTS = [
         "cover": False,
         "triggered_by": ["connector-tests-harness"],
         "paths": ["src/ingestion/connectors/task-tracking/jira", "src/ingestion/connectors/ai/claude-admin"],
+    },
+    # `src/frontend/helm` falls under this path but has no measured lines, so it
+    # never moves the number.
+    {
+        "name": "frontend",
+        "lang": "js",
+        "root": "src/frontend",
+        "paths": ["src/frontend"],
     },
 ]
 

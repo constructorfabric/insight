@@ -6,18 +6,10 @@ import time
 from unittest.mock import Mock
 
 import pytest
-from airbyte_cdk.models import (
-    AirbyteStream,
-    ConfiguredAirbyteCatalog,
-    ConfiguredAirbyteStream,
-    DestinationSyncMode,
-    SyncMode,
-)
 from airbyte_cdk.utils import AirbyteTracedException
 from requests.exceptions import RequestException
 from source_salesforce.api import Salesforce, SalesforceAuthenticator, SalesforceTokenProvider
 from source_salesforce.constants import CRM_STREAMS, TOKEN_REFRESH_INTERVAL_SECONDS
-from source_salesforce.exceptions import TypeSalesforceException
 from tests.conftest import INSTANCE_URL, FakeResponse, make_sf
 
 
@@ -40,6 +32,16 @@ def _stub_send_request(sf: Salesforce, responses):
 
 
 class TestTokenProvider:
+    def test_first_use_authenticates(self, sf):
+        sf.login = Mock(side_effect=lambda: setattr(sf, "access_token", "tok"))
+        assert sf._token_provider.get_token() == "tok"
+        sf.login.assert_called_once()
+
+    def test_first_login_failure_surfaces(self, sf):
+        sf.login = Mock(side_effect=RequestException("no creds"))
+        with pytest.raises(RequestException):
+            sf._token_provider.get_token()
+
     def test_fresh_token_not_refreshed(self, sf):
         sf.access_token = "tok"
         sf.login = Mock()
@@ -158,7 +160,7 @@ class TestLogin:
 
 
 # ---------------------------------------------------------------------------
-# describe + schema generation
+# describe + field discovery
 # ---------------------------------------------------------------------------
 
 ACCOUNT_DESCRIBE = {
@@ -174,9 +176,18 @@ ACCOUNT_DESCRIBE = {
 
 class TestDescribe:
     def test_global_describe_url(self, sf):
+        sf.access_token = "tok"
         calls = _stub_send_request(sf, [FakeResponse({"sobjects": []})])
         assert sf.describe() == {"sobjects": []}
         assert calls[0]["url"] == (f"{INSTANCE_URL}/services/data/{sf.version}/sobjects")
+
+    def test_describe_authenticates_when_no_token_yet(self, sf):
+        """Describe is often a sync's first authenticated call."""
+        sf.login = Mock(side_effect=lambda: setattr(sf, "access_token", "tok"))
+        calls = _stub_send_request(sf, [FakeResponse(ACCOUNT_DESCRIBE)])
+        sf.describe("Account")
+        sf.login.assert_called_once()
+        assert calls[0]["headers"]["Authorization"] == "Bearer tok"
 
     def test_sobject_describe_url_and_auth_header(self, sf):
         sf.access_token = "tok"
@@ -186,64 +197,45 @@ class TestDescribe:
         assert calls[0]["headers"]["Authorization"] == "Bearer tok"
 
     def test_404_for_named_sobject_is_config_error(self, sf):
+        sf.access_token = "tok"
         _stub_send_request(sf, [FakeResponse({}, status_code=404)])
         with pytest.raises(AirbyteTracedException, match="'Missing' not found"):
             sf.describe("Missing")
 
     def test_other_error_is_system_error(self, sf):
+        sf.access_token = "tok"
         _stub_send_request(sf, [FakeResponse({}, status_code=500)])
         with pytest.raises(AirbyteTracedException, match="describe\\('global'\\) failed"):
             sf.describe()
 
 
-class TestGenerateSchema:
-    def test_properties_built_from_fields(self, sf):
+class TestFieldNames:
+    def test_returns_standard_and_custom_fields(self, sf):
         sf.describe = Mock(return_value=ACCOUNT_DESCRIBE)
-        schema = sf.generate_schema("Account")
-        assert schema["type"] == "object"
-        assert schema["properties"]["Id"] == {"type": ["string", "null"]}
-        assert schema["properties"]["AnnualRevenue"] == {"type": ["number", "null"]}
-        # Describe response cached for get_custom_field_names().
-        assert sf._sobject_describes["Account"] is ACCOUNT_DESCRIBE
+        names = sf.field_names("Account")
+        assert "Id" in names and "Custom__c" in names
 
-    def test_unnamed_schema_not_cached(self, sf):
-        sf.describe = Mock(return_value=ACCOUNT_DESCRIBE)
-        sf.generate_schema()
-        assert sf._sobject_describes == {}
-
-
-class TestGetCustomFieldNames:
-    def test_from_cache_no_extra_describe(self, sf):
+    def test_cached_describe_reused(self, sf):
         sf._sobject_describes["Account"] = ACCOUNT_DESCRIBE
         sf.describe = Mock()
-        assert sf.get_custom_field_names("Account") == frozenset({"Custom__c"})
+        assert "Custom__c" in sf.field_names("Account")
         sf.describe.assert_not_called()
 
-    def test_fallback_fetches_on_demand(self, sf):
+    def test_describe_fetched_once_per_sobject(self, sf):
         sf.describe = Mock(return_value=ACCOUNT_DESCRIBE)
-        assert sf.get_custom_field_names("Account") == frozenset({"Custom__c"})
-        sf.describe.assert_called_once_with("Account")
+        sf.field_names("Account")
+        sf.field_names("Account")
+        assert sf.describe.call_count == 1
         assert sf._sobject_describes["Account"] is ACCOUNT_DESCRIBE
 
+    def test_absent_sobject_yields_no_fields(self, sf):
+        sf.describe = Mock(return_value=None)
+        assert sf.field_names("Ghost") == ()
+        assert sf.is_queryable("Ghost") is False
 
-class TestGenerateSchemas:
-    def test_parallel_success(self, sf):
-        sf.describe = Mock(return_value=ACCOUNT_DESCRIBE)
-        schemas = sf.generate_schemas({"Account": {}, "Contact": {}})
-        assert set(schemas) == {"Account", "Contact"}
-        assert schemas["Account"]["properties"]["Id"] == {"type": ["string", "null"]}
-
-    def test_request_error_becomes_traced_exception(self, sf):
-        sf.generate_schema = Mock(side_effect=RequestException("timeout"))
-        with pytest.raises(AirbyteTracedException, match="Schema could not be extracted"):
-            sf.generate_schemas({"Account": {}})
-
-    def test_chunked_across_parallel_task_size(self, sf, monkeypatch):
-        # Force two sequential batches to cover the outer chunking loop.
-        monkeypatch.setattr(sf, "parallel_tasks_size", 1)
-        sf.describe = Mock(return_value=ACCOUNT_DESCRIBE)
-        schemas = sf.generate_schemas({"Account": {}, "Contact": {}})
-        assert set(schemas) == {"Account", "Contact"}
+    def test_non_queryable_sobject_reported_unavailable(self, sf):
+        sf.describe = Mock(return_value={"fields": [{"name": "Id"}], "queryable": False})
+        assert sf.is_queryable("Account") is False
 
 
 # ---------------------------------------------------------------------------
@@ -266,44 +258,23 @@ class TestStreamDiscovery:
         blacklist = sf.get_streams_black_list()
         assert "Vote" in blacklist and "ContentBody" in blacklist
 
-    def test_default_selection_uses_crm_streams(self, sf):
-        sf.describe = Mock(return_value=_global_describe(CRM_STREAMS + ["Unrelated"]))
-        validated = sf.get_validated_streams()
-        assert set(validated) == set(CRM_STREAMS)
+    def test_syncable_streams_are_the_curated_set(self, sf):
+        sf.describe = Mock(side_effect=AssertionError("describe must not be called"))
+        assert sf.syncable_streams() == list(CRM_STREAMS)
 
-    def test_non_queryable_skipped(self, sf):
-        sf.describe = Mock(return_value=_global_describe(["Account"], queryable=False))
-        assert sf.get_validated_streams() == {}
+    def test_syncable_streams_exclude_streams_needing_an_object_id(self, sf, monkeypatch):
+        monkeypatch.setattr("source_salesforce.api.CRM_STREAMS", ["Account", "ActivityMetric"])
+        assert sf.syncable_streams() == ["Account"]
 
-    def test_unsupported_streams_skipped(self, sf):
-        sf.describe = Mock(return_value=_global_describe(["ActivityMetric", "Account"]))
-        assert set(sf.get_validated_streams()) == {"Account"}
-
-    def test_missing_requested_streams_logged(self, sf, caplog):
-        sf.describe = Mock(return_value=_global_describe(["Account"]))
-        with caplog.at_level("WARNING", logger="airbyte"):
-            validated = sf.get_validated_streams()
-        assert set(validated) == {"Account"}
-        assert "not queryable in this org" in caplog.text
-
-    def test_catalog_intersection_wins(self, sf):
+    def test_unavailable_streams_reports_what_the_org_lacks(self, sf):
         sf.describe = Mock(return_value=_global_describe(["Account", "Contact"]))
-        catalog = ConfiguredAirbyteCatalog(
-            streams=[
-                ConfiguredAirbyteStream(
-                    stream=AirbyteStream(name="Account", json_schema={}, supported_sync_modes=[SyncMode.full_refresh]),
-                    sync_mode=SyncMode.full_refresh,
-                    destination_sync_mode=DestinationSyncMode.overwrite,
-                ),
-                ConfiguredAirbyteStream(
-                    stream=AirbyteStream(name="Ghost", json_schema={}, supported_sync_modes=[SyncMode.full_refresh]),
-                    sync_mode=SyncMode.full_refresh,
-                    destination_sync_mode=DestinationSyncMode.overwrite,
-                ),
-            ]
-        )
-        validated = sf.get_validated_streams(catalog=catalog)
-        assert set(validated) == {"Account"}
+        unavailable = sf.unavailable_streams()
+        assert "Account" not in unavailable
+        assert "Opportunity" in unavailable
+
+    def test_unavailable_streams_counts_non_queryable_as_missing(self, sf):
+        sf.describe = Mock(return_value=_global_describe(CRM_STREAMS, queryable=False))
+        assert set(sf.unavailable_streams()) == set(CRM_STREAMS)
 
 
 # ---------------------------------------------------------------------------
@@ -326,34 +297,3 @@ class TestPkAndReplicationKey:
     def test_no_cursor_no_pk(self):
         assert Salesforce.get_pk_and_replication_key({"properties": {"Name": {}}}) == (None, None)
         assert Salesforce.get_pk_and_replication_key({}) == (None, None)
-
-
-class TestFieldToPropertySchema:
-    @pytest.mark.parametrize(
-        "sf_type,expected",
-        [
-            ("string", {"type": ["string", "null"]}),
-            ("picklist", {"type": ["string", "null"]}),
-            ("datetime", {"type": ["string", "null"], "format": "date-time"}),
-            ("date", {"type": ["string", "null"], "format": "date"}),
-            ("currency", {"type": ["number", "null"]}),
-            ("int", {"type": ["integer", "null"]}),
-            ("boolean", {"type": ["boolean", "null"]}),
-            ("base64", {"type": ["string", "null"], "format": "base64"}),
-            ("anyType", {"type": ["string", "null"]}),
-            ("calculated", {"type": ["string", "null"]}),
-        ],
-    )
-    def test_scalar_types(self, sf_type, expected):
-        assert Salesforce.field_to_property_schema({"type": sf_type}) == expected
-
-    def test_address_and_location_are_objects(self):
-        address = Salesforce.field_to_property_schema({"type": "address"})
-        assert address["type"] == ["object", "null"]
-        assert "street" in address["properties"]
-        location = Salesforce.field_to_property_schema({"type": "location"})
-        assert set(location["properties"]) == {"longitude", "latitude"}
-
-    def test_unknown_type_raises(self):
-        with pytest.raises(TypeSalesforceException, match="Unsupported Salesforce field type"):
-            Salesforce.field_to_property_schema({"type": "hologram"})
