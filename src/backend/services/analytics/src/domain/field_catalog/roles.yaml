@@ -1,0 +1,53 @@
+# Field roles for the semantic-layer field catalog (#2208, Phase 1 slice 2).
+#
+# This is the AUTHORED half of the hybrid catalog: the semantic role of each
+# exposed dataset field. Column TYPES are NOT authored here — they are joined in
+# from `types.snapshot.json`, which is generated from ClickHouse `system.columns`
+# (see the drift test). A field named here must exist as a column in the
+# snapshot, and its ClickHouse type must normalize to a known field type; the
+# offline consistency test enforces both, so a role can never reference a column
+# the warehouse does not have.
+#
+# Seed set: the two git datasets that carry a direct entity. Relations without a
+# self-contained entity (e.g. class_git_file_changes, which needs a join to
+# commits) belong to derived datasets and are catalogued during extraction
+# (slice 5).
+#
+# Roles: tenant | entity | event_time | dimension | value | subject
+datasets:
+  - key: git_commits
+    database: silver
+    table: class_git_commits
+    read_discipline: final
+    fields:
+      - {name: tenant_id, role: tenant}
+      - {name: author_email, role: entity}
+      - {name: date, role: event_time}
+      - {name: commit_hash, role: subject}
+      - {name: repo_slug, role: dimension}
+      - {name: project_key, role: dimension}
+      - {name: branch, role: dimension}
+      - {name: data_source, role: dimension}
+      - {name: is_merge_commit, role: dimension}
+      - {name: lines_added, role: value}
+      - {name: lines_removed, role: value}
+      - {name: files_changed, role: value}
+  - key: git_pull_requests
+    database: silver
+    table: class_git_pull_requests
+    read_discipline: final
+    fields:
+      - {name: tenant_id, role: tenant}
+      - {name: author_email, role: entity}
+      - {name: created_on, role: event_time}
+      - {name: closed_on, role: event_time}
+      - {name: pr_id, role: subject}
+      - {name: repo_slug, role: dimension}
+      - {name: project_key, role: dimension}
+      - {name: source_branch, role: dimension}
+      - {name: destination_branch, role: dimension}
+      - {name: state, role: dimension}
+      - {name: data_source, role: dimension}
+      - {name: files_changed, role: value}
+      - {name: lines_added, role: value}
+      - {name: lines_removed, role: value}

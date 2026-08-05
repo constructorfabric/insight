@@ -282,6 +282,8 @@ Definitions live in application-owned storage so they can be authored, versioned
 
 Every dataset publishes a typed, role-annotated catalog of its fields — the editor's palette, the compiler's validation universe, and the discovery API's vocabulary at once. It is what makes capability a projection of definitions rather than data.
 
+**Implementation status (#2208, Phase 1 slice 2):** the build-time catalog is shipped in `domain/field_catalog/` (Rust). Because the dbt `schema.yml` files carry no `meta:` type/role annotations, the source is **hybrid**: column **types** come from a committed ClickHouse type snapshot (`types.snapshot.json`, generated from `system.columns` and kept honest by an ignored drift test against the live warehouse), and **roles** are authored in `roles.yaml`. The generator joins the two and rejects any role that names an absent column or an unmodeled type, so the embedded catalog is a consistent validation universe at build time (offline tests) with no live warehouse needed in CI. Seed datasets are the two git relations that carry a direct entity (`class_git_commits`, `class_git_pull_requests`); full dataset coverage lands during extraction (slice 5). Inspect via `analytics field-catalog`.
+
 ##### Responsibility scope
 
 - Generated from dataset schemas (a Rust build-time generator sharing the backend's definition parsers, sourced from dbt `schema.yml` `meta:` blocks), never hand-maintained. Roles: entity, dimension, measurable, event time.

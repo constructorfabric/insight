@@ -90,6 +90,10 @@ enum Commands {
     /// regenerate docs/components/backend/analytics/openapi.json and to
     /// drift-check it in CI.
     Openapi,
+    /// Print the semantic-layer field catalog to stdout and exit. Built offline
+    /// from the embedded roles + ClickHouse type snapshot — no database, no
+    /// config. The validation universe measures are checked against.
+    FieldCatalog,
 }
 
 #[tokio::main]
@@ -114,6 +118,11 @@ async fn main() -> Result<()> {
         Commands::Check => gear::check_config(&config),
         // Emit the OpenAPI document offline (no backends) — see `print_openapi`.
         Commands::Openapi => print_openapi(),
+        // Emit the field catalog offline (no backends) — see `print_field_catalog`.
+        Commands::FieldCatalog => {
+            print!("{}", domain::field_catalog::render());
+            Ok(())
+        }
     }
 }
 
@@ -133,5 +142,12 @@ mod tests {
     #[test]
     fn print_openapi_writes_the_document() -> anyhow::Result<()> {
         super::print_openapi()
+    }
+
+    /// The `field-catalog` subcommand's happy path: render the catalog offline
+    /// (building it from the embedded roles + type snapshot) and write it out.
+    #[test]
+    fn print_field_catalog_writes_the_document() {
+        assert!(super::domain::field_catalog::render().contains("git_commits"));
     }
 }
