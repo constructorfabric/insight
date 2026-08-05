@@ -73,11 +73,11 @@ jobs:
       CLICKHOUSE_PASSWORD: insight
       CLICKHOUSE_DATABASE: insight
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7.0.0
         with:
           # run-dbt.sh builds its venv from python3.12/3.11 — same major as the
           # toolbox image.
@@ -160,7 +160,7 @@ jobs:
 
       - name: Upload the drift diff
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: connectors-ddl-drift
           path: ${{ runner.temp }}/connectors-ddl.diff
@@ -228,7 +228,7 @@ jobs:
       DDL_DIR: src/ingestion/scripts/connectors-ddl
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           # This checkout keeps credentials on purpose: the push below uses them.
