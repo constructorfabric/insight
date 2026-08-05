@@ -2,19 +2,28 @@
 #
 # This is the AUTHORED half of the hybrid catalog: the semantic role of each
 # exposed dataset field. Column TYPES are NOT authored here — they are joined in
-# from `types.snapshot.json`, which is generated from ClickHouse `system.columns`
-# (see the drift test). A field named here must exist as a column in the
-# snapshot, and its ClickHouse type must normalize to a known field type; the
-# offline consistency test enforces both, so a role can never reference a column
-# the warehouse does not have.
+# from `types.snapshot.json`, generated from ClickHouse `system.columns` (see the
+# drift test). A field named here must exist as a column in the snapshot and its
+# ClickHouse type must normalize to a known field type; the offline consistency
+# test enforces both.
 #
-# Seed set: the two git datasets that carry a direct entity. Relations without a
-# self-contained entity (e.g. class_git_file_changes, which needs a join to
-# commits) belong to derived datasets and are catalogued during extraction
-# (slice 5).
+# Coverage: the source families with a clean, self-contained entity and tenant at
+# the silver layer — git, ai, collab, wiki. NOT yet catalogued (deferred to the
+# extraction slice, #2208 slice 5, where roles are verified against real
+# measures):
+#   - task (class_task_worklogs/comments carry no tenant column and key on
+#     author_id, not an email — needs identity resolution and a tenant join);
+#   - reference/join relations with no direct entity (class_git_repositories,
+#     *_branches, git PR comment/commit/reviewer tables, class_task_statuses/
+#     projects/sprints/field_metadata, class_wiki_engagement);
+#   - derived populations (active-day, focus) that are not a single raw relation.
+#
+# Note the tenant column name is NOT uniform across families (git/collab/wiki:
+# tenant_id; ai: insight_tenant_id), so it is named per dataset here.
 #
 # Roles: tenant | entity | event_time | dimension | value | subject
 datasets:
+  # ---- git ----
   - key: git_commits
     database: silver
     table: class_git_commits
@@ -51,3 +60,156 @@ datasets:
       - {name: files_changed, role: value}
       - {name: lines_added, role: value}
       - {name: lines_removed, role: value}
+  # ---- ai (tenant column is insight_tenant_id) ----
+  - key: ai_dev_usage
+    database: silver
+    table: class_ai_dev_usage
+    read_discipline: final
+    fields:
+      - {name: insight_tenant_id, role: tenant}
+      - {name: email, role: entity}
+      - {name: day, role: event_time}
+      - {name: tool, role: dimension}
+      - {name: source, role: dimension}
+      - {name: session_count, role: value}
+      - {name: conversation_count, role: value}
+      - {name: lines_added, role: value}
+      - {name: lines_removed, role: value}
+      - {name: tool_use_offered, role: value}
+      - {name: tool_use_accepted, role: value}
+      - {name: agent_sessions, role: value}
+      - {name: chat_requests, role: value}
+      - {name: cost_cents, role: value}
+  - key: ai_assistant_usage
+    database: silver
+    table: class_ai_assistant_usage
+    read_discipline: final
+    fields:
+      - {name: insight_tenant_id, role: tenant}
+      - {name: email, role: entity}
+      - {name: day, role: event_time}
+      - {name: tool, role: dimension}
+      - {name: surface, role: dimension}
+      - {name: source, role: dimension}
+      - {name: session_count, role: value}
+      - {name: conversation_count, role: value}
+      - {name: message_count, role: value}
+      - {name: action_count, role: value}
+      - {name: cost_cents, role: value}
+  - key: ai_api_usage
+    database: silver
+    table: class_ai_api_usage
+    read_discipline: final
+    fields:
+      - {name: insight_tenant_id, role: tenant}
+      - {name: email, role: entity}
+      - {name: day, role: event_time}
+      - {name: provider, role: dimension}
+      - {name: channel, role: dimension}
+      - {name: source, role: dimension}
+      - {name: input_tokens, role: value}
+      - {name: output_tokens, role: value}
+      - {name: cache_read_tokens, role: value}
+      - {name: cache_creation_tokens, role: value}
+      - {name: cost_amount, role: value}
+  - key: ai_overage
+    database: silver
+    table: class_ai_overage
+    read_discipline: final
+    fields:
+      - {name: insight_tenant_id, role: tenant}
+      - {name: email, role: entity}
+      - {name: period_month, role: event_time}
+      - {name: tool, role: dimension}
+      - {name: seat_tier, role: dimension}
+      - {name: source, role: dimension}
+      - {name: credit_limit_cents, role: value}
+      - {name: used_amount_cents, role: value}
+      - {name: overage_cents, role: value}
+  # ---- collab ----
+  - key: collab_chat_activity
+    database: silver
+    table: class_collab_chat_activity
+    read_discipline: final
+    fields:
+      - {name: tenant_id, role: tenant}
+      - {name: email, role: entity}
+      - {name: date, role: event_time}
+      - {name: data_source, role: dimension}
+      - {name: direct_messages, role: value}
+      - {name: group_chat_messages, role: value}
+      - {name: direct_and_group_messages, role: value}
+      - {name: total_chat_messages, role: value}
+      - {name: channel_posts, role: value}
+      - {name: channel_replies, role: value}
+  - key: collab_document_activity
+    database: silver
+    table: class_collab_document_activity
+    read_discipline: final
+    fields:
+      - {name: tenant_id, role: tenant}
+      - {name: email, role: entity}
+      - {name: date, role: event_time}
+      - {name: product, role: dimension}
+      - {name: data_source, role: dimension}
+      - {name: viewed_or_edited_count, role: value}
+      - {name: shared_internally_count, role: value}
+      - {name: shared_externally_count, role: value}
+      - {name: visited_page_count, role: value}
+  - key: collab_email_activity
+    database: silver
+    table: class_collab_email_activity
+    read_discipline: final
+    fields:
+      - {name: tenant_id, role: tenant}
+      - {name: email, role: entity}
+      - {name: date, role: event_time}
+      - {name: data_source, role: dimension}
+      - {name: sent_count, role: value}
+      - {name: received_count, role: value}
+      - {name: read_count, role: value}
+  - key: collab_meeting_activity
+    database: silver
+    table: class_collab_meeting_activity
+    read_discipline: final
+    fields:
+      - {name: tenant_id, role: tenant}
+      - {name: email, role: entity}
+      - {name: date, role: event_time}
+      - {name: data_source, role: dimension}
+      - {name: calls_count, role: value}
+      - {name: meetings_organized, role: value}
+      - {name: meetings_attended, role: value}
+      - {name: adhoc_meetings_attended, role: value}
+      - {name: scheduled_meetings_attended, role: value}
+      - {name: audio_duration_seconds, role: value}
+      - {name: video_duration_seconds, role: value}
+      - {name: screen_share_duration_seconds, role: value}
+  # ---- wiki ----
+  - key: wiki_activity
+    database: silver
+    table: class_wiki_activity
+    read_discipline: final
+    fields:
+      - {name: tenant_id, role: tenant}
+      - {name: author_email, role: entity}
+      - {name: day, role: event_time}
+      - {name: source, role: dimension}
+      - {name: data_source, role: dimension}
+      - {name: pages_edited, role: value}
+      - {name: total_edits, role: value}
+      - {name: pages_created, role: value}
+  - key: wiki_pages
+    database: silver
+    table: class_wiki_pages
+    read_discipline: final
+    fields:
+      - {name: tenant_id, role: tenant}
+      - {name: author_email, role: entity}
+      - {name: created_at, role: event_time}
+      - {name: updated_at, role: event_time}
+      - {name: page_id, role: subject}
+      - {name: space_name, role: dimension}
+      - {name: status, role: dimension}
+      - {name: source, role: dimension}
+      - {name: version_count, role: value}

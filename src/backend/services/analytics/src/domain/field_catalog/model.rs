@@ -29,6 +29,9 @@ pub enum FieldType {
     Int,
     UInt,
     Float,
+    /// Fixed-point (`Decimal(p, s)`) — a distinct measurable type from `Float`
+    /// so the compiler can preserve exact currency/amount arithmetic.
+    Decimal,
     Date,
     DateTime,
 }
@@ -54,6 +57,7 @@ impl FieldType {
             "Int8" | "Int16" | "Int32" | "Int64" | "Int128" | "Int256" => Self::Int,
             "UInt8" | "UInt16" | "UInt32" | "UInt64" | "UInt128" | "UInt256" => Self::UInt,
             "Float32" | "Float64" => Self::Float,
+            "Decimal" | "Decimal32" | "Decimal64" | "Decimal128" | "Decimal256" => Self::Decimal,
             "Date" | "Date32" => Self::Date,
             "DateTime" | "DateTime64" => Self::DateTime,
             _ => return None,

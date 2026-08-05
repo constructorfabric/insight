@@ -259,6 +259,8 @@ mod tests {
                 Some((FieldType::String, true)),
             ),
             ("Float64", Some((FieldType::Float, false))),
+            ("Decimal(18, 4)", Some((FieldType::Decimal, false))),
+            ("Nullable(Decimal(38, 9))", Some((FieldType::Decimal, true))),
             ("Array(String)", None),
             ("Map(String, String)", None),
         ];
