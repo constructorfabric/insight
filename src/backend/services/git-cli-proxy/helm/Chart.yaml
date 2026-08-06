@@ -1,0 +1,8 @@
+apiVersion: v2
+name: insight-git-cli-proxy
+description: Insight Git CLI Proxy — clone-based git data extraction for the nocode git connectors
+version: 0.1.0
+# appVersion is managed by the release pipeline (build-images.yml): it is
+# bumped to the freshly built image tag on merges that change this service.
+appVersion: "0.0.0-dev"
+type: application

@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "insight-git-cli-proxy.fullname" . }}-config
+  labels:
+    {{- include "insight-git-cli-proxy.labels" . | nindent 4 }}
+data:
+  insight.yaml: |
+    server:
+      home_dir: "/app/data/home"
+
+    logging:
+      default:
+        console_level: info
+
+    gears:
+      api-gateway:
+        config:
+          bind_addr: "0.0.0.0:{{ .Values.service.port }}"
+          enable_docs: false
+          cors_enabled: false
+          # Airbyte-only consumer: no gateway-JWT pipeline. /v1 is guarded by
+          # the service's own bearer token from the config Secret.
+          auth_disabled: true
+
+      gear-orchestrator:
+        config: {}
+
+      authn-resolver:
+        config:
+          vendor: "hyperspot"
+
+      grpc-hub:
+        config:
+          listen_addr: "uds:///tmp/git-cli-proxy-grpc"
+
+      git-cli-proxy:
+        config:
+          data_dir: "{{ .Values.persistence.mountPath }}"
+          disk_budget_bytes: {{ required "cache.diskBudgetBytes is required" .Values.cache.diskBudgetBytes | int64 }}
+          max_repo_bytes: {{ required "cache.maxRepoBytes is required" .Values.cache.maxRepoBytes | int64 }}
+          default_max_staleness_seconds: {{ required "cache.defaultMaxStalenessSeconds is required" .Values.cache.defaultMaxStalenessSeconds | int64 }}
+          heavy_ops_concurrency: {{ required "cache.heavyOpsConcurrency is required" .Values.cache.heavyOpsConcurrency | int64 }}
+          ca_cert_path: {{ .Values.cache.caCertPath | quote }}
+          # proxy_token is NEVER rendered here — it arrives via envFrom from
+          # the config Secret (APP__gears__git_cli_proxy__config__proxy_token).
+          proxy_token: ""

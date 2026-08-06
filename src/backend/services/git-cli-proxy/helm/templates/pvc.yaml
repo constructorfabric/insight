@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "insight-git-cli-proxy.fullname" . }}-cache
+  labels:
+    {{- include "insight-git-cli-proxy.labels" . | nindent 4 }}
+  annotations:
+    # The cache is rebuildable: losing it costs re-clones, never correctness.
+    # Kept on uninstall anyway — a re-clone storm across every tenant's
+    # repositories is expensive enough to be an operator decision.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    # ReadWriteOnce is load-bearing, not a default: the in-process locks, the
+    # LRU state and the single-flight map live in ONE process, so exactly one
+    # pod may write this volume (see replicaCount / strategy in deployment).
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ required "persistence.size is required" .Values.persistence.size }}
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
