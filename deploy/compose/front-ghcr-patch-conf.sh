@@ -1,18 +1,25 @@
 #!/bin/sh
 # Compose-only patch for the published frontend ghcr image.
 #
-# The published image's nginx config deliberately has no /api proxy — in k8s
-# the cluster ingress routes /api/* straight to the gateway pod, so the FE pod
-# never sees those requests. The docker-compose stack has nothing in front of
-# the FE container, so /api has to land locally.
+# The published image's nginx config deliberately has no /api or /auth proxy —
+# in k8s the cluster ingress routes both straight to the gateway pod, so the FE
+# pod never sees those requests. The docker-compose stack has nothing in front
+# of the FE container, so both have to land locally.
+#
+# /auth matters as much as /api: the SPA's session check is GET /auth/me, and
+# without the hop it resolves to `try_files … /index.html`. The SPA reads HTML
+# where it expects JSON, concludes it is logged out, navigates to /auth/login,
+# gets the same HTML, and boots again — an endless reload with no error
+# anywhere. `AUTHENTICATOR_REDIRECT_URI` defaults to this origin's
+# /auth/callback, which needs the hop for the same reason.
 #
 # Rather than maintain a parallel config (drift risk every time the upstream
-# changes), we insert just the /api location block at a known marker. The patch
+# changes), we insert just those location blocks at a known marker. The patch
 # is idempotent, so container restarts do not stack copies.
 #
 # If the upstream config ever drops the marker line, this script is a no-op and
-# the symptoms revert to the original "GET /api → 200 HTML, POST /api → 405"
-# failure mode — observable, not silent.
+# the symptoms revert to "GET /api → 200 HTML, POST /api → 405" plus the login
+# loop above — observable, not silent.
 #
 # This runs as the container's COMMAND, not its entrypoint, and patches the
 # SERVED config rather than the template it is copied from. Both details are
@@ -40,8 +47,8 @@ CONF=/etc/nginx/conf.d/default.conf
 
 if [ ! -f "$CONF" ]; then
   echo "WARN: $CONF missing — FE image structure changed; cannot patch." >&2
-elif grep -q "location /api/" "$CONF"; then
-  echo "front-ghcr-patch: /api proxy already present — skipping."
+elif grep -q "front-ghcr-patch-conf.sh" "$CONF"; then
+  echo "front-ghcr-patch: proxies already present — skipping."
 elif ! grep -q "snippets/security-headers\.conf" "$CONF"; then
   echo "WARN: marker 'snippets/security-headers.conf' not in $CONF — FE config changed;" >&2
   echo "      /api will be served by the SPA instead of proxied to the gateway." >&2
@@ -54,8 +61,8 @@ else
     /snippets\/security-headers\.conf/ && !done {
       print
       print ""
-      print "    # Compose-only /api proxy injected by front-ghcr-patch-conf.sh."
-      print "    # k8s relies on the cluster ingress to route /api → gateway;"
+      print "    # Compose-only /api + /auth proxies injected by front-ghcr-patch-conf.sh."
+      print "    # k8s relies on the cluster ingress to route both → gateway;"
       print "    # compose has no front-proxy so we add the hop here."
       print "    #"
       print "    # 127.0.0.11 is Dockers embedded DNS. We use it via `resolver` +"
@@ -72,13 +79,26 @@ else
       print "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"
       print "        proxy_set_header X-Forwarded-Proto $scheme;"
       print "    }"
+      print ""
+      print "    # Set-Cookie passes through untouched, which the `__Host-sid`"
+      print "    # session cookie requires: any domain rewrite would void the"
+      print "    # prefix and the browser would drop the session silently."
+      print "    location /auth/ {"
+      print "        set $upstream_authgw \"gateway:8080\";"
+      print "        proxy_pass http://$upstream_authgw;"
+      print "        proxy_http_version 1.1;"
+      print "        proxy_set_header Host $host;"
+      print "        proxy_set_header X-Real-IP $remote_addr;"
+      print "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"
+      print "        proxy_set_header X-Forwarded-Proto $scheme;"
+      print "    }"
       done=1
       next
     }
     { print }
   ' "$CONF" > "$CONF.new"
   mv "$CONF.new" "$CONF"
-  echo "front-ghcr-patch: inserted /api → gateway:8080 into the served config."
+  echo "front-ghcr-patch: inserted /api + /auth → gateway:8080 into the served config."
 fi
 
 exec "$@"
