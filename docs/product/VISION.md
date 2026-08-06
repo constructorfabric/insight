@@ -561,15 +561,15 @@ This layer does not weaken the ownership and control promise in Sections 2 and 3
 
 Business and monetization models for shared intelligence — acquiring useful public or commercial datasets, reselling third-party datasets where licensing permits, selling or licensing proprietary datasets, and offering anonymized aggregated benchmarks from participating customers — are out of scope for this document. The Vision describes the capability and its guardrails, not how it is offered commercially.
 
-## 13\. Constructor Fabric: Studio, Insight, and Gears
+## 13\. Constructor Fabric Elements: Studio, Insight, and Gears
 
-Constructor Insight is one of three Constructor Fabric products. Constructor Studio supports how software is specified, designed, and built. Constructor Gears provides reusable, operable components that applications are assembled from. Insight observes and improves how work is performed.
+Constructor Fabric has three elements: Constructor Studio, Constructor Insight, and Constructor Gears. Studio supports how software is specified, designed, and built. Gears provides reusable, operable components that applications are assembled from. Insight observes and improves how work is performed.
 
-Each product is usable on its own. The promises in Sections 2 and 3 are unchanged: Insight is tool-agnostic and source-agnostic, it does not require Studio or Gears, and no capability described in this document depends on them.
+Each element is usable on its own. The promises in Sections 2 and 3 are unchanged: Insight is tool-agnostic and source-agnostic, it does not require Studio or Gears, and no capability described in this document depends on them.
 
-Where a customer does run them, the three products enrich each other. Studio and Gears become high-quality evidence sources for Insight, and Insight's findings return to the place where they can be acted on. Evidence from Studio and Gears passes through the same connector evidence contract (Section 10.10) as any other source — declared fields, coverage, freshness, identity assumptions, and limitations.
+Where a customer does run them, the three elements enrich each other. Studio and Gears become high-quality evidence sources for Insight, and Insight's findings return to the place where they can be acted on. Evidence from Studio and Gears passes through the same connector evidence contract (Section 10.10) as any other source — declared fields, coverage, freshness, identity assumptions, and limitations.
 
-Studio and Gears also enrich each other directly: Studio composes applications from Gears modules and contributes reusable workflows and components back. That relationship sits outside Insight's boundary and is described in Fabric-level product material, not here.
+Studio and Gears also enrich each other directly: Studio composes applications from Gears modules and contributes reusable workflows and components back. That relationship sits outside Insight's boundary and is described in Fabric-level material, not here.
 
 ### 13.1 What Insight Consumes
 
@@ -715,6 +715,7 @@ Plain-language definitions; terminology is consistent across this document.
 | **Benchmark**            | An anonymized, aggregated comparison point — from the organization's own history, opt-in peer data, or public/market sources — declared with cohort definition, coverage, and confidence. Never individual-level. |
 | **Shared intelligence**  | The opt-in layer that combines an organization's own evidence with anonymized peer benchmarks and public/market data (Section 12). |
 | **Clean room**           | A data-sharing model where raw data never leaves its owner's boundary and only anonymized, aggregated results are exchanged. |
-| **Constructor Fabric**   | The product family Insight belongs to, alongside Constructor Studio and Constructor Gears (Section 13). |
-| **Constructor Studio**   | The Fabric product supporting how software is specified, designed, and built. An optional evidence source for Insight, and a destination for Insight's design and implementation findings. Not required to run Insight. |
-| **Constructor Gears**    | The Fabric product providing reusable, operable components that applications are assembled from. An optional source of operational evidence for Insight, and a destination for component-level findings. Not required to run Insight. |
+| **Constructor Fabric**   | The whole that Constructor Studio, Constructor Insight, and Constructor Gears are the three elements of (Section 13). |
+| **Element**              | One of the three parts of Constructor Fabric — Studio, Insight, or Gears. Preferred over describing them as three separate products. |
+| **Constructor Studio**   | The Fabric element supporting how software is specified, designed, and built. An optional evidence source for Insight, and a destination for Insight's design and implementation findings. Not required to run Insight. |
+| **Constructor Gears**    | The Fabric element providing reusable, operable components that applications are assembled from. An optional source of operational evidence for Insight, and a destination for component-level findings. Not required to run Insight. |

@@ -7,6 +7,8 @@ import {
 } from "@/mocks/metric-results-fixtures";
 import {
   buildMetricCollectionRequest,
+  entityObserved,
+  type NormalizedMetricResult,
   chunkEntityIds,
   entityChunkSize,
   forEntity,
@@ -315,5 +317,73 @@ describe("forEntity", () => {
     )!;
     expect(forEntity(ratio, "bob@example.com").value).toBeNull();
     expect(forEntity(ratio, "nobody@example.com").value).toBeNull();
+  });
+});
+
+/**
+ * Every "source isn't ingested" gate in the portal rides on this predicate, and
+ * it rests on a backend guarantee: the peer view's `target_value` is NULL
+ * exactly when the entity was not observed. That holds because the peer query
+ * ends with `SETTINGS join_use_nulls = 1` — without it ClickHouse would fill
+ * unmatched rows with 0 and an un-ingested domain would render an all-zero
+ * dashboard instead of the honest empty state.
+ *
+ * These cases pin BOTH sides of that contract, so a regression in the backend
+ * setting shows up as a failing expectation here rather than as fabricated
+ * zeros in front of a customer.
+ */
+describe("entityObserved", () => {
+  const withPeer = (target: number | null, value: number | null) =>
+    ({
+      metric_key: "m",
+      label: "M",
+      unit: null,
+      computation: "sum",
+      format: "integer",
+      direction: "higher_is_better",
+      period: { view: "period", values: [{ entity_id: "a@x", value }] },
+      peer: {
+        view: "peer",
+        values: [{ entity_id: "a@x", target_value: target, median: 5, n: 9 }],
+      },
+    }) as unknown as NormalizedMetricResult;
+
+  it("treats a null peer target as unobserved, whatever the period value says", () => {
+    // The period view zero-fills every requested entity, so a 0 there proves
+    // nothing on its own.
+    expect(entityObserved(withPeer(null, 0), "a@x")).toBe(false);
+  });
+
+  it("treats a ZERO peer target as observed — a measured zero is data", () => {
+    // The case the null-only fixtures never covered: if the backend ever
+    // zero-filled instead of nulling, this is what would silently flip every
+    // gate from "not ingested" to "all zeros".
+    expect(entityObserved(withPeer(0, 0), "a@x")).toBe(true);
+  });
+
+  it("falls back to a non-zero period value when there is no peer row", () => {
+    const noPeer = {
+      metric_key: "m",
+      label: "M",
+      unit: null,
+      computation: "sum",
+      format: "integer",
+      direction: "higher_is_better",
+      period: { view: "period", values: [{ entity_id: "a@x", value: 7 }] },
+    } as unknown as NormalizedMetricResult;
+    expect(entityObserved(noPeer, "a@x")).toBe(true);
+  });
+
+  it("does not count a zero-filled period value as observation without a peer row", () => {
+    const noPeer = {
+      metric_key: "m",
+      label: "M",
+      unit: null,
+      computation: "sum",
+      format: "integer",
+      direction: "higher_is_better",
+      period: { view: "period", values: [{ entity_id: "a@x", value: 0 }] },
+    } as unknown as NormalizedMetricResult;
+    expect(entityObserved(noPeer, "a@x")).toBe(false);
   });
 });

@@ -26,3 +26,23 @@ export function isPersonId(value: string): boolean {
   const normalized = normalizePersonId(value);
   return UUID_RE.test(normalized) && normalized !== NIL_UUID;
 }
+
+const PERSON_PATH = /^\/ic\/([^/]+)/;
+
+/**
+ * The person id a `/ic/<id>/...` path names, or null for any other path.
+ *
+ * `decodeURIComponent` THROWS a URIError on a malformed percent-sequence, and
+ * the pathname is reader-editable text — decoding it raw during render crashes
+ * the shell on a typo'd link. An undecodable segment is treated as "no person"
+ * so the caller falls back (to the viewer, to no highlight) instead.
+ */
+export function personIdFromPath(pathname: string): string | null {
+  const m = PERSON_PATH.exec(pathname);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]!);
+  } catch {
+    return null;
+  }
+}

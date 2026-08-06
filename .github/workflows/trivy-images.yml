@@ -142,3 +142,12 @@ jobs:
           sarif_file: trivy-image.sarif
           # Per-image category: one analysis per image, so alerts never overwrite each other.
           category: trivy-image:${{ matrix.image }}
+
+      - name: Fail on a fixable critical
+        # Last, and reusing the scan's JSON, so the summary and the SARIF upload still run.
+        env:
+          TRIVY_IMAGE: aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f
+        run: |
+          set -euo pipefail
+          docker run --rm -v "${{ github.workspace }}:/work" "$TRIVY_IMAGE" convert \
+            --severity CRITICAL --exit-code 1 --format table /work/trivy-image.json

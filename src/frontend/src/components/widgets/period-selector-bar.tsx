@@ -123,9 +123,17 @@ export function PeriodSelectorBar({
         <Popover open={calOpen} onOpenChange={handleOpenChange}>
           <PopoverTrigger
             render={
-              <ToggleGroupItem value="custom" className="gap-1.5">
+              <ToggleGroupItem
+                value="custom"
+                className="gap-1.5"
+                // Below `sm` the label is hidden and only the icon remains, so
+                // without this the control has no accessible name at all.
+                aria-label={`Custom date range: ${activeRangeLabel}`}
+              >
                 <CalendarIcon className="size-3.5" />
-                <span>{activeRangeLabel}</span>
+                {/* The range spells out to ~140px; below `sm` the calendar icon
+                    stands in for it and the popover shows the actual dates. */}
+                <span className="hidden sm:inline">{activeRangeLabel}</span>
                 <TooltipProvider delay={200}>
                   <Tooltip>
                     <TooltipTrigger

@@ -19,7 +19,7 @@ import type {
 const BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api/analytics/v1";
 
-type MetricDefinitionSchemaStatus = "ok" | "error" | "unchecked";
+export type MetricDefinitionSchemaStatus = "ok" | "error" | "unchecked";
 
 export interface MetricDefinition {
   metric_key: string;

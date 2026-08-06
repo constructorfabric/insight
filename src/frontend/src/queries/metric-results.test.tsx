@@ -183,3 +183,88 @@ describe("collectionSetPending", () => {
     expect(collectionSetPending(new Map())).toBe(false);
   });
 });
+
+/**
+ * Reported from the review environment: `/v1/metric-results` answering 400
+ * `entity.ids must not be empty`. The request was ours — `refetch()` ignores
+ * `enabled`, so a Retry on a view whose roster had not resolved posted an empty
+ * entity list, and the resulting error then latched the view into a hard-error
+ * card that no further Retry could clear.
+ */
+describe("a disabled collection has nothing to retry", () => {
+  beforeEach(() => {
+    mock.mockReset();
+    mock.mockImplementation((req: MetricResultsRequest) =>
+      Promise.resolve(respond(req)),
+    );
+  });
+
+  it("sends nothing while the entity list is empty", () => {
+    renderHook(
+      () => useMetricCollection(COLLECTION, { type: "person", ids: [] }, RANGE),
+      { wrapper: wrapper() },
+    );
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it("ignores refetch instead of posting an entity-less request", async () => {
+    const { result } = renderHook(
+      () => useMetricCollection(COLLECTION, { type: "person", ids: [] }, RANGE),
+      { wrapper: wrapper() },
+    );
+
+    result.current.refetch();
+
+    // A short settle window: the failure mode is a request that DOES go out.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it("ignores refetch on a set of chunked collections too", async () => {
+    const { result } = renderHook(
+      () =>
+        useMetricCollectionSet(
+          [{ key: "g", collection: COLLECTION }],
+          { type: "person", ids: [] },
+          RANGE,
+        ),
+      { wrapper: wrapper() },
+    );
+
+    result.current.get("g")?.refetch();
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it("still retries once there is something to ask for", async () => {
+    const { result } = renderHook(
+      () =>
+        useMetricCollection(COLLECTION, { type: "person", ids: ["a@x"] }, RANGE),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(mock).toHaveBeenCalledTimes(1));
+
+    result.current.refetch();
+    await waitFor(() => expect(mock).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not carry a failure across into a resolved roster", async () => {
+    // The failure was recorded against the entity list that produced it (ids
+    // ride in the query key), so once the roster resolves the view starts from
+    // a clean query rather than inheriting "Unable to load".
+    mock.mockRejectedValue(new Error("400 invalid_argument"));
+    const { result, rerender } = renderHook(
+      ({ ids }: { ids: string[] }) =>
+        useMetricCollection(COLLECTION, { type: "person", ids }, RANGE),
+      { wrapper: wrapper(), initialProps: { ids: ["a@x"] } },
+    );
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    mock.mockImplementation((req: MetricResultsRequest) =>
+      Promise.resolve(respond(req)),
+    );
+    rerender({ ids: ["a@x", "b@x"] });
+    await waitFor(() => expect(result.current.isError).toBe(false));
+  });
+});

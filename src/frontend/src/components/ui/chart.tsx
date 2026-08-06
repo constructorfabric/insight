@@ -2,6 +2,7 @@ import * as React from "react";
 import * as RechartsPrimitive from "recharts";
 import type { TooltipValueType } from "recharts";
 
+import { formatAxisTick } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 // Format: { THEME_NAME: CSS_SELECTOR }
@@ -118,7 +119,23 @@ const LineChart = RechartsPrimitive.LineChart;
 const ComposedChart = RechartsPrimitive.ComposedChart;
 const CartesianGrid = RechartsPrimitive.CartesianGrid;
 const XAxis = RechartsPrimitive.XAxis;
-const YAxis = RechartsPrimitive.YAxis;
+
+/**
+ * Value axis with abbreviated ticks by default (36000 → "36k"). A raw five-digit
+ * label needs more room than the ~28px gutter charts give the axis, so it was
+ * being clipped by the chart's own edge on a narrow screen — and any series can
+ * cross that threshold as the org grows. Callers that need literal numbers can
+ * still pass their own `tickFormatter`.
+ *
+ * Category axes are left alone: a non-numeric tick passes through untouched.
+ */
+function YAxis({
+  tickFormatter = (value: unknown) =>
+    typeof value === "number" ? formatAxisTick(value) : String(value),
+  ...props
+}: React.ComponentProps<typeof RechartsPrimitive.YAxis>) {
+  return <RechartsPrimitive.YAxis tickFormatter={tickFormatter} {...props} />;
+}
 const ReferenceArea = RechartsPrimitive.ReferenceArea;
 const ReferenceLine = RechartsPrimitive.ReferenceLine;
 const ResponsiveContainer = RechartsPrimitive.ResponsiveContainer;
@@ -133,21 +150,70 @@ function ChartBar({
   );
 }
 
+/**
+ * Above this many buckets per-point dots stop being readable and turn the line
+ * into noise, so they collapse to hover-only (`activeDot`).
+ */
+export const DOT_DENSITY_LIMIT = 31;
+
+/**
+ * The shared dot rule for every line/area in the app.
+ *
+ * Two jobs: mark the actual measurements while there are few enough of them to
+ * see, and ALWAYS mark a value whose neighbours are null — a lone reading in a
+ * gappy series draws no line segment at all, so without a dot the series looks
+ * like it has no data rather than one data point.
+ */
+function AdaptiveDot({
+  cx,
+  cy,
+  index,
+  points,
+  stroke,
+  value,
+}: RechartsPrimitive.DotItemDotProps) {
+  if (value == null || cx == null || cy == null) return null;
+  const isolated =
+    points[index - 1]?.value == null && points[index + 1]?.value == null;
+  if (!isolated && points.length > DOT_DENSITY_LIMIT) return null;
+  return <circle cx={cx} cy={cy} r={isolated ? 3 : 2.5} fill={stroke} />;
+}
+
+/**
+ * `type="linear"` on purpose: a monotone curve interpolates between buckets,
+ * inventing a shape for days we never measured. Straight segments say "these
+ * are the readings, joined" — and for step-like counters a caller can still
+ * pass `type="stepAfter"`.
+ */
 function ChartLine({
   isAnimationActive = false,
+  type = "linear",
+  dot = AdaptiveDot,
+  activeDot = { r: 4 },
   ...props
 }: React.ComponentProps<typeof RechartsPrimitive.Line>) {
   return (
-    <RechartsPrimitive.Line isAnimationActive={isAnimationActive} {...props} />
+    <RechartsPrimitive.Line
+      isAnimationActive={isAnimationActive}
+      type={type}
+      dot={dot}
+      activeDot={activeDot}
+      {...props}
+    />
   );
 }
 
 function ChartArea({
   isAnimationActive = false,
+  type = "linear",
   ...props
 }: React.ComponentProps<typeof RechartsPrimitive.Area>) {
   return (
-    <RechartsPrimitive.Area isAnimationActive={isAnimationActive} {...props} />
+    <RechartsPrimitive.Area
+      isAnimationActive={isAnimationActive}
+      type={type}
+      {...props}
+    />
   );
 }
 

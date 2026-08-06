@@ -81,6 +81,10 @@ export function useMetricCollection(
     { type: entity.type, ids },
     range
   );
+  // An empty entity list is not a request the backend can answer — it rejects
+  // `entity.ids: []` with 400 invalid_argument. So the query stays disabled,
+  // and because `refetch()` bypasses `enabled`, the `refetch` and `isError`
+  // this hook returns have to respect the same flag.
   const enabled = ids.length > 0 && Boolean(range.from && range.to);
 
   const current = useQuery({
@@ -136,8 +140,16 @@ export function useMetricCollection(
     previousByKey,
     isPending: current.isPending && enabled,
     isFetching: current.isFetching || (hasPrevious && previous.isFetching),
-    isError: current.isError,
+    // Defensive: `ids` and `range` both ride in the query key, so today a
+    // disabled query cannot be holding an error from an enabled one. Kept so
+    // that a future key change cannot resurrect "Unable to load" for a
+    // collection we are deliberately not asking about.
+    isError: enabled && current.isError,
     refetch: () => {
+      // `refetch()` ignores `enabled` in react-query, so this guard is what
+      // stops a Retry on an unresolved roster from POSTing `entity.ids: []` —
+      // see the note on `enabled` above.
+      if (!enabled) return;
       void current.refetch();
       if (hasPrevious) void previous.refetch();
     },
@@ -208,13 +220,17 @@ export function useMetricCollectionSet(
     maps.push(normalizeMetricResults(query.data?.metrics));
     chunkMaps.set(key, maps);
     const existing = out.get(key);
-    const refetch = () => void query.refetch();
+    // Same guard as the single-collection hook: a disabled chunk has no valid
+    // request to send, and `refetch()` would send it anyway.
+    const refetch = () => {
+      if (enabled) void query.refetch();
+    };
     out.set(key, {
       byKey: new Map(),
       previousByKey: null,
       isPending: (existing?.isPending ?? false) || (query.isPending && enabled),
       isFetching: (existing?.isFetching ?? false) || query.isFetching,
-      isError: (existing?.isError ?? false) || query.isError,
+      isError: (existing?.isError ?? false) || (enabled && query.isError),
       // Chunks of the same collection share a key; refetch fans out to all.
       refetch: existing
         ? () => {

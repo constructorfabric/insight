@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isPersonId, normalizePersonId } from "./entity";
+import { isPersonId, normalizePersonId, personIdFromPath } from "./entity";
 
 describe("normalizePersonId", () => {
   it("trims and lowercases so a route param and an identity record compare equal", () => {
@@ -33,4 +33,25 @@ describe("isPersonId", () => {
       expect(isPersonId(value)).toBe(false);
     },
   );
+});
+
+describe("personIdFromPath", () => {
+  const ID = "019e27bc-dec0-7626-81a9-c5524662a6a9";
+
+  it("reads the person id a /ic/ path names, encoded or not", () => {
+    expect(personIdFromPath(`/ic/${ID}/personal`)).toBe(ID);
+    expect(personIdFromPath(`/ic/${ID}/team/`)).toBe(ID);
+    expect(personIdFromPath("/ic/who%40x/personal")).toBe("who@x");
+  });
+
+  it("is null for a path that names no person", () => {
+    expect(personIdFromPath("/")).toBeNull();
+    expect(personIdFromPath("/metrics")).toBeNull();
+  });
+
+  it("survives a malformed percent-sequence instead of throwing", () => {
+    // The pathname is reader-editable text; decoding it raw during render
+    // raises URIError and takes the shell down over a typo'd link.
+    expect(personIdFromPath("/ic/%E0%A4%A/personal")).toBeNull();
+  });
 });

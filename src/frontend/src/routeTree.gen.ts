@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WhatsNewRouteImport } from './routes/whats-new'
 import { Route as QueriesRouteImport } from './routes/queries'
+import { Route as PortalRouteImport } from './routes/portal'
 import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as IcPersonRouteImport } from './routes/ic.$person'
@@ -26,6 +27,11 @@ const WhatsNewRoute = WhatsNewRouteImport.update({
 const QueriesRoute = QueriesRouteImport.update({
   id: '/queries',
   path: '/queries',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PortalRoute = PortalRouteImport.update({
+  id: '/portal',
+  path: '/portal',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MetricsRoute = MetricsRouteImport.update({
@@ -62,6 +68,7 @@ const IcPersonPersonalRoute = IcPersonPersonalRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/metrics': typeof MetricsRoute
+  '/portal': typeof PortalRoute
   '/queries': typeof QueriesRoute
   '/whats-new': typeof WhatsNewRoute
   '/ic/$person': typeof IcPersonRouteWithChildren
@@ -72,6 +79,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/metrics': typeof MetricsRoute
+  '/portal': typeof PortalRoute
   '/queries': typeof QueriesRoute
   '/whats-new': typeof WhatsNewRoute
   '/ic/$person/personal': typeof IcPersonPersonalRoute
@@ -82,6 +90,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/metrics': typeof MetricsRoute
+  '/portal': typeof PortalRoute
   '/queries': typeof QueriesRoute
   '/whats-new': typeof WhatsNewRoute
   '/ic/$person': typeof IcPersonRouteWithChildren
@@ -94,6 +103,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/metrics'
+    | '/portal'
     | '/queries'
     | '/whats-new'
     | '/ic/$person'
@@ -104,6 +114,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/metrics'
+    | '/portal'
     | '/queries'
     | '/whats-new'
     | '/ic/$person/personal'
@@ -113,6 +124,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/metrics'
+    | '/portal'
     | '/queries'
     | '/whats-new'
     | '/ic/$person'
@@ -124,6 +136,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   MetricsRoute: typeof MetricsRoute
+  PortalRoute: typeof PortalRoute
   QueriesRoute: typeof QueriesRoute
   WhatsNewRoute: typeof WhatsNewRoute
   IcPersonRoute: typeof IcPersonRouteWithChildren
@@ -143,6 +156,13 @@ declare module '@tanstack/react-router' {
       path: '/queries'
       fullPath: '/queries'
       preLoaderRoute: typeof QueriesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/portal': {
+      id: '/portal'
+      path: '/portal'
+      fullPath: '/portal'
+      preLoaderRoute: typeof PortalRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/metrics': {
@@ -209,6 +229,7 @@ const IcPersonRouteWithChildren = IcPersonRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   MetricsRoute: MetricsRoute,
+  PortalRoute: PortalRoute,
   QueriesRoute: QueriesRoute,
   WhatsNewRoute: WhatsNewRoute,
   IcPersonRoute: IcPersonRouteWithChildren,

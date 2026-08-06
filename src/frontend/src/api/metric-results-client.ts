@@ -183,6 +183,15 @@ export interface MetricResultsResponse {
 export async function queryMetricResults(
   body: MetricResultsRequest
 ): Promise<MetricResultsResponse> {
+  // Refuse a request the backend is guaranteed to reject (400 invalid_argument,
+  // "entity.ids must not be empty"). Callers are expected to keep the query
+  // disabled until they have entities; failing here names the real cause
+  // instead of surfacing a server validation error in the network log.
+  if (body.entity.ids.length === 0) {
+    throw new Error(
+      "metric-results: refusing to request an empty entity list — the caller should stay disabled until the roster resolves",
+    );
+  }
   const res = await fetchWithAuth(`${BASE}/metric-results`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

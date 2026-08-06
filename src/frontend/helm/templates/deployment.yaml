@@ -43,10 +43,16 @@ spec:
               protocol: TCP
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
-            # No readOnlyRootFilesystem: the entrypoint renders the nginx config
-            # from /etc/nginx/templates at start, and nginx needs its cache dir.
+          volumeMounts:
+            # The only writes the image makes: nginx-unprivileged puts its pid and
+            # every *_temp_path in /tmp, the entrypoint writes the config to conf.d.
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
           livenessProbe:
             httpGet:
               path: /healthz
@@ -61,3 +67,8 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: nginx-conf
+          emptyDir: {}

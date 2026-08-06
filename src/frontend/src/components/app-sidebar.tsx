@@ -1,9 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
-  BookOpenText,
   ChevronDown,
   ChevronRight,
-  Megaphone,
   User,
   Users,
 } from "lucide-react";
@@ -11,9 +9,7 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useViewer } from "@/auth";
-import { SidebarSettings } from "@/components/sidebar-settings";
-import { ThemeSwitcher } from "@/components/theme-switcher";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import {
   Sidebar,
   SidebarContent,
@@ -25,7 +21,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { getInitials } from "@/lib/insight/get-initials";
+import { personIdFromPath } from "@/lib/metrics/entity";
 import { useIcPerson } from "@/queries/ic-dashboard";
 import type { IdentityPerson } from "@/types/insight";
 
@@ -104,15 +100,15 @@ function PersonNode({
 
 export function AppSidebar() {
   const { t } = useTranslation();
-  const { email: viewerEmail, personId: viewerPersonId } = useViewer();
+  const { personId: viewerPersonId } = useViewer();
   const viewerQ = useIcPerson(viewerPersonId ?? "");
   const viewer = viewerQ.data ?? null;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   // The URL segment is the person id since the identity cutover; a legacy
   // email URL simply highlights nothing for the moment its redirect takes.
   const activePersonId = useMemo(() => {
-    const m = /^\/ic\/([^/]+)/.exec(pathname);
-    if (m) return decodeURIComponent(m[1]!);
+    const fromPath = personIdFromPath(pathname);
+    if (fromPath) return fromPath;
     if (pathname === "/" && viewerPersonId) return viewerPersonId;
     return null;
   }, [pathname, viewerPersonId]);
@@ -141,58 +137,7 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              isActive={pathname === "/metrics"}
-              render={<Link to="/metrics" />}
-            >
-              <BookOpenText />
-              <span>{t("metric_definitions.nav_label")}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              isActive={pathname === "/whats-new"}
-              render={<Link to="/whats-new" />}
-            >
-              <Megaphone />
-              <span>{t("whats_new.nav_label")}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-        <SidebarSettings />
-        <ThemeSwitcher />
-        {viewerEmail
-          ? (() => {
-              const primaryEmail = viewer?.email ?? viewerEmail;
-              const primary = viewer?.display_name || primaryEmail;
-              const showSecondary = primary !== primaryEmail;
-              return (
-                <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton size="lg" className="cursor-default">
-                      <Avatar className="size-8 shrink-0">
-                        <AvatarFallback className="bg-sidebar-primary text-xs font-semibold text-sidebar-primary-foreground">
-                          {getInitials(primary) || "?"}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                        <span className="truncate text-sm font-medium text-sidebar-foreground">
-                          {primary}
-                        </span>
-                        {showSecondary ? (
-                          <span className="truncate text-xs text-sidebar-foreground/60">
-                            {primaryEmail}
-                          </span>
-                        ) : null}
-                      </div>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              );
-            })()
-          : null}
+        <AppSidebarFooter />
       </SidebarFooter>
     </Sidebar>
   );

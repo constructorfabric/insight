@@ -100,6 +100,26 @@ function getSnapshot(): PersistedState {
   return state;
 }
 
+/**
+ * The remembered default for a URL that names no period (see usePortalPeriod),
+ * SUBSCRIBED rather than read during render: reading localStorage in a render
+ * body is an impure read of a mutable external store, and under concurrent
+ * rendering two components in the same pass can disagree after a write. The
+ * store below already has the primitive, so use it.
+ */
+export function usePeriodPreference(): PeriodValue {
+  return useSyncExternalStore(
+    subscribe,
+    () => state.period,
+    () => state.period,
+  );
+}
+
+/** Persist the default AND notify, so every reader sees the same value at once. */
+export function writePeriodPreference(period: PeriodValue): void {
+  setState({ period });
+}
+
 export function usePeriod(): {
   period: PeriodValue;
   customRange: CustomRange | null;

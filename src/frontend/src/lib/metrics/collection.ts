@@ -222,7 +222,7 @@ export function forEntity(
  * all-or-nothing limit (5000). Headroom below that so period+peer chunking
  * never sits exactly on the cliff.
  */
-const MAX_PROJECTED_ROWS = 4500;
+export const MAX_PROJECTED_ROWS = 4500;
 
 /**
  * How many entities fit in one request for this collection, or null when the
@@ -302,6 +302,23 @@ export function mergeNormalizedResults(
     }
   }
   return out;
+}
+
+/**
+ * Whether the entity has any observations for this metric. Period views
+ * zero-fill sums for requested entities, so a zero alone cannot distinguish
+ * "measured zero" from "unmeasured" — the peer view's `target_value` can
+ * (null exactly when unobserved). Without a peer row (no peer view, or no
+ * cohort membership), a non-null non-zero period value still proves
+ * observation; a zero-filled one does not.
+ */
+export function entityObserved(
+  result: NormalizedMetricResult,
+  entityId: string
+): boolean {
+  const data = forEntity(result, entityId);
+  if (data.peer) return data.peer.target_value != null;
+  return data.value != null && data.value !== 0;
 }
 
 function toRequestView(

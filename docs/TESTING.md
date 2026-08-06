@@ -131,6 +131,8 @@ still unmeasured.
 
 - Query latency (p50/p95/p99), load, stress, soak/endurance.
 - **Not** on PR — runs in **Test** (baselines / nightly) and **Beta** (prod-load + soak). Requires the metrics stack.
+- **Fixture sizes** — which organisation sizes these run against, and how much data each holds per
+  metric class: [`REFERENCE-ORGS.md`](REFERENCE-ORGS.md).
 
 ---
 

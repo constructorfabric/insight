@@ -10,7 +10,14 @@ export type PeerStats = {
 export type PeerStatus = "top" | "in_pack" | "bottom"
 export type PeerStatusWithNeutral = PeerStatus | "neutral"
 
-export type PeerCohortLabel = "team" | "org" | "department"
+/**
+ * The noun a peer comparison is phrased against ("top 25% in <label>").
+ * The three literals are the common cases and keep autocomplete useful; the
+ * open branch admits a slice-derived cohort noun (division, title, …) now that
+ * peer cohorts follow the active slice. Consumers only interpolate this — no
+ * exhaustive switching depends on the closed set.
+ */
+export type PeerCohortLabel = "team" | "org" | "department" | (string & {})
 
 export type FocusMode = "all" | "critical" | "rewards" | "neutral"
 
@@ -77,4 +84,3 @@ export function peerStatusVsQuartiles(
   if (value >= stats.p75 && value > stats.p50) return "bottom"
   return "in_pack"
 }
-

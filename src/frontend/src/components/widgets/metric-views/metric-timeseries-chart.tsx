@@ -1,5 +1,4 @@
 import { format } from "date-fns";
-import type { DotItemDotProps } from "recharts";
 
 import {
   BarChart,
@@ -41,21 +40,6 @@ function dateLabel(value: string, pattern: string): string {
   const [year, month, day] = value.split("-").map(Number);
   if (!year || !month || !day) return value;
   return format(new Date(year, month - 1, day), pattern);
-}
-
-function IsolatedPoint({
-  cx,
-  cy,
-  index,
-  points,
-  stroke,
-  value,
-}: DotItemDotProps) {
-  if (value == null || cx == null || cy == null) return null;
-  if (points[index - 1]?.value != null || points[index + 1]?.value != null) {
-    return null;
-  }
-  return <circle cx={cx} cy={cy} r={3} fill={stroke} />;
 }
 
 function TimeseriesXAxis({
@@ -225,11 +209,14 @@ export function MetricTimeseriesChart({
             {chartModel.series.map((series) => (
               <ChartLine
                 key={series.key}
-                type="monotone"
                 dataKey={series.key}
                 stroke={`var(--color-${series.key})`}
                 strokeWidth={2}
-                dot={IsolatedPoint}
+                // No local `dot`: ChartLine's AdaptiveDot generalises what the
+                // local IsolatedPoint did (always mark a reading whose
+                // neighbours are null) across every chart. `connectNulls` is a
+                // separate concern and stays — a gap must read as a gap, not as
+                // a straight line drawn across it.
                 connectNulls={false}
                 name={series.label}
                 onClick={(point) => openPoint(series, point)}
