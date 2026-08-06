@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use sha2::{Digest, Sha256};
 
 /// Git credentials for one invocation. They exist only in the child process
 /// environment — never in argv, never on disk, never in the stored remote URL
@@ -29,6 +30,20 @@ impl GitCredentials {
     fn basic_header(&self) -> String {
         let pair = format!("{}:{}", self.username, self.token);
         format!("Authorization: Basic {}", BASE64.encode(pair))
+    }
+
+    /// Stable one-way fingerprint of these credentials, stored alongside the
+    /// cache entry so a warm read can require the caller to present the
+    /// credentials that proved origin access. The token itself is never
+    /// written to disk; recovering it from the digest is infeasible for
+    /// high-entropy tokens.
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.username.as_bytes());
+        hasher.update([0u8]);
+        hasher.update(self.token.as_bytes());
+        hex::encode(hasher.finalize())
     }
 }
 
@@ -74,25 +89,7 @@ impl GitRunner {
         args: &[&str],
         creds: Option<&GitCredentials>,
     ) -> Result<Output, GitError> {
-        let mut command = tokio::process::Command::new("git");
-        command.env_clear();
-        if let Some(path) = std::env::var_os("PATH") {
-            command.env("PATH", path);
-        }
-        command
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("LC_ALL", "C");
-
-        if let Some(creds) = creds {
-            command
-                .env("GIT_CONFIG_COUNT", "1")
-                .env("GIT_CONFIG_KEY_0", "http.extraheader")
-                .env("GIT_CONFIG_VALUE_0", creds.basic_header());
-        }
-
+        let mut command = Self::base_command(creds);
         if let Some(dir) = git_dir {
             command.arg("--git-dir").arg(dir);
         }
@@ -113,6 +110,90 @@ impl GitRunner {
             return Ok(output);
         }
         Err(classify_failure(&output))
+    }
+
+    /// Run `git <producer> | git <consumer>` inside `git_dir`, returning the
+    /// consumer's stdout. Used for `log --patch | patch-id --stable`, the
+    /// canonical batch form — piping keeps whole-history diffs out of memory.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError`] on spawn failure, timeout, or a non-zero exit from either
+    /// side of the pipe.
+    pub async fn run_piped(
+        &self,
+        git_dir: &Path,
+        producer: &[&str],
+        consumer: &[&str],
+    ) -> Result<Vec<u8>, GitError> {
+        let mut left = Self::base_command(None);
+        left.arg("--git-dir")
+            .arg(git_dir)
+            .args(producer)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut left_child = left.spawn()?;
+
+        let left_stdout = left_child
+            .stdout
+            .take()
+            .ok_or_else(|| GitError::Failed("pipe producer exposed no stdout".to_owned()))?;
+
+        let mut right = Self::base_command(None);
+        right
+            .arg("--git-dir")
+            .arg(git_dir)
+            .args(consumer)
+            .stdin(Stdio::from(left_stdout.into_owned_fd()?))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let right_child = right.spawn()?;
+
+        let joined = async {
+            let right_output = right_child.wait_with_output().await?;
+            let left_status = left_child.wait().await?;
+            Ok::<_, std::io::Error>((left_status, right_output))
+        };
+
+        let (left_status, right_output) = match tokio::time::timeout(self.timeout, joined).await {
+            Ok(result) => result?,
+            Err(_elapsed) => return Err(GitError::TimedOut(self.timeout)),
+        };
+
+        if !left_status.success() {
+            return Err(GitError::Failed(format!(
+                "pipe producer failed with {left_status}"
+            )));
+        }
+        if !right_output.status.success() {
+            return Err(classify_failure(&right_output));
+        }
+        Ok(right_output.stdout)
+    }
+
+    fn base_command(creds: Option<&GitCredentials>) -> tokio::process::Command {
+        let mut command = tokio::process::Command::new("git");
+        command.env_clear();
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", path);
+        }
+        command
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("LC_ALL", "C");
+
+        if let Some(creds) = creds {
+            command
+                .env("GIT_CONFIG_COUNT", "1")
+                .env("GIT_CONFIG_KEY_0", "http.extraheader")
+                .env("GIT_CONFIG_VALUE_0", creds.basic_header());
+        }
+        command
     }
 }
 

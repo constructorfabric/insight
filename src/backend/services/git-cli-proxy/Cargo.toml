@@ -54,4 +54,5 @@ tracing-subscriber = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 # tests/boot.rs drives the built binary over real HTTP (routegen cli.rs
 # precedent — covers main.rs/gear.rs under llvm-cov).
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+serde_json = { workspace = true }

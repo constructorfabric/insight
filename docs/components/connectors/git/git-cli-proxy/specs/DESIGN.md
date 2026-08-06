@@ -122,24 +122,48 @@ consistency property we want (all streams of a sync observe one origin state).
 
 A no-op fetch (nothing changed) is one ref-advertisement round trip —
 milliseconds — so even a staleness-window miss costs almost nothing.
+
+**Bounded wait, then `429`.** Preparation runs as a background task that owns
+the entry's write lock; the request joins it and waits at most
+`INLINE_WAIT` (15 s). A fast fetch therefore completes inline and the caller
+gets data; a cold clone exceeds the wait and the caller gets
+`429` + `Retry-After: 30`, while the clone keeps running to completion. This is
+what reconciles single-flight with the `429` contract (§4.4): waiters never
+hang for the length of a clone, and a client giving up never cancels the work.
 Single-flight guarantees concurrent requests for one repo trigger at most one
-clone/fetch; latecomers wait for its completion.
+clone/fetch regardless of which of them time out.
+
+**Credential re-proof.** Each entry records a one-way fingerprint of the
+credentials that last proved origin access (`meta.json`). A warm read is served
+only to a caller whose credentials match; a mismatch forces a fetch, so a
+caller must prove access to origin before seeing cached data. Rotation costs
+one fetch, never a re-clone. The cache key alone is never treated as an
+authorization claim (§3.7).
 
 ### 3.3 Blob lifecycle
 
 Blobs exist on disk only transiently, for the commit window being served:
 
-1. **Enumerate** new commits with tree-only data: `git log --raw` /
-   `git diff-tree -r` — filenames and A/M/D/R statuses need **no blobs**.
+1. **Enumerate** new commits with tree-only data:
+   `git log --no-walk --raw --no-abbrev` — filenames and A/M/D/R statuses need
+   **no blobs**. Two flag details are load-bearing: `diff-tree` with several
+   revisions diffs *between* them instead of per commit (so the multi-commit
+   form is `log --no-walk`), and raw output abbreviates OIDs unless
+   `--no-abbrev` is given — abbreviated OIDs cannot be fetched (`--full-index`
+   affects only patch headers).
 2. **Prefetch in batch** the blob OIDs referenced by the window's diffs
-   (both sides of each changed path): one `git fetch origin <oid>...` against
-   the promisor remote — never rely on git's implicit one-blob-per-roundtrip
-   lazy fetching. Where the installed git provides `git backfill` (≥ 2.49),
-   use it instead.
-3. **Compute** `--numstat`, rename detection (`-M`), and patches locally.
-4. **Purge**: `git repack -a -d --filter=blob:none` returns the repo to its
-   skeleton size. Run after serving a window when the repo's size exceeds its
-   skeleton baseline, and during eviction (§3.6).
+   (both sides of each changed path; the all-zero OID marks an absent side and
+   is skipped): one `git fetch origin <oid>...` against the promisor remote —
+   never rely on git's implicit one-blob-per-roundtrip lazy fetching. Where the
+   installed git provides `git backfill` (≥ 2.49), use it instead.
+3. **Compute** `--numstat` with `--raw` (counts from numstat, exact statuses
+   from the tree diff), rename detection (`-M`), and patches locally.
+4. **Purge**: `git repack -a -d --filter=blob:none --no-write-bitmap-index`
+   returns the repo to its skeleton size. Run after serving a window when the
+   repo's size exceeds its skeleton baseline, and during eviction (§3.6).
+   `--no-write-bitmap-index` is mandatory, not cosmetic: `--filter` splits
+   objects across packs while bitmap writing assumes a single pack, so with
+   `repack.writeBitmaps` enabled the repack fails and the blobs stay on disk.
 
 Blob prefetch is always required: numstat, `patch_id` computation, and patch
 text all need blob content. `include_patch=false` (§4.2) only skips patch
@@ -177,8 +201,8 @@ Within one repo, a keyed read-write lock plus a reader refcount:
 
 | Operation | Lock |
 |---|---|
-| Read (`log`, `diff-tree`, `for-each-ref`) | shared; safe concurrently with fetch (fetch only adds packs and updates refs atomically) |
-| `fetch` / initial clone | per-repo exclusive among writers, single-flight for waiters |
+| Read (`log`, `diff-tree`, `for-each-ref`) | shared with other readers only |
+| `fetch` / initial clone | fully exclusive against readers, single-flight for waiters. A fetch updates many refs, so a concurrent `--all` walk could otherwise straddle two ref sets and break the one-snapshot-per-sync property of §3.2 |
 | `repack -a -d --filter` (deletes packs) | fully exclusive: only at zero reader refcount |
 | Eviction (delete directory) | fully exclusive: only at zero refcount, never for a just-requested repo |
 
@@ -243,6 +267,12 @@ nowhere else:
   supplies the username; the proxy does not hardcode vendor rules.
 - Access-log middleware redacts `Authorization`, `X-Git-Token`, and any
   header matched by a deny-list.
+- **`X-Tenant-Id` / `X-Source-Id` are cache partition inputs, not
+  authorization claims.** One deployment-wide bearer token authenticates *the
+  caller class*, not a tenant, so those headers alone must never grant access
+  to a warm entry: the credential re-proof of §3.2 is what binds a caller to
+  an entry. A caller that cannot satisfy origin auth for a repository cannot
+  read its cached data, whatever tenant/source it names.
 - Proxy-level authentication (service-to-service): static bearer token via
   `Authorization`, provisioned by deployment; independent from git
   credentials.
@@ -256,10 +286,20 @@ nowhere else:
   `X-Git-Token`, `Authorization` (proxy bearer). Optional:
   `X-Max-Staleness: <seconds>`.
 - Pagination: all list endpoints order rows **ascending by
-  `(committed_date, sha)`** and return an opaque `next_page_token` encoding
-  the last emitted pair. Ascending order makes pagination deterministic even
-  if the repo is evicted and re-cloned between pages, and is friendly to
-  Airbyte cursor checkpointing. `page_size` default 1000, max 10000.
+  `(committed_date, sha)`** and return an opaque `next_page_token` encoding the
+  last emitted pair **plus the snapshot generation** it came from. Ascending
+  order makes pagination deterministic and is friendly to Airbyte cursor
+  checkpointing. `page_size` default 1000, max 10000.
+- **Snapshot pinning.** The generation in the token binds a page sequence to
+  one ref snapshot: a request that carries a token **never fetches** (it is
+  served from that generation, whatever the staleness window says), and only
+  the first page of a walk can trigger a fetch. If the pinned generation is
+  gone (a fetch by another caller, an eviction, a repack), the request fails
+  `409 snapshot_changed` naming the live generation rather than silently
+  splicing two snapshots — which would let a commit that became reachable
+  mid-walk be skipped. The consumer restarts the stream slice from its own
+  cursor; bronze is append-only, so replayed rows dedup downstream.
+  INVARIANT: the token selects a position, never a repository or a tenant.
 - Responses: `{ "items": [ … ], "next_page_token": "…" | null }`.
 - The proxy returns **pure git data**. Envelope fields are the connector's
   job (§5.4).
@@ -345,11 +385,18 @@ latency/size histograms per endpoint.
 
 | Status | Meaning | Connector behavior |
 |---|---|---|
-| `429` + `Retry-After` | repo cold (clone queued), fetch in flight, or admission rejected | retry with backoff (declarative error handler) |
-| `401` / `403` | origin rejected the supplied git credentials | fail the sync (config error) |
+| `400` | missing identity/credential header, empty `repo`, malformed page token | permanent — a config or wiring bug |
+| `401` | proxy bearer token wrong, or origin rejected the supplied git credentials | fail the sync (config error) |
 | `404` | repo not found at origin | fail the slice; parent record is stale |
+| `409` | the pinned snapshot is gone (§4.1) | restart the stream slice from its cursor |
 | `413` | repo exceeds `MAX_REPO_BYTES` | permanent — do not retry |
+| `429` + `Retry-After` | repo cold (clone queued), fetch in flight, or admission rejected | retry with backoff (declarative error handler) |
 | `5xx` | internal/transient | retry with backoff |
+
+Error bodies are `{ "error": "<code>", "message": "…" }`. Caller-actionable
+failures name the problem (which header is missing); internal failures carry a
+generic message and the detail goes to the log only — paths and cache internals
+never reach the wire.
 
 The `429` path is the **only** cold-start mechanism: connector-side retry
 absorbs clone latency with zero orchestration changes (no Argo pre-steps, no
@@ -407,7 +454,11 @@ definitions:
     request_headers:
       X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
       X-Source-Id: "{{ config['insight_source_id'] }}"
-      X-Git-Username: "x-access-token"        # vendor-specific constant
+      # Vendor-specific: GitHub any username (e.g. x-access-token), GitLab
+      # `oauth2`, Bitbucket Cloud `x-token-auth`. This definition is per-vendor
+      # (one connector = one vendor), so the constant is correct here — do NOT
+      # lift it into a shared cross-vendor definition.
+      X-Git-Username: "oauth2"
       X-Git-Token: "{{ config['api_token'] }}" # the same PAT the vendor streams use
     error_handler:
       type: DefaultErrorHandler
@@ -468,11 +519,19 @@ streams:
           - { path: [source_id],   value: "{{ config['insight_source_id'] }}" }
           - { path: [data_source], value: "insight_github" }
           - { path: [collected_at], value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}" }
-          - { path: [unique_key],  value: "{{ [config['insight_tenant_id'], config['insight_source_id'], record['sha']] | join(':') }}" }
+          # Repository identity is REQUIRED in the key: forks share commit
+          # SHAs, so tenant+source+sha alone lets RMT collapse commits from
+          # different repositories into one row. Prefer the vendor repository
+          # id from the parent record over a URL.
+          - { path: [unique_key],  value: "{{ [config['insight_tenant_id'], config['insight_source_id'], stream_partition.repo_id, record['sha']] | join(':') }}" }
 ```
 
 (Illustrative, not literal — exact field set per vendor mirrors the current
-bronze schemas; `file_changes` adds `filename` to the `unique_key` parts.)
+bronze schemas; `file_changes` adds `filename` after the repository id and sha.)
+
+Add `409 snapshot_changed` handling to the paginated streams: the pinned
+snapshot is gone (§4.1), so the slice restarts from its stored cursor rather
+than retrying the dead token.
 
 ### 5.5 Ordering and state
 
@@ -524,8 +583,15 @@ bronze branches (append-only → RMT)                    unique_key excludes hea
   `HEAVY_OPS_CONCURRENCY`, `PROXY_BEARER_TOKEN` (secret).
 - **Probes**: liveness = process health; readiness = HTTP serving (not disk
   pressure).
-- **Network**: cluster-internal Service only; egress to git origins over
-  https. No ingress exposure.
+- **Network**: cluster-internal Service only, no ingress exposure; egress to
+  git origins over https. Every `/v1` request carries `X-Git-Token` and the
+  proxy bearer token, so the connector→proxy hop must be restricted at two
+  levels: a `NetworkPolicy` admitting ingress only from the Airbyte job
+  namespace (the sole consumer — no other service and no user calls this API),
+  and `git_proxy_url` restricted to `https` unless the deployment is explicitly
+  opted into plaintext in-cluster traffic. In-cluster TLS has a precedent here
+  (the authenticator serves https with a mounted CA), so preferring it over
+  plaintext costs no new machinery.
 - **Image**: minimal base + git ≥ 2.36 (≥ 2.49 preferred).
 
 ## 7. Design Decisions
@@ -567,12 +633,28 @@ proportional to *metadata* and peak disk proportional to *one commit window*.
 Fallback for origins without partial-clone support (§8): full bare clone +
 identical repack purge — same steady state, heavier first download.
 
-### DD-GP-06: Ascending `(committed_date, sha)` pagination
+### DD-GP-06: Ascending `(committed_date, sha)` pagination, pinned to a generation
 
 Descending or insertion-ordered pagination breaks when the cache entry is
 evicted/re-cloned mid-pagination. Ascending order over an immutable-ish
 history is deterministic across cache lifecycle events and lets Airbyte
 checkpoint safely at any page boundary.
+
+Ordering alone is not enough: a fetch between two pages can make an older
+commit reachable, which a position-only cursor would skip. The token therefore
+carries the snapshot generation, continuation requests never fetch, and a
+superseded generation fails `409` instead of splicing two histories (§4.1).
+
+### DD-GP-07: Credential re-proof instead of trusting caller-supplied identity
+
+One deployment-wide bearer token cannot express "this caller may read this
+tenant's repository", and `X-Tenant-Id`/`X-Source-Id` are caller-supplied.
+Rather than adding a second authorization system, the cache entry remembers a
+fingerprint of the credentials that proved origin access and refuses to serve a
+warm read to anyone else (forcing a fetch, where the vendor itself is the
+authority). Access to cached data therefore requires access to the origin —
+the property that matters — with no key distribution beyond the git PAT the
+connector already holds.
 
 ## 8. Open Questions / Pre-build Validation
 

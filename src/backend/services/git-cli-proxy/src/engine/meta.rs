@@ -13,6 +13,13 @@ pub struct RepoMeta {
     pub last_fetched_at_epoch_s: u64,
     pub last_accessed_at_epoch_s: u64,
     pub size_bytes: u64,
+    /// Bumped on every successful clone/fetch. Page tokens carry it so a
+    /// paginating caller is pinned to one ref snapshot.
+    pub generation: u64,
+    /// Fingerprint of the credentials that last proved origin access.
+    /// INVARIANT: a warm read is served only to a caller presenting matching
+    /// credentials — the cache key alone is not an authorization claim.
+    pub cred_fingerprint: String,
 }
 
 const META_FILE: &str = "meta.json";
@@ -72,6 +79,8 @@ mod tests {
             last_fetched_at_epoch_s: 100,
             last_accessed_at_epoch_s: 200,
             size_bytes: 42,
+            generation: 3,
+            cred_fingerprint: "deadbeef".to_owned(),
         }
     }
 
