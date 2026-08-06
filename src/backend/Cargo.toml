@@ -3,6 +3,7 @@ members = [
     "libs/insight-clickhouse",
     "libs/authenticator-sdk",
     "services/analytics",
+    "services/git-cli-proxy",
     "services/identity-resolution",
     "services/authenticator",
     # Dev/e2e-only fake OIDC provider (never shipped in a prod image). See
