@@ -290,7 +290,8 @@ Plain CRUD over stored queries so a new analytics slice needs no engineering cha
 - Does NOT bypass the gate — import re-gates every SQL exactly as create does.
 - Does NOT string-interpolate parameter values — binding is server-side only.
 - Does NOT trust any id or tenant on an imported document — both are dropped and re-homed to the importing session's tenant, so an import can never write cross-tenant or resurrect a stale id.
-- Does NOT overwrite on import — a same-name collision is skipped, never clobbered; changing an existing query stays an explicit update.
+- Does NOT overwrite on import — a same-name collision is skipped, never clobbered; changing an existing query stays an explicit update. The skip is name-based and best-effort: the surface carries no `(insight_tenant_id, name)` uniqueness invariant (create already permits duplicate names), so two concurrent imports of the same new name race exactly as two concurrent creates would — acceptable for a promotion tool, and never a cross-tenant concern.
+- Does NOT accept an unbounded import — a document over the per-request query limit is rejected at the route boundary with a 400 before any load or write, so one request cannot force an unbounded batch. Export is bounded by construction: it returns only the tenant's own analyst-authored queries and never truncates.
 - Does NOT seed curated/product queries — auto-seeding sanctioned definitions to every stand is definitions-as-data (semantic epic #2213), not this bespoke export/import.
 - Does NOT yet inject the tenant-row filter (#1967) — the run path binds the `{tenant}` *value* but does not yet add an `insight_tenant_id = {tenant}` predicate to queries that omit it; that cross-cutting concern lands in its own sub-issue.
 

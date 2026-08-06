@@ -31,6 +31,11 @@ use crate::domain::saved_query::{
 };
 use crate::infra::db::entities::saved_queries;
 
+/// Upper bound on the queries one import document may carry, rejected at the
+/// route boundary before any load or write so a single request cannot force an
+/// unbounded batch. Generous next to analyst-authored volumes.
+const MAX_IMPORT_QUERIES: usize = 1_000;
+
 // ── CRUD ────────────────────────────────────────────────────
 
 pub async fn list_saved_queries(
@@ -162,6 +167,10 @@ pub async fn import_saved_queries(
     Json(doc): Json<SavedQueryExport>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant_id = ctx.subject_tenant_id();
+
+    if doc.queries.len() > MAX_IMPORT_QUERIES {
+        return Err(import_too_large(doc.queries.len()));
+    }
 
     // Re-gate every SQL before writing anything: one bad statement rejects the
     // whole document, so an import is all-valid-or-nothing.
@@ -409,6 +418,15 @@ fn invalid_import_sql(name: &str, reason: String) -> CanonicalError {
         .create()
 }
 
+/// An import document over [`MAX_IMPORT_QUERIES`]: a 400 on the `queries` field.
+fn import_too_large(count: usize) -> CanonicalError {
+    let reason =
+        format!("import carries {count} queries, over the {MAX_IMPORT_QUERIES} per-request limit");
+    SavedQueryError::invalid_argument()
+        .with_field_violation("queries", reason, "TOO_MANY")
+        .create()
+}
+
 fn model_to_saved_query(m: saved_queries::Model) -> SavedQuery {
     SavedQuery {
         id: m.id,
@@ -488,6 +506,15 @@ mod tests {
             select_new_queries(HashSet::new(), vec![portable("a"), portable("b")]);
         assert_eq!(names(&fresh), vec!["a", "b"]);
         assert_eq!(skipped, 0);
+    }
+
+    /// An import over the per-request limit is caller error → 400 on `queries`.
+    #[test]
+    fn oversized_import_is_a_400() -> Result<(), Box<dyn std::error::Error>> {
+        let p = problem_of(super::import_too_large(super::MAX_IMPORT_QUERIES + 1))?;
+        assert_eq!(p["status"], 400);
+        assert_eq!(p["context"]["field_violations"][0]["field"], "queries");
+        Ok(())
     }
 
     fn problem_of(
