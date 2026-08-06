@@ -456,15 +456,18 @@ class PortableSavedQuery(BaseModel):
     """
     One record of the export/import document.
 
-    Portable by construction: it carries only `name`, `description`, and `sql` —
-    no id, tenant, or timestamps. The SQL is contract-relative and the tenant is
-    session-injected at run time, so the record is stand-independent and import
-    re-homes it to the importing session's tenant.
+    Carries the `id` — the stable handle a promoted frontend references in
+    `/v1/queries/{id}/run`, so it must survive the move for the frontend to
+    resolve on the target stand — plus `name`, `description`, and `sql`. It
+    carries no tenant or timestamps: the SQL is contract-relative and the tenant
+    is session-injected at run time, so import preserves the `id` and re-homes
+    only the tenant to the importing session.
     """
     model_config = ConfigDict(
         extra='forbid',
     )
     description: str | None = None
+    id: UUID
     name: str
     sql: str
 

@@ -210,9 +210,9 @@ The system **MUST** support named query parameters, always injecting `tenant` fr
 
 - [ ] `p2` - **ID**: `cpt-presentation-fr-saved-query-export-import`
 
-The system **MUST** let an analyst export the calling tenant's saved queries as a portable JSON document (`{ "queries": [{ name, description, sql }] }`) and import such a document to bulk-create saved queries. Import **MUST** re-validate every `sql` through the single-SELECT gate, **MUST** drop any source id or tenant and re-home each query to the importing session's tenant (fresh id, session tenant), and **MUST NOT** overwrite an existing query of the same name (name collisions are skipped, so re-import is idempotent). Export **MUST** carry no id, tenant, or timestamps, so the document is stand-independent.
+The system **MUST** let an analyst export the calling tenant's saved queries as a portable JSON document (`{ "queries": [{ id, name, description, sql }] }`) and import such a document to bulk-create saved queries. Import **MUST** re-validate every `sql` through the single-SELECT gate, **MUST** preserve each query's `id` while re-homing it to the importing session's tenant (the `id` is the stable handle a promoted frontend references in `/run`, so it must survive the move), and **MUST NOT** overwrite a query whose `id` already exists (id collisions are skipped, so re-import is idempotent). Export **MUST** carry the `id` but no tenant or timestamps, so the document is stand-independent.
 
-**Rationale**: A tier-3 experiment's saved queries are authored on a dev stand; the frontend promotes to production by PR, but the queries it depends on are otherwise stranded on the dev stand's database. Export/import lets the queries travel dev to prod alongside the frontend. Because SQL is contract-relative and the tenant is session-injected at run time, the document is portable with no rewriting.
+**Rationale**: A tier-3 experiment's saved queries are authored on a dev stand; the frontend promotes to production by PR, but the queries it depends on are otherwise stranded on the dev stand's database. The promoted frontend calls each query by its `id`, so that `id` must exist on the target stand for the frontend to resolve. Export/import lets the queries travel dev to prod by their id. Because SQL is contract-relative and the tenant is session-injected at run time, the document is portable with no rewriting; cross-tenant safety comes from the tenant-scoped reads, not from changing the id.
 
 **Actors**: `cpt-presentation-actor-analyst`, `cpt-presentation-actor-analytics-svc`
 
@@ -426,7 +426,7 @@ Contract reads for tenant A **MUST NOT** return rows from tenant B, regardless o
 - [ ] No presentation-side operation can write, alter, or drop contract objects (adversarial SQL included).
 - [ ] The single-SELECT gate rejects empty input, multiple statements, non-read (DDL/DML) statements, and unparseable input on write and run.
 - [ ] An analyst can create, list, fetch, update, delete, and run a saved query with no engineering change.
-- [ ] An analyst can export the tenant's saved queries as portable JSON and import that document into another stand, where each query is re-gated, re-homed to the importing tenant, and a same-name collision is skipped rather than overwritten.
+- [ ] An analyst can export the tenant's saved queries as portable JSON and import that document into another stand, where each query is re-gated, keeps its id, is re-homed to the importing tenant, and an already-existing id is skipped rather than overwritten — so a promoted frontend that calls the query by id resolves on the target stand.
 - [ ] Every contract read carries a server-injected tenant predicate the client cannot widen.
 - [ ] Cross-tenant reads return no rows.
 - [ ] The `presentation` namespace exists and legacy gold remains read-only in `insight`.

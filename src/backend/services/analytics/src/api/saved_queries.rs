@@ -178,12 +178,16 @@ pub async fn import_saved_queries(
         validate_single_select(&query.sql).map_err(|e| invalid_import_sql(&query.name, e))?;
     }
 
-    // Names already taken for this tenant are skipped, never overwritten; the
-    // pure partition also absorbs duplicate names inside the document, so a
-    // re-import is idempotent. Source id/tenant are dropped — every kept row is
-    // re-homed to the importing session's tenant with a fresh id.
-    let existing = load_query_names(&state, tenant_id).await?;
-    let (fresh, skipped) = select_new_queries(existing, doc.queries);
+    // Identity is the id, not the name (names are not unique). The source id is
+    // preserved so a promoted frontend that references it resolves here; only
+    // the tenant is re-homed to the importing session. An id already in the
+    // table is skipped, never overwritten — checked globally, not per tenant,
+    // because the id is the sole primary key, so an already-taken id cannot be
+    // re-homed and skipping it (rather than colliding on insert) keeps a
+    // re-import idempotent. The pure partition also absorbs duplicate ids inside
+    // the document.
+    let taken = existing_query_ids(&state, &doc.queries).await?;
+    let (fresh, skipped) = select_new_queries(taken, doc.queries);
 
     let rows: Vec<saved_queries::ActiveModel> = fresh
         .into_iter()
@@ -207,11 +211,12 @@ pub async fn import_saved_queries(
     ))
 }
 
-/// A fresh insert row for an imported query: a new id and the importing
-/// session's tenant, dropping whatever id/tenant the source stand held.
+/// An insert row for an imported query: its own preserved id, re-homed to the
+/// importing session's tenant. The id survives so a promoted frontend that
+/// references it resolves on this stand.
 fn new_query_row(tenant_id: Uuid, query: PortableSavedQuery) -> saved_queries::ActiveModel {
     saved_queries::ActiveModel {
-        id: Set(Uuid::now_v7()),
+        id: Set(query.id),
         insight_tenant_id: Set(tenant_id),
         name: Set(query.name),
         description: Set(query.description),
@@ -221,19 +226,19 @@ fn new_query_row(tenant_id: Uuid, query: PortableSavedQuery) -> saved_queries::A
     }
 }
 
-/// Keep only the imported queries whose `name` is free, dropping same-name
-/// collisions against `existing` and duplicate names inside the document
+/// Keep only the imported queries whose `id` the tenant does not already hold,
+/// dropping collisions against `existing` and duplicate ids inside the document
 /// (first occurrence wins). Returns the queries to create and the skip count.
 /// Pure, so the collision policy is unit-testable without a database.
 fn select_new_queries(
-    mut existing: HashSet<String>,
+    mut existing: HashSet<Uuid>,
     queries: Vec<PortableSavedQuery>,
 ) -> (Vec<PortableSavedQuery>, usize) {
     let mut fresh = Vec::new();
     let mut skipped = 0_usize;
 
     for query in queries {
-        if existing.insert(query.name.clone()) {
+        if existing.insert(query.id) {
             fresh.push(query);
         } else {
             skipped += 1;
@@ -243,22 +248,28 @@ fn select_new_queries(
     (fresh, skipped)
 }
 
-/// Load the set of saved-query names already used by a tenant, so import can
-/// skip same-name collisions without a per-row lookup.
-async fn load_query_names(
+/// Which of the imported ids already exist in the table — any tenant, since the
+/// id is the sole primary key. Queried over just the incoming ids (not the whole
+/// table) so import can skip the taken ones without risking an insert collision.
+async fn existing_query_ids(
     state: &AppState,
-    tenant_id: Uuid,
-) -> Result<HashSet<String>, CanonicalError> {
+    queries: &[PortableSavedQuery],
+) -> Result<HashSet<Uuid>, CanonicalError> {
+    let ids: Vec<Uuid> = queries.iter().map(|q| q.id).collect();
+    if ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+
     let rows = saved_queries::Entity::find()
-        .filter(saved_queries::Column::InsightTenantId.eq(tenant_id))
+        .filter(saved_queries::Column::Id.is_in(ids))
         .all(&state.db)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, "failed to load saved query names");
+            tracing::error!(error = %e, "failed to load saved query ids");
             CanonicalError::internal("failed to import saved queries").create()
         })?;
 
-    Ok(rows.into_iter().map(|m| m.name).collect())
+    Ok(rows.into_iter().map(|m| m.id).collect())
 }
 
 // ── Run ─────────────────────────────────────────────────────
@@ -449,6 +460,7 @@ fn model_to_summary(m: saved_queries::Model) -> SavedQuerySummary {
 
 fn model_to_portable(m: saved_queries::Model) -> PortableSavedQuery {
     PortableSavedQuery {
+        id: m.id,
         name: m.name,
         description: m.description,
         sql: m.sql,
@@ -466,8 +478,9 @@ mod tests {
 
     type R = Result<(), Box<dyn std::error::Error>>;
 
-    fn portable(name: &str) -> PortableSavedQuery {
+    fn portable(id: u128, name: &str) -> PortableSavedQuery {
         PortableSavedQuery {
+            id: Uuid::from_u128(id),
             name: name.to_owned(),
             description: None,
             sql: "SELECT 1".to_owned(),
@@ -478,33 +491,39 @@ mod tests {
         queries.iter().map(|q| q.name.as_str()).collect()
     }
 
-    /// Import keeps a query whose name is free and skips one that collides with
-    /// an existing tenant query — the collision is never overwritten.
+    /// Import keeps a query whose id the tenant lacks and skips one it already
+    /// holds — the collision is never overwritten. Identity is the id, so a
+    /// differing name on the same id does not make it a new query.
     #[test]
-    fn import_skips_names_that_already_exist() {
-        let existing = HashSet::from(["taken".to_owned()]);
+    fn import_skips_ids_the_tenant_already_holds() {
+        let existing = HashSet::from([Uuid::from_u128(1)]);
         let (fresh, skipped) =
-            select_new_queries(existing, vec![portable("taken"), portable("new")]);
+            select_new_queries(existing, vec![portable(1, "taken"), portable(2, "new")]);
         assert_eq!(names(&fresh), vec!["new"]);
         assert_eq!(skipped, 1);
     }
 
-    /// A duplicate name inside one document keeps the first and skips the rest,
-    /// so re-importing the same document is idempotent.
+    /// A duplicate id inside one document keeps the first and skips the rest —
+    /// even under differing names — so re-importing the document is idempotent.
     #[test]
-    fn import_dedupes_within_the_document() {
-        let (fresh, skipped) =
-            select_new_queries(HashSet::new(), vec![portable("dup"), portable("dup")]);
+    fn import_dedupes_by_id_within_the_document() {
+        let (fresh, skipped) = select_new_queries(
+            HashSet::new(),
+            vec![portable(7, "dup"), portable(7, "dup-again")],
+        );
         assert_eq!(names(&fresh), vec!["dup"]);
         assert_eq!(skipped, 1);
     }
 
-    /// With no collisions every query is kept and nothing is skipped.
+    /// With no id collisions every query is kept and nothing is skipped, even
+    /// when two carry the same (non-unique) name.
     #[test]
-    fn import_keeps_all_distinct_free_names() {
-        let (fresh, skipped) =
-            select_new_queries(HashSet::new(), vec![portable("a"), portable("b")]);
-        assert_eq!(names(&fresh), vec!["a", "b"]);
+    fn import_keeps_all_distinct_ids() {
+        let (fresh, skipped) = select_new_queries(
+            HashSet::new(),
+            vec![portable(1, "same"), portable(2, "same")],
+        );
+        assert_eq!(names(&fresh), vec!["same", "same"]);
         assert_eq!(skipped, 0);
     }
 

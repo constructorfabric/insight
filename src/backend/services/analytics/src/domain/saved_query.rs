@@ -82,12 +82,15 @@ pub struct RunResponse {
 
 /// One record of the export/import document.
 ///
-/// Portable by construction: it carries only `name`, `description`, and `sql` —
-/// no id, tenant, or timestamps. The SQL is contract-relative and the tenant is
-/// session-injected at run time, so the record is stand-independent and import
-/// re-homes it to the importing session's tenant.
+/// Carries the `id` — the stable handle a promoted frontend references in
+/// `/v1/queries/{id}/run`, so it must survive the move for the frontend to
+/// resolve on the target stand — plus `name`, `description`, and `sql`. It
+/// carries no tenant or timestamps: the SQL is contract-relative and the tenant
+/// is session-injected at run time, so import preserves the `id` and re-homes
+/// only the tenant to the importing session.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PortableSavedQuery {
+    pub id: Uuid,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,

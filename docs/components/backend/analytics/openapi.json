@@ -1196,13 +1196,17 @@
         "type": "object"
       },
       "PortableSavedQuery": {
-        "description": "One record of the export/import document.\n\nPortable by construction: it carries only `name`, `description`, and `sql` —\nno id, tenant, or timestamps. The SQL is contract-relative and the tenant is\nsession-injected at run time, so the record is stand-independent and import\nre-homes it to the importing session's tenant.",
+        "description": "One record of the export/import document.\n\nCarries the `id` — the stable handle a promoted frontend references in\n`/v1/queries/{id}/run`, so it must survive the move for the frontend to\nresolve on the target stand — plus `name`, `description`, and `sql`. It\ncarries no tenant or timestamps: the SQL is contract-relative and the tenant\nis session-injected at run time, so import preserves the `id` and re-homes\nonly the tenant to the importing session.",
         "properties": {
           "description": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
           },
           "name": {
             "type": "string"
@@ -1212,6 +1216,7 @@
           }
         },
         "required": [
+          "id",
           "name",
           "sql"
         ],
