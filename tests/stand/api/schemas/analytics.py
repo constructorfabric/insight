@@ -122,6 +122,18 @@ class HistogramValueDto(BaseModel):
     entity_id: str
 
 
+class ImportResponse(BaseModel):
+    """
+    Result of `POST /v1/queries/import`: how many rows were created versus
+    skipped as a same-name collision.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    imported: int = Field(..., ge=0)
+    skipped: int = Field(..., ge=0)
+
+
 class MetricDimensionDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -440,6 +452,23 @@ class PeriodValueDto(BaseModel):
     value: float | None = None
 
 
+class PortableSavedQuery(BaseModel):
+    """
+    One record of the export/import document.
+
+    Portable by construction: it carries only `name`, `description`, and `sql` —
+    no id, tenant, or timestamps. The SQL is contract-relative and the tenant is
+    session-injected at run time, so the record is stand-independent and import
+    re-homes it to the importing session's tenant.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    description: str | None = None
+    name: str
+    sql: str
+
+
 class Problem(BaseModel):
     """
     RFC 9457 problem+json. `context` varies by error category.
@@ -498,6 +527,17 @@ class SavedQuery(BaseModel):
     name: str
     sql: str
     updated_at: UnzonedDatetime
+
+
+class SavedQueryExport(BaseModel):
+    """
+    Body of `GET /v1/queries/export` and `POST /v1/queries/import` — the portable
+    document that carries a tenant's saved queries between stands.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    queries: list[PortableSavedQuery]
 
 
 class SavedQuerySummary(BaseModel):

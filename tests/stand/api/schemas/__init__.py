@@ -42,10 +42,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from .analytics import (
+    ImportResponse,
     MetricDefinitionListResponse,
     MetricResultsResponse,
+    PortableSavedQuery,
     RunResponse,
     SavedQuery,
+    SavedQueryExport,
     SavedQueryListResponse,
 )
 from .analytics import (
@@ -78,6 +81,7 @@ __all__: Sequence[str] = (
     "EXTRACTOR_REJECTION_CONTENT_TYPE",
     "PROBLEM_CONTENT_TYPE",
     "IdentityValue",
+    "ImportResponse",
     "ListResponse",
     "MetricDefinitionListResponse",
     "MetricResultsResponse",
@@ -86,12 +90,14 @@ __all__: Sequence[str] = (
     "PeriodView",
     "PersonRole",
     "PersonRoleList",
+    "PortableSavedQuery",
     "ProblemDocument",
     "Profile",
     "Role",
     "RoleList",
     "RunResponse",
     "SavedQuery",
+    "SavedQueryExport",
     "SavedQueryListResponse",
     "Subchart",
     "SubchartForest",

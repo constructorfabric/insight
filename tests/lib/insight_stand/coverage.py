@@ -120,6 +120,10 @@ BLOCKED: dict[str, frozenset[int]] = {
     "PUT /v1/queries/{id}": _NO_AUTHZ_OR_CONFLICT,
     "DELETE /v1/queries/{id}": _NO_AUTHZ_OR_CONFLICT,
     "POST /v1/queries/{id}/run": _NO_AUTHZ_OR_CONFLICT,
+    # Export/import share the surface's absent gate; import skips a name
+    # collision rather than answering 409, so no conflict path either.
+    "GET /v1/queries/export": _NO_AUTHZ_OR_CONFLICT,
+    "POST /v1/queries/import": _NO_AUTHZ_OR_CONFLICT,
     # `POST /v1/metric-drilldown` and `GET /v1/metric-definitions` used to sit
     # here. #2134 corrected their declarations, so there is no longer a 403 to
     # subtract — the gate reported both as stale and they came out.

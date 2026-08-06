@@ -6,6 +6,8 @@
     PUT    /v1/queries/{id}         200 · 400 not-a-read · 404 unknown
     DELETE /v1/queries/{id}         204 · 404 unknown
     POST   /v1/queries/{id}/run     200 · 400 unbound param · 404 · 415 wrong-ct
+    GET    /v1/queries/export       200 · carries the tenant's queries, no ids
+    POST   /v1/queries/import       201 · 400 not-a-read · skips a name collision
 
 The non-uuid and wrong-media-type halves are in `test_request_contracts.py`,
 swept over every route at once; `/run` keeps its own 415 because it is the
@@ -25,15 +27,38 @@ from __future__ import annotations
 
 import pytest
 from insight_stand import ApiClient, Manifest, analytics_path
+from insight_stand.api import JsonValue
 
-from ..schemas import RunResponse, SavedQuery, SavedQueryListResponse
+from ..schemas import (
+    ImportResponse,
+    RunResponse,
+    SavedQuery,
+    SavedQueryExport,
+    SavedQueryListResponse,
+)
 from ..scratch import SCRATCH_QUERY_REF, UNKNOWN_ID, create_saved_query, scratch_name
 
 QUERIES = analytics_path("/v1/queries")
+EXPORT = analytics_path("/v1/queries/export")
+IMPORT = analytics_path("/v1/queries/import")
 
 
 def _query_path(query_id: object, suffix: str = "") -> str:
     return analytics_path(f"/v1/queries/{query_id}{suffix}")
+
+
+def _ids_by_name(api: ApiClient) -> dict[str, str]:
+    """Every saved-query name the listing reports, mapped to its id."""
+    response = api.get(QUERIES)
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+    return {item.name: str(item.id) for item in response.parse(SavedQueryListResponse).items}
+
+
+def _delete_by_name(api: ApiClient, names: set[str]) -> None:
+    """Best-effort cleanup for rows import created — it returns no ids itself."""
+    for name, query_id in _ids_by_name(api).items():
+        if name in names:
+            api.delete(_query_path(query_id))
 
 
 def _saved(api: ApiClient) -> set[str]:
@@ -245,3 +270,79 @@ def test_running_with_a_parameter_left_unbound_is_400_not_500(api: ApiClient) ->
         )
     finally:
         api.delete(_query_path(query.id))
+
+
+# ---------------------------------------------------------------------------
+# Export / import — promoting queries across stands
+# ---------------------------------------------------------------------------
+
+
+def test_export_carries_the_tenants_queries_without_ids(
+    api: ApiClient, scratch_saved_query: SavedQuery
+) -> None:
+    """`GET /v1/queries/export` → 200, the tenant's queries as a portable document.
+
+    The document is `name`/`description`/`sql` only — the generated model forbids
+    extra fields, so an id or tenant leaking into the export would fail the parse
+    rather than travel to another stand.
+    """
+    response = api.get(EXPORT)
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+
+    document = response.parse(SavedQueryExport)
+    exported = {query.name: query.sql for query in document.queries}
+    assert exported.get(scratch_saved_query.name) == scratch_saved_query.sql, (
+        "the created query is missing from the export or its SQL did not survive"
+    )
+
+
+def test_import_creates_re_homed_queries_and_is_idempotent(api: ApiClient) -> None:
+    """`POST /v1/queries/import` → 201; a re-import of the same document skips.
+
+    First import creates the row; the second sees the name already taken and
+    skips it, so the counts flip from imported to skipped and the row is never
+    duplicated. That is the promotion loop's safety property: re-running it does
+    not clobber or double a query.
+    """
+    name = scratch_name("import")
+    document: JsonValue = {
+        "queries": [
+            {"name": name, "description": "imported by the stand suite", "sql": SCRATCH_QUERY_REF}
+        ]
+    }
+    try:
+        first = api.post(IMPORT, json_body=document)
+        assert first.status_code == 201, f"import: {first.status_code} {first.text[:300]}"
+        created = first.parse(ImportResponse)
+        assert (created.imported, created.skipped) == (1, 0), created
+
+        assert name in _ids_by_name(api), "the imported query is not listed"
+
+        second = api.post(IMPORT, json_body=document)
+        assert second.status_code == 201, f"re-import: {second.status_code} {second.text[:300]}"
+        again = second.parse(ImportResponse)
+        assert (again.imported, again.skipped) == (0, 1), (
+            f"a same-name re-import must skip, not overwrite or duplicate: {again}"
+        )
+    finally:
+        _delete_by_name(api, {name})
+
+
+def test_import_re_gates_every_sql_and_refuses_a_non_read(api: ApiClient) -> None:
+    """Import runs the single-SELECT gate, so a promoted document cannot smuggle
+    a write past it — one bad statement rejects the whole document as a 400.
+
+    The imported SQL runs later with the service's own ClickHouse credentials,
+    exactly like a create, so the gate has to hold on this path too.
+    """
+    name = scratch_name("import-bad-sql")
+    document: JsonValue = {"queries": [{"name": name, "sql": "DROP TABLE metrics"}]}
+    try:
+        response = api.post(IMPORT, json_body=document)
+        assert response.status_code == 400, (
+            f"a non-read statement was accepted on import ({response.status_code}): "
+            f"{response.text[:300]}"
+        )
+        assert name not in _ids_by_name(api), "a rejected import still created a row"
+    finally:
+        _delete_by_name(api, {name})

@@ -53,6 +53,7 @@ Requirements that significantly influence architecture decisions.
 | `cpt-presentation-fr-namespace` | New empty `presentation` database for new gold, saved-query results, and scratch; legacy gold left read-only in `insight` |
 | `cpt-presentation-fr-saved-query-crud` | The saved query (`presentation.queries` logically; the `saved_queries` table physically) is a SeaORM entity in the analytics **service database (MariaDB)**, like metric definitions; CRUD mutates that metadata, not ClickHouse. Only `/run` reaches ClickHouse — it reuses the existing read path and executes the stored SQL as `presentation_ro`, so no write grant on the contract is ever needed. Shipped (#1965) |
 | `cpt-presentation-fr-query-params` | Named parameters, `tenant` always injected from context (not client SQL), `period` supported |
+| `cpt-presentation-fr-saved-query-export-import` | Two thin endpoints over the saved-query CRUD: `GET /v1/queries/export` dumps the tenant's queries as portable JSON (`name`/`description`/`sql` only), `POST /v1/queries/import` bulk-creates from that JSON, re-gating each SQL and re-homing it to the importing session's tenant with a fresh id; same-name collisions are skipped. Promotes tier-3 experiment queries dev to prod alongside the FE (#2259) |
 | `cpt-presentation-fr-tenant-filter` | Literal leading `tenant_id = <ctx.tenant>` injected in one place — the compiler's shared `WHERE` (and the peer-cohort CTE reads) — replacing the no-op. `tenant_id` is the column the gold observation and cohort contract exposes (silver's `insight_tenant_id`, aliased to `tenant_id` in gold); filtering on it sidesteps the #1596 name drift, which affects other tables, not this read surface. Shipped for the structured `metric_results` read path (#1967). The legacy per-metric `query_ref` path (`execute_metric_query`) remains unscoped and is explicitly outside this guarantee until protected — see the component boundaries below. |
 | `cpt-presentation-fr-contract-surface-doc` | Contract surface documented as the read boundary in [CONTRACT-SURFACE.md](./CONTRACT-SURFACE.md): the `class_*`/`fct_*`/`mtr_*`/`dim_*` silver families and `person.*`/`identity.*` objects, with the additive-only rules and the granted `insight` legacy gold. Shipped (#1968) |
 | `cpt-presentation-fr-contract-version-stamp` | Engineering stamps `silver.contract_version` (single-row constant view, ledgerless CH migration); analytics pins `PINNED_CONTRACT_VERSION` and verifies the stamp in a periodic post-boot sweep, logging a mismatch or missing stamp without gating boot. Shipped (#1969) |
@@ -281,12 +282,16 @@ Plain CRUD over stored queries so a new analytics slice needs no engineering cha
 - Validate SQL via the query gate (`validate_single_select`) on create, update, **and** run — the run-side re-validation keeps a stored SQL from reaching ClickHouse as anything but a single read.
 - Run: execute the stored single-SELECT read-only as `presentation_ro` and return untyped JSON rows (`JSONEachRow`, same shape as the existing metric query path).
 - Bind named parameters on run (#1966): `{tenant}` is always bound from the session `SecurityContext` (never client-settable); `{period}` is bound when supplied on the run request body. Values are passed as ClickHouse server-side parameters (`Query::param` → `param_<name>`), so a value can never change query structure; the gate already tolerates `{name:Type}` placeholders. A query that references a parameter left unbound (e.g. `{period}` with no period supplied) fails as a 400, not a 5xx.
+- Export/import (#2259): `GET /v1/queries/export` reuses the tenant-scoped list read and returns each row as `{ name, description, sql }` — no id, tenant, or timestamps, so the document is stand-independent. `POST /v1/queries/import` bulk-creates from that document, re-validating each `sql` through the same gate as create and binding `ctx.subject_tenant_id()` with a fresh `Uuid::now_v7()`; the document carries no id or tenant to re-home. A row whose `name` already exists for the tenant is skipped (not overwritten), so a re-import is idempotent; the response reports the imported and skipped counts.
 
 ##### Responsibility boundaries
 
 - Does NOT carry metric metadata, thresholds, or passports — those are Phase B.
-- Does NOT bypass the gate.
+- Does NOT bypass the gate — import re-gates every SQL exactly as create does.
 - Does NOT string-interpolate parameter values — binding is server-side only.
+- Does NOT trust any id or tenant on an imported document — both are dropped and re-homed to the importing session's tenant, so an import can never write cross-tenant or resurrect a stale id.
+- Does NOT overwrite on import — a same-name collision is skipped, never clobbered; changing an existing query stays an explicit update.
+- Does NOT seed curated/product queries — auto-seeding sanctioned definitions to every stand is definitions-as-data (semantic epic #2213), not this bespoke export/import.
 - Does NOT yet inject the tenant-row filter (#1967) — the run path binds the `{tenant}` *value* but does not yet add an `insight_tenant_id = {tenant}` predicate to queries that omit it; that cross-cutting concern lands in its own sub-issue.
 
 ##### Related components (by ID)
@@ -476,8 +481,12 @@ Entity `presentation.queries`: `{ id, insight_tenant_id, name, description, sql,
 | `PUT` | `/v1/queries/{id}` | Update (re-validates SQL) | unstable |
 | `DELETE` | `/v1/queries/{id}` | Delete | unstable |
 | `POST` | `/v1/queries/{id}/run` | Execute read-only as `presentation_ro`, return rows; optional body `{ "period": "<value>" }` binds `{period}`; `{tenant}` always bound from context (tenant-row *filter* deferred to #1967 — the run path binds the tenant value but adds no `insight_tenant_id` predicate yet) | unstable |
+| `GET` | `/v1/queries/export` | Dump the tenant's saved queries as portable JSON `{ "queries": [{ name, description, sql }] }` — no id, tenant, or timestamps | unstable |
+| `POST` | `/v1/queries/import` | Bulk-create from `{ "queries": [{ name, description, sql }] }`; each `sql` re-gated, re-homed to the session tenant with a fresh id; same-name rows skipped. Returns `{ imported, skipped }` counts | unstable |
 
 `run` executes as `presentation_ro` and returns untyped JSON rows, the same shape as the existing metric query path. The request body is optional; named parameters (`tenant`/`period`, #1966) are bound as ClickHouse server-side parameters. No metric metadata, thresholds, or passports in Phase A.
+
+`export`/`import` (#2259) move saved queries across stands so a promoted tier-3 experiment arrives with the queries it needs. The document is `{ name, description, sql }` only — portable by construction because the SQL is contract-relative and the tenant is session-injected at run time, never stored. `import` reuses the create path: it re-validates each `sql` through the single-SELECT gate, drops any source id/tenant, generates a fresh id, and binds the importing session's tenant, so an import can never write cross-tenant. A row whose `name` already exists for the tenant is skipped (not overwritten), making re-import idempotent; the response reports imported vs skipped counts.
 
 ### 3.4 Internal Dependencies
 

@@ -46,6 +46,7 @@ BODY_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/v1/queries"),
     ("PUT", f"/v1/queries/{scratch.UNKNOWN_ID}"),
     ("POST", f"/v1/queries/{scratch.UNKNOWN_ID}/run"),
+    ("POST", "/v1/queries/import"),
     ("POST", "/v1/metric-results"),
     ("POST", "/v1/metric-drilldown"),
     ("POST", "/v1/metric-drilldown/export"),
@@ -103,6 +104,7 @@ LEGACY_422 = 422
 OFF_SCHEMA_ROUTES: tuple[tuple[str, str, int], ...] = (
     ("POST", "/v1/queries", LEGACY_422),
     ("PUT", f"/v1/queries/{scratch.UNKNOWN_ID}", LEGACY_422),
+    ("POST", "/v1/queries/import", LEGACY_422),
     ("POST", "/v1/metric-results", LEGACY_422),
     ("POST", "/v1/metric-drilldown", LEGACY_422),
     ("POST", "/v1/metric-drilldown/export", LEGACY_422),

@@ -80,6 +80,35 @@ pub struct RunResponse {
     pub rows: Vec<serde_json::Value>,
 }
 
+/// One record of the export/import document.
+///
+/// Portable by construction: it carries only `name`, `description`, and `sql` —
+/// no id, tenant, or timestamps. The SQL is contract-relative and the tenant is
+/// session-injected at run time, so the record is stand-independent and import
+/// re-homes it to the importing session's tenant.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct PortableSavedQuery {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub sql: String,
+}
+
+/// Body of `GET /v1/queries/export` and `POST /v1/queries/import` — the portable
+/// document that carries a tenant's saved queries between stands.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SavedQueryExport {
+    pub queries: Vec<PortableSavedQuery>,
+}
+
+/// Result of `POST /v1/queries/import`: how many rows were created versus
+/// skipped as a same-name collision.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ImportResponse {
+    pub imported: usize,
+    pub skipped: usize,
+}
+
 /// Deserialize a field that can be absent, null, or a value.
 #[allow(clippy::option_option)] // intentional: triple-state for PATCH semantics
 fn deserialize_optional_nullable<'de, D>(
@@ -95,9 +124,12 @@ impl toolkit::api::api_dto::ResponseApiDto for SavedQuery {}
 impl toolkit::api::api_dto::ResponseApiDto for SavedQuerySummary {}
 impl toolkit::api::api_dto::ResponseApiDto for SavedQueryListResponse {}
 impl toolkit::api::api_dto::ResponseApiDto for RunResponse {}
+impl toolkit::api::api_dto::ResponseApiDto for SavedQueryExport {}
+impl toolkit::api::api_dto::ResponseApiDto for ImportResponse {}
 impl toolkit::api::api_dto::RequestApiDto for CreateSavedQueryRequest {}
 impl toolkit::api::api_dto::RequestApiDto for UpdateSavedQueryRequest {}
 impl toolkit::api::api_dto::RequestApiDto for RunSavedQueryRequest {}
+impl toolkit::api::api_dto::RequestApiDto for SavedQueryExport {}
 
 #[cfg(test)]
 mod tests {

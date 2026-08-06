@@ -81,7 +81,7 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 10 operations.
+#: analytics — 12 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/queries"),
     _a("POST", "/v1/queries"),
@@ -89,6 +89,8 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("PUT", f"/v1/queries/{SOME_ID}"),
     _a("DELETE", f"/v1/queries/{SOME_ID}"),
     _a("POST", f"/v1/queries/{SOME_ID}/run"),
+    _a("GET", "/v1/queries/export"),
+    _a("POST", "/v1/queries/import"),
     _a("GET", "/v1/metric-definitions"),
     _a("POST", "/v1/metric-results"),
     _a("POST", "/v1/metric-drilldown"),

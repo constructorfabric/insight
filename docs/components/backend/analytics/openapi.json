@@ -171,6 +171,24 @@
         ],
         "type": "object"
       },
+      "ImportResponse": {
+        "description": "Result of `POST /v1/queries/import`: how many rows were created versus\nskipped as a same-name collision.",
+        "properties": {
+          "imported": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "imported",
+          "skipped"
+        ],
+        "type": "object"
+      },
       "MetricDefinitionListResponse": {
         "description": "Response body for `GET /v1/metric-definitions`. Metrics are sorted by\n`metric_key` ascending so the payload is byte-stable for caching and\ndiff tooling.",
         "properties": {
@@ -1177,6 +1195,28 @@
         ],
         "type": "object"
       },
+      "PortableSavedQuery": {
+        "description": "One record of the export/import document.\n\nPortable by construction: it carries only `name`, `description`, and `sql` —\nno id, tenant, or timestamps. The SQL is contract-relative and the tenant is\nsession-injected at run time, so the record is stand-independent and import\nre-homes it to the importing session's tenant.",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "sql": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "sql"
+        ],
+        "type": "object"
+      },
       "Problem": {
         "description": "RFC 9457 problem+json. `context` varies by error category.",
         "properties": {
@@ -1276,6 +1316,21 @@
           "sql",
           "created_at",
           "updated_at"
+        ],
+        "type": "object"
+      },
+      "SavedQueryExport": {
+        "description": "Body of `GET /v1/queries/export` and `POST /v1/queries/import` — the portable\ndocument that carries a tenant's saved queries between stands.",
+        "properties": {
+          "queries": {
+            "items": {
+              "$ref": "#/components/schemas/PortableSavedQuery"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "queries"
         ],
         "type": "object"
       },
@@ -1969,6 +2024,203 @@
           }
         ],
         "summary": "Create a saved query"
+      }
+    },
+    "/v1/queries/export": {
+      "get": {
+        "operationId": "analytics_api.queries.export",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedQueryExport"
+                }
+              }
+            },
+            "description": "Portable saved-query document"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Export saved queries"
+      }
+    },
+    "/v1/queries/import": {
+      "post": {
+        "operationId": "analytics_api.queries.import",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedQueryExport"
+              }
+            }
+          },
+          "description": "Portable saved-query document to bulk-create",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResponse"
+                }
+              }
+            },
+            "description": "Imported and skipped counts"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Import saved queries"
       }
     },
     "/v1/queries/{id}": {

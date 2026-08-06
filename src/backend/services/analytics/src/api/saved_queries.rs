@@ -10,6 +10,7 @@
 //! (from context), `{period}` when supplied (#1966). The injected tenant-row
 //! filter (#1967) is a separate sub-issue.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::Json;
@@ -25,8 +26,8 @@ use super::AppState;
 use super::error::SavedQueryError;
 use crate::domain::query_gate::validate_single_select;
 use crate::domain::saved_query::{
-    CreateSavedQueryRequest, RunResponse, RunSavedQueryRequest, SavedQuery, SavedQuerySummary,
-    UpdateSavedQueryRequest,
+    CreateSavedQueryRequest, ImportResponse, PortableSavedQuery, RunResponse, RunSavedQueryRequest,
+    SavedQuery, SavedQueryExport, SavedQuerySummary, UpdateSavedQueryRequest,
 };
 use crate::infra::db::entities::saved_queries;
 
@@ -134,6 +135,121 @@ pub async fn delete_saved_query(
         })?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Export / Import ─────────────────────────────────────────
+
+pub async fn export_saved_queries(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    let rows = saved_queries::Entity::find()
+        .filter(saved_queries::Column::InsightTenantId.eq(ctx.subject_tenant_id()))
+        .all(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to export saved queries");
+            CanonicalError::internal("failed to export saved queries").create()
+        })?;
+
+    let queries = rows.into_iter().map(model_to_portable).collect();
+    Ok(Json(SavedQueryExport { queries }))
+}
+
+pub async fn import_saved_queries(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    Json(doc): Json<SavedQueryExport>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    let tenant_id = ctx.subject_tenant_id();
+
+    // Re-gate every SQL before writing anything: one bad statement rejects the
+    // whole document, so an import is all-valid-or-nothing.
+    for query in &doc.queries {
+        validate_single_select(&query.sql).map_err(|e| invalid_import_sql(&query.name, e))?;
+    }
+
+    // Names already taken for this tenant are skipped, never overwritten; the
+    // pure partition also absorbs duplicate names inside the document, so a
+    // re-import is idempotent. Source id/tenant are dropped — every kept row is
+    // re-homed to the importing session's tenant with a fresh id.
+    let existing = load_query_names(&state, tenant_id).await?;
+    let (fresh, skipped) = select_new_queries(existing, doc.queries);
+
+    let rows: Vec<saved_queries::ActiveModel> = fresh
+        .into_iter()
+        .map(|query| new_query_row(tenant_id, query))
+        .collect();
+
+    let imported = rows.len();
+    if !rows.is_empty() {
+        saved_queries::Entity::insert_many(rows)
+            .exec(&state.db)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to import saved queries");
+                CanonicalError::internal("failed to import saved queries").create()
+            })?;
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        Json(ImportResponse { imported, skipped }),
+    ))
+}
+
+/// A fresh insert row for an imported query: a new id and the importing
+/// session's tenant, dropping whatever id/tenant the source stand held.
+fn new_query_row(tenant_id: Uuid, query: PortableSavedQuery) -> saved_queries::ActiveModel {
+    saved_queries::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        insight_tenant_id: Set(tenant_id),
+        name: Set(query.name),
+        description: Set(query.description),
+        sql: Set(query.sql),
+        created_at: NotSet,
+        updated_at: NotSet,
+    }
+}
+
+/// Keep only the imported queries whose `name` is free, dropping same-name
+/// collisions against `existing` and duplicate names inside the document
+/// (first occurrence wins). Returns the queries to create and the skip count.
+/// Pure, so the collision policy is unit-testable without a database.
+fn select_new_queries(
+    mut existing: HashSet<String>,
+    queries: Vec<PortableSavedQuery>,
+) -> (Vec<PortableSavedQuery>, usize) {
+    let mut fresh = Vec::new();
+    let mut skipped = 0_usize;
+
+    for query in queries {
+        if existing.insert(query.name.clone()) {
+            fresh.push(query);
+        } else {
+            skipped += 1;
+        }
+    }
+
+    (fresh, skipped)
+}
+
+/// Load the set of saved-query names already used by a tenant, so import can
+/// skip same-name collisions without a per-row lookup.
+async fn load_query_names(
+    state: &AppState,
+    tenant_id: Uuid,
+) -> Result<HashSet<String>, CanonicalError> {
+    let rows = saved_queries::Entity::find()
+        .filter(saved_queries::Column::InsightTenantId.eq(tenant_id))
+        .all(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to load saved query names");
+            CanonicalError::internal("failed to import saved queries").create()
+        })?;
+
+    Ok(rows.into_iter().map(|m| m.name).collect())
 }
 
 // ── Run ─────────────────────────────────────────────────────
@@ -284,6 +400,15 @@ fn invalid_sql_for(id: Uuid, reason: String) -> CanonicalError {
         .create()
 }
 
+/// An imported query whose SQL the gate rejects: a 400 naming the offending
+/// query by `name` (imports carry no id yet) so the whole document is refused.
+fn invalid_import_sql(name: &str, reason: String) -> CanonicalError {
+    SavedQueryError::invalid_argument()
+        .with_resource(name.to_owned())
+        .with_field_violation("sql", reason, "INVALID")
+        .create()
+}
+
 fn model_to_saved_query(m: saved_queries::Model) -> SavedQuery {
     SavedQuery {
         id: m.id,
@@ -304,14 +429,66 @@ fn model_to_summary(m: saved_queries::Model) -> SavedQuerySummary {
     }
 }
 
+fn model_to_portable(m: saved_queries::Model) -> PortableSavedQuery {
+    PortableSavedQuery {
+        name: m.name,
+        description: m.description,
+        sql: m.sql,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{classify_run_error, missing_param_name, parse_json_each_row};
+    use super::{classify_run_error, missing_param_name, parse_json_each_row, select_new_queries};
+    use crate::domain::saved_query::PortableSavedQuery;
     use serde_json::json;
+    use std::collections::HashSet;
     use toolkit_canonical_errors::Problem;
     use uuid::Uuid;
 
     type R = Result<(), Box<dyn std::error::Error>>;
+
+    fn portable(name: &str) -> PortableSavedQuery {
+        PortableSavedQuery {
+            name: name.to_owned(),
+            description: None,
+            sql: "SELECT 1".to_owned(),
+        }
+    }
+
+    fn names(queries: &[PortableSavedQuery]) -> Vec<&str> {
+        queries.iter().map(|q| q.name.as_str()).collect()
+    }
+
+    /// Import keeps a query whose name is free and skips one that collides with
+    /// an existing tenant query — the collision is never overwritten.
+    #[test]
+    fn import_skips_names_that_already_exist() {
+        let existing = HashSet::from(["taken".to_owned()]);
+        let (fresh, skipped) =
+            select_new_queries(existing, vec![portable("taken"), portable("new")]);
+        assert_eq!(names(&fresh), vec!["new"]);
+        assert_eq!(skipped, 1);
+    }
+
+    /// A duplicate name inside one document keeps the first and skips the rest,
+    /// so re-importing the same document is idempotent.
+    #[test]
+    fn import_dedupes_within_the_document() {
+        let (fresh, skipped) =
+            select_new_queries(HashSet::new(), vec![portable("dup"), portable("dup")]);
+        assert_eq!(names(&fresh), vec!["dup"]);
+        assert_eq!(skipped, 1);
+    }
+
+    /// With no collisions every query is kept and nothing is skipped.
+    #[test]
+    fn import_keeps_all_distinct_free_names() {
+        let (fresh, skipped) =
+            select_new_queries(HashSet::new(), vec![portable("a"), portable("b")]);
+        assert_eq!(names(&fresh), vec!["a", "b"]);
+        assert_eq!(skipped, 0);
+    }
 
     fn problem_of(
         err: toolkit_canonical_errors::CanonicalError,

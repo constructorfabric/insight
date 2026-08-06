@@ -206,6 +206,16 @@ The system **MUST** support named query parameters, always injecting `tenant` fr
 
 **Actors**: `cpt-presentation-actor-analyst`, `cpt-presentation-actor-analytics-svc`
 
+#### Saved-Query Export and Import
+
+- [ ] `p2` - **ID**: `cpt-presentation-fr-saved-query-export-import`
+
+The system **MUST** let an analyst export the calling tenant's saved queries as a portable JSON document (`[{ name, description, sql }]`) and import such a document to bulk-create saved queries. Import **MUST** re-validate every `sql` through the single-SELECT gate, **MUST** drop any source id or tenant and re-home each query to the importing session's tenant (fresh id, session tenant), and **MUST NOT** overwrite an existing query of the same name (name collisions are skipped, so re-import is idempotent). Export **MUST** carry no id, tenant, or timestamps, so the document is stand-independent.
+
+**Rationale**: A tier-3 experiment's saved queries are authored on a dev stand; the frontend promotes to production by PR, but the queries it depends on are otherwise stranded on the dev stand's database. Export/import lets the queries travel dev to prod alongside the frontend. Because SQL is contract-relative and the tenant is session-injected at run time, the document is portable with no rewriting.
+
+**Actors**: `cpt-presentation-actor-analyst`, `cpt-presentation-actor-analytics-svc`
+
 ### 5.3 Tenant Isolation (p1)
 
 #### Server-Injected Tenant Filter
@@ -348,7 +358,7 @@ Contract reads for tenant A **MUST NOT** return rows from tenant B, regardless o
 
 **Stability**: unstable
 
-**Description**: CRUD and read-only run over saved queries, tenant-scoped. The one new surface Phase A adds. Detailed endpoint contracts live in DESIGN. (CRUD + run shipped in #1965; named parameters shipped in #1966.)
+**Description**: CRUD and read-only run over saved queries, tenant-scoped, plus tenant-wide export and import for promoting experiment queries across stands. The one new surface Phase A adds. Detailed endpoint contracts live in DESIGN. (CRUD + run shipped in #1965; named parameters shipped in #1966; export/import added for the tier-3 experiment loop.)
 
 **Breaking Change Policy**: Unstable in Phase A; contract hardens in a later phase.
 
@@ -416,6 +426,7 @@ Contract reads for tenant A **MUST NOT** return rows from tenant B, regardless o
 - [ ] No presentation-side operation can write, alter, or drop contract objects (adversarial SQL included).
 - [ ] The single-SELECT gate rejects empty input, multiple statements, non-read (DDL/DML) statements, and unparseable input on write and run.
 - [ ] An analyst can create, list, fetch, update, delete, and run a saved query with no engineering change.
+- [ ] An analyst can export the tenant's saved queries as portable JSON and import that document into another stand, where each query is re-gated, re-homed to the importing tenant, and a same-name collision is skipped rather than overwritten.
 - [ ] Every contract read carries a server-injected tenant predicate the client cannot widen.
 - [ ] Cross-tenant reads return no rows.
 - [ ] The `presentation` namespace exists and legacy gold remains read-only in `insight`.

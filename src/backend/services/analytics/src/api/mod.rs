@@ -223,6 +223,41 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(saved_queries::run_saved_query)
         .register(router, openapi);
 
+    // Export/import (#2259) — promote a tenant's saved queries across stands.
+    // Export dumps portable JSON; import re-gates each SQL and re-homes it to the
+    // session tenant, skipping same-name collisions.
+    router = OperationBuilder::get("/v1/queries/export")
+        .operation_id("analytics_api.queries.export")
+        .summary("Export saved queries")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<saved_query::SavedQueryExport>(
+            openapi,
+            StatusCode::OK,
+            "Portable saved-query document",
+        )
+        .standard_errors(openapi)
+        .handler(saved_queries::export_saved_queries)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/v1/queries/import")
+        .operation_id("analytics_api.queries.import")
+        .summary("Import saved queries")
+        .authenticated()
+        .no_license_required()
+        .json_request::<saved_query::SavedQueryExport>(
+            openapi,
+            "Portable saved-query document to bulk-create",
+        )
+        .json_response_with_schema::<saved_query::ImportResponse>(
+            openapi,
+            StatusCode::CREATED,
+            "Imported and skipped counts",
+        )
+        .standard_errors(openapi)
+        .handler(saved_queries::import_saved_queries)
+        .register(router, openapi);
+
     router = OperationBuilder::post("/v1/metric-drilldown")
         .operation_id("analytics_api.metric_drilldown.create")
         .summary("List metric evidence")
