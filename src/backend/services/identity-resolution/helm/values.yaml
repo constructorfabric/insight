@@ -123,6 +123,33 @@ sync:
       cpu: 500m
       memory: 512Mi
 
+reconcileAttributes:
+  enabled: true
+  # Journal-row tenant (UUID); same override semantics as seed.tenantDefaultId
+  # (the run spans every tenant present in claims — this only scopes the
+  # operations journal the admin GET routes read).
+  tenantDefaultId: ""
+  # Daily, after the sync's 06:45 run — freshly synced connector fields
+  # register the same morning.
+  schedule: "0 7 * * *"
+  # Belt-and-braces for cron-vs-cron only — manual Jobs and other instances
+  # serialize on the MariaDB advisory lock regardless.
+  concurrencyPolicy: Forbid
+  # Retries for transient connect blips; the lock + insert-only idempotency
+  # make a repeated run safe.
+  backoffLimit: 2
+  # Caps a wedged pod well past the in-binary 5-minute reconcile timeout.
+  activeDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 # TCP gate before start: the service connects to MariaDB at boot. Same
 # busybox wait as the .NET identity chart.
 waitForMariadb:

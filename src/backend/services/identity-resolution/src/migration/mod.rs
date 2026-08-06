@@ -43,6 +43,7 @@ mod m20260724_000011_operations;
 mod m20260724_000012_org_chart_nullable_parent;
 mod m20260724_000013_persons_email_any_tenant_idx;
 mod m20260724_000014_account_person_map_datetime;
+mod m20260806_000015_person_attributes;
 
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::sea_orm::ConnectionTrait;
@@ -67,6 +68,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260724_000012_org_chart_nullable_parent::Migration),
             Box::new(m20260724_000013_persons_email_any_tenant_idx::Migration),
             Box::new(m20260724_000014_account_person_map_datetime::Migration),
+            Box::new(m20260806_000015_person_attributes::Migration),
         ]
     }
 }
@@ -140,6 +142,7 @@ mod tests {
             (include_str!("sql/012_org_chart_nullable_parent.sql"), 3),
             (include_str!("sql/013_persons_email_any_tenant_idx.sql"), 1),
             (include_str!("sql/014_account_person_map_datetime.sql"), 2),
+            (include_str!("sql/015_person_attributes.sql"), 2),
         ];
         for (i, (script, expected)) in cases.iter().enumerate() {
             let stmts = split_statements(script);

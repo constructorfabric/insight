@@ -43,10 +43,13 @@ UMBRELLA = REPO_ROOT / "charts" / "insight"
 
 TENANT = "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab"
 
-# name suffix -> (schedule, subcommand) — the per-job contract facts.
+# name suffix -> (schedule, subcommand, values key) — the per-job contract
+# facts. The values key differs from the name suffix only where the suffix
+# has a hyphen (values keys stay camelCase for clean `.Values.` template refs).
 JOBS = {
-    "seed": ("30 6 * * *", "seed"),
-    "sync": ("45 6 * * *", "sync"),
+    "seed": ("30 6 * * *", "seed", "seed"),
+    "sync": ("45 6 * * *", "sync", "sync"),
+    "reconcile-attributes": ("0 7 * * *", "reconcile-attributes", "reconcileAttributes"),
 }
 
 # Minimum viable subchart install (mirrors the umbrella's wiring).
@@ -168,7 +171,7 @@ def _job_container(cronjob: dict) -> dict:
     return container
 
 
-def test_default_render_ships_exactly_the_two_documented_cronjobs(default_docs) -> None:
+def test_default_render_ships_exactly_the_documented_cronjobs(default_docs) -> None:
     names = sorted(_cronjobs(default_docs))
     assert len(names) == len(JOBS), names
     for job in JOBS:
@@ -217,7 +220,7 @@ def test_tenant_value_overrides_the_secret_via_env(default_docs, job: str) -> No
     container = _job_container(_cronjob(default_docs, job))
     assert "env" not in container, container.get("env")
 
-    docs = _subchart_docs("--set", f"{job}.tenantDefaultId={TENANT}")
+    docs = _subchart_docs("--set", f"{JOBS[job][2]}.tenantDefaultId={TENANT}")
     container = _job_container(_cronjob(docs, job))
     env = {e["name"]: e["value"] for e in container["env"]}
     assert env == {"APP__gears__identity_resolution__config__tenant_default_id": TENANT}
@@ -225,12 +228,12 @@ def test_tenant_value_overrides_the_secret_via_env(default_docs, job: str) -> No
 
 @pytest.mark.parametrize("job", JOBS)
 def test_disabling_one_job_removes_only_that_cronjob(job: str) -> None:
-    docs = _subchart_docs("--set", f"{job}.enabled=false")
+    docs = _subchart_docs("--set", f"{JOBS[job][2]}.enabled=false")
     jobs = _cronjobs(docs)
     assert f"contract-test-identity-resolution-{job}" not in jobs, sorted(jobs)
-    # The sibling CronJob and the rest of the chart are untouched.
-    (other,) = [j for j in JOBS if j != job]
-    _cronjob(docs, other)
+    # The sibling CronJobs and the rest of the chart are untouched.
+    for other in (j for j in JOBS if j != job):
+        _cronjob(docs, other)
     _the(docs, "Deployment")
     _the(docs, "Service")
 
