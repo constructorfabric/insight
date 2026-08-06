@@ -424,6 +424,77 @@ async fn sha_filter_selects_one_commit_across_both_endpoints() -> R {
 }
 
 #[tokio::test]
+async fn branches_honour_page_size_and_paginate_by_name() -> R {
+    let server = spawn_server("branchpages", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = fixture_origin(&server.dir)?;
+
+    // Six branches: enough that an unpaginated response is visibly wrong.
+    let script = ["b1", "b2", "b3", "b4", "b5"]
+        .map(|name| format!("git branch {name}"))
+        .join(" && ");
+    let output = Command::new("sh")
+        .arg("-ec")
+        .arg(&script)
+        .current_dir(server.dir.join("origin"))
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    get_json(server.port, "/v1/branches", &repo).await?;
+
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let page = |token: Option<String>| {
+        let client = client.clone();
+        let base = base.clone();
+        let repo = repo.clone();
+        async move {
+            let mut request = client
+                .get(format!("{base}/v1/branches"))
+                .query(&[("repo", repo.as_str()), ("page_size", "2")])
+                .bearer_auth(TOKEN)
+                .header("x-tenant-id", "tenant-1")
+                .header("x-source-id", "source-1")
+                .header("x-git-username", "u")
+                .header("x-git-token", "p");
+            if let Some(token) = token {
+                request = request.query(&[("page_token", token)]);
+            }
+            request.send().await?.json::<serde_json::Value>().await
+        }
+    };
+
+    let first = page(None).await?;
+    let items = first["items"].as_array().ok_or("no items")?;
+    assert_eq!(items.len(), 2, "page_size must bound the branch response");
+
+    let token = first["next_page_token"]
+        .as_str()
+        .ok_or("a truncated branch page must carry a cursor")?
+        .to_owned();
+    let second = page(Some(token)).await?;
+    let next = second["items"].as_array().ok_or("no items")?;
+    assert_eq!(next.len(), 2);
+
+    let first_names: Vec<&str> = items.iter().filter_map(|b| b["name"].as_str()).collect();
+    let next_names: Vec<&str> = next.iter().filter_map(|b| b["name"].as_str()).collect();
+    assert!(
+        first_names.iter().all(|n| !next_names.contains(n)),
+        "pages must not overlap: {first_names:?} vs {next_names:?}"
+    );
+    assert!(
+        first_names.last() < next_names.first(),
+        "branches walk in ascending name order: {first_names:?} then {next_names:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn refuses_to_boot_on_empty_required_config() -> R {
     let port = free_port()?;
     let dir = test_dir("invalid")?;

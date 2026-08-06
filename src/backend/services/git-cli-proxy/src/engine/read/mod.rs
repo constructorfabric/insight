@@ -85,8 +85,8 @@ mod tests {
     fn continuation_resumes_strictly_after_the_cursor() {
         let token = PageToken {
             generation: 1,
-            committed_date: "2026-08-01T00:00:00Z".to_owned(),
-            sha: "bbb".to_owned(),
+            primary: "2026-08-01T00:00:00Z".to_owned(),
+            secondary: "bbb".to_owned(),
         };
         let (page, cursor) = slice_page(rows(), Some(&token), 10, key);
         assert_eq!(page.len(), 1, "the cursor row itself is not repeated");
@@ -115,8 +115,8 @@ mod tests {
     fn cursor_past_the_end_yields_nothing() {
         let token = PageToken {
             generation: 1,
-            committed_date: "2027-01-01T00:00:00Z".to_owned(),
-            sha: "zzz".to_owned(),
+            primary: "2027-01-01T00:00:00Z".to_owned(),
+            secondary: "zzz".to_owned(),
         };
         let (page, cursor) = slice_page(rows(), Some(&token), 5, key);
         assert!(page.is_empty());

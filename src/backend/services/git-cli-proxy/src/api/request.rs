@@ -336,8 +336,8 @@ mod tests {
     fn paging_rejects_foreign_tokens_but_accepts_its_own() {
         let token = PageToken {
             generation: 4,
-            committed_date: "2026-08-01T00:00:00Z".to_owned(),
-            sha: "aaa".to_owned(),
+            primary: "2026-08-01T00:00:00Z".to_owned(),
+            secondary: "aaa".to_owned(),
         };
         let encoded = token.encode();
         let Ok(paging) = Paging::parse(Some(&encoded), Some(10)) else {

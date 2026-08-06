@@ -39,6 +39,8 @@ pub struct FileChangesQuery {
 #[derive(Debug, Deserialize)]
 pub struct BranchesQuery {
     repo: String,
+    page_size: Option<u32>,
+    page_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -207,13 +209,21 @@ pub async fn list_branches(
     Query(query): Query<BranchesQuery>,
 ) -> Result<Json<Page<branches::BranchRow>>, ApiError> {
     let context = RequestContext::from_parts(&headers, &query.repo)?;
-    let paging = Paging::parse(None, None)?;
+    let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let guard = open(&state, &context, &paging).await?;
 
-    let items = branches::read(state.store.runner(), guard.git_dir(), &context.creds).await?;
+    let mut all = branches::read(state.store.runner(), guard.git_dir(), &context.creds).await?;
+    // Branches have no date cursor, so the walk orders by name — the same
+    // ascending-key contract the other endpoints use, which is what makes the
+    // page token meaningful here too.
+    all.sort_by(|a, b| a.name.cmp(&b.name));
+    let (items, cursor) = read::slice_page(all, paging.token.as_ref(), paging.page_size, |row| {
+        (row.name.clone(), String::new())
+    });
+
     Ok(Json(Page {
         items,
-        next_page_token: None,
+        next_page_token: encode_cursor(cursor, guard.generation()),
     }))
 }
 
@@ -247,7 +257,7 @@ async fn open(
 /// exact `(date, sha)` position, so this only saves work, never rows.
 fn narrowed_since<'a>(since: Option<&'a str>, paging: &'a Paging) -> Option<&'a str> {
     match paging.token.as_ref() {
-        Some(token) => Some(token.committed_date.as_str()),
+        Some(token) => Some(token.primary.as_str()),
         None => since,
     }
 }
@@ -266,11 +276,11 @@ where
 }
 
 fn encode_cursor(cursor: Option<(String, String)>, generation: u64) -> Option<String> {
-    cursor.map(|(committed_date, sha)| {
+    cursor.map(|(primary, secondary)| {
         PageToken {
             generation,
-            committed_date,
-            sha,
+            primary,
+            secondary,
         }
         .encode()
     })

@@ -359,7 +359,10 @@ never silently under-count. Commit-level dedup does not depend on patch text
 
 #### `GET /v1/branches`
 
-`?repo` — full refresh, no cursor.
+`?repo&page_size&page_token` — full refresh, but paginated: branch counts are
+unbounded, so the response must be too. The walk orders by **name** ascending
+(there is no date cursor here), which is why the page token carries a generic
+two-part ordering key rather than a date and a sha.
 
 | Field | Type |
 |---|---|
