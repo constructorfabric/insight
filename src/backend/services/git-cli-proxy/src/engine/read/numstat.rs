@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::engine::runner::{GitError, GitRunner};
+use crate::engine::runner::{GitCredentials, GitError, GitRunner};
 
 /// One changed path inside one commit: status comes from the tree diff
 /// (`--raw`), line counts from `--numstat`.
@@ -62,6 +62,7 @@ pub async fn read(
     runner: &GitRunner,
     git_dir: &Path,
     shas: &[String],
+    creds: &GitCredentials,
 ) -> Result<HashMap<String, Vec<FileStat>>, GitError> {
     if shas.is_empty() {
         return Ok(HashMap::new());
@@ -80,7 +81,7 @@ pub async fn read(
     ];
     args.extend(shas.iter().map(String::as_str));
 
-    let output = runner.run(Some(git_dir), &args, None).await?;
+    let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
     let text = String::from_utf8_lossy(&output.stdout);
     Ok(parse(&text))
 }

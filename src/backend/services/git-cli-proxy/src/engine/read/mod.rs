@@ -161,7 +161,7 @@ mod live_tests {
         let runner = f.store.runner();
         let git_dir = guard.git_dir();
 
-        let headers = match commits::headers(runner, git_dir, None).await {
+        let headers = match commits::headers(runner, git_dir, None, &creds()).await {
             Ok(h) => h,
             Err(e) => panic!("commits::headers: {e}"),
         };
@@ -181,7 +181,7 @@ mod live_tests {
         };
         assert!(fetched > 0, "a blobless clone needs its blobs fetched");
 
-        let stats = match numstat::read(runner, git_dir, &shas).await {
+        let stats = match numstat::read(runner, git_dir, &shas, &creds()).await {
             Ok(s) => s,
             Err(e) => panic!("numstat::read: {e}"),
         };
@@ -197,7 +197,7 @@ mod live_tests {
             "counts must be real: {files:?}"
         );
 
-        let texts = match patches::read(runner, git_dir, &shas, 64 * 1024).await {
+        let texts = match patches::read(runner, git_dir, &shas, 64 * 1024, &creds()).await {
             Ok(t) => t,
             Err(e) => panic!("patches::read: {e}"),
         };
@@ -207,13 +207,13 @@ mod live_tests {
         assert!(patch.text.contains("+new"), "patch body: {patch:?}");
         assert!(!patch.truncated);
 
-        let ids = match commits::patch_ids(runner, git_dir, &shas).await {
+        let ids = match commits::patch_ids(runner, git_dir, &shas, &creds()).await {
             Ok(i) => i,
             Err(e) => panic!("commits::patch_ids: {e}"),
         };
         assert_eq!(ids.len(), 3, "every non-merge commit gets a patch id");
 
-        let membership = match commits::branch_membership(runner, git_dir, &shas).await {
+        let membership = match commits::branch_membership(runner, git_dir, &shas, &creds()).await {
             Ok(m) => m,
             Err(e) => panic!("commits::branch_membership: {e}"),
         };
@@ -226,7 +226,7 @@ mod live_tests {
             "the tip commit lives only on its branch"
         );
 
-        let rows = match branches::read(runner, git_dir).await {
+        let rows = match branches::read(runner, git_dir, &creds()).await {
             Ok(r) => r,
             Err(e) => panic!("branches::read: {e}"),
         };
@@ -255,17 +255,23 @@ mod live_tests {
         let guard = open_until_ready(&f, &k, refresh()).await;
         let runner = f.store.runner();
 
-        let all = match commits::headers(runner, guard.git_dir(), None).await {
+        let all = match commits::headers(runner, guard.git_dir(), None, &creds()).await {
             Ok(h) => h,
             Err(e) => panic!("headers: {e}"),
         };
         assert_eq!(all.len(), 2);
 
-        let recent =
-            match commits::headers(runner, guard.git_dir(), Some("2026-08-02T00:00:00Z")).await {
-                Ok(h) => h,
-                Err(e) => panic!("headers with since: {e}"),
-            };
+        let recent = match commits::headers(
+            runner,
+            guard.git_dir(),
+            Some("2026-08-02T00:00:00Z"),
+            &creds(),
+        )
+        .await
+        {
+            Ok(h) => h,
+            Err(e) => panic!("headers with since: {e}"),
+        };
         assert_eq!(recent.len(), 1, "only the newer commit survives the cutoff");
         assert_eq!(recent[0].message, "second");
     }
@@ -284,28 +290,28 @@ mod live_tests {
             Some(0)
         );
         assert_eq!(
-            numstat::read(runner, guard.git_dir(), &none)
+            numstat::read(runner, guard.git_dir(), &none, &creds())
                 .await
                 .ok()
                 .map(|m| m.len()),
             Some(0)
         );
         assert_eq!(
-            patches::read(runner, guard.git_dir(), &none, 1024)
+            patches::read(runner, guard.git_dir(), &none, 1024, &creds())
                 .await
                 .ok()
                 .map(|m| m.len()),
             Some(0)
         );
         assert_eq!(
-            commits::patch_ids(runner, guard.git_dir(), &none)
+            commits::patch_ids(runner, guard.git_dir(), &none, &creds())
                 .await
                 .ok()
                 .map(|m| m.len()),
             Some(0)
         );
         assert_eq!(
-            commits::branch_membership(runner, guard.git_dir(), &none)
+            commits::branch_membership(runner, guard.git_dir(), &none, &creds())
                 .await
                 .ok()
                 .map(|m| m.len()),

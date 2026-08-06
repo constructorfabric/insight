@@ -116,11 +116,22 @@ impl RepoStore {
     ///
     /// I/O failure creating the cache directories under `data_dir`.
     pub fn new(data_dir: &Path, heavy_ops_concurrency: usize) -> Result<Self, StoreError> {
+        Self::with_ca_cert(data_dir, heavy_ops_concurrency, None)
+    }
+
+    /// # Errors
+    ///
+    /// I/O failure creating the cache directories under `data_dir`.
+    pub fn with_ca_cert(
+        data_dir: &Path,
+        heavy_ops_concurrency: usize,
+        ca_cert_path: Option<String>,
+    ) -> Result<Self, StoreError> {
         std::fs::create_dir_all(data_dir.join("repos"))?;
         std::fs::create_dir_all(data_dir.join("tmp"))?;
         Ok(Self {
             data_dir: data_dir.to_owned(),
-            runner: GitRunner::new(HEAVY_OP_TIMEOUT),
+            runner: GitRunner::new(HEAVY_OP_TIMEOUT).with_ca_cert(ca_cert_path),
             heavy: Semaphore::new(heavy_ops_concurrency),
             entries: Mutex::new(HashMap::new()),
             inflight: Mutex::new(HashMap::new()),

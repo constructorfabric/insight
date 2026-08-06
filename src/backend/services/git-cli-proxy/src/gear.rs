@@ -27,7 +27,11 @@ impl Gear for GitCliProxyGear {
         config.validate()?;
         tracing::info!(config = ?config, "starting git-cli-proxy gear");
 
-        let store = RepoStore::new(Path::new(&config.data_dir), config.heavy_ops_concurrency)?;
+        let store = RepoStore::with_ca_cert(
+            Path::new(&config.data_dir),
+            config.heavy_ops_concurrency,
+            Some(config.ca_cert_path.clone()),
+        )?;
 
         let state = AppState {
             store: Arc::new(store),

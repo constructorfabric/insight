@@ -35,7 +35,7 @@ pub async fn prefetch(
         return Ok(0);
     }
 
-    let oids = needed_oids(runner, git_dir, shas).await?;
+    let oids = needed_oids(runner, git_dir, shas, creds).await?;
     if oids.is_empty() {
         return Ok(0);
     }
@@ -53,11 +53,14 @@ async fn needed_oids(
     runner: &GitRunner,
     git_dir: &Path,
     shas: &[String],
+    creds: &GitCredentials,
 ) -> Result<BTreeSet<String>, GitError> {
     // `log --no-walk` (not `diff-tree`) is the multi-commit form: diff-tree
     // with several revisions diffs BETWEEN them instead of per commit.
     // `--no-abbrev` is required — raw output abbreviates OIDs by default, and
-    // `--full-index` only affects patch headers, not raw lines.
+    // `--full-index` only affects patch headers, not raw lines. No `-M` here:
+    // rename detection compares blob CONTENT, which would make the enumeration
+    // step itself trigger the lazy fetches it exists to prevent.
     let mut args = vec![
         "log",
         "--no-walk",
@@ -65,12 +68,11 @@ async fn needed_oids(
         "--no-abbrev",
         "--no-color",
         "--root",
-        "-M",
         "--pretty=format:",
     ];
     args.extend(shas.iter().map(String::as_str));
 
-    let output = runner.run(Some(git_dir), &args, None).await?;
+    let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
     let raw = String::from_utf8_lossy(&output.stdout);
     Ok(parse_raw_oids(&raw))
 }

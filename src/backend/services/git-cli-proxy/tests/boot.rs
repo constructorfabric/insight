@@ -364,6 +364,66 @@ async fn paginates_commits_with_a_snapshot_bound_cursor() -> R {
 }
 
 #[tokio::test]
+async fn sha_filter_selects_one_commit_across_both_endpoints() -> R {
+    let server = spawn_server("sha", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = fixture_origin(&server.dir)?;
+
+    let commits = get_json(server.port, "/v1/commits", &repo).await?;
+    let items = commits["items"].as_array().ok_or("no items")?;
+    let target = items[1]["sha"].as_str().ok_or("no sha")?.to_owned();
+    let prefix = &target[..8];
+
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let ask = |path: &str, sha: String| {
+        let url = format!("{base}{path}");
+        let repo = repo.clone();
+        let client = client.clone();
+        async move {
+            client
+                .get(url)
+                .query(&[("repo", repo.as_str()), ("sha", sha.as_str())])
+                .bearer_auth(TOKEN)
+                .header("x-tenant-id", "tenant-1")
+                .header("x-source-id", "source-1")
+                .header("x-git-username", "u")
+                .header("x-git-token", "p")
+                .send()
+                .await?
+                .json::<serde_json::Value>()
+                .await
+        }
+    };
+
+    let by_prefix = ask("/v1/commits", prefix.to_owned()).await?;
+    let selected = by_prefix["items"].as_array().ok_or("no items")?;
+    assert_eq!(selected.len(), 1, "an 8-char prefix selects one commit");
+    assert_eq!(selected[0]["sha"], target.as_str());
+
+    let changes = ask("/v1/file-changes", target.clone()).await?;
+    let rows = changes["items"].as_array().ok_or("no items")?;
+    assert!(!rows.is_empty(), "the selected commit has file rows");
+    assert!(
+        rows.iter().all(|row| row["sha"] == target.as_str()),
+        "no other commit may leak into a filtered response"
+    );
+
+    let rejected = client
+        .get(format!("{base}/v1/commits"))
+        .query(&[("repo", repo.as_str()), ("sha", "nothex")])
+        .bearer_auth(TOKEN)
+        .header("x-tenant-id", "tenant-1")
+        .header("x-source-id", "source-1")
+        .header("x-git-username", "u")
+        .header("x-git-token", "p")
+        .send()
+        .await?;
+    assert_eq!(rejected.status(), 400, "a malformed sha is a bad request");
+    Ok(())
+}
+
+#[tokio::test]
 async fn refuses_to_boot_on_empty_required_config() -> R {
     let port = free_port()?;
     let dir = test_dir("invalid")?;

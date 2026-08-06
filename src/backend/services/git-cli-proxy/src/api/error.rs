@@ -3,6 +3,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
+use crate::engine::runner::GitError;
 use crate::engine::store::StoreError;
 
 use super::request::BadRequest;
@@ -14,7 +15,7 @@ pub enum ApiError {
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error("git failed: {0}")]
-    Git(#[from] crate::engine::runner::GitError),
+    Git(#[from] GitError),
 }
 
 #[derive(Serialize)]
@@ -41,6 +42,7 @@ impl IntoResponse for ApiError {
                 tracing::error!(error = %internal, "request failed");
                 "internal error".to_owned()
             }
+            Self::Git(origin @ (GitError::AuthRejected | GitError::NotFound)) => origin.to_string(),
             Self::Git(internal) => {
                 tracing::error!(error = %internal, "request failed");
                 "internal error".to_owned()
@@ -68,10 +70,16 @@ impl ApiError {
     fn classify(&self) -> (StatusCode, &'static str, Option<u64>) {
         match self {
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request", None),
-            Self::Store(StoreError::AuthRejected) => {
+            // A reader hits the same origin failures as the clone: a partial
+            // clone lazily fetches from the promisor remote, so any git step
+            // can be rejected by the vendor. Classify by kind, never by which
+            // layer raised it.
+            Self::Store(StoreError::AuthRejected) | Self::Git(GitError::AuthRejected) => {
                 (StatusCode::UNAUTHORIZED, "origin_auth_rejected", None)
             }
-            Self::Store(StoreError::NotFound) => (StatusCode::NOT_FOUND, "repo_not_found", None),
+            Self::Store(StoreError::NotFound) | Self::Git(GitError::NotFound) => {
+                (StatusCode::NOT_FOUND, "repo_not_found", None)
+            }
             Self::Store(StoreError::Busy { retry_after }) => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "repo_preparing",
@@ -80,7 +88,8 @@ impl ApiError {
             Self::Store(StoreError::SnapshotChanged { .. }) => {
                 (StatusCode::CONFLICT, "snapshot_changed", None)
             }
-            Self::Store(StoreError::Git(_) | StoreError::Io(_)) | Self::Git(_) => {
+            Self::Store(StoreError::Git(_) | StoreError::Io(_))
+            | Self::Git(GitError::TimedOut(_) | GitError::Failed(_) | GitError::Io(_)) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal", None)
             }
         }
@@ -126,6 +135,22 @@ mod tests {
             ),
             (
                 StoreError::Git("boom".to_owned()).into(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+            ),
+            // Same failures raised by a reader step, not by the clone.
+            (
+                GitError::AuthRejected.into(),
+                StatusCode::UNAUTHORIZED,
+                "origin_auth_rejected",
+            ),
+            (
+                GitError::NotFound.into(),
+                StatusCode::NOT_FOUND,
+                "repo_not_found",
+            ),
+            (
+                GitError::Failed("boom".to_owned()).into(),
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
             ),

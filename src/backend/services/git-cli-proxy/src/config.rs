@@ -34,6 +34,11 @@ pub struct GearConfig {
     /// auth; the service is cluster-internal and never behind the platform
     /// gateway). Supplied per-deployment, never committed.
     pub proxy_token: String,
+    /// PEM bundle for origins whose TLS chain is not in the system store —
+    /// a self-hosted vendor behind a private CA. Empty means "system store
+    /// only", which is correct for the public clouds, so this is the one
+    /// optional field.
+    pub ca_cert_path: String,
 }
 
 /// Manual `Debug` that never prints the token — the config is logged on boot
@@ -49,6 +54,7 @@ impl std::fmt::Debug for GearConfig {
                 &self.default_max_staleness_seconds,
             )
             .field("heavy_ops_concurrency", &self.heavy_ops_concurrency)
+            .field("ca_cert_path", &self.ca_cert_path)
             .field("proxy_token", &"<redacted>")
             .finish()
     }
@@ -109,6 +115,7 @@ mod tests {
             default_max_staleness_seconds: 300,
             heavy_ops_concurrency: 4,
             proxy_token: "secret".to_owned(),
+            ca_cert_path: String::new(),
         }
     }
 

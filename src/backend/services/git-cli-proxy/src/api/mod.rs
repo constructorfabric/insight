@@ -60,6 +60,7 @@ mod tests {
                 default_max_staleness_seconds: 300,
                 heavy_ops_concurrency: 2,
                 proxy_token: "t0ken".to_owned(),
+                ca_cert_path: String::new(),
             },
         })
     }

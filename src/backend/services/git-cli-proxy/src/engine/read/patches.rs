@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::engine::runner::{GitError, GitRunner};
+use crate::engine::runner::{GitCredentials, GitError, GitRunner};
 
 /// Per-file unified diff text for one commit, keyed by the post-image path.
 pub type CommitPatches = HashMap<String, Patch>;
@@ -26,6 +26,7 @@ pub async fn read(
     git_dir: &Path,
     shas: &[String],
     max_bytes: usize,
+    creds: &GitCredentials,
 ) -> Result<HashMap<String, CommitPatches>, GitError> {
     if shas.is_empty() {
         return Ok(HashMap::new());
@@ -44,7 +45,7 @@ pub async fn read(
     ];
     args.extend(shas.iter().map(String::as_str));
 
-    let output = runner.run(Some(git_dir), &args, None).await?;
+    let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
     let text = String::from_utf8_lossy(&output.stdout);
     Ok(parse(&text, max_bytes))
 }

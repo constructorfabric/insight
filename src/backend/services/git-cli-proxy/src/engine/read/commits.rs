@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::engine::runner::{GitError, GitRunner};
+use crate::engine::runner::{GitCredentials, GitError, GitRunner};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct CommitRow {
@@ -59,6 +59,7 @@ pub async fn headers(
     runner: &GitRunner,
     git_dir: &Path,
     since: Option<&str>,
+    creds: &GitCredentials,
 ) -> Result<Vec<CommitHeader>, GitError> {
     let format = format!(
         "--pretty=format:{RECORD}%H{FIELD}%P{FIELD}%aI{FIELD}%cI{FIELD}%an{FIELD}%ae{FIELD}%cn{FIELD}%ce{FIELD}%B"
@@ -70,7 +71,7 @@ pub async fn headers(
         args.push(arg);
     }
 
-    let output = runner.run(Some(git_dir), &args, None).await?;
+    let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
     let text = String::from_utf8_lossy(&output.stdout);
 
     let mut headers = parse_headers(&text);
@@ -87,6 +88,7 @@ pub async fn branch_membership(
     runner: &GitRunner,
     git_dir: &Path,
     shas: &[String],
+    creds: &GitCredentials,
 ) -> Result<HashMap<String, Vec<String>>, GitError> {
     let mut membership: HashMap<String, Vec<String>> =
         shas.iter().map(|sha| (sha.clone(), Vec::new())).collect();
@@ -99,7 +101,7 @@ pub async fn branch_membership(
             .run(
                 Some(git_dir),
                 &["branch", "--format=%(refname:short)", "--contains", sha],
-                None,
+                Some(creds),
             )
             .await?;
         let listing = String::from_utf8_lossy(&output.stdout);
@@ -124,6 +126,7 @@ pub async fn patch_ids(
     runner: &GitRunner,
     git_dir: &Path,
     shas: &[String],
+    creds: &GitCredentials,
 ) -> Result<HashMap<String, String>, GitError> {
     if shas.is_empty() {
         return Ok(HashMap::new());
@@ -133,7 +136,7 @@ pub async fn patch_ids(
     producer.extend(shas.iter().map(String::as_str));
 
     let stdout = runner
-        .run_piped(git_dir, &producer, &["patch-id", "--stable"])
+        .run_piped(git_dir, &producer, &["patch-id", "--stable"], creds)
         .await?;
     Ok(parse_patch_ids(&String::from_utf8_lossy(&stdout)))
 }

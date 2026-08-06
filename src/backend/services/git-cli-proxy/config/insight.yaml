@@ -67,3 +67,7 @@ gears:
       heavy_ops_concurrency: 0
       # Service-to-service bearer token for /v1. Never committed.
       proxy_token: ""
+      # PEM bundle for a self-hosted vendor behind a private CA. Empty = the
+      # system trust store, which is correct for the public clouds. This is the
+      # only optional field.
+      ca_cert_path: ""

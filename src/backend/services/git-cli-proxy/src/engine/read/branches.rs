@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::engine::runner::{GitError, GitRunner};
+use crate::engine::runner::{GitCredentials, GitError, GitRunner};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct BranchRow {
@@ -19,7 +19,11 @@ const FIELD: char = '\u{1f}';
 /// # Errors
 ///
 /// [`GitError`] when a git invocation fails.
-pub async fn read(runner: &GitRunner, git_dir: &Path) -> Result<Vec<BranchRow>, GitError> {
+pub async fn read(
+    runner: &GitRunner,
+    git_dir: &Path,
+    creds: &GitCredentials,
+) -> Result<Vec<BranchRow>, GitError> {
     let default = default_branch(runner, git_dir).await?;
 
     let format =
@@ -28,7 +32,7 @@ pub async fn read(runner: &GitRunner, git_dir: &Path) -> Result<Vec<BranchRow>, 
         .run(
             Some(git_dir),
             &["for-each-ref", &format, "refs/heads"],
-            None,
+            Some(creds),
         )
         .await?;
     let listing = String::from_utf8_lossy(&output.stdout);

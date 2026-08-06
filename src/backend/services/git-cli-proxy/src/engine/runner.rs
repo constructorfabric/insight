@@ -67,6 +67,9 @@ pub enum GitError {
 #[derive(Debug, Clone)]
 pub struct GitRunner {
     timeout: Duration,
+    /// PEM bundle for origins whose TLS chain is not in the system store
+    /// (a self-hosted vendor behind a private CA). Empty = system store only.
+    ca_cert_path: Option<String>,
 }
 
 const STDERR_TAIL_BYTES: usize = 4096;
@@ -74,7 +77,16 @@ const STDERR_TAIL_BYTES: usize = 4096;
 impl GitRunner {
     #[must_use]
     pub fn new(timeout: Duration) -> Self {
-        Self { timeout }
+        Self {
+            timeout,
+            ca_cert_path: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_ca_cert(mut self, path: Option<String>) -> Self {
+        self.ca_cert_path = path.filter(|value| !value.is_empty());
+        self
     }
 
     /// Run `git <args>` against `git_dir` (None for `clone`, which creates
@@ -89,7 +101,7 @@ impl GitRunner {
         args: &[&str],
         creds: Option<&GitCredentials>,
     ) -> Result<Output, GitError> {
-        let mut command = Self::base_command(creds);
+        let mut command = self.base_command(creds);
         if let Some(dir) = git_dir {
             command.arg("--git-dir").arg(dir);
         }
@@ -125,8 +137,9 @@ impl GitRunner {
         git_dir: &Path,
         producer: &[&str],
         consumer: &[&str],
+        creds: &GitCredentials,
     ) -> Result<Vec<u8>, GitError> {
-        let mut left = Self::base_command(None);
+        let mut left = self.base_command(Some(creds));
         left.arg("--git-dir")
             .arg(git_dir)
             .args(producer)
@@ -141,7 +154,7 @@ impl GitRunner {
             .take()
             .ok_or_else(|| GitError::Failed("pipe producer exposed no stdout".to_owned()))?;
 
-        let mut right = Self::base_command(None);
+        let mut right = self.base_command(Some(creds));
         right
             .arg("--git-dir")
             .arg(git_dir)
@@ -174,7 +187,7 @@ impl GitRunner {
         Ok(right_output.stdout)
     }
 
-    fn base_command(creds: Option<&GitCredentials>) -> tokio::process::Command {
+    fn base_command(&self, creds: Option<&GitCredentials>) -> tokio::process::Command {
         let mut command = tokio::process::Command::new("git");
         command.env_clear();
         if let Some(path) = std::env::var_os("PATH") {
@@ -187,13 +200,28 @@ impl GitRunner {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("LC_ALL", "C");
 
-        if let Some(creds) = creds {
-            command
-                .env("GIT_CONFIG_COUNT", "1")
-                .env("GIT_CONFIG_KEY_0", "http.extraheader")
-                .env("GIT_CONFIG_VALUE_0", creds.basic_header());
+        // Config travels as env pairs, never argv: the credential header must
+        // stay invisible in `ps`, and the CA path rides along the same way.
+        for (index, (key, value)) in self.config_pairs(creds).into_iter().enumerate() {
+            command.env(format!("GIT_CONFIG_KEY_{index}"), key);
+            command.env(format!("GIT_CONFIG_VALUE_{index}"), value);
+        }
+        let count = self.config_pairs(creds).len();
+        if count > 0 {
+            command.env("GIT_CONFIG_COUNT", count.to_string());
         }
         command
+    }
+
+    fn config_pairs(&self, creds: Option<&GitCredentials>) -> Vec<(&'static str, String)> {
+        let mut pairs: Vec<(&'static str, String)> = Vec::new();
+        if let Some(creds) = creds {
+            pairs.push(("http.extraheader", creds.basic_header()));
+        }
+        if let Some(path) = self.ca_cert_path.as_ref() {
+            pairs.push(("http.sslCAInfo", path.clone()));
+        }
+        pairs
     }
 }
 
@@ -308,6 +336,42 @@ mod tests {
         };
         let rendered = format!("{creds:?}");
         assert!(!rendered.contains("sup3r-secret"), "leaked: {rendered}");
+    }
+
+    #[test]
+    fn config_pairs_carry_credentials_and_ca_path() {
+        let creds = GitCredentials {
+            username: "oauth2".to_owned(),
+            token: "tok".to_owned(),
+        };
+        let plain = GitRunner::new(Duration::from_secs(1));
+        assert!(
+            plain.config_pairs(None).is_empty(),
+            "no creds and no CA means no git config at all"
+        );
+
+        let with_creds = plain.config_pairs(Some(&creds));
+        assert_eq!(with_creds.len(), 1);
+        assert_eq!(with_creds[0].0, "http.extraheader");
+
+        let with_ca =
+            GitRunner::new(Duration::from_secs(1)).with_ca_cert(Some("/certs/ca.pem".to_owned()));
+        let both = with_ca.config_pairs(Some(&creds));
+        assert_eq!(both.len(), 2, "on-prem origins need the CA pair too");
+        assert!(
+            both.iter()
+                .any(|(k, v)| *k == "http.sslCAInfo" && v == "/certs/ca.pem"),
+            "got: {both:?}"
+        );
+    }
+
+    #[test]
+    fn empty_ca_path_is_treated_as_unset() {
+        let runner = GitRunner::new(Duration::from_secs(1)).with_ca_cert(Some(String::new()));
+        assert!(
+            runner.config_pairs(None).is_empty(),
+            "an empty CA path must not become a git config value"
+        );
     }
 
     #[tokio::test]

@@ -12,12 +12,15 @@ use crate::engine::store::{Freshness, RepoGuard};
 
 use super::AppState;
 use super::error::ApiError;
-use super::request::{Paging, RequestContext, clamp_page_size, clamp_patch_bytes};
+use super::request::{
+    Paging, RequestContext, ShaFilter, clamp_page_size, clamp_patch_bytes, parse_sha_filter,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct CommitsQuery {
     repo: String,
     since: Option<String>,
+    sha: Option<String>,
     page_size: Option<u32>,
     page_token: Option<String>,
 }
@@ -26,6 +29,7 @@ pub struct CommitsQuery {
 pub struct FileChangesQuery {
     repo: String,
     since: Option<String>,
+    sha: Option<String>,
     page_size: Option<u32>,
     page_token: Option<String>,
     include_patch: Option<bool>,
@@ -63,12 +67,14 @@ pub async fn list_commits(
 ) -> Result<Json<Page<commits::CommitRow>>, ApiError> {
     let context = RequestContext::from_parts(&headers, &query.repo)?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
+    let selected = parse_sha_filter(query.sha.as_deref())?;
     let guard = open(&state, &context, &paging).await?;
 
     let runner = state.store.runner();
-    let headers_page = commits::headers(runner, guard.git_dir(), query.since.as_deref()).await?;
+    let walk_from = narrowed_since(query.since.as_deref(), &paging);
+    let all = commits::headers(runner, guard.git_dir(), walk_from, &context.creds).await?;
     let (window, cursor) = read::slice_page(
-        headers_page,
+        retain_selected(all, selected.as_ref(), |header| &header.sha),
         paging.token.as_ref(),
         paging.page_size,
         |header| (header.committed_date.clone(), header.sha.clone()),
@@ -77,9 +83,10 @@ pub async fn list_commits(
     let shas: Vec<String> = window.iter().map(|header| header.sha.clone()).collect();
     blobs::prefetch(runner, guard.git_dir(), &shas, &context.creds).await?;
 
-    let file_stats = numstat::read(runner, guard.git_dir(), &shas).await?;
-    let membership = commits::branch_membership(runner, guard.git_dir(), &shas).await?;
-    let ids = commits::patch_ids(runner, guard.git_dir(), &shas).await?;
+    let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
+    let membership =
+        commits::branch_membership(runner, guard.git_dir(), &shas, &context.creds).await?;
+    let ids = commits::patch_ids(runner, guard.git_dir(), &shas, &context.creds).await?;
 
     let items = window
         .into_iter()
@@ -124,17 +131,20 @@ pub async fn list_file_changes(
 ) -> Result<Json<Page<FileChangeRow>>, ApiError> {
     let context = RequestContext::from_parts(&headers, &query.repo)?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
+    let selected = parse_sha_filter(query.sha.as_deref())?;
     let include_patch = query.include_patch.unwrap_or(true);
     let max_patch_bytes = clamp_patch_bytes(query.max_patch_bytes);
     let guard = open(&state, &context, &paging).await?;
 
     let runner = state.store.runner();
-    let all = commits::headers(runner, guard.git_dir(), query.since.as_deref()).await?;
+    let walk_from = narrowed_since(query.since.as_deref(), &paging);
+    let all = commits::headers(runner, guard.git_dir(), walk_from, &context.creds).await?;
     // Parity with the CDK connectors: merge commits contribute no file rows.
-    let non_merge: Vec<commits::CommitHeader> = all
-        .into_iter()
-        .filter(|header| !header.is_merge())
-        .collect();
+    let non_merge: Vec<commits::CommitHeader> =
+        retain_selected(all, selected.as_ref(), |header| &header.sha)
+            .into_iter()
+            .filter(|header| !header.is_merge())
+            .collect();
     let (window, cursor) = read::slice_page(
         non_merge,
         paging.token.as_ref(),
@@ -145,9 +155,16 @@ pub async fn list_file_changes(
     let shas: Vec<String> = window.iter().map(|header| header.sha.clone()).collect();
     blobs::prefetch(runner, guard.git_dir(), &shas, &context.creds).await?;
 
-    let file_stats = numstat::read(runner, guard.git_dir(), &shas).await?;
+    let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
     let texts = if include_patch {
-        patches::read(runner, guard.git_dir(), &shas, max_patch_bytes).await?
+        patches::read(
+            runner,
+            guard.git_dir(),
+            &shas,
+            max_patch_bytes,
+            &context.creds,
+        )
+        .await?
     } else {
         std::collections::HashMap::new()
     };
@@ -193,7 +210,7 @@ pub async fn list_branches(
     let paging = Paging::parse(None, None)?;
     let guard = open(&state, &context, &paging).await?;
 
-    let items = branches::read(state.store.runner(), guard.git_dir()).await?;
+    let items = branches::read(state.store.runner(), guard.git_dir(), &context.creds).await?;
     Ok(Json(Page {
         items,
         next_page_token: None,
@@ -222,6 +239,30 @@ async fn open(
         .open(&context.key, &context.creds, freshness)
         .await?;
     Ok(guard)
+}
+
+/// Tighten the walk to the page's remainder. The token's date is always at or
+/// after the caller's `since` (it names a commit that already passed that
+/// filter), so it is the stricter bound — and `slice_page` still applies the
+/// exact `(date, sha)` position, so this only saves work, never rows.
+fn narrowed_since<'a>(since: Option<&'a str>, paging: &'a Paging) -> Option<&'a str> {
+    match paging.token.as_ref() {
+        Some(token) => Some(token.committed_date.as_str()),
+        None => since,
+    }
+}
+
+fn retain_selected<T, K>(rows: Vec<T>, selected: Option<&ShaFilter>, key: K) -> Vec<T>
+where
+    K: Fn(&T) -> &str,
+{
+    match selected {
+        Some(filter) => rows
+            .into_iter()
+            .filter(|row| filter.matches(key(row)))
+            .collect(),
+        None => rows,
+    }
 }
 
 fn encode_cursor(cursor: Option<(String, String)>, generation: u64) -> Option<String> {

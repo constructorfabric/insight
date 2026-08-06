@@ -17,6 +17,59 @@ const DEFAULT_PAGE_SIZE: usize = 1_000;
 const MAX_PATCH_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_PATCH_BYTES: usize = 1024 * 1024;
 
+const MIN_SHA_PREFIX: usize = 7;
+
+/// Explicit commit selection: full SHAs or unambiguous prefixes, comma
+/// separated. A debugging and incident-review affordance — the sync path pages
+/// by cursor instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShaFilter {
+    prefixes: Vec<String>,
+}
+
+impl ShaFilter {
+    /// # Errors
+    ///
+    /// [`BadRequest`] when an entry is not hex or is too short to identify a
+    /// commit.
+    pub fn parse(raw: &str) -> Result<Self, BadRequest> {
+        let prefixes: Vec<String> = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(str::to_ascii_lowercase)
+            .collect();
+
+        if prefixes.is_empty() {
+            return Err(BadRequest::MissingParam("sha"));
+        }
+        for prefix in &prefixes {
+            if prefix.len() < MIN_SHA_PREFIX || !prefix.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(BadRequest::MalformedSha(prefix.clone()));
+            }
+        }
+        Ok(Self { prefixes })
+    }
+
+    #[must_use]
+    pub fn matches(&self, sha: &str) -> bool {
+        let sha = sha.to_ascii_lowercase();
+        self.prefixes.iter().any(|prefix| sha.starts_with(prefix))
+    }
+}
+
+/// Parse the optional `sha` query parameter.
+///
+/// # Errors
+///
+/// [`BadRequest`] when the value is present but malformed.
+pub fn parse_sha_filter(raw: Option<&str>) -> Result<Option<ShaFilter>, BadRequest> {
+    match raw.filter(|value| !value.trim().is_empty()) {
+        Some(value) => ShaFilter::parse(value).map(Some),
+        None => Ok(None),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum BadRequest {
     #[error("missing or empty header: {0}")]
@@ -27,6 +80,8 @@ pub enum BadRequest {
     MalformedToken,
     #[error("{0} is not a valid number")]
     NotANumber(&'static str),
+    #[error("`sha` entry is not a hex commit id of at least 7 characters: {0}")]
+    MalformedSha(String),
 }
 
 /// Everything a data request carries besides its own filters: who is asking,
@@ -215,6 +270,40 @@ mod tests {
             Err(e) => panic!("wrong error: {e}"),
             Ok(_) => panic!("non-numeric staleness must be rejected"),
         }
+    }
+
+    #[test]
+    fn sha_filter_accepts_full_ids_and_prefixes() {
+        let Ok(filter) = ShaFilter::parse("ABC1234, def5678901234567890123456789012345678901")
+        else {
+            panic!("a comma-separated list must parse")
+        };
+        assert!(
+            filter.matches("abc1234def"),
+            "prefix match, case-insensitive"
+        );
+        assert!(filter.matches("DEF5678901234567890123456789012345678901"));
+        assert!(!filter.matches("999999999"), "unrelated sha must not match");
+    }
+
+    #[test]
+    fn sha_filter_rejects_unusable_entries() {
+        let cases = vec![
+            ("too short", "abc123"),
+            ("not hex", "zzzzzzzz"),
+            ("only separators", ",,"),
+            ("empty", ""),
+        ];
+        for (name, raw) in cases {
+            assert!(ShaFilter::parse(raw).is_err(), "must reject: {name}");
+        }
+    }
+
+    #[test]
+    fn absent_sha_parameter_is_not_an_error() {
+        assert!(matches!(parse_sha_filter(None), Ok(None)));
+        assert!(matches!(parse_sha_filter(Some("   ")), Ok(None)));
+        assert!(parse_sha_filter(Some("abc1234")).is_ok_and(|f| f.is_some()));
     }
 
     #[test]
