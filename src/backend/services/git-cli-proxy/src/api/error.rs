@@ -36,7 +36,8 @@ impl IntoResponse for ApiError {
                 store @ (StoreError::AuthRejected
                 | StoreError::NotFound
                 | StoreError::Busy { .. }
-                | StoreError::SnapshotChanged { .. }),
+                | StoreError::SnapshotChanged { .. }
+                | StoreError::TooLarge { .. }),
             ) => store.to_string(),
             Self::Store(internal @ (StoreError::Git(_) | StoreError::Io(_))) => {
                 tracing::error!(error = %internal, "request failed");
@@ -87,6 +88,11 @@ impl ApiError {
             ),
             Self::Store(StoreError::SnapshotChanged { .. }) => {
                 (StatusCode::CONFLICT, "snapshot_changed", None)
+            }
+            // Permanent by design: retrying an oversized repository just burns
+            // the budget again. The operator raises the cap or excludes it.
+            Self::Store(StoreError::TooLarge { .. }) | Self::Git(GitError::TooLarge { .. }) => {
+                (StatusCode::PAYLOAD_TOO_LARGE, "repo_too_large", None)
             }
             Self::Store(StoreError::Git(_) | StoreError::Io(_))
             | Self::Git(GitError::TimedOut(_) | GitError::Failed(_) | GitError::Io(_)) => {
@@ -153,6 +159,11 @@ mod tests {
                 GitError::Failed("boom".to_owned()).into(),
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
+            ),
+            (
+                StoreError::TooLarge { cap_bytes: 1024 }.into(),
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "repo_too_large",
             ),
         ];
         for (error, expected_status, expected_code) in cases {

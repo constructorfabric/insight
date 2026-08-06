@@ -13,6 +13,9 @@ pub struct RepoMeta {
     pub last_fetched_at_epoch_s: u64,
     pub last_accessed_at_epoch_s: u64,
     pub size_bytes: u64,
+    /// Size right after a clone or a blob purge — the blobless skeleton.
+    /// Anything above it is transient blob weight a purge can reclaim.
+    pub skeleton_bytes: u64,
     /// Bumped on every successful clone/fetch. Page tokens carry it so a
     /// paginating caller is pinned to one ref snapshot.
     pub generation: u64,
@@ -79,6 +82,7 @@ mod tests {
             last_fetched_at_epoch_s: 100,
             last_accessed_at_epoch_s: 200,
             size_bytes: 42,
+            skeleton_bytes: 40,
             generation: 3,
             cred_fingerprint: "deadbeef".to_owned(),
         }

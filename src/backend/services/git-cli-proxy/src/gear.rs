@@ -10,6 +10,7 @@ use toolkit::{Gear, GearCtx, RestApiCapability};
 
 use crate::api::AppState;
 use crate::config::GearConfig;
+use crate::engine::disk::Budget;
 use crate::engine::store::RepoStore;
 
 /// Config key is the gear name `git-cli-proxy`; env overrides are
@@ -27,10 +28,14 @@ impl Gear for GitCliProxyGear {
         config.validate()?;
         tracing::info!(config = ?config, "starting git-cli-proxy gear");
 
-        let store = RepoStore::with_ca_cert(
+        let store = RepoStore::open_cache(
             Path::new(&config.data_dir),
             config.heavy_ops_concurrency,
             Some(config.ca_cert_path.clone()),
+            Budget {
+                total_bytes: config.disk_budget_bytes,
+            },
+            config.max_repo_bytes,
         )?;
 
         let state = AppState {

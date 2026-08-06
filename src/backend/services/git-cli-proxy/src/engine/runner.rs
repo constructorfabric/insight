@@ -59,6 +59,8 @@ pub enum GitError {
     Failed(String),
     #[error("failed to spawn git: {0}")]
     Io(#[from] std::io::Error),
+    #[error("repository exceeds the per-repository size cap of {cap_bytes} bytes")]
+    TooLarge { cap_bytes: u64 },
 }
 
 /// Spawns git subprocesses with a hermetic environment: explicit `--git-dir`

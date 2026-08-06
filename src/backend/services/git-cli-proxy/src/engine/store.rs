@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, Semaphore, watch};
 
+use super::disk::{Budget, Candidate, Reclaim};
 use super::key::CacheKey;
 use super::meta::{RepoMeta, now_epoch_s};
 use super::runner::{GitCredentials, GitError, GitRunner};
@@ -22,6 +23,7 @@ pub enum RefreshFailure {
     Auth,
     NotFound,
     Timeout,
+    TooLarge { cap_bytes: u64 },
     Other(String),
 }
 
@@ -33,6 +35,9 @@ impl From<&GitError> for RefreshFailure {
             GitError::TimedOut(_) => Self::Timeout,
             GitError::Failed(message) => Self::Other(message.clone()),
             GitError::Io(e) => Self::Other(e.to_string()),
+            GitError::TooLarge { cap_bytes } => Self::TooLarge {
+                cap_bytes: *cap_bytes,
+            },
         }
     }
 }
@@ -51,6 +56,8 @@ pub enum StoreError {
     Git(String),
     #[error("cache I/O failed: {0}")]
     Io(#[from] std::io::Error),
+    #[error("repository exceeds the per-repository size cap of {cap_bytes} bytes")]
+    TooLarge { cap_bytes: u64 },
 }
 
 impl From<RefreshFailure> for StoreError {
@@ -59,6 +66,7 @@ impl From<RefreshFailure> for StoreError {
             RefreshFailure::Auth => Self::AuthRejected,
             RefreshFailure::NotFound => Self::NotFound,
             RefreshFailure::Timeout => Self::Git("git timed out".to_owned()),
+            RefreshFailure::TooLarge { cap_bytes } => Self::TooLarge { cap_bytes },
             RefreshFailure::Other(message) => Self::Git(message),
         }
     }
@@ -105,6 +113,8 @@ type RefreshResult = Result<u64, RefreshFailure>;
 pub struct RepoStore {
     data_dir: PathBuf,
     runner: GitRunner,
+    budget: Budget,
+    max_repo_bytes: u64,
     heavy: Semaphore,
     entries: Mutex<HashMap<String, Arc<RwLock<()>>>>,
     inflight: Mutex<HashMap<String, watch::Receiver<Option<RefreshResult>>>>,
@@ -116,22 +126,34 @@ impl RepoStore {
     ///
     /// I/O failure creating the cache directories under `data_dir`.
     pub fn new(data_dir: &Path, heavy_ops_concurrency: usize) -> Result<Self, StoreError> {
-        Self::with_ca_cert(data_dir, heavy_ops_concurrency, None)
+        Self::open_cache(
+            data_dir,
+            heavy_ops_concurrency,
+            None,
+            Budget {
+                total_bytes: u64::MAX,
+            },
+            u64::MAX,
+        )
     }
 
     /// # Errors
     ///
     /// I/O failure creating the cache directories under `data_dir`.
-    pub fn with_ca_cert(
+    pub fn open_cache(
         data_dir: &Path,
         heavy_ops_concurrency: usize,
         ca_cert_path: Option<String>,
+        budget: Budget,
+        max_repo_bytes: u64,
     ) -> Result<Self, StoreError> {
         std::fs::create_dir_all(data_dir.join("repos"))?;
         std::fs::create_dir_all(data_dir.join("tmp"))?;
         Ok(Self {
             data_dir: data_dir.to_owned(),
             runner: GitRunner::new(HEAVY_OP_TIMEOUT).with_ca_cert(ca_cert_path),
+            budget,
+            max_repo_bytes,
             heavy: Semaphore::new(heavy_ops_concurrency),
             entries: Mutex::new(HashMap::new()),
             inflight: Mutex::new(HashMap::new()),
@@ -312,6 +334,10 @@ impl RepoStore {
         git_dir: &Path,
         creds: &GitCredentials,
     ) -> Result<u64, GitError> {
+        // Reclaim BEFORE taking disk, not after: an admission check that runs
+        // post-clone has already overshot the budget.
+        self.reclaim_if_needed().await;
+
         // INVARIANT: the permit spans the whole clone — the semaphore IS the
         // global heavy-ops cap.
         let _permit = self.heavy.acquire().await;
@@ -353,6 +379,14 @@ impl RepoStore {
             )
             .await?;
 
+        let cloned_bytes = dir_size(&tmp);
+        if cloned_bytes > self.max_repo_bytes {
+            let _ = std::fs::remove_dir_all(&tmp);
+            return Err(GitError::TooLarge {
+                cap_bytes: self.max_repo_bytes,
+            });
+        }
+
         std::fs::create_dir_all(entry_dir).map_err(GitError::Io)?;
         std::fs::rename(&tmp, git_dir).map_err(GitError::Io)?;
 
@@ -363,7 +397,8 @@ impl RepoStore {
             source_id: key.source_id.clone(),
             last_fetched_at_epoch_s: now,
             last_accessed_at_epoch_s: now,
-            size_bytes: dir_size(git_dir),
+            size_bytes: cloned_bytes,
+            skeleton_bytes: cloned_bytes,
             generation: 1,
             cred_fingerprint: creds.fingerprint(),
         };
@@ -378,6 +413,8 @@ impl RepoStore {
         git_dir: &Path,
         creds: &GitCredentials,
     ) -> Result<u64, GitError> {
+        self.reclaim_if_needed().await;
+
         // INVARIANT: the permit spans the whole fetch — the semaphore IS the
         // global heavy-ops cap.
         let _permit = self.heavy.acquire().await;
@@ -390,6 +427,14 @@ impl RepoStore {
             )
             .await?;
 
+        let fetched_bytes = dir_size(git_dir);
+        if fetched_bytes > self.max_repo_bytes {
+            let _ = std::fs::remove_dir_all(entry_dir);
+            return Err(GitError::TooLarge {
+                cap_bytes: self.max_repo_bytes,
+            });
+        }
+
         let now = now_epoch_s();
         let previous = RepoMeta::load(entry_dir);
         let generation = previous.as_ref().map_or(0, |m| m.generation) + 1;
@@ -399,7 +444,11 @@ impl RepoStore {
             source_id: key.source_id.clone(),
             last_fetched_at_epoch_s: now,
             last_accessed_at_epoch_s: now,
-            size_bytes: dir_size(git_dir),
+            size_bytes: fetched_bytes,
+            // A fetch adds objects but does not change the blobless baseline.
+            skeleton_bytes: previous
+                .as_ref()
+                .map_or(fetched_bytes, |m| m.skeleton_bytes.min(fetched_bytes)),
             generation,
             cred_fingerprint: creds.fingerprint(),
         };
@@ -444,10 +493,137 @@ impl RepoStore {
             .await?;
 
         if let Some(mut meta) = RepoMeta::load(&entry_dir) {
-            meta.size_bytes = dir_size(&git_dir);
+            let purged = dir_size(&git_dir);
+            meta.size_bytes = purged;
+            meta.skeleton_bytes = purged;
             let _ = meta.store(&entry_dir);
         }
         Ok(())
+    }
+}
+
+impl RepoStore {
+    /// Bring usage back under the low watermark when it has crossed the high
+    /// one. Best-effort by design: a cache that cannot reclaim still serves
+    /// warm repositories, and the per-repo cap is what refuses oversized work.
+    async fn reclaim_if_needed(&self) {
+        let candidates = self.candidates().await;
+        let used: u64 = candidates.iter().map(|c| c.size_bytes).sum();
+        if !self.budget.over_high_watermark(used) {
+            return;
+        }
+
+        let target = self.budget.excess_over_low(used);
+        let plan = super::disk::plan_reclaim(&candidates, target);
+        tracing::info!(
+            used_bytes = used,
+            target_bytes = target,
+            steps = plan.len(),
+            "cache over the high watermark, reclaiming"
+        );
+
+        for step in plan {
+            match step {
+                Reclaim::PurgeBlobs { dir_name, frees } => {
+                    match self.purge_blobs_by_dir(&dir_name).await {
+                        Ok(()) => {
+                            tracing::info!(dir = %dir_name, freed_bytes = frees, "purged blobs");
+                        }
+                        Err(e) => tracing::warn!(error = %e, dir = %dir_name, "blob purge failed"),
+                    }
+                }
+                Reclaim::Evict { dir_name, frees } => {
+                    let path = self.data_dir.join("repos").join(&dir_name);
+                    let lock = self.lock_for_dir(&dir_name).await;
+                    // INVARIANT: only a writer may delete an entry — a reader
+                    // must never observe a partially deleted repository.
+                    let Ok(_write) = lock.try_write() else {
+                        continue;
+                    };
+                    match std::fs::remove_dir_all(&path) {
+                        Ok(()) => {
+                            tracing::info!(dir = %dir_name, freed_bytes = frees, "evicted repo");
+                        }
+                        Err(e) => tracing::warn!(error = %e, dir = %dir_name, "eviction failed"),
+                    }
+                }
+            }
+        }
+    }
+
+    /// Every cache entry with the facts the reclaim planner needs. `in_use` is
+    /// probed with a non-blocking write lock: a repo with readers, or one being
+    /// cloned, refuses the lock and is skipped.
+    async fn candidates(&self) -> Vec<Candidate> {
+        let Ok(entries) = std::fs::read_dir(self.data_dir.join("repos")) else {
+            return Vec::new();
+        };
+
+        let mut candidates = Vec::new();
+        for entry in entries.flatten() {
+            let Some(dir_name) = entry.file_name().to_str().map(ToOwned::to_owned) else {
+                continue;
+            };
+            let Some(meta) = RepoMeta::load(&entry.path()) else {
+                continue;
+            };
+            let in_use = self.lock_for_dir(&dir_name).await.try_write().is_err();
+            candidates.push(Candidate {
+                dir_name,
+                size_bytes: meta.size_bytes,
+                skeleton_bytes: meta.skeleton_bytes,
+                last_accessed_at_epoch_s: meta.last_accessed_at_epoch_s,
+                in_use,
+            });
+        }
+        candidates
+    }
+
+    async fn lock_for_dir(&self, dir_name: &str) -> Arc<RwLock<()>> {
+        let mut entries = self.entries.lock().await;
+        entries.entry(dir_name.to_owned()).or_default().clone()
+    }
+
+    async fn purge_blobs_by_dir(&self, dir_name: &str) -> Result<(), StoreError> {
+        let entry_dir = self.data_dir.join("repos").join(dir_name);
+        let git_dir = entry_dir.join("repo.git");
+        if !git_dir.is_dir() {
+            return Ok(());
+        }
+
+        let lock = self.lock_for_dir(dir_name).await;
+        // INVARIANT: repack DELETES packs — it must run with zero readers.
+        let Ok(_write) = lock.try_write() else {
+            return Ok(());
+        };
+        let _permit = self.heavy.acquire().await;
+
+        self.runner
+            .run(
+                Some(&git_dir),
+                &[
+                    "repack",
+                    "-a",
+                    "-d",
+                    "--filter=blob:none",
+                    "--no-write-bitmap-index",
+                ],
+                None,
+            )
+            .await?;
+
+        if let Some(mut meta) = RepoMeta::load(&entry_dir) {
+            let purged = dir_size(&git_dir);
+            meta.size_bytes = purged;
+            meta.skeleton_bytes = purged;
+            let _ = meta.store(&entry_dir);
+        }
+        Ok(())
+    }
+
+    /// Current cache usage, as accounted per entry.
+    pub async fn used_bytes(&self) -> u64 {
+        self.candidates().await.iter().map(|c| c.size_bytes).sum()
     }
 }
 
@@ -532,6 +708,25 @@ pub(crate) mod tests {
             "script failed: {script}\nstderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    /// A cache with a tiny budget, so reclaim can be exercised deterministically.
+    pub(crate) fn fixture_with_budget(tag: &str, budget_bytes: u64, cap_bytes: u64) -> Fixture {
+        let mut f = fixture(tag);
+        let store = match RepoStore::open_cache(
+            &f.root.join("cache-bounded"),
+            2,
+            None,
+            Budget {
+                total_bytes: budget_bytes,
+            },
+            cap_bytes,
+        ) {
+            Ok(s) => s,
+            Err(e) => panic!("bounded store init: {e}"),
+        };
+        f.store = Arc::new(store);
+        f
     }
 
     pub(crate) fn fixture(tag: &str) -> Fixture {
@@ -835,6 +1030,115 @@ pub(crate) mod tests {
             }
         }
         panic!("clone failure never surfaced");
+    }
+
+    #[tokio::test]
+    async fn a_repository_over_the_cap_is_refused_permanently() {
+        // Cap of one byte: any real clone exceeds it.
+        let f = fixture_with_budget("cap", 10_000_000, 1);
+        let k = key(&f);
+
+        for _ in 0..40u32 {
+            match f
+                .store
+                .open(
+                    &k,
+                    &creds(),
+                    Freshness::Refresh {
+                        max_staleness: Duration::from_mins(5),
+                    },
+                )
+                .await
+            {
+                Err(StoreError::Busy { .. }) => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Err(StoreError::TooLarge { cap_bytes }) => {
+                    assert_eq!(cap_bytes, 1, "the cap is reported to the caller");
+                    let entry = f.store.entry_dir(&k);
+                    assert!(
+                        !entry.join("repo.git").is_dir(),
+                        "an oversized clone must not be left on disk"
+                    );
+                    return;
+                }
+                Ok(_) => panic!("an oversized repository must not be served"),
+                Err(e) => panic!("expected a size refusal, got {e}"),
+            }
+        }
+        panic!("the cap was never enforced");
+    }
+
+    #[tokio::test]
+    async fn crossing_the_high_watermark_reclaims_an_idle_repository() {
+        // Budget of 1 byte: any entry puts the cache over the high watermark,
+        // so the next admission must reclaim.
+        let f = fixture_with_budget("reclaim", 1, u64::MAX);
+        let k = key(&f);
+
+        let guard = open_until_ready(
+            &f,
+            &k,
+            Freshness::Refresh {
+                max_staleness: Duration::from_mins(5),
+            },
+        )
+        .await;
+        assert!(f.store.used_bytes().await > 0, "the clone is accounted for");
+        drop(guard);
+
+        // A second repository forces admission to run with nothing pinned.
+        let origin_two = f.root.join("origin2");
+        if let Err(e) = std::fs::create_dir_all(&origin_two) {
+            panic!("create second origin: {e}");
+        }
+        sh(
+            &origin_two,
+            "git init -q -b main . && git config uploadpack.allowFilter true && \
+             echo x > x.txt && git add . && \
+             GIT_AUTHOR_DATE='2026-08-01T10:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-01T10:00:00+0000' git commit -qm x",
+        );
+        let second = CacheKey {
+            clone_url: format!("file://{}", origin_two.display()),
+            ..key(&f)
+        };
+        open_until_ready(
+            &f,
+            &second,
+            Freshness::Refresh {
+                max_staleness: Duration::from_mins(5),
+            },
+        )
+        .await;
+
+        let first_entry = f.store.entry_dir(&k);
+        assert!(
+            !first_entry.join("repo.git").is_dir(),
+            "the idle repository must have been reclaimed to make room"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pinned_repository_survives_reclaim() {
+        let f = fixture_with_budget("pinned-reclaim", 1, u64::MAX);
+        let k = key(&f);
+
+        // INVARIANT: holding the guard pins the entry; reclaim must skip it.
+        let guard = open_until_ready(
+            &f,
+            &k,
+            Freshness::Refresh {
+                max_staleness: Duration::from_mins(5),
+            },
+        )
+        .await;
+
+        f.store.reclaim_if_needed().await;
+        assert!(
+            guard.git_dir().is_dir(),
+            "a repository with a live reader must never be deleted"
+        );
     }
 
     #[tokio::test]
