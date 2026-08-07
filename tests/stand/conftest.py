@@ -191,10 +191,13 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     writing only on success would make the gate's input depend on the suite's
     result, which is backwards.
 
-    Every client in the suite records here, browser journeys included — they
-    drive `ApiClient` for their setup — so this is the whole run's ledger, not
-    the api directory's. `api/conftest.py` writes the operation CATALOGUE beside
-    it, because that list is the api package's.
+    Only `ApiClient` records, so in practice this is the API suite's ledger. The
+    browser journeys take a `PersonaSession` for the identity and password they
+    sign in with and never build a client, and Playwright's own traffic is not
+    instrumented — so a ui-only run dumps an empty ledger. `api/conftest.py`
+    writes the operation CATALOGUE beside this, and only when the api package is
+    collected, which is why a ui-only run also produces no catalogue for the
+    gate to read.
     """
     del session, exitstatus
 

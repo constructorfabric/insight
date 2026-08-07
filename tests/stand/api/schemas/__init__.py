@@ -10,7 +10,7 @@ Two halves, and a reader should be able to tell which one they are in:
   it declares `/v1/persons/{email}` (which identity answers 404 for), declares
   `POST /v1/persons-seed` (405), spells the
   subchart parameter `{personId}` where the service serves `{person_id}`, omits
-  both persons-sync operations, and lists only `200` for all 18 operations.
+  both persons-sync operations, and lists only `200` for every one of its operations.
   Generating from it would record every one of those errors as fact.
 * `analytics.py`, `authenticator.py` — GENERATED from documents the services
   emit themselves (`cargo run -p <service> -- openapi`) and CI drift-gates in
