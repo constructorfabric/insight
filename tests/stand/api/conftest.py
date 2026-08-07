@@ -67,8 +67,8 @@ def api(lead_session: PersonaSession) -> ApiClient:
     """An authenticated client, for cases that are not about who is calling.
 
     A lead rather than an admin on purpose: analytics has no admin gate at all
-    (`require_admin` appears nowhere in it, and `/v1/admin/*` is admin by name
-    only), so an ordinary persona is what the endpoints actually face.
+    (`require_admin` appears nowhere in the service), so an ordinary persona is
+    what the endpoints actually face.
     """
     return lead_session.client
 

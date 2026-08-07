@@ -66,9 +66,9 @@ Otherwise, don't invent a generic checklist. Read the issue and the actual imple
 Two things this grounding is *for*, beyond correctness:
 
 - **The denominators.** "API coverage — 100%" is unfalsifiable until you know 100% of what. Count
-  it: endpoints in the router, cases in the acceptance criteria, connectors under
-  `src/ingestion/connectors`, metric keys in `metric_definitions/builtin.rs`. Those counts go in
-  the section.
+  it: endpoints in the router, cases in the acceptance criteria, and the repo-wide values from
+  `scripts/counts.sh` (connectors, catalog metrics, dbt models and tests, specs). Those counts go in
+  the section — taken at the moment you write it, never copied from this skill.
 - **Whether the feature's own framing still holds.** When the shipped code contradicts the issue —
   scope was dropped, scope was added, a "table" shipped as a general-purpose component — correct
   the checks against reality and say so to the user. Report what you found, not what you think it
@@ -157,7 +157,7 @@ For a port/migration, name the parity bar here.>
    - Metric: <the quantity — a rate, a count, a percentage, a latency. Two or three words.>
    - How measured: <the exact procedure, with the denominator: which fixture, how many items, which
      tool's which field.>
-   - Target: <the number. 100%. 0. < 1s P95. 26/26.>
+   - Target: <the number. 100%. 0. < 1s P95. n/n.>
 
 ### <Next vector>
 2. **<Metric name>**
@@ -174,9 +174,12 @@ on the shared runtime.>
   (P95)", "Memory growth", "Critical findings". If the name is a sentence, it's a behaviour — find
   the quantity underneath it. Two or three plain words; no `snake_case`, no invented coinages like
   "reconciliation integrity index".
-- **Every How measured carries its denominator.** `n of m`, not "some". *59 of 59 catalog metrics*,
-  *17 of 17 acceptance criteria*, *26 of 26 connectors*, *7 pages of a 3,000-record fixture*. If you
-  can't state m, you haven't finished grounding — go count it.
+- **Every How measured carries its denominator.** `n of m`, not "some". The shapes:
+  *<all> of <all> catalog metrics*, *<n> of <n> acceptance criteria in the issue*, *<all> of <all>
+  connectors*, *7 pages of a 3,000-record fixture*. Take repo-wide values from
+  `scripts/counts.sh` at the moment you write the target — never copy one out of
+  this file or an example, both of which are snapshots. If you can't state m,
+  you haven't finished grounding — go count it.
 - **Every Target is a value.** A number, a percentage, a ratio, a threshold, or `0`. Never `?`,
   never "no regressions", never "works correctly". `Lighthouse?` → `< 10s page load`. `coverage?` →
   `17/17 cases`. If the decision isn't yours, ask — don't ship a `?`.
@@ -232,32 +235,48 @@ on the shared runtime.>
 
 ### Turning a vague line into a metric
 
+The counts below were current when this table was written and are here to show
+the *shape* of a target. Re-take any repo-wide denominator with
+`scripts/counts.sh` before using it.
+
 | Author wrote | Metric | How measured | Target |
 |---|---|---|---|
 | "API coverage - limits" | **API coverage** | happy path + oversized request + undrillable target, against the 17 acceptance criteria | **17/17**; oversized → 4xx + reason, never a partial 200 |
 | "pagination tests" | **Page errors** | page a 3,000-record fixture at page size 500 (7 pages) | **0** duplicates, **0** omissions, total exact |
-| "Cover all connector data" | **Connector coverage** | per-connector fixtures driven by the metric catalog | **26/26** connectors, **59/59** metric keys |
+| "Cover all connector data" | **Connector coverage** | per-connector fixtures driven by the metric catalog | **26/26** connectors, **60/60** metric keys |
 | "Latency for drill down requests" | **Latency (P95)** | 200 requests on the reference-org dataset, deepest lineage path | **< 1s** |
 | "Resource usage per service" | **Memory growth** | RSS at start vs end of a 30-min paged-request soak | **< 5%** |
 | "No critical issues in the ci pipeline" | **Critical findings** | Trivy `--severity CRITICAL` + Semgrep `--severity ERROR` counts, from the workflows in `.github/` | **0** |
 
-## Counts worth knowing (verify, don't quote from here)
-These change; the point is that they are *countable*, and where.
+## Counts worth knowing — take them, never quote them
+
+Run this and use what it prints:
 
 ```sh
-find src/ingestion/connectors -maxdepth 2 -mindepth 2 -type d | wc -l    # connectors (26)
-grep -oE 'metric_key: "[a-z0-9_.]+"' \
-  src/backend/services/analytics/src/domain/metric_definitions/builtin.rs \
-  | sort -u | wc -l                                                      # catalog metrics (59)
-grep -c "^CREATE VIEW insight\." \
-  src/ingestion/scripts/migrations/20260422000000_gold-views.sql         # gold views (28)
-ls src/ingestion/tests/e2e/metrics/*.test.yaml | wc -l                   # metrics with a spec (36)
+.claude/skills/quality-vector-tests/scripts/counts.sh
 ```
 
-Those last two give the coverage ratio for "which metrics have a regression test" — specs over
-catalog metrics, 36/59 at the time of writing, not 36/36. The catalog count is the denominator.
-It is the natural target for a Reliability coverage check on any metric feature — `metric-test`
-authors those specs.
+It reports the connectors, catalog metrics, dbt models and data tests, metrics
+carrying a regression spec, and stand tests, each beside the path it was
+counted from.
+
+**No number appears in this skill on purpose.** The numbers move, and the last
+time they moved the failure was silent: the catalog used to live inline in
+`builtin.rs`, became `include_str!("registry.yaml")`, and the documented
+`grep … builtin.rs | wc -l` kept returning a number — `0` — which reads exactly
+like an answer. A denominator of `0` in a target is worse than no target at
+all. So every count in the script proves its source first and reports **MOVED**
+rather than zero when the source has shifted; `--check` exits non-zero, which
+is what to wire into CI if you want the drift caught rather than discovered.
+
+If a count comes back MOVED, re-derive it from the tree and fix the script.
+Do not write a target against a denominator you could not take.
+
+"Metrics with a spec" over "catalog metrics" is the coverage ratio for *which
+metrics have a regression test* — and note the denominator is the catalog, not
+the specs, so the ratio is under 1 and stays honest. It is the natural target
+for a Reliability coverage check on any metric feature; `metric-test` authors
+those specs.
 
 ## Worked examples
 Read the one closest to the feature in front of you — they show the format applied end to end:

@@ -144,34 +144,38 @@ for — not an assertion that the UI "should" be covered too.
 ## What this suite does not cover
 
 As of this writing: no metric value is asserted (the golden set is empty by
-design, above); no accessibility or contrast checking; cross-tenant
-isolation and the service-principal route are left to the in-process
-`bronze-to-api` rig; `/v1/columns` is asserted only against an empty
-universe (the seed does not populate `table_columns`).
+design, above), and there is no accessibility or contrast checking.
 
-Four gaps worth naming separately, because none of them is "nobody got to
+Three gaps worth naming separately, because none of them is "nobody got to
 it":
 
 - **No metrics harness.** There is no suite here that asserts a served metric
   against a declared expectation. One was written and is being migrated
-  separately, so this directory has `api/` and `ui/` and nothing else — do not
-  read the absence as "metric values are not worth testing".
-- **Nothing measures this suite's own coverage.** There is no per-operation,
-  per-status-code gate here, so a route that gains a status code no test
-  exercises goes unreported. The rig has one
-  (`src/ingestion/tests/e2e/lib/api_coverage.py` — an httpx-hook ledger plus a
-  gate over the committed OpenAPI document); migrating it is a known
-  follow-up. Until it lands, `api/operations.py` is the only catalogue of the
-  surface and it is kept honest by hand.
-- **Cross-tenant refusal.** Covered on compose, and only there: the second
-  tenant's caller is a fixture the seed writes when
-  `SEED_CROSS_TENANT_FIXTURE` is on, which `docker-compose.yml` sets. A cluster
-  stand turns it off (a second tenant aborts identity-resolution's scheduled
-  projection), and the seed's manifest then omits `other_tenant_lead`, so tests
-  declaring `requires_seed("other_tenant_lead")` skip rather than fail.
+  separately — do not read the absence as "metric values are not worth
+  testing".
+- **The coverage ledger is the API suite's, not the run's.** Only `ApiClient`
+  records into it, so a ui-only run dumps an empty ledger and writes no
+  operation catalogue (`api/conftest.py` writes that, and only when the api
+  package is collected). Read a clean gate after a ui run as "nothing was
+  measured", not as coverage.
+- **Cross-tenant refusal is compose-only.** The second tenant's caller is a
+  fixture the seed writes when `SEED_CROSS_TENANT_FIXTURE` is on, which
+  `docker-compose.yml` sets. A cluster stand turns it off (a second tenant
+  aborts identity-resolution's scheduled projection), and the seed's manifest
+  then omits `other_tenant_lead`, so tests declaring
+  `requires_seed("other_tenant_lead")` skip rather than fail.
 - **JWT verification** — an expired token, a wrong audience, an untrusted
   issuer, a signature from a key the JWKS never published. Minting tokens is
   ruled out here by design (see `../lib/insight_stand/session.py`): this suite
   proves the *session*, won by a real login, and the rig proves the token.
   The refusal itself is covered — `api/test_gateway.py` sweeps 401 over every
   operation.
+
+Three items that used to sit in this list have since landed, and are noted so
+nobody re-opens them:
+
+| Was listed as missing | Now |
+|---|---|
+| no per-operation coverage gate | `../lib/insight_stand/coverage.py`, fed by the ledger and the catalogue, with its own tests in `meta/` |
+| cross-tenant refusal has no caller | `other_tenant_session` drives `other_tenant_lead` — on compose; see the caveat above |
+| the service-principal route is the rig's | `service_client` exchanges a real RFC 7523 assertion; `api/identity/test_internal.py` covers `/internal/*` |

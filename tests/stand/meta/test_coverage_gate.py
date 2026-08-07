@@ -19,7 +19,7 @@ from typing import Any
 
 from insight_stand import coverage
 
-# Two catalogued operations, standing in for the real 45.
+# Two catalogued operations, standing in for the real catalogue.
 QUERIES = coverage.Operation(method="GET", path="/api/analytics/v1/queries")
 SUBCHART = coverage.Operation(method="GET", path="/api/identity/v1/subchart")
 CATALOGUE = [QUERIES, SUBCHART]
