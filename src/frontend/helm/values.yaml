@@ -11,11 +11,13 @@ service:
   type: ClusterIP
   port: 80
 
-ingress:
-  enabled: true
-  className: nginx
-  annotations: {}
+route:
+  enabled: false
+  parentRef:
+    name: insight
+    namespace: insight-infra
   host: ""
+  annotations: {}
 
 resources:
   requests:

@@ -1,0 +1,33 @@
+{{- if .Values.route.enabled }}
+# Route on the shared Gateway -> the nginx gateway. The gateway is the single
+# edge proxy: it runs auth_request against the authenticator, injects the
+# gateway JWT, and fans out to /api/* upstreams + the SPA. So the route sends
+# everything ("/") here; path routing happens inside the gateway, not at the
+# route. TLS terminates at the shared Gateway listener, not per-route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "insight-gateway.fullname" . }}
+  labels:
+    {{- include "insight-gateway.labels" . | nindent 4 }}
+  {{- with .Values.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    - name: {{ .Values.route.parentRef.name }}
+      namespace: {{ .Values.route.parentRef.namespace }}
+  {{- if .Values.route.host }}
+  hostnames:
+    - {{ .Values.route.host | quote }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "insight-gateway.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- end }}

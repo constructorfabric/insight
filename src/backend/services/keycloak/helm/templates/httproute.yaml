@@ -1,0 +1,41 @@
+{{- if .Values.route.enabled }}
+# Route on the shared Gateway -> Keycloak at the /kc prefix. Keycloak serves
+# under /kc natively (--http-relative-path) and discovery emits absolute URLs
+# off KC_HOSTNAME (= .Values.hostname), so no rewrite.
+#
+# Only the browser/OIDC surface is exposed: /kc/realms (discovery, auth,
+# tokens, broker callbacks, account console) and /kc/resources (theme
+# assets). The admin console and admin REST API (/kc/admin, plus the /kc
+# welcome redirect to it) stay cluster-internal — reach them with
+#   kubectl port-forward svc/<release>-keycloak {{ .Values.service.port }}
+# (adminHostname in values.yaml advertises that URL to the console).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "insight-keycloak.fullname" . }}
+  labels:
+    {{- include "insight-keycloak.labels" . | nindent 4 }}
+  {{- with .Values.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    - name: {{ .Values.route.parentRef.name }}
+      namespace: {{ .Values.route.parentRef.namespace }}
+  {{- if .Values.route.host }}
+  hostnames:
+    - {{ .Values.route.host | quote }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /kc/realms
+        - path:
+            type: PathPrefix
+            value: /kc/resources
+      backendRefs:
+        - name: {{ include "insight-keycloak.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- end }}

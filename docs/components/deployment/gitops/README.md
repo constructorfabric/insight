@@ -129,7 +129,7 @@ Insight on Kubernetes is split into three deploy layers. Each layer has its own 
 
 | Layer | Purpose | Namespace | How installed | Where it lives in `infra/insight-gitops` |
 |------|---------|-----------|---------------|-------------------------------------------|
-| **L0 — Bootstrap** | Cluster prerequisites. Installs sealed-secrets-controller, ingress-nginx, cert-manager (and any cluster-scoped issuers/CRDs); creates the `insight-infra` and `insight` namespaces. | cluster-scoped | `make bootstrap ENV=<env>` (idempotent) | `bootstrap/<env>/` |
+| **L0 — Bootstrap** | Cluster prerequisites. Installs sealed-secrets-controller, Envoy Gateway, cert-manager (and any cluster-scoped issuers/CRDs, Gateway API CRDs included); applies the shared `Gateway`; creates the `insight-infra` and `insight` namespaces. | cluster-scoped | `make bootstrap ENV=<env>` (idempotent) | `bootstrap/<env>/` |
 | **L2 — System** | Shared stateful infrastructure: MariaDB, ClickHouse, Redis, Redpanda + Redpanda Console, Airbyte, Argo Workflows. **One Helm release per service.** Each service can also be replaced by a managed external endpoint (RDS, MSK, etc.) — in which case its `system/<service>/` is simply not installed and the app values point at the external host. | `insight-infra` (one per cluster, shared by every app deploy on that cluster) | manually, deliberately. Either `cd system/<service> && helm upgrade --install …` for a values-only release, or `make system-<service> ENV=<env>` when a sealed-secret needs to be created/refreshed in the same step. | `system/<service>/` (base) + `environments/<env>/<service>-values.yaml` (per-env overlay) + `environments/<env>/sealed-secrets/insight-infra/` |
 | **L3 — App** | The Insight platform itself: api-gateway, analytics, identity-resolution, frontend. The umbrella chart, app services only — no infra subcharts. | `insight` (one Insight install per cluster; ENV selects the **cluster**, not the namespace) | `make deploy-app ENV=<env>` (alias `make deploy`); pulls the umbrella chart from `oci://ghcr.io/constructorfabric/charts/insight` pinned to `.insight-version`. | `environments/<env>/values.yaml` + `environments/<env>/sealed-secrets/insight/` |
 
@@ -149,7 +149,7 @@ For one cluster carrying environment `<env>`:
 | Namespace | Owner layer | Contents |
 |-----------|-------------|----------|
 | `kube-system` | k8s + L0 | sealed-secrets-controller, k3s defaults |
-| `ingress-nginx` | L0 | ingress-nginx controller |
+| `envoy-gateway-system` | L0 | Envoy Gateway controller + its data-plane Service |
 | `cert-manager` | L0 | cert-manager + webhook + cainjector |
 | `insight-infra` | L2 | mariadb, clickhouse, redis, redpanda, redpanda-console, airbyte, argo-workflows (each as its own Helm release) |
 | `insight` | L3 | the umbrella chart (api-gateway, analytics, identity-resolution, frontend) |
@@ -315,7 +315,7 @@ Run **once per cluster**, before any system or app deploy can proceed. Idempoten
 2. **Cluster reach** — `make doctor` also runs the equivalent of `kubectl --context insight-<env> cluster-info` so a missing VPN or wrong kubeconfig fails before anything is changed.
 3. **`make bootstrap ENV=<env>`** — installs the controllers and creates the namespaces this layer is responsible for:
    - `kube-system/sealed-secrets-controller` (named so `kubeseal` finds it without flags)
-   - `ingress-nginx/ingress-nginx-controller` (claims the `nginx` IngressClass)
+   - `envoy-gateway-system/envoy-gateway` (claims the `envoy` GatewayClass; ships the Gateway API CRDs), then applies the shared `insight` Gateway from `bootstrap/<env>/gateway.yaml`
    - `cert-manager/cert-manager` plus the per-env ClusterIssuers (`selfsigned-cluster-issuer` and `local-ca` for non-public envs; Let's Encrypt for customer-facing envs — committed under `bootstrap/<env>/issuer.yaml`)
    - the `insight-infra` namespace (shared by L2)
    - the `insight` namespace (the L3 target)
@@ -538,7 +538,7 @@ ARGO_CHART               ?= argo/argo-workflows
 ARGO_VERSION             ?= 0.45.16
 
 # ── L0 (Bootstrap) — see §3.4 ──
-INGRESS_NGINX_VERSION    ?= 4.13.0
+ENVOY_GATEWAY_VERSION    ?= 1.8.3
 CERT_MANAGER_VERSION     ?= v1.18.0
 SEALED_SECRETS_VERSION   ?= 2.17.4
 ```
@@ -566,7 +566,7 @@ Targets are grouped by the layer they affect (see [§1.5](#15-layer-model)). L0 
 
 | Target | Purpose | Pre-flight | Effect |
 |--------|---------|------------|--------|
-| `make bootstrap ENV=<env>` | Install ingress-nginx + cert-manager + sealed-secrets-controller; create `insight-infra` + `insight` namespaces; apply per-env ClusterIssuers from `bootstrap/<env>/`. | `kube-ctx` | Three Helm releases + namespace creation + ClusterIssuer apply. Idempotent. |
+| `make bootstrap ENV=<env>` | Install Envoy Gateway + cert-manager + sealed-secrets-controller; create `insight-infra` + `insight` namespaces; apply per-env ClusterIssuers and the GatewayClass + shared Gateway from `bootstrap/<env>/`. | `kube-ctx` | Three Helm releases + namespace creation + ClusterIssuer apply. Idempotent. |
 | `make bootstrap-status ENV=<env>` | Show what L0 has installed on this cluster. | `kube-ctx` | Read-only. |
 | `make fetch-cert ENV=<env>` | `kubeseal --fetch-cert > environments/<env>/pub-cert.pem`. | `kube-ctx` | Writes one file. |
 
@@ -780,7 +780,8 @@ infra/insight-gitops/
 ├── bootstrap/                  # ── L0 — cluster prereqs + namespaces ──
 │   ├── argo-rbac.yaml.tmpl     # supplemental Argo RBAC, applied by `make system-argo`
 │   └── <env>/
-│       ├── ingress-nginx-values.yaml
+│       ├── envoy-gateway-values.yaml
+│       ├── gateway.yaml        # GatewayClass `envoy` + the shared `insight` Gateway
 │       ├── cert-manager-values.yaml
 │       ├── sealed-secrets-values.yaml
 │       └── issuer.yaml         # ClusterIssuers — selfsigned + local-ca for non-public
@@ -839,7 +840,7 @@ infra/insight-gitops/
 
 Conventions:
 
-- **L0 files** in `bootstrap/<env>/`. Per-env because cert-manager issuers (Let's Encrypt prod vs. selfsigned local) genuinely differ by env. Cluster-scoped resources (ingress-nginx, sealed-secrets-controller) reuse the same values across envs by referring to chart defaults; per-env overrides are an as-needed addition.
+- **L0 files** in `bootstrap/<env>/`. Per-env because cert-manager issuers (Let's Encrypt prod vs. selfsigned local) genuinely differ by env. Cluster-scoped resources (Envoy Gateway, sealed-secrets-controller) reuse the same values across envs by referring to chart defaults; per-env overrides are an as-needed addition.
 - **L2 files** are split by service (`system/<service>/values.yaml`) to keep each release independently readable. Per-env tuning lives in `environments/<env>/<service>-values.yaml` and is layered on top at deploy time. A self-hosted cluster carries the values; a managed-external cluster simply does not run that `make system-<service>` target.
 - **L3 files** stay where they were: one `values.yaml` per env for the umbrella chart, plus one `pub-cert.pem` per cluster.
 - **Sealed secrets** are split by **target namespace** under `environments/<env>/sealed-secrets/<namespace>/`. `insight-infra` for L2, `insight` for L3 — the two well-known namespaces every cluster has. The `*-secret-template.yaml` template files live next to their sealed counterparts and carry the same target namespace.

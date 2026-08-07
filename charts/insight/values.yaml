@@ -335,14 +335,13 @@ gateway:
   resources:
     requests: {cpu: 25m, memory: 32Mi}
     limits: {cpu: 500m, memory: 128Mi}
-  # The gateway is the cluster ingress target; it routes "/" internally.
-  ingress:
+  # The gateway's route attaches to the shared Gateway; it routes "/" internally.
+  route:
     enabled: true
-    className: nginx
+    parentRef:
+      name: insight
+      namespace: insight-infra
     host: ""
-    tls:
-      enabled: false
-      secretName: ""
 # ─── Authenticator (OIDC login + Redis sessions + gateway-JWT mint) ─────────
 authenticator:
   replicaCount: 1
@@ -399,7 +398,7 @@ keycloak:
   # Advertised issuer BASE (must end in /kc) — the URL browser AND
   # authenticator reach, e.g. https://<host>/kc.
   hostname: ""
-  # Admin console base. The ingress exposes only /kc/realms + /kc/resources;
+  # Admin console base. The route exposes only /kc/realms + /kc/resources;
   # the console rides a port-forward (empty = http://localhost:<port>/kc).
   adminHostname: ""
   # Bootstrap-admin Secret (keys username/password) and DB connection.
@@ -411,7 +410,7 @@ keycloak:
     name: "keycloak"
     username: ""
     passwordSecret: {name: "", key: ""}
-  ingress:
+  route:
     enabled: false
 # ─── keycloakConfig (broker realms as code — ADR-0003, EPIC #2193) ──────────
 # Hook Job applying the env's versioned realm YAML (pre-created ConfigMap from
@@ -550,7 +549,5 @@ frontend:
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 200m, memory: 128Mi}
-  ingress:
+  route:
     enabled: false
-    className: nginx
-    host: ""

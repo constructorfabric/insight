@@ -1,0 +1,45 @@
+# One route object per experiment. Routes attach to the shared Gateway via
+# parentRefs, so applying this chart ADDS the `/exp/<name>` route and
+# `helm uninstall` REMOVES it -- no central config is ever rewritten.
+#
+# The FE image is built with a relative asset base and a runtime router
+# basepath, so we prefix-strip: URLRewrite ReplacePrefixMatch rewrites
+# `/exp/<name>/...` to `/...` before it reaches the FE pod. PathPrefix matches
+# on path-element boundaries (`/exp/foo` never matches `/exp/foobar`), and
+# longest-prefix precedence puts `/exp/<name>` above the main gateway's `/`
+# route by spec. `/api/...` is an ABSOLUTE path the FE emits unprefixed, so it
+# is not matched here and flows to the shared backend route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "insight-preview.fullname" . }}
+  labels:
+    {{- include "insight-preview.labels" . | nindent 4 }}
+  {{- with .Values.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    - name: {{ .Values.route.parentRef.name }}
+      namespace: {{ .Values.route.parentRef.namespace }}
+  {{- if .Values.route.host }}
+  hostnames:
+    - {{ .Values.route.host | quote }}
+  {{- else }}
+  {{- fail "route.host is required: one host serves every /exp/<name> experiment" }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ include "insight-preview.path" . }}
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: {{ include "insight-preview.fullname" . }}
+          port: {{ .Values.service.port }}

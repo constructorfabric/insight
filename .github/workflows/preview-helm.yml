@@ -45,7 +45,7 @@ jobs:
           helm lint deploy/preview \
             --set experiment=widget-alpha \
             --set image.tag=0.0.0-test \
-            --set ingress.host=preview.test
+            --set route.host=preview.test
 
       - name: Render-contract tests (prefix-strip route, per-experiment naming)
         run: python -m pytest deploy/preview/tests/ -q

@@ -1180,7 +1180,7 @@ helm/
 │   ├── hpa.yaml
 │   ├── migration-job.yaml            # Helm pre-upgrade hook
 │   ├── sealedsecret.yaml
-│   └── ingress.yaml
+│   └── httproute.yaml
 ```
 
 **Infrastructure charts** (under `infra/`):
@@ -1222,9 +1222,11 @@ smtp:
   username: "insight@customer.com"
   password: "<sealed>"
 
-ingress:
-  host: "insight.customer.com"
-  tlsSecret: "insight-tls"
+route:
+  parentRef:
+    name: insight
+    namespace: insight-infra
+  host: "insight.customer.com"   # TLS terminates at the Gateway listener
 
 bootstrap:
   tenantName: "Customer Corp"

@@ -1,0 +1,28 @@
+{{- if .Values.route.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "insight-frontend.fullname" . }}
+  labels:
+    {{- include "insight-frontend.labels" . | nindent 4 }}
+  {{- with .Values.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    - name: {{ .Values.route.parentRef.name }}
+      namespace: {{ .Values.route.parentRef.namespace }}
+  {{- if .Values.route.host }}
+  hostnames:
+    - {{ .Values.route.host | quote }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "insight-frontend.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- end }}
