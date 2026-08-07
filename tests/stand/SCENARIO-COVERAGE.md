@@ -176,10 +176,10 @@ two `/v1/metric-results` reads · P1 · new · `[SUPPORTED]`
 **R12-01 — `n` reflects the cohort, not the request: asking about one person
 and about five returns the same `n` for that person.** The obvious claim — the
 same cohort at team scope versus organization scope — **cannot be requested**:
-a peer request carries only `cohort_key`, every one of the 59 definitions
+a peer request carries only `cohort_key`, every one of the 60 definitions
 declares `org_unit` and validation refuses any other value, and the cohort CTE
 selects on the *target's* `cohort_id` independently of `entity.ids`
-(`compiler.rs:541-547`). What survives is narrower and still worth having,
+(`analytics/src/domain/metric_results/compiler.rs:540-546`). What survives is narrower and still worth having,
 because counting the requested entities is exactly how a naive implementation
 gets this wrong. API `POST /v1/metric-results` · P1 · new · `[VERIFIED]`
 
@@ -197,7 +197,7 @@ seeded roster without a seed change; check before assuming otherwise. API
 **S1-I-03 — an IC asking for `ai.cost` about a colleague is refused.** There is
 no cost *endpoint*, which is why this looked unreachable at first; `ai.cost` is
 an ordinary currency metric on the ordinary routes
-(`registry.yaml:227-241`). API `POST /v1/metric-results` · P0 · new ·
+(`registry.yaml:230-242`). API `POST /v1/metric-results` · P0 · new ·
 `[VERIFIED]`
 
 **R6-01 — the `ai.cost` definition states the seat/usage separation rather than
@@ -232,7 +232,7 @@ enforcement points:
 | Frontend | `MIN_COHORT` — `src/frontend/src/lib/insight/within-team-peer.ts:17` | **4** | the client-synthesised peer view yields no stats |
 
 The backend one is compiled into the peer SQL for every percentile
-(`compiler.rs:606-611`, `:1477`), and its comment is explicit that the placement
+(`analytics/src/domain/metric_results/compiler.rs:606-610`, `:1518`), and its comment is explicit that the placement
 is the point: *"Enforced here, server-side, so every consumer inherits it."* So
 §5 rule 5 ("by construction, not as a filter a screen applies") **is** satisfied
 — contrary to an earlier reading of this file.

@@ -106,7 +106,7 @@ either leaks a different thing, so name both.
 **Verdict: Partial — there is no cost *endpoint*, but there is a cost
 *metric*, and the rule is about figures.**
 
-`registry.yaml:227-241` defines `ai.cost` ("AI usage cost", `format: currency`,
+`registry.yaml:230-242` defines `ai.cost` ("AI usage cost", `format: currency`,
 `entity_type: person`), served by `/v1/metric-definitions` and
 `/v1/metric-results` like any other metric.
 
@@ -171,7 +171,7 @@ There are two thresholds in the product, not one:
 
 The backend one is compiled into the peer SQL as
 `if({pool} >= {min_peer_n}, …, NULL)` over every percentile
-(`compiler.rs:606-611`, `:1477`), where `{pool}` counts entities with a
+(`analytics/src/domain/metric_results/compiler.rs:606-610`, `:1518`), where `{pool}` counts entities with a
 non-null value. Its comment is explicit that this is deliberate placement:
 *"Enforced here, server-side, so every consumer inherits it."*
 
@@ -238,12 +238,12 @@ organization scope; `n` must differ". Three things block it:
 
 - **There is no scope selector.** A peer request carries exactly one field
   besides `view`: `cohort_key` (`MetricViewRequest2`).
-- **There is one cohort key.** All 59 definitions in `registry.yaml` declare
+- **There is one cohort key.** All 60 definitions in `registry.yaml` declare
   `peer_cohort_key: org_unit`, and validation refuses any value the definition
-  does not declare (`validation.rs:322-346`).
+  does not declare (`analytics/src/domain/metric_results/validation.rs:330`).
 - **Cohort membership is independent of what you asked for.** The cohort CTE
   selects everyone sharing the *target's* `cohort_id`
-  (`compiler.rs:541-547`), so `n` for a given person and metric is the same
+  (`analytics/src/domain/metric_results/compiler.rs:540-546`), so `n` for a given person and metric is the same
   number however many entities the request names.
 
 A test written to that oracle would fail for a reason unrelated to R12. What

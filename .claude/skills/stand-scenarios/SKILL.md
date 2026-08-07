@@ -95,7 +95,7 @@ anonymous HTTP client; refusal exists only inside the browser.*
 
 ### 5. What already tests this?
 
-Ask before designing, every time. `tests/stand/` carries roughly 120 tests and
+Ask before designing, every time. `tests/stand/` carries well over a hundred tests and
 several already prove SCENARIOS.md clauses without naming them — e.g. ADMIN
 "never gains data visibility implicitly from administrative rights" is
 `test_operator_sees_nobody_in_the_org_chart`.
