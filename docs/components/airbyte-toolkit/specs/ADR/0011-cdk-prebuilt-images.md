@@ -85,6 +85,7 @@ Chosen option: **Option B — Pre-built images, descriptor carries the full imag
 - **Bad**, because authors must write the full reference string (longer than just a tag). Mitigated by the fact that they'd otherwise have to write the registry URL somewhere else anyway.
 - **Neutral**, because `reconcile_definitions` for `type=cdk` + missing definition: split `cdk_image` → `source_definitions/create_custom` → register.
 - **Neutral**, because tag bump in `cdk_image` (same `dockerRepository`, new `dockerImageTag`) → reconcile sees drift → `ab_set_definition_image_tag(definition_id, new_tag)`. Pod for next sync pulls new tag.
+- **Neutral**, because a `dockerRepository` change cannot go through `source_definitions/update` (its payload carries only `dockerImageTag`). Reconcile migrates the definition instead, and only when the live one is still on `airbyte/source-declarative-manifest`: state is exported and persisted, the old sources and definition are deleted, the CDK image is registered under the freed name, and the source/connection stages rebuild and restore state. A difference between two CDK repositories keeps the previous WARN-and-skip — it is a registry move or a typo, not a change of connector kind. This is the path a connector rewritten from a declarative manifest to a CDK source takes, and it is automatic — the earlier behaviour (WARN and skip, awaiting a manual recreate) left the superseded connection syncing indefinitely while the repository claimed the connector had been rewritten.
 
 ### Confirmation
 
