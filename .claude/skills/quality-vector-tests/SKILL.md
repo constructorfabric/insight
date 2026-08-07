@@ -174,7 +174,7 @@ on the shared runtime.>
   (P95)", "Memory growth", "Critical findings". If the name is a sentence, it's a behaviour — find
   the quantity underneath it. Two or three plain words; no `snake_case`, no invented coinages like
   "reconciliation integrity index".
-- **Every How measured carries its denominator.** `n of m`, not "some". *59 of 59 catalog metrics*,
+- **Every How measured carries its denominator.** `n of m`, not "some". *60 of 60 catalog metrics*,
   *17 of 17 acceptance criteria*, *26 of 26 connectors*, *7 pages of a 3,000-record fixture*. If you
   can't state m, you haven't finished grounding — go count it.
 - **Every Target is a value.** A number, a percentage, a ratio, a threshold, or `0`. Never `?`,
@@ -236,7 +236,7 @@ on the shared runtime.>
 |---|---|---|---|
 | "API coverage - limits" | **API coverage** | happy path + oversized request + undrillable target, against the 17 acceptance criteria | **17/17**; oversized → 4xx + reason, never a partial 200 |
 | "pagination tests" | **Page errors** | page a 3,000-record fixture at page size 500 (7 pages) | **0** duplicates, **0** omissions, total exact |
-| "Cover all connector data" | **Connector coverage** | per-connector fixtures driven by the metric catalog | **26/26** connectors, **59/59** metric keys |
+| "Cover all connector data" | **Connector coverage** | per-connector fixtures driven by the metric catalog | **26/26** connectors, **60/60** metric keys |
 | "Latency for drill down requests" | **Latency (P95)** | 200 requests on the reference-org dataset, deepest lineage path | **< 1s** |
 | "Resource usage per service" | **Memory growth** | RSS at start vs end of a 30-min paged-request soak | **< 5%** |
 | "No critical issues in the ci pipeline" | **Critical findings** | Trivy `--severity CRITICAL` + Semgrep `--severity ERROR` counts, from the workflows in `.github/` | **0** |
@@ -246,16 +246,15 @@ These change; the point is that they are *countable*, and where.
 
 ```sh
 find src/ingestion/connectors -maxdepth 2 -mindepth 2 -type d | wc -l    # connectors (26)
-grep -oE 'metric_key: "[a-z0-9_.]+"' \
-  src/backend/services/analytics/src/domain/metric_definitions/builtin.rs \
-  | sort -u | wc -l                                                      # catalog metrics (59)
+grep -c '^  - metric_key:' \
+  src/backend/services/analytics/src/domain/metric_definitions/registry.yaml  # catalog metrics (60)
 grep -c "^CREATE VIEW insight\." \
   src/ingestion/scripts/migrations/20260422000000_gold-views.sql         # gold views (28)
-ls src/ingestion/tests/e2e/metrics/*.test.yaml | wc -l                   # metrics with a spec (36)
+ls src/ingestion/tests/e2e/metrics/*.test.yaml | wc -l                   # metrics with a spec (37)
 ```
 
 Those last two give the coverage ratio for "which metrics have a regression test" — specs over
-catalog metrics, 36/59 at the time of writing, not 36/36. The catalog count is the denominator.
+catalog metrics, 37/60 at the time of writing, not 37/37. The catalog count is the denominator.
 It is the natural target for a Reliability coverage check on any metric feature — `metric-test`
 authors those specs.
 

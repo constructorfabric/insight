@@ -31,7 +31,7 @@ drill-down must account for 42) has no check at all.
 - `insight.ic_drill` is an **empty stub view** (`SELECT '' … FROM system.one WHERE 0`) reached via
   an OData `drill_id eq` filter — the contract exists, the evidence doesn't. So the checks are
   written against the issue's requirement ids, not against code.
-- Countable denominators found in the repo: **26** connectors, **59** catalog metric keys across 5
+- Countable denominators found in the repo: **26** connectors, **60** catalog metric keys across 5
   families, **17** acceptance criteria in the issue itself.
 - Semgrep, Trivy and CodeQL run in this repo's CI (`.github/workflows/`), so a Security target is
   measurable here — and since the SPA lives in `src/frontend`, the same scanners cover it. There is
@@ -52,7 +52,7 @@ are measured on the reference-org dataset.
    - Metric: drilled record count ÷ displayed value.
    - How measured: for each catalog metric, run the metric query and the drill query with identical
      period, person and filters, and compare; derived values compare against their stated inputs.
-   - Target: **59/59** metrics match, **0** discrepancy.
+   - Target: **60/60** metrics match, **0** discrepancy.
 2. **Excluded records shown** *(BR-3)*
    - Metric: records the metric excluded that appear in its drill-down.
    - How measured: fixture seeded with bot, automation, migration-artefact and unattributed records.
@@ -71,7 +71,7 @@ are measured on the reference-org dataset.
 5. **Connector coverage** *(BR-18, BR-12)*
    - Metric: connectors and metrics that return evidence or an explicit lineage gap.
    - How measured: per-connector fixtures driven by the metric catalog.
-   - Target: **26/26** connectors, **59/59** metrics; **0** silently undrillable.
+   - Target: **26/26** connectors, **60/60** metrics; **0** silently undrillable.
 
 ### Performance
 6. **Latency (P95)**
@@ -97,7 +97,8 @@ are measured on the reference-org dataset.
 - Renamed behaviours into metrics the author can read at a glance: "pagination tests" → **Page
   errors**, "Cover all 25 connector data" → **Connector coverage**, "No critical issues in the ci
   pipeline" → **Critical findings**.
-- Gave every target a denominator counted from the repo (59, 25, 17, 3,000/500) instead of "all"
+- Gave every target a denominator counted from the repo (60 metrics, 26 connectors, 3,000/500)
+  — and corrected the issue's own "25 connectors" to the 26 the tree actually has — instead of "all"
   or "100%".
 - Moved "pagination tests" and "Coverage" from Efficiency to **Reliability** — paging correctness is
   a correctness claim; Efficiency kept the author's genuine run-cost item.
