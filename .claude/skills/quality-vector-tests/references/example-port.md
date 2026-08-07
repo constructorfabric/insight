@@ -1,5 +1,8 @@
 # Worked example — identity resolution (C#→Rust port)
 
+> **Snapshot.** Denominators here were counted when the example was written.
+> Re-take them with `../scripts/counts.sh`; the *form* is what this teaches.
+
 Port of the C# identity service to Rust, grown into a full identity epic. Shape: **port** → the
 core gate is parity (same data in, same people out). This example shows the vector spread across
 **all five** vectors, and the correction that grounding forced.

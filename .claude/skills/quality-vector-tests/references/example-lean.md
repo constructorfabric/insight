@@ -5,6 +5,11 @@ built** — no branch, no PR. This example shows three things the other two don'
 author's own draft scope, explicit `Not applicable` vectors, and how to handle a target whose
 tooling doesn't exist.
 
+> **Snapshot.** The denominators in this example were counted when it was
+> written. They are illustrative, not current — re-take them with
+> `../scripts/counts.sh`. What the example teaches is the *form*, which does
+> not move.
+
 ## Before (loose author draft)
 ```
 **Reliability** 
