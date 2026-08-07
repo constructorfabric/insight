@@ -59,7 +59,7 @@ sign_in(page, base_url, session_for("dev_lead"))
 ```
 
 Every `session_for` / `requires_seed` name is a key in the manifest's
-`fixtures{}` catalogue — read `deploy/seed/PROFILE.md` for the list. Guessing is
+`fixtures{}` catalogue — read `src/ingestion/tools/seed/PROFILE.md` for the list. Guessing is
 not a soft failure: an unknown name aborts collection for the whole session.
 
 `sign_in` drives the deployed OIDC chain with **no shortcut at any step**: an
@@ -150,7 +150,7 @@ every assertion below it vacuous.
 **No metric value while the golden set is empty** — which it is, by design.
 Hand-authoring an expected number is forbidden under `tests/stand/`; the
 criteria an expectation must meet before it is admitted are in
-`deploy/seed/golden_metrics.py`.
+`src/ingestion/tools/seed/insight_seed/golden_metrics.py`.
 What a journey *can* assert about numbers is their **honesty**:
 
 - a populated tile is `not_to_have_text("—")`

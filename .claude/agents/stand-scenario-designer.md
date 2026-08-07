@@ -26,7 +26,7 @@ question (`A1`…`G4`). Design only what is in scope.
 - Read the scenario block in full, plus the §1.1 reach row for every persona it
   names, plus every §5 rule it leans on.
 - Ground each persona in a seeded fixture name from
-  `deploy/seed/PROFILE.md`. Never an email, never a UUID.
+  `src/ingestion/tools/seed/PROFILE.md`. Never an email, never a UUID.
 - **Establish whether the surface exists before designing anything.** Check the
   route tables under `src/backend/services/{analytics,identity-resolution}/src/api/`,
   the catalogue in `tests/stand/api/operations.py`, and the SPA under

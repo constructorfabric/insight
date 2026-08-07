@@ -1,10 +1,10 @@
 # Personas → the seeded roster, and the reach matrix as a decision table
 
-SCENARIOS.md §1 names four personas. `deploy/seed` provisions a roster of 27
+SCENARIOS.md §1 names four personas. `src/ingestion/tools/seed` provisions a roster of 27
 people. This file is the join, plus the traps in it.
 
-Regenerate the roster view with `python3 deploy/seed/render_profile.py`; the
-authority is [`deploy/seed/PROFILE.md`](../../../deploy/seed/PROFILE.md) and
+Regenerate the roster view with `python3 -m insight_seed.render_profile`; the
+authority is [`src/ingestion/tools/seed/PROFILE.md`](../../../src/ingestion/tools/seed/PROFILE.md) and
 `manifest.json`, never this page.
 
 ## The mapping
@@ -89,7 +89,7 @@ filter on a screen**" (§S-9). Two separate claims, and they fail differently:
   (`test_two_leads_of_different_teams_see_different_people`,
   `test_subchart_of_someone_out_of_scope_is_404_not_403`).
 - **Upward** — `dev_lead` must not reach `ceo`. The seed supports it directly:
-  `deploy/seed/profiles.py` gives the CEO `parent_uuid=None` and every lead
+  `src/ingestion/tools/seed/insight_seed/profiles.py` gives the CEO `parent_uuid=None` and every lead
   `parent_uuid=CEO_UUID`, with each IC parented to their lead — a genuine
   three-level tree. No test names the upward case. That is a real gap.
 

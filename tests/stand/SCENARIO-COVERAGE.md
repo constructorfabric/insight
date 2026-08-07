@@ -79,7 +79,7 @@ closed.
 ### The lead's upward boundary
 
 **Source** SCENARIOS.md §S-9 LEAD, §1.1 LEAD *Never*. **Personas** `dev_lead`,
-`ceo`. **Oracle** the seeded org edges (`deploy/seed/profiles.py:269-314` — CEO
+`ceo`. **Oracle** the seeded org edges (`src/ingestion/tools/seed/insight_seed/profiles.py:269-314` — CEO
 `parent_uuid=None`, each lead parented to the CEO, each IC to their lead).
 
 **S9-L-03 — a lead asking for their own manager's subchart is refused, 404 not
@@ -266,7 +266,7 @@ correction surviving the next sync" needs a sync to run, and this stand declares
 | Possibly nothing | the negative case for §5 R10 | `MIN_PEER_N` counts *measured* members per metric, not headcount, so a sparsely-recorded metric may already fall below 5. Check before changing the seed |
 | `other_tenant_lead` has no activity and no org edge | any cross-tenant claim about *data* rather than *identity* | deliberate — they exist only so refusal has a caller |
 | `ingestion: no` | S-7 readiness, R3 lineage, R7 read-only-towards-sources, identity-correction survival | compose seeds silver/gold directly |
-| `golden_metrics` empty | every value assertion, in every scenario | deliberate; admission criteria in `deploy/seed/golden_metrics.py` |
+| `golden_metrics` empty | every value assertion, in every scenario | deliberate; admission criteria in `src/ingestion/tools/seed/insight_seed/golden_metrics.py` |
 | Which of the five grant kinds have distinct enforcement points | S9-E-02 | read the access model |
 
 ---

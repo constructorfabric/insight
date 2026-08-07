@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 
 `tests/stand/` tests a **deployed** Insight: real Keycloak login, the gateway
 BFF, pinned ghcr images for all four backend services and the frontend, over a
-compose stack seeded deterministically by `deploy/seed`.
+compose stack seeded deterministically by `src/ingestion/tools/seed`.
 
 ## The one rule that shapes everything
 
@@ -23,7 +23,7 @@ exists to catch.*
 Two consequences you will meet immediately:
 
 - **The stand must describe itself.** Every fixture name, capability and seeded
-  fact comes from `deploy/seed/manifest.json`. Nothing has a default to fall
+  fact comes from `src/ingestion/tools/seed/manifest.json`. Nothing has a default to fall
   back to; a missing or unparseable manifest aborts the session.
 - **Unsatisfiable data requirements abort at COLLECTION time**, once, listing
   every missing name — not on test #47.
@@ -75,7 +75,7 @@ like a product bug.
 | Fact | Flag | Falls back to |
 |---|---|---|
 | **Where the stand is** | `--base-url` (pytest-base-url) | `$PYTEST_BASE_URL`, the `base_url` ini key, `$INSIGHT_STAND_BASE_URL`, then the `GATEWAY_PORT` in an env file — `$INSIGHT_STAND_ENV_FILE` if set, else `.env.compose.test-stand`, **else `.env.compose`** |
-| **What it was seeded with** | `--stand-manifest <path>` | `$INSIGHT_STAND_MANIFEST`, then `deploy/seed/manifest.json` |
+| **What it was seeded with** | `--stand-manifest <path>` | `$INSIGHT_STAND_MANIFEST`, then `src/ingestion/tools/seed/manifest.json` |
 
 That last fallback is worth knowing: with no test-stand env file present, a run
 silently inherits a developer's own `.env.compose` — the exact mis-aim the rest
@@ -129,16 +129,16 @@ Three preconditions, each refused up front rather than failing opaquely later:
   `http://localhost:${GATEWAY_PORT}/auth/callback` while an in-namespace
   browser reaches the gateway at its *container* port; when they differ the
   login dies several steps later as an opaque IdP error.
-- `deploy/seed/manifest.json` must exist — seed first.
+- `src/ingestion/tools/seed/manifest.json` must exist — seed first.
 - The image must already be pulled. This mode never builds it.
 
 Test paths become **image-side** (`/tests/stand/ui`, not `tests/stand/ui`).
 
 ## Read the stand before writing against it
 
-[`deploy/seed/PROFILE.md`](../../../deploy/seed/PROFILE.md) is generated from
+[`src/ingestion/tools/seed/PROFILE.md`](../../../src/ingestion/tools/seed/PROFILE.md) is generated from
 the same builder that writes `manifest.json`, so the two cannot disagree.
-Regenerate with `python3 deploy/seed/render_profile.py`; `--check` verifies it
+Regenerate with `python3 -m insight_seed.render_profile`; `--check` verifies it
 without a database.
 
 Read it for three things:
@@ -150,7 +150,7 @@ Read it for three things:
   it.
 - **`golden_metrics`** — **empty by design.** No test under `tests/stand/`
   asserts an exact metric value, and none should until the table has entries.
-  The admission criterion (`deploy/seed/golden_metrics.py`) is that an
+  The admission criterion (`src/ingestion/tools/seed/insight_seed/golden_metrics.py`) is that an
   expectation must be *computable from the seed inputs*, not read back out of
   the gold layer. Reading a number off a running stand and asserting it back
   only proves that the code which produced it produced it.
@@ -165,7 +165,7 @@ Read it for three things:
 | `@pytest.mark.requires_seed(*names)` | **session aborts** at collection, listing every missing name and every test that needed it | the stand was seeded wrong |
 | `@pytest.mark.requires_ingestion` | that item **skips**, with a reason | a legitimate property of this stand |
 | `@pytest.mark.requires_service_principal` | that item **skips**, with a reason | the stand's manifest does not declare `service_principals` — i.e. its token listener is not published. Read the manifest, not your container |
-| `@pytest.mark.requires_catalogue(*parts)` | that item **skips**, with a reason | rows `deploy/seed/analytics.py` writes are absent |
+| `@pytest.mark.requires_catalogue(*parts)` | that item **skips**, with a reason | rows `src/ingestion/tools/seed/insight_seed/analytics.py` writes are absent |
 
 Two different resolutions on purpose: a missing *fixture* is a defect in how
 the stand was prepared; a missing *capability* is a fact about it.
