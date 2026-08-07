@@ -31,6 +31,8 @@ route:
   parentRef:
     name: insight
     namespace: insight-infra
+    # Target listener on the Gateway (e.g. https). Empty = all listeners.
+    sectionName: ""
   # REQUIRED. The single preview host. One host serves every experiment (one
   # Entra redirect URI, same-origin session cookie); only the path varies.
   host: ""

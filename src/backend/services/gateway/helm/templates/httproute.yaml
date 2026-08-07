@@ -18,6 +18,9 @@ spec:
   parentRefs:
     - name: {{ .Values.route.parentRef.name }}
       namespace: {{ .Values.route.parentRef.namespace }}
+      {{- with .Values.route.parentRef.sectionName }}
+      sectionName: {{ . }}
+      {{- end }}
   {{- if .Values.route.host }}
   hostnames:
     - {{ .Values.route.host | quote }}

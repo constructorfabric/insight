@@ -16,6 +16,8 @@ route:
   parentRef:
     name: insight
     namespace: insight-infra
+    # Target listener on the Gateway (e.g. https). Empty = all listeners.
+    sectionName: ""
   host: ""
   annotations: {}
 
