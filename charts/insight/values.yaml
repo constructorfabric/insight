@@ -501,6 +501,43 @@ analytics:
 # SCHEMA OWNER: identity-resolution's migrate initContainer applies the
 # migrations + first-admin bootstrap against `databaseName` — see ADR-0006
 # (service-owned migrations).
+# Git CLI Proxy — clone-based commit extraction for the nocode git connectors.
+# Airbyte-only consumer: no gateway route, no platform-config entry (other
+# services must not discover it), ingress restricted by its own NetworkPolicy.
+# Deploy is OFF by default: it costs a PVC and is only useful once a git
+# connector is configured to use it.
+gitCliProxy:
+  deploy: false
+  replicaCount: 1
+  image:
+    repository: ghcr.io/constructorfabric/insight-git-cli-proxy
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 200m, memory: 256Mi}
+    limits: {cpu: "2", memory: 2Gi}
+  persistence:
+    size: 50Gi
+    storageClass: ""
+  cache:
+    # Keep the budget 10-15% below persistence.size: the headroom absorbs
+    # transient packs and git temp files.
+    diskBudgetBytes: 46170898432
+    maxRepoBytes: 10737418240
+    defaultMaxStalenessSeconds: 300
+    heavyOpsConcurrency: 4
+    caCertPath: ""
+  caCertSecret: ""
+  # Composed by templates/secrets.yaml (carries the bearer token).
+  existingSecret: "insight-git-cli-proxy-config"
+  networkPolicy:
+    enabled: true
+    # Namespaces whose pods may call the proxy. Empty denies all ingress —
+    # set this to the namespace running Airbyte connector jobs.
+    allowedNamespaceLabels:
+      - key: kubernetes.io/metadata.name
+        values: []
+
 identityResolution:
   deploy: true
   replicaCount: 1

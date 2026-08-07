@@ -13,7 +13,7 @@
 # appVersion for an image that was not pushed publishes a chart that cannot pull.
 #
 # Env: BUILD_TAG (required), FULL_REBUILD (default false), and one flag per
-# service (ANALYTICS/AUTHENTICATOR/GATEWAY/IDENTITY_RESOLUTION/FRONTEND)
+# service (ANALYTICS/AUTHENTICATOR/GATEWAY/IDENTITY_RESOLUTION/GIT_CLI_PROXY/FRONTEND)
 # carrying the paths-filter output ('true' when that service changed).
 set -euo pipefail
 
@@ -26,6 +26,7 @@ services=(
   "AUTHENTICATOR:src/backend/services/authenticator/helm/Chart.yaml"
   "GATEWAY:src/backend/services/gateway/helm/Chart.yaml"
   "IDENTITY_RESOLUTION:src/backend/services/identity-resolution/helm/Chart.yaml"
+  "GIT_CLI_PROXY:src/backend/services/git-cli-proxy/helm/Chart.yaml"
   "FRONTEND:src/frontend/helm/Chart.yaml"
 )
 

@@ -2584,6 +2584,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "git-cli-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "cf-gears-api-gateway",
+ "cf-gears-authn-resolver",
+ "cf-gears-gear-orchestrator",
+ "cf-gears-grpc-hub",
+ "cf-gears-toolkit",
+ "cf-gears-types-registry",
+ "clap",
+ "hex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
