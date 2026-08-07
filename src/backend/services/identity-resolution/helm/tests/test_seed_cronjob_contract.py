@@ -50,6 +50,7 @@ JOBS = {
     "seed": ("30 6 * * *", "seed", "seed"),
     "sync": ("45 6 * * *", "sync", "sync"),
     "reconcile-attributes": ("0 7 * * *", "reconcile-attributes", "reconcileAttributes"),
+    "publish-policy": ("15 * * * *", "publish-policy", "publishPolicy"),
 }
 
 # Minimum viable subchart install (mirrors the umbrella's wiring).

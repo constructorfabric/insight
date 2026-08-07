@@ -22,6 +22,8 @@ pub const PERSONS_SEED_OP: &str = "persons-seed";
 pub const PERSONS_SYNC_OP: &str = "persons-sync";
 /// Operation type of the attribute-reconcile runner.
 pub const PERSON_ATTRIBUTES_RECONCILE_OP: &str = "person-attributes-reconcile";
+/// Operation type of the policy-snapshot publisher.
+pub const PERSON_ATTRIBUTES_POLICY_PUBLISH_OP: &str = "person-attributes-policy-publish";
 
 /// Lifecycle phase of an operation. DB column is a `VARCHAR(16)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
