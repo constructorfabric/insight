@@ -28,7 +28,7 @@ from .pages.person_view import PersonView
 
 #: The first column of the Task delivery table, so the Total cell opened below
 #: names this metric. The label is the server's.
-TASKS_CLOSED = "Tasks closed"
+TASKS_CLOSED = "Issues closed"
 
 #: A dialog opened for several metrics at once titles itself with all of their
 #: labels joined, and that joining is the assertion — no single label would do.
@@ -41,6 +41,14 @@ def test_multi_metric_block_offers_every_metric_in_one_dialog(
     base_url: str,
     session_for: Callable[[str], PersonaSession],
 ) -> None:
+    """Git output, because it is one of the few blocks plotting several metrics.
+
+    The choice of block is the whole precondition: a block's evidence covers
+    every metric it plots, so a single-metric block can only ever open a
+    single-metric dialog no matter what else the journey does. Git output plots
+    four, and all four advertise a drilldown capability, so the joined dialog
+    this asserts is reachable at all.
+    """
     persona = session_for("dev_lead")
     sign_in(page, base_url, persona)
 
@@ -48,12 +56,21 @@ def test_multi_metric_block_offers_every_metric_in_one_dialog(
     person.go(persona.person.uuid)
     expect(person.person_heading(persona.person.display_name)).to_be_visible()
 
-    tasks = person.open_domain("Task delivery")
-    expect(tasks.dialog).to_be_visible()
-    with evidence_selection(page) as opened_selection:
-        tasks.evidence_button().click()
+    block = person.open_domain("Git output")
+    expect(block.dialog).to_be_visible()
 
-    evidence = tasks.evidence_for(_JOINED_TITLE)
+    # The block plots four metrics but groups by repository, so the chart shows
+    # one at a time. Table presentation is what makes the block's evidence cover
+    # every metric it plots. Clicking an already-active toggle is a no-op, and
+    # the table's presence is what proves the state — the choice is persisted
+    # per block in localStorage, so it is established here, never assumed.
+    block.table_view().click()
+    expect(block.block_table()).to_be_visible()
+
+    with evidence_selection(page) as opened_selection:
+        block.evidence_button().click()
+
+    evidence = block.evidence_for(_JOINED_TITLE)
     expect(evidence.dialog).to_be_visible()
 
     selector = evidence.metric_selector()
