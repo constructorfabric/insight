@@ -402,7 +402,12 @@ spec:
           - name: insight-<env>-tls
       allowedRoutes:
         namespaces:
-          from: All
+          from: Selector
+          selector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [insight, insight-infra]
 ```
 
 cert-manager (installed with `config.enableGatewayAPI=true`) watches

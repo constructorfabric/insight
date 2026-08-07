@@ -11,6 +11,9 @@ service:
   type: ClusterIP
   port: 80
 
+# Standalone installs only. Do not enable together with the gateway's route
+# on the same Gateway and host: both match PathPrefix "/", and the older
+# route wins the Gateway API tie-break.
 route:
   enabled: false
   parentRef:

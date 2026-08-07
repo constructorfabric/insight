@@ -1222,11 +1222,12 @@ smtp:
   username: "insight@customer.com"
   password: "<sealed>"
 
-route:
-  parentRef:
-    name: insight
-    namespace: insight-infra
-  host: "insight.customer.com"   # TLS terminates at the Gateway listener
+gateway:
+  route:
+    parentRef:
+      name: insight
+      namespace: insight-infra
+    host: "insight.customer.com"   # TLS terminates at the Gateway listener
 
 bootstrap:
   tenantName: "Customer Corp"

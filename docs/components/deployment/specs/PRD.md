@@ -629,7 +629,7 @@ Every merge to `main` of `constructorfabric/insight` **MUST** publish a new umbr
 
 ## 11. Assumptions
 
-- Cluster operators (Cyberfabric SRE for gitops, customer SREs for external installs) provide a working default StorageClass and a Gateway API implementation with a Gateway for the chart's HTTPRoute to attach to; the Deployment subsystem does not provision either.
+- Cluster operators provide a working default StorageClass. External chart consumers also provide a Gateway API implementation with a Gateway for the chart's HTTPRoute to attach to; gitops environments get both (Envoy Gateway and the shared Gateway) from L0 Bootstrap.
 - Operators consuming the chart are comfortable with Helm values files, kubectl, and at least one of (helm, ArgoCD, Flux, Terraform Helm provider); the chart is not targeted at non-technical operators.
 - Frontend source is part of this repository, so `FRONTEND_MODE=dev` and `built` need no extra checkout; the default `ghcr` mode pulls the published frontend image, so a fresh laptop with only Docker can run the full stack without building it.
 - The bundled Airbyte and Argo Workflows versions remain viable for the next release cycle; upgrades to newer minors are handled in dedicated PRs with regression tests over ingestion workflows.

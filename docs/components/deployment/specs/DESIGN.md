@@ -485,7 +485,7 @@ Day-to-day backend / frontend work needs a fast loop with no Kubernetes overhead
 | mariadb | `mariadb.deploy`, `mariadb.host`, `mariadb.port`, `mariadb.database`, `mariadb.username`, `mariadb.passwordSecret.{name,key}` | Unified shape. | unstable |
 | redis | `redis.deploy`, `redis.host`, `redis.port`, `redis.passwordSecret.{name,key}` | Unified shape. | unstable |
 | redpanda | `redpanda.deploy`, `redpanda.brokers`, `redpanda.tls.*`, `redpanda.auth.sasl.*` | Unified shape. | unstable |
-| apiGateway | `apiGateway.replicaCount`, `apiGateway.image.*`, `apiGateway.oidc.*`, `apiGateway.authDisabled`, `apiGateway.route.{enabled,parentRef.name,parentRef.namespace,host}`, `apiGateway.proxy.routes` | Mandatory API Gateway service. | unstable |
+| gateway | `gateway.replicaCount`, `gateway.image.*`, `gateway.route.{enabled,parentRef.name,parentRef.namespace,host}`, `gateway.gateway.routes` | Mandatory gateway edge service (OIDC login lives on `authenticator.oidc.*`). | unstable |
 | analytics | `analytics.replicaCount`, `analytics.image.*` | Mandatory Analytics API service; reads DB/Redis/CH coordinates from auto-generated `insight-analytics-config` Secret. | unstable |
 | identityResolution | `identityResolution.deploy`, `identityResolution.replicaCount`, `identityResolution.image.*` | Optional Identity Resolution stub (off by default). | unstable |
 | frontend | `frontend.replicaCount`, `frontend.image.*`, `frontend.route.{enabled,parentRef.name,parentRef.namespace,host}`, `frontend.oidc.*` | Mandatory Frontend SPA. | unstable |

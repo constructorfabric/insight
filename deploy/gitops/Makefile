@@ -931,8 +931,8 @@ bootstrap-sealed-secrets: vpn-up kube-ctx
 bootstrap-status: vpn-up kube-ctx
 	@echo "=== envoy-gateway ==="
 	@helm --kube-context $(KUBE_CTX) -n $(ENVOY_GATEWAY_NAMESPACE) status $(ENVOY_GATEWAY_RELEASE) 2>/dev/null | head -3 || echo "(not installed)"
-	@kubectl --context $(KUBE_CTX) get gatewayclass 2>/dev/null
-	@kubectl --context $(KUBE_CTX) get gateway -A 2>/dev/null
+	@kubectl --context $(KUBE_CTX) get gatewayclass 2>/dev/null || echo "(no Gateway API CRDs)"
+	@kubectl --context $(KUBE_CTX) get gateway -A 2>/dev/null || true
 	@echo
 	@echo "=== cert-manager ==="
 	@helm --kube-context $(KUBE_CTX) -n $(CERT_MANAGER_NAMESPACE) status $(CERT_MANAGER_RELEASE) 2>/dev/null | head -3 || echo "(not installed)"
