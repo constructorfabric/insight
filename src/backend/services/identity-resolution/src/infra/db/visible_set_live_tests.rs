@@ -1,129 +1,12 @@
 //! INVARIANT: never `#[ignore]` these — the identity CI job runs `cargo test`
 //! without `--include-ignored`, so an ignored case silently stops running.
-//! INVARIANT: [`FIXTURE_REASON`] must differ from `e2e-seed` — the e2e seeder
-//! deletes by reason with no tenant filter and would wipe fixtures mid-run.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 use uuid::Uuid;
 
-use super::{connect_single, persons_repo, roles_repo, subchart_repo};
-
-const ENV_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
-const FIXTURE_REASON: &str = "visible-set-live-test";
-const SOURCE_TYPE: &str = "bamboohr";
+use super::test_fixture::fixture_or_skip;
+use super::{persons_repo, roles_repo, subchart_repo};
 
 type TestResult = anyhow::Result<()>;
-
-struct Fixture {
-    db: DatabaseConnection,
-    tenant: Uuid,
-    source_id: Uuid,
-}
-
-async fn fixture_or_skip() -> anyhow::Result<Option<Fixture>> {
-    let Ok(url) = std::env::var(ENV_VAR) else {
-        eprintln!("skip: set {ENV_VAR} to run");
-        return Ok(None);
-    };
-    Ok(Some(Fixture {
-        db: connect_single(&url).await?,
-        tenant: Uuid::now_v7(),
-        source_id: Uuid::now_v7(),
-    }))
-}
-
-impl Fixture {
-    async fn person(&self, email: &str) -> anyhow::Result<Uuid> {
-        let person_id = Uuid::now_v7();
-        self.exec(
-            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
-                 insight_tenant_id, value_id, person_id, author_person_id, reason)
-             VALUES ('email', ?, ?, ?, ?, ?, ?, ?)",
-            [
-                SOURCE_TYPE.into(),
-                bytes(self.source_id),
-                bytes(self.tenant),
-                email.into(),
-                bytes(person_id),
-                bytes(person_id),
-                FIXTURE_REASON.into(),
-            ],
-        )
-        .await?;
-        Ok(person_id)
-    }
-
-    async fn reports_to(&self, child: Uuid, parent: Uuid) -> TestResult {
-        self.exec(
-            "INSERT INTO org_chart (insight_tenant_id, insight_source_type, insight_source_id,
-                 child_person_id, parent_person_id, author_person_id, reason, valid_from)
-             VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6))",
-            [
-                bytes(self.tenant),
-                SOURCE_TYPE.into(),
-                bytes(self.source_id),
-                bytes(child),
-                bytes(parent),
-                bytes(parent),
-                FIXTURE_REASON.into(),
-            ],
-        )
-        .await
-    }
-
-    async fn grant(&self, viewer: Uuid, target: Option<Uuid>) -> TestResult {
-        self.exec(
-            "INSERT INTO visibility (visibility_id, insight_tenant_id, viewer_person_id,
-                 viewed_person_id, valid_from, author_person_id, reason)
-             VALUES (?, ?, ?, ?, UTC_TIMESTAMP(6), ?, ?)",
-            [
-                bytes(Uuid::now_v7()),
-                bytes(self.tenant),
-                bytes(viewer),
-                target.map_or(Value::Bytes(None), bytes),
-                bytes(viewer),
-                FIXTURE_REASON.into(),
-            ],
-        )
-        .await
-    }
-
-    async fn make_admin(&self, person_id: Uuid) -> TestResult {
-        self.exec(
-            "INSERT INTO person_roles (person_role_id, insight_tenant_id, person_id, role_id,
-                 valid_from, author_person_id, reason)
-             VALUES (?, ?, ?, ?, UTC_TIMESTAMP(6), ?, ?)",
-            [
-                bytes(Uuid::now_v7()),
-                bytes(self.tenant),
-                bytes(person_id),
-                bytes(roles_repo::ADMIN_ROLE_ID),
-                bytes(person_id),
-                FIXTURE_REASON.into(),
-            ],
-        )
-        .await
-    }
-
-    async fn visible(&self, viewer: Uuid, candidates: &[Uuid]) -> anyhow::Result<Vec<Uuid>> {
-        subchart_repo::visible_targets(&self.db, self.tenant, viewer, candidates, SOURCE_TYPE).await
-    }
-
-    async fn exec(&self, sql: &str, values: impl IntoIterator<Item = Value>) -> anyhow::Result<()> {
-        self.db
-            .execute(Statement::from_sql_and_values(
-                DbBackend::MySql,
-                sql,
-                values,
-            ))
-            .await?;
-        Ok(())
-    }
-}
-
-fn bytes(id: Uuid) -> Value {
-    id.as_bytes().to_vec().into()
-}
 
 #[tokio::test]
 async fn caller_without_reports_still_sees_themselves() -> TestResult {
@@ -188,17 +71,55 @@ async fn the_wildcard_echo_is_bounded_by_the_tenant() -> TestResult {
     };
     let ours = f.person("in-tenant@example.com").await?;
 
-    let other = Fixture {
-        db: f.db.clone(),
-        tenant: Uuid::now_v7(),
-        source_id: f.source_id,
-    };
+    let other = f.in_another_tenant();
     let foreign = other.person("other-tenant@example.com").await?;
 
     let got =
         persons_repo::persons_in_tenant(&f.db, f.tenant, &[ours, foreign, Uuid::now_v7()]).await?;
 
     assert_eq!(got, vec![ours], "only the caller-tenant person survives");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_person_exists_only_inside_their_own_tenant() -> TestResult {
+    // The existence probe behind `value_type='person_id'`: a person another
+    // tenant observed must read as unknown here, or the profile lookup would
+    // answer 404-vs-200 differently depending on data the caller cannot see.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let ours = f.person("exists@visible-set.test").await?;
+    let foreign = f
+        .in_another_tenant()
+        .person("foreign@visible-set.test")
+        .await?;
+
+    assert!(
+        persons_repo::person_exists(&f.db, f.tenant, ours).await?,
+        "a person the tenant observed exists"
+    );
+    assert!(
+        !persons_repo::person_exists(&f.db, f.tenant, foreign).await?,
+        "another tenant's person does not"
+    );
+    assert!(
+        !persons_repo::person_exists(&f.db, f.tenant, Uuid::now_v7()).await?,
+        "an id nobody observed does not"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_person_with_no_email_still_exists() -> TestResult {
+    // The person_id key exists to reach exactly this person; an existence probe
+    // that keyed on the email observation would report them missing.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let person = f.emailless_person().await?;
+
+    assert!(persons_repo::person_exists(&f.db, f.tenant, person).await?);
     Ok(())
 }
 

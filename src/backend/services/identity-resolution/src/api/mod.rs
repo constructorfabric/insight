@@ -5,6 +5,8 @@ pub(crate) mod datetime;
 pub mod error;
 mod gate;
 mod handlers;
+#[cfg(test)]
+mod http_live_tests;
 pub mod person_roles;
 pub mod roles;
 pub mod seed;
