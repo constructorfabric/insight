@@ -1,6 +1,6 @@
 ---
 name: stand-scenarios
-description: "Turn docs/product/SCENARIOS.md into testable claims for the deployed-stand suite — QA scenario design for Insight. Pick a scenario (S-1…S-10), a persona (EXEC/LEAD/IC/ADMIN), an invariant (§5 rules 1-12) or an Appendix A question (B1…G4), ground it in the seeded roster, and emit claims with an oracle, a layer and a priority that stand-api-test / stand-ui-test can implement. Use when the task is deciding WHAT to test: 'what should we test for S-9', 'design e2e scenarios from the product doc', 'which product rules are unverified', 'is the IC boundary covered', 'plan coverage for the reach matrix', 'convert the scenarios doc into tests'. Not for writing test code — that is stand-api-test and stand-ui-test."
+description: "Turn docs/product/SCENARIOS.md into testable claims for the deployed-stand suite — QA scenario design for Insight. Pick a scenario (S-1…S-10), a persona (EXEC/LEAD/IC/ADMIN), an invariant (§5 rules 1-12) or an Appendix A question (A1…G4), ground it in the seeded roster, and emit claims with an oracle, a layer and a priority that stand-api-test / stand-ui-test can implement. Use when the task is deciding WHAT to test: 'what should we test for S-9', 'design e2e scenarios from the product doc', 'which product rules are unverified', 'is the IC boundary covered', 'plan coverage for the reach matrix', 'convert the scenarios doc into tests'. Not for writing test code — that is stand-api-test and stand-ui-test; for scoping tests from a GitHub issue or an unbuilt feature use scope-feature-tests instead."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
@@ -48,14 +48,20 @@ is the deliverable. Check the route tables
 catalogue in `tests/stand/api/operations.py`, and the SPA
 (`src/frontend/src/`) before designing anything.
 
-Three verdicts, and only the first produces claims:
+Four verdicts, and only the first two produce claims:
 
 - **Built** — a route or a screen answers this today.
-- **Partial** — the mechanism exists but the specific guarantee does not (e.g.
-  peer views exist, but the cohort statistic is synthesised client-side).
-  Design the claim *and* record where the guarantee actually lives.
+- **Partial** — the mechanism exists but part of the guarantee does not. Design
+  the claim for the part that does *and* record where the rest lives.
 - **No surface** — nothing to test. Write one line saying so and stop.
   SCENARIOS.md Appendix C already concedes this for S-6.
+- **Not enforceable here** — a real rule, wrong suite. Name the suite that owns
+  it (the ingestion path, the chart install) rather than filing it as absent.
+
+Beware the near-miss that looks like *No surface*: "there is no cost
+**endpoint**" is true and irrelevant, because `ai.cost` is an ordinary metric on
+the ordinary routes. Ask whether the *figure* is reachable, not whether a
+dedicated route exists.
 
 ### 3. What is the oracle?
 
@@ -67,7 +73,7 @@ oracles, and one forbidden one.
 | **The manifest** | identity facts — who exists, who reports to whom, which team | `stand_manifest.fixture("development_ic").uuid` |
 | **The API response the UI just received** | anything on screen | the drilldown table matches the payload behind it |
 | **The endpoint contract** | status codes, media types, problem documents | 415 on a wrong content type |
-| **The code** | a rule whose only statement is an implementation | `MIN_COHORT = 4` |
+| **The code** | a rule whose only statement is an implementation | a suppression threshold that appears in no contract |
 | ~~A number you read off a running stand~~ | **never** | `golden_metrics` is empty by design |
 
 **No claim may assert an exact metric value.** Reading a number off the stand
@@ -95,9 +101,12 @@ several already prove SCENARIOS.md clauses without naming them — e.g. ADMIN
 `test_operator_sees_nobody_in_the_org_chart`.
 
 ```bash
-grep -rn "^def test_" tests/stand | sed 's/(.*//'
+grep -rn --include='*.py' "def test_" tests/stand
 grep -rn "subchart\|visible-persons\|metric-results" tests/stand/api
 ```
+
+§2 of `SCENARIO-COVERAGE.md` already attributes nine clauses to their tests —
+faster than grep for anything recorded there.
 
 Two blocking gates in the sibling rig also own territory — the metric×view gate
 (`src/ingestion/tests/e2e/lib/metric_coverage.py`) and the per-operation API
@@ -144,7 +153,15 @@ Oracle the manifest's org edges · API `GET /v1/subchart/{id}` · P0 · new
 
 - **IDs** — `S<n>-<persona letter>-<seq>` (`S9-L-03`, `S1-I-02`, `S8-A-01`),
   letters `E`/`L`/`I`/`A`. Cross-cutting invariants take `R<rule>-<seq>`
-  (`R10-01`). An ID never changes and is never reused.
+  (`R10-01`). An ID never changes and is never reused, so **read the issued
+  ones before minting a new one** — the register is §3 of
+  [`tests/stand/SCENARIO-COVERAGE.md`](../../../tests/stand/SCENARIO-COVERAGE.md),
+  and it is the only place they are recorded.
+- **Confidence** — close the metadata line with `[VERIFIED]` (confirmed against
+  the code *and* an existing test or `PROFILE.md`), `[SUPPORTED]` (one
+  authoritative source), or `[INFERRED]` (deduced; say what the implementer
+  must check first). Reach for `[INFERRED]` when you have read the endpoint but
+  not the code behind it — that is where wrong claims come from.
 - **Priority is blast radius**, not screen prominence. Assign on the first
   trigger that fires:
   - **P0** — a caller is served data they are not entitled to, or another
@@ -175,8 +192,18 @@ are plausible failures for a filter. The shipped `visible-persons` test names a
 visible person, an out-of-scope person, an out-of-tenant person and an
 unresolvable id in one request, for exactly this reason.
 
-**404, not 403, outside a scope.** Refusing with 403 confirms the row exists.
-Which code a boundary answers *is* the claim, not a detail of it.
+**Which code a refusal answers *is* the claim — and the two services differ.**
+Get this from the code, never from instinct:
+
+| Surface | Code | Reasoning it encodes |
+|---|---|---|
+| identity person-keyed routes (`/v1/subchart/{id}`, `/v1/profiles`) | **404** | a 403 would confirm the person exists, leaking the org's shape while denying the data |
+| the analytics visible-set gate (`/v1/metric-results`, `/v1/metric-drilldown`) | **403** | the caller may not ask about this person, and saying so leaks nothing they could not already infer |
+| identity admin routes, missing grant | **403** | a 404 would leak that the gate ran *after* the lookup |
+
+Writing a 404 claim against `/v1/metric-results` is the most likely mistake in
+this whole skill: it either fails, or gets mismarked `EXPECTED TO FAIL` and
+filed against a deliberate contract.
 
 **Would this pass on an empty stand?** If a view that rendered nothing would
 still satisfy the assertion, the claim asserts nothing. Prefer "every report
@@ -207,8 +234,17 @@ a test or a commit. The seeded roster is synthetic by construction
 6. **Draft claims**, negatives first.
 7. **Assign oracle, layer, priority**; cite code where it rests on one.
 8. **Self-check** against Design discipline above.
-9. **Hand off** — `stand-api-test` or `stand-ui-test` per claim; `file-bug-insight`
-   for anything marked `EXPECTED TO FAIL`.
+9. **Record it.** Claims land in
+   [`tests/stand/SCENARIO-COVERAGE.md`](../../../tests/stand/SCENARIO-COVERAGE.md)
+   — surface verdicts in §1, existing coverage in §2, claims in §3, and
+   product-doc-versus-product divergences in §4 (**Findings**, which is where
+   the most valuable output usually goes: a rule that is enforced in the wrong
+   place, or two enforcement points disagreeing on a number).
+10. **Hand off** — `stand-api-test` or `stand-ui-test` per claim;
+    `file-bug-insight` for anything marked `EXPECTED TO FAIL`.
+
+Its §2 also answers question 5 faster than grep does, for anything already
+attributed.
 
 For a full pass over several scenarios at once, dispatch the
 `stand-scenario-designer` agent — it does the reading in its own context and

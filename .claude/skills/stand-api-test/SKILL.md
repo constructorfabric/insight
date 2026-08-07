@@ -1,6 +1,6 @@
 ---
 name: stand-api-test
-description: "Write, fix, or review HTTP contract tests in tests/stand/api/ — the deployed-stand suite against a real gateway, real Keycloak sessions and real backend images. Covers the operation catalogue, which persona session to take, requires_seed markers, the scratch-resource policy, the hand-written vs generated response models, status-code discipline (404-not-403, 400 vs 415 vs 422) and the endpoint coverage gate. Use when adding or changing anything under tests/stand/api/, closing a coverage-gate gap, or turning a stand-scenarios claim into an API case. For browser journeys use stand-ui-test; for the in-process analytics rig under src/ingestion/tests/e2e/api/ use api-test instead — they are different suites with different rules."
+description: "Write, fix, or review HTTP contract tests in tests/stand/api/ — the deployed-stand suite against a real gateway, real Keycloak sessions and real backend images. Covers the operation catalogue, which persona session to take, requires_seed markers, the scratch-resource policy, the hand-written vs generated response models, status-code discipline (identity 404 vs analytics 403 outside a scope, 400 vs 415 vs 422) and the endpoint coverage gate. Use when adding or changing anything under tests/stand/api/, closing a coverage-gate gap, or turning a stand-scenarios claim into an API case. For browser journeys use stand-ui-test; for the in-process analytics rig under src/ingestion/tests/e2e/api/ use api-test instead — they are different suites with different rules."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
@@ -29,13 +29,14 @@ which a test's setup differs. Identity's answers depend on **who is asking**
 
 | Path | Holds |
 |---|---|
-| `api/conftest.py` | the `api` client, scratch fixtures, the leak detector, catalogue export |
+| `api/conftest.py` | the `api` client, the one scratch fixture (`scratch_saved_query`), the leak detector, catalogue export |
 | `api/operations.py` | every operation the gateway routes, named once |
 | `api/scratch.py` | the mutation policy and the resources that implement it |
 | `api/schemas/` | response models — see *Models* below |
 | `api/analytics/` | `/api/analytics`, one module per path group |
 | `api/identity/` | `/api/identity`, one module per concern |
 | `api/test_gateway.py` | the edge — 401 swept over every catalogued operation at once |
+| `*/test_request_contracts.py` | **route-table properties, as a table**: non-UUID path 400, wrong-media-type 415, off-schema body, admin-gate 403. Put them here, not in your new module |
 
 Extend the existing module for a path group; never add a parallel one.
 
@@ -68,11 +69,17 @@ Two consumers, one list:
 - `test_gateway.py` asserts 401 for **every** row.
 - the per-service modules assert what each operation does *with* a session.
 
-**Never write a per-module 401 test.** A 401 alone proves nothing — the gateway
+**Do not re-sweep 401 per operation.** A 401 alone proves nothing — the gateway
 rejects at the edge before routing, so a path that does not exist answers 401
 too. The refusal only means "refused" when the same url is shown to serve
 something, which is why the sweep and the service modules must build urls from
 one catalogue.
+
+A *single* premise-check per module is house style, though, and shipped:
+`test_an_unauthenticated_caller_never_reaches_any_of_this` — "proven per
+operation by `test_gateway.py`, and spot-checked here so this module carries its
+own reason for using a session at all." One per module, never one per
+operation.
 
 Adding an operation means adding a row to `ANALYTICS_OPERATIONS` or
 `IDENTITY_OPERATIONS`. Path parameters use the `SOME_ID` stand-in so the
@@ -110,15 +117,17 @@ so a wrongly-seeded stand aborts once naming every missing name.
 
 ## Status-code discipline
 
-**Bodies from the spec; status codes never.** Per-operation code lists are
-stamped uniformly by `.standard_errors` and describe nothing (#1669); the
-identity contract fails the same way by listing only `200`. Every expected code
-is asserted per test, from behaviour you read in the handler.
+**Bodies from the spec; status codes never.** Most per-operation code lists are
+stamped by `.standard_errors` and describe nothing (#1669) — three analytics
+operations escape the stamp and are still not trustworthy — and the identity
+contract fails the other way, listing only `200` for all 19 operations. Every
+expected code is asserted per test, from behaviour you read in the handler.
 
 | Situation | Code | Why it matters |
 |---|---|---|
-| resource outside the caller's scope | **404, not 403** | a 403 confirms the row exists — the refusal itself would leak the org's shape |
-| missing grant on an admin route | **403** | the route exists and the caller is known; nothing is leaked by saying so |
+| **identity** person route, target outside the caller's scope | **404** | a 403 confirms the person exists — the refusal itself would leak the org's shape |
+| **analytics** visible-set gate, person outside scope | **403** | the deliberate opposite choice; `/v1/metric-results` and `/v1/metric-drilldown` both answer 403 on the same seeded pair identity 404s on |
+| missing grant on an identity admin route | **403** | a 404 would leak that the gate ran *after* the lookup |
 | path segment is not a UUID | **400** | `Path<Uuid>` fails deserialization before any handler logic |
 | body with the wrong media type | **415** | refused on media type, not parsed |
 | body parses but is off-schema | **422** or 400 — assert what the extractor chooses | do not assume; probe |
@@ -131,6 +140,14 @@ in one read:
 assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
 ```
 
+## The client, in one place
+
+Everything a test needs comes from the top-level `insight_stand` package:
+`analytics_path(suffix)` / `identity_path(suffix)` to build a url,
+`ApiClient.get/post/put/delete(path, json_body=…, content=…, headers=…)`,
+and on the response `.status_code`, `.text`, `.content_type`,
+`.parse(Model)`.
+
 ## Models
 
 Read `api/schemas/__init__.py` before adding one — the halves are not
@@ -138,7 +155,8 @@ interchangeable:
 
 - `common.py`, `identity.py` — **hand-written**. Identity's committed contract
   is the stale .NET document; generating from it would record its errors as
-  fact. `identity.py` names its Rust source file for field.
+  fact. `identity.py` opens with a "Sources, field for field" table naming the Rust
+  DTO each model was transcribed from — keep it current when you add one.
 - `analytics.py`, `authenticator.py` — **GENERATED** by
   `tests/generate_schemas.py` from documents the services emit themselves and
   CI drift-gates. Committed, ruff-excluded, and never edited by hand. Verify
@@ -158,7 +176,11 @@ TRUNCATE. The exception has an exact shape:
 1. Create **through the API**, and delete. Never a database connection — that
    is a back door around the deployed path, which is the only thing this suite
    exercises.
-2. Every row carries `SCRATCH_PREFIX` plus the session's `RUN_TAG`.
+2. Every row carries `SCRATCH_PREFIX` plus the session's `RUN_TAG` — and it must
+   come from `scratch.scratch_name(tag)`, with the row registered via
+   `scratch.track(listing_path, id_field, value)`. Formatting the name by hand
+   satisfies the rule and silently blinds the detector, because the issued-name
+   registry is populated only inside `scratch_name`.
 3. **The metric catalog is out of bounds** — it is the metric gate's universe.
 4. Teardown deletes are unchecked: a delete-case test already removed its row.
 
@@ -173,8 +195,9 @@ diagnosed as flakiness.
   number.
 - **No minted tokens.** Sessions are won by driving the deployed OIDC chain.
   Minting is the rig's path and would mean never exercising the login.
-- **Nothing from `src/ingestion/tests/e2e/**`.** That rig is read-only
-  reference.
+- **Never import from or edit `src/ingestion/tests/e2e/**`.** Read it freely —
+  `coverage.py` and `tests/stand/meta/` are deliberate ports of rig files — but
+  the dependency runs one way.
 - **No production-derived data** (`AGENTS.md`). The roster is synthetic
   (`@company.nonpresent`); scratch names are `stand-scratch-<tag>`.
 
@@ -199,14 +222,31 @@ the gate's central rule and the reason `template` exists.
 3. Pick the caller — the choice is usually the test.
 4. Enumerate cases: success, each validation 400, path-parse 400, 404 unknown,
    415, and the scope/tenant refusals. One test per code.
-5. Declare `requires_seed` for every person named, plus any capability marker.
+5. Declare `requires_seed` for every person named, plus the capability marker if
+   one applies — `requires_service_principal` is **mandatory** for any
+   `/internal/*` case, or the test hard-fails on a stand that cannot reach the
+   token endpoint instead of skipping with a reason.
 6. Write the tests; extend the module docstring's route table.
 7. Run and check the ledger:
 
 ```bash
-./dev-compose.sh test-stand test tests/stand/api/identity/test_subchart.py
+# NOT a subset: the verb appends your path to a hardcoded `tests/stand`, and
+# pytest unions path arguments — so this runs the whole suite, browsers included.
+./dev-compose.sh test-stand test -k subchart
+
+# a genuine subset needs pytest directly
+uv run --project tests --frozen pytest tests/stand/api/identity/test_subchart.py
+
 uv run --project tests --frozen ruff check tests/
 uv run --project tests --frozen python tests/generate_schemas.py --check
+```
+
+Then reconcile the gate, which is what "closing a coverage gap" means:
+
+```bash
+python3 tests/lib/insight_stand/coverage.py \
+  --observed .artifacts/stand_observed_endpoints.json \
+  --catalogue .artifacts/stand_operations.json
 ```
 
 8. Hand a claim marked `EXPECTED TO FAIL` to `file-bug-insight` rather than

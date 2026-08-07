@@ -28,13 +28,26 @@ admin-gated route.
 
 That is SCENARIOS.md §1.1 running the other way: the doc states *administrative
 rights do not carry the right to see data*; the seed also enforces that
-*seniority does not carry administrative rights*. Both directions deserve a
-claim; only the first is currently covered
-(`test_admin_listing_is_403_for_a_realm_admin_without_the_grant`).
+*seniority does not carry administrative rights*. **Both directions are already
+covered**, so neither is a gap:
+
+| Direction | Proved by |
+|---|---|
+| admin rights ⇏ data visibility | `test_operator_sees_nobody_in_the_org_chart` |
+| seniority ⇏ admin rights | `test_admin_listing_is_403_for_a_realm_admin_without_the_grant` — its docstring: *"Holding `insight-admin` in the realm is NOT administrative authority."* |
+
+Read them the right way round. It is easy to cite the second for the first,
+because both are about the word "admin".
 
 Fixture consequence: use `realm_admin_session` for *a senior person's view of
 the organisation*, `admin_operator_session` for *administrative authority*.
 They are not interchangeable and the names are chosen to stop the confusion.
+
+Do not reason "realm admin ⇒ the CEO" from the roster: `admin_operator` holds
+`insight-admin` too, and sorts first. `realm_admin_session` reaches the CEO only
+because `resolve_by_realm_role` explicitly skips operator accounts — being
+outside the org chart they see nobody, which would make an admin-vs-lead
+visibility comparison pass while proving nothing.
 
 ### 2. `lead_session` deliberately excludes admins
 
@@ -62,8 +75,8 @@ Seven dimensions × four personas. The **Never** column is where the claims are.
 | **How far they see** | whole org | own team, no further | themselves | settings, not people's data | **Built** — `/v1/subchart`, `/v1/visible-persons`, `/v1/profiles`, `POST /v1/metric-results` (403 outside the visible set) |
 | **How far they zoom** | org → function → team → person | team → sub-team → group → own reports | themselves vs a median | n/a | **Built** — `GET /v1/subchart?depth=` |
 | **People by name** | anyone, where granted | their own reports | themselves | only while resolving who is who | **Built** — subchart, team view |
-| **Comparison** | between functions, teams, people | between groups in their team | against a median, never a named colleague | n/a | **Partial** — a `peer` view with `cohort_key` exists and `PeerValueDto` carries `n`/`median`/`p25`/`min`/`max`; see the cohort note below |
-| **Cost figures** | where granted | where granted | **no** | where granted | **No surface** — no cost endpoint |
+| **Comparison** | between functions, teams, people | between groups in their team | against a median, never a named colleague | n/a | **Built** — a `peer` view with `cohort_key`, `PeerValueDto` carrying `n`/`median`/`p25`/`min`/`max`, and server-side suppression below `MIN_PEER_N`. Detail in [invariants.md](./invariants.md) R10 and R12 |
+| **Cost figures** | where granted | where granted | **no** | where granted | **Built** — there is no cost *endpoint*, but `ai.cost` is a currency metric on the ordinary metric routes, so the IC "no" is directly testable |
 | **Conclusions and advice** | reads conclusions | reads + receives recommendations | **neither** | neither | **No surface** — S-2/S-3 not built |
 | **Never** | a default ranking of people · a number with no coverage/confidence | anything outside their team · a default ranking of their reports · group figures carried over from the org | any other person's activity · any team metric beyond the median · their own rank | admin rights ⇏ data visibility | mixed — the access "nevers" are the strongest claims available |
 
@@ -84,22 +97,13 @@ filter on a screen**" (§S-9). Two separate claims, and they fail differently:
 *API*, not merely be hidden by the SPA. Any claim of this family belongs at the
 API layer even where a user would meet it on a screen.
 
-### The cohort note — where the four-person rule actually lives
+### The cohort note
 
-SCENARIOS.md §5 rule 10 says a group figure is not shown below **four** people.
-`MIN_COHORT = 4` exists in `src/frontend/src/lib/insight/within-team-peer.ts:17`
-— the **frontend**. Its own comment records why: *"Peer stats aren't computed by
-the backend yet, so the shared members grid paints every cell neutral … a
-single, honest, client-side computation."*
-
-So today that threshold is enforced exactly where §5 rule 5 says a boundary must
-not be: as a filter a screen applies. Design claims accordingly — a UI claim can
-assert the suppression, an API claim cannot, and the divergence itself is worth
-recording rather than smoothing over.
-
-**Seed limit:** every seeded team has five ICs plus a lead, so no cohort on this
-stand falls below four. The suppression rule has no negative case here without a
-seed change. Say so rather than designing a claim that cannot run.
+Group-size suppression is enforced **server-side** (`MIN_PEER_N = 5`) as well as
+client-side (`MIN_COHORT = 4`), and the two numbers disagree with each other and
+with SCENARIOS.md's four. That is a live finding rather than a footnote, and it
+lives once, in [invariants.md](./invariants.md) under **R10** — read it there
+before designing any comparison claim.
 
 ## Persona availability per scenario
 

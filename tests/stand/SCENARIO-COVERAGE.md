@@ -27,7 +27,7 @@ user, P2 one control with a workaround. Not screen prominence.
 
 | Scenario | Verdict | Basis |
 |---|---|---|
-| **S-1** Metrics review | **Partial** | `POST /v1/metric-results`, `/v1/metric-definitions`, `/v1/metric-drilldown` all answer. Reach and honesty are assertable; **values are not** — `golden_metrics` is empty by design |
+| **S-1** Metrics review | **Partial** | `POST /v1/metric-results`, `/v1/metric-definitions`, `/v1/metric-drilldown` all answer, including the `peer` view and the `ai.cost` currency metric. Reach, honesty and suppression are assertable; **values are not** — `golden_metrics` is empty by design |
 | **S-2** Analysis and diagnosis | **No surface** | no conclusion, bottleneck, anomaly or forecast endpoint exists |
 | **S-3** Recommendations and validation | **No surface** | no recommendation object, no validation window |
 | **S-4** Dashboards and exploration | **Partial** | `/v1/queries` CRUD + run, `/v1/metric-drilldown` exist; saved/shared *views* are an Appendix C proposal, not a surface |
@@ -44,8 +44,8 @@ and they are already the best covered.
 
 The §5 invariants are triaged separately in
 [`.claude/skills/stand-scenarios/invariants.md`](../../.claude/skills/stand-scenarios/invariants.md):
-`Built` for R1, R5, R11 · `Partial` for R4, R9, R10, R12 · `No surface` for R2,
-R3, R6, R8 · not enforceable here for R7.
+`Built` for R1, R5, R10, R11 · `Partial` for R4, R6, R9 · `No surface` for R2,
+R3, R8 and for R12's team-vs-org contrast · not enforceable here for R7.
 
 ---
 
@@ -56,8 +56,8 @@ the next person to read the product doc will otherwise design them again.
 
 | Clause | Proved by |
 |---|---|
-| §S-1 ADMIN "Nothing by default · never gains data visibility implicitly from administrative rights" | `test_operator_sees_nobody_in_the_org_chart` |
-| §1.1 ADMIN "administrative rights do **not** carry the right to see data" | `test_admin_listing_is_403_for_a_realm_admin_without_the_grant` |
+| §S-1 / §1.1 ADMIN "never gains data visibility implicitly from administrative rights" | `test_operator_sees_nobody_in_the_org_chart` |
+| §1.1, the converse — seniority does **not** carry administrative rights | `test_admin_listing_is_403_for_a_realm_admin_without_the_grant` — *"Holding `insight-admin` in the realm is NOT administrative authority."* |
 | §S-9 LEAD "never sideways" | `test_two_leads_of_different_teams_see_different_people`, `test_subchart_of_someone_out_of_scope_is_404_not_403` |
 | §1.1 IC "How far they see: themselves" | `test_org_visibility_scope_differs_by_persona` (a plain member sees nobody in the org chart) |
 | §5 R5 "the boundary holds by construction" | `test_metric_results_403_for_a_person_out_of_scope`, `test_a_person_outside_the_callers_scope_is_404_not_403` |
@@ -173,12 +173,39 @@ two `/v1/metric-results` reads · P1 · new · `[SUPPORTED]`
 
 **Source** §5 R12.
 
-**R12-01 — the same metric and cohort at team scope and at organization scope
-return a different `n`.** `PeerValueDto` carries the cohort size, so the claim
-needs no hand-authored number — the assertion is that the two reads *disagree*,
-which is exactly what the rule says must happen. P1 · new · `[INFERRED]` —
-**blocked**: establish first whether the backend `peer` view returns populated
-statistics on this stand, or whether the SPA synthesises them (see §4).
+**R12-01 — `n` reflects the cohort, not the request: asking about one person
+and about five returns the same `n` for that person.** The obvious claim — the
+same cohort at team scope versus organization scope — **cannot be requested**:
+a peer request carries only `cohort_key`, every one of the 59 definitions
+declares `org_unit` and validation refuses any other value, and the cohort CTE
+selects on the *target's* `cohort_id` independently of `entity.ids`
+(`compiler.rs:541-547`). What survives is narrower and still worth having,
+because counting the requested entities is exactly how a naive implementation
+gets this wrong. API `POST /v1/metric-results` · P1 · new · `[VERIFIED]`
+
+**R10-01 — a cohort below `MIN_PEER_N` answers with `n` present and every
+percentile `NULL`, never a fabricated median.** The strongest available claim on
+the group-size rule, and an API one — see Finding 1. The pool counts *measured*
+members for that metric rather than headcount, so it may be reachable on the
+seeded roster without a seed change; check before assuming otherwise. API
+`POST /v1/metric-results` peer view · P0 · new · `[VERIFIED]`
+
+### Cost figures
+
+**Source** §1.1 IC *Never* ("Cost figures: **no**"), §5 R6.
+
+**S1-I-03 — an IC asking for `ai.cost` about a colleague is refused.** There is
+no cost *endpoint*, which is why this looked unreachable at first; `ai.cost` is
+an ordinary currency metric on the ordinary routes
+(`registry.yaml:227-241`). API `POST /v1/metric-results` · P0 · new ·
+`[VERIFIED]`
+
+**R6-01 — the `ai.cost` definition states the seat/usage separation rather than
+presenting one blended figure.** Its `explanation` already carries the wording —
+*"Includes usage a seat or subscription already covered, and excludes seat and
+subscription fees, so it is not the amount invoiced"* — so the claim is that it
+survives, not that it appears. API `GET /v1/metric-definitions` · P2 · new ·
+`[VERIFIED]`
 
 ### No default ranking
 
@@ -195,15 +222,26 @@ existing positive that every report is named, so the two together distinguish
 
 Things the pass surfaced that are decisions or defects, not test work.
 
-**1 · The four-person suppression rule is enforced by the screen.** §5 rule 10
-says a group figure is not shown below four people; §5 rule 5 says a boundary
-must hold *by construction, not as a filter a screen applies*. `MIN_COHORT = 4`
-lives in `src/frontend/src/lib/insight/within-team-peer.ts:17`, and its own
-comment records why: *"Peer stats aren't computed by the backend yet, so the
-shared members grid paints every cell neutral … a single, honest, client-side
-computation."* No equivalent constant was found under `src/backend/`. Any API
-consumer — and §S-5 promises the API is one — is outside that protection. This
-needs a product decision before it needs a test.
+**1 · Two group-size thresholds are enforced, and they disagree on the number.**
+§5 rule 10 says a group figure is not shown below **four** people. There are two
+enforcement points:
+
+| Where | Constant | Value | Below it |
+|---|---|---|---|
+| Backend | `MIN_PEER_N` — `analytics/src/domain/metric_results/compiler.rs:25` | **5** | `n` is still reported; `p25`/`median`/`p75`/`min`/`max` come back `NULL` |
+| Frontend | `MIN_COHORT` — `src/frontend/src/lib/insight/within-team-peer.ts:17` | **4** | the client-synthesised peer view yields no stats |
+
+The backend one is compiled into the peer SQL for every percentile
+(`compiler.rs:606-611`, `:1477`), and its comment is explicit that the placement
+is the point: *"Enforced here, server-side, so every consumer inherits it."* So
+§5 rule 5 ("by construction, not as a filter a screen applies") **is** satisfied
+— contrary to an earlier reading of this file.
+
+The live question is the number. A cohort of exactly four measured members gets
+client-side statistics and `NULL` API statistics: the same person sees a median
+on screen that the API declines to compute. Which of 4 or 5 is the product rule
+is a decision, and Appendix C already lists the threshold as needing
+confirmation.
 
 **2 · R11's exclusion half is unbuilt.** "Where a conclusion would rest on a
 defective metric, the metric is excluded by name" depends on conclusions (S-2),
@@ -225,11 +263,10 @@ correction surviving the next sync" needs a sync to run, and this stand declares
 
 | Blocker | Blocks | Note |
 |---|---|---|
-| No cohort below four people | the negative case for §5 R10 | every seeded team is five ICs + a lead; needs a small team in `deploy/seed/profiles.py` |
+| Possibly nothing | the negative case for §5 R10 | `MIN_PEER_N` counts *measured* members per metric, not headcount, so a sparsely-recorded metric may already fall below 5. Check before changing the seed |
 | `other_tenant_lead` has no activity and no org edge | any cross-tenant claim about *data* rather than *identity* | deliberate — they exist only so refusal has a caller |
 | `ingestion: no` | S-7 readiness, R3 lineage, R7 read-only-towards-sources, identity-correction survival | compose seeds silver/gold directly |
 | `golden_metrics` empty | every value assertion, in every scenario | deliberate; admission criteria in `deploy/seed/golden_metrics.py` |
-| Where peer statistics are computed | R12-01 | read the `peer` view handler and `withinCohortPeer` before implementing |
 | Which of the five grant kinds have distinct enforcement points | S9-E-02 | read the access model |
 
 ---

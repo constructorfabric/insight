@@ -103,8 +103,21 @@ either leaks a different thing, so name both.
 
 > seat-based and usage-based cost are never one figure
 
-**Verdict: No surface.** No cost endpoint. §S-1 "Not this" says the same thing
-from the product side.
+**Verdict: Partial — there is no cost *endpoint*, but there is a cost
+*metric*, and the rule is about figures.**
+
+`registry.yaml:227-241` defines `ai.cost` ("AI usage cost", `format: currency`,
+`entity_type: person`), served by `/v1/metric-definitions` and
+`/v1/metric-results` like any other metric.
+
+Its `explanation` states the separation this rule demands, in the product's own
+words: *"Includes usage a seat or subscription already covered, and excludes
+seat and subscription fees, so it is not the amount invoiced."* So the claim is
+assertable at `GET /v1/metric-definitions` today — the definition must carry
+that qualification rather than presenting a single blended figure.
+
+The onward half — cost *movement* preserved as a shift across teams — has no
+surface.
 
 ## R7 · Insight observes and advises; people act
 
@@ -146,25 +159,39 @@ oracle, only that the two reads agree.
 > a group figure is not shown below **four** people; a comparative conclusion is
 > not drawn below **eight** on each side
 
-**Verdict: Partial, and the interesting part is *where*.**
+**Verdict: Built server-side — and the interesting part is that the two
+enforcement points disagree on the number.**
 
-The four-person threshold is `MIN_COHORT = 4` in
-`src/frontend/src/lib/insight/within-team-peer.ts:17` — the **frontend**. Its
-comment states the reason: peer stats are not computed by the backend yet, so
-the grid synthesises them client-side. No equivalent constant was found under
-`src/backend/`.
+There are two thresholds in the product, not one:
 
-So the rule that protects an individual from being identifiable behind a group
-figure is currently enforced by the screen. R5 says a boundary must hold by
-construction; R10's threshold does not. **Record the divergence; do not design a
-test that asserts the API enforces it, because it does not.**
+| Where | Constant | Value | Behaviour below it |
+|---|---|---|---|
+| Backend | `MIN_PEER_N` (`analytics/src/domain/metric_results/compiler.rs:25`) | **5** | the peer view still reports `n`, but `p25`/`median`/`p75`/`min`/`max` come back `NULL` |
+| Frontend | `MIN_COHORT` (`src/frontend/src/lib/insight/within-team-peer.ts:17`) | **4** | the client-synthesised within-cohort peer view yields no stats (neutral cells) |
+
+The backend one is compiled into the peer SQL as
+`if({pool} >= {min_peer_n}, …, NULL)` over every percentile
+(`compiler.rs:606-611`, `:1477`), where `{pool}` counts entities with a
+non-null value. Its comment is explicit that this is deliberate placement:
+*"Enforced here, server-side, so every consumer inherits it."*
+
+So the strongest R10 claim is an **API** claim, not a UI one: a cohort below the
+threshold answers with `n` present and every percentile `NULL`, never a
+fabricated median. Design it.
+
+**The finding to record is the three-way disagreement on the number.**
+SCENARIOS.md §5 rule 10 says four; the frontend says four; the backend says
+five. A cohort of exactly four measured members gets client-side statistics and
+`NULL` API statistics — the same person sees a median on screen that the API
+declines to compute. Which number is the product rule is a decision, and
+Appendix C already lists the threshold as needing confirmation.
+
+**On the seed:** the pool is *measured members of the cohort for that metric*,
+not headcount, so a metric only some of a team records can fall below five with
+no seed change at all. Check before concluding the negative case is unreachable.
 
 The eight-per-side threshold belongs to comparative *conclusions* — S-2, no
 surface.
-
-**Seed limit:** every seeded team is five ICs plus a lead, so nothing on this
-stand falls below four. The negative case needs a seed change before it can be
-written at all.
 
 ## R11 · A metric with a known defect says so on the metric itself
 
@@ -203,17 +230,28 @@ is a narrower gap than "the rule is unimplemented", and worth stating as such.
 > different numbers at team level and at organization level, and why that is
 > correct rather than a discrepancy.
 
-**Verdict: Partial — and testable without asserting a value.**
+**Verdict: No surface for the team-vs-organization contrast. Do not design the
+obvious claim — it cannot be requested.**
 
-`PeerValueDto` carries **`n`**, the cohort size, alongside `median`/`p25`/`min`/
-`max`. That is the oracle: request the same metric and cohort at team scope and
-at organization scope, and `n` must differ. No hand-authored number is needed —
-the claim is that the two reads disagree, which is exactly what the rule says
-must happen.
+The tempting oracle is "ask for the same metric and cohort at team scope and at
+organization scope; `n` must differ". Three things block it:
 
-The complication is R10's: within-team peer statistics are synthesised
-client-side today, so where the figure is *computed* determines which layer can
-prove it. Read `withinCohortPeer` and the `peer` view handler before choosing.
+- **There is no scope selector.** A peer request carries exactly one field
+  besides `view`: `cohort_key` (`MetricViewRequest2`).
+- **There is one cohort key.** All 59 definitions in `registry.yaml` declare
+  `peer_cohort_key: org_unit`, and validation refuses any value the definition
+  does not declare (`validation.rs:322-346`).
+- **Cohort membership is independent of what you asked for.** The cohort CTE
+  selects everyone sharing the *target's* `cohort_id`
+  (`compiler.rs:541-547`), so `n` for a given person and metric is the same
+  number however many entities the request names.
+
+A test written to that oracle would fail for a reason unrelated to R12. What
+*is* assertable is narrower: that `n` reflects the cohort rather than the
+request — ask for one person and for five, and `n` must **not** change. That is
+worth having, because "the group figure is computed for the group in view" is
+exactly the property a naive implementation would get wrong by counting the
+requested entities.
 
 ---
 
@@ -226,10 +264,10 @@ prove it. Read `withinCohortPeer` and the `peer` view handler before choosing.
 | R3 lineage before attribution | No surface | — |
 | R4 no default ranking | Partial | UI |
 | R5 access by construction | Built | **API** |
-| R6 cost movement preserved | No surface | — |
+| R6 cost movement preserved | Partial — `ai.cost` exists; the movement half does not | API — `GET /v1/metric-definitions` |
 | R7 observes, does not act | Not enforceable here | — |
 | R8 clean room | No surface | — |
 | R9 role/activity separate axes | Partial | API (temporal half) |
-| R10 group-size thresholds | Partial; enforced client-side | UI only; seed blocks the negative case |
+| R10 group-size thresholds | Built server-side (`MIN_PEER_N`), and the two enforcement points disagree on the number | **API** |
 | R11 defect stated on the metric | Built (the exclusion half is not) | API — `GET /v1/metric-definitions` |
-| R12 group figure computed in view | Partial | API via `n`, pending where it is computed |
+| R12 group figure computed in view | No surface for the team-vs-org contrast; a narrower claim survives | API — `n` must not track the request |

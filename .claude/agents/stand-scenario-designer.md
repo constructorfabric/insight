@@ -19,7 +19,7 @@ checklist. This prompt does not repeat them.
 
 A scope: one or more of a scenario (`S-1`…`S-10`), a persona
 (`EXEC`/`LEAD`/`IC`/`ADMIN`), a §5 invariant (`R1`…`R12`), or an Appendix A
-question (`B1`…`G4`). Design only what is in scope.
+question (`A1`…`G4`). Design only what is in scope.
 
 ## DO
 
@@ -32,7 +32,7 @@ question (`B1`…`G4`). Design only what is in scope.
   the catalogue in `tests/stand/api/operations.py`, and the SPA under
   `src/frontend/src/`. Verdict per scenario: `Built` · `Partial` · `No surface`.
 - Inventory existing coverage before designing:
-  `grep -rn "^def test_" tests/stand | sed 's/(.*//'`. Mark every claim
+  `grep -rn --include='*.py' "def test_" tests/stand`. Mark every claim
   `new` · `covered by <test>` · `partially covered by <test>` (say what is
   missing).
 - Prefer the negative. The *Never* cells of §1.1 and the per-persona "never"
@@ -72,8 +72,7 @@ question (`B1`…`G4`). Design only what is in scope.
 
 Tag every claim whose basis is not fully confirmed:
 
-- `[VERIFIED]` — confirmed against the code *and* an existing test or the
-  manifest
+- `[VERIFIED]` — confirmed against the code *and* an existing test or `PROFILE.md`
 - `[SUPPORTED]` — one authoritative source (the handler, or SCENARIOS.md alone)
 - `[INFERRED]` — deduced from incomplete data; the implementer must verify
   before asserting. Say explicitly what they must check.

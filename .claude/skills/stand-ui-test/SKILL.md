@@ -1,9 +1,9 @@
 ---
 name: stand-ui-test
-description: "Write, fix, or review the browser journeys in tests/stand/ui/ — Playwright (Python, sync API) against a deployed Insight stand with a real Keycloak sign-in. Covers the governing UI-vs-API rule and how to justify a browser test in writing, accessibility-first locators (the shipped SPA has no data-testid), the page-object/flows split, manifest-derived expectations, and the assertions a journey may and may not make. Use when adding or changing anything under tests/stand/ui/, or turning a stand-scenarios claim into a browser journey. For HTTP contract tests use stand-api-test; for driving a browser by hand to look at something use drive-ui or playwright-cli."
+description: "Write, fix, or review the browser journeys in tests/stand/ui/ — Playwright (Python, sync API) against a deployed Insight stand with a real Keycloak sign-in. Covers the governing UI-vs-API rule and how to justify a browser test in writing, accessibility-first locators, the page-object/flows split, manifest-derived expectations, and the assertions a journey may and may not make. Use for any request to write, add, fix or review a committed browser test in this repository — 'add a Playwright test for X', 'the UI test is failing', 'turn this scenario into a browser journey' — and for anything under tests/stand/ui/. For HTTP contract tests use stand-api-test; playwright-cli is for driving a browser interactively at a prompt and for Playwright's own CLI — reach for it only when nothing will be committed under tests/stand/ui/; drive-ui is for looking at a stand by hand."
 disable-model-invocation: false
 user-invocable: true
-allowed-tools: Bash, Read, Write, Edit, Glob, Grep
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill, Task
 ---
 
 # Browser journeys on the stand (`tests/stand/ui/`)
@@ -43,6 +43,13 @@ model:
 "The UI should be covered too" is not a justification. If you cannot name the
 measurement, write an API test.
 
+**Take the measurement before writing the paragraph.** The shipped ones came
+from curling every SPA route anonymously, inspecting `window` either side of a
+transition, and counting locator matches per name — `drive-ui` or
+`playwright-cli` for in-browser probes, plain `curl` for what an HTTP client
+sees. Quote the number you got. A plausible paragraph with nothing behind it is
+exactly the failure this rule exists to prevent.
+
 ## Signing in
 
 ```python
@@ -50,6 +57,10 @@ from .flows import sign_in
 
 sign_in(page, base_url, session_for("dev_lead"))
 ```
+
+Every `session_for` / `requires_seed` name is a key in the manifest's
+`fixtures{}` catalogue — read `deploy/seed/PROFILE.md` for the list. Guessing is
+not a soft failure: an unknown name aborts collection for the whole session.
 
 `sign_in` drives the deployed OIDC chain with **no shortcut at any step**: an
 unauthenticated visit to `/` starts authorization-code+PKCE by itself, Keycloak
@@ -70,9 +81,8 @@ trap and its 401→503 loop are in `insight-stand`.
 
 ## Locators — accessibility-first, because there is no alternative
 
-The published SPA carries **no `data-testid` attributes at all** (re-verified
-across the whole shipped bundle). Roles and accessible names are the only stable
-handles:
+No `data-testid` was found on any view these journeys touch, so roles and
+accessible names are the stable handles:
 
 ```python
 page.get_by_role("dialog", name="Git output")
@@ -80,7 +90,20 @@ dialog.get_by_role("table").filter(has_text="PRs merged")
 page.get_by_role("link", name=display_name)
 ```
 
-Never a hashed CSS class, an nth-child chain, or a Tailwind utility selector.
+Two exceptions the shipped page objects rely on, so treat them as permitted
+rather than as violations to clean up:
+
+- **`data-slot` attributes** (`[data-slot='card']`, `card-title`, and the
+  `xpath=ancestor::*[@data-slot="card"][1]` walk in `person_view.py`). These are
+  structural attributes the component library emits, stable across restyles —
+  unlike a hashed class, which is what the rule is actually aimed at.
+- **Index chains inside a role-anchored container**, e.g.
+  `table.get_by_role("rowgroup").nth(1).get_by_role("row").first`. Position is
+  the only thing that distinguishes a header row from a data row; anchoring on
+  the table by role first is what keeps it honest.
+
+What stays out: hashed CSS classes, Tailwind utility selectors, and any chain
+that starts from the page rather than from a named element.
 
 **Locate by the thing that would break.** The sidebar carries every person in
 the org scope on every view, so a name-based locator passes against an empty
@@ -124,8 +147,10 @@ assert reports, "the manifest places nobody under this lead — the test would a
 That guard is not decoration. A derived expectation that comes back empty makes
 every assertion below it vacuous.
 
-**No metric value, ever.** `golden_metrics` is empty by design, and
-hand-authoring an expected number is forbidden anywhere under `tests/stand/`.
+**No metric value while the golden set is empty** — which it is, by design.
+Hand-authoring an expected number is forbidden under `tests/stand/`; the
+criteria an expectation must meet before it is admitted are in
+`deploy/seed/golden_metrics.py`.
 What a journey *can* assert about numbers is their **honesty**:
 
 - a populated tile is `not_to_have_text("—")`
@@ -164,16 +189,25 @@ Run `stand-test-auditor` over a new journey before considering it done.
 
 ```bash
 uv run --project tests playwright install chromium        # first time only
-./dev-compose.sh test-stand test tests/stand/ui/
-./dev-compose.sh test-stand test tests/stand/ui/test_login.py --headed
+
+# The verb appends your path to a hardcoded `tests/stand` and pytest unions path
+# arguments — so a path here does NOT narrow the run. Use -k, or pytest directly.
+./dev-compose.sh test-stand test -k login --headed
+
+uv run --project tests --frozen pytest tests/stand/ui                  # a real subset
+uv run --project tests --frozen pytest tests/stand/ui/test_login.py --headed
+
+# --image is the exception: the args replace the image's CMD, so this one narrows
 ./dev-compose.sh test-stand test --image ghcr.io/constructorfabric/insight-ui-tests:latest
 ```
 
 In `--image` mode test paths are **image-side** (`/tests/stand/ui`), and
 pytest-playwright's artefacts still land in `./test-results`.
 
-Browser journeys drive `ApiClient` for their setup, so they record into the same
-coverage ledger as the API suite.
+A ui-only run records **nothing** into the coverage ledger and writes no
+operation catalogue: only `ApiClient.request` records, and a journey takes a
+`PersonaSession` for its identity and password without ever building a client.
+Do not read a clean ledger after a ui run as coverage.
 
 ## Procedure
 

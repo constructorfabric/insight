@@ -1,6 +1,6 @@
 ---
 name: insight-stand
-description: "Operate the Insight compose stand and run the deployed-stand suite in tests/stand/ — bring it up, seed it, aim a run at it (local or remote), read what it was seeded with, and triage the failures that are the stand rather than the product. Use whenever a task means running, re-seeding, pointing, or debugging the stand: 'bring the stand up', 'run the stand tests', 'why did collection abort', 'these tests all skipped', 'the login loops', 'point the suite at another stand', 'what personas does the stand have'. This is the environment skill; stand-api-test and stand-ui-test own the test code, stand-scenarios owns what to test."
+description: "Operate the Insight compose stand and run the deployed-stand suite in tests/stand/ — bring it up (`./dev-compose.sh test-stand up`), seed it, aim a run at it (local or remote), read what it was seeded with, and triage the failures that are the stand rather than the product. Use whenever a task means running, re-seeding, pointing, or debugging the stand: 'bring the stand up', 'run the stand tests', 'test-stand up failed', 'why did collection abort', 'UsageError: stand manifest unusable', 'these tests all skipped', 'the login loops', 'scratch rows survived the run', 'point the suite at another stand', 'what personas does the stand have'. This is the environment skill; stand-api-test and stand-ui-test own the test code, stand-scenarios owns what to test, and drive-ui owns driving a browser at a stand by hand."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
@@ -34,7 +34,7 @@ Two consequences you will meet immediately:
 ./dev-compose.sh test-stand up      # generate env, up, seed, block until dbt built gold
 ./dev-compose.sh test-stand seed    # re-seed a running stand (default target: all)
 ./dev-compose.sh test-stand test    # run the suite (uv, on the host)
-./dev-compose.sh test-stand test tests/stand/api/   # args pass through to pytest, no `--`
+./dev-compose.sh test-stand test -k subchart        # args pass through to pytest, no `--`
 ./dev-compose.sh test-stand down    # stop AND remove volumes
 ```
 
@@ -44,18 +44,28 @@ Two consequences you will meet immediately:
 `origin/main` under `src/backend/`, since the pinned images would not be what
 ran.
 
+**A path argument does not narrow the run.** The verb appends it to a hardcoded
+`tests/stand` and pytest unions path arguments, so `test-stand test
+tests/stand/api/` runs the whole suite, browsers included. Use `-k` / `--ignore`,
+or run pytest directly against the path. (`--image` mode is the exception: there
+the arguments replace the image's own `CMD`.)
+
 `down` removes volumes. There is no lighter reset: **the stand is read-only by
 contract and reset by volume teardown, never by TRUNCATE.**
 
-Run pytest directly if you prefer — same thing:
+Run pytest directly when you need to — and note `--frozen`, which the verb also
+passes. It runs exactly the locked dependency set rather than re-resolving
+silently, so the host runner and the `ui-tests` image stay identical:
 
 ```bash
 uv sync --project tests
 uv run --project tests playwright install chromium   # first time only, for ui/
-uv run --project tests pytest tests/stand
+uv run --project tests --frozen pytest tests/stand
 ```
 
-Full verb reference: `./dev-compose.sh test-stand --help`.
+Verb reference: `./dev-compose.sh test-stand --help`. It omits `up --auth
+<keycloak|fakeidp>`, which exists — read `cmd_test_stand` if you need the
+full set.
 
 ## Aiming a run
 
@@ -64,14 +74,34 @@ like a product bug.
 
 | Fact | Flag | Falls back to |
 |---|---|---|
-| **Where the stand is** | `--base-url` (pytest-base-url) | `$PYTEST_BASE_URL`, the `base_url` ini key, then `$INSIGHT_STAND_BASE_URL` / the `GATEWAY_PORT` in the stand's own env file |
+| **Where the stand is** | `--base-url` (pytest-base-url) | `$PYTEST_BASE_URL`, the `base_url` ini key, `$INSIGHT_STAND_BASE_URL`, then the `GATEWAY_PORT` in an env file — `$INSIGHT_STAND_ENV_FILE` if set, else `.env.compose.test-stand`, **else `.env.compose`** |
 | **What it was seeded with** | `--stand-manifest <path>` | `$INSIGHT_STAND_MANIFEST`, then `deploy/seed/manifest.json` |
+
+That last fallback is worth knowing: with no test-stand env file present, a run
+silently inherits a developer's own `.env.compose` — the exact mis-aim the rest
+of this section exists to prevent.
 
 `conftest.pytest_configure` fills pytest-base-url's option only when the
 operator has not, so `--base-url` keeps its documented precedence and
 everything downstream (the `base_url` fixture, the run header's `baseurl:`
 line, `--verify-base-url`, every browser context) behaves as that plugin
 documents.
+
+### Aiming at a stand that is not the local one
+
+**Not through `test-stand test`.** That verb reads `GATEWAY_PORT` from the
+stand's env file and curl-preflights `http://localhost:<port>/` *before* it
+looks at any pytest argument, so it aborts with "gateway is not answering …
+Bring the stand up first" no matter what `--base-url` you pass. The message
+sends you to bring a stand up, which is the wrong move and an easy loop to get
+stuck in.
+
+Aim a run elsewhere by running pytest directly, or by exporting the variable:
+
+```bash
+uv run --project tests --frozen pytest tests/stand \
+  --base-url https://<stand> --stand-manifest <path>/manifest.json
+```
 
 ### The base-URL trap — read before pointing a containerised runner
 
@@ -93,8 +123,16 @@ So a containerised runner joins the gateway's network namespace and uses
 ./dev-compose.sh test-stand test --image ghcr.io/constructorfabric/insight-ui-tests:latest
 ```
 
-That mode never builds — pull first. Test paths become **image-side**
-(`/tests/stand/ui`, not `tests/stand/ui`).
+Three preconditions, each refused up front rather than failing opaquely later:
+
+- **`GATEWAY_PORT` must be the container port (8080).** The realm registered
+  `http://localhost:${GATEWAY_PORT}/auth/callback` while an in-namespace
+  browser reaches the gateway at its *container* port; when they differ the
+  login dies several steps later as an opaque IdP error.
+- `deploy/seed/manifest.json` must exist — seed first.
+- The image must already be pulled. This mode never builds it.
+
+Test paths become **image-side** (`/tests/stand/ui`, not `tests/stand/ui`).
 
 ## Read the stand before writing against it
 
@@ -126,11 +164,16 @@ Read it for three things:
 |---|---|---|
 | `@pytest.mark.requires_seed(*names)` | **session aborts** at collection, listing every missing name and every test that needed it | the stand was seeded wrong |
 | `@pytest.mark.requires_ingestion` | that item **skips**, with a reason | a legitimate property of this stand |
-| `@pytest.mark.requires_service_principal` | that item **skips**, with a reason | the authenticator's token listener is unreachable from this runner |
+| `@pytest.mark.requires_service_principal` | that item **skips**, with a reason | the stand's manifest does not declare `service_principals` — i.e. its token listener is not published. Read the manifest, not your container |
 | `@pytest.mark.requires_catalogue(*parts)` | that item **skips**, with a reason | rows `deploy/seed/analytics.py` writes are absent |
 
 Two different resolutions on purpose: a missing *fixture* is a defect in how
 the stand was prepared; a missing *capability* is a fact about it.
+
+Only two are carried by shipped tests today — `requires_seed` and
+`requires_service_principal`. `requires_ingestion` and `requires_catalogue` are
+registered and unused, so do not go looking for an example of them; they are
+the extension contract, not current practice.
 
 All four are registered in `tests/pyproject.toml` under
 `[tool.pytest.ini_options] markers`, with `--strict-markers` and `-ra` — that
@@ -176,22 +219,15 @@ grant bolted onto the CEO.
 
 ## Mutation policy
 
-The stand persists between runs. A leaked row does not break the run that
-leaked it — **it changes what the next run sees**, which is the kind of failure
-that gets diagnosed as flakiness.
+The stand persists between runs and is reset by volume teardown, never by
+TRUNCATE. A leaked row does not break the run that leaked it — **it changes
+what the next run sees**, which is the kind of failure that gets diagnosed as
+flakiness. The session-scoped `no_scratch_rows_survive` fixture fails a run
+that leaks one.
 
-1. A test may create rows **through the API**, and must delete them. Never a
-   database connection: that would hand every test a back door around the
-   deployed path.
-2. Every created row carries `SCRATCH_PREFIX` (`stand-scratch`) plus a
-   per-session `RUN_TAG`, so a leak is identifiable and attributable.
-3. **The metric catalog is out of bounds** — it is the metric-coverage gate's
-   universe.
-4. Teardown deletes are best-effort: a delete-case test already removed its
-   row, so a 404 in teardown is the expected outcome.
-
-Rule 2 exists to make rule 1 checkable: the session-scoped
-`no_scratch_rows_survive` fixture fails the run if anything survives it.
+The rules themselves live with the code that implements them
+(`tests/stand/api/scratch.py`) and in `stand-api-test`, which owns writing
+tests that create rows. What you need here is the triage row below.
 
 ## Triage — is this the stand or the product?
 
@@ -199,7 +235,8 @@ Rule 2 exists to make rule 1 checkable: the session-scoped
 |---|---|---|
 | `UsageError: requires_seed: manifest is missing fixtures…` | stand seeded without those names, or seeded with an older roster | `./dev-compose.sh test-stand seed` |
 | `UsageError: stand manifest unusable` | wrong `--stand-manifest`, or `up` never finished seeding | check the path the message quotes |
-| `UsageError: the stand endpoint was never resolved` | no address from any of the four sources | `--base-url`, or run from the repo root where the env file lives |
+| `cannot resolve the stand's base URL — refusing to assume one` (lists what it tried) | no address from any source | `--base-url`, or run from the repo root where the env file lives |
+| `gateway is not answering on http://localhost:<port>/` | you aimed `test-stand test` at a stand that is not local | the wrapper preflights localhost — run pytest directly instead |
 | Everything skips with "capability … not present" | expected on this stand (`ingestion: no`) | not a failure — read the reason |
 | Login loops, then 503 | **base URL is not `localhost`** — see the trap above | join the gateway netns, or use the published port |
 | `scratch resources survived the run` | a test created rows and did not delete them | find it by the `RUN_TAG` in the leaked names |
@@ -211,18 +248,27 @@ failure can always name the document behind it.
 
 ## Artefacts
 
-At session end the suite writes, **unconditionally** — a failing run's ledger
-is the more useful of the two, and making the gate's input depend on the
-suite's verdict is backwards:
+Both are written at session end regardless of the run's verdict — a failing
+run's ledger is the more useful of the two, and making the gate's input depend
+on the suite's result is backwards.
 
-- `.artifacts/stand_observed_endpoints.json` — the coverage ledger, every
-  client in the suite recording into it, browser journeys included.
-- `.artifacts/stand_operations.json` — the operation catalogue from
-  `tests/stand/api/operations.py`.
+- `.artifacts/stand_observed_endpoints.json` — the coverage ledger. Only
+  `ApiClient.request` records, so this is the **API suite's** ledger: the
+  browser journeys take a `PersonaSession` for its identity and password and
+  never build a client, so a ui-only run contributes nothing. (The root
+  conftest's docstring claims otherwise and is stale.)
+- `.artifacts/stand_operations.json` — the operation catalogue, written by
+  `api/conftest.py`. A ui-only run therefore produces no catalogue at all, and
+  the gate requires one.
 
-The gate (`tests/lib/insight_stand/coverage.py`) compares the two. It is a
-stdlib script over two JSON files: runnable on a machine with no stand, no uv
-and no browser.
+The gate compares the two. It is stdlib-only, so it runs on a machine with no
+stand, no uv and no browser:
+
+```bash
+python3 tests/lib/insight_stand/coverage.py \
+  --observed .artifacts/stand_observed_endpoints.json \
+  --catalogue .artifacts/stand_operations.json
+```
 
 ## Hand off
 
@@ -230,4 +276,6 @@ and no browser.
 - **An API case** → `stand-api-test`
 - **A browser journey** → `stand-ui-test`
 - **Looking at a UI by hand** → `drive-ui`, `playwright-cli`
+- **Designing what to cover** → `stand-scenario-designer` (agent)
+- **Checking a test proves its claim** → `stand-test-auditor` (agent)
 - **A real product defect found here** → `file-bug-insight`
