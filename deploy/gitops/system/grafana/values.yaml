@@ -33,8 +33,37 @@ persistence:
 initChownData:
   enabled: false
 
+# ─── Plugins ────────────────────────────────────────────────────────────
+# Downloaded from grafana.com by the chart's init container on every pod
+# start (there is no PVC — see above), so the pod needs egress to
+# grafana.com. On an air-gapped cluster, bake them into a custom image
+# instead and drop this block.
+plugins:
+  - grafana-clickhouse-datasource
+
+# ─── Datasource credentials ─────────────────────────────────────────────
+# The ClickHouse password comes from the `grafana-clickhouse` Secret, which
+# `make system-grafana` applies from
+# environments/<env>/sealed-secrets/insight-infra/ (the optional-secrets
+# helper globs grafana*-sealedsecret.yaml) and whose ClickHouse-side user is
+# created by system/grafana/provision-clickhouse-user.sh in the same target.
+# Grafana expands $CLICKHOUSE_PASSWORD in the provisioning file below, so no
+# secret lands in this repo. Both are optional: without them the ClickHouse
+# datasource simply fails its health check and the Loki dashboards carry on.
+envValueFrom:
+  CLICKHOUSE_USER:
+    secretKeyRef:
+      name: grafana-clickhouse
+      key: username
+      optional: true
+  CLICKHOUSE_PASSWORD:
+    secretKeyRef:
+      name: grafana-clickhouse
+      key: password
+      optional: true
+
 # Loki wired as the default datasource so Explore works out of the box.
-# Fixed uid so provisioned dashboards can reference it. Tempo/Mimir get
+# Fixed uids so provisioned dashboards can reference them. Tempo/Mimir get
 # added here in the tracing/metrics phases; `derivedFields` will then map
 # `trace_id` → a Tempo link for log↔trace correlation.
 datasources:
@@ -49,6 +78,30 @@ datasources:
         isDefault: true
         jsonData:
           maxLines: 1000
+
+      # The warehouse itself, for dashboards that chart data volume rather
+      # than pod behaviour — row counts bucketed by `_airbyte_extracted_at`,
+      # which no log or container metric can answer. Native protocol (9000)
+      # rather than HTTP (8123): both are exposed by svc/clickhouse, native
+      # is cheaper for the wide GROUP BY scans those panels do. The
+      # grafana_ro user is SELECT-only with readonly=2 and a matching 60s
+      # server-side timeout — see system/grafana/SECRETS.md.
+      - name: ClickHouse
+        uid: clickhouse
+        type: grafana-clickhouse-datasource
+        access: proxy
+        isDefault: false
+        jsonData:
+          host: clickhouse.insight-infra.svc.cluster.local
+          port: 9000
+          protocol: native
+          secure: false
+          username: $CLICKHOUSE_USER
+          tlsSkipVerify: false
+          dialTimeout: 10
+          queryTimeout: 60
+        secureJsonData:
+          password: $CLICKHOUSE_PASSWORD
 
 # ─── Dashboards as code ─────────────────────────────────────────────────
 # Provisioned into the "Insight" folder. Sources are LOG-based (LogQL over
