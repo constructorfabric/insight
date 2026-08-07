@@ -308,6 +308,26 @@ connectors:
         value: fake
       insight_tenant_id:
         value: fake
+  bitbucket-nocode:
+    path: git/bitbucket-nocode
+    config:
+      bitbucket_start_date:
+        value: "2020-01-01"
+      bitbucket_token:
+        value: fake
+      bitbucket_username:
+        value: fake
+      bitbucket_workspaces:
+        value:
+          - fake
+      git_proxy_token:
+        value: fake
+      git_proxy_url:
+        value: fake
+      insight_source_id:
+        value: fake
+      insight_tenant_id:
+        value: fake
   gitlab-nocode:
     path: git/gitlab-nocode
     config:
