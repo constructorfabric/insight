@@ -257,6 +257,55 @@ impl ReconcileLockGuard {
     }
 }
 
+/// Name of the GLOBAL advisory lock serializing policy-publish runs.
+const POLICY_PUBLISH_LOCK: &str = "person-attributes-policy-publish";
+
+/// RAII holder of the policy-publish advisory lock.
+pub struct PolicyPublishLockGuard {
+    conn: DatabaseConnection,
+}
+
+impl PolicyPublishLockGuard {
+    /// Try to take the policy-publish lock without waiting; `None` when
+    /// another run holds it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection or the query fails.
+    pub async fn try_acquire(database_url: &str) -> anyhow::Result<Option<Self>> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let conn = connect_single(database_url).await?;
+        let acquired: Option<i8> = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                "SELECT GET_LOCK(?, 0)",
+                [POLICY_PUBLISH_LOCK.into()],
+            ))
+            .await?
+            .map(|r| r.try_get_by_index::<Option<i8>>(0))
+            .transpose()?
+            .flatten();
+        if acquired == Some(1) {
+            Ok(Some(Self { conn }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Explicit best-effort release; dropping the session releases anyway.
+    pub async fn release(self) {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let _ = self
+            .conn
+            .execute(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                "SELECT RELEASE_LOCK(?)",
+                [POLICY_PUBLISH_LOCK.into()],
+            ))
+            .await;
+    }
+}
+
 /// Name of the cross-process advisory lock serializing schema migration runs.
 const MIGRATION_LOCK: &str = "identity_resolution_migrations";
 /// How long a second migrator waits for the lock before giving up (seconds).

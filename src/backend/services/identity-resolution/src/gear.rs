@@ -155,6 +155,30 @@ pub async fn run_reconcile_attributes(
     Ok(())
 }
 
+/// `publish-policy` subcommand: publish the current person-attribute policy
+/// snapshot to ClickHouse once and exit. Same shape as [`run_seed`].
+///
+/// # Errors
+///
+/// [`crate::publish_policy_runner::PublishRunError`] — the caller maps each
+/// variant to a distinct process exit code.
+pub async fn run_publish_policy(
+    app: &toolkit::bootstrap::AppConfig,
+) -> Result<(), crate::publish_policy_runner::PublishRunError> {
+    let cfg =
+        extract_gear_config(app).map_err(crate::publish_policy_runner::PublishRunError::Failed)?;
+    if cfg.database_url.is_empty() {
+        return Err(crate::publish_policy_runner::PublishRunError::Failed(
+            anyhow::anyhow!(
+                "`gears.identity-resolution.config.database_url` is required for publish-policy"
+            ),
+        ));
+    }
+    let summary = crate::publish_policy_runner::run(&cfg).await?;
+    tracing::info!(?summary, "policy-publish run finished");
+    Ok(())
+}
+
 impl RestApiCapability for IdentityResolutionGear {
     fn register_rest(
         &self,

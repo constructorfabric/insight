@@ -158,6 +158,11 @@ def seed_identity_persons(
     `value_effective` is what the macro reads (lowercased and trimmed on both
     sides of the join); `id` is the resolution tiebreak, so it must be distinct
     and stable per person or which row wins becomes arbitrary.
+
+    Each person also gets a `value_type='id'` binding row carrying a synthetic
+    source account, because that is what `person_account_assignments_current`
+    projects — an email-only log leaves that relation empty and every
+    account-keyed lookup silently resolves nothing.
     """
     truncate(client, "identity", "identity_persons")
 
@@ -167,6 +172,7 @@ def seed_identity_persons(
         "insight_source_type",
         "insight_source_id",
         "insight_tenant_id",
+        "value_id",
         "value_effective",
         "person_id",
         "author_person_id",
@@ -177,24 +183,46 @@ def seed_identity_persons(
     author = deterministic_uuid("identity_persons", "author")
     stamped = _dt.datetime(2026, 1, 1, tzinfo=_dt.UTC)
 
-    rows: list[tuple[object, ...]] = [
+    # The whole roster, not `_measured_persons`: the admin operator holds no
+    # activity but still has to RESOLVE, or any request naming them reads as
+    # an unknown person rather than a person with nothing.
+    emails: list[tuple[object, ...]] = [
         (
             index + 1,
             "email",
             "seed",
             source_id,
             tenant_uuid,
+            None,
             p.email.lower(),
             p.uuid,
             author,
             stamped,
             stamped,
         )
-        # The whole roster, not `_measured_persons`: the admin operator holds no
-        # activity but still has to RESOLVE, or any request naming them reads as
-        # an unknown person rather than a person with nothing.
         for index, p in enumerate(roster)
     ]
+
+    # `id` rows carry the account in `value_id`; ids continue past the email
+    # block so the resolution tiebreak stays distinct across both kinds.
+    bindings: list[tuple[object, ...]] = [
+        (
+            len(roster) + index + 1,
+            "id",
+            "seed",
+            source_id,
+            tenant_uuid,
+            f"seed-account-{index + 1}",
+            f"seed-account-{index + 1}",
+            p.uuid,
+            author,
+            stamped,
+            stamped,
+        )
+        for index, p in enumerate(roster)
+    ]
+
+    rows = emails + bindings
     return bulk_insert(client, "identity", "identity_persons", cols, rows)
 
 

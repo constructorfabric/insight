@@ -229,3 +229,47 @@ models:
           - not_null
           - accepted_values:
               values: ['UPSERT']
+
+  - name: person_account_assignments_current
+    description: >
+      Current account→person assignment: one row per stable source account,
+      carrying the person it is bound to now. A view over
+      identity.identity_persons, which is replaced by an atomic swap, so the
+      relation is always consistent with the latest published journal.
+      Latest-wins is keyed by account, so rebinding an account to another
+      person changes this row rather than leaving both bindings visible.
+      JOIN RECIPE for raw-keyed relations (the person-attribute claim
+      relations and the attribute policy snapshot): hash their raw tenant and
+      source-instance identifiers with the insight_uuid_from_raw macro, and
+      join source_account_id raw-to-raw — value_id is not hashed.
+    columns:
+      - name: insight_tenant_id
+        description: "Tenant UUID (raw tenant string hashed via insight_uuid_from_raw)"
+        tests:
+          - not_null
+      - name: insight_source_type
+        description: "Source system discriminator (bamboohr, ms-entra, …)"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Source instance UUID (raw instance string hashed via insight_uuid_from_raw)"
+        tests:
+          - not_null
+      - name: source_account_id
+        description: "Native account identifier, exactly as the source issued it"
+        tests:
+          - not_null
+      - name: person_id
+        description: "Canonical person the account currently resolves to"
+        tests:
+          - not_null
+      - name: assigned_at
+        description: "When the winning binding observation was recorded"
+        tests:
+          - not_null
+      - name: _synced_at
+        description: >
+          Publication stamp of the underlying journal snapshot, identical for
+          every row; consumers pin it as the assignment revision.
+        tests:
+          - not_null

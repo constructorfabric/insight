@@ -82,6 +82,23 @@ impl ValueMode {
     }
 }
 
+/// One definition with its current policy, flattened for publication.
+#[derive(Debug, Clone)]
+pub struct CurrentPolicyRow {
+    pub definition_id: Uuid,
+    pub insight_tenant_id: String,
+    pub insight_source_type: String,
+    pub insight_source_id: String,
+    pub source_field_id: String,
+    pub revision: i32,
+    pub label_override: Option<String>,
+    pub sensitivity_class: Option<String>,
+    pub grouping_enabled: bool,
+    pub comparison_enabled: bool,
+    pub value_mode: ValueMode,
+    pub retired: bool,
+}
+
 /// Outcome of registering one discovered field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterOutcome {
@@ -326,6 +343,44 @@ fn row_to_definition(row: &sea_orm::QueryResult) -> anyhow::Result<DefinitionWit
             actor_person_id: Uuid::from_slice(&actor)?,
             reason: row.try_get("", "reason")?,
         },
+    })
+}
+
+/// Every definition with its current policy, across all tenants, ordered
+/// deterministically so the published snapshot and its checksum are stable
+/// between runs that changed nothing.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub async fn current_policies(db: &DatabaseConnection) -> anyhow::Result<Vec<CurrentPolicyRow>> {
+    let stmt = Statement::from_string(
+        DbBackend::MySql,
+        format!(
+            "{SELECT_WITH_POLICY} ORDER BY d.insight_tenant_id, d.insight_source_type, \
+             d.insight_source_id, d.source_field_id"
+        ),
+    );
+    let rows = db.query_all(stmt).await?;
+    rows.iter().map(row_to_current_policy).collect()
+}
+
+fn row_to_current_policy(row: &sea_orm::QueryResult) -> anyhow::Result<CurrentPolicyRow> {
+    let id: Vec<u8> = row.try_get("", "definition_id")?;
+    let value_mode: String = row.try_get("", "value_mode")?;
+    Ok(CurrentPolicyRow {
+        definition_id: Uuid::from_slice(&id)?,
+        insight_tenant_id: row.try_get("", "tenant_id")?,
+        insight_source_type: row.try_get("", "source_type")?,
+        insight_source_id: row.try_get("", "source_instance")?,
+        source_field_id: row.try_get("", "field_id")?,
+        revision: row.try_get("", "revision")?,
+        label_override: row.try_get("", "label_override")?,
+        sensitivity_class: row.try_get("", "sensitivity_class")?,
+        grouping_enabled: row.try_get("", "grouping_enabled")?,
+        comparison_enabled: row.try_get("", "comparison_enabled")?,
+        value_mode: ValueMode::from_db(&value_mode)?,
+        retired: row.try_get("", "retired")?,
     })
 }
 

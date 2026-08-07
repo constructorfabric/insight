@@ -532,6 +532,87 @@
         ],
         "type": "object"
       },
+      "PolicyPublishListResponse": {
+        "description": "List response wrapper (typed for OpenAPI); `next_cursor` is declared but\nalways `null`, same non-paginating contract as the other journals.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PolicyPublishOperationResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "PolicyPublishOperationResponse": {
+        "description": "One reconcile operation's status.",
+        "properties": {
+          "author_person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "insight_tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operation_type": {
+            "type": "string"
+          },
+          "request": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {
+            "description": "On completion: the [`PublishSummary`] — published row count, content\nchecksum, and whether the run skipped an already-current snapshot.\n\n[`PublishSummary`]: crate::publish_policy_runner::PublishSummary",
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "operation_id",
+          "operation_type",
+          "status",
+          "insight_tenant_id",
+          "author_person_id",
+          "started_at"
+        ],
+        "type": "object"
+      },
       "PolicyResponse": {
         "description": "The current policy revision of one definition.",
         "properties": {
@@ -1172,6 +1253,192 @@
           }
         ],
         "summary": "List discovered person attributes with their current policy (admin)"
+      }
+    },
+    "/v1/person-attributes-policy-publish": {
+      "get": {
+        "operationId": "identity_resolution.person_attributes_policy_publish.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyPublishListResponse"
+                }
+              }
+            },
+            "description": "Operations"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List policy-publish operations"
+      }
+    },
+    "/v1/person-attributes-policy-publish/{id}": {
+      "get": {
+        "operationId": "identity_resolution.person_attributes_policy_publish.get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyPublishOperationResponse"
+                }
+              }
+            },
+            "description": "Operation status"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Poll one policy-publish operation"
       }
     },
     "/v1/person-attributes-reconcile": {

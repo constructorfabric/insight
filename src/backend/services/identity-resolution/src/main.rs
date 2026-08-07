@@ -16,6 +16,7 @@ mod domain;
 mod gear;
 mod infra;
 mod migration;
+mod publish_policy_runner;
 mod seed_runner;
 mod sync_runner;
 
@@ -95,6 +96,10 @@ enum Commands {
     /// 1 failed / 2 another run holds the lock / 3 refused by a guard
     /// (claims relation absent, or a broken claims contract).
     ReconcileAttributes,
+    /// Publish the registry's current person-attribute policy into ClickHouse
+    /// and exit. Same execution model as `sync` — Helm `CronJob` / manual Job.
+    /// Exit codes: 0 ok / 1 failed / 2 another run holds the lock.
+    PublishPolicy,
 }
 
 /// Exit codes of the `seed` / `sync` subcommands (one shared scheme),
@@ -148,6 +153,20 @@ async fn main() -> Result<()> {
                 }
                 Err(sync_runner::SyncRunError::Failed(e)) => {
                     tracing::error!(error = %format!("{e:#}"), "persons-sync failed");
+                    std::process::exit(EXIT_SEED_FAILED);
+                }
+            }
+        }
+        Commands::PublishPolicy => {
+            init_subcommand_logging();
+            match gear::run_publish_policy(&config).await {
+                Ok(()) => Ok(()),
+                Err(publish_policy_runner::PublishRunError::LockBusy) => {
+                    tracing::warn!("another policy-publish run holds the lock; exiting");
+                    std::process::exit(EXIT_SEED_LOCK_BUSY);
+                }
+                Err(publish_policy_runner::PublishRunError::Failed(e)) => {
+                    tracing::error!(error = %format!("{e:#}"), "policy publish failed");
                     std::process::exit(EXIT_SEED_FAILED);
                 }
             }

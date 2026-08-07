@@ -1,0 +1,102 @@
+{{- if .Values.publishPolicy.enabled }}
+# Scheduled policy publish: copies the registry's current per-attribute
+# policy into ClickHouse `identity.person_attribute_policy_snapshot`, the
+# relation the query path enforces policy from. Hourly and offset from the
+# reconcile run, so a field registered in the morning is publishable the same
+# hour and an admin's policy edit reaches analytics within the hour.
+#
+# Same image/config/secret wiring as the seed/sync CronJobs; the
+# `publish-policy` subcommand runs once and exits (exit codes: 0 ok /
+# 1 failed / 2 lock busy). An unchanged policy set short-circuits after
+# verifying the published snapshot still matches, so most runs write nothing.
+# Runs serialize on a MariaDB advisory lock, so `concurrencyPolicy: Forbid`
+# is belt-and-braces for cron-vs-cron only.
+#
+# Manual run:
+#   kubectl create job --from=cronjob/{{ include "insight-identity-resolution.fullname" . }}-publish-policy publish-manual-$USER
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "insight-identity-resolution.fullname" . }}-publish-policy
+  labels:
+    {{- include "insight-identity-resolution.labels" . | nindent 4 }}
+    app.kubernetes.io/component: policy-publish
+spec:
+  schedule: {{ .Values.publishPolicy.schedule | quote }}
+  concurrencyPolicy: {{ .Values.publishPolicy.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.publishPolicy.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.publishPolicy.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      # Retries for transient connect blips; the advisory lock + the
+      # snapshot-swap idempotency make a repeated run safe. The deadline caps
+      # a wedged pod well past the in-binary 5-minute publish timeout.
+      backoffLimit: {{ .Values.publishPolicy.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.publishPolicy.activeDeadlineSeconds }}
+      template:
+        metadata:
+          # NOT the shared selectorLabels: the Service selects on
+          # name+instance alone, and a job pod carrying them would enter the
+          # Service's endpoints (it listens on nothing).
+          labels:
+            app.kubernetes.io/name: identity-resolution-policy-publish
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: policy-publish
+        spec:
+          {{- with .Values.global }}
+          {{- with .imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- end }}
+          enableServiceLinks: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+          containers:
+            - name: policy-publish
+              image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["/app/identity-resolution"]
+              args: ["-c", "/app/config/insight.yaml", "publish-policy"]
+              volumeMounts:
+                - name: identity-resolution-config
+                  mountPath: /app/config/insight.yaml
+                  subPath: insight.yaml
+                  readOnly: true
+                # The gears host creates `server.home_dir` at boot; the
+                # subcommand never starts grpc-hub, so /app/data is the only
+                # writable path it needs under a read-only root.
+                - name: data
+                  mountPath: /app/data
+              envFrom:
+                # Same Secret as the deployment: database_url, clickhouse_*,
+                # tenant_default_id — everything the publish needs. The
+                # ClickHouse user needs CREATE/INSERT/EXCHANGE in the
+                # `identity` database (the snapshot-swap write path), which
+                # persons-sync already requires.
+                - secretRef:
+                    name: {{ required "existingSecret is required (umbrella provides `insight-identity-resolution-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
+              {{- with .Values.publishPolicy.tenantDefaultId }}
+              env:
+                # Explicit tenant for the JOURNAL row (the copy itself is
+                # tenant-agnostic). Same override semantics as the seed's.
+                - name: APP__gears__identity_resolution__config__tenant_default_id
+                  value: {{ . | quote }}
+              {{- end }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                {{- toYaml .Values.publishPolicy.resources | nindent 16 }}
+          volumes:
+            - name: identity-resolution-config
+              configMap:
+                name: {{ include "insight-identity-resolution.fullname" . }}-gears-config
+            - name: data
+              emptyDir: {}
+{{- end }}
