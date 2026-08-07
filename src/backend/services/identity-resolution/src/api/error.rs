@@ -15,6 +15,9 @@ pub struct PersonsSeedError;
 #[resource_error("gts.cf.insight.identity_resolution.persons_sync.v1~")]
 pub struct PersonsSyncError;
 
+#[resource_error("gts.cf.insight.identity_resolution.person_attribute.v1~")]
+pub struct PersonAttributeError;
+
 /// Shared admin-gate errors (401 no caller / 403 not admin), used by every
 /// admin-gated endpoint via [`crate::api::gate`].
 #[resource_error("gts.cf.insight.identity_resolution.access.v1~")]

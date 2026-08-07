@@ -20,6 +20,8 @@ use uuid::Uuid;
 pub const PERSONS_SEED_OP: &str = "persons-seed";
 /// Operation type of the persons→ClickHouse sync (`sync` subcommand).
 pub const PERSONS_SYNC_OP: &str = "persons-sync";
+/// Operation type of the attribute-reconcile runner.
+pub const PERSON_ATTRIBUTES_RECONCILE_OP: &str = "person-attributes-reconcile";
 
 /// Lifecycle phase of an operation. DB column is a `VARCHAR(16)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

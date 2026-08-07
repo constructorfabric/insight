@@ -1,10 +1,12 @@
 //! HTTP API layer — shared state, route table, extractors.
 
+pub mod attribute_reconcile;
 pub(crate) mod canonical_json;
 pub(crate) mod datetime;
 pub mod error;
 mod gate;
 mod handlers;
+pub mod person_attributes;
 pub mod person_roles;
 pub mod roles;
 pub mod seed;
@@ -19,7 +21,7 @@ use axum::Extension;
 use axum::Router;
 use axum::http::StatusCode;
 use sea_orm::DatabaseConnection;
-use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationBuilder};
 
 use crate::config::GearConfig;
 use crate::domain::profile;
@@ -148,6 +150,79 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(sync::list_persons_sync)
+        .register(router, openapi);
+
+    // Person-attribute registry (admin-gated; discovery is CLI-only, see
+    // `crate::attribute_reconcile_runner`).
+    let router = OperationBuilder::get("/v1/person-attributes")
+        .operation_id("identity_resolution.person_attributes.list")
+        .summary("List discovered person attributes with their current policy (admin)")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<person_attributes::PersonAttributeListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Person attributes",
+        )
+        .standard_errors(openapi)
+        .handler(person_attributes::list_person_attributes)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/person-attributes/{id}")
+        .operation_id("identity_resolution.person_attributes.get")
+        .summary("One person attribute with its current policy (admin)")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<person_attributes::PersonAttributeResponse>(
+            openapi,
+            StatusCode::OK,
+            "Person attribute",
+        )
+        .standard_errors(openapi)
+        .handler(person_attributes::get_person_attribute)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/v1/person-attributes/{id}/policy")
+        .operation_id("identity_resolution.person_attributes.put_policy")
+        .summary("Append the next policy revision of a person attribute (admin)")
+        .authenticated()
+        .no_license_required()
+        .json_request::<person_attributes::PolicyUpdateRequest>(openapi, "Next policy revision")
+        .json_response_with_schema::<person_attributes::PersonAttributeResponse>(
+            openapi,
+            StatusCode::OK,
+            "Person attribute with the appended policy",
+        )
+        .standard_errors(openapi)
+        .handler(person_attributes::put_person_attribute_policy)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/person-attributes-reconcile/{id}")
+        .operation_id("identity_resolution.person_attributes_reconcile.get")
+        .summary("Poll one attribute-reconcile operation")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<attribute_reconcile::AttributeReconcileOperationResponse>(
+            openapi,
+            StatusCode::OK,
+            "Operation status",
+        )
+        .standard_errors(openapi)
+        .handler(attribute_reconcile::get_attribute_reconcile)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/person-attributes-reconcile")
+        .operation_id("identity_resolution.person_attributes_reconcile.list")
+        .summary("List attribute-reconcile operations")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<attribute_reconcile::AttributeReconcileListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Operations",
+        )
+        .standard_errors(openapi)
+        .handler(attribute_reconcile::list_attribute_reconcile)
         .register(router, openapi);
 
     // Roles catalogue (admin-gated CRUD over the global `roles` table).
@@ -309,4 +384,46 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .standard_errors(openapi)
         .handler(visible_persons::filter_visible_persons)
         .register(router, openapi)
+}
+
+fn openapi_info() -> OpenApiInfo {
+    OpenApiInfo {
+        title: "Identity Resolution API".to_owned(),
+        version: "1.0.0".to_owned(),
+        description: Some(
+            "Identity governance service: person profiles, roles and \
+             visibility administration, persons-seed/sync journals, and the \
+             person-attribute registry. The API Gateway mounts this service \
+             at /api/identity-resolution."
+                .to_owned(),
+        ),
+        servers: Vec::new(),
+    }
+}
+
+/// Build the identity-resolution `OpenAPI` document **offline** — no
+/// `AppState`, DB, or HTTP listener. Backs the `openapi` subcommand
+/// (committed-doc regeneration + drift gate), reusing the exact
+/// `build_operations` route table the live gear serves, so the two can never
+/// diverge.
+///
+/// # Errors
+///
+/// Returns an error when the registry cannot assemble the document.
+pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
+    let openapi = OpenApiRegistryImpl::new();
+    let _ = build_operations(Router::new(), &openapi);
+    openapi
+        .build_openapi(&openapi_info())
+        .map_err(|e| anyhow::anyhow!("failed to build identity-resolution OpenAPI document: {e}"))
+}
+
+#[cfg(test)]
+mod openapi_tests {
+    /// The `openapi` subcommand's input: the document must build offline.
+    #[test]
+    fn openapi_document_builds_offline() {
+        let doc = super::openapi_document();
+        assert!(doc.is_ok(), "document must build: {:?}", doc.err());
+    }
 }

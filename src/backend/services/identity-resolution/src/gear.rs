@@ -130,6 +130,31 @@ pub async fn run_sync(
     Ok(())
 }
 
+/// `reconcile-attributes` subcommand: register warehouse-discovered
+/// person-attribute fields in the MariaDB registry once and exit. Same shape
+/// as [`run_seed`].
+///
+/// # Errors
+///
+/// [`crate::attribute_reconcile_runner::ReconcileRunError`] — the caller maps
+/// each variant to a distinct process exit code.
+pub async fn run_reconcile_attributes(
+    app: &toolkit::bootstrap::AppConfig,
+) -> Result<(), crate::attribute_reconcile_runner::ReconcileRunError> {
+    let cfg = extract_gear_config(app)
+        .map_err(crate::attribute_reconcile_runner::ReconcileRunError::Failed)?;
+    if cfg.database_url.is_empty() {
+        return Err(
+            crate::attribute_reconcile_runner::ReconcileRunError::Failed(anyhow::anyhow!(
+                "`gears.identity-resolution.config.database_url` is required for reconcile-attributes"
+            )),
+        );
+    }
+    let summary = crate::attribute_reconcile_runner::run(&cfg).await?;
+    tracing::info!(?summary, "attribute-reconcile run finished");
+    Ok(())
+}
+
 impl RestApiCapability for IdentityResolutionGear {
     fn register_rest(
         &self,

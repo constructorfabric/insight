@@ -99,6 +99,44 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "::error::Authenticator OpenAPI spec drift — $AUTHENTICATOR_SPEC is stale. Regenerate: (cd src/backend && cargo run -p authenticator --bin authenticator -- openapi) > dump.json && python3 scripts/ci/openapi_spec.py update --file $AUTHENTICATOR_SPEC --live-file dump.json"; fi
           exit "$rc"
 
+  # ─── identity-resolution — offline emit via the `openapi` subcommand ──────
+  identity-resolution:
+    name: Identity-resolution OpenAPI spec drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install protoc
+        # protobuf-compiler: grpc-hub -> prost-build (same host gear set as
+        # the analytics service).
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src/backend -> target
+          key: identity-resolution-openapi
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Generate the OpenAPI doc offline and drift-check it
+        env:
+          IDENTITY_RESOLUTION_SPEC: docs/components/backend/identity-resolution/openapi.json
+        run: |
+          # `identity-resolution openapi` builds offline and prints the doc; a
+          # build failure here should abort loudly under the runner's `set -e`.
+          (cd src/backend && cargo run --quiet -p identity-resolution -- openapi) > identity-resolution.openapi.live.json
+          # Relax errexit from here: we capture the drift-check rc ourselves,
+          # write the committed-vs-generated diff to the step summary, and emit a
+          # friendly ::error:: before exiting non-zero.
+          set +e
+          python3 scripts/ci/openapi_spec.py check --file "$IDENTITY_RESOLUTION_SPEC" --live-file identity-resolution.openapi.live.json | tee identity_resolution_openapi_drift.txt
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat identity_resolution_openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::Identity-resolution OpenAPI spec drift — $IDENTITY_RESOLUTION_SPEC is stale. Regenerate: (cd src/backend && cargo run -p identity-resolution -- openapi) > dump.json && python3 scripts/ci/openapi_spec.py update --file $IDENTITY_RESOLUTION_SPEC --live-file dump.json"; fi
+          exit "$rc"
+
   # ─── the models generated FROM those documents ────────────────────────────
   # `tests/stand/api/schemas/` is generated from the same committed documents
   # the two jobs above gate, so it belongs in this workflow rather than beside

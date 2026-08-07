@@ -22,6 +22,7 @@
 pub mod bootstrap;
 pub mod entities;
 pub mod ops_repo;
+pub mod person_attributes_repo;
 pub mod person_roles_repo;
 pub mod persons_log_repo;
 pub mod persons_repo;
@@ -200,6 +201,57 @@ impl SyncLockGuard {
                 DbBackend::MySql,
                 "SELECT RELEASE_LOCK(?)",
                 [SYNC_LOCK.into()],
+            ))
+            .await;
+    }
+}
+
+/// Name of the GLOBAL advisory lock serializing attribute-reconcile runs —
+/// same lifetime semantics as [`SyncLockGuard`], distinct name so a reconcile
+/// never contends with a sync.
+const ATTRIBUTE_RECONCILE_LOCK: &str = "person-attributes-reconcile";
+
+/// RAII holder of the attribute-reconcile advisory lock.
+pub struct ReconcileLockGuard {
+    conn: DatabaseConnection,
+}
+
+impl ReconcileLockGuard {
+    /// Try to take the reconcile lock without waiting; `None` when another
+    /// run holds it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection or the query fails.
+    pub async fn try_acquire(database_url: &str) -> anyhow::Result<Option<Self>> {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let conn = connect_single(database_url).await?;
+        let acquired: Option<i8> = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                "SELECT GET_LOCK(?, 0)",
+                [ATTRIBUTE_RECONCILE_LOCK.into()],
+            ))
+            .await?
+            .map(|r| r.try_get_by_index::<Option<i8>>(0))
+            .transpose()?
+            .flatten();
+        if acquired == Some(1) {
+            Ok(Some(Self { conn }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Explicit best-effort release; dropping the session releases anyway.
+    pub async fn release(self) {
+        use sea_orm::{ConnectionTrait, DbBackend, Statement};
+        let _ = self
+            .conn
+            .execute(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                "SELECT RELEASE_LOCK(?)",
+                [ATTRIBUTE_RECONCILE_LOCK.into()],
             ))
             .await;
     }

@@ -10,6 +10,7 @@
 //! external id).
 
 mod api;
+mod attribute_reconcile_runner;
 mod config;
 mod domain;
 mod gear;
@@ -83,6 +84,17 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Print the OpenAPI document to stdout and exit. Built offline from the
+    /// route table — no database, no HTTP listener, no config needed. Used to
+    /// regenerate docs/components/backend/identity-resolution/openapi.json and
+    /// to drift-check it in CI.
+    Openapi,
+    /// Register person-attribute fields discovered in the warehouse claim
+    /// relation into the MariaDB registry and exit. Same execution model as
+    /// `seed`/`sync` — Helm `CronJob` / manual Job. Exit codes: 0 ok /
+    /// 1 failed / 2 another run holds the lock / 3 refused by a guard
+    /// (claims relation absent, or a broken claims contract).
+    ReconcileAttributes,
 }
 
 /// Exit codes of the `seed` / `sync` subcommands (one shared scheme),
@@ -140,7 +152,35 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Openapi => print_openapi(),
+        Commands::ReconcileAttributes => {
+            init_subcommand_logging();
+            match gear::run_reconcile_attributes(&config).await {
+                Ok(()) => Ok(()),
+                Err(attribute_reconcile_runner::ReconcileRunError::LockBusy) => {
+                    tracing::warn!("another attribute-reconcile run holds the lock; exiting");
+                    std::process::exit(EXIT_SEED_LOCK_BUSY);
+                }
+                Err(attribute_reconcile_runner::ReconcileRunError::Guard(msg)) => {
+                    tracing::error!(%msg, "attribute reconcile refused by guard");
+                    std::process::exit(EXIT_SEED_GUARD);
+                }
+                Err(attribute_reconcile_runner::ReconcileRunError::Failed(e)) => {
+                    tracing::error!(error = %format!("{e:#}"), "attribute reconcile failed");
+                    std::process::exit(EXIT_SEED_FAILED);
+                }
+            }
+        }
     }
+}
+
+/// Print the OpenAPI document built offline by [`api::openapi_document`]. No
+/// config or backends are touched, and no logging subscriber is initialized
+/// on this path, so stdout stays pure JSON.
+fn print_openapi() -> Result<()> {
+    let doc = api::openapi_document()?;
+    println!("{}", serde_json::to_string_pretty(&doc)?);
+    Ok(())
 }
 
 /// Plain stdout logging for the `migrate` / `seed` subcommands. The bootstrap
