@@ -612,10 +612,20 @@ system-alloy: vpn-up kube-ctx
 		$(call _system_values_args,alloy) \
 		--wait --timeout 5m
 
+# Grafana's ClickHouse datasource needs a ClickHouse login, and this is the
+# only place that knows Grafana is being installed at all — the umbrella must
+# not provision it, because ingestion ships to every instance and Grafana does
+# not. Runs after the sealed secrets land (it reads the password from one) and
+# before helm, so the datasource authenticates on first start. Idempotent, and
+# it degrades to a warning rather than failing the install when ClickHouse is
+# external or the password has not been sealed yet.
 .PHONY: system-grafana
 system-grafana: vpn-up kube-ctx
 	@$(call _helm_repo_add,grafana,https://grafana.github.io/helm-charts)
 	$(call _apply_optional_system_secrets,grafana)
+	@echo "$(C_GRN)→$(C_RST) provisioning grafana_ro in ClickHouse"
+	@NAMESPACE=$(NS_INFRA) KUBE_CTX=$(KUBE_CTX) \
+		bash system/grafana/provision-clickhouse-user.sh
 	helm upgrade --install $(GRAFANA_RELEASE) $(GRAFANA_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(GRAFANA_VERSION) $(HELM_EXTRA_FLAGS) \
