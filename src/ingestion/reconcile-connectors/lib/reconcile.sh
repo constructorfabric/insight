@@ -216,6 +216,25 @@ reconcile_classify_change() {
 _RECONCILE_MANIFEST_REPO="airbyte/source-declarative-manifest"
 
 # ---------------------------------------------------------------------------
+# reconcile_find_custom_definition_id <workspace_id> <connector_name>
+#
+# The id of the Insight-managed (custom, per ADR-0009) source definition holding
+# this connector's name, or empty. Emits nothing but the id, so it is safe to
+# read with a command substitution — unlike anything that logs, since log_line
+# writes its JSON to stdout.
+# ---------------------------------------------------------------------------
+reconcile_find_custom_definition_id() {
+  local workspace_id="$1" connector_name="$2"
+  ab_list_definitions "${workspace_id}" | python3 -c '
+import sys, json
+target = sys.argv[1]
+for d in json.load(sys.stdin):
+    if d.get("name") == target and d.get("custom") is True:
+        print(d.get("sourceDefinitionId", "")); break
+' "${connector_name}"
+}
+
+# ---------------------------------------------------------------------------
 # reconcile_migrated_state_file <source_name>
 #
 # Path of the state backup taken when reconcile_migrate_definition_kind tore a
@@ -347,7 +366,6 @@ for s in json.load(sys.stdin):
 
   reconcile__log CHANGE "${connector_name}" \
     "migrated to cdk definition ${new_def_id} (${docker_repo}:${docker_tag}); source and connection are rebuilt by the later stages"
-  printf '%s' "${new_def_id}"
 }
 
 # ---------------------------------------------------------------------------
@@ -407,16 +425,7 @@ reconcile_definitions() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-none
   local workspace_id
   workspace_id="$(ab_workspace_id)"
-  local defs_json
-  defs_json="$(ab_list_definitions "${workspace_id}")"
-  # custom is True: Insight namespace separation per ADR-0009.
-  definition_id="$(printf '%s' "${defs_json}" | python3 -c '
-import sys, json
-target = sys.argv[1]
-for d in json.load(sys.stdin):
-    if d.get("name") == target and d.get("custom") is True:
-        print(d.get("sourceDefinitionId", "")); break
-' "${connector_name}")"
+  definition_id="$(reconcile_find_custom_definition_id "${workspace_id}" "${connector_name}")"
 
   if [[ -z "${definition_id}" ]]; then
     if [[ "${type}" == "nocode" ]]; then
@@ -593,10 +602,20 @@ for d in json.load(sys.stdin):
         printf 'republish\tpatch\t%s\n' "${definition_id}"
         return 0
       fi
-      local migrated_def_id
-      if ! migrated_def_id="$(reconcile_migrate_definition_kind \
-            "${connector_name}" "${definition_id}" "${cdk_image}")"; then
+      # Called directly, never through a command substitution: it logs, and
+      # log_line writes JSON to stdout, so capturing it would swallow the log
+      # lines into the value. The new id is read back from Airbyte afterwards,
+      # which also confirms the definition really does hold the name now.
+      if ! reconcile_migrate_definition_kind \
+            "${connector_name}" "${definition_id}" "${cdk_image}"; then
         reconcile__log ERROR "${connector_name}" "definition migration failed"
+        return 1
+      fi
+      local migrated_def_id
+      migrated_def_id="$(reconcile_find_custom_definition_id "${workspace_id}" "${connector_name}")"
+      if [[ -z "${migrated_def_id}" ]]; then
+        reconcile__log ERROR "${connector_name}" \
+          "migration reported success but no definition holds the name — the next pass republishes it as a first publish"
         return 1
       fi
       _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
