@@ -1,0 +1,12 @@
+name: code-ranker
+on:
+  pull_request:
+  push:
+jobs:
+  code-ranker:
+    # Pinned to an immutable commit SHA (supply-chain hardening); the trailing
+    # `# v1` lets Dependabot bump the pin when a new release moves the v1 tag.
+    uses: code-ranker-com/actions/.github/workflows/report.yml@6f07a2fc5eaf4265723fc15fbdc62d8fe46f2915 # v1
+    permissions:
+      # Only permission needed — reads your code to analyze it.
+      contents: read
