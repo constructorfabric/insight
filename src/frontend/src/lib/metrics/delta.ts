@@ -46,11 +46,28 @@ export function computeDelta(
  * direction. Neutral (no better/worse direction) and a zero move both read
  * as `neutral` — a change with no judgment attached.
  */
+/**
+ * Moves too small to be worth a colour.
+ *
+ * A period boundary nudges most counters a little, and a badge that paints
+ * −1% in the same red as −70% teaches the reader that red means nothing. The
+ * number is still shown — only the alarm is withheld.
+ */
+const TRIVIAL_PERCENT_CHANGE = 2;
+const TRIVIAL_PP_CHANGE = 1;
+
+export function isTrivialDelta(delta: MetricDelta): boolean {
+  return (
+    Math.abs(delta.value) <=
+    (delta.kind === "pp_change" ? TRIVIAL_PP_CHANGE : TRIVIAL_PERCENT_CHANGE)
+  );
+}
+
 export function deltaStatus(
   delta: MetricDelta,
   direction: MetricDirection,
 ): Status {
-  if (direction === "neutral" || delta.value === 0) return "neutral";
+  if (direction === "neutral" || isTrivialDelta(delta)) return "neutral";
   const favorable =
     direction === "lower_is_better" ? delta.value < 0 : delta.value > 0;
   return favorable ? "good" : "bad";

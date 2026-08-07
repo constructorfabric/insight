@@ -1,6 +1,7 @@
 # BambooHR Connector
 
-Employee directory, leave requests, and field metadata from BambooHR via API Key authentication.
+Employee directory, leave requests, and field metadata from BambooHR via API key
+authentication. Python CDK source.
 
 ## Prerequisites
 
@@ -22,9 +23,8 @@ metadata:
     insight.cyberfabric.com/source-id: bamboohr-main
 type: Opaque
 stringData:
-  bamboohr_api_key: ""                      # BambooHR API key
-  bamboohr_domain: ""                       # Subdomain (e.g. "acme")
-  bamboohr_employees_custom_fields: "[]"    # Optional: JSON array of custom field aliases
+  bamboohr_api_key: ""    # BambooHR API key
+  bamboohr_domain: ""     # Subdomain (e.g. "acme")
 ```
 
 ### Fields
@@ -33,18 +33,11 @@ stringData:
 |-------|----------|-------------|
 | `bamboohr_api_key` | Yes | BambooHR API key (Account > API Keys) |
 | `bamboohr_domain` | Yes | BambooHR subdomain (e.g. `acme` from `acme.bamboohr.com`) |
-| `bamboohr_employees_custom_fields` | No | JSON array of custom field aliases (e.g. `["customTeam", "customProjects"]`) |
 | `bamboohr_start_date` | No | Leave requests history start date, ISO format (default: `2020-01-01`) |
 
-> **Note on `username` / `password` spec fields.**
-> The Airbyte Builder auto-generates `username` and `password` properties in
-> `connection_specification` because the connector uses `BasicHttpAuthenticator`.
-> These are managed automatically by the authenticator config:
-> `username` = `bamboohr_api_key`, `password` = `"x"` (hardcoded).
-> Do **not** set them in the K8s Secret or credentials file -- they are not
-> user-provided values.
-
 ### Automatically injected
+
+Set by `reconcile-connectors` / `connect.sh`, must NOT be in the Secret:
 
 | Field | Source |
 |-------|--------|
@@ -53,22 +46,70 @@ stringData:
 
 ### Local development
 
-Create `src/ingestion/secrets/connectors/bamboohr.yaml` (gitignored) from the example:
-
 ```bash
 cp src/ingestion/secrets/connectors/bamboohr.yaml.example src/ingestion/secrets/connectors/bamboohr.yaml
 # Fill in real values, then apply:
 kubectl apply -f src/ingestion/secrets/connectors/bamboohr.yaml
 ```
 
+Run the connector directly against a config file:
+
+```bash
+pip install -e src/ingestion/connectors/hr-directory/bamboohr
+source-bamboohr spec
+source-bamboohr check --config config.json
+source-bamboohr discover --config config.json
+```
+
 ## Streams
 
 | Stream | Description | Sync Mode |
 |--------|-------------|-----------|
-| `employees` | Employee directory via custom report API | Full refresh |
-| `leave_requests` | Time-off requests (from 2020-01-01) | Full refresh |
+| `employees` | Employee directory via the custom report API | Full refresh |
+| `leave_requests` | Time-off requests from `bamboohr_start_date` to today | Full refresh |
 | `meta_fields` | Field metadata (names, types, aliases) | Full refresh |
+
+### Employee fields
+
+Each sync reads `meta/fields` and requests every non-deprecated field it names in
+the custom report, so customer-defined fields are collected without configuration.
+The bronze columns declared by the `employees` stream are always requested, whatever
+the field metadata returns; every field the report answers with — declared column or
+not — is preserved in `raw_data`, which is what change detection and the field-level
+history read.
+
+BambooHR caps a custom report at 400 fields and answers a larger request with a
+`400`, so an account defining more than that is read in several requests and the
+rows merged on employee id.
+
+Requested fields the API key cannot read are dropped from the report silently, with
+the call still succeeding. The connector compares the report's declared columns
+against what it asked for, but only holds the bronze columns to it: those are named
+by alias and come back under it, and publishing one empty would clear identity
+values downstream, so a missing one stops the sync. The rest cannot be checked that
+way — field metadata lists entries a custom report will not return, and a field
+asked for by numeric id comes back under an indexed `<id>.N` key — so an apparent
+gap there says more about BambooHR's naming than about access. A report that
+declares no columns at all is treated as unverifiable rather than as loss.
+
+`SENSITIVE_FIELDS` in `source_bamboohr/streams/employees.py` is the exception:
+government identifiers, protected demographics, personal contact details, street
+address, photos, social profiles, and compensation amounts are never requested and
+are dropped from `raw_data` if the report returns them anyway. The list is fixed in
+the connector and covers standard BambooHR aliases — a customer-defined field
+carries no classification in the field metadata and is collected in full.
 
 ## Silver Targets
 
-- `class_people` — unified person registry
+- `class_people` — unified person registry (via `bamboohr__to_class_people`)
+- `identity_inputs` — identity signals for the Identity Manager (via `bamboohr__identity_inputs`)
+- `class_hr_events`, `class_hr_working_hours` — leave and schedule facts
+
+## Build & deploy (CDK)
+
+```bash
+cd src/ingestion
+./reconcile-connectors/main.sh          # discovers, builds, registers, connects
+./run-sync.sh bamboohr <tenant>         # e2e: Airbyte sync → dbt (Bronze → Silver)
+./logs.sh -f latest
+```

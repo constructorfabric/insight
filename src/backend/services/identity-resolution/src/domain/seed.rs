@@ -1,12 +1,17 @@
 //! Persons-seed domain: group source-account profiles and resolve each group to
 //! a `person_id` — the **write-side** identity resolution (what the read side
-//! only looks up). Pure logic, no DB / IO, mirroring the .NET
-//! `EmailProfileResolver` + `PersonAssignmentResolver`.
+//! only looks up). Pure logic, no DB / IO. Ported from the .NET
+//! `EmailProfileResolver` + `PersonAssignmentResolver`, with one deliberate
+//! deviation: divergent e-mail groups keep per-account bindings (classified by
+//! binding author) instead of collapsing onto the first binding.
 
 use std::collections::HashMap;
 
 use sea_orm::prelude::DateTime;
 use uuid::Uuid;
+
+use super::observation_slot::SlotAllocator;
+use super::resolution::EXCLUDED_PERSON;
 
 /// Identifies one source-native account: the source instance (`source_type` +
 /// `source_id`) plus the account's native id within it.
@@ -65,6 +70,24 @@ pub struct ProfileGroup {
     pub profiles: Vec<SeedProfile>,
 }
 
+/// An account's current binding as loaded from `persons`: the person plus who
+/// authored the binding row. Authorship decides conflict classification — an
+/// operator-authored binding marks divergence inside an e-mail group as an
+/// intentional, settled state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnownBinding {
+    pub person_id: Uuid,
+    pub author_person_id: Uuid,
+}
+
+impl KnownBinding {
+    /// The all-zero author is the seed sentinel; any real UUID is an operator.
+    #[must_use]
+    pub fn is_operator_authored(&self) -> bool {
+        !self.author_person_id.is_nil()
+    }
+}
+
 /// How a group's `person_id` was decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssignmentKind {
@@ -93,11 +116,20 @@ pub struct ResolveOutcome {
     pub minted: usize,
     pub skipped_closed: usize,
     pub skipped_no_email: usize,
-    /// Email groups whose accounts were already bound to *more than one*
-    /// existing person; the group is still collapsed onto the first binding
-    /// (parity with the .NET resolver), but the conflict is counted + logged
-    /// so a silent identity merge is observable.
+    /// Email groups whose accounts are bound to *more than one* person with no
+    /// operator-authored binding explaining it. Each account keeps its own
+    /// binding (never collapsed); the group is counted + logged for review.
     pub known_binding_conflicts: usize,
+    /// Divergent e-mail groups where at least one binding is operator-authored
+    /// — an intentional split, kept silent (not a conflict).
+    pub operator_settled_groups: usize,
+    /// Unbound accounts inside a divergent e-mail group: their e-mail is
+    /// contested evidence, so they are not auto-linked to anyone.
+    pub skipped_contested_email: usize,
+    /// Accounts bound to the excluded person (ADR-0003). They are not persons:
+    /// nothing is re-emitted for them, and their values link nobody —
+    /// automation may not spread an operator's exclusion to new accounts.
+    pub skipped_excluded: usize,
 }
 
 /// Case-fold an email for grouping / lookup (ADR-0011: matched
@@ -142,50 +174,98 @@ pub fn group_by_email(profiles: Vec<SeedProfile>) -> Vec<ProfileGroup> {
     groups
 }
 
-/// Resolve each group to a `person_id` via the .NET four-branch classification,
-/// in priority order: reuse an already-bound account (idempotent); else link to
-/// the person the group's email already maps to; else mint a fresh person when
-/// at least one profile is active; else skip (no email, or all closed). `mint`
-/// is injected so tests are deterministic.
+/// Resolve each group to a `person_id`, in priority order: reuse already-bound
+/// accounts (idempotent — each account keeps **its own** binding, never
+/// collapsed across a divergent group); else link to the person the group's
+/// email already maps to; else mint a fresh person when at least one profile
+/// is active; else skip (no email, or all closed). `mint` is injected so tests
+/// are deterministic.
 #[must_use]
 pub fn resolve_assignments(
     groups: Vec<ProfileGroup>,
-    known: &HashMap<SourceAccountKey, Uuid>,
+    known: &HashMap<SourceAccountKey, KnownBinding>,
     email_to_person: &HashMap<String, Uuid>,
     mut mint: impl FnMut() -> Uuid,
 ) -> ResolveOutcome {
     let mut out = ResolveOutcome::default();
 
     for group in groups {
-        // 1. Known binding wins — reuse the person for the whole group, even
-        //    when the group also has no email (idempotent re-seed). If the
-        //    group's accounts are bound to *different* persons (e.g. an email
-        //    reassigned after a departure), we still collapse onto the first
-        //    binding for .NET parity, but surface the conflict — otherwise the
-        //    other account's identity is silently merged away.
-        let bound: Vec<Uuid> = group
-            .profiles
-            .iter()
-            .filter_map(|p| known.get(&p.account).copied())
-            .collect();
-        if let Some(&pid) = bound.first() {
-            if bound.iter().any(|&other| other != pid) {
-                out.known_binding_conflicts += 1;
-                tracing::warn!(
-                    person_id = %pid,
-                    accounts = group.profiles.len(),
-                    "persons-seed: group accounts bound to multiple persons; \
-                     collapsing onto the first (possible identity merge)"
-                );
+        // 0. Excluded accounts (bound to the sentinel) are not persons: they
+        //    contribute no new observations, and they leave the group before
+        //    any linking decision so their values claim nobody. The exclusion
+        //    itself stays in force — its journal row is already the latest.
+        let (excluded, remaining): (Vec<_>, Vec<_>) = group.profiles.into_iter().partition(|p| {
+            known
+                .get(&p.account)
+                .is_some_and(|b| b.person_id == EXCLUDED_PERSON)
+        });
+        out.skipped_excluded += excluded.len();
+        if remaining.is_empty() {
+            continue;
+        }
+
+        // 1. Known bindings win — and each bound account keeps its own person.
+        //    A group whose accounts are bound to different persons is an
+        //    intentional split when any binding is operator-authored (ADR-0003);
+        //    otherwise it is a conflict to surface. Either way the e-mail is
+        //    contested evidence, so unbound group members are not auto-linked.
+        let (bound, unbound): (Vec<_>, Vec<_>) = remaining
+            .into_iter()
+            .partition(|p| known.contains_key(&p.account));
+        if !bound.is_empty() {
+            let bindings: Vec<KnownBinding> = bound.iter().map(|p| known[&p.account]).collect();
+            let first_person = bindings[0].person_id;
+            let divergent = bindings.iter().any(|b| b.person_id != first_person);
+
+            if divergent {
+                if bindings.iter().any(KnownBinding::is_operator_authored) {
+                    out.operator_settled_groups += 1;
+                } else {
+                    out.known_binding_conflicts += 1;
+                    tracing::warn!(
+                        accounts = bound.len(),
+                        "persons-seed: group accounts bound to multiple persons \
+                         with no operator decision; keeping each binding, \
+                         surfacing for review"
+                    );
+                }
+
+                let mut by_person: HashMap<Uuid, Vec<SeedProfile>> = HashMap::new();
+                for profile in bound {
+                    let person = known[&profile.account].person_id;
+                    by_person.entry(person).or_default().push(profile);
+                }
+                for (person_id, profiles) in by_person {
+                    out.reused_known += profiles.len();
+                    out.assignments.push(PersonAssignment {
+                        person_id,
+                        kind: AssignmentKind::ReusedKnown,
+                        profiles,
+                    });
+                }
+
+                if !unbound.is_empty() {
+                    out.skipped_contested_email += unbound.len();
+                    tracing::warn!(
+                        accounts = unbound.len(),
+                        "persons-seed: e-mail contested between persons; \
+                         not auto-linking new accounts"
+                    );
+                }
+                continue;
             }
-            out.reused_known += group.profiles.len();
+
+            let mut profiles = bound;
+            profiles.extend(unbound);
+            out.reused_known += profiles.len();
             out.assignments.push(PersonAssignment {
-                person_id: pid,
+                person_id: first_person,
                 kind: AssignmentKind::ReusedKnown,
-                profiles: group.profiles,
+                profiles,
             });
             continue;
         }
+        let group = ProfileGroup { profiles: unbound };
 
         // The group's email — shared by every profile in an email group;
         // singleton no-email groups have none. (`first` is always `Some` here —
@@ -201,8 +281,14 @@ pub fn resolve_assignments(
             continue;
         };
 
-        // 2. Email matches an existing person → link.
-        if let Some(&pid) = email_to_person.get(&email) {
+        // 2. Email matches an existing person → link. A map entry naming the
+        //    excluded sentinel (legacy rows from before exclusions stopped
+        //    re-emitting) is no person and links nobody — fall through to mint.
+        let linked = email_to_person
+            .get(&email)
+            .copied()
+            .filter(|pid| *pid != EXCLUDED_PERSON);
+        if let Some(pid) = linked {
             out.linked_by_email += group.profiles.len();
             out.assignments.push(PersonAssignment {
                 person_id: pid,
@@ -334,13 +420,22 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
 /// each upsert observation, routed into its value column and stamped with the
 /// group's `person_id` and the seed author. Email-linked assignments carry the
 /// `auto-seed-link` reason; reused / minted carry an empty reason (matching the
-/// .NET seeder). Over-limit values are dropped. Mirrors `BuildObservationRows`.
+/// .NET seeder). Over-limit values are dropped.
+///
+/// The natural observation key ends in `created_at` and carries no account
+/// discriminator, so two accounts of one source resolving to one person at the
+/// same `synced_at` would collide on their `value_type='id'` rows and
+/// `INSERT IGNORE` would drop one binding. Rows are therefore nudged forward by
+/// whole microseconds until the key is unique within the batch — the smallest
+/// step `DATETIME(6)` can store, keeping observation chronology intact.
 #[must_use]
 pub fn assignments_to_rows(
     assignments: &[PersonAssignment],
     author_person_id: Uuid,
 ) -> Vec<SeedObservationRow> {
     let mut rows = Vec::new();
+    let mut slots = SlotAllocator::new();
+
     for assignment in assignments {
         let reason = if assignment.kind == AssignmentKind::LinkedByEmail {
             AUTO_SEED_LINK_REASON
@@ -353,6 +448,15 @@ pub fn assignments_to_rows(
                 if value_id.is_none() && value_full_text.is_none() && value.is_none() {
                     continue; // oversized — dropped per the routing rule
                 }
+
+                let created_at = slots.claim(
+                    assignment.person_id,
+                    &obs.source_type,
+                    obs.source_id,
+                    &obs.value_type,
+                    obs.synced_at,
+                );
+
                 rows.push(SeedObservationRow {
                     value_type: obs.value_type.clone(),
                     source_type: obs.source_type.clone(),
@@ -363,7 +467,7 @@ pub fn assignments_to_rows(
                     person_id: assignment.person_id,
                     author_person_id,
                     reason: Some(reason.to_owned()),
-                    created_at: obs.synced_at,
+                    created_at,
                 });
             }
         }
@@ -373,6 +477,8 @@ pub fn assignments_to_rows(
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeDelta;
+
     use super::*;
 
     fn prof(source_type: &str, account_id: &str, email: Option<&str>, closed: bool) -> SeedProfile {
@@ -389,6 +495,20 @@ mod tests {
     }
 
     /// A minting factory yielding Uuid(1), Uuid(2), … deterministically.
+    fn seed_bound(person: u128) -> KnownBinding {
+        KnownBinding {
+            person_id: Uuid::from_u128(person),
+            author_person_id: Uuid::nil(),
+        }
+    }
+
+    fn operator_bound(person: u128) -> KnownBinding {
+        KnownBinding {
+            person_id: Uuid::from_u128(person),
+            author_person_id: Uuid::from_u128(0xAD_1119),
+        }
+    }
+
     fn counter() -> impl FnMut() -> Uuid {
         let mut n = 0u128;
         move || {
@@ -462,7 +582,7 @@ mod tests {
     fn reuses_known_account_binding_over_email() {
         let p = prof("bamboohr", "1", Some("anna@corp.com"), false);
         let mut known = HashMap::new();
-        known.insert(p.account.clone(), Uuid::from_u128(42)); // already bound
+        known.insert(p.account.clone(), seed_bound(42)); // already bound
         let mut email_map = HashMap::new();
         email_map.insert("anna@corp.com".to_owned(), Uuid::from_u128(99)); // different person!
 
@@ -493,7 +613,7 @@ mod tests {
         let known_acc = prof("slack", "U1", Some("anna@corp.com"), false);
         let new_acc = prof("github", "gh1", Some("anna@corp.com"), false);
         let mut known = HashMap::new();
-        known.insert(known_acc.account.clone(), Uuid::from_u128(5));
+        known.insert(known_acc.account.clone(), seed_bound(5));
 
         let out = resolve_assignments(
             group_by_email(vec![known_acc, new_acc]),
@@ -512,16 +632,15 @@ mod tests {
     }
 
     #[test]
-    fn multi_person_binding_conflict_collapses_and_is_counted() {
-        // Two accounts share an email but are already bound to two *different*
-        // persons (email reassigned after a departure). The group still
-        // collapses onto the first binding (.NET parity), but the conflict is
-        // counted so the silent identity merge is observable.
+    fn divergent_group_keeps_each_accounts_own_binding() {
+        // Two accounts share an email but are bound to two *different* persons
+        // with no operator decision: each keeps its own binding (never
+        // collapsed) and the group is counted as a conflict for review.
         let acc_a = prof("slack", "U1", Some("anna@corp.com"), false);
         let acc_b = prof("github", "gh1", Some("anna@corp.com"), false);
         let mut known = HashMap::new();
-        known.insert(acc_a.account.clone(), Uuid::from_u128(5));
-        known.insert(acc_b.account.clone(), Uuid::from_u128(6));
+        known.insert(acc_a.account.clone(), seed_bound(5));
+        known.insert(acc_b.account.clone(), seed_bound(6));
 
         let out = resolve_assignments(
             group_by_email(vec![acc_a, acc_b]),
@@ -529,12 +648,146 @@ mod tests {
             &HashMap::new(),
             counter(),
         );
-        assert_eq!(out.assignments.len(), 1, "group collapsed onto one person");
+
+        assert_eq!(out.assignments.len(), 2, "one assignment per binding");
+        let mut persons: Vec<Uuid> = out.assignments.iter().map(|a| a.person_id).collect();
+        persons.sort();
+        assert_eq!(persons, vec![Uuid::from_u128(5), Uuid::from_u128(6)]);
         assert_eq!(out.reused_known, 2);
         assert_eq!(
             out.known_binding_conflicts, 1,
-            "conflict detected + counted"
+            "all-seed divergence surfaces"
         );
+        assert_eq!(out.operator_settled_groups, 0);
+    }
+
+    #[test]
+    fn operator_authored_divergence_is_settled_not_a_conflict() {
+        // Same divergence, but one binding was written by an operator (a detach
+        // decision): the split is intentional — no conflict is counted.
+        let acc_a = prof("slack", "U1", Some("team@corp.com"), false);
+        let acc_b = prof("github", "gh1", Some("team@corp.com"), false);
+        let mut known = HashMap::new();
+        known.insert(acc_a.account.clone(), seed_bound(5));
+        known.insert(acc_b.account.clone(), operator_bound(6));
+
+        let out = resolve_assignments(
+            group_by_email(vec![acc_a, acc_b]),
+            &known,
+            &HashMap::new(),
+            counter(),
+        );
+
+        assert_eq!(out.assignments.len(), 2);
+        assert_eq!(
+            out.known_binding_conflicts, 0,
+            "operator decision settles it"
+        );
+        assert_eq!(out.operator_settled_groups, 1);
+    }
+
+    #[test]
+    fn contested_email_does_not_auto_link_new_accounts() {
+        // A divergent group's e-mail is contested evidence: a brand-new account
+        // arriving with it is neither linked to either person nor minted — it
+        // is left for the operator (skipped + counted).
+        let acc_a = prof("slack", "U1", Some("team@corp.com"), false);
+        let acc_b = prof("github", "gh1", Some("team@corp.com"), false);
+        let newcomer = prof("zoom", "Z9", Some("team@corp.com"), false);
+        let mut known = HashMap::new();
+        known.insert(acc_a.account.clone(), seed_bound(5));
+        known.insert(acc_b.account.clone(), operator_bound(6));
+
+        let out = resolve_assignments(
+            group_by_email(vec![acc_a, acc_b, newcomer]),
+            &known,
+            &HashMap::new(),
+            counter(),
+        );
+
+        assert_eq!(out.skipped_contested_email, 1, "newcomer not auto-linked");
+        assert_eq!(out.minted, 0);
+        assert_eq!(out.reused_known, 2, "bound accounts keep their persons");
+        let assigned: usize = out.assignments.iter().map(|a| a.profiles.len()).sum();
+        assert_eq!(assigned, 2, "the newcomer is in no assignment");
+    }
+
+    fn excluded_bound() -> KnownBinding {
+        KnownBinding {
+            person_id: EXCLUDED_PERSON,
+            author_person_id: Uuid::from_u128(0xAD_1119),
+        }
+    }
+
+    #[test]
+    fn excluded_accounts_are_skipped_and_their_email_links_nobody() {
+        // A bot was excluded by an operator. The seed must not re-emit its
+        // observations under the sentinel, and a new account sharing the bot's
+        // e-mail must not inherit the exclusion — automation may not decide
+        // "not a person". The newcomer is its own fresh person.
+        let bot = prof("github", "gh-bot", Some("ci@corp.com"), false);
+        let newcomer = prof("jira", "jr-1", Some("ci@corp.com"), false);
+        let mut known = HashMap::new();
+        known.insert(bot.account.clone(), excluded_bound());
+
+        let out = resolve_assignments(
+            group_by_email(vec![bot, newcomer]),
+            &known,
+            &HashMap::new(),
+            counter(),
+        );
+
+        assert_eq!(out.skipped_excluded, 1, "the bot contributes nothing");
+        assert_eq!(out.minted, 1, "the newcomer is a fresh person");
+        assert_eq!(out.assignments.len(), 1);
+        assert_ne!(out.assignments[0].person_id, EXCLUDED_PERSON);
+        assert_eq!(out.assignments[0].profiles[0].account.account_id, "jr-1");
+    }
+
+    #[test]
+    fn an_exclusion_does_not_settle_someone_elses_divergence() {
+        // Two automation bindings disagree AND a third account of the group is
+        // excluded. The exclusion is an operator decision about the BOT, not
+        // about the 5/6 split — the conflict must still surface (the review
+        // queue classifies it the same way).
+        let acc_a = prof("slack", "U1", Some("team@corp.com"), false);
+        let acc_b = prof("github", "gh1", Some("team@corp.com"), false);
+        let bot = prof("zoom", "Z9", Some("team@corp.com"), false);
+        let mut known = HashMap::new();
+        known.insert(acc_a.account.clone(), seed_bound(5));
+        known.insert(acc_b.account.clone(), seed_bound(6));
+        known.insert(bot.account.clone(), excluded_bound());
+
+        let out = resolve_assignments(
+            group_by_email(vec![acc_a, acc_b, bot]),
+            &known,
+            &HashMap::new(),
+            counter(),
+        );
+
+        assert_eq!(out.known_binding_conflicts, 1, "the split still surfaces");
+        assert_eq!(out.operator_settled_groups, 0);
+        assert_eq!(out.skipped_excluded, 1);
+    }
+
+    #[test]
+    fn a_legacy_email_map_entry_naming_the_sentinel_links_nobody() {
+        // Seeds that ran before exclusions stopped re-emitting may have left
+        // e-mail rows under the sentinel; such a map entry is not a person.
+        let newcomer = prof("jira", "jr-1", Some("ci@corp.com"), false);
+        let mut email_map = HashMap::new();
+        email_map.insert("ci@corp.com".to_owned(), EXCLUDED_PERSON);
+
+        let out = resolve_assignments(
+            group_by_email(vec![newcomer]),
+            &HashMap::new(),
+            &email_map,
+            counter(),
+        );
+
+        assert_eq!(out.linked_by_email, 0, "the sentinel links nobody");
+        assert_eq!(out.minted, 1);
+        assert_ne!(out.assignments[0].person_id, EXCLUDED_PERSON);
     }
 
     fn input(
@@ -554,6 +807,64 @@ mod tests {
             synced_at,
             is_delete,
         }
+    }
+
+    #[test]
+    fn same_source_accounts_on_one_person_get_distinct_timestamps() -> anyhow::Result<()> {
+        // Two accounts of one source resolve to one person and were synced at
+        // the same instant: their `id` observations share every natural-key
+        // column, so without disambiguation INSERT IGNORE would drop one
+        // binding. Rows must land on distinct microseconds.
+        let t: DateTime = "2026-01-01T00:00:00".parse()?;
+        let mut a = prof("bamboohr", "1", Some("anna@corp.com"), false);
+        let mut b = prof("bamboohr", "2", Some("anna@corp.com"), false);
+        a.observations = vec![input("bamboohr", "1", "id", "1", false, t)];
+        b.observations = vec![input("bamboohr", "2", "id", "2", false, t)];
+
+        let rows = assignments_to_rows(
+            &[PersonAssignment {
+                person_id: Uuid::from_u128(7),
+                kind: AssignmentKind::Minted,
+                profiles: vec![a, b],
+            }],
+            Uuid::nil(),
+        );
+
+        assert_eq!(rows.len(), 2);
+        assert_ne!(
+            rows[0].created_at, rows[1].created_at,
+            "colliding natural keys must be nudged apart"
+        );
+        assert_eq!(rows[0].created_at, t, "the first row keeps its own instant");
+        assert_eq!(rows[1].created_at, t + TimeDelta::microseconds(1));
+        Ok(())
+    }
+
+    #[test]
+    fn distinct_value_types_at_one_instant_keep_their_timestamp() -> anyhow::Result<()> {
+        // Different value_types are already distinct in the natural key — no
+        // nudging, so observation chronology stays exactly as observed.
+        let t: DateTime = "2026-01-01T00:00:00".parse()?;
+        let mut p = prof("bamboohr", "1", Some("anna@corp.com"), false);
+        p.observations = vec![
+            input("bamboohr", "1", "id", "1", false, t),
+            input("bamboohr", "1", "email", "anna@corp.com", false, t),
+        ];
+
+        let rows = assignments_to_rows(
+            &[PersonAssignment {
+                person_id: Uuid::from_u128(7),
+                kind: AssignmentKind::Minted,
+                profiles: vec![p],
+            }],
+            Uuid::nil(),
+        );
+
+        assert!(
+            rows.iter().all(|r| r.created_at == t),
+            "distinct value_types do not collide"
+        );
+        Ok(())
     }
 
     #[test]

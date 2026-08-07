@@ -24,9 +24,10 @@ name: E2E — Bronze to API
 # hands it to `e2e-metrics` as a saved image
 # artifact, which also makes `build` the SOLE writer of the GHA BuildKit
 # cache scopes wired in compose/docker-compose.cache.yml (two concurrent
-# writers to the same scope key just thrash each other's cache). The lane
-# loads the pre-built image, boots its stack, runs the suite, and snapshots
-# that session's `.artifacts/` for `metric-coverage-gate`, which analyses it
+# writers to the same scope key just thrash each other's cache). The lane is
+# a shard matrix: each leg loads the pre-built image, boots its own isolated
+# stack, runs its slice of the suite, and snapshots that session's
+# `.artifacts/` for `metric-coverage-gate`, which analyses it
 # as a pure-Python check (no Docker, no app boot). See
 # src/ingestion/tests/e2e/lib/{metric_coverage,collect_metric_definitions}.py.
 #
@@ -268,6 +269,17 @@ jobs:
         run: ./e2e.sh build
         env:
           E2E_COMPOSE_OVERLAYS: ${{ github.event_name == 'pull_request' && 'compose/docker-compose.prebuilt.yml' || (github.event_name == 'merge_group' && 'compose/docker-compose.cache-ro.yml' || 'compose/docker-compose.cache.yml') }}
+          # From-source path only: delegate the build to buildx bake so the
+          # three build-only component images (analytics, identity-resolution,
+          # jira-enrich) compile CONCURRENTLY in one BuildKit graph instead of
+          # one compose service at a time. Cache-scope safety is unchanged —
+          # each service keeps its own gha scope, still one writer per scope.
+          # The PR path stays on the classic builder: bake is not needed there
+          # (no Rust compiles at all) and the docker-image:// prebuilt contexts
+          # are only guaranteed to resolve from the daemon store with the
+          # default driver/builder. Explicit 'false', not '' — compose parses
+          # the variable with strict ParseBool and dies on an empty string.
+          COMPOSE_BAKE: ${{ github.event_name != 'pull_request' && 'true' || 'false' }}
 
       # ─── Hand the built image to both lanes ─────────────────────────────
       # Only insight-e2e-runner:latest travels: analytics and jira-enrich
@@ -299,10 +311,35 @@ jobs:
           overwrite: true
 
   e2e-metrics:
-    name: metrics
+    name: metrics (shard ${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      # Every leg reports: a red shard must not cancel its siblings, or their
+      # failures (and coverage artifacts) vanish with it.
+      fail-fast: false
+      matrix:
+        # Shards of the metrics suite, one isolated stack per leg, sliced BY
+        # FIXTURE FAMILY (filename prefix), not round-robin. Families must not
+        # split across shards: fixtures leak state to LATER tests in the same
+        # session through table existence — e.g. every ai_* silver build
+        # eagerly selects assert_cursor_event_cost_attributed (dbt's default
+        # indirect selection), whose ephemeral ref compiles to a read of the
+        # cursor staging tables, and those only exist once a cursor-seeding
+        # fixture (ai_active_days, alphabetically first) has run in the same
+        # session. Grouping a family keeps its alphabetical order — exactly
+        # the serial lane's semantics. (Round-robin sharding was tried and
+        # tripped precisely this: dbt indirect-selection modes don't help —
+        # `cautious`/`buildable` would silently deselect that test everywhere
+        # because its ephemeral parent is never in any build's selection.)
+        #
+        # `rest` is the complement of the named prefixes (see the run step),
+        # so every yaml lands in EXACTLY one shard by construction and a new
+        # test — even with a brand-new prefix — can never silently fall out
+        # of CI. Rebalancing = promoting a prefix out of `rest` into its own
+        # leg here AND excluding it in the run step's `rest` branch.
+        shard: [ai, collab, tasks, rest]
 
     defaults:
       run:
@@ -339,35 +376,65 @@ jobs:
       - name: Reset coverage artifacts
         run: rm -rf .artifacts
 
-      # ─── Run the suite inside the runner ────────────────────────────────
-      # `./e2e.sh test <path>` (docker compose run runner) starts the clickhouse
-      # + mariadb `depends_on` services — compose pulls their images on demand
-      # and waits for `service_healthy` — so no explicit image pre-pull is needed.
+      # ─── Run this shard's slice inside the runner ───────────────────────
+      # `./e2e.sh test <node-ids>` (docker compose run runner) starts the
+      # clickhouse + mariadb `depends_on` services — compose pulls their images
+      # on demand and waits for `service_healthy` — so no explicit image
+      # pre-pull is needed.
       #
       # This lane runs only the metrics/ suite — the bronze→dbt→gold→API metric
-      # fixtures (the yaml rig). It's serial on purpose: the session rig is not
-      # xdist-safe yet (see conftest.py — per-worker analytics spawns race
-      # SeaORM migrations in the shared MariaDB, non-primary workers don't wait
-      # for ClickHouse migrations, and the shared dbt target/ dir is deleted by
-      # whichever worker finishes first). Wall-time cost is negligible: this
-      # lane only loads the pre-built runner image and runs the metrics/ suite
-      # — the expensive analytics+enrich compile happens once, upstream, in
-      # the `build` job.
+      # fixtures (the yaml rig) — split across the shard matrix: each leg gets
+      # its own runner VM, hence its own ClickHouse/MariaDB/dbt target/analytics
+      # — full isolation with zero changes to the session rig. The slice is
+      # this shard's fixture family (see the matrix comment for why families
+      # must stay whole), expanded into explicit pytest node ids: exhaustive by
+      # construction (no `-k` substring traps — an id that is a prefix of
+      # another cannot leak across shards, and a new test can never silently
+      # fall out of CI thanks to the complement `rest` shard).
+      #
+      # WITHIN a shard the tests still run serially: the session rig is not
+      # xdist-safe (see conftest.py — per-worker analytics spawns race SeaORM
+      # migrations in the shared MariaDB, non-primary workers don't wait for
+      # ClickHouse migrations, and the shared dbt target/ dir is deleted by
+      # whichever worker finishes first). The expensive analytics+enrich
+      # compile happens once, upstream, in the `build` job.
       #
       # meta/ (the rig's own framework smoke tests) is deliberately NOT run in
       # CI — it tests the harness, not the product; run it locally via
       # `./e2e.sh test meta/`.
       #
-      # This session ALSO emits BOTH .artifacts/ files while analytics is up:
+      # Each shard's session ALSO emits BOTH .artifacts/ files while analytics
+      # is up:
       #   • metric_definitions.json  (lib/collect_metric_definitions.py)
       #   • observed_endpoints.json  (conftest.pytest_sessionfinish — httpx hook
       #     ledger)
       # but only the lane-relevant one is consumed downstream: this metrics
-      # lane feeds metric-coverage-gate. (The api lane above feeds
-      # api-endpoint-coverage-gate instead, since that suite alone already
-      # exercises every spec operation.)
-      - name: E2E suite — metrics
-        run: ./e2e.sh test metrics/ --tb=short -q
+      # lane feeds metric-coverage-gate. metric_definitions.json is the FULL
+      # builtin registry queried from MariaDB — independent of which tests the
+      # shard ran, so every shard's copy is identical and the gate can use any
+      # one of them.
+      - name: E2E suite — metrics shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          # `rest` must exclude exactly the prefixes that have their own matrix
+          # leg — keep this list in lockstep with `matrix.shard` above.
+          case "$SHARD" in
+            rest) filter=(grep -v -e '^metrics/ai_' -e '^metrics/collab_' -e '^metrics/tasks_') ;;
+            *)    filter=(grep -e "^metrics/${SHARD}_") ;;
+          esac
+          nodes=()
+          while IFS= read -r stem; do
+            nodes+=("metrics/test_fixtures.py::test_metric_smoke[${stem}]")
+          done < <(printf '%s\n' metrics/*.test.yaml | "${filter[@]}" | sort \
+                     | xargs -n1 basename | sed 's/\.test\.yaml$//')
+          # Fail loudly on an empty slice — pytest exits 4 on unknown node ids
+          # but an empty arg list would silently run the FULL suite instead.
+          [ "${#nodes[@]}" -gt 0 ] || { echo "::error::shard ${SHARD} selected no tests"; exit 1; }
+          printf 'shard %s → %s tests\n' "$SHARD" "${#nodes[@]}"
+          printf '  %s\n' "${nodes[@]}"
+          ./e2e.sh test "${nodes[@]}" --tb=short -q
 
       # ─── Hand the collected catalog to the gate job ─────────────────────
       # Uploaded even if the suite failed (the collection script still runs), so the
@@ -377,7 +444,13 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-inputs-metrics
+          # Per-shard name — matrix legs may not share one artifact. The gate
+          # downloads the whole coverage-inputs-metrics-* family and merges
+          # last-write-wins; safe because the only file it reads —
+          # metric_definitions.json — is a full-registry snapshot, identical
+          # in every shard. (observed_endpoints.json does differ per shard,
+          # but nothing downstream consumes it in this lane.)
+          name: coverage-inputs-metrics-${{ matrix.shard }}
           path: src/ingestion/tests/e2e/.artifacts/
           # Single-writer per-run artifact; lets "Re-run failed jobs" replace a
           # prior partial upload instead of erroring "artifact already exists".
@@ -430,9 +503,16 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      # Merge every shard's artifact into one directory. The gate's "asserted"
+      # side is a STATIC scan of metrics/*.test.yaml from the checkout (see
+      # lib/metric_coverage.py:coverage_from_tests) — sharding cannot
+      # under-fill it — and its only runtime input, metric_definitions.json,
+      # is identical in every shard, so the merge just needs at least one
+      # shard to have uploaded.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: coverage-inputs-metrics
+          pattern: coverage-inputs-metrics-*
+          merge-multiple: true
           path: coverage-inputs
       - name: Analyse metric coverage
         run: |
@@ -479,6 +559,7 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           BUILD: ${{ needs.build.result }}
+          # Matrix aggregate: 'success' only when EVERY shard passed.
           METRICS: ${{ needs.e2e-metrics.result }}
         run: |
           set -euo pipefail

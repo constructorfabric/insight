@@ -10,8 +10,8 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::seed::{
-    IdentityInputRow, SeedObservationRow, SourceAccountKey, assignments_to_rows, build_profiles,
-    group_by_email, resolve_assignments,
+    IdentityInputRow, KnownBinding, SeedObservationRow, SourceAccountKey, assignments_to_rows,
+    build_profiles, group_by_email, resolve_assignments,
 };
 
 /// Streams the raw `identity_inputs` observations for a tenant, delivered
@@ -29,7 +29,7 @@ pub trait SeedStore {
     async fn known_account_bindings(
         &self,
         tenant_id: Uuid,
-    ) -> anyhow::Result<HashMap<SourceAccountKey, Uuid>>;
+    ) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>>;
 
     async fn latest_email_to_person(
         &self,
@@ -74,8 +74,15 @@ pub struct SeedSummary {
     pub skipped_no_email: usize,
     pub observations_inserted: u64,
     pub org_chart_rows_rebuilt: u64,
-    /// Email groups collapsed across a multi-person binding conflict (logged).
+    /// Divergent e-mail groups with no operator-authored binding (surfaced).
     pub known_binding_conflicts: usize,
+    /// Divergent e-mail groups settled by an operator decision (kept silent).
+    pub operator_settled_groups: usize,
+    /// Unbound accounts whose e-mail is contested between persons (not linked).
+    pub skipped_contested_email: usize,
+    /// Accounts bound to the excluded person (nothing re-emitted, values link
+    /// nobody).
+    pub skipped_excluded: usize,
 }
 
 /// Run one persons-seed over an already-read input: fold to per-account
@@ -140,6 +147,9 @@ where
         observations_inserted: counts.observations_inserted,
         org_chart_rows_rebuilt: counts.org_chart_rows_rebuilt,
         known_binding_conflicts: outcome.known_binding_conflicts,
+        operator_settled_groups: outcome.operator_settled_groups,
+        skipped_contested_email: outcome.skipped_contested_email,
+        skipped_excluded: outcome.skipped_excluded,
     })
 }
 
@@ -149,7 +159,7 @@ mod tests {
     use sea_orm::prelude::DateTime;
 
     struct FakeStore {
-        known: HashMap<SourceAccountKey, Uuid>,
+        known: HashMap<SourceAccountKey, KnownBinding>,
         emails: HashMap<String, Uuid>,
     }
     #[async_trait]
@@ -157,7 +167,7 @@ mod tests {
         async fn known_account_bindings(
             &self,
             _tenant: Uuid,
-        ) -> anyhow::Result<HashMap<SourceAccountKey, Uuid>> {
+        ) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
             Ok(self.known.clone())
         }
         async fn latest_email_to_person(
@@ -247,7 +257,10 @@ mod tests {
                 source_id: Uuid::from_u128(1),
                 account_id: "5000".to_owned(),
             },
-            Uuid::from_u128(7),
+            KnownBinding {
+                person_id: Uuid::from_u128(7),
+                author_person_id: Uuid::nil(),
+            },
         );
         let store = FakeStore {
             known,

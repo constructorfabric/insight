@@ -1,0 +1,271 @@
+# GitHub organization directory — identity inputs only.
+#
+# Single purpose: give identity-resolution a GitHub account roster so a person
+# who signs in through a GitHub-brokered IdP resolves to an Insight person.
+# It collects no repository, pull-request or commit data; that is the separate
+# `github` connector's job.
+#
+# API facts that shape this manifest:
+#   - The org member roster with profile fields is GraphQL-only in one call.
+#     REST needs GET /orgs/{org}/members (login only) plus GET /users/{login}
+#     per member, and still never returns the org role.
+#   - `email` is only populated when the member's org email is verified and
+#     visible to the token's scopes, so it is frequently null. The account
+#     binding therefore rests on the login, not the email.
+#   - GraphQL reports throttling as HTTP 200 with errors[].type=RATE_LIMITED,
+#     which no status-code filter can see.
+#
+# `login_normalized` exists because the person lookup this feeds compares
+# byte-exact against a case-sensitive column, while Keycloak lowercases the
+# username it brokers from GitHub. Lowercasing loses nothing: GitHub logins are
+# unique case-insensitively. The raw `login` is kept alongside it so bronze
+# still shows what the API returned.
+
+version: "7.0.4"
+type: DeclarativeSource
+
+definitions:
+  graphql_requester: &graphql_requester
+    type: HttpRequester
+    url_base: "https://api.github.com/"
+    path: "graphql"
+    http_method: POST
+    authenticator:
+      type: BearerAuthenticator
+      api_token: "{{ config['github_token'] }}"
+    request_headers:
+      Accept: "application/vnd.github+json"
+      X-GitHub-Api-Version: "2022-11-28"
+    error_handler:
+      type: DefaultErrorHandler
+      max_retries: 5
+      backoff_strategies:
+        - type: WaitTimeFromHeader
+          header: Retry-After
+          max_waiting_time_in_seconds: 600
+        - type: WaitUntilTimeFromHeader
+          header: X-RateLimit-Reset
+          max_waiting_time_in_seconds: 600
+      response_filters:
+        - type: HttpResponseFilter
+          action: RATE_LIMITED
+          http_codes: [429]
+        - type: HttpResponseFilter
+          action: RATE_LIMITED
+          predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
+        # Any other GraphQL error still arrives as HTTP 200, and a
+        # query-level one (bad credentials, missing scope, unauthorized org)
+        # omits `data` entirely. Without this the record extractor simply
+        # finds nothing, the sync reports zero members, and the first symptom
+        # is an unreadable interpolation error from the paginator. Fail with
+        # what GitHub actually said instead.
+        - type: HttpResponseFilter
+          action: FAIL
+          predicate: "{{ (response.get('errors') or []) | length > 0 }}"
+          error_message: "GitHub GraphQL error: {{ (response.get('errors') or []) | map(attribute='message') | join('; ') }}"
+        - type: HttpResponseFilter
+          action: RETRY
+          http_codes: [500, 502, 503, 504]
+
+  standard_fields: &standard_fields
+    - type: AddedFieldDefinition
+      path: [tenant_id]
+      value: "{{ config['insight_tenant_id'] }}"
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [source_id]
+      value: "{{ config['insight_source_id'] }}"
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [collected_at]
+      value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [data_source]
+      value: insight_github
+      value_type: string
+
+check:
+  type: CheckStream
+  stream_names:
+    - org_members
+
+streams:
+  # ── org_members ──────────────────────────────────────────────────────
+  # Full refresh: a roster is current state, and membersWithRole offers no
+  # change filter. Removed members simply stop appearing.
+  - type: DeclarativeStream
+    name: org_members
+    primary_key: [unique_key]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          org: { type: string }
+          login: { type: string }
+          login_normalized: { type: string }
+          member_id: { type: ["integer", "null"] }
+          name: { type: ["string", "null"] }
+          email: { type: ["string", "null"] }
+          company: { type: ["string", "null"] }
+          role: { type: ["string", "null"] }
+          created_at: { type: ["string", "null"] }
+          updated_at: { type: ["string", "null"] }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *graphql_requester
+        request_body_json:
+          query: |
+            query($org: String!, $cursor: String) {
+              organization(login: $org) {
+                membersWithRole(first: 100, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  edges {
+                    role
+                    node { login databaseId name email company createdAt updatedAt }
+                  }
+                }
+              }
+            }
+          variables:
+            org: "{{ stream_partition.org }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, organization, membersWithRole, edges]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response['data']['organization']['membersWithRole']['pageInfo']['endCursor'] }}"
+          stop_condition: "{{ not response['data']['organization']['membersWithRole']['pageInfo']['hasNextPage'] }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: ListPartitionRouter
+        cursor_field: org
+        values: "{{ config['github_organizations'] }}"
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [org]
+            value: "{{ stream_partition.org }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [login]
+            value: "{{ (record.get('node') or {}).get('login') }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            # The join key for person resolution — see the header note.
+            path: [login_normalized]
+            value: "{{ ((record.get('node') or {}).get('login') or '') | lower }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [member_id]
+            value: "{{ (record.get('node') or {}).get('databaseId') }}"
+          - type: AddedFieldDefinition
+            path: [name]
+            value: "{{ (record.get('node') or {}).get('name') or none }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [email]
+            value: "{{ (record.get('node') or {}).get('email') or none }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [company]
+            value: "{{ (record.get('node') or {}).get('company') or none }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [role]
+            value: "{{ record.get('role') or none }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [created_at]
+            value: "{{ (record.get('node') or {}).get('createdAt') or none }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ (record.get('node') or {}).get('updatedAt') or none }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            # Keyed on the normalized login so a change of login letter-case
+            # does not fork the entity into a second bronze row.
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org }}:{{ ((record.get('node') or {}).get('login') or '') | lower }}"
+            value_type: string
+      - type: RemoveFields
+        field_pointers:
+          - [node]
+
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 4
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - github_token
+      - github_organizations
+    properties:
+      insight_tenant_id:
+        type: string
+        minLength: 1
+        title: Insight Tenant ID
+        description: Tenant isolation identifier, injected as `tenant_id` on every record.
+        order: 0
+      insight_source_id:
+        type: string
+        title: Source Instance ID
+        description: Connector instance identifier (e.g. `github-directory-main`). Set by the reconcile loop from the K8s Secret annotation `insight.cyberfabric.com/source-id`.
+        default: ""
+        order: 1
+      github_token:
+        type: string
+        title: GitHub Token
+        airbyte_secret: true
+        description: |
+          Personal access token or GitHub App installation token with BOTH
+          `read:org` and `user:email` (or `read:user`).
+
+          `user:email` is not optional: GitHub validates the whole GraphQL
+          document up front and rejects it outright when the token cannot read
+          the `email` field, so a `read:org`-only token collects nothing at all
+          rather than returning members with null emails.
+        order: 2
+      github_organizations:
+        type: array
+        title: Organizations
+        # An empty list yields zero partitions, so the sync would succeed while
+        # collecting nothing and every GitHub login would keep failing with no
+        # error to point at.
+        minItems: 1
+        items:
+          type: string
+          minLength: 1
+        description: GitHub organization logins whose members form the directory.
+        order: 3
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    org_members: false

@@ -4,20 +4,19 @@ People / org-linkage seed.
 Populates:
 
 * `silver.class_people` — one row per person with `department_name`
-  set to the team. The `insight.team_member` view joins on this.
+  set to the team. Cohort and coverage gold models join on this.
 * `bronze_bamboohr.employees` — emails + departments + supervisorEmail
-  so `insight.people` can compute `org_unit_id` and the supervisor
-  chain from a BambooHR-shaped table. The columns used by the
-  view are workEmail, displayName, department, jobTitle, supervisorEmail.
+  so the HR directory can resolve `org_unit_id` and the supervisor
+  chain from a BambooHR-shaped table. The columns used are workEmail,
+  displayName, department, jobTitle, supervisorEmail.
 
 `silver.class_people` lowercases its `email` column so case-insensitive
-joins downstream (notably `insight.team_member`, which compares against
-`lower(...)`) match cleanly. `bronze_bamboohr.employees` keeps the
+joins downstream match cleanly. `bronze_bamboohr.employees` keeps the
 original casing that a real BambooHR feed would deliver — fine here
 because the seed roster (`profiles.py`) already uses lowercase
 addresses end-to-end, so no identities split in practice. If a future
 roster introduces mixed-case emails, restore `.lower()` on `workEmail`
-and `supervisorEmail` below or fix the downstream view to compare
+and `supervisorEmail` below or fix the downstream model to compare
 case-insensitively.
 
 Both tables use ReplacingMergeTree; we TRUNCATE before each insert so
@@ -70,8 +69,8 @@ def _display_name(p: Person) -> str:
     """Person's real name, or a synthesized one from the email's local part.
 
     The roster now carries first/last names (profiles.py), so prefer those —
-    this feeds bronze_bamboohr.employees.displayName, which the analytics
-    `insight.team_member` view surfaces in the UI's Team Members table.
+    this feeds bronze_bamboohr.employees.displayName, which reaches the UI
+    through the HR directory.
     """
     if p.display_name:
         return p.display_name

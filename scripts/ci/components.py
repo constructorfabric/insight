@@ -179,6 +179,13 @@ COMPONENTS = [
         "cov_package": "source_github_copilot",
         "paths": ["src/ingestion/connectors/ai/github-copilot"],
     },
+    {
+        "name": "bamboohr",
+        "lang": "python",
+        "root": "src/ingestion/connectors/hr-directory/bamboohr",
+        "cov_package": "source_bamboohr",
+        "paths": ["src/ingestion/connectors/hr-directory/bamboohr"],
+    },
     # Deploy-time ClickHouse schema tooling (the migration Job's Python half:
     # reconcile_bronze_schema, which heals warm-cluster bronze drift — #1991).
     # Owning the whole scripts/ tree means a connectors-ddl snapshot regen also

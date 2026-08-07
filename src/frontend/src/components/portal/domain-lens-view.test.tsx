@@ -72,7 +72,7 @@ vi.mock("@/queries/metric-results", () => ({
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
     period: "week",
-    dateRange: { start: "2026-07-20", end: "2026-07-26" },
+    dateRange: { from: "2026-07-20", to: "2026-07-26" },
   }),
 }));
 // Charts are exercised by the browser/storybook project; here they'd render

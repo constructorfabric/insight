@@ -267,11 +267,11 @@ describe("SliceSelect", () => {
     const slice = renderHook(() => usePortalSlice());
     render(<SliceSelect dims={[{ key: "division", label: "Division" }]} />);
     // "Slice:" is a separate, md-only span now, so match the value itself.
-    expect(screen.getByRole("combobox", { name: "Slice by" })).toHaveTextContent(
+    expect(screen.getByRole("combobox", { name: "Cohort" })).toHaveTextContent(
       "Team (all)",
     );
 
-    await userEvent.click(screen.getByRole("combobox", { name: "Slice by" }));
+    await userEvent.click(screen.getByRole("combobox", { name: "Cohort" }));
     await userEvent.click(await screen.findByRole("option", { name: "Division" }));
     expect(slice.result.current).toBe("division");
   });
@@ -280,7 +280,7 @@ describe("SliceSelect", () => {
     act(() => portalRouter.set({ slice: "division" }));
     render(<SliceSelect dims={[{ key: "division", label: "Division" }]} />);
     const slice = renderHook(() => usePortalSlice());
-    await userEvent.click(screen.getByRole("combobox", { name: "Slice by" }));
+    await userEvent.click(screen.getByRole("combobox", { name: "Cohort" }));
     await userEvent.click(await screen.findByRole("option", { name: "Team (all)" }));
     expect(slice.result.current).toBe("");
   });

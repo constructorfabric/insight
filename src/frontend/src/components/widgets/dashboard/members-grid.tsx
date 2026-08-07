@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { metricHelp } from "@/lib/insight/metric-help";
 import { Link } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp } from "lucide-react";
 
@@ -488,7 +489,7 @@ function MemberRow({
             <Link
               to="/ic/$person/personal"
               params={{ person: member.entityId }}
-              className="min-w-0 truncate text-sm font-medium leading-tight hover:underline"
+              className="min-w-0 truncate text-sm leading-tight font-medium hover:underline"
             >
               {member.displayName}
             </Link>
@@ -704,6 +705,7 @@ function ColumnHeader({
   direction: "ascending" | "descending" | undefined;
   onClick: () => void;
 }) {
+  const help = metricHelp(col.metric);
   return (
     <Tooltip>
       <TooltipTrigger
@@ -732,6 +734,15 @@ function ColumnHeader({
       <TooltipContent side="top" className="max-w-56">
         <span className="flex flex-col gap-0.5 leading-snug">
           <span className="font-medium">{col.label}</span>
+          {/* What the column counts, in the catalog's words. A header reading
+              "AI LINES +" is otherwise a guess, and the grid is where a
+              reader compares people on it. */}
+          {help?.description ? <span>{help.description}</span> : null}
+          {/* The catalog sometimes supplies only the longer explanation, and a
+              header showing neither leaves the column a guess. */}
+          {help?.explanation ? (
+            <span className="text-background/70">{help.explanation}</span>
+          ) : null}
           <span className="text-background/70">
             {col.unit ? `${col.unit} · ` : ""}
             {betterWhenHigher(col.direction) === true

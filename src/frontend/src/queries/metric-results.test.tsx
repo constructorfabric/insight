@@ -20,8 +20,18 @@ vi.mock("@/api/metric-results-client", async (orig) => ({
   ...(await orig<typeof import("@/api/metric-results-client")>()),
   queryMetricResults: vi.fn(),
 }));
+// The catalog gate reads this; tests that do not care about it get every key.
+vi.mock("@/api/metric-definitions-client", () => ({
+  listMetricDefinitions: vi.fn(async () => ({ metrics: catalog })),
+}));
 
 const mock = vi.mocked(queryMetricResults);
+
+/** What the installation's catalog offers, per test. */
+let catalog: Array<{ metric_key: string; is_enabled: boolean }> = [];
+function offers(...keys: string[]) {
+  catalog = keys.map((metric_key) => ({ metric_key, is_enabled: true }));
+}
 
 // Echo the requested metrics/entities back as a valid response so merges and
 // pairing have real data to operate on.
@@ -76,6 +86,42 @@ describe("useMetricCollection", () => {
   beforeEach(() => {
     mock.mockReset();
     mock.mockImplementation(async (req) => respond(req));
+    offers("m", "other");
+  });
+
+  it("asks only for metrics this installation's catalog offers", async () => {
+    // The backend rejects the whole request over one unknown key, so a
+    // compiled-in key a tenant does not have must not reach it — otherwise a
+    // single missing metric blanks the screen instead of its own tile.
+    offers("m");
+    const withUnknown: MetricCollectionConfig = {
+      metrics: [
+        { key: "m", views: [{ view: "period" }] },
+        { key: "tasks.closed_non_bug", views: [{ view: "period" }] },
+      ],
+    };
+    const { result } = renderHook(
+      () => useMetricCollection(withUnknown, ENTITY, RANGE),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock.mock.calls[0]![0].metrics.map((m) => m.metric_key)).toEqual(["m"]);
+    expect(result.current.byKey.get("m")).toBeDefined();
+    expect(result.current.byKey.get("tasks.closed_non_bug")).toBeUndefined();
+  });
+
+  it("makes no request at all when the catalog offers none of the collection", async () => {
+    // An empty `metrics: []` is itself a 400, and a screen must not sit on a
+    // spinner waiting for a request that will never be sent.
+    offers("something.else");
+    const { result } = renderHook(
+      () => useMetricCollection(COLLECTION, ENTITY, RANGE),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(mock).not.toHaveBeenCalled();
+    expect(result.current.isError).toBe(false);
   });
 
   it("normalizes the current result and skips the previous twin by default", async () => {
@@ -123,6 +169,34 @@ describe("useMetricCollectionSet", () => {
   beforeEach(() => {
     mock.mockReset();
     mock.mockImplementation(async (req) => respond(req));
+    offers("m", "other");
+  });
+
+  it("holds every request until the catalog answers, then drops unknown keys", async () => {
+    offers("m");
+    const { result } = renderHook(
+      () =>
+        useMetricCollectionSet(
+          [
+            { key: "g", collection: COLLECTION },
+            {
+              key: "unavailable",
+              collection: {
+                metrics: [{ key: "nope", views: [{ view: "period" }] }],
+              },
+            },
+          ],
+          ENTITY,
+          RANGE,
+        ),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(collectionSetPending(result.current)).toBe(false));
+    // One request for the collection the catalog covers; none for the other,
+    // which would have failed BOTH of them as a single 400.
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock.mock.calls[0]![0].metrics.map((m) => m.metric_key)).toEqual(["m"]);
+    expect(result.current.get("g")?.byKey.get("m")).toBeDefined();
   });
 
   it("splits a large roster into chunks and merges them into one result", async () => {

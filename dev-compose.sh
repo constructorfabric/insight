@@ -1124,7 +1124,13 @@ cmd_seed() {
 
   # Run the seed step itself. NOT `exec` — we still want to bounce
   # analytics after silver/all completes (see cf/insight#1307).
-  "${compose_cmd[@]}" --profile seed run --rm seed-sample "${args[@]}"
+  #
+  # --build: `compose run` reuses whatever image the tag currently holds, and a
+  # seed image left over from an older checkout runs the wrong entrypoint from
+  # the wrong directory — it surfaces as an EACCES on /app/manifest.json after
+  # the whole seed has run. The source is bind-mounted anyway, so the rebuild
+  # is layer-cached and only refreshes entrypoint/WORKDIR/deps.
+  "${compose_cmd[@]}" --profile seed run --build --rm seed-sample "${args[@]}"
   local seed_status=$?
   if [[ $seed_status -ne 0 ]]; then
     return $seed_status
@@ -1162,6 +1168,7 @@ The main pass removes:
   • all stack containers (insight-*)
   • named volumes: mariadb-data, clickhouse-data, clickhouse-logs,
     redis-data, redpanda-data, rust-target, frontend-node-modules
+  • locally-built images (seed-sample, build containers, ...)
   • host-side build artefacts under deploy/compose/build/
   • the generated authenticator dev signing key
     (deploy/compose/authenticator-dev-keys/)
@@ -1191,6 +1198,7 @@ This will permanently remove Docker state for Compose instance
 $COMPOSE_PROJECT_NAME:
   • containers
   • named volumes
+  • the instance's locally-built images
   • the instance network
 
 Worktree-level build artefacts, generated config, keys, and .env.compose
@@ -1203,6 +1211,7 @@ This will permanently remove the local Insight stack state:
   • containers (insight-*)
   • named volumes (mariadb-data, clickhouse-data, redis-data,
     redpanda-data, rust-target, frontend-node-modules, ...)
+  • locally-built images (seed-sample, build containers, ...)
   • deploy/compose/build/ artefacts
   • deploy/compose/authenticator-dev-keys/ (dev signing key)
   • deploy/compose/override.generated.yml
@@ -1231,13 +1240,19 @@ EOF
   local compose_cmd=(docker compose --project-name "$COMPOSE_PROJECT_NAME" --env-file "$env_file" -f docker-compose.yml)
   [[ -f "$override" ]] && compose_cmd+=(-f "$override")
 
-  echo "=== docker compose down --volumes --remove-orphans ==="
+  # --rmi local: also drop the images compose built for this project (they
+  # carry no custom `image:` tag, which is what "local" matches — the pulled
+  # ghcr images keep their separate question below). A locally-built image
+  # that outlives a prune is worse than a stale volume: the next `run`
+  # silently reuses it even after the source tree it was built from has
+  # moved, and the layer cache makes the rebuild cheap anyway.
+  echo "=== docker compose down --volumes --rmi local --remove-orphans ==="
   "${compose_cmd[@]}" \
     --profile front-dev --profile front-built --profile front-ghcr \
     --profile auth-keycloak \
     --profile build --profile seed \
     --profile local-mariadb --profile local-clickhouse \
-    down --volumes --remove-orphans || true
+    down --volumes --rmi local --remove-orphans || true
 
   if [[ -z "$instance" && -d deploy/compose/build ]]; then
     echo "Removing deploy/compose/build/..."
@@ -1268,8 +1283,16 @@ EOF
   # Image removal is a separate question — re-pulling is slow.
   if ask_yes_no "Also remove pulled ghcr.io/constructorfabric/insight-* images?" "n"; then
     local imgs
-    imgs=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-           | grep -E '^ghcr\.io/constructorfabric/insight-' || true)
+    # A pull whose tag was since taken over by a newer image is listed as
+    # `repo:<none>` — not a valid reference for `docker rmi`. Address those as
+    # `repo@digest`, which removes only the ghcr association: unlike the image
+    # ID, it leaves any other tag on the same image (the e2e rig's
+    # `*:e2e-prebuilt` retags) in place. Tagged pulls keep the repo:tag form.
+    imgs=$(docker images --digests --format '{{.Repository}}:{{.Tag}} {{.Repository}}@{{.Digest}}' 2>/dev/null \
+           | awk '$1 ~ /^ghcr\.io\/constructorfabric\/insight-/ {
+               if ($1 !~ /:<none>$/)      print $1
+               else if ($2 !~ /@<none>$/) print $2
+             }' || true)
     if [[ -z "$imgs" ]]; then
       echo "  No matching images present."
     else

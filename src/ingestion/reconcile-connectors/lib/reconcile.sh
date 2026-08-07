@@ -237,6 +237,166 @@ reconcile_classify_change() {
 }
 
 # ---------------------------------------------------------------------------
+# Docker repository Airbyte runs every builder-published (nocode) definition
+# from. A live definition on this repository is what tells reconcile the
+# connector is still manifest-backed, and it is the only starting point from
+# which a definition is migrated rather than left alone.
+_RECONCILE_MANIFEST_REPO="airbyte/source-declarative-manifest"
+
+# ---------------------------------------------------------------------------
+# reconcile_find_custom_definition_id <workspace_id> <connector_name>
+#
+# The id of the Insight-managed (custom, per ADR-0009) source definition holding
+# this connector's name, or empty. Emits nothing but the id, so it is safe to
+# read with a command substitution — unlike anything that logs, since log_line
+# writes its JSON to stdout.
+# ---------------------------------------------------------------------------
+reconcile_find_custom_definition_id() {
+  local workspace_id="$1" connector_name="$2"
+  ab_list_definitions "${workspace_id}" | python3 -c '
+import sys, json
+target = sys.argv[1]
+for d in json.load(sys.stdin):
+    if d.get("name") == target and d.get("custom") is True:
+        print(d.get("sourceDefinitionId", "")); break
+' "${connector_name}"
+}
+
+# ---------------------------------------------------------------------------
+# reconcile_migrated_state_file <source_name>
+#
+# Path of the state backup taken when reconcile_migrate_definition_kind tore a
+# source down, read back by reconcile_connections when it creates the
+# replacement. The handoff goes through the filesystem rather than a shell
+# variable because both stages are invoked as `$(...)` by _reconcile_one_connector
+# — anything they assign dies with the subshell.
+#
+# Keyed by source name: the name is what survives a recreate, and a definition
+# may have several sources bound to it, whose states must not overwrite each
+# other. Scoped to the run so a backup abandoned by an earlier crash is never
+# mistaken for this run's.
+# ---------------------------------------------------------------------------
+reconcile_migrated_state_file() {
+  local source_name="$1" safe_name
+  safe_name="$(printf '%s' "${source_name}" | tr -c '[:alnum:]._-' '_')"
+  printf '%s/%s.json' "$(reconcile_migrated_state_dir)" "${safe_name}"
+}
+
+# Directory holding this run's state backups. The file paths are predictable —
+# both stages have to derive the same one — so the directory carries the
+# protection: created 0700, and refused if it is not a directory we own, which
+# is what stops a pre-created path or symlink in a shared TMPDIR from
+# redirecting the write or exposing the contents.
+reconcile_migrated_state_dir() {
+  printf '%s/insight-migrated-state.%s' "${TMPDIR:-/tmp}" "${RECONCILE_RUN_ID:-$$}"
+}
+
+reconcile_migrated_state_dir_ready() {
+  local dir
+  dir="$(reconcile_migrated_state_dir)"
+  [[ -d "${dir}" ]] || mkdir -m 700 "${dir}" 2>/dev/null || return 1
+  [[ -d "${dir}" && ! -L "${dir}" && -O "${dir}" ]] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# reconcile_migrate_definition_kind <connector_name> <old_definition_id> <cdk_image>
+#
+# Move a connector from a manifest-backed definition to a CDK-image-backed one.
+# Airbyte's source_definitions/update carries only dockerImageTag, so a
+# definition's docker repository cannot be repointed, and definitions are found
+# by name — the old one must be gone before the new one can hold the name.
+#
+# Delete-then-create is therefore forced, and the order below makes it safe:
+# state is exported and persisted to disk before anything is destroyed, and the
+# remaining stages are self-healing — reconcile_sources finds no source and
+# creates one from the descriptor and Secret. Rebuilding the source config from
+# the Secret rather than copying the old one is also what drops a config field
+# the rewrite retired, which the old config would otherwise carry into a spec
+# that no longer accepts it.
+#
+# A crash between the delete and the create leaves no definition, which the next
+# pass treats as a first publish — the same path a new connector takes.
+#
+# Emits the new definition id on stdout.
+# ---------------------------------------------------------------------------
+reconcile_migrate_definition_kind() {
+  local connector_name="$1" old_definition_id="$2" cdk_image="$3"
+  local workspace_id sources_json bound_sources
+
+  # Defensive dry-run guard: reconcile_definitions already short-circuits before
+  # calling us, but enforce here too per dod-reconcile-dry-run-non-destructive.
+  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+    reconcile__log CHANGE "${connector_name}" \
+      "would migrate definition ${old_definition_id} to ${cdk_image}"
+    return 0
+  fi
+
+  workspace_id="$(ab_workspace_id)"
+  sources_json="$(ab_list_sources "${workspace_id}")"
+  # `<sourceId>\t<name>` per bound source — the name is the key the replacement
+  # is created under, so it is what the state backup has to be filed against.
+  bound_sources="$(printf '%s' "${sources_json}" | python3 -c '
+import sys, json
+target = sys.argv[1]
+for s in json.load(sys.stdin):
+    if s.get("sourceDefinitionId") == target:
+        print("%s\t%s" % (s.get("sourceId", ""), s.get("name", "")))
+' "${old_definition_id}")"
+
+  local source_id source_name connection_id state_json state_backup
+  while IFS=$'\t' read -r source_id source_name; do
+    [[ -n "${source_id}" ]] || continue
+
+    connection_id="$(ab_list_connections "${workspace_id}" \
+      | python3 "${_RECONCILE_PY_DIR}/select_connection_by_source.py" "${source_id}")"
+    if [[ -n "${connection_id}" ]]; then
+      if ! state_json="$(ab_get_state "${connection_id}")"; then
+        reconcile__log ERROR "${connector_name}" \
+          "state export failed for connection ${connection_id} — aborting definition migration"
+        return 1
+      fi
+      if ! reconcile_migrated_state_dir_ready; then
+        reconcile__log ERROR "${connector_name}" \
+          "state backup directory $(reconcile_migrated_state_dir) is unusable — aborting before anything is deleted"
+        return 1
+      fi
+      state_backup="$(reconcile_migrated_state_file "${source_name}")"
+      rm -f "${state_backup}"
+      ( umask 077 && printf '%s' "${state_json}" > "${state_backup}" ) \
+        || { reconcile__log ERROR "${connector_name}" "state backup write failed — aborting"; return 1; }
+      reconcile__log INFO "${connector_name}" "state backup for ${source_name}: ${state_backup}"
+    fi
+
+    # RECONCILE_DRY_RUN guarded at top of reconcile_migrate_definition_kind.
+    ab_delete_source "${source_id}" >/dev/null
+    reconcile__log CHANGE "${connector_name}" \
+      "deleted source ${source_id} bound to the manifest-backed definition"
+  done <<<"${bound_sources}"
+
+  # RECONCILE_DRY_RUN guarded at top of reconcile_migrate_definition_kind.
+  if ! ab_delete_source_definition "${old_definition_id}" >/dev/null; then
+    reconcile__log ERROR "${connector_name}" \
+      "failed to delete manifest-backed definition ${old_definition_id}"
+    return 1
+  fi
+
+  local docker_repo docker_tag new_def_id
+  IFS=$'\t' read -r docker_repo docker_tag \
+    < <(python3 "${_RECONCILE_PY_DIR}/split_docker_image_ref.py" "${cdk_image}")
+  # RECONCILE_DRY_RUN guarded at top of reconcile_migrate_definition_kind.
+  if ! new_def_id="$(ab_create_custom_cdk_definition \
+                     "${workspace_id}" "${connector_name}" \
+                     "${docker_repo}" "${docker_tag}")"; then
+    reconcile__log ERROR "${connector_name}" \
+      "definition ${old_definition_id} deleted but registering ${docker_repo}:${docker_tag} failed — the next pass republishes it as a first publish"
+    return 1
+  fi
+
+  reconcile__log CHANGE "${connector_name}" \
+    "migrated to cdk definition ${new_def_id} (${docker_repo}:${docker_tag}); source and connection are rebuilt by the later stages"
+}
+
+# ---------------------------------------------------------------------------
 # reconcile_definitions <connector_name> <target_version> <type> <connector_dir> [<cdk_image>]
 # diff-definition-version algorithm. Idempotent.
 #
@@ -293,16 +453,7 @@ reconcile_definitions() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-none
   local workspace_id
   workspace_id="$(ab_workspace_id)"
-  local defs_json
-  defs_json="$(ab_list_definitions "${workspace_id}")"
-  # custom is True: Insight namespace separation per ADR-0009.
-  definition_id="$(printf '%s' "${defs_json}" | python3 -c '
-import sys, json
-target = sys.argv[1]
-for d in json.load(sys.stdin):
-    if d.get("name") == target and d.get("custom") is True:
-        print(d.get("sourceDefinitionId", "")); break
-' "${connector_name}")"
+  definition_id="$(reconcile_find_custom_definition_id "${workspace_id}" "${connector_name}")"
 
   if [[ -z "${definition_id}" ]]; then
     if [[ "${type}" == "nocode" ]]; then
@@ -451,10 +602,52 @@ for d in json.load(sys.stdin):
     IFS=$'\t' read -r desc_repo desc_tag \
       < <(python3 "${_RECONCILE_PY_DIR}/split_docker_image_ref.py" "${cdk_image}")
 
-    if [[ "${current_repo}" != "${desc_repo}" ]]; then
+    if [[ "${current_repo}" != "${desc_repo}" && "${current_repo}" != "${_RECONCILE_MANIFEST_REPO}" ]]; then
+      # Two CDK image repositories differing is a registry move or a descriptor
+      # typo, not a change of connector kind, and tearing a live source down for
+      # either would be out of all proportion. Unchanged from before: WARN and
+      # leave it to an operator.
       reconcile__log WARN "${connector_name}" \
         "cdk image repository changed (${current_repo} → ${desc_repo}); manual recreate-with-state needed — skipping for now"
       printf 'noop\tnone\t%s\n' "${definition_id}"
+      return 0
+    fi
+
+    if [[ "${current_repo}" != "${desc_repo}" ]]; then
+      # Only the manifest-backed → CDK case reaches here. A connector rewritten
+      # from a declarative manifest keeps its name, so the definition found above
+      # is the manifest runner's and its repository can never be updated into
+      # ours. Migrating is the only way forward; leaving it in place would keep
+      # the old connection syncing the superseded extraction while the repo
+      # claims otherwise.
+      # bump_kind=patch, same as the cdk first-publish this effectively is: a
+      # one-shot sync still fires (data changed), but never `dbt --full-refresh`
+      # — that would drop and rebuild the connector's incremental SCD2 models
+      # and erase the very history the state backup exists to protect.
+      if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+        reconcile__log CHANGE "${connector_name}" \
+          "would migrate definition from ${current_repo} to ${desc_repo} (old source, connection and definition replaced; state preserved)"
+        printf 'republish\tpatch\t%s\n' "${definition_id}"
+        return 0
+      fi
+      # Called directly, never through a command substitution: it logs, and
+      # log_line writes JSON to stdout, so capturing it would swallow the log
+      # lines into the value. The new id is read back from Airbyte afterwards,
+      # which also confirms the definition really does hold the name now.
+      if ! reconcile_migrate_definition_kind \
+            "${connector_name}" "${definition_id}" "${cdk_image}"; then
+        reconcile__log ERROR "${connector_name}" "definition migration failed"
+        return 1
+      fi
+      local migrated_def_id
+      migrated_def_id="$(reconcile_find_custom_definition_id "${workspace_id}" "${connector_name}")"
+      if [[ -z "${migrated_def_id}" ]]; then
+        reconcile__log ERROR "${connector_name}" \
+          "migration reported success but no definition holds the name — the next pass republishes it as a first publish"
+        return 1
+      fi
+      _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
+      printf 'republish\tpatch\t%s\n' "${migrated_def_id}"
       return 0
     fi
     current_value="${current_tag}"
@@ -594,6 +787,7 @@ for s in json.load(sys.stdin):
 reconcile_connections() {
   local connector_name="$1" source_id="$2" secret_cfg_hash="$3"
   local namespace_format="${4:?reconcile_connections: namespace_format (arg 4) required — from descriptor.connection.namespace, no fallback}"
+  local source_name="${5:-}"
   local workspace_id connections_json filtered
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-connection-tags:p2:inst-dct-find-tag
@@ -706,6 +900,24 @@ print("\n".join(sorted(i for i in ids if i)))')"
         fi
       done <<< "${post_ids}"
       new_conn_id="${keep_id}"
+    fi
+    # A connection created in the same pass that migrated the definition is the
+    # replacement for the one that was torn down, so the state exported there
+    # belongs to it. Without this the streams would resync from cursor zero.
+    local migrated_state=""
+    [[ -n "${source_name}" ]] && migrated_state="$(reconcile_migrated_state_file "${source_name}")"
+    if [[ -n "${migrated_state}" && -n "${new_conn_id}" && -s "${migrated_state}" ]]; then
+      # RECONCILE_DRY_RUN guarded by the early return in this branch above.
+      if ab_create_or_update_state "${new_conn_id}" "$(cat "${migrated_state}")" >/dev/null; then
+        reconcile__log CHANGE "${connector_name}" \
+          "restored state onto migrated connection ${new_conn_id}"
+        rm -f "${migrated_state}"
+      else
+        # Keep the backup: it is the only copy, and the restore is retried on
+        # the next pass or recovered by hand from this path.
+        reconcile__log ERROR "${connector_name}" \
+          "state restore failed for migrated connection ${new_conn_id} — recover from ${migrated_state}"
+      fi
     fi
     _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
     printf 'created\t%s\n' "${new_conn_id}"
@@ -1148,7 +1360,7 @@ print(json.dumps(d))
   #      genuine reason to re-sync (the new credentials may scope to a
   #      different account / dataset).
   local conn_result conn_action conn_id
-  if ! conn_result="$(reconcile_connections "${name}" "${src_id}" "${cfg_hash}" "${ns_format}")"; then
+  if ! conn_result="$(reconcile_connections "${name}" "${src_id}" "${cfg_hash}" "${ns_format}" "${expected_source_name}")"; then
     log_line ERROR "${name}: failed to reconcile connection"
     _RECONCILE_FAILED=$((_RECONCILE_FAILED + 1))
     return 1

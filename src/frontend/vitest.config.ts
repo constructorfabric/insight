@@ -80,6 +80,34 @@ export default defineConfig({
             tags: { include: ["test"], exclude: [], skip: ["skip-test"] },
           }),
         ],
+        // Dependencies vite's pre-bundling scan does not reach from the story
+        // entry points, because a story renders them only after it mounts.
+        // Discovering one mid-run makes vite re-optimize and RELOAD the page,
+        // which aborts whatever the running test was doing — most visibly a
+        // dynamic import, which fails with "Failed to fetch dynamically
+        // imported module". The failure lands on an unrelated test and only
+        // on a cold cache, so it reads as a flake and reproduces nowhere but
+        // CI. Listing them here is what vite's own warning asks for.
+        //
+        // A component newly reached from a story can add to this list. The
+        // symptom to match it to: "new dependencies optimized: …" followed by
+        // "optimized dependencies changed. reloading" in the run output.
+        optimizeDeps: {
+          include: [
+            "@base-ui/react/avatar",
+            "@base-ui/react/collapsible",
+            "@base-ui/react/dialog",
+            "@base-ui/react/input",
+            "@base-ui/react/preview-card",
+            "@base-ui/react/separator",
+            "@base-ui/react/switch",
+            "@base-ui/react/tooltip",
+            "@tanstack/react-virtual",
+            "react-day-picker",
+            "react-error-boundary",
+            "sonner",
+          ],
+        },
         test: {
           name: "storybook",
           browser: {

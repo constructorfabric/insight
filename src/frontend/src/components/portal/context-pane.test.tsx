@@ -18,6 +18,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   zone: { activeZone: "overview", activePerson: "boss@x" },
+  standings: [] as Array<{
+    id: string;
+    title: string;
+    status: string;
+    phrase: string;
+    hasData: boolean;
+    isPending: boolean;
+  }>,
 }));
 
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
@@ -31,6 +39,13 @@ import {
   usePortalLens,
 } from "@/lib/portal/portal-nav";
 import { SidebarProvider } from "@/components/ui/sidebar";
+// The sections nav asks where the person stands so it can mark each section;
+// the standings come from the section screens' own queries, which this test
+// has no reason to run.
+vi.mock("@/lib/portal/use-person-sections", () => ({
+  usePersonSectionStandings: () => mocks.standings,
+}));
+
 import { ContextPane } from "./context-pane";
 
 const pane = () => render(<SidebarProvider><ContextPane /></SidebarProvider>);
@@ -47,6 +62,7 @@ beforeEach(() => {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
   mocks.zone = { activeZone: "overview", activePerson: "boss@x" };
+  mocks.standings = [];
   act(() => {
     portalRouter.set({ zone: undefined });
     portalRouter.set({ item: undefined });
@@ -107,5 +123,60 @@ describe("ContextPane", () => {
     pane();
     expect(screen.getByText("Pick a person")).toBeInTheDocument();
     expect(screen.getByText("At a glance")).toBeInTheDocument();
+  });
+
+  it("marks a section with where the person stands in it", () => {
+    // The mark is the whole point of this nav: it says which section is worth
+    // opening. Its colour and its reason have to reach the reader.
+    mocks.zone = { activeZone: "person", activePerson: "boss@x" };
+    mocks.standings = [
+      {
+        id: "git_output",
+        title: "Git output",
+        status: "bad",
+        phrase: "4 of 6 behind peers",
+        hasData: true,
+        isPending: false,
+      },
+    ];
+    pane();
+    const button = screen.getByTitle("4 of 6 behind peers");
+    expect(button.querySelector(".bg-destructive")).not.toBeNull();
+  });
+
+  it("says a section has nothing rather than colouring it", () => {
+    mocks.zone = { activeZone: "person", activePerson: "boss@x" };
+    mocks.standings = [
+      {
+        id: "git_output",
+        title: "Git output",
+        status: "neutral",
+        phrase: "no peer data",
+        hasData: false,
+        isPending: false,
+      },
+    ];
+    pane();
+    const button = screen.getByTitle("No data this period");
+    expect(button.querySelector(".bg-muted-foreground\\/30")).not.toBeNull();
+  });
+
+  it("draws no mark while the standings are still loading", () => {
+    // A pending section drawn grey would read as "nothing here" — an answer
+    // the hook has not given yet.
+    mocks.zone = { activeZone: "person", activePerson: "boss@x" };
+    mocks.standings = [
+      {
+        id: "git_output",
+        title: "Git output",
+        status: "neutral",
+        phrase: "",
+        hasData: false,
+        isPending: true,
+      },
+    ];
+    pane();
+    const button = screen.getByText("Git output").closest("button")!;
+    expect(button.querySelector("span[aria-hidden]")).toBeNull();
   });
 });

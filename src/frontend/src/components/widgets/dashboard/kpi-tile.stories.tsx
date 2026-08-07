@@ -32,12 +32,11 @@ function makeTile(overrides: Partial<KpiTileData> = {}): KpiTileData {
     key: "tasks.closed",
     label: "Bugs Fixed",
     value: "12",
-    valueStatus: "good",
     delta: { text: "+9%", status: "good", down: false },
     medianLabel: "median 6",
     gapText: null,
     gapStatus: "neutral",
-    context: "Jira",
+    help: { description: "Issues closed in the period", explanation: null },
     groupId: "task_delivery",
     ...overrides,
   };
@@ -92,7 +91,7 @@ export const TestOkTile: Story = {
 export const TestNoPeers: Story = {
   tags: ["test"],
   args: {
-    tile: makeTile({ valueStatus: "neutral", medianLabel: null, delta: null }),
+    tile: makeTile({ gapStatus: "neutral", medianLabel: null, delta: null }),
   },
   play: async ({ canvas }) => {
     await expect(canvas.getByText("Bugs Fixed")).toBeInTheDocument();

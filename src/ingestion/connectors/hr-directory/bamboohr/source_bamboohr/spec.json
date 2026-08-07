@@ -1,0 +1,58 @@
+{
+  "documentationUrl": "https://documentation.bamboohr.com/reference",
+  "connectionSpecification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "BambooHR Source",
+    "type": "object",
+    "required": [
+      "insight_tenant_id",
+      "insight_source_id",
+      "bamboohr_api_key",
+      "bamboohr_domain"
+    ],
+    "additionalProperties": true,
+    "properties": {
+      "insight_tenant_id": {
+        "type": "string",
+        "title": "Insight Tenant ID",
+        "description": "Tenant isolation identifier (UUID).",
+        "minLength": 1,
+        "order": 0
+      },
+      "insight_source_id": {
+        "type": "string",
+        "title": "Insight Source ID",
+        "description": "Unique identifier for this BambooHR connector instance (e.g., 'bamboohr-acme-prod').",
+        "examples": ["bamboohr-acme-prod"],
+        "minLength": 1,
+        "order": 1
+      },
+      "bamboohr_api_key": {
+        "type": "string",
+        "title": "BambooHR API Key",
+        "description": "BambooHR API key for authentication. Found in BambooHR > Account > API Keys.",
+        "airbyte_secret": true,
+        "minLength": 1,
+        "order": 2
+      },
+      "bamboohr_domain": {
+        "type": "string",
+        "title": "BambooHR Domain",
+        "description": "Your BambooHR subdomain (e.g., 'acme' from acme.bamboohr.com). The bare subdomain only — not a full hostname or URL.",
+        "examples": ["acme"],
+        "pattern": "^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$",
+        "minLength": 1,
+        "order": 3
+      },
+      "bamboohr_start_date": {
+        "type": "string",
+        "title": "Start Date",
+        "description": "Start date for leave requests history (ISO format YYYY-MM-DD). Defaults to 2020-01-01 if not set.",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+        "default": "2020-01-01",
+        "examples": ["2024-01-01"],
+        "order": 4
+      }
+    }
+  }
+}

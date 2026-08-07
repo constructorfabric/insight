@@ -15,13 +15,11 @@ at /ingestion (docker-compose.yml `seed-sample.volumes`):
    tables. Volumes scale by team profile + persona; per-day caps live in
    each generator module.
 
-3. `apply-ch-migrations.sh` — applies migrations/*.sql (gold VIEWs), the
-   staging label repair, and `dbt run --select tag:gold` to build the
-   dbt-owned gold models. Run AFTER seeding so the one materialized gold
-   model (`insight.git_metric_observations`, materialized='table') is built
-   over real seeded silver instead of empty placeholders. The migration
-   views and the two view-materialized gold models are read-time, so their
-   order relative to seeding does not matter; the table model's does.
+3. `apply-ch-migrations.sh` — applies migrations/*.sql (identity DDL, class
+   contract heals, the contract-version stamp), the staging label repair,
+   and `dbt run --select tag:gold` to build the dbt-owned gold models. Run
+   AFTER seeding so the materialized gold models are built over real seeded
+   silver instead of empty placeholders.
 
    Re-running create-bronze-placeholders.sh from inside this script is a
    no-op on the seeded tables (IF NOT EXISTS, no DROP/TRUNCATE), and the
@@ -178,17 +176,9 @@ def run() -> None:
         # 2. Seed silver rows into the created tables.
         generate_rows(client)
         # 3. Real deploy mechanism: migrations + gold (incl. dbt gold build
-        #    over the now-seeded silver). Runs AFTER seeding so the one
-        #    materialized gold model (git_metric_observations, a table) and
-        #    the migration views all reflect real rows.
+        #    over the now-seeded silver). Runs AFTER seeding so the gold
+        #    models reflect real rows.
         apply_ch_migrations()
-        # 4. Populate the task refreshable MVs from seeded silver — DDL was
-        #    created in step 3; SYSTEM REFRESH must run once the rows exist.
-        #    Python analog of scripts/post-deploy/refresh-task-views.sh (that
-        #    script needs clickhouse-client, which the seed image omits to
-        #    stay lean — the two SYSTEM REFRESH statements are identical).
-        task.refresh_dependent_mvs(client)
-        LOG.info("task refreshable MVs refreshed")
     finally:
         client.close()
     LOG.info("DONE: silver rows seeded + gold layer built via deploy scripts.")

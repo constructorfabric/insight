@@ -514,9 +514,21 @@ export const HEATMAP_COLLECTION: MetricCollectionConfig = {
 };
 
 /**
- * The "At a glance" KPI row: array order is display order. Tiles are metric
- * keys resolved against the KPI collection below and render through the
- * display-ready tile intermediate — selectors own formatting and scoring.
+ * CANDIDATES for the "At a glance" row, in display order — not the row itself.
+ *
+ * The row renders the first `KPI_ROW_MAX` of these that this person was
+ * actually observed for. A fixed five-key row spends the most valuable space on
+ * the page on whatever the list happens to name: a person whose role produces
+ * no pull requests and no tasks gets dashes in those slots, while the metrics
+ * their work does register are nowhere on the screen.
+ *
+ * The tail exists for exactly that person. It is a fallback, not a demotion —
+ * a developer still leads with tasks and PRs, because those come first here and
+ * they have them.
+ *
+ * "Observed" is the honest test, not "non-zero": a developer who merged nothing
+ * this month KEEPS the empty PR tile, because a measured zero is a finding. A
+ * metric no connector feeds for this person is what drops out.
  */
 export const KPI_ROW: readonly string[] = [
   "tasks.closed",
@@ -524,7 +536,21 @@ export const KPI_ROW: readonly string[] = [
   "git.prs_merged",
   "ai.active_days",
   "ai.accepted_lines",
+  "collab.messages_sent",
+  "collab.meeting_hours",
+  "wiki.pages_created",
+  "git.commits",
 ];
+
+/** How many tiles the row shows; the rest of the candidates are fallbacks. */
+/**
+ * Four, not five, because the row is laid out in a column count that divides
+ * it. Five tiles in a four-column row leave the fifth alone on a line of its
+ * own beside a hole the width of three tiles, and the hole reads as something
+ * failing to load. The candidate list is longer than the row either way, so
+ * the row already adapts to the person; it now also fills.
+ */
+export const KPI_ROW_MAX = 4;
 
 export const KPI_ROW_COLLECTION: MetricCollectionConfig = {
   metrics: KPI_ROW.map((key) => ({

@@ -12,6 +12,7 @@ import {
 import {
   buildMetricCollectionRequest,
   chunkEntityIds,
+  filterCollectionToAvailable,
   entityChunkSize,
   mergeNormalizedResults,
   normalizeMetricResults,
@@ -20,6 +21,7 @@ import {
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { useAvailableMetricKeys } from "@/queries/metric-definitions";
 import type { PeriodValue } from "@/types/insight";
 
 export interface MetricCollectionOptions {
@@ -76,16 +78,25 @@ export function useMetricCollection(
   options?: MetricCollectionOptions
 ): MetricCollectionResult {
   const ids = canonicalEntityIds(entity);
+  // Ask only for metrics this installation's catalog offers: the backend
+  // rejects the WHOLE request over one unknown key, so a compiled-in key that
+  // a tenant does not have would blank the screen instead of its own tile.
+  const catalog = useAvailableMetricKeys();
+  const asked = filterCollectionToAvailable(collection, catalog.keys);
   const request = buildMetricCollectionRequest(
-    collection,
+    asked,
     { type: entity.type, ids },
     range
   );
-  // An empty entity list is not a request the backend can answer — it rejects
-  // `entity.ids: []` with 400 invalid_argument. So the query stays disabled,
-  // and because `refetch()` bypasses `enabled`, the `refetch` and `isError`
-  // this hook returns have to respect the same flag.
-  const enabled = ids.length > 0 && Boolean(range.from && range.to);
+  // Neither an empty entity list nor an empty metric list is a request the
+  // backend can answer — it rejects both with 400 invalid_argument. So the
+  // query stays disabled, and because `refetch()` bypasses `enabled`, the
+  // `refetch` and `isError` this hook returns have to respect the same flag.
+  const enabled =
+    ids.length > 0 &&
+    request.metrics.length > 0 &&
+    !catalog.isPending &&
+    Boolean(range.from && range.to);
 
   const current = useQuery({
     queryKey: queryKeyFor(entity, ids, range, request.metrics),
@@ -99,7 +110,7 @@ export function useMetricCollection(
     : null;
   const previousRequest = previousRange
     ? buildMetricCollectionRequest(
-        collection,
+        asked,
         { type: entity.type, ids },
         previousRange
       )
@@ -138,7 +149,10 @@ export function useMetricCollection(
   return {
     byKey,
     previousByKey,
-    isPending: current.isPending && enabled,
+    // Pending while the catalog resolves too: the request is coming, so the
+    // screen must show a skeleton rather than an empty state it would replace
+    // a moment later.
+    isPending: (current.isPending && enabled) || (ids.length > 0 && catalog.isPending),
     isFetching: current.isFetching || (hasPrevious && previous.isFetching),
     // Defensive: `ids` and `range` both ride in the query key, so today a
     // disabled query cannot be holding an error from an enabled one. Kept so
@@ -181,30 +195,42 @@ export function useMetricCollectionSet(
   range: DateRange
 ): Map<string, MetricCollectionResult> {
   const ids = canonicalEntityIds(entity);
-  const enabled = ids.length > 0 && Boolean(range.from && range.to);
+  const catalog = useAvailableMetricKeys();
+  const enabled =
+    ids.length > 0 && !catalog.isPending && Boolean(range.from && range.to);
 
   // Large rosters are chunked so a period+peer collection over N entities
   // never exceeds the backend's all-or-nothing projected-row limit; chunk
   // results merge back into one collection result per key.
-  const requests = collections.flatMap(({ key, collection }) => {
+  const requests = collections.flatMap(({ key, collection: raw }) => {
+    // Same catalog gate as `useMetricCollection` — see the note there.
+    const collection = filterCollectionToAvailable(raw, catalog.keys);
     const chunkSize = entityChunkSize(collection);
     const chunks = chunkSize === null ? [ids] : chunkEntityIds(ids, chunkSize);
-    return chunks.map((chunkIds) => ({
-      key,
-      request: buildMetricCollectionRequest(
+    return chunks.map((chunkIds) => {
+      const request = buildMetricCollectionRequest(
         collection,
         { type: entity.type, ids: chunkIds },
         range
-      ),
-      chunkIds,
-    }));
+      );
+      return {
+        key,
+        request,
+        chunkIds,
+        // Per-request, not just the shared gate: a collection the catalog
+        // covers none of filters down to `metrics: []`, which is itself a 400.
+        // It also decides `isPending`/`isError` below — a query that will never
+        // fire must not report itself as forever loading.
+        active: enabled && request.metrics.length > 0,
+      };
+    });
   });
 
   const results = useQueries({
-    queries: requests.map(({ request, chunkIds }) => ({
+    queries: requests.map(({ request, chunkIds, active }) => ({
       queryKey: queryKeyFor(entity, chunkIds, range, request.metrics),
       queryFn: () => queryMetricResults(request),
-      enabled,
+      enabled: active,
     })),
   });
 
@@ -213,7 +239,7 @@ export function useMetricCollectionSet(
     string,
     Array<Map<string, NormalizedMetricResult>>
   >();
-  requests.forEach(({ key }, index) => {
+  requests.forEach(({ key, active }, index) => {
     const query = results[index];
     if (!query) return;
     const maps = chunkMaps.get(key) ?? [];
@@ -223,14 +249,19 @@ export function useMetricCollectionSet(
     // Same guard as the single-collection hook: a disabled chunk has no valid
     // request to send, and `refetch()` would send it anyway.
     const refetch = () => {
-      if (enabled) void query.refetch();
+      if (active) void query.refetch();
     };
     out.set(key, {
       byKey: new Map(),
       previousByKey: null,
-      isPending: (existing?.isPending ?? false) || (query.isPending && enabled),
+      // Pending covers the catalog wait too — otherwise a screen reads "no
+      // data" for the moment before its requests are even allowed to fire.
+      isPending:
+        (existing?.isPending ?? false) ||
+        (query.isPending && active) ||
+        (ids.length > 0 && catalog.isPending),
       isFetching: (existing?.isFetching ?? false) || query.isFetching,
-      isError: (existing?.isError ?? false) || (enabled && query.isError),
+      isError: (existing?.isError ?? false) || (active && query.isError),
       // Chunks of the same collection share a key; refetch fans out to all.
       refetch: existing
         ? () => {

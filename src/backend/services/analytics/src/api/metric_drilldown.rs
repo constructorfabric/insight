@@ -5,7 +5,7 @@ use axum::Json;
 use axum::body::Body;
 use axum::extract::Extension;
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
-use axum::http::{HeaderValue, Response};
+use axum::http::{HeaderMap, HeaderValue, Response};
 use tokio::sync::Semaphore;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
@@ -14,11 +14,12 @@ use super::AppState;
 use crate::api::error::MetricError;
 use crate::domain::metric_drilldown::{
     EVIDENCE_QUERY_TIMEOUT_SECS, EvidenceQueryRow, MAX_EXPORT_BYTES, MAX_EXPORT_ROWS,
-    MetricDrilldownColumn, MetricDrilldownExportFormat, MetricDrilldownExportRequest,
-    MetricDrilldownRequest, MetricDrilldownResponse, MetricDrilldownRow, ValidatedMetricDrilldown,
-    build_export, build_response, compile_query, decode_evidence_rows, evidence_unavailable,
-    export_filename, export_internal, export_limit, presentation, validate_export_request,
-    validate_request, verify_evidence_snapshot, with_evidence_query_limits,
+    MetricDrilldownColumn, MetricDrilldownEntity, MetricDrilldownExportFormat,
+    MetricDrilldownExportRequest, MetricDrilldownRequest, MetricDrilldownResponse,
+    MetricDrilldownRow, ValidatedMetricDrilldown, build_export, build_response, compile_query,
+    decode_evidence_rows, evidence_unavailable, export_filename, export_internal, export_limit,
+    parse_person_entity, presentation, validate_export_request, validate_request,
+    verify_evidence_snapshot, with_evidence_query_limits,
 };
 use crate::domain::person_visibility::authorize_entity_ids;
 
@@ -36,25 +37,14 @@ static QUERY_SEMAPHORE: LazyLock<Semaphore> =
 pub async fn query_metric_drilldown(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     Json(req): Json<MetricDrilldownRequest>,
 ) -> Result<Json<MetricDrilldownResponse>, CanonicalError> {
     let started = Instant::now();
+    authorize_person_entity(&state, &ctx, &headers, &req.entity).await?;
+
     let mut req = validate_request(&state.db, &state.ch, ctx.subject_tenant_id(), req).await?;
     req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
-
-    // Visibility gate BEFORE any ClickHouse work, same predicate and failure
-    // matrix as `/v1/metric-results`: this endpoint serves per-person evidence
-    // rows — names, record labels, contributions — so an unchecked id here is
-    // the same IDOR the sibling endpoint answers 403 for.
-    authorize_entity_ids(
-        &state.identity,
-        &ctx,
-        super::forwarded_authorization(&headers),
-        &req.selection.entity.r#type,
-        &[req.person_id],
-    )
-    .await?;
 
     let log_comment = format!("metric-drilldown:page:{}", req.plan.definition.key());
     let rows = fetch_rows(&state, &req, &log_comment).await?;
@@ -75,9 +65,14 @@ pub async fn query_metric_drilldown(
 pub async fn export_metric_drilldown(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
+    headers: HeaderMap,
     Json(req): Json<MetricDrilldownExportRequest>,
 ) -> Result<Response<Body>, CanonicalError> {
     let started = Instant::now();
+    // Ahead of the permit: a caller who may not see this person must not occupy
+    // one of MAX_CONCURRENT_EXPORTS slots.
+    authorize_person_entity(&state, &ctx, &headers, &req.entity).await?;
+
     let permit = acquire_export_permit().await?;
     let deadline = tokio::time::Instant::now() + EXPORT_TIMEOUT;
 
@@ -116,6 +111,29 @@ pub async fn export_metric_drilldown(
     );
 
     attachment_response(body, content_type, &export_name(&validated, extension))
+}
+
+// INVARIANT: both drilldown routes call this before validation touches MariaDB
+// or ClickHouse. They serve per-person evidence — names, record labels,
+// contributions — so an unchecked id is the IDOR `/v1/metric-results` answers
+// 403 for. Gating ahead of validation also stops its error codes (404 unknown
+// metric, 400 unhealthy evidence) from describing a person the caller cannot see.
+async fn authorize_person_entity(
+    state: &AppState,
+    ctx: &SecurityContext,
+    headers: &HeaderMap,
+    entity: &MetricDrilldownEntity,
+) -> Result<(), CanonicalError> {
+    let (entity_type, person_id) = parse_person_entity(entity)?;
+
+    authorize_entity_ids(
+        &state.identity,
+        ctx,
+        super::forwarded_authorization(headers),
+        &entity_type,
+        &[person_id],
+    )
+    .await
 }
 
 async fn acquire_export_permit() -> Result<tokio::sync::SemaphorePermit<'static>, CanonicalError> {

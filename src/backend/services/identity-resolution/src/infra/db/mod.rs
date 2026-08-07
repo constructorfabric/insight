@@ -25,6 +25,7 @@ pub mod ops_repo;
 pub mod person_roles_repo;
 pub mod persons_log_repo;
 pub mod persons_repo;
+pub mod resolution_repo;
 pub mod roles_repo;
 pub mod seed_repo;
 pub mod sql_named;

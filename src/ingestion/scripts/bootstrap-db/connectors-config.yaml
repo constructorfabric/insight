@@ -158,6 +158,18 @@ connectors:
         value: bitbucket-acme-prod
       insight_tenant_id:
         value: fake
+  github-directory:
+    path: git/github-directory
+    config:
+      github_organizations:
+        value:
+          - fake
+      github_token:
+        value: fake
+      insight_source_id:
+        value: github-directory-acme-prod
+      insight_tenant_id:
+        value: fake
   github-v2:
     path: git/github-v2
     config:

@@ -4,24 +4,25 @@ import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { GroupDrilldownSheet } from "@/components/widgets/dashboard/group-drilldown-sheet";
 import { IcNeedsAttention } from "@/components/widgets/dashboard/ic-needs-attention";
-import { KpiTile, KpiTilePlaceholder } from "@/components/widgets/dashboard/kpi-tile";
-import { MetricGroupCard } from "@/components/widgets/metric-views/metric-group-card";
+import { KpiTile } from "@/components/widgets/dashboard/kpi-tile";
+import { previousPeriodRange } from "@/api/period-to-date-range";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
+import type { PeriodValue } from "@/types/insight";
 import { useSettings } from "@/hooks/use-settings";
-import { metricAttentionItems } from "@/lib/insight/attention";
 import {
-  KPI_ROW,
-  KPI_ROW_COLLECTION,
-  GROUPS,
-  type GroupId,
-} from "@/lib/insight/groups";
-import { metricKpiTiles, type KpiTileData } from "@/lib/insight/kpi-row";
+  metricAttentionItems,
+  orderAttentionItems,
+} from "@/lib/insight/attention";
+import { typicalPeerPool } from "@/lib/insight/peer-pool";
+import { KPI_ROW_COLLECTION, GROUPS, type GroupId } from "@/lib/insight/groups";
+import { metricKpiTiles } from "@/lib/insight/kpi-row";
 import { injectCohortPeer } from "@/lib/insight/within-team-peer";
 import {
   projectViews,
   type MetricCollectionConfig,
 } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { cn } from "@/lib/utils";
 import { useCohortLabel } from "@/lib/portal/use-cohort-label";
 import { usePersonCohort } from "@/lib/portal/use-person-cohort";
 import {
@@ -31,6 +32,27 @@ import {
 } from "@/queries/metric-results";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
+
+/**
+ * Column counts by how many tiles there are. Written out rather than composed,
+ * because the class scanner reads source text and cannot see a name built at
+ * runtime.
+ */
+const TILE_GRID: Record<number, string> = {
+  0: "grid-cols-1",
+  1: "grid-cols-1",
+  2: "grid-cols-1 sm:grid-cols-2",
+  3: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3",
+  4: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4",
+};
+
+/** What the previous period IS, so the badge can be named in plain words. */
+const PERIOD_NOUN: Record<PeriodValue, string> = {
+  week: "week",
+  month: "month",
+  quarter: "quarter",
+  year: "year",
+};
 const CLOSED_ENTITY = { type: "person" as const, ids: [] };
 const CLOSED_DRILLDOWN_DATA = {
   byKey: new Map(),
@@ -87,7 +109,7 @@ export function MetricGroupsView({
     showKpis ? KPI_ROW_COLLECTION : EMPTY_COLLECTION,
     showKpis ? entity : CLOSED_ENTITY,
     dateRange,
-    { previousPeriod: period },
+    { previousPeriod: period }
   );
   const groupData = useMetricCollectionSet(
     defs.map((def) => ({
@@ -95,21 +117,36 @@ export function MetricGroupsView({
       collection: projectViews(def.collection, ["period", "peer"]),
     })),
     entity,
-    dateRange,
+    dateRange
+  );
+  // The same collections over the previous period: attention needs to know
+  // whether a standing is also a change (see `metricAttentionItems`), and
+  // "period" alone is enough for that — no peer stats needed.
+  const previousRange = previousPeriodRange(dateRange, period);
+  const previousGroupData = useMetricCollectionSet(
+    showKpis
+      ? defs.map((def) => ({
+          key: def.id,
+          collection: projectViews(def.collection, ["period"]),
+        }))
+      : [],
+    showKpis ? entity : CLOSED_ENTITY,
+    previousRange
   );
 
   // Slice cohort: the people who share this person's active-slice attribute
   // value. Only fetched when a slice is picked — otherwise the person's own
   // numbers stand alone (no cohort, tiles show "no peer data" as before).
   const cohortIds = usePersonCohort(entityId);
-  const cohortEntity =
-    cohortIds.length ? { type: "person" as const, ids: cohortIds } : CLOSED_ENTITY;
+  const cohortEntity = cohortIds.length
+    ? { type: "person" as const, ids: cohortIds }
+    : CLOSED_ENTITY;
   const cohortKpi = useMetricCollection(
     cohortIds.length && showKpis ? KPI_ROW_COLLECTION : EMPTY_COLLECTION,
     // Entity gated on the SAME condition as the collection — a live entity
     // with an empty collection still issues a useless network request.
     cohortIds.length && showKpis ? cohortEntity : CLOSED_ENTITY,
-    dateRange,
+    dateRange
   );
   const cohortGroup = useMetricCollectionSet(
     cohortIds.length
@@ -119,7 +156,7 @@ export function MetricGroupsView({
         }))
       : [],
     cohortEntity,
-    dateRange,
+    dateRange
   );
 
   const [openGroup, setOpenGroup] = useState<GroupId | null>(null);
@@ -131,7 +168,7 @@ export function MetricGroupsView({
   const drilldownData = useMetricCollection(
     openDef?.collection ?? EMPTY_COLLECTION,
     openDef ? entity : CLOSED_ENTITY,
-    dateRange,
+    dateRange
   );
 
   const [prevPersonId, setPrevPersonId] = useState(personId);
@@ -152,12 +189,35 @@ export function MetricGroupsView({
     );
   }
 
-  const isLoading = (showKpis && kpiData.isPending) || collectionSetPending(groupData);
+  // The previous period counts as part of the picture: attention needs it to
+  // tell a change from a standing, so a pending one is still loading and a
+  // failed one is an error. Left out, a failed comparison would render as
+  // "nothing needs attention" — the most misleading empty state on the page.
+  //
+  // The cohort's own results count too. Every comparison on the page is drawn
+  // against them — `injectCohortPeer` only copies peer values that have
+  // arrived — so rendering before they do shows the person measured against a
+  // cohort that is not yet there, under a heading naming how many people are
+  // in it.
+  const cohortPending =
+    cohortIds.length > 0 &&
+    ((showKpis && cohortKpi.isPending) || collectionSetPending(cohortGroup));
+  const isLoading =
+    (showKpis &&
+      (kpiData.isPending || collectionSetPending(previousGroupData))) ||
+    collectionSetPending(groupData) ||
+    cohortPending;
   if (isLoading) return <CenteredSpinner className="min-h-[60vh]" />;
 
   // Surface a backend failure as a retryable error, not empty section cards.
   const isError =
-    (showKpis && kpiData.isError) || [...groupData.values()].some((r) => r.isError);
+    (showKpis &&
+      (kpiData.isError ||
+        [...previousGroupData.values()].some((r) => r.isError))) ||
+    [...groupData.values()].some((r) => r.isError) ||
+    (cohortIds.length > 0 &&
+      ((showKpis && cohortKpi.isError) ||
+        [...cohortGroup.values()].some((r) => r.isError)));
   if (isError)
     return (
       <div className="mx-auto w-full max-w-md p-8">
@@ -167,6 +227,9 @@ export function MetricGroupsView({
           onRetry={() => {
             kpiData.refetch();
             groupData.forEach((r) => r.refetch());
+            previousGroupData.forEach((r) => r.refetch());
+            cohortKpi.refetch();
+            cohortGroup.forEach((r) => r.refetch());
           }}
         />
       </div>
@@ -183,15 +246,32 @@ export function MetricGroupsView({
     return { ...r, byKey: injectCohortPeer(r.byKey, cr.byKey, cohortIds) };
   };
 
+  const peerPool = showKpis ? typicalPeerPool(kpiByKey, entityId) : null;
+
   const tiles = showKpis
     ? metricKpiTiles(kpiByKey, kpiData.previousByKey, entityId, focusMode)
     : [];
-  const tilesByKey = new Map<string, KpiTileData>(
-    tiles.map((tile) => [tile.key, tile]),
-  );
+
+  // What the row actually rendered — the block skips exactly those, no more.
+  const headlineKeys = new Set(tiles.map((t) => t.key));
+
+  // Deduped across groups, not within one: a metric and the wider metric that
+  // contains it need not live in the same section.
+  // Thinned across groups AND against the row above: a metric and the one it
+  // restates need not live in the same section, and the row is the more
+  // prominent of the two places a fact can appear.
   const attentionItems = showKpis
-    ? defs.flatMap((def) =>
-        metricAttentionItems(def, groupResult(def.id)?.byKey ?? new Map(), entityId),
+    ? orderAttentionItems(
+        defs.flatMap((def) =>
+          metricAttentionItems(
+            def,
+            groupResult(def.id)?.byKey ?? new Map(),
+            previousGroupData.get(def.id)?.byKey ?? null,
+            entityId,
+            headlineKeys
+          )
+        ),
+        headlineKeys
       )
     : [];
 
@@ -201,47 +281,58 @@ export function MetricGroupsView({
         {showKpis ? (
           <>
             <section className="flex flex-col gap-3">
-              <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+              <p className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                 At a glance
+                {/* Whose median. Every comparison on this page says "vs median"
+                    and none of them said against whom — which is the one thing
+                    a reader needs to judge any of it, and the one that reveals
+                    a lead being measured against their own reports. */}
+                {peerPool ? (
+                  <span className="font-normal tracking-normal normal-case">
+                    · compared with {peerPool} people in the same {cohortLabel}
+                  </span>
+                ) : null}
+                {/* Each tile carries TWO comparisons — a badge against the
+                    person's own last period, a line against the cohort — and
+                    neither said which was which, so "-13%" could be read as
+                    either. Named once here rather than on every tile: the
+                    grammar is the same for all of them, and a tile is 13rem
+                    wide. */}
+                <span className="font-normal tracking-normal normal-case">
+                  · badges show the change since the previous{" "}
+                  {PERIOD_NOUN[period]}
+                </span>
               </p>
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(13rem,1fr))] gap-3">
-                {/* KPI_ROW is a plain metric-key list upstream now — the
-                    legacy/metric tile split died with the legacy data path. */}
-                {KPI_ROW.map((key) => {
-                  const tile = tilesByKey.get(key);
-                  if (tile)
-                    return (
-                      <KpiTile key={key} tile={tile} onOpenGroup={openOrSelect} />
-                    );
-                  return <KpiTilePlaceholder key={key} />;
-                })}
+              {/* A counted column grid, not auto-fit: auto-fit packs in as many
+                  tiles as the width allows and leaves whatever is left over on
+                  its own. The count follows how many tiles there ARE, so a
+                  person with two of them gets two full-width tiles rather than
+                  half a row of blanks — which reads as tiles that failed to
+                  load, not as a person with two measurements. */}
+              <div
+                className={cn(
+                  "grid gap-3",
+                  TILE_GRID[tiles.length] ?? TILE_GRID[4]
+                )}
+              >
+                {/* The tiles ARE the row: `metricKpiTiles` already picked the
+                    metrics this person is observed for, in candidate order. A
+                    slot per fixed key is what painted "—" over the most
+                    valuable space on the page. */}
+                {tiles.map((tile) => (
+                  <KpiTile
+                    key={tile.key}
+                    tile={tile}
+                    onOpenGroup={openOrSelect}
+                  />
+                ))}
               </div>
             </section>
-            <IcNeedsAttention items={attentionItems} onOpenGroup={openOrSelect} />
+            <IcNeedsAttention
+              items={attentionItems}
+              onOpenGroup={openOrSelect}
+            />
           </>
-        ) : null}
-
-        {showSections ? (
-          <section className="flex flex-col gap-3">
-            <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-              Sections
-            </p>
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(18rem,1fr))] gap-3">
-              {defs.map((def) => {
-                const result = groupResult(def.id);
-                if (!result) return null;
-                return (
-                  <MetricGroupCard
-                    key={def.id}
-                    def={def}
-                    data={result}
-                    entityId={entityId}
-                    onOpen={() => openOrSelect(def.id)}
-                  />
-                );
-              })}
-            </div>
-          </section>
         ) : null}
       </main>
 

@@ -5,6 +5,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { Spinner } from "@/components/ui/spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { useSettings } from "@/hooks/use-settings";
@@ -19,11 +20,7 @@ import {
   sectionStandingPhrase,
 } from "@/lib/scoring";
 import { applyFocus, PEER_TEXT } from "@/lib/peers";
-import {
-  STATUS_BG_CLASS,
-  STATUS_STRIPE_LEFT,
-  applyFocusStatus,
-} from "@/lib/status";
+import { STATUS_BG_CLASS, applyFocusStatus } from "@/lib/status";
 import type { MetricCollectionResult } from "@/queries/metric-results";
 import { cn } from "@/lib/utils";
 
@@ -86,7 +83,7 @@ export function TeamMetricGroupCard({
   const standings = teamMetricStandings(def, data.byKey, memberIds);
   const scored = standings.filter((s) => s.scored > 0);
   const counts = rankCounts(
-    standings.map((standing) => ({ row: standing, rank: standing.verdict })),
+    standings.map((standing) => ({ row: standing, rank: standing.verdict }))
   );
   const status = applyFocusStatus(gradeSectionStanding(counts), focusMode);
   const badgeText = sectionStandingPhrase(counts);
@@ -96,7 +93,6 @@ export function TeamMetricGroupCard({
   const preview: TeamMetricStanding[] = def.card.preview
     .map((key) => standings.find((s) => s.metric.metric_key === key))
     .filter((s): s is TeamMetricStanding => s != null);
-  const stripeClass = STATUS_STRIPE_LEFT[status];
 
   return (
     <Card
@@ -107,10 +103,7 @@ export function TeamMetricGroupCard({
           aria-label={`Open ${def.title} details`}
         />
       }
-      className={cn(
-        "text-left transition-colors hover:bg-accent/50",
-        stripeClass,
-      )}
+      className={cn("text-left transition-colors hover:bg-accent/50")}
     >
       <CardHeader>
         <CardTitle className="text-base font-semibold">{def.title}</CardTitle>
@@ -122,7 +115,7 @@ export function TeamMetricGroupCard({
             <span
               className={cn(
                 "size-1.5 shrink-0 rounded-full",
-                STATUS_BG_CLASS[status],
+                STATUS_BG_CLASS[status]
               )}
               aria-hidden
             />
@@ -143,12 +136,13 @@ export function TeamMetricGroupCard({
                   key={standing.metric.metric_key}
                   className="flex items-baseline justify-between gap-2"
                 >
-                  <span className="min-w-0 truncate text-muted-foreground">
-                    {standing.metric.label}
-                  </span>
+                  <MetricName
+                    metric={standing.metric}
+                    className="min-w-0 truncate text-muted-foreground"
+                  />
                   <RowStanding standing={standing} focusMode={focusMode} />
                 </li>
-              ),
+              )
             )}
           </ul>
         )}
@@ -182,7 +176,7 @@ function RowStanding({
       <span
         className={cn(
           "shrink-0 text-xs tabular-nums",
-          PEER_TEXT[applyFocus("bottom", focusMode)],
+          PEER_TEXT[applyFocus("bottom", focusMode)]
         )}
       >
         {bottom} behind
@@ -194,7 +188,7 @@ function RowStanding({
       <span
         className={cn(
           "shrink-0 text-xs tabular-nums",
-          PEER_TEXT[applyFocus("top", focusMode)],
+          PEER_TEXT[applyFocus("top", focusMode)]
         )}
       >
         {top} ahead

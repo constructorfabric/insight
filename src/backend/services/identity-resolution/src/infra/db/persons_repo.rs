@@ -6,7 +6,11 @@
 //! `infra::db` module docs + constructorfabric/gears-rust#4239), so we run them
 //! as **raw SQL** via SeaORM's `Statement` and read columns off the
 //! `QueryResult`. Running the same SQL as the .NET service keeps resolution
-//! behaviour identical.
+//! behaviour identical — with ONE deliberate deviation the .NET service never
+//! needed: rows naming the excluded-person sentinel (ADR-0003; only the Rust
+//! correction verbs can mint them) are filtered AFTER the latest-wins ranking,
+//! so an excluded account resolves as no person rather than as the shared
+//! sentinel, and an older binding is never resurrected past an exclusion.
 
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
@@ -15,6 +19,7 @@ use sea_orm::{
 use uuid::Uuid;
 
 use super::entities::persons;
+use crate::domain::resolution::EXCLUDED_PERSON;
 
 /// Resolve the set of `person_id`s whose CURRENT email (latest observation per
 /// source instance) equals `email` within the tenant.
@@ -51,6 +56,7 @@ pub async fn resolve_person_ids_by_email(
         FROM ranked
         WHERE rn = 1
           AND value_id = ?
+          AND person_id != ?
     ";
 
     let stmt = Statement::from_sql_and_values(
@@ -59,6 +65,7 @@ pub async fn resolve_person_ids_by_email(
         [
             tenant_id.as_bytes().to_vec().into(),
             email.trim().to_owned().into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
         ],
     );
 
@@ -101,12 +108,19 @@ pub async fn resolve_person_id_by_email_any_tenant(
         SELECT person_id
         FROM ranked
         WHERE rn = 1
+          AND person_id != ?
         ORDER BY created_at DESC, id DESC
         LIMIT 1
     ";
 
-    let stmt =
-        Statement::from_sql_and_values(DbBackend::MySql, SQL, [email.trim().to_owned().into()]);
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [
+            email.trim().to_owned().into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
+        ],
+    );
 
     match db.query_one(stmt).await? {
         Some(row) => {
@@ -168,6 +182,7 @@ pub async fn resolve_person_id_by_source_any_tenant(
         SELECT person_id
         FROM ranked
         WHERE rn = 1
+          AND person_id != ?
         ORDER BY created_at DESC, id DESC
         LIMIT 1
     ";
@@ -175,7 +190,11 @@ pub async fn resolve_person_id_by_source_any_tenant(
     let stmt = Statement::from_sql_and_values(
         DbBackend::MySql,
         SQL,
-        [source_type.to_owned().into(), external_id.to_owned().into()],
+        [
+            source_type.to_owned().into(),
+            external_id.to_owned().into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
+        ],
     );
 
     match db.query_one(stmt).await? {
@@ -220,6 +239,7 @@ pub async fn resolve_person_ids_by_source_id(
         FROM ranked
         WHERE rn = 1
           AND value_id = ?
+          AND person_id != ?
     ";
 
     let stmt = Statement::from_sql_and_values(
@@ -232,6 +252,7 @@ pub async fn resolve_person_ids_by_source_id(
             // Source-native ids are matched as-is (the .NET service trims only
             // email, not the id path).
             value.to_owned().into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
         ],
     );
 
@@ -272,6 +293,7 @@ pub async fn persons_in_tenant(
         .column(persons::Column::PersonId)
         .filter(persons::Column::InsightTenantId.eq(tenant_id.as_bytes().to_vec()))
         .filter(persons::Column::PersonId.is_in(person_ids.iter().map(|id| id.as_bytes().to_vec())))
+        .filter(persons::Column::PersonId.ne(EXCLUDED_PERSON.as_bytes().to_vec()))
         .distinct()
         .into_tuple::<Vec<u8>>()
         .all(db)
@@ -285,6 +307,12 @@ pub async fn person_exists(
     tenant_id: Uuid,
     person_id: Uuid,
 ) -> anyhow::Result<bool> {
+    // The excluded-person sentinel accumulates journal rows once any account
+    // is excluded, but it is not a person and the read API must not serve it.
+    if person_id == EXCLUDED_PERSON {
+        return Ok(false);
+    }
+
     let found = persons::Entity::find()
         .filter(persons::Column::InsightTenantId.eq(tenant_id.as_bytes().to_vec()))
         .filter(persons::Column::PersonId.eq(person_id.as_bytes().to_vec()))

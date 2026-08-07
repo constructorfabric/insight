@@ -92,3 +92,23 @@ describe("<PeriodSelectorBar>", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("the range label says which year", () => {
+  it("keeps the year out of the way when both ends are this year", () => {
+    const year = new Date().getFullYear();
+    renderBar({ from: `${year}-07-01`, to: `${year}-07-10` });
+    expect(screen.getByText("1 Jul – 10 Jul")).toBeInTheDocument();
+  });
+
+  it("names the year when the range crosses one", () => {
+    // "31 Jul – 30 Jul" for a whole year read as a typo, or as a week: the
+    // reader had to already know the answer to decode the label.
+    renderBar({ from: "2025-07-31", to: "2026-07-30" });
+    expect(screen.getByText("31 Jul 2025 – 30 Jul 2026")).toBeInTheDocument();
+  });
+
+  it("names the year when the range is not in this one", () => {
+    renderBar({ from: "2024-03-01", to: "2024-03-31" });
+    expect(screen.getByText("1 Mar 2024 – 31 Mar 2024")).toBeInTheDocument();
+  });
+});

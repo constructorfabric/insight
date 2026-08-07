@@ -157,7 +157,7 @@ models:
 
   - name: bamboohr__employees_snapshot
     description: >
-      SCD2 append-only snapshot of BambooHR employees. Tracks changes in standard fields and custom fields from raw_data. Custom fields list is passed via dbt var bamboohr_custom_fields.
+      SCD2 append-only snapshot of BambooHR employees. A new version is appended when any field of the raw_data payload changes, except lastChanged, which BambooHR moves on its own.
     columns:
       - name: unique_key
         tests:
@@ -169,7 +169,7 @@ models:
 
   - name: bamboohr__employees_fields_history
     description: >
-      Field-level change log for BambooHR employees. One row per changed field per version transition. Includes both standard and custom fields (from raw_data).
+      Field-level change log for BambooHR employees. One row per changed field per version transition, covering every field of the raw_data payload the snapshot versions on.
     columns:
       - name: entity_id
         description: "BambooHR employee ID"

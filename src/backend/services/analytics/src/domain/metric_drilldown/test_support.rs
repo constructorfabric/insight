@@ -101,7 +101,6 @@ pub(super) fn validated(plan: EvidencePlan) -> ValidatedMetricDrilldown {
         display_dimensions: vec!["category".to_owned()],
     };
     ValidatedMetricDrilldown {
-        person_id: TEST_PERSON,
         tenant_id: TEST_TENANT,
         enforce_tenant_scope: true,
         fingerprint: selection_fingerprint(Uuid::nil(), &selection)

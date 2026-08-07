@@ -5,7 +5,7 @@ name = "InsightSpec"
 slug = "insightspec"
 kit = "sdlc"
 codebase = ["docs"]
-children = ["identity-svc", "ir", "person", "orgchart", "presentation", "metric-cat", "dataflow", "semantic-layer"]
+children = ["identity-svc", "ir", "person", "orgchart", "presentation", "metric-cat", "dataflow", "semantic-layer", "person-attributes"]
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -771,6 +771,11 @@ kind = "ADR"
 path = "docs/domain/identity-resolution/specs/ADR/0003-operator-decisions-as-persons-observations.md"
 name = "ADR-0003: Operator identity corrections as append-only persons observations"
 
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/domain/identity-resolution/specs/feature-manual-resolution/FEATURE.md"
+name = "Feature: Manual Identity Resolution"
+
 
 [[systems]]
 name = "Person Domain"
@@ -907,6 +912,38 @@ traceability = "DOCS-ONLY"
 kind = "DESIGN"
 path = "docs/domain/metric-catalog/specs/DESIGN.md"
 name = "Metric Catalog DESIGN"
+traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Person Attributes and Cohorting"
+slug = "person-attributes"
+kit = "sdlc"
+codebase = [
+    "docs/domain/person-attributes",
+    "docs/domain/identity-resolution",
+    "docs/domain/person",
+    "src/backend/services/identity-resolution",
+    "src/backend/services/analytics",
+    "src/ingestion",
+]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/person-attributes/specs/DESIGN.md"
+name = "Person Attributes and Cohorting Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/person-attributes/specs/ADR/0001-attribute-data-ownership-v1.md"
+name = "ADR-0001: Keep Account Attribute Facts in ClickHouse and Governance in Identity"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/person-attributes/specs/ADR/0002-identity-and-time-semantics-v1.md"
+name = "ADR-0002: Separate Corrective Account Identity from Temporal Attribute Facts"
 traceability = "DOCS-ONLY"
 
 [[systems]]

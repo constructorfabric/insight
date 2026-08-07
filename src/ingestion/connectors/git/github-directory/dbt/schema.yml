@@ -1,0 +1,39 @@
+version: 2
+
+sources:
+  - name: bronze_github_directory
+    # Source freshness: the newest Airbyte row must be recent, else the sync
+    # silently stopped and logins for newly-added members start failing with
+    # no error anywhere.
+    freshness:
+      warn_after: {count: 36, period: hour}
+      error_after: {count: 72, period: hour}
+    loaded_at_field: _airbyte_extracted_at
+    schema: bronze_github_directory
+    tables:
+      - name: org_members
+
+models:
+  - name: github_directory__bronze_promoted
+    description: "Promotes bronze_github_directory tables to ReplacingMergeTree ordered by unique_key, so the snapshot's FINAL read is well-defined."
+
+  # Profile / identity trio (mirrors youtrack + bamboohr): snapshot → fields_history → identity_inputs.
+  - name: github_directory__org_members_snapshot
+    description: "SCD2 snapshot of the GitHub organization roster (appends a version on tracked-field change). Feeds the fields-history / identity-inputs chain."
+  - name: github_directory__org_members_fields_history
+    description: "Field-level change log of the GitHub member profile, derived from github_directory__org_members_snapshot. entity_id is the lowercased login. Input to github_directory__identity_inputs."
+  - name: github_directory__identity_inputs
+    description: "Identity-resolution inputs from the GitHub member roster (id binding on lowercased login, username, display_name, email). Unioned into silver.identity_inputs via the silver:identity_inputs tag; source_type is 'github'."
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: insight_source_type
+        tests:
+          - accepted_values:
+              values: ['github']
+      - name: value_type
+        tests:
+          - accepted_values:
+              values: ['id', 'email', 'username', 'display_name']

@@ -6,6 +6,7 @@ pub mod error;
 mod gate;
 mod handlers;
 pub mod person_roles;
+pub mod resolution;
 pub mod roles;
 pub mod seed;
 pub mod subchart;
@@ -85,6 +86,111 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(handlers::resolve_profile)
+        .register(router, openapi);
+
+    // Operator identity corrections (ADR-0003): each verb appends binding
+    // observations authored by the caller. Admin-gated like the rest of the
+    // operator surface; the handlers journal every call in `operations`.
+    let router = OperationBuilder::post("/v1/resolution/bind")
+        .operation_id("identity_resolution.resolution.bind")
+        .summary("Bind accounts to persons (single or bulk; also confirms an automatic binding)")
+        .authenticated()
+        .no_license_required()
+        .json_request::<resolution::BindRequest>(openapi, "Bindings to record")
+        .json_response_with_schema::<resolution::CorrectionResponse>(
+            openapi,
+            StatusCode::OK,
+            "Per-account outcomes",
+        )
+        .standard_errors(openapi)
+        .handler(resolution::bind)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/v1/resolution/merge")
+        .operation_id("identity_resolution.resolution.merge")
+        .summary("Merge two persons: rebind every account of the absorbed person")
+        .authenticated()
+        .no_license_required()
+        .json_request::<resolution::MergeRequest>(openapi, "Persons to merge")
+        .json_response_with_schema::<resolution::CorrectionResponse>(
+            openapi,
+            StatusCode::OK,
+            "Per-account outcomes",
+        )
+        .standard_errors(openapi)
+        .handler(resolution::merge)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/v1/resolution/detach")
+        .operation_id("identity_resolution.resolution.detach")
+        .summary("Detach an account into a freshly minted person")
+        .authenticated()
+        .no_license_required()
+        .json_request::<resolution::AccountRequest>(openapi, "Account to detach")
+        .json_response_with_schema::<resolution::CorrectionResponse>(
+            openapi,
+            StatusCode::OK,
+            "Outcome and the new person id",
+        )
+        .standard_errors(openapi)
+        .handler(resolution::detach)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/v1/resolution/exclude")
+        .operation_id("identity_resolution.resolution.exclude")
+        .summary("Exclude an account as not a person (bot, CI, service account)")
+        .authenticated()
+        .no_license_required()
+        .json_request::<resolution::AccountRequest>(openapi, "Account to exclude")
+        .json_response_with_schema::<resolution::CorrectionResponse>(
+            openapi,
+            StatusCode::OK,
+            "Outcome",
+        )
+        .standard_errors(openapi)
+        .handler(resolution::exclude)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/resolution/attention")
+        .operation_id("identity_resolution.resolution.attention")
+        .summary("Accounts awaiting an operator decision, with the resolution rates")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<resolution::AttentionResponse>(
+            openapi,
+            StatusCode::OK,
+            "Queue items and rates",
+        )
+        .standard_errors(openapi)
+        .handler(resolution::attention)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/resolution/accounts/{source}/{source_id}/{account_id}")
+        .operation_id("identity_resolution.resolution.account_binding")
+        .summary("Current binding of an account and every decision behind it")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<resolution::AccountBindingResponse>(
+            openapi,
+            StatusCode::OK,
+            "Binding and history",
+        )
+        .standard_errors(openapi)
+        .handler(resolution::account_binding)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/resolution/persons/{person_id}/accounts")
+        .operation_id("identity_resolution.resolution.person_accounts")
+        .summary("Every account bound to a person, with the values behind each link")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<resolution::PersonAccountsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Accounts of the person",
+        )
+        .standard_errors(openapi)
+        .handler(resolution::person_accounts)
         .register(router, openapi);
 
     // Persons-seed operations journal (read-only; the seed itself runs via the

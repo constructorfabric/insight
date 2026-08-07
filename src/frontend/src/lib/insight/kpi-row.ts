@@ -1,13 +1,17 @@
 import { formatMetricNumber, formatMetricValue } from "@/lib/format";
 import {
   KPI_ROW,
+  KPI_ROW_MAX,
   groupIdForMetricKey,
   type GroupId,
 } from "@/lib/insight/groups";
 import {
+  entityObserved,
   forEntity,
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
+import { dropRedundantMetrics } from "@/lib/insight/metric-containment";
+import { metricHelp, type MetricHelpText } from "@/lib/insight/metric-help";
 import { peerStatusToStatus } from "@/lib/insight/peer-status";
 import { formatGapMagnitude } from "@/lib/metrics/gap";
 import { derivePeerStanding } from "@/lib/metrics/peer-standing";
@@ -27,18 +31,28 @@ export interface KpiTileData {
   key: string;
   label: string;
   value: string;
-  valueStatus: Status;
   delta: { text: string; status: Status; down: boolean } | null;
   medianLabel: string | null;
   /**
    * Scale of divergence from the peer median ("3.5×", "−39%", "−35 pp"), shown
    * beside the median; null at the median or without an honest comparison.
-   * Colored by `gapStatus`.
    */
   gapText: string | null;
+  /**
+   * The peer verdict, carried by the line that actually states the comparison.
+   *
+   * It used to colour the VALUE, which put two different questions in one
+   * red/green channel: a tile could show a red number (bottom of the cohort)
+   * beside a green badge (up on its own past) and read as a contradiction
+   * rather than as two facts. The value is now plain ink; standing is stated
+   * where it is explained, and the badge keeps the trend to itself.
+   */
   gapStatus: Status;
-  /** Secondary context line, shown when explanations are enabled. */
-  context: string | null;
+  /**
+   * The catalog's own words for the metric — shown on hover or focus, and
+   * inline when explanations are enabled. Null when the catalog has none.
+   */
+  help: MetricHelpText | null;
   groupId: GroupId | null;
 }
 
@@ -49,9 +63,14 @@ export function metricKpiTiles(
   entityId: string,
   focusMode: FocusMode
 ): KpiTileData[] {
-  return KPI_ROW.flatMap((metricKey) => {
+  const tiles = KPI_ROW.flatMap((metricKey) => {
     const metric = byKey.get(metricKey);
     if (!metric) return [];
+    // Never observed for this person = no connector feeds it for them, which
+    // is not a headline — it is an empty slot in the most valuable space on the
+    // page. A measured zero survives: `entityObserved` reads the peer target,
+    // so 0 stays and only null drops.
+    if (!entityObserved(metric, entityId)) return [];
 
     const data = forEntity(metric, entityId);
     const value = data.value;
@@ -61,7 +80,7 @@ export function metricKpiTiles(
     // color follows the same rank mapping as every card and the peer story
     // — red means bottom quartile, in-pack is normal and stays uncolored.
     const standing = derivePeerStanding(metric.direction, data);
-    const valueStatus = applyFocusStatus(
+    const gapStatus = applyFocusStatus(
       peerStatusToStatus(standing.rank),
       focusMode
     );
@@ -106,6 +125,9 @@ export function metricKpiTiles(
     return [
       {
         key: metric.metric_key,
+        // The full label, not `short_label`: "Msgs" and "AI lines +" save
+        // width by making the reader decode them. The tile wraps to two lines
+        // instead, which costs a row of pixels once and nothing after that.
         label: metric.label,
         value:
           value == null
@@ -113,7 +135,6 @@ export function metricKpiTiles(
             : metric.format === "percent"
               ? formatMetricValue(value, metric.format, metric.unit)
               : formatMetricNumber(value, metric.format),
-        valueStatus,
         delta,
         medianLabel:
           median != null
@@ -124,10 +145,15 @@ export function metricKpiTiles(
               }`
             : null,
         gapText,
-        gapStatus: valueStatus,
-        context: metric.description ?? null,
+        gapStatus,
+        help: metricHelp(metric),
         groupId: groupIdForMetricKey(metric.metric_key),
       },
     ];
   });
+  // Two tiles saying one thing cost a slot the row does not have — with four
+  // of them, "Focus Time" and "Meeting Hours" would spend half the row on the
+  // same measurement, read from opposite ends. Candidate order decides which
+  // survives, so the row keeps the one it prefers.
+  return dropRedundantMetrics(tiles).slice(0, KPI_ROW_MAX);
 }
