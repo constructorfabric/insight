@@ -67,7 +67,7 @@ Two things this grounding is *for*, beyond correctness:
 
 - **The denominators.** "API coverage — 100%" is unfalsifiable until you know 100% of what. Count
   it: endpoints in the router, cases in the acceptance criteria, and the repo-wide values from
-  `scripts/counts.sh` (connectors, catalog metrics, gold views, specs). Those counts go in
+  `scripts/counts.sh` (connectors, catalog metrics, dbt models and tests, specs). Those counts go in
   the section — taken at the moment you write it, never copied from this skill.
 - **Whether the feature's own framing still holds.** When the shipped code contradicts the issue —
   scope was dropped, scope was added, a "table" shipped as a general-purpose component — correct
@@ -157,7 +157,7 @@ For a port/migration, name the parity bar here.>
    - Metric: <the quantity — a rate, a count, a percentage, a latency. Two or three words.>
    - How measured: <the exact procedure, with the denominator: which fixture, how many items, which
      tool's which field.>
-   - Target: <the number. 100%. 0. < 1s P95. 26/26.>
+   - Target: <the number. 100%. 0. < 1s P95. n/n.>
 
 ### <Next vector>
 2. **<Metric name>**
@@ -256,8 +256,9 @@ Run this and use what it prints:
 .claude/skills/quality-vector-tests/scripts/counts.sh
 ```
 
-It reports the connectors, catalog metrics, gold views, metrics carrying a
-regression spec, and stand tests, each beside the path it was counted from.
+It reports the connectors, catalog metrics, dbt models and data tests, metrics
+carrying a regression spec, and stand tests, each beside the path it was
+counted from.
 
 **No number appears in this skill on purpose.** The numbers move, and the last
 time they moved the failure was silent: the catalog used to live inline in

@@ -66,10 +66,19 @@ count "catalog metrics" \
   "grep -c '^  - metric_key:' src/backend/services/analytics/src/domain/metric_definitions/registry.yaml" \
   "grep -q '^  - metric_key:' src/backend/services/analytics/src/domain/metric_definitions/registry.yaml"
 
-count "gold views" \
-  "src/ingestion/scripts/migrations/20260422000000_gold-views.sql" \
-  "grep -c '^CREATE VIEW insight\.' src/ingestion/scripts/migrations/20260422000000_gold-views.sql" \
-  "grep -q '^CREATE VIEW insight\.' src/ingestion/scripts/migrations/20260422000000_gold-views.sql"
+# "gold views" used to be counted from a single migration. That migration was
+# deleted by "stop creating the legacy gold views" and the gold layer is dbt
+# per-connector now, so there is no equivalent single number. Replaced with the
+# two surfaces that ARE countable and that a coverage target can name.
+count "dbt models" \
+  "src/ingestion/connectors" \
+  "find src/ingestion/connectors -path '*/dbt/*' -name '*.sql' | wc -l" \
+  "find src/ingestion/connectors -path '*/dbt/*' -name '*.sql' | grep -q ."
+
+count "dbt data tests" \
+  "src/ingestion/dbt/tests" \
+  "find src/ingestion/dbt/tests -name '*.sql' | wc -l" \
+  "find src/ingestion/dbt/tests -name '*.sql' | grep -q ."
 
 count "metrics with a spec" \
   "src/ingestion/tests/e2e/metrics" \
