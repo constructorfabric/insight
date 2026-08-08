@@ -39,7 +39,7 @@ This runbook shows a platform or DevOps engineer how to install the Insight busi
 
 Insight reads engineering and collaboration data from your tools (Jira, Slack, GitHub, and so on), pipelines it through ClickHouse, and serves metrics to a dashboard behind an OIDC (OpenID Connect, the login protocol) login. It installs as five first-party services in one Helm "umbrella" chart — bundled sub-charts, so a single `helm install` deploys everything — published at `oci://ghcr.io/constructorfabric/charts/insight`. The five are:
 
-- **Gateway** (`insight-gateway`, alias `gateway`) — the OpenResty edge. It owns the public ingress and is the single entrance to the cluster: it routes `/*` to the Frontend and `/api/*` to Analytics/Identity, performing a cached cookie-to-JWT exchange against the Authenticator's `/internal/authz` endpoint (a per-pod Lua cosocket lookup, not nginx's `auth_request`) and injecting the resulting gateway JWT into upstream requests.
+- **Gateway** (`insight-gateway`, alias `gateway`) — the OpenResty edge. It owns the chart's only public route (a Gateway API `HTTPRoute`) and is the single entrance to the cluster: it routes `/*` to the Frontend and `/api/*` to Analytics/Identity, performing a cached cookie-to-JWT exchange against the Authenticator's `/internal/authz` endpoint (a per-pod Lua cosocket lookup, not nginx's `auth_request`) and injecting the resulting gateway JWT into upstream requests.
 - **Authenticator** (`insight-authenticator`, alias `authenticator`) — a separate pod that performs the OIDC login with your IdP, keeps Redis-backed sessions, and mints the ES256 gateway JWT the Gateway injects downstream.
 - **Analytics** (`insight-analytics`, alias `analytics`) — serves metrics from the ClickHouse Gold layer.
 - **Identity Resolution** (`insight-identity-resolution`, alias `identityResolution`) — resolves people and org data from MariaDB. `identityResolution.deploy: true` is the chart default and effectively required: the Authenticator's login-bootstrap person lookup only exists on this service (constructorfabric/insight#1960), so the chart's `insight.validate` render-time check refuses to install with it off.
@@ -61,14 +61,17 @@ You supply one values file, secret files, and optionally one Secret per connecto
 
 Install all three of these before the chart — it bundles none of them:
 
-- **An ingress controller.** Install ingress-nginx, or point `gateway.ingress.className` at what you run (default `nginx`). The gateway owns the only Ingress: UI at `/`, APIs under `/api/`.
+- **A Gateway API implementation, with a `Gateway` for the chart to attach to.** Envoy Gateway is what this repo installs and tests against; any conformant implementation works. Create (or pick) a `Gateway` and point `gateway.route.parentRef.name` / `gateway.route.parentRef.namespace` at it — the chart publishes a single `HTTPRoute` that attaches there: UI at `/`, APIs under `/api/`.
+
+  > **Breaking change for chart consumers:** earlier chart releases published a Kubernetes `Ingress` and read `gateway.ingress.*` (className, host, tls). Those values are gone — the chart now renders an `HTTPRoute` and reads `gateway.route.*`, and an ingress controller alone is no longer enough. Before upgrading, install a Gateway API implementation, create a `Gateway`, and move your host and TLS configuration as described below.
 - **A real OIDC identity provider** — Entra ID, Okta, Auth0, or your own. OIDC is mandatory and there is no auth-off switch. **No IdP on the stand? Install Keycloak as its own release**, on a hostname the browser and the authenticator pod resolve identically, then read its issuer, client ID and client secret in Step 0. The bundled `keycloak` subchart is wired for this repo's own environments (roster realm, config-cli-managed content), not this.
-- **cert-manager, plus a `ClusterIssuer` of your own.** The authenticator's TLS-discovery sidecar (`authenticator.tlsDiscovery.enabled`, default `true`) creates a `cert-manager.io/v1` `Certificate`, and Analytics verifies the authenticator's JWKS against that CA — load-bearing, not optional. Point `authenticator.tlsDiscovery.issuerRef.name` at an issuer your cluster actually has: the chart's `local-ca` default exists only in this repo's local k3s sandbox (`deploy/gitops/bootstrap/local/selfsigned-issuer.yaml`). Any issuer works, self-signed included — the certificate is internal-only and unrelated to the ingress certificate in `<TLS_SECRET>`. (Identity Resolution verifies the same way as Analytics.)
+- **cert-manager, plus a `ClusterIssuer` of your own.** The authenticator's TLS-discovery sidecar (`authenticator.tlsDiscovery.enabled`, default `true`) creates a `cert-manager.io/v1` `Certificate`, and Analytics verifies the authenticator's JWKS against that CA — load-bearing, not optional. Point `authenticator.tlsDiscovery.issuerRef.name` at an issuer your cluster actually has: the chart's `local-ca` default exists only in this repo's local k3s sandbox (`deploy/gitops/bootstrap/local/selfsigned-issuer.yaml`). Any issuer works, self-signed included — the certificate is internal-only and unrelated to the TLS certificate on your Gateway's HTTPS listener. (Identity Resolution verifies the same way as Analytics.)
 
 Confirm the cluster-side pieces (the IdP gets verified in Step 0, once you have its issuer URL):
 
 ```sh
-kubectl get ingressclass nginx                  # the className the gateway Ingress uses
+kubectl get crd httproutes.gateway.networking.k8s.io          # Gateway API CRDs installed
+kubectl get gateway -A                          # the Gateway for gateway.route.parentRef
 kubectl get crd certificates.cert-manager.io    # cert-manager CRDs installed
 kubectl get clusterissuer                       # pick one for tlsDiscovery.issuerRef.name
 ```
@@ -216,13 +219,12 @@ analytics:
 
 gateway:
   replicaCount: 1
-  ingress:                           # the only Ingress the chart publishes; the gateway
+  route:                             # the only HTTPRoute the chart publishes; the gateway
     enabled: true                    # itself routes / to the UI and /api/* to Analytics
-    className: nginx                 # and Identity, from subchart defaults you need not set
+    parentRef:                       # and Identity, from subchart defaults you need not set
+      name: <GATEWAY_NAME>           # the Gateway API `Gateway` the route attaches to
+      namespace: <GATEWAY_NAMESPACE>
     host: <HOST>
-    tls:
-      enabled: true
-      secretName: <TLS_SECRET>
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits:   { cpu: 500m, memory: 256Mi }
@@ -264,7 +266,7 @@ identityResolution:
     limits:   { cpu: 500m, memory: 512Mi }
 
 frontend:                            # the web UI (dashboard)
-  deploy: true                       # served through the gateway at / — no ingress of its own
+  deploy: true                       # served through the gateway at / — no route of its own
   replicaCount: 1
 ```
 
@@ -285,8 +287,8 @@ Fill each placeholder:
 | `<REDPANDA_BROKERS>` | The bootstrap string you composed in Step 0 — comma-separated `host:port` pointing at the internal Kafka API listener |
 | `<AIRBYTE_NAMESPACE>` | Namespace of the Airbyte release from Step 0, for example `insight-infra`. Leave `""` if Airbyte shares the app namespace |
 | `<ARGO_INSTANCE_ID>` | The `instanceID` your Argo workflow controller is pinned to — read it off the controller config map in Step 0. Leave empty (`""`) if the controller is unpinned, the common case |
-| `<HOST>` | Public FQDN for the gateway ingress — the single entrance for both the UI and the APIs, for example `insight.example.com` |
-| `<TLS_SECRET>` | TLS Secret for that domain. The chart only references it: pre-create it, or add `gateway.ingress.annotations: {cert-manager.io/cluster-issuer: <issuer>}`. Missing, ingress-nginx quietly serves its own fake certificate |
+| `<HOST>` | Public FQDN for the gateway route — the single entrance for both the UI and the APIs, for example `insight.example.com` |
+| `<GATEWAY_NAME>` / `<GATEWAY_NAMESPACE>` | Name and namespace of the Gateway API `Gateway` from Prerequisites. TLS is not chart config anymore: terminate it at that Gateway's HTTPS listener — reference a TLS Secret in the listener's `certificateRefs`, or (with cert-manager's Gateway API support enabled, `config.enableGatewayAPI=true`) annotate the Gateway with `cert-manager.io/cluster-issuer: <issuer>` and let it mint the listener certificate |
 | `<CLUSTER_ISSUER>` | A cert-manager `ClusterIssuer` in your cluster, for the authenticator's internal JWKS certificate. Self-signed is fine; the chart's `local-ca` default exists only in this repo's local sandbox |
 | `<OIDC_ISSUER>` | Your IdP's issuer URL. Its `/.well-known/openid-configuration` document must resolve from inside the cluster |
 | `<OIDC_CLIENT_ID>` / `<OIDC_CLIENT_SECRET>` | Your OIDC client / application registration credentials |
@@ -428,8 +430,8 @@ This is demo data. The seeder refuses a tenant that already holds `persons` rows
 | `<REDPANDA_BROKERS>` | `redpanda.brokers` | Always external; a single comma-separated `host:port` string, not a host/port pair. `9093` for the `redpanda/redpanda` chart's internal listener — read yours in Step 0 |
 | `<AIRBYTE_NAMESPACE>` | `airbyte.namespace` | Namespace of the Airbyte release; `""` = app namespace. Drives the computed `apiUrl` and where the jobs read `airbyte-auth-secrets` |
 | `<ARGO_INSTANCE_ID>` | `ingestion.reconcile.argoInstanceId` | Match the controller's configured `instanceID` (Step 0); empty if unpinned |
-| `<HOST>` | `gateway.ingress.host` | Public FQDN on the gateway's Ingress, the only one the chart publishes (`/` → UI, `/api/*` → Analytics/Identity) |
-| `<TLS_SECRET>` | `gateway.ingress.tls.secretName` | Kubernetes TLS Secret name; referenced only — the chart never creates it |
+| `<HOST>` | `gateway.route.host` | Public FQDN on the gateway's HTTPRoute, the only one the chart publishes (`/` → UI, `/api/*` → Analytics/Identity) |
+| `<GATEWAY_NAME>` / `<GATEWAY_NAMESPACE>` | `gateway.route.parentRef.name`/`namespace` | The Gateway API `Gateway` the route attaches to; TLS terminates at its HTTPS listener, not in this chart |
 | `<CLUSTER_ISSUER>` | `authenticator.tlsDiscovery.issuerRef.name` | A cert-manager `ClusterIssuer` that exists in your cluster; internal cert, so self-signed is fine |
 | `<OIDC_ISSUER>` | `authenticator.oidc.issuerUrl` | Your IdP's issuer URL |
 | `<OIDC_CLIENT_ID>` / `<OIDC_CLIENT_SECRET>` | `authenticator.oidc.clientId`/`clientSecret` | Your OIDC client / application registration credentials. The authenticator is the only OIDC client — the frontend does not register one |

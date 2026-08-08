@@ -9,8 +9,9 @@ assertions, no cluster. Runs anywhere helm + PyYAML exist
 Covered:
   * three resources named `preview-<experiment>` so experiments coexist and
     `helm uninstall preview-<experiment>` removes exactly one;
-  * the Ingress prefix-strips `/exp/<name>` (`rewrite-target: /$2`,
-    `path: /exp/<name>(/|$)(.*)`) so one image serves under any prefix;
+  * the HTTPRoute prefix-strips `/exp/<name>` (PathPrefix match + URLRewrite
+    ReplacePrefixMatch `/`) so one image serves under any prefix;
+  * the route attaches to the shared Gateway (parentRef) on the single host;
   * an invalid experiment slug and a missing host FAIL the render (they would
     otherwise produce a broken URL segment or an unroutable object);
   * the FE carries no auth env (login is the gateway+authenticator's job).
@@ -27,7 +28,7 @@ import yaml
 HERE = Path(__file__).resolve()
 CHART = HERE.parents[1]  # deploy/preview
 
-BASE = ["--set", "experiment=widget-alpha", "--set", "image.tag=abc123", "--set", "ingress.host=preview.example.com"]
+BASE = ["--set", "experiment=widget-alpha", "--set", "image.tag=abc123", "--set", "route.host=preview.example.com"]
 
 
 def _render(*extra: str) -> tuple[int, str, str]:
@@ -59,28 +60,37 @@ def _render_ok(*extra: str) -> list[dict]:
 
 def test_resources_are_named_per_experiment():
     docs = _render_ok()
-    for kind in ("Deployment", "Service", "Ingress"):
+    for kind in ("Deployment", "Service", "HTTPRoute"):
         assert _the(docs, kind)["metadata"]["name"] == "preview-widget-alpha"
 
 
-def test_ingress_prefix_strips_the_exp_path():
-    ingress = _the(_render_ok(), "Ingress")
-    anns = ingress["metadata"]["annotations"]
-    assert anns["nginx.ingress.kubernetes.io/rewrite-target"] == "/$2"
-    assert anns["nginx.ingress.kubernetes.io/use-regex"] == "true"
+def test_httproute_prefix_strips_the_exp_path():
+    route = _the(_render_ok(), "HTTPRoute")
+    assert route["apiVersion"] == "gateway.networking.k8s.io/v1"
 
-    rule = ingress["spec"]["rules"][0]
-    assert rule["host"] == "preview.example.com"
-    path = rule["http"]["paths"][0]
-    assert path["path"] == "/exp/widget-alpha(/|$)(.*)"
-    assert path["pathType"] == "ImplementationSpecific"
-    assert path["backend"]["service"]["name"] == "preview-widget-alpha"
+    spec = route["spec"]
+    assert spec["hostnames"] == ["preview.example.com"]
+
+    parent = spec["parentRefs"][0]
+    assert parent["name"] == "insight"
+    assert parent["namespace"] == "insight-infra"
+
+    rule = spec["rules"][0]
+    match = rule["matches"][0]["path"]
+    assert match["type"] == "PathPrefix"
+    assert match["value"] == "/exp/widget-alpha"
+
+    rewrite = rule["filters"][0]
+    assert rewrite["type"] == "URLRewrite"
+    assert rewrite["urlRewrite"]["path"] == {"type": "ReplacePrefixMatch", "replacePrefixMatch": "/"}
+
+    assert rule["backendRefs"][0]["name"] == "preview-widget-alpha"
 
 
 def test_custom_base_path_is_honored():
-    ingress = _the(_render_ok("--set", "ingress.basePath=/preview"), "Ingress")
-    path = ingress["spec"]["rules"][0]["http"]["paths"][0]["path"]
-    assert path == "/preview/widget-alpha(/|$)(.*)"
+    route = _the(_render_ok("--set", "route.basePath=/preview"), "HTTPRoute")
+    match = route["spec"]["rules"][0]["matches"][0]["path"]
+    assert match["value"] == "/preview/widget-alpha"
 
 
 def test_service_selects_the_deployment_pods():
@@ -97,16 +107,14 @@ def test_image_is_the_pinned_tag():
 
 @pytest.mark.parametrize("bad", ["Widget_Bad", "UPPER", "-lead", "trail-", "a/b"])
 def test_invalid_experiment_slug_fails(bad):
-    code, _out, err = _render(
-        "--set", f"experiment={bad}", "--set", "image.tag=t", "--set", "ingress.host=h.example.com"
-    )
+    code, _out, err = _render("--set", f"experiment={bad}", "--set", "image.tag=t", "--set", "route.host=h.example.com")
     assert code != 0, f"slug {bad!r} should be rejected"
     assert "DNS-1123 label" in err
 
 
 def test_overlong_experiment_slug_fails():
     code, _out, err = _render(
-        "--set", f"experiment={'a' * 56}", "--set", "image.tag=t", "--set", "ingress.host=h.example.com"
+        "--set", f"experiment={'a' * 56}", "--set", "image.tag=t", "--set", "route.host=h.example.com"
     )
     assert code != 0
     assert "too long" in err
@@ -115,11 +123,11 @@ def test_overlong_experiment_slug_fails():
 def test_missing_host_fails():
     code, _out, err = _render("--set", "experiment=ok", "--set", "image.tag=t")
     assert code != 0
-    assert "ingress.host is required" in err
+    assert "route.host is required" in err
 
 
 def test_missing_image_tag_fails():
-    code, _out, err = _render("--set", "experiment=ok", "--set", "ingress.host=h.example.com")
+    code, _out, err = _render("--set", "experiment=ok", "--set", "route.host=h.example.com")
     assert code != 0
     assert "image.tag is required" in err
 

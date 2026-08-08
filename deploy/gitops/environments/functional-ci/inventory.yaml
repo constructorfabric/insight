@@ -16,7 +16,7 @@ release: insight
 
 bootstrap:
   namespaces: true
-  ingressNginx: false
+  envoyGateway: false
   certManager: false
   sealedSecrets: true
 
@@ -34,9 +34,9 @@ system:
 
 secrets:
   infra:
-    - { name: mariadb-creds, enabled: true }
-    - { name: clickhouse-creds, enabled: true }
-    - { name: redis-creds, enabled: true }
+    - {name: mariadb-creds, enabled: true}
+    - {name: clickhouse-creds, enabled: true}
+    - {name: redis-creds, enabled: true}
   services:
-    - { name: insight-db-creds, enabled: true }
-    - { name: insight-oidc, enabled: false }
+    - {name: insight-db-creds, enabled: true}
+    - {name: insight-oidc, enabled: false}

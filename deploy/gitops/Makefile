@@ -10,7 +10,7 @@
 #
 # Quick reference (L0 = cluster prereqs, L2 = shared infra, L3 = umbrella):
 #   make doctor                                    # check tooling
-#   make bootstrap ENV=<env>                       # L0: ingress-nginx, cert-manager, sealed-secrets, namespaces
+#   make bootstrap ENV=<env>                       # L0: envoy-gateway, cert-manager, sealed-secrets, namespaces
 #   make system-mariadb ENV=<env>                  # L2: shared infra (one target per service)
 #   make system-clickhouse ENV=<env>               # L2
 #   make system-redis ENV=<env>                    # L2
@@ -134,13 +134,13 @@ GRAFANA_RELEASE  ?= grafana
 GRAFANA_CHART    ?= grafana/grafana
 GRAFANA_VERSION  ?= 10.5.15    # app 12.3.1
 
-# Per-cluster bootstrap controllers (ingress, cert-manager, sealed-secrets).
+# Per-cluster bootstrap controllers (gateway, cert-manager, sealed-secrets).
 # Versions pinned here; bump deliberately. Per-env overrides go in
 # bootstrap/<env>/<controller>-values.yaml. Namespaces fall through to
 # inventory.namespaces.<controller> for rare-but-allowed overrides.
-INGRESS_NGINX_NAMESPACE  ?= $(shell yq -r '.namespaces.ingressNginx  // "ingress-nginx"' $(INVENTORY) 2>/dev/null)
-INGRESS_NGINX_RELEASE    ?= ingress-nginx
-INGRESS_NGINX_VERSION    ?= 4.15.1
+ENVOY_GATEWAY_NAMESPACE  ?= $(shell yq -r '.namespaces.envoyGateway  // "envoy-gateway-system"' $(INVENTORY) 2>/dev/null)
+ENVOY_GATEWAY_RELEASE    ?= envoy-gateway
+ENVOY_GATEWAY_VERSION    ?= 1.8.3
 
 CERT_MANAGER_NAMESPACE   ?= $(shell yq -r '.namespaces.certManager   // "cert-manager"' $(INVENTORY) 2>/dev/null)
 CERT_MANAGER_RELEASE     ?= cert-manager
@@ -457,8 +457,8 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 
 # Helper: chain a sub-target IF the matching inventory.<section>.<key>
 # is true; otherwise print a skip message. Use with $(call …) below.
-#   $(1) — inventory key (e.g. bootstrap.ingressNginx)
-#   $(2) — sub-target name (e.g. bootstrap-ingress-nginx)
+#   $(1) — inventory key (e.g. bootstrap.envoyGateway)
+#   $(2) — sub-target name (e.g. bootstrap-envoy-gateway)
 define _run_if_enabled
 @if [ "$$(yq -r '.$(1) // false' $(INVENTORY))" = "true" ]; then \
 	echo "$(C_GRN)→$(C_RST) $(2)"; \
@@ -838,7 +838,7 @@ fetch-cert: vpn-up kube-ctx
 
 # ─── Cluster bootstrap ────────────────────────────────────────────────
 #
-# One-time install of cluster prerequisites (ingress controller,
+# One-time install of cluster prerequisites (gateway controller,
 # cert-manager, sealed-secrets-controller) for an env. Idempotent: a
 # re-run is a no-op apart from helm-upgrade noise.
 #
@@ -849,7 +849,7 @@ fetch-cert: vpn-up kube-ctx
 .PHONY: bootstrap
 bootstrap: inventory-present vpn-up kube-ctx
 	$(call _run_if_enabled,bootstrap.namespaces,bootstrap-namespaces)
-	$(call _run_if_enabled,bootstrap.ingressNginx,bootstrap-ingress-nginx)
+	$(call _run_if_enabled,bootstrap.envoyGateway,bootstrap-envoy-gateway)
 	$(call _run_if_enabled,bootstrap.certManager,bootstrap-cert-manager)
 	$(call _run_if_enabled,bootstrap.sealedSecrets,bootstrap-sealed-secrets)
 	@echo "$(C_GRN)bootstrap complete$(C_RST) → $(KUBE_CTX)"
@@ -865,19 +865,22 @@ bootstrap-namespaces: vpn-up kube-ctx
 		echo "$(C_GRN)namespace$(C_RST) → $$ns"; \
 	done
 
-.PHONY: bootstrap-ingress-nginx
-bootstrap-ingress-nginx: vpn-up kube-ctx
-	@helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx >/dev/null 2>&1 || true
-	@helm repo update ingress-nginx >/dev/null
+# OCI chart — no `helm repo add/update`. Ships the Gateway API CRDs.
+.PHONY: bootstrap-envoy-gateway
+bootstrap-envoy-gateway: vpn-up kube-ctx
 	@VALUES_ARGS=""; \
-	if [ -s $(BOOTSTRAP_DIR)/ingress-nginx-values.yaml ]; then \
-		VALUES_ARGS="-f $(BOOTSTRAP_DIR)/ingress-nginx-values.yaml"; \
+	if [ -s $(BOOTSTRAP_DIR)/envoy-gateway-values.yaml ]; then \
+		VALUES_ARGS="-f $(BOOTSTRAP_DIR)/envoy-gateway-values.yaml"; \
 	fi; \
-	helm upgrade --install $(INGRESS_NGINX_RELEASE) ingress-nginx/ingress-nginx \
-		--namespace $(INGRESS_NGINX_NAMESPACE) --create-namespace \
-		--version $(INGRESS_NGINX_VERSION) $(HELM_EXTRA_FLAGS) \
+	helm upgrade --install $(ENVOY_GATEWAY_RELEASE) oci://docker.io/envoyproxy/gateway-helm \
+		--namespace $(ENVOY_GATEWAY_NAMESPACE) --create-namespace \
+		--version $(ENVOY_GATEWAY_VERSION) $(HELM_EXTRA_FLAGS) \
 		$$VALUES_ARGS \
 		--wait --timeout 5m
+	@if [ -f $(BOOTSTRAP_DIR)/gateway.yaml ]; then \
+		echo "applying $(BOOTSTRAP_DIR)/gateway.yaml"; \
+		kubectl --context $(KUBE_CTX) apply -f $(BOOTSTRAP_DIR)/gateway.yaml; \
+	fi
 
 .PHONY: bootstrap-cert-manager
 bootstrap-cert-manager: vpn-up kube-ctx
@@ -891,6 +894,7 @@ bootstrap-cert-manager: vpn-up kube-ctx
 		--namespace $(CERT_MANAGER_NAMESPACE) --create-namespace \
 		--version $(CERT_MANAGER_VERSION) $(HELM_EXTRA_FLAGS) \
 		--set crds.enabled=true \
+		--set config.enableGatewayAPI=true \
 		$$VALUES_ARGS \
 		--wait --timeout 5m
 	@kubectl --context $(KUBE_CTX) -n $(CERT_MANAGER_NAMESPACE) \
@@ -925,9 +929,10 @@ bootstrap-sealed-secrets: vpn-up kube-ctx
 
 .PHONY: bootstrap-status
 bootstrap-status: vpn-up kube-ctx
-	@echo "=== ingress-nginx ==="
-	@helm --kube-context $(KUBE_CTX) -n $(INGRESS_NGINX_NAMESPACE) status $(INGRESS_NGINX_RELEASE) 2>/dev/null | head -3 || echo "(not installed)"
-	@kubectl --context $(KUBE_CTX) get ingressclass 2>/dev/null
+	@echo "=== envoy-gateway ==="
+	@helm --kube-context $(KUBE_CTX) -n $(ENVOY_GATEWAY_NAMESPACE) status $(ENVOY_GATEWAY_RELEASE) 2>/dev/null | head -3 || echo "(not installed)"
+	@kubectl --context $(KUBE_CTX) get gatewayclass 2>/dev/null || echo "(no Gateway API CRDs)"
+	@kubectl --context $(KUBE_CTX) get gateway -A 2>/dev/null || true
 	@echo
 	@echo "=== cert-manager ==="
 	@helm --kube-context $(KUBE_CTX) -n $(CERT_MANAGER_NAMESPACE) status $(CERT_MANAGER_RELEASE) 2>/dev/null | head -3 || echo "(not installed)"

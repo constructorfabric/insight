@@ -18,7 +18,7 @@ service:
 # advertised issuer.
 hostname: ""
 
-# Admin console base URL. The ingress never exposes /kc/admin — admin access
+# Admin console base URL. The route never exposes /kc/admin — admin access
 # is `kubectl port-forward svc/<release>-keycloak <service.port>`, and this
 # is the URL the console advertises for that. Empty = derived as
 # http://localhost:<service.port>/kc.
@@ -36,12 +36,16 @@ database:
   username: ""
   passwordSecret: {name: "", key: ""}
 
-# Optional ingress exposing only /kc/realms and /kc/resources (Keycloak
-# serves under /kc natively — no rewrite). /kc/admin stays cluster-internal;
-# see adminHostname.
-ingress:
+# Optional HTTPRoute on the shared Gateway exposing only /kc/realms and
+# /kc/resources (Keycloak serves under /kc natively — no rewrite). /kc/admin
+# stays cluster-internal; see adminHostname.
+route:
   enabled: false
-  className: nginx
+  parentRef:
+    name: insight
+    namespace: insight-infra
+    # Target listener on the Gateway (e.g. https). Empty = all listeners.
+    sectionName: ""
   host: ""
   annotations: {}
 

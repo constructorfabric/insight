@@ -1,0 +1,12 @@
+##
+## envoy-gateway — local k3s overlay.
+##
+## Envoy Gateway creates a LoadBalancer Service per Gateway in
+## envoy-gateway-system; on k3s the built-in servicelb (klipper)
+## implements it, mapping the service to host ports.
+##
+deployment:
+  envoyGateway:
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 512Mi}

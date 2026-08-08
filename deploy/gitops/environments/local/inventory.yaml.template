@@ -19,7 +19,7 @@ namespaces:
   infra:    insight-infra     # L2 shared stateful
   # Controller namespaces accept upstream-chart defaults; uncomment
   # only to override.
-  # ingressNginx:  ingress-nginx
+  # envoyGateway:  envoy-gateway-system
   # certManager:   cert-manager
   # sealedSecrets: kube-system
 
@@ -29,7 +29,7 @@ release: insight
 # ─── L0 — cluster prereqs (drives `make bootstrap`) ────────────────────
 bootstrap:
   namespaces:    true
-  ingressNginx:  true
+  envoyGateway:  true
   certManager:   true
   sealedSecrets: true
 

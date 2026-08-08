@@ -33,8 +33,9 @@ ingestion:
 
 gateway:
   replicaCount: 1
-  ingress:
-    enabled: true
+  # CI cluster has no Gateway controller or Gateway API CRDs; access is port-forward.
+  route:
+    enabled: false
 
 authenticator:
   replicaCount: 1
@@ -56,7 +57,7 @@ authenticator:
     sourceType: "keycloak"
     externalIdClaim: "sub"
 
-# `hostname` is the advertised issuer base; no ingress here, so the concrete
+# `hostname` is the advertised issuer base; no route here, so the concrete
 # Service FQDN (the keycloak-realm recipe reads it raw — no tpl string).
 keycloak:
   deploy: true
