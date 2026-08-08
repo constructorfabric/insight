@@ -207,6 +207,7 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
                     <KpiTile
                       key={tile.key}
                       tile={tile}
+                      periodNoun={period}
                       onOpenGroup={openDetails}
                     />
                   ))

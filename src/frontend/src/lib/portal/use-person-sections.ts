@@ -1,5 +1,5 @@
 import { GROUPS, type GroupId } from "@/lib/insight/groups";
-import { groupHasData } from "@/lib/insight/group-data";
+import { groupHasData, groupPeersHaveData } from "@/lib/insight/group-data";
 import { injectCohortPeer } from "@/lib/insight/within-team-peer";
 import {
   gradeSectionStanding,
@@ -23,6 +23,12 @@ export interface SectionStanding {
   phrase: string;
   /** False when no metric of the section has a value for this period. */
   hasData: boolean;
+  /**
+   * Whether anyone in the comparison pool reads here. With `hasData` false it
+   * separates a section this person is absent from (pool reads) from one
+   * nobody is measured in (pool empty).
+   */
+  peersHaveData: boolean;
   isPending: boolean;
 }
 
@@ -97,6 +103,7 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
       status: gradeSectionStanding(counts),
       phrase: sectionStandingPhrase(counts),
       hasData: groupHasData(def, byKey, entityId),
+      peersHaveData: groupPeersHaveData(def, byKey, entityId),
       isPending: result?.isPending ?? true,
     };
   });

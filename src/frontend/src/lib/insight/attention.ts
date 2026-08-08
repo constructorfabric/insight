@@ -220,11 +220,26 @@ export function metricAttentionItems(
  */
 export function orderAttentionItems(
   items: readonly AttentionItem[],
-  headlineKeys: ReadonlySet<string>
+  headlineKeys: ReadonlySet<string>,
+  /**
+   * Put what CHANGED first — for a reader looking at their own page.
+   *
+   * A standing is the larger claim and leads by default, which is what a
+   * manager scanning someone else needs. On your own page the order inverts:
+   * what moved this period is what you can still do something about, while
+   * what has been true for months you have already lived through.
+   *
+   * Neither order hides anything — both kinds are always listed.
+   */
+  changesFirst = false
 ): AttentionItem[] {
+  const leads = (item: AttentionItem) =>
+    changesFirst
+      ? Number(item.kind === "fell")
+      : Number(item.kind === "behind");
   const ranked = [...items].sort(
     (a, b) =>
-      Number(b.kind === "behind") - Number(a.kind === "behind") ||
+      leads(b) - leads(a) ||
       (a.kind === "behind" ? b.relGap - a.relGap : b.spreadGap - a.spreadGap) ||
       b.relGap - a.relGap
   );

@@ -59,7 +59,8 @@ const ME = "019e27bc-dec0-7626-81a9-c5524662a6a9";
 function metric(
   key: string,
   value: number | null,
-  median: number
+  median: number,
+  n = 9
 ): MetricResult {
   return {
     metric_key: key,
@@ -81,7 +82,7 @@ function metric(
             p75: median + 2,
             min: 0,
             max: median + 5,
-            n: 9,
+            n,
           },
         ],
       },
@@ -118,6 +119,20 @@ describe("usePersonSectionStandings", () => {
     const git = standings().find((s) => s.id === "git_output")!;
     expect(git.hasData).toBe(false);
     expect(git.phrase).toBe("no peer data");
+  });
+
+  it("separates a section this person is absent from one nobody is measured in", () => {
+    // Both arrive as a null own value, and the page says different things
+    // about them: a pool that reads means the measurement works.
+    mocks.byKey = normalizeMetricResults([metric("git.commits", null, 20)]);
+    expect(standings().find((s) => s.id === "git_output")!.peersHaveData).toBe(
+      true
+    );
+
+    mocks.byKey = normalizeMetricResults([metric("git.commits", null, 20, 0)]);
+    expect(standings().find((s) => s.id === "git_output")!.peersHaveData).toBe(
+      false
+    );
   });
 
   it("stays pending while the queries are, so the nav shows no mark yet", () => {

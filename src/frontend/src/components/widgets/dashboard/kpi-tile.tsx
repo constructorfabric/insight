@@ -6,8 +6,8 @@ import {
   TrendingUpIcon,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { MetricHelpTooltip } from "@/components/widgets/metric-help-tooltip";
+import { Sparkline } from "@/components/widgets/dashboard/sparkline";
 import {
   Card,
   CardDescription,
@@ -18,11 +18,19 @@ import {
 import { useSettings } from "@/hooks/use-settings";
 import type { KpiTileData } from "@/lib/insight/kpi-row";
 import type { GroupId } from "@/lib/insight/groups";
-import { STATUS_BG_CLASS, STATUS_TEXT_CLASS } from "@/lib/status";
+import { STATUS_TEXT_CLASS } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 export interface KpiTileProps {
   tile: KpiTileData;
+  /** "month" / "week" — names what the change is measured against. */
+  periodNoun: string;
+  /**
+   * Finished readings, oldest first; absent while they load or when there are
+   * too few to draw. Never blocks the tile — the numbers are the page, and the
+   * line is what the page grows once it can.
+   */
+  trend?: (number | null)[] | null;
   onOpenGroup?: (id: GroupId) => void;
 }
 
@@ -32,7 +40,12 @@ const CARD_SURFACE = "@container/card";
  * Presentational KPI tile: everything display-ready arrives on `tile`
  * (selectors in `lib/insight/kpi-row.ts` own formatting and scoring).
  */
-export function KpiTile({ tile, onOpenGroup }: KpiTileProps) {
+export function KpiTile({
+  tile,
+  periodNoun,
+  trend,
+  onOpenGroup,
+}: KpiTileProps) {
   const { showExplanations } = useSettings();
   const primaryGroup = onOpenGroup ? tile.groupId : null;
   const interactive = primaryGroup != null;
@@ -79,13 +92,9 @@ export function KpiTile({ tile, onOpenGroup }: KpiTileProps) {
               {tile.help?.description}
             </CardDescription>
           ) : null}
-          {/* The delta rides WITH the value, not up beside the label: it is a
-              statement about this number ("−1 pp since last period"), and read
-              from the label row it looked like a second, unrelated figure.
-              Pinned to the right edge so the badges line up down a row of tiles
-              — a column the eye can scan instead of chasing each value's end.
-              Plain ink, always: the number states a quantity, and the verdict
-              on it belongs to the line that explains the comparison. */}
+          {/* Plain ink, and the badge is gone: its content moved into the
+              line below, where it can say what it is comparing against
+              instead of leaving "-13%" to be read as either comparison. */}
           <CardTitle
             className={cn(
               "col-span-full flex w-full flex-wrap items-baseline justify-between gap-x-2 gap-y-1",
@@ -93,23 +102,16 @@ export function KpiTile({ tile, onOpenGroup }: KpiTileProps) {
             )}
           >
             <span>{tile.value}</span>
-            {tile.delta ? (
-              <Badge
-                variant="outline"
-                className={cn(
-                  "self-center",
-                  STATUS_TEXT_CLASS[tile.delta.status]
-                )}
-              >
-                {tile.delta.status === "neutral" ? (
-                  <Minus />
-                ) : tile.delta.down ? (
-                  <TrendingDownIcon />
-                ) : (
-                  <TrendingUpIcon />
-                )}
-                {tile.delta.text}
-              </Badge>
+            {/* Beside the number it describes, not in a block of its own: the
+                question "and before that?" is asked here, and an answer one
+                scroll away is an answer nobody reads.
+                Pinned to the right edge rather than trailing the value — the
+                values are of different widths, so a line that starts where
+                each one ends leaves four lines at four x-positions. On the
+                edge they form a column the eye can read down. Absent until
+                the readings arrive: the page does not wait for it. */}
+            {trend ? (
+              <Sparkline points={trend} className="self-center" />
             ) : null}
           </CardTitle>
         </CardHeader>
@@ -117,29 +119,39 @@ export function KpiTile({ tile, onOpenGroup }: KpiTileProps) {
             even when one of them wraps its badge onto a second line; the
             two-line reserve keeps a wrapped comparison from changing the
             card's height. */}
-        <CardFooter className="mt-auto min-h-[2lh] items-start text-sm text-muted-foreground">
-          {tile.medianLabel ? (
-            <span>
-              {/* The standing, on the sentence that states it — and marked by
-                  a dot as well as a colour, so it survives being read by
-                  someone who cannot tell the two colours apart. */}
-              {tile.gapStatus !== "neutral" ? (
-                <span
-                  className={cn(
-                    "mr-1.5 inline-block size-1.5 rounded-full align-middle",
-                    STATUS_BG_CLASS[tile.gapStatus]
-                  )}
-                  aria-hidden
-                />
-              ) : null}
-              <span className={STATUS_TEXT_CLASS[tile.gapStatus]}>
-                {tile.gapText ? `${tile.gapText} vs ` : "at "}
-                {tile.medianLabel}
-              </span>
+        <CardFooter className="mt-auto min-h-[2lh] flex-col items-start gap-0.5 text-sm">
+          {/* The person's own change first, and the only line carrying a
+              verdict. This is their page: their own last period is the one
+              comparison they can act on. */}
+          {tile.delta ? (
+            <span
+              className={cn(
+                "flex items-center gap-1",
+                STATUS_TEXT_CLASS[tile.delta.status]
+              )}
+            >
+              {tile.delta.status === "neutral" ? (
+                <Minus className="size-3.5" />
+              ) : tile.delta.down ? (
+                <TrendingDownIcon className="size-3.5" />
+              ) : (
+                <TrendingUpIcon className="size-3.5" />
+              )}
+              {tile.delta.text} since last {periodNoun}
             </span>
           ) : (
-            "No peer data"
+            <span className="text-muted-foreground">
+              no earlier {periodNoun} to compare
+            </span>
           )}
+          {/* The cohort, stated and not judged: the reader did not choose these
+              people, cannot see who they are, and cannot decide that their
+              median is the right target. */}
+          <span className="text-xs text-muted-foreground">
+            {tile.medianLabel
+              ? `Team ${tile.medianLabel}${tile.gapText ? ` · ${tile.gapText}` : ""}`
+              : "No peer data"}
+          </span>
         </CardFooter>
       </Card>
     </MetricHelpTooltip>

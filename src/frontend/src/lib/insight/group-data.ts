@@ -26,6 +26,33 @@ export function groupHasData(
 }
 
 
+/**
+ * Whether anyone in the comparison pool has a reading for this section.
+ *
+ * The difference between "this source does not reach us" and "this person did
+ * none of that work" is not visible in the person's own row — both arrive as
+ * a null. It IS visible in the pool: a peer view counts the entities that had
+ * a reading, so a pool of zero across every metric of a section means nobody
+ * is measured here, while a pool with readings and an empty own row means the
+ * measurement works and this person is simply absent from it.
+ *
+ * Not proof — a section whose whole cohort was idle looks the same. It fails
+ * toward the weaker claim, which is the safe direction: saying "no activity"
+ * where a connector is in fact missing understates what we know, while saying
+ * "no data reaches us" of a working source is plainly false to anyone whose
+ * colleagues' numbers are on the next screen.
+ */
+export function groupPeersHaveData(
+  def: MetricGroup,
+  byKey: Map<string, NormalizedMetricResult>,
+  entityId: string,
+): boolean {
+  return def.collection.metrics.some((m) => {
+    const metric = byKey.get(m.key);
+    return metric != null && (forEntity(metric, entityId).peer?.n ?? 0) > 0;
+  });
+}
+
 /** Worst standing first — the row a card leads with is the one to look at. */
 const HEADLINE_TIER: Record<PeerStatusWithNeutral, number> = {
   bottom: 3,

@@ -433,4 +433,22 @@ describe("orderAttentionItems", () => {
     );
     expect(ordered).toEqual([]);
   });
+
+  it("leads with what changed when the reader is looking at their own page", () => {
+    // A standing is the larger claim and leads by default — what a manager
+    // scanning someone else needs. On your own page what moved this period is
+    // what you can still act on; what has been true for months you have
+    // already lived through. Nothing is hidden either way.
+    const items = [
+      row({ key: "standing", kind: "behind" }),
+      row({ key: "change", kind: "fell" }),
+    ];
+    expect(orderAttentionItems(items, new Set()).map((i) => i.key)).toEqual([
+      "standing",
+      "change",
+    ]);
+    expect(
+      orderAttentionItems(items, new Set(), true).map((i) => i.key)
+    ).toEqual(["change", "standing"]);
+  });
 });

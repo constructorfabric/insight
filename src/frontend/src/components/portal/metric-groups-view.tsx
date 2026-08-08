@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
+import { useViewer } from "@/auth";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { GroupDrilldownSheet } from "@/components/widgets/dashboard/group-drilldown-sheet";
 import { IcNeedsAttention } from "@/components/widgets/dashboard/ic-needs-attention";
+import { PersonCoverage } from "@/components/widgets/dashboard/person-coverage";
 import { KpiTile } from "@/components/widgets/dashboard/kpi-tile";
 import { previousPeriodRange } from "@/api/period-to-date-range";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
@@ -14,7 +16,12 @@ import {
   orderAttentionItems,
 } from "@/lib/insight/attention";
 import { typicalPeerPool } from "@/lib/insight/peer-pool";
-import { KPI_ROW_COLLECTION, GROUPS, type GroupId } from "@/lib/insight/groups";
+import {
+  KPI_ROW,
+  KPI_ROW_COLLECTION,
+  GROUPS,
+  type GroupId,
+} from "@/lib/insight/groups";
 import { metricKpiTiles } from "@/lib/insight/kpi-row";
 import { injectCohortPeer } from "@/lib/insight/within-team-peer";
 import {
@@ -25,6 +32,14 @@ import { normalizePersonId } from "@/lib/metrics/entity";
 import { cn } from "@/lib/utils";
 import { useCohortLabel } from "@/lib/portal/use-cohort-label";
 import { usePersonCohort } from "@/lib/portal/use-person-cohort";
+import {
+  personTrendPoints,
+  runningBucketStart,
+  TREND_BUCKETS,
+  trendBucket,
+  trendRange,
+} from "@/lib/portal/person-trend";
+import { usePersonSectionStandings } from "@/lib/portal/use-person-sections";
 import {
   collectionSetPending,
   useMetricCollection,
@@ -77,11 +92,6 @@ export interface MetricGroupsViewProps {
    * modal. Passing it also suppresses the modal sheets entirely.
    */
   onSelectGroup?: (id: GroupId) => void;
-  /**
-   * Render the per-group section cards. Off ⇒ a general glance (KPI row +
-   * needs-attention only) with sections reached from the sidebar instead.
-   */
-  showSections?: boolean;
 }
 
 /**
@@ -95,12 +105,15 @@ export function MetricGroupsView({
   groupIds,
   showKpis = false,
   onSelectGroup,
-  showSections = true,
 }: MetricGroupsViewProps) {
   const cohortLabel = useCohortLabel();
   const { period, dateRange } = usePortalPeriod();
   const { focusMode } = useSettings();
   const entityId = normalizePersonId(personId);
+  // Whose page this is. A person reading their own page and a manager
+  // reading it want different things first — see `orderAttentionItems`.
+  const { personId: viewerPersonId } = useViewer();
+  const isSelf = normalizePersonId(viewerPersonId ?? "") === entityId;
   const entity = { type: "person" as const, ids: [entityId] };
 
   const defs = GROUPS.filter((d) => groupIds.includes(d.id));
@@ -157,6 +170,27 @@ export function MetricGroupsView({
       : [],
     cohortEntity,
     dateRange
+  );
+
+  const sectionStandings = usePersonSectionStandings(personId);
+
+  // Deliberately outside every loading and error gate below: the tiles render
+  // from the current period, and the line appears when it arrives. A first
+  // screen must not wait on decoration.
+  const bucket = trendBucket(period);
+  const trendCollection = useMemo(
+    () => ({
+      metrics: KPI_ROW.map((key) => ({
+        key,
+        views: [{ view: "timeseries" as const, bucket }],
+      })),
+    }),
+    [bucket]
+  );
+  const trendData = useMetricCollection(
+    showKpis ? trendCollection : EMPTY_COLLECTION,
+    showKpis ? entity : CLOSED_ENTITY,
+    trendRange(dateRange.to, bucket)
   );
 
   const [openGroup, setOpenGroup] = useState<GroupId | null>(null);
@@ -255,6 +289,16 @@ export function MetricGroupsView({
   // What the row actually rendered — the block skips exactly those, no more.
   const headlineKeys = new Set(tiles.map((t) => t.key));
 
+  // Sections with no reading at all, split by whose fault the blank is: a
+  // pool that reads means the measurement works and this person is absent
+  // from it, an empty pool means nobody here is measured. A page that shows
+  // only what it can see otherwise reads as a whole picture of a person.
+  const blank = showKpis
+    ? sectionStandings.filter((st) => !st.isPending && !st.hasData)
+    : [];
+  const unmeasured = blank.filter((st) => !st.peersHaveData).map((st) => st.title);
+  const inactive = blank.filter((st) => st.peersHaveData).map((st) => st.title);
+
   // Deduped across groups, not within one: a metric and the wider metric that
   // contains it need not live in the same section.
   // Thinned across groups AND against the row above: a metric and the one it
@@ -271,7 +315,8 @@ export function MetricGroupsView({
             headlineKeys
           )
         ),
-        headlineKeys
+        headlineKeys,
+        isSelf
       )
     : [];
 
@@ -280,6 +325,11 @@ export function MetricGroupsView({
       <main className="flex flex-1 flex-col gap-8 p-4 md:p-6">
         {showKpis ? (
           <>
+            {/* Before the numbers, not after them. On a person's own page the
+                first question is what this thing knows about them, and a page
+                that answers it only at the bottom has already been read as a
+                complete picture by then. */}
+            <PersonCoverage unmeasured={unmeasured} inactive={inactive} />
             <section className="flex flex-col gap-3">
               <p className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                 At a glance
@@ -292,15 +342,12 @@ export function MetricGroupsView({
                     · compared with {peerPool} people in the same {cohortLabel}
                   </span>
                 ) : null}
-                {/* Each tile carries TWO comparisons — a badge against the
-                    person's own last period, a line against the cohort — and
-                    neither said which was which, so "-13%" could be read as
-                    either. Named once here rather than on every tile: the
-                    grammar is the same for all of them, and a tile is 13rem
-                    wide. */}
+                {/* The lines carry no axis and no labels — a tile has room for
+                    neither — so the one thing they cannot say for themselves
+                    is said once, here: what a line spans. */}
                 <span className="font-normal tracking-normal normal-case">
-                  · badges show the change since the previous{" "}
-                  {PERIOD_NOUN[period]}
+                  · lines cover the last {TREND_BUCKETS}{" "}
+                  {bucket === "week" ? "weeks" : "months"}
                 </span>
               </p>
               {/* A counted column grid, not auto-fit: auto-fit packs in as many
@@ -323,6 +370,12 @@ export function MetricGroupsView({
                   <KpiTile
                     key={tile.key}
                     tile={tile}
+                    periodNoun={PERIOD_NOUN[period]}
+                    trend={personTrendPoints(
+                      trendData.byKey.get(tile.key),
+                      entityId,
+                      runningBucketStart(dateRange.to, bucket)
+                    )}
                     onOpenGroup={openOrSelect}
                   />
                 ))}
@@ -336,7 +389,13 @@ export function MetricGroupsView({
         ) : null}
       </main>
 
-      {onSelectGroup || !showSections
+      {/* A click on a number is answered here, with the evidence behind it.
+          This used to be gated on a `showSections` flag that also hid the
+          per-group cards — and those cards moved to the navigation long ago,
+          so the flag survived only to make clicks land nowhere. Only a caller
+          that routes clicks elsewhere (`onSelectGroup`) has no use for the
+          drilldowns. */}
+      {onSelectGroup
         ? null
         : defs.map((def) => (
             <GroupDrilldownSheet
