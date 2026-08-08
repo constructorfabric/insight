@@ -166,7 +166,14 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
   metrics: [
     {
       key: "git.commits",
-      views: [{ view: "period" }, { view: "peer" }],
+      // The forge split is asked for so the section can name what it was
+      // watching. One breakdown per class is enough for that line, and this
+      // is the metric every git source reports.
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["source"] },
+      ],
     },
     {
       key: "git.prs_merged",

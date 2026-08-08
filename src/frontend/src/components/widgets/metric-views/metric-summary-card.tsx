@@ -10,25 +10,16 @@ import {
 } from "@/components/widgets/metric-views/dimension-series";
 import { MetricSublabel } from "@/components/widgets/dashboard/metric-sublabel";
 import { MetricCardActions } from "@/components/widgets/metric-views/metric-card-actions";
-import { useSettings } from "@/hooks/use-settings";
 import {
   formatMetricNumber,
   formatMetricValue,
   metricDisplayUnit,
 } from "@/lib/format";
-import { peerStatusToStatus } from "@/lib/insight/peer-status";
 import {
   forEntity,
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
-import { derivePeerStanding } from "@/lib/metrics/peer-standing";
 import { seriesColors } from "@/lib/series-colors";
-import {
-  STATUS_STRIPE_LEFT,
-  STATUS_TEXT_CLASS,
-  applyFocusStatus,
-} from "@/lib/status";
-import { cn } from "@/lib/utils";
 import { evidenceSelection } from "@/api/metric-drilldown-client";
 
 export interface MetricSummaryCardProps {
@@ -37,17 +28,21 @@ export interface MetricSummaryCardProps {
 }
 
 /**
- * Modality headline card: period total with peer status, plus a collapsible
+ * Modality headline card: period total, plus a collapsible
  * proportional breakdown over the metric's dimension groups (ribbon +
  * legend). The breakdown section renders only when at least two groups have
  * data — a single-source metric reads as a plain summary card.
+ *
+ * No standing and no colour. The card says how much of a modality there was
+ * and what it was made of; whether that is good is a judgment the section
+ * around it deliberately does not make, and a coloured card makes it anyway
+ * — louder than any sentence next to it.
  */
 export function MetricSummaryCard({
   metric,
   entityId,
 }: MetricSummaryCardProps) {
   const [open, setOpen] = useState(false);
-  const { focusMode } = useSettings();
   const evidence = metric.drilldown
     ? evidenceSelection(
         metric.selection,
@@ -64,11 +59,6 @@ export function MetricSummaryCard({
   // the quartile rank come from the shared standing derivation — same
   // verdict as the KPI tiles and the peer story by construction: red means
   // bottom quartile, in-pack is normal and stays uncolored.
-  const standing = derivePeerStanding(metric.direction, data);
-  const status = applyFocusStatus(peerStatusToStatus(standing.rank), focusMode);
-  // The status is carried by the stripe and the value color alone — no
-  // status words on the card.
-  const stripeClass = STATUS_STRIPE_LEFT[status];
 
   const rows = data.breakdown
     .filter((row) => (row.value ?? 0) > 0)
@@ -86,7 +76,7 @@ export function MetricSummaryCard({
   const displayUnit = metricDisplayUnit(metric.format, metric.unit);
 
   return (
-    <Card className={cn("relative h-full", stripeClass)}>
+    <Card className="relative h-full">
       <MetricCardActions evidence={evidence} label={metric.label} />
       <CardContent className="flex h-full flex-col gap-3">
         {/* KPI-tile line structure — label, sublabel slot, then the
@@ -104,12 +94,7 @@ export function MetricSummaryCard({
           />
         </div>
         <span className="flex items-baseline gap-1 tabular-nums">
-          <span
-            className={cn(
-              "text-3xl font-semibold",
-              status !== "neutral" && STATUS_TEXT_CLASS[status]
-            )}
-          >
+          <span className="text-3xl font-semibold">
             {value == null
               ? "—"
               : metric.format === "percent"
