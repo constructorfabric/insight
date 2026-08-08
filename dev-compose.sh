@@ -80,6 +80,215 @@ resolve_env_file() {
   return 1
 }
 
+# The variables that name an IMAGE for a service instead of building it here.
+# Listed once: load_env_file protects exactly these, and the image-source
+# resolution below reads the same list.
+IMAGE_OVERRIDE_VARS="ANALYTICS_IMAGE IDENTITY_RESOLUTION_IMAGE AUTHENTICATOR_IMAGE GATEWAY_IMAGE FRONTEND_IMAGE"
+
+# load_env_file <path> — source the env file, but let the SHELL win for the
+# image variables.
+#
+# `set -a; source` alone gives the file the last word, which is backwards for a
+# per-run override and actively broken here: .env.compose.example declares every
+# *_IMAGE blank, so sourcing it assigns the empty string over an exported ref and
+# the service silently goes back to being built from source. Plain
+# `ANALYTICS_IMAGE=... ./dev-compose.sh up` would do nothing at all.
+#
+# Only the image vars are protected. Everything else still comes from the file,
+# because a shell that wins for every setting turns a stale exported PORT or
+# PASSWORD into a stack that points somewhere the file never described.
+load_env_file() {
+  local f="$1" var val saved=""
+  for var in $IMAGE_OVERRIDE_VARS; do
+    eval "val=\${$var:-}"
+    # Image refs never contain whitespace, so a space-separated list is a safe
+    # stand-in for the associative array bash 3.2 (macOS) does not have.
+    [[ -n "$val" ]] && saved="$saved $var=$val"
+  done
+  set -a
+  # shellcheck source=/dev/null
+  source "$f"
+  set +a
+  local kv
+  for kv in $saved; do
+    eval "export ${kv%%=*}=\"${kv#*=}\""
+  done
+}
+
+# image_platform_line <image-ref> — the `platform:` line the generated override
+# needs for a service pinned to <image-ref>, or nothing.
+#
+# The published BACKEND images are amd64-only, so an Apple-silicon host has to be
+# told to pull the amd64 manifest and run it under Rosetta. That is a property of
+# those images, not of running from an image: a locally built or CI-loaded tag is
+# whatever arch its builder produced, and pinning amd64 for an arm64 image fails
+# outright with "no matching manifest for linux/arm64/v8". (The published
+# FRONTEND tags are multi-arch — see insight-front-ghcr in docker-compose.yml —
+# and that service has never carried a pin.)
+#
+# COMPOSE_IMAGE_PLATFORM overrides both ways, for the host that needs something
+# else entirely.
+image_platform_line() {
+  local image="$1"
+  if [[ -n "${COMPOSE_IMAGE_PLATFORM:-}" ]]; then
+    printf '    platform: %s\n' "$COMPOSE_IMAGE_PLATFORM"
+    return 0
+  fi
+  case "$image" in
+    ghcr.io/constructorfabric/*) printf '    platform: linux/amd64\n' ;;
+  esac
+}
+
+# service_image_ref <service> — the image reference selected for <service>, or
+# the empty string when nothing selected one and the service is built here.
+# identity-resolution-migrate deliberately shares identity-resolution's ref: it
+# is the same image invoked with a different command.
+service_image_ref() {
+  local var
+  var="$(service_env_prefix "$1")_IMAGE" || return 1
+  eval "printf '%s' \"\${$var:-}\""
+}
+
+# The env-variable prefix a service's knobs are named after.
+service_env_prefix() {
+  case "$1" in
+    analytics)                                       printf 'ANALYTICS' ;;
+    identity-resolution|identity-resolution-migrate) printf 'IDENTITY_RESOLUTION' ;;
+    authenticator)                                   printf 'AUTHENTICATOR' ;;
+    gateway)                                         printf 'GATEWAY' ;;
+    frontend)                                        printf 'FRONTEND' ;;
+    *) return 1 ;;
+  esac
+}
+
+# Where <service> gets its image from: `image` when one was selected, `build`
+# when it is compiled from this tree. Building is the default everywhere — the
+# dev stand and the test stand alike — so a run tests the code in front of you
+# unless you deliberately asked for something else.
+service_image_source() {
+  local ref
+  ref="$(service_image_ref "$1")" || return 1
+  if [[ -n "$ref" ]]; then printf 'image'; else printf 'build'; fi
+}
+
+service_chart_path() {
+  case "$1" in
+    analytics|authenticator|gateway|identity-resolution)
+      printf 'src/backend/services/%s/helm/Chart.yaml' "$1" ;;
+    frontend) printf 'src/frontend/helm/Chart.yaml' ;;
+    *) return 1 ;;
+  esac
+}
+
+# resolve_ghcr_image <service> — the published image at the version that
+# service's OWN chart names.
+#
+# Never `:latest`, which would make a run unreproducible. build-images.yml's
+# bump-descriptors writes these appVersions on every successful main push, so an
+# appVersion names an image that provably exists.
+resolve_ghcr_image() {
+  local svc="$1" chart version
+  chart="$(service_chart_path "$svc")" || {
+    echo "ERROR: unknown service '$svc' — cannot resolve a published image." >&2; return 1; }
+  [[ -f "$chart" ]] || { echo "ERROR: $chart not found — cannot pin $svc." >&2; return 1; }
+  version="$(awk -F'"' '/^appVersion:/ {print $2; exit}' "$chart")"
+  [[ -n "$version" ]] || { echo "ERROR: no appVersion in $chart — cannot pin $svc." >&2; return 1; }
+  printf 'ghcr.io/constructorfabric/insight-%s:%s' "$svc" "$version"
+}
+
+# check_no_source_build <service-list> — 0 when every listed service has an
+# image, non-zero naming the ones that do not.
+#
+# The point of the flag this backs is that CI accounts for every image up front.
+# Compiling instead of failing is how a 26-minute build comes back invisibly, and
+# how a run reports green for an image nobody chose.
+check_no_source_build() {
+  local services="$1" svc building=""
+  for svc in $services; do
+    [[ "$(service_image_source "$svc")" == "build" ]] && building="$(add "$building" "$svc")"
+  done
+  building="$(trim "$building")"
+  [[ -z "$building" ]] && return 0
+  echo "ERROR: --no-source-build, but no image was supplied for: $building" >&2
+  echo "       Supply one per service (e.g. ANALYTICS_IMAGE=insight-analytics:e2e-prebuilt)," >&2
+  echo "       or pin it with --from-ghcr, or drop --no-source-build to compile here." >&2
+  return 1
+}
+
+# The paths that make a service's image stale, mirroring the per-service filters
+# in .github/workflows/build-images.yml. Kept in step with that file: it decides
+# which images a PR run rebuilds, so it is the definition of "this tree changes
+# that service". Note a shared Cargo.toml/Cargo.lock edit touches every backend.
+service_change_paths() {
+  case "$1" in
+    analytics)
+      printf '%s\n' src/backend/services/analytics \
+                    src/backend/libs/insight-clickhouse \
+                    src/backend/docker-entrypoint.sh \
+                    src/backend/Cargo.toml src/backend/Cargo.lock ;;
+    identity-resolution)
+      printf '%s\n' src/backend/services/identity-resolution \
+                    src/backend/libs/insight-clickhouse \
+                    src/backend/docker-entrypoint.sh \
+                    src/backend/Cargo.toml src/backend/Cargo.lock ;;
+    authenticator)
+      printf '%s\n' src/backend/services/authenticator \
+                    src/backend/libs/authenticator-sdk \
+                    src/backend/Cargo.toml src/backend/Cargo.lock ;;
+    gateway)
+      printf '%s\n' src/backend/services/gateway \
+                    src/backend/tools/routegen \
+                    src/backend/Cargo.toml src/backend/Cargo.lock ;;
+    frontend)
+      printf '%s\n' src/frontend ;;
+    *) return 1 ;;
+  esac
+}
+
+# Print where each service's image comes from, before anything starts.
+#
+# Worth the six lines: "built from tree" versus a registry reference is the
+# difference between testing your change and testing main, and it is otherwise
+# invisible until something fails for a reason that makes no sense.
+report_image_sources() {
+  local svc ref
+  echo "=== Image sources ==="
+  for svc in $1; do
+    ref="$(service_image_ref "$svc")"
+    if [[ -z "$ref" ]]; then
+      printf '    %-20s built from this tree\n' "$svc"
+    else
+      printf '    %-20s %s\n' "$svc" "$ref"
+    fi
+  done
+}
+
+# stand_guard_unsafe_services <service-list> <changed-path…> — the services that
+# would run an image NOT containing this tree's code for them.
+#
+# Only a chart-pinned service can be unsafe. One built here is this tree by
+# definition, and one given an explicit reference was chosen deliberately — CI
+# supplies exactly the images its own pipeline built for this commit.
+stand_guard_unsafe_services() {
+  local services="$1"; shift
+  local changed=" $* "
+  local svc p pinned prefix out=""
+  for svc in $services; do
+    prefix="$(service_env_prefix "$svc")" || continue
+    # <PREFIX>_GHCR_PINNED is the ONLY thing that puts a service in question.
+    # Testing for "has an image" instead would skip every pinned service too —
+    # pinning IS how a service gets an image — and the guard would never fire.
+    eval "pinned=\${${prefix}_GHCR_PINNED:-}"
+    [[ "$pinned" == "true" ]] || continue
+    for p in $(service_change_paths "$svc"); do
+      case "$changed" in
+        *" $p"*) out="$(add "$out" "$svc")"; break ;;
+      esac
+    done
+  done
+  trim "$out"
+}
+
 # ──────────────────────────────────────────────────────────────────────
 # Helpers that survived the wizard extraction
 #
@@ -130,12 +339,48 @@ usage: dev-compose.sh up [options]
 
 Bring the stack up: build host-side artefacts (Rust + optional
 frontend dist), generate a per-run compose override that flips selected
-services to ghcr images, then `docker compose up -d`.
+services to a pre-built image, then `docker compose up -d`.
+
+Image selection, per service, first match wins:
+  1. a shell-exported ANALYTICS_IMAGE / IDENTITY_RESOLUTION_IMAGE /
+     AUTHENTICATOR_IMAGE / GATEWAY_IMAGE / FRONTEND_IMAGE
+  2. the same variable in the env file
+  3. --from-ghcr names it -> its chart's appVersion
+  4. nothing set -> the service is built from this tree
+
+Whatever is resolved is printed as a table before anything starts. An image
+already in the local daemon is used as-is; otherwise it is pulled; if it is
+neither, the run FAILS rather than falling back to a build.
+
+Any reference works, not only a registry one:
+
+  ANALYTICS_IMAGE=insight-analytics:local ./dev-compose.sh up
+
+`platform: linux/amd64` is pinned only for ghcr.io/constructorfabric/*
+backend references, which are published amd64-only; a locally built arm64
+image runs natively. COMPOSE_IMAGE_PLATFORM forces a platform for every
+overridden service.
 
 Options:
-  --from-ghcr=svc1,svc2     Pull these backend services from ghcr instead
-                            of building. Recognised:
-                            analytics, identity, identity-resolution.
+  --test-stand              Bring the stack up in TEST configuration instead
+                            of dev: .env.compose.test-stand, compose instance
+                            `test` (project insight-test, so it shares no
+                            containers or volumes with the dev stand), then a
+                            seed and a gate that blocks until dbt has rebuilt
+                            every gold observation table for this run.
+                            `dev-compose.sh test-stand up` is an alias for it.
+  --build-backend           Deprecated no-op: building from this tree is the
+                            default for the stand as well as the dev stack.
+  --no-source-build         Fail, naming the services, rather than compiling
+                            anything. CI passes this because it supplies every
+                            image up front; a service left unaccounted for is a
+                            bug, not a reason to spend 26 minutes building.
+  --from-ghcr=svc1,svc2     Run these services from their PUBLISHED image
+                            instead of building them, each at the appVersion
+                            its own helm/Chart.yaml names (never :latest).
+                            Recognised: analytics, identity-resolution,
+                            authenticator, gateway, frontend.
+                            <SVC>_GHCR_TAG overrides the tag for one service.
   --watch=svc1,svc2         Run selected Rust services from source with
                             cargo-watch. Recognised: analytics.
   --build-only=svc1,svc2    Build only these; everything else from ghcr.
@@ -383,9 +628,15 @@ cmd_up() {
   local authenticator_redirects=""
   local skip_build=false
   local no_frontend=false
+  local test_stand=false
+  local build_backend=false
+  local no_source_build=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --test-stand)      test_stand=true; shift ;;
+      --build-backend)   build_backend=true; shift ;;
+      --no-source-build) no_source_build=true; shift ;;
       --env-file=*)      env_file="${1#*=}"; shift ;;
       --env-file)        env_file="$2"; shift 2 ;;
       --from-ghcr=*)     from_ghcr_csv="${1#*=}"; shift ;;
@@ -419,6 +670,38 @@ cmd_up() {
     esac
   done
 
+  # ── Test-stand mode ───────────────────────────────────────────────
+  # The stand is this same `up` with three additions: its own env file, its own
+  # compose project, and a seed plus readiness gate after the stack is running.
+  #
+  # The instance is what keeps it OFF the dev stand. Without it both stands
+  # resolve to project `insight` and therefore to the same containers, networks
+  # and named volumes — at which point `test-stand down`, which always passes
+  # --volumes, deletes the dev stand's databases.
+  #
+  # COMPOSE_INSTANCE is set alongside the local so the cmd_seed calls nested
+  # below inherit the same project rather than seeding `insight`.
+  if [[ "$test_stand" == "true" ]]; then
+    [[ "$env_file" == ".env.compose" ]] && env_file="$TEST_STAND_ENV_FILE"
+    if [[ -z "$instance" ]]; then
+      instance="$TEST_STAND_INSTANCE"
+      COMPOSE_INSTANCE="$instance"
+    fi
+    test_stand_write_env || return 1
+    # --build-backend is the default now and kept only so existing callers and
+    # CI invocations keep working. Nothing here pins an image: `--from-ghcr` and
+    # the *_IMAGE variables are the way to run something other than this tree.
+    if [[ "$build_backend" == "true" ]]; then
+      echo "=== --build-backend is the default for the stand; nothing to do ==="
+    fi
+    # The realm must register the origin the browser will actually be driven at.
+    authenticator_redirects="$(add "$authenticator_redirects" "$(test_stand_origin)/auth/callback")"
+  elif [[ "$build_backend" == "true" ]]; then
+    echo "ERROR: --build-backend applies to the test stand; the dev stand always" >&2
+    echo "       builds from this tree. Did you mean: up --test-stand --build-backend?" >&2
+    return 2
+  fi
+
   # First-run wizard: only when the user is using the default env file
   # and it doesn't exist yet. A custom --env-file path is left alone.
   # The wizard itself lives in deploy/compose/insight-init.sh, shared with the
@@ -430,7 +713,7 @@ cmd_up() {
   fi
 
   env_file="$(resolve_env_file "$env_file")"
-  set -a; source "$env_file"; set +a
+  load_env_file "$env_file"
   COMPOSE_PROJECT_NAME="$(compose_project_name "$instance")" || return $?
   export COMPOSE_PROJECT_NAME
   [[ -n "$instance" ]] && echo "Compose instance → $COMPOSE_PROJECT_NAME"
@@ -520,11 +803,49 @@ cmd_up() {
     fi
   done
 
-  contains "$ghcr_list" analytics && [[ -z "${ANALYTICS_IMAGE:-}" ]] && export ANALYTICS_IMAGE="ghcr.io/constructorfabric/insight-analytics:${ANALYTICS_GHCR_TAG:-latest}"
-  contains "$ghcr_list" identity-resolution && [[ -z "${IDENTITY_RESOLUTION_IMAGE:-}" ]] && export IDENTITY_RESOLUTION_IMAGE="ghcr.io/constructorfabric/insight-identity-resolution:${IDENTITY_RESOLUTION_GHCR_TAG:-latest}"
-  contains "$ghcr_list" authenticator && [[ -z "${AUTHENTICATOR_IMAGE:-}" ]] && export AUTHENTICATOR_IMAGE="ghcr.io/constructorfabric/insight-authenticator:${AUTHENTICATOR_GHCR_TAG:-latest}"
-  contains "$ghcr_list" gateway && [[ -z "${GATEWAY_IMAGE:-}" ]] && export GATEWAY_IMAGE="ghcr.io/constructorfabric/insight-gateway:${GATEWAY_GHCR_TAG:-latest}"
-  true
+  # Resolve every service the caller asked to take from the registry, at the
+  # version its own chart names. <PREFIX>_GHCR_TAG still overrides for the rare
+  # case of chasing a specific build.
+  local prefix tag
+  for s in $ghcr_list; do
+    prefix="$(service_env_prefix "$s")" || {
+      echo "ERROR: unknown service '$s' in --from-ghcr." >&2; return 2; }
+    eval "tag=\${${prefix}_GHCR_TAG:-}"
+    if [[ -z "$(service_image_ref "$s")" ]]; then
+      if [[ -n "$tag" ]]; then
+        eval "export ${prefix}_IMAGE=\"ghcr.io/constructorfabric/insight-\${s}:\${tag}\""
+      else
+        eval "export ${prefix}_IMAGE=\"\$(resolve_ghcr_image \"\$s\")\"" || return 1
+      fi
+      # Marks it as tracking main rather than this tree, which is what the
+      # stand guard below is about.
+      eval "export ${prefix}_GHCR_PINNED=true"
+    fi
+  done
+
+  # A frontend image resolved HERE arrives after the env file was written, so
+  # the mode recorded there still says `built` and the front-built profile
+  # would start with the image sitting unused. The mode follows the image.
+  if contains "$ghcr_list" frontend && [[ -z "$frontend_mode_override" ]]; then
+    FRONTEND_MODE="ghcr"
+    [[ "$test_stand" == "true" ]] && update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_MODE "ghcr"
+  fi
+
+  # Everything the stand runs, so the table and the gate below cover the
+  # frontend too rather than the four backends alone.
+  local all_services="$all_backend frontend"
+
+  if [[ "$no_source_build" == "true" ]]; then
+    check_no_source_build "$all_services" || return 1
+  fi
+
+  report_image_sources "$all_services"
+
+  # A pinned image tracks main, so it cannot carry a local change to that
+  # service. Checked after resolution, so it sees exactly what will run.
+  test_stand_backend_matches_charts || return 1
+
+  ensure_images_available "$all_services" || return 1
 
   # ── Generate per-run override ────────────────────────────────────
   # (see ghcr_volumes_block below for what the flip keeps and drops)
@@ -542,11 +863,11 @@ cmd_up() {
       local svc
       for svc in $all_backend; do
         if contains "$ghcr_list" "$svc"; then
-          # Ghcr images are amd64-only for now (arm64 builds are
-          # tracked separately). Pin the platform so Apple-silicon
-          # hosts pull the amd64 manifest and run it under Rosetta
-          # instead of erroring with "no matching manifest for
-          # linux/arm64/v8".
+          # The platform line is emitted per image reference, not per override:
+          # the PUBLISHED backend images are amd64-only and need the pin on
+          # Apple silicon, while a locally built or CI-loaded tag must NOT be
+          # pinned or it fails with "no matching manifest for linux/arm64/v8".
+          # See image_platform_line.
           #
           # `command: !reset null` falls back to the image's own CMD, which is
           # the same `-c /app/config/insight.yaml` invocation minus the
@@ -556,7 +877,7 @@ cmd_up() {
     build: !reset null
     entrypoint: !reset null
     command: !reset null
-    platform: linux/amd64
+$(image_platform_line "$(service_image_ref "$svc")")
 $(ghcr_volumes_block "$svc")
 YML
           if [[ "$svc" == "identity-resolution" ]]; then
@@ -570,7 +891,7 @@ YML
             cat <<YML
   identity-resolution-migrate:
     build: !reset null
-    platform: linux/amd64
+$(image_platform_line "$(service_image_ref identity-resolution-migrate)")
 $(ghcr_volumes_block identity-resolution-migrate)
 YML
           fi
@@ -834,6 +1155,29 @@ YML
   echo "Rebuild one: ./dev-compose.sh build$instance_option <service>"
   echo "Re-seed:     ./dev-compose.sh seed$instance_option"
   echo "Wipe state:  ./dev-compose.sh prune$instance_option"
+
+  # The stand is not "up" when its containers are: it is up when dbt has
+  # rebuilt every gold observation table for THIS run. Seed and gate here, so
+  # `up --test-stand` returns only once the suite has data to assert on.
+  if [[ "$test_stand" == "true" ]]; then
+    # Persist the issuer this run resolved rather than re-deriving it, so the
+    # seed container and the suite read the value the stack is running with.
+    update_env_var "$TEST_STAND_ENV_FILE" AUTHENTICATOR_OIDC_ISSUER "${AUTHENTICATOR_OIDC_ISSUER:-}"
+    echo "=== persisted AUTHENTICATOR_OIDC_ISSUER=${AUTHENTICATOR_OIDC_ISSUER:-<empty>} ==="
+
+    # Scope the gate to this run BEFORE seeding.
+    local run_started_at
+    run_started_at="$(date -u '+%Y-%m-%d %H:%M:%S')"
+
+    # The first-run auto-seed above may already have run, but it ran before the
+    # issuer was persisted — so its manifest would record the wrong IdP.
+    # Re-seed explicitly now that the env file is complete.
+    cmd_seed --env-file "$env_file" all || return 1
+
+    test_stand_wait_ready "$run_started_at" || return 1
+
+    echo "=== test-stand is ready ==="
+  fi
 }
 
 # ──────────────────────────────────────────────────────────────────────
@@ -895,7 +1239,7 @@ cmd_urls() {
     esac
   done
   env_file="$(resolve_env_file "$env_file")" || return $?
-  set -a; source "$env_file"; set +a
+  load_env_file "$env_file"
   # FRONTEND_MODE is always dev|built|ghcr (cmd_up enforces it), so the
   # frontend is assumed up; report_service_urls defaults to showing it.
   report_service_urls true
@@ -1014,7 +1358,7 @@ cmd_build() {
   [[ -z "$target" || "$target" == "-h" || "$target" == "--help" ]] && { cmd_build_help; return 0; }
 
   env_file="$(resolve_env_file "$env_file")"
-  set -a; source "$env_file"; set +a
+  load_env_file "$env_file"
   COMPOSE_PROJECT_NAME="$(compose_project_name "$instance")" || return $?
   export COMPOSE_PROJECT_NAME
 
@@ -1322,6 +1666,10 @@ EOF
 # so `./dev-compose.sh up` keeps behaving exactly as it did.
 
 TEST_STAND_ENV_FILE=".env.compose.test-stand"
+# The compose instance the stand runs as, so its containers, networks and named
+# volumes are `insight-test_*` and never the dev stand's. Overridable with
+# --instance for a second stand.
+TEST_STAND_INSTANCE="test"
 # The origin the app is driven at, by a browser runner and by a human alike.
 #
 # Two things are load-bearing here.
@@ -1355,25 +1703,28 @@ cmd_test_stand_help() {
   cat <<'EOF'
 usage: dev-compose.sh test-stand <up|seed|test|down> [args]
 
-The stack in test configuration: pinned ghcr images for the frontend and all
-four backend services, real Keycloak login, and a readiness gate that waits
-for dbt-built gold data rather than for containers to report healthy.
+The stack in test configuration: its own compose project, real Keycloak login,
+and a readiness gate that waits for dbt-built gold data rather than for
+containers to report healthy.
 
-  up      Generate .env.compose.test-stand, bring the stack up, seed it, and
-          block until EVERY gold observation table the seed populates proves
-          dbt rebuilt it for this run and left a positive observation in it.
+  up      An alias for `dev-compose.sh up --test-stand`, so every `up` option
+          works here too. Generates .env.compose.test-stand, brings the stack
+          up as instance `test`, seeds it, and blocks until EVERY gold
+          observation table the seed populates proves dbt rebuilt it for this
+          run and left a positive observation in it.
 
-          The four backend services (analytics, authenticator,
-          identity-resolution, gateway) and the frontend are PULLED, each
-          pinned to its own chart's appVersion — never :latest, and never
-          compiled here. Building them took ~26 minutes for code the stand
-          does not change.
+          Every service is BUILT FROM THIS TREE by default, so the stand
+          tests the code in front of you. Locally that is incremental: the
+          Rust target directory lives in the `rust-target` named volume.
 
-          --build-backend  Compile the backend from this working tree instead.
-                           Needed to test a backend change: `up` otherwise
-                           refuses when the tree differs from origin/main
-                           under src/backend/, since the pinned images would
-                           not be what ran.
+          To run published images instead, per service:
+
+            ./dev-compose.sh test-stand up --from-ghcr=gateway,frontend
+            ANALYTICS_IMAGE=insight-analytics:local ./dev-compose.sh test-stand up
+
+          A service pinned with --from-ghcr runs its chart's appVersion, which
+          tracks main — so `up` refuses when this tree changes that service's
+          inputs, per service rather than for src/backend as a whole.
   seed    Re-seed the running stand (default target: all).
   test    Run the stand suite against an already-up stand. Passes extra
           arguments through to pytest — no `--` separator.
@@ -1390,93 +1741,109 @@ for dbt-built gold data rather than for containers to report healthy.
   down    Stop the stand and REMOVE its volumes, so the next `up` starts
           from empty databases.
 
-Isolation: reads and writes .env.compose.test-stand only — never your own
-.env.compose. Airbyte and Argo are never started.
+Isolation: the stand runs as compose instance `test` (project insight-test),
+so its containers, networks and named volumes are its own and `down --volumes`
+cannot reach the dev stand's databases. It reads and writes
+.env.compose.test-stand only — never your own .env.compose. Every verb here
+defaults to that instance; pass --instance NAME for a second stand. Airbyte and
+Argo are never started.
+
+Not concurrent with the dev stand: published host ports are shared across
+instances, so bring one down before starting the other.
 EOF
 }
 
-# Resolve an image from its own chart's appVersion, so the stand runs the same
-# build the umbrella chart would deploy. Never `:latest`, which would make a run
-# unreproducible — build-images.yml's bump-descriptors writes these on every
-# successful main push, so an appVersion names an image that provably exists.
-test_stand_pinned_image() {
-  local chart="$1" name="$2" version
-  [[ -f "$chart" ]] || { echo "ERROR: $chart not found — cannot pin $name." >&2; return 1; }
-  version="$(awk -F'"' '/^appVersion:/ {print $2; exit}' "$chart")"
-  [[ -n "$version" ]] || { echo "ERROR: no appVersion in $chart — cannot pin $name." >&2; return 1; }
-  printf 'ghcr.io/constructorfabric/insight-%s:%s' "$name" "$version"
-}
-
-test_stand_frontend_image() {
-  test_stand_pinned_image src/frontend/helm/Chart.yaml frontend
-}
-
-# The backend services the stand runs from published images rather than from
-# source, as "<compose env var>|<chart path>|<image name>".
+# Make sure every selected image is actually runnable, before anything starts.
 #
-# Building these four compiles the Rust workspace twice — once on the host for
-# the bind-mounted binaries, then again inside each service image — which is
-# where the stand's wall-clock went.
-TEST_STAND_PINNED_BACKENDS=(
-  "ANALYTICS_IMAGE|src/backend/services/analytics/helm/Chart.yaml|analytics"
-  "AUTHENTICATOR_IMAGE|src/backend/services/authenticator/helm/Chart.yaml|authenticator"
-  "IDENTITY_RESOLUTION_IMAGE|src/backend/services/identity-resolution/helm/Chart.yaml|identity-resolution"
-  "GATEWAY_IMAGE|src/backend/services/gateway/helm/Chart.yaml|gateway"
-)
-
-# Pin and pull every backend image, or fail.
-#
-# Fails rather than falling back to a build on purpose: a silent fallback is how
-# a 26-minute compile comes back invisibly.
-test_stand_pull_backends() {
-  local entry var chart name image
-  echo "=== Pinning the backend to published images (skip with --build-backend) ==="
-  for entry in "${TEST_STAND_PINNED_BACKENDS[@]}"; do
-    IFS='|' read -r var chart name <<<"$entry"
-    image="$(test_stand_pinned_image "$chart" "$name")" || return 1
-    echo "    ${name}: ${image}"
-    docker pull --quiet "$image" >/dev/null || {
-      echo "ERROR: cannot pull $image (pinned by $chart's appVersion)." >&2
-      echo "       Not falling back to a source build — that would report a pass" >&2
-      echo "       for an image this run never ran. Check ghcr access, or pass" >&2
-      echo "       --build-backend to build from source deliberately." >&2
+# Present in the local daemon wins: that is how a locally built tag and a tar
+# CI loaded with `docker load` both work without a registry. Otherwise pull it.
+# If neither, FAIL — never quietly fall back to a source build, which is how a
+# 26-minute compile comes back invisibly and how a run reports green for an
+# image nobody chose.
+ensure_images_available() {
+  local svc ref
+  for svc in $1; do
+    ref="$(service_image_ref "$svc")"
+    [[ -z "$ref" ]] && continue
+    docker image inspect "$ref" >/dev/null 2>&1 && continue
+    echo "    pulling ${ref}"
+    docker pull --quiet "$ref" >/dev/null || {
+      echo "ERROR: ${svc}: ${ref} is neither in the local daemon nor pullable." >&2
+      echo "       Not falling back to a source build. Check the reference and" >&2
+      echo "       your registry access, or drop the override to build it here." >&2
       return 1; }
-    update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
   done
 }
 
-# Refuse to pin when the working tree's backend differs from what the charts
-# describe.
+# Refuse to run a CHART-PINNED service whose code this tree changes.
 #
-# The appVersions track main. A branch that edits src/backend/** and then runs
-# against published images would report green for code it never executed. The PR
-# path filter makes this unreachable in the normal lane; this covers
-# workflow_dispatch and local runs, which bypass it.
-test_stand_backend_matches_charts() {
-  git rev-parse --git-dir >/dev/null 2>&1 || return 0
-  git remote get-url origin >/dev/null 2>&1 || return 0
-  git rev-parse --verify --quiet origin/main >/dev/null || return 0
+# The appVersions track main, so a pinned image cannot contain a local change —
+# the run would report green for code it never executed. This is per service:
+# pinning the gateway is fine while editing analytics, and a service built from
+# this tree or given an explicit reference is never in question.
+# The service paths THIS branch introduces, relative to where it left main.
+#
+# Three dots, not two. `git diff origin/main` reports differences in BOTH
+# directions, so a branch that merely sits behind main lists everything main has
+# added since — and the guard blocks a developer whose branch changes nothing at
+# all. `origin/main...HEAD` diffs against the merge base, which is the only
+# question being asked: what did this branch do?
+#
+# Empty output means "nothing to worry about"; a non-zero return means the
+# comparison could not be made (no repo, no origin, no origin/main) and the
+# caller should skip the check rather than guess.
+stand_changed_paths() {
+  git rev-parse --git-dir >/dev/null 2>&1 || return 1
+  git remote get-url origin >/dev/null 2>&1 || return 1
+  git rev-parse --verify --quiet origin/main >/dev/null || return 1
+  git diff --name-only origin/main...HEAD -- src/backend src/frontend 2>/dev/null
+}
 
-  local changed
-  changed="$(git diff --name-only origin/main -- src/backend 2>/dev/null | head -5)"
+test_stand_backend_matches_charts() {
+  local changed unsafe
+  changed="$(stand_changed_paths)" || return 0
   [[ -z "$changed" ]] && return 0
 
-  echo "ERROR: this tree changes src/backend/ relative to origin/main:" >&2
-  printf '         %s\n' $changed >&2
-  echo "       The stand pins each backend image to its chart's appVersion, which" >&2
-  echo "       tracks main — so those changes would NOT be what runs. Pass" >&2
-  echo "       --build-backend to build this tree instead." >&2
+  unsafe="$(stand_guard_unsafe_services "analytics identity-resolution authenticator gateway frontend" $changed)"
+  [[ -z "$unsafe" ]] && return 0
+
+  echo "ERROR: these services are pinned to a published image, but this tree" >&2
+  echo "       changes what goes into them:$(printf ' %s' $unsafe)" >&2
+  echo "       A chart appVersion tracks main, so the change would NOT be what" >&2
+  echo "       ran. Drop them from --from-ghcr to build from this tree, or give" >&2
+  echo "       each an explicit image that does contain the change." >&2
   return 1
 }
 
 # Derive the test env file from the committed example, overriding only the
 # knobs the test path forces. SEEDED_LOCAL_* are blanked so every `up` seeds.
 test_stand_write_env() {
-  local image="$1"
   [[ -f .env.compose.example ]] || { echo "ERROR: .env.compose.example not found." >&2; return 1; }
-  cp .env.compose.example "$TEST_STAND_ENV_FILE"
-  update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_MODE   "ghcr"
-  update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_IMAGE  "$image"
+  # Created from the example ONCE, then only the knobs the test path forces are
+  # updated. Copying it fresh on every run would erase whatever the developer
+  # persisted there — image references above all, which is the one setting this
+  # file exists to let them choose.
+  if [[ ! -f "$TEST_STAND_ENV_FILE" ]]; then
+    cp .env.compose.example "$TEST_STAND_ENV_FILE"
+    echo "=== created $TEST_STAND_ENV_FILE from .env.compose.example ==="
+  fi
+  # `built` (nginx over a pnpm build), not `dev` (Vite) and not `ghcr`: the
+  # suite drives the SPA the way it ships, and the stand now builds from this
+  # tree by default. FRONTEND_IMAGE still switches it to a published image.
+  #
+  # The file is consulted as well as the shell because this runs BEFORE
+  # load_env_file — reading only the shell would force `built` over a reference
+  # the developer had persisted here, and the front-ghcr profile would then
+  # never start while the image sat in the file being ignored.
+  local frontend_ref="${FRONTEND_IMAGE:-}"
+  if [[ -z "$frontend_ref" ]]; then
+    frontend_ref="$(trim "$(grep -E '^[[:space:]]*FRONTEND_IMAGE=' "$TEST_STAND_ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-)")"
+  fi
+  if [[ -n "$frontend_ref" ]]; then
+    update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_MODE "ghcr"
+  else
+    update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_MODE "built"
+  fi
   update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_MARIA ""
   update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_CH    ""
   # Point the authenticator at the same origin the realm registers and the
@@ -1486,7 +1853,7 @@ test_stand_write_env() {
   # browser to its OWN loopback, and a host client to an origin that serves
   # the SPA rather than the authenticator.
   update_env_var "$TEST_STAND_ENV_FILE" AUTHENTICATOR_REDIRECT_URI "$(test_stand_origin)/auth/callback"
-  echo "=== test-stand env → $TEST_STAND_ENV_FILE (frontend: $image) ==="
+  echo "=== test-stand env → $TEST_STAND_ENV_FILE ==="
   echo "    app origin: $(test_stand_origin)  callback: $(test_stand_origin)/auth/callback"
 }
 
@@ -1604,9 +1971,15 @@ test_stand_wait_ready() {
 # as "${GATEWAY_PORT:-8080}:8080"). A runner sharing the gateway's network
 # namespace talks to this, not to the published host port.
 TEST_STAND_GATEWAY_CONTAINER_PORT=8080
-# docker-compose.yml pins `container_name: insight-gateway`, so the namespace to
-# join is a fixed name rather than something to discover.
-TEST_STAND_GATEWAY_CONTAINER=insight-gateway
+# The container whose network namespace a containerised runner joins.
+#
+# docker-compose.yml names it `${COMPOSE_PROJECT_NAME:-insight}-gateway`, so this
+# has to follow the instance. A constant `insight-gateway` would send a runner
+# aimed at the test stand into the DEV stand's namespace whenever that one
+# happens to be up, and into nothing at all when it is not.
+stand_gateway_container() {
+  printf '%s-gateway' "${COMPOSE_PROJECT_NAME:-$(compose_project_name "${COMPOSE_INSTANCE:-}")}"
+}
 # Where pytest-playwright writes traces, screenshots and video. `test-results`
 # is its own default and the image's WORKDIR is /tests, so mounting the host
 # directory at /tests/test-results makes the default land on the host with no
@@ -1668,7 +2041,7 @@ test_stand_test_in_image() {
     # cannot write into it — and the traces a failed journey uploads are the
     # whole reason that mount exists.
     --user "$(id -u):$(id -g)"
-    --network "container:${TEST_STAND_GATEWAY_CONTAINER}"
+    --network "container:$(stand_gateway_container)"
     -e "INSIGHT_STAND_BASE_URL=http://localhost:${TEST_STAND_GATEWAY_CONTAINER_PORT}"
     # Mounted at a stable path and NAMED, rather than reproducing the suite's
     # own repo-relative arithmetic inside an image where the tree lives at
@@ -1709,7 +2082,7 @@ test_stand_test_in_image() {
     run_args+=(-e "INSIGHT_STAND_IDENTITY_URL=http://identity-resolution:8082")
   fi
 
-  echo "=== running the suite in ${image} (namespace: ${TEST_STAND_GATEWAY_CONTAINER}) ==="
+  echo "=== running the suite in ${image} (namespace: $(stand_gateway_container)) ==="
   docker run "${run_args[@]}" "$image" "$@"
 }
 
@@ -1717,52 +2090,16 @@ cmd_test_stand() {
   local verb="${1:-help}"
   [[ $# -gt 0 ]] && shift
 
+  # Every verb works on the stand's own instance unless the caller named one,
+  # so `test-stand down` can only ever reach the stand's volumes.
+  [[ -z "${COMPOSE_INSTANCE:-}" ]] && COMPOSE_INSTANCE="$TEST_STAND_INSTANCE"
+
   case "$verb" in
     up)
-      local image build_backend=false
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --build-backend) build_backend=true; shift ;;
-          -h|--help) cmd_test_stand_help; return 0 ;;
-          *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
-        esac
-      done
-
-      image="$(test_stand_frontend_image)" || return 1
-      test_stand_write_env "$image" || return 1
-
-      # Pinning writes the four *_IMAGE vars into the env file, which is what
-      # makes cmd_up put those services in its ghcr list — so this has to happen
-      # before cmd_up reads it.
-      if [[ "$build_backend" != true ]]; then
-        test_stand_backend_matches_charts || return 1
-        test_stand_pull_backends || return 1
-      else
-        echo "=== --build-backend: compiling the backend from this tree ==="
-      fi
-
-      local up_args=(--env-file "$TEST_STAND_ENV_FILE"
-                     --authenticator-redirect "$(test_stand_origin)/auth/callback")
-      cmd_up "${up_args[@]}" || return 1
-
-      # cmd_up resolved and exported the issuer for this run; persist what it
-      # chose rather than re-deriving it, so the seed container and the test
-      # suite read exactly the value the stack is running with.
-      update_env_var "$TEST_STAND_ENV_FILE" AUTHENTICATOR_OIDC_ISSUER "${AUTHENTICATOR_OIDC_ISSUER:-}"
-      echo "=== persisted AUTHENTICATOR_OIDC_ISSUER=${AUTHENTICATOR_OIDC_ISSUER:-<empty>} ==="
-
-      # Scope the gate to this run BEFORE seeding.
-      local run_started_at
-      run_started_at="$(date -u '+%Y-%m-%d %H:%M:%S')"
-
-      # cmd_up's first-run auto-seed may already have run, but it ran before
-      # the issuer was persisted — so its manifest would record the wrong IdP.
-      # Re-seed explicitly now that the env file is complete.
-      cmd_seed --env-file "$TEST_STAND_ENV_FILE" all || return 1
-
-      test_stand_wait_ready "$run_started_at" || return 1
-
-      echo "=== test-stand is ready ==="
+      # A thin alias. The stand IS `up` with --test-stand, so every up option
+      # (--from-ghcr, --frontend-mode, --skip-build, --watch, --instance) works
+      # here too, and the two entry points cannot drift apart.
+      cmd_up --test-stand "$@"
       ;;
 
     seed)
