@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import {
   listMetricDefinitions,
   type MetricDefinition,
+  type MetricDefinitionListResponse,
 } from "@/api/metric-definitions-client";
 
 export interface MetricDefinitionGroup {
@@ -44,6 +45,20 @@ export function useMetricDefinitions(): UseQueryResult<
   });
 }
 
+/**
+ * The whole catalog response, not just its metrics.
+ *
+ * Shares the one cached query the availability gate and the definitions list
+ * already use, so reading a second field off it costs no extra request.
+ */
+export function useMetricDefinitionsResponse(): UseQueryResult<MetricDefinitionListResponse> {
+  return useQuery({
+    queryKey: ["metric-definitions"],
+    queryFn: listMetricDefinitions,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export interface AvailableMetricKeys {
   /**
    * What this installation can serve, or null when the catalog could not be
@@ -79,10 +94,10 @@ export function useAvailableMetricKeys(): AvailableMetricKeys {
     () =>
       data
         ? new Set(
-            data.metrics.filter((m) => m.is_enabled).map((m) => m.metric_key),
+            data.metrics.filter((m) => m.is_enabled).map((m) => m.metric_key)
           )
         : null,
-    [data],
+    [data]
   );
   return { keys, isPending };
 }
