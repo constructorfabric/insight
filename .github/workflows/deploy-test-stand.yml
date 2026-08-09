@@ -1,0 +1,792 @@
+name: Deploy test stand
+
+# Take the umbrella chart that build-images.yml has just published, put it on the
+# shared test stand, seed it, and prove a person can sign in and see data. Issue
+# #2244's three acceptance criteria, and nothing else.
+#
+# ── WHY THIS IS AN ALARM AND NOT A GATE ─────────────────────────────────────
+#
+# The thing under test does not exist until the merge has happened. `publish-chart`
+# runs on push to main; the chart version this workflow deploys is minted by that
+# job, so there is no point before the merge at which a deploy of it could be
+# required. That is not a limitation to be engineered around — it is the shape of
+# the problem. What guards the merge is the existing merge-queue lanes (ci.yml,
+# e2e-stand.yml, e2e-bronze-to-api.yml); what this workflow guards is the claim
+# that the artefact those lanes approved actually installs and works.
+#
+# So the failure mode is an ALARM: a red X on the merge commit. There is no
+# freeze, no automatic revert, no rollback. A red run means the stand is broken
+# and, by construction, so is main.
+#
+#   RED-RUN OWNERSHIP. The author of the merge commit owns the red run. Fix
+#   forward if the cause is obvious and small; revert if it is not. "Someone will
+#   look at it" is how a permanently red stand happens, and a permanently red
+#   stand is worth less than no stand at all — it stops being read.
+#
+# The stand's state is CI's: every merge redeploys and reseeds it. Do not put
+# hand-made data on it, do not point a demo at it expecting it to be stable, and
+# do not `helm upgrade` it by hand except to recover from a failure this workflow
+# left in place on purpose (see "deploy" below).
+#
+# ── WHY ONE JOB AND NOT THREE ───────────────────────────────────────────────
+#
+# The three stages are steps in one job, each with its own `timeout-minutes`,
+# rather than three jobs. Three jobs would be tidier to read in the UI and would
+# cost two things that matter more:
+#
+#   * The seed manifest would have to travel between jobs, and the only transport
+#     is an artifact. That manifest names every seeded persona — emails, UUIDs,
+#     the tenant. On a public repository an uploaded artifact is a downloadable
+#     copy of that for anyone who wants one. Kept inside one job it lives in
+#     $RUNNER_TEMP and dies with the runner.
+#   * The kubeconfig would have to be re-materialised in each job, tripling the
+#     number of places a credential is written to disk.
+#
+# Steps also give "smoke never runs after a failed seed" for free: a step without
+# `if:` does not run once an earlier step has failed. Nothing enforces that
+# ordering except the absence of `if: always()`, which is why every `if:` in this
+# file is deliberate and worth a second look in review.
+#
+# ── WHAT THIS DELIBERATELY DOES NOT DO ──────────────────────────────────────
+#
+# Scope is exactly the three acceptance criteria. Everything below is a known gap
+# with a follow-up issue, NOT an oversight:
+#
+#   * No alerting. The red X is the whole notification story.
+#   * No rollback, and no `--atomic`. A failed upgrade is LEFT failed so the next
+#     person to look has the evidence (see the deploy stage).
+#   * No infrastructure bootstrap. Datastores, the gateway, cert-manager and the
+#     IdP realm are somebody else's lifecycle; this workflow installs the
+#     application chart and nothing beneath it.
+#   * No `kubectl rollout restart` after the upgrade. The composed *-config
+#     Secrets reach pods through `envFrom`, which is read once at container
+#     start, so a changed coordinate can produce a healthy-looking release with
+#     stale configuration. Adding the restart is a real improvement and a real
+#     behaviour change; it belongs in its own change with its own reasoning.
+#   * No exact-value assertions on seeded data. The smoke proves shape and
+#     non-emptiness. Reading a number off a running stand and asserting it back
+#     is a test of nothing.
+#   * No second environment. `ENV=test-stand` is hardcoded; a second stand gets a
+#     second gitops environment and an input, not a copy of this file.
+#
+# ── EVERY LINE THIS PRINTS IS PUBLIC ────────────────────────────────────────
+#
+# This repository is public, so run logs are public, forever, to everyone. The
+# rules that follow from that are not negotiable and are enforced structurally
+# rather than by care:
+#
+#   * All cluster and seeder output goes through
+#     .github/workflows/scripts/redact-stand-log.py before it reaches the
+#     console. The raw copy stays in $RUNNER_TEMP.
+#   * Failure diagnostics are an allowlist —
+#     .github/workflows/scripts/stand-diagnostics.sh — not "dump everything and
+#     hope". No `kubectl describe`, no `-o yaml`, no environment dumps, no
+#     artifact uploads.
+#   * Every credential arrives from the `insight-test-stand` GitHub environment.
+#     Nothing about the stand's identity, addresses or accounts is committed here.
+#
+# ── WHY THE HELM CALL IS SPELLED OUT AND NOT `make deploy` ──────────────────
+#
+# Reusing `deploy/gitops`'s own entry point was the first design and it is the
+# wrong one FOR THIS STAND. `make deploy` → `deploy-insight` depends on
+# `apply-app-secrets`, which:
+#
+#   * hard-requires at least one *-sealedsecret.yaml under
+#     environments/<ENV>/sealed-secrets/insight/ and `kubectl apply`s it. This
+#     cluster runs no sealed-secrets controller and has no SealedSecret CRD, and
+#     the target has no skip switch;
+#   * then runs compose-app-secrets.sh, which overwrites the three chart-owned
+#     *-config Secrets and reads the OIDC client secret from a key name this
+#     stand's Secret does not use — writing a BLANK client secret and breaking
+#     every login while the release still reports `deployed`.
+#
+# and `deploy-insight` additionally hardcodes `--atomic` after
+# $(HELM_UPGRADE_FLAGS), so no existing variable can turn it off (a later
+# `--atomic` re-sets what an earlier `--atomic=false` cleared) — which would roll
+# a failed upgrade back and destroy the evidence this stand exists to produce.
+#
+# So the deploy stage runs the invocation written down in
+# deploy/gitops/environments/test-stand/README.md, step by step. "CI and humans
+# run the same code path" is preserved by that README plus
+# deploy/gitops/scripts/emulate-ci-deploy.sh, which runs these same commands from
+# a laptop and prints a parity report against THIS FILE. If you change a command
+# here, run that harness: it greps for each command's anchor and tells you which
+# one drifted. `make diff`, `make status` and `make rollback` do still work for
+# this environment and are the right tools for their jobs.
+#
+# If that harness's parity report says `make deploy` and `ATOMIC=` are ABSENT
+# from this file: that is this decision, not a regression. The authority is
+# deploy/gitops/environments/test-stand/README.md, "Why not `make deploy`" —
+# the sealed-secrets prerequisite alone makes that target unable to run against
+# this stand at all, with or without an `--atomic` knob.
+#
+# ── PRECONDITIONS THIS WORKFLOW ASSERTS RATHER THAN ASSUMES ─────────────────
+#
+# Each is checked with a named error rather than left to fail obscurely:
+#
+#   1. `deploy/gitops/environments/test-stand/` exists and its `kubeContext`
+#      matches the kubeconfig in the environment secret. That comparison is the
+#      mechanical guard that a deploy cannot land on a cluster nobody meant to
+#      touch — the credential alone is not a guarantee, because a credential is
+#      whatever someone last pasted into the settings page.
+#   2. The in-cluster Secret `insight-oidc` carries a non-empty `client-secret`.
+#      The committed values file leaves `authenticator.oidc.clientSecret` empty
+#      because this repository is public, and the chart writes whatever it is
+#      given straight into the authenticator's config. An upgrade without that
+#      value produces a confidential OIDC client with a blank secret: pods Ready,
+#      release `deployed`, every login broken.
+#   3. The stand's IdP can complete the login the smoke stage attempts. At the
+#      time of writing the stand's realm federates to an external provider and
+#      has no local users, which no amount of test code can work around; the
+#      smoke suite carries two modes and fails — loudly, naming the step it got
+#      stuck at — rather than pretending. See tests/stand/smoke/README.md.
+#
+# ── COST ────────────────────────────────────────────────────────────────────
+#
+# This runs INSIDE the caller's workflow run, so a merge's image build and this
+# deploy share one `build-images-refs/heads/main` concurrency slot. The next
+# merge's build queues behind this run's stand work. That is a deliberate trade:
+# coalescing deploys (`cancel-in-progress: false`) never kills a running upgrade,
+# and an upgrade killed halfway leaves a release in `pending-upgrade`, which is
+# the one state neither this workflow nor a human can diagnose from a log.
+
+on:
+  # The normal path: build-images.yml calls this as its final job, once the
+  # chart is published. See .cf-studio/.plans/test-stand-ci/build-images-hook.patch.md
+  # for the calling block and the reasoning behind its guards.
+  workflow_call:
+    inputs:
+      chart_version:
+        description: >-
+          Exact umbrella chart version to install, as published to oci://ghcr.io/constructorfabric/charts/insight — e.g. 0.5.101. Comes from publish-chart's output, never from deploy/gitops/.insight-version: that file is only committed at the END of publish-chart, so a checkout of the trigger SHA reads the PREVIOUS release.
+        required: true
+        type: string
+  # The human path: redeploy a specific version by hand, e.g. after fixing the
+  # stand by hand and wanting CI's view of it back. Same input, same code path —
+  # there is no manual-only branch anywhere below.
+  workflow_dispatch:
+    inputs:
+      chart_version:
+        description: "Umbrella chart version to install (e.g. 0.5.101). Must already be published."
+        required: true
+        type: string
+
+# One stand, one deploy at a time. `cancel-in-progress: false` because the thing
+# being cancelled would be a `helm upgrade` mid-flight: killing it leaves the
+# release in `pending-upgrade`, which blocks the next upgrade until a human
+# intervenes. Waiting is cheap; an interrupted upgrade is not.
+#
+# The group lives HERE, in the called workflow, so what it serialises is the
+# deploy work inside each caller run. A burst of merges therefore deploys in
+# order, each run installing the chart its own run published, rather than two
+# upgrades racing on one release. If that ever needs to become "newest wins,
+# drop the rest", the change is a group on the calling job AND removing this one
+# — never both, see the note below.
+#
+# NOTE for the caller: do NOT also put `concurrency:` with this group on the job
+# that `uses:` this workflow. The calling job would hold the group while the
+# called workflow's job waits for it, and the run would sit there until it timed
+# out.
+concurrency:
+  group: test-stand-deploy
+  cancel-in-progress: false
+
+# Narrower than the caller's. This workflow reads the repository and talks to a
+# cluster; it publishes nothing, writes nothing back to git, and needs no
+# registry token — the umbrella chart is pullable anonymously from GHCR, which
+# was verified rather than assumed.
+permissions:
+  contents: read
+
+jobs:
+  test-stand:
+    name: deploy → seed → smoke
+    runs-on: ubuntu-latest
+    # The environment is declared HERE and not on the calling job: `environment:`
+    # is not a legal key on a job that `uses:` a reusable workflow. Its
+    # deployment-branch policy (main only) still evaluates against the caller's
+    # ref, so restricting the environment to main restricts this whole path to
+    # main — including a manual dispatch from a topic branch, which is refused
+    # again below with a readable message.
+    environment: insight-test-stand
+    # The ceiling, not the expectation. Sum of the stage budgets plus room for a
+    # cold runner: deploy 14 + seed 65 + smoke 5 + toolchain and preflight.
+    timeout-minutes: 95
+    env:
+      # The gitops environment this deploys. One stand, one name; a second stand
+      # gets its own directory and an input, not a fork of this file.
+      #
+      # The two paths are spelled out in full rather than composed from
+      # ENV_NAME. Composing them would read fine and cost two things: a reader
+      # would have to resolve a variable to learn which file the upgrade
+      # actually passes to helm, and deploy/gitops/scripts/emulate-ci-deploy.sh's
+      # parity report — which greps this file for the literal commands it
+      # rehearses — would stop finding them.
+      ENV_NAME: test-stand
+      VALUES_FILE: deploy/gitops/environments/test-stand/values.yaml
+      INVENTORY_FILE: deploy/gitops/environments/test-stand/inventory.yaml
+      CHART_REF: oci://ghcr.io/constructorfabric/charts/insight
+      STAND_NAMESPACE: insight
+      STAND_RELEASE: insight
+      SMOKE_SUITE: tests/stand/smoke
+      # The three deployments whose configuration arrives through `envFrom` and
+      # is therefore read exactly once, at container start. See stage 1's restart
+      # step for why a list of two would be a silent bug.
+      RESTART_TARGETS: deploy/insight-authenticator deploy/insight-analytics deploy/insight-identity-resolution
+      # The edge objects the chart does not render and this release does not own,
+      # but every acceptance criterion travels through.
+      ROUTE_NAMES: insight-gateway insight-keycloak
+      CHART_VERSION: ${{ inputs.chart_version }}
+      REDACT: .github/workflows/scripts/redact-stand-log.py
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+
+      # ── Guards ────────────────────────────────────────────────────────────
+      # Everything that can be refused without touching the cluster is refused
+      # here, in order of how cheap it is to check. A deploy that fails after
+      # `helm upgrade` has started costs a stand; one that fails now costs
+      # nothing.
+      - name: Refuse anything that is not main, and anything that is not a version
+        env:
+          # Through the environment rather than interpolated into the script
+          # body: `chart_version` is a free-text `workflow_dispatch` input, and a
+          # string spliced into a shell line is a script-injection sink. It is
+          # also passed to `make` further down, which is the reason the shape
+          # check below is a refusal and not a warning.
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$REF_NAME" != "main" ]; then
+            echo "::error::this workflow deploys main and only main (ref was '$REF_NAME', event '$EVENT')."
+            echo "The insight-test-stand environment's deployment-branch policy is the real control;"
+            echo "this check exists so the refusal is readable instead of a missing-secret failure."
+            exit 1
+          fi
+          if ! printf '%s' "$CHART_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+            echo "::error::chart_version '$CHART_VERSION' is not a semver. Refusing to pass it to make."
+            exit 1
+          fi
+          echo "deploying umbrella chart $CHART_VERSION to ENV=$ENV_NAME"
+
+      - name: Confirm the environment is wired up
+        env:
+          # Presence only. Values are never printed; GitHub masks the secrets
+          # anyway, but a workflow that relies on masking to keep a secret out of
+          # a log is one `base64` away from not doing so.
+          #
+          # The names are the ones in
+          # docs/components/deployment/specs/sop/credentials-runbook.md — that
+          # runbook is how they get set, and a rename has to happen in both.
+          HAVE_KUBECONFIG: ${{ secrets.TEST_STAND_KUBECONFIG != '' }}
+          HAVE_SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL != '' }}
+          HAVE_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD != '' }}
+          HAVE_BOOTSTRAP_EMAIL: ${{ secrets.TEST_STAND_BOOTSTRAP_EMAIL != '' }}
+          HAVE_BOOTSTRAP_PASSWORD: ${{ secrets.TEST_STAND_BOOTSTRAP_PASSWORD != '' }}
+          HAVE_BASE_URL: ${{ vars.TEST_STAND_BASE_URL != '' }}
+          # `password` (every persona authenticates as themselves) or `override`
+          # (one principal authenticates and every persona session is minted from
+          # it). Unset means the suite's own default, which is `password`.
+          LOGIN_MODE: ${{ vars.TEST_STAND_SMOKE_LOGIN_MODE }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ "$HAVE_KUBECONFIG" = "true" ] || missing="$missing secrets.TEST_STAND_KUBECONFIG"
+          [ "$HAVE_SEED_EMAIL" = "true" ] || missing="$missing secrets.TEST_STAND_SEED_EMAIL"
+          [ "$HAVE_BASE_URL" = "true" ]   || missing="$missing vars.TEST_STAND_BASE_URL"
+
+          # Checked HERE rather than left to the smoke suite, which validates the
+          # same thing far better than this does — but only after a deploy and a
+          # seed have already run. Twenty minutes is too long to wait to be told
+          # a password is missing.
+          case "${LOGIN_MODE:-password}" in
+            override)
+              [ "$HAVE_BOOTSTRAP_EMAIL" = "true" ]    || missing="$missing secrets.TEST_STAND_BOOTSTRAP_EMAIL"
+              [ "$HAVE_BOOTSTRAP_PASSWORD" = "true" ] || missing="$missing secrets.TEST_STAND_BOOTSTRAP_PASSWORD" ;;
+            password)
+              [ "$HAVE_PERSONA_PASSWORD" = "true" ]   || missing="$missing secrets.TEST_STAND_PERSONA_PASSWORD" ;;
+            *)
+              echo "::error::vars.TEST_STAND_SMOKE_LOGIN_MODE is '$LOGIN_MODE'; it must be 'password' or 'override'"
+              exit 1 ;;
+          esac
+
+          if [ -n "$missing" ]; then
+            echo "::error::the insight-test-stand environment is missing:$missing"
+            echo ""
+            echo "What each one is (full procedure: docs/components/deployment/specs/sop/credentials-runbook.md):"
+            echo "  TEST_STAND_KUBECONFIG          base64 of the kubeconfig for the namespace-scoped"
+            echo "                                 'ci-deployer' ServiceAccount, as produced by"
+            echo "                                 deploy/gitops/scripts/provision-ci-deployer.sh."
+            echo "                                 Admin kubeconfigs stay with humans."
+            echo "  TEST_STAND_SEED_EMAIL          address the seeded dev-lead persona resolves to."
+            echo "                                 A secret rather than a variable purely so it is"
+            echo "                                 masked in this public log."
+            echo "  TEST_STAND_PERSONA_PASSWORD    'password' mode: the credential every persona"
+            echo "                                 signs in with."
+            echo "  TEST_STAND_BOOTSTRAP_EMAIL     'override' mode: the one principal that really"
+            echo "  TEST_STAND_BOOTSTRAP_PASSWORD  authenticates; persona sessions are minted from it."
+            echo "  TEST_STAND_BASE_URL            the stand's public HTTPS origin, scheme and host,"
+            echo "                                 no trailing slash. A variable, not a secret: the"
+            echo "                                 smoke drives it as a browser would."
+            exit 1
+          fi
+          echo "smoke login mode: ${LOGIN_MODE:-password (suite default)}"
+
+      # ── Toolchain ─────────────────────────────────────────────────────────
+      # All of it before anything touches the cluster: a broken lockfile or a
+      # missing binary should not be discovered after an upgrade has landed.
+      # Every pin is one this repository already uses elsewhere.
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          # Same pin as publish-chart, so the chart is installed by the version
+          # of helm that packaged it. Also sidesteps the helm 4.2.1 `--wait`
+          # regression that deploy/gitops/scripts/doctor.sh refuses.
+          version: '3.14.0'
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          cache-suffix: test-stand-smoke
+
+      - name: Check the tools this workflow and the seeder shell out to
+        run: |
+          set -euo pipefail
+          # The inventory is read with yq; seed-stand.sh renders its Job with
+          # envsubst; the release check and the diagnostics select fields with
+          # jq. All three are on the GitHub-hosted image today, and all three
+          # would otherwise fail somewhere much less obvious than here.
+          missing=""
+          for tool in helm kubectl yq jq envsubst python3; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::the runner image no longer carries:$missing — install it in this job"
+            exit 1
+          fi
+          helm version --short
+          kubectl version --client -o yaml | head -n 3
+
+      - name: Resolve the smoke suite's dependencies
+        run: |
+          set -euo pipefail
+          # --frozen: the lockfile is the contract. A run that silently resolves
+          # a different dependency set is testing a different suite.
+          uv sync --project tests --frozen
+
+      # ── Cluster identity ──────────────────────────────────────────────────
+      - name: Write the stand kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.TEST_STAND_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          target="$RUNNER_TEMP/test-stand.kubeconfig"
+          # umask BEFORE the file exists, chmod after: the file must never be
+          # readable by another process on the runner, not even for the instant
+          # between creation and chmod.
+          (
+            umask 077
+            printf '%s' "$KUBECONFIG_B64" | tr -d '[:space:]' | base64 -d > "$target"
+          )
+          chmod 600 "$target"
+          # Never `cat`, never `kubectl config view` without a redirect: the only
+          # thing this prints is whether the file parses at all.
+          if ! KUBECONFIG="$target" kubectl config view --minify >/dev/null 2>&1; then
+            echo "::error::TEST_STAND_KUBECONFIG did not decode into a usable kubeconfig."
+            echo "It must be base64 of a complete kubeconfig with a current-context set —"
+            echo "'base64 -w0 < kubeconfig' on Linux, 'base64 < kubeconfig | tr -d \\\\n' on macOS."
+            exit 1
+          fi
+          echo "KUBECONFIG=$target" >> "$GITHUB_ENV"
+
+      - name: Confirm the credential points at the stand this repo describes
+        run: |
+          set -euo pipefail
+          if [ ! -f "$INVENTORY_FILE" ]; then
+            echo "::error::$INVENTORY_FILE does not exist."
+            echo "The committed gitops environment is what makes this deploy reviewable:"
+            echo "the cluster it targets, the namespaces, and which infrastructure is"
+            echo "externally managed all live there. Add it before wiring up the deploy."
+            exit 1
+          fi
+          expected="$(yq -r '.kubeContext // ""' "$INVENTORY_FILE")"
+          actual="$(kubectl config current-context 2>/dev/null || echo "")"
+          if [ -z "$expected" ]; then
+            echo "::error::$INVENTORY_FILE has no kubeContext, so there is nothing to check the credential against."
+            exit 1
+          fi
+          if [ "$expected" != "$actual" ]; then
+            # Deliberately does NOT echo the context the kubeconfig actually
+            # carries. This branch is exactly the case where the credential points
+            # somewhere it should not, and naming that somewhere in a public log is
+            # the thing the check exists to prevent.
+            echo "::error::the kubeconfig's current context is not the one $INVENTORY_FILE names ('$expected')."
+            echo "Either the environment secret holds the wrong cluster's credential, or the"
+            echo "inventory was changed without rotating it. Both are human decisions; CI will not guess."
+            exit 1
+          fi
+          # `get namespace <name>` rather than `cluster-info` or a workload list:
+          # the CI credential is namespace-scoped and cannot do anything
+          # cluster-wide, so a reachability probe that needs cluster scope would
+          # reject the very credential it is meant to validate. A request for a
+          # Namespace object is authorised within that namespace, which a
+          # RoleBinding can satisfy.
+          if ! kubectl --request-timeout=20s get namespace "$STAND_NAMESPACE" -o name >/dev/null 2>&1; then
+            echo "::error::cannot read namespace '$STAND_NAMESPACE' with this credential."
+            echo "Either the cluster is unreachable from a GitHub-hosted runner, or the"
+            echo "ci-deployer ServiceAccount and its RoleBinding are not in place. Re-issue with"
+            echo "deploy/gitops/scripts/provision-ci-deployer.sh."
+            exit 1
+          fi
+          echo "context matches the committed inventory; namespace $STAND_NAMESPACE is reachable"
+
+      - name: Confirm the chart this run is asked to install exists
+        run: |
+          set -euo pipefail
+          # Read-only, no cluster, a couple of seconds — and it converts "helm
+          # spent ten minutes failing to pull a chart" into an immediate,
+          # specific failure. The registry is anonymous-readable, so no token is
+          # needed here and the job asks for no `packages:` permission.
+          if ! helm show chart "$CHART_REF" --version "$CHART_VERSION" >/dev/null 2>&1; then
+            echo "::error::$CHART_REF:$CHART_VERSION is not in the registry."
+            echo "publish-chart is what puts it there; if that job failed after pushing but"
+            echo "before committing the version bump, re-run it rather than deploying by hand."
+            exit 1
+          fi
+          echo "$CHART_REF:$CHART_VERSION is published"
+
+      # ── Stage 1 of 3: deploy ──────────────────────────────────────────────
+      # `timeout-minutes` is 14 against helm's own `--timeout 10m` on purpose,
+      # with room for the chart pull and the render that precede it. The step
+      # budget must never be the one that fires: a step timeout SIGKILLs helm and
+      # leaves the release in `pending-upgrade`, while helm's own timeout leaves
+      # a clean `failed` release that `helm history` explains.
+      - name: 'Stage 1/3 — upgrade the release'
+        timeout-minutes: 14
+        run: |
+          set -euo pipefail
+          # The OIDC client secret is read out of the cluster at deploy time and
+          # injected, because the committed values file leaves it empty — this
+          # repository is public. The chart writes whatever it is given straight
+          # into the authenticator's config Secret, so an upgrade without this
+          # produces a confidential client with a blank secret: pods Ready,
+          # release `deployed`, every login broken.
+          #
+          # Read from the cluster rather than held as a GitHub secret so there is
+          # ONE copy of the value — the one the realm already agrees with. A
+          # second copy in CI is a second thing to rotate and a second way for
+          # the two to disagree.
+          oidc_client_secret="$(
+            kubectl -n "$STAND_NAMESPACE" get secret insight-oidc \
+              -o 'jsonpath={.data.client-secret}' | base64 --decode
+          )"
+          if [ -z "$oidc_client_secret" ]; then
+            echo "::error::Secret insight-oidc in namespace $STAND_NAMESPACE has no non-empty 'client-secret' key."
+            echo "Refusing to deploy: the upgrade would succeed and leave the authenticator with a"
+            echo "blank client secret, which looks healthy and fails every login."
+            exit 1
+          fi
+          # Belt and braces. The value is never echoed below, but a masked value
+          # cannot be leaked by a future edit either.
+          echo "::add-mask::$oidc_client_secret"
+
+          # Deliberately NO --atomic: a failed upgrade is LEFT failed so the pods
+          # holding the reason are still there for the diagnostics step. Recovery
+          # is the next merge, or a human running `make rollback ENV=test-stand`.
+          #
+          # Deliberately NO --create-namespace: the namespace exists, and the CI
+          # credential is namespace-scoped and could not create one anyway —
+          # asking would turn a working deploy into an RBAC failure.
+          #
+          # --timeout 10m rather than the gitops Makefile's 30m default: a deploy
+          # that is going to fail should say so inside the CI budget.
+          helm upgrade --install "$STAND_RELEASE" "$CHART_REF" \
+            --version "$CHART_VERSION" \
+            --namespace "$STAND_NAMESPACE" \
+            --values "$VALUES_FILE" \
+            --set-string authenticator.oidc.clientSecret="$oidc_client_secret" \
+            --wait --timeout 10m \
+            --history-max 10 \
+            2>&1 | python3 "$REDACT"
+
+      - name: 'Stage 1/3 — verify the release is the chart this run published'
+        run: |
+          set -euo pipefail
+          # A release can be `deployed` and still be the wrong chart — a resumed
+          # run, a hand-deploy that raced this one, an input that did not say what
+          # it meant. Checked separately from the upgrade's exit status because
+          # they answer different questions.
+          #
+          # The status flags are enumerated instead of `--all` because `--all` is
+          # a Helm 3 flag that Helm 4 removed: on a runner carrying v4 it exits
+          # `Error: unknown flag: --all` and this verification silently reports
+          # every release as "absent". The explicit set means the same thing on
+          # both majors. The intent it preserves: the interesting failures are
+          # the ones the default listing hides — a `pending-upgrade` release (an
+          # upgrade that was killed rather than one that failed) must be reported
+          # as itself, not as "absent".
+          listed="$(helm list -n "$STAND_NAMESPACE" \
+            --deployed --failed --pending --uninstalling \
+            --filter "^${STAND_RELEASE}\$" -o json)"
+          status="$(printf '%s' "$listed" | jq -r '.[0].status // "absent"')"
+          chart="$(printf '%s' "$listed" | jq -r '.[0].chart // "absent"')"
+          revision="$(printf '%s' "$listed" | jq -r '.[0].revision // "?"')"
+          echo "release $STAND_RELEASE: status=$status chart=$chart revision=$revision"
+          if [ "$status" != "deployed" ]; then
+            echo "::error::release '$STAND_RELEASE' is '$status', not 'deployed'."
+            echo "It has been left in that state on purpose — see the failure diagnostics below,"
+            echo "then either fix forward with another merge or roll back by hand."
+            exit 1
+          fi
+          if [ "$chart" != "insight-$CHART_VERSION" ]; then
+            echo "::error::the stand is running '$chart', not 'insight-$CHART_VERSION'."
+            echo "helm reported success while installing something else — treat this as a"
+            echo "problem with the chart reference or the version input, not with the stand."
+            exit 1
+          fi
+
+      - name: 'Stage 1/3 — restart what the chart cannot know to restart'
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          # Each subchart's `checksum/config` annotation hashes its OWN ConfigMap.
+          # It does not cover the umbrella-rendered insight-*-config Secrets,
+          # which these pods consume with `envFrom` and therefore read exactly
+          # once, at container start. So a changed datastore host, tenant or
+          # client secret updates the Secret, leaves the pod spec byte-identical,
+          # and never reaches a running process — a `deployed` release with
+          # all-Ready pods running stale configuration.
+          #
+          # All three services are listed on purpose: each consumes its config
+          # the same way, and a restart list of two would leave one of them
+          # holding yesterday's configuration with nothing to show for it.
+          # shellcheck disable=SC2086  # RESTART_TARGETS is a deliberate word list
+          kubectl -n "$STAND_NAMESPACE" rollout restart $RESTART_TARGETS
+          # shellcheck disable=SC2086
+          kubectl -n "$STAND_NAMESPACE" rollout status --timeout=5m $RESTART_TARGETS
+
+      - name: 'Stage 1/3 — confirm the edge still routes'
+        run: |
+          set -euo pipefail
+          # The chart renders NO HTTPRoute. These two objects live outside the
+          # release, are owned by the deployment repository, and every acceptance
+          # criterion travels through them — so a successful upgrade says nothing
+          # about whether the stand is reachable.
+          #
+          # Read, never applied: the files under
+          # deploy/gitops/environments/test-stand/manifests/ are the source of
+          # truth, and applying them from here would make CI a second writer on an
+          # object a human owns.
+          # shellcheck disable=SC2086  # ROUTE_NAMES is a deliberate word list
+          kubectl -n "$STAND_NAMESPACE" get httproute $ROUTE_NAMES \
+            -o 'custom-columns=NAME:.metadata.name,ACCEPTED:.status.parents[0].conditions[?(@.type=="Accepted")].status'
+          # shellcheck disable=SC2086
+          not_accepted="$(
+            kubectl -n "$STAND_NAMESPACE" get httproute $ROUTE_NAMES \
+              -o 'jsonpath={range .items[*]}{.metadata.name}{"="}{.status.parents[0].conditions[?(@.type=="Accepted")].status}{"\n"}{end}' \
+              | grep -v '=True$' || true
+          )"
+          if [ -n "$not_accepted" ]; then
+            echo "::error::an edge route is not Accepted:"
+            printf '%s\n' "$not_accepted"
+            echo "The release may be perfectly healthy; the stand is still unreachable, and the"
+            echo "smoke below would fail at its first request with a much less useful message."
+            exit 1
+          fi
+
+      # ── Stage 2 of 3: seed ────────────────────────────────────────────────
+      # 65 minutes is a CEILING chosen against the seed Job's own
+      # activeDeadlineSeconds of 3600s, not a measurement: deliberately just
+      # ABOVE it, so the pod's deadline is what fires first. A step timeout that
+      # fired first would kill the log follow while leaving the Job running in
+      # the cluster, and the next run would meet it half-finished.
+      #
+      # PENDING: replace this with a measured value once a handful of runs have
+      # reported wall-clock. If the real figure is (say) 12 minutes, the Job's
+      # --deadline should come down with the step budget, in one change, with the
+      # measurement quoted.
+      - name: 'Stage 2/3 — seed the stand'
+        timeout-minutes: 65
+        env:
+          SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL }}
+        run: |
+          set -euo pipefail
+          # seed-stand.sh verbatim — no wrapper, no re-implemented Job manifest.
+          # It discovers every coordinate it needs (datastore hosts, the tenant,
+          # the seed image the release pins) from the cluster, which is precisely
+          # why CI must not hand it any: a value CI supplied would be a value CI
+          # could get wrong, and a stand seeded against the wrong tenant looks
+          # seeded.
+          #
+          # `--context` is passed even though the ambient kubeconfig already
+          # points there. The script prints the context it resolved before it
+          # writes anything, and a run whose target is stated rather than
+          # inherited is one a reader of this log can check.
+          #
+          # `--days`, spelled exactly like that: the seeder rejects unknown
+          # arguments, so a plausible-looking synonym fails the stage every time.
+          #
+          # `tee` keeps the raw stream in $RUNNER_TEMP — it is the only copy of
+          # the seed manifest, which the next step reads — while only the redacted
+          # form reaches this public log. `pipefail` (set above) is what makes
+          # the seeder's exit status, rather than python's, the status of this
+          # step; without it a failed seed would be reported as a clean run.
+          kube_context="$(yq -r '.kubeContext' "$INVENTORY_FILE")"
+          ./src/ingestion/tools/seed/seed-stand.sh \
+            -n "$STAND_NAMESPACE" \
+            --context "$kube_context" \
+            --email "$SEED_EMAIL" \
+            --days 730 \
+            2>&1 | tee "$RUNNER_TEMP/seed.log" | python3 "$REDACT"
+
+      - name: 'Stage 2/3 — capture the seed manifest'
+        run: |
+          set -euo pipefail
+          # A cluster seed Job's filesystem dies with its pod, so the seeder
+          # prints the manifest to stdout before writing it. That log is the only
+          # record, and the smoke suite needs the document to know which personas
+          # exist. Extracted here rather than uploaded anywhere: it names every
+          # persona and the tenant.
+          python3 - "$RUNNER_TEMP/seed.log" "$RUNNER_TEMP/stand-manifest.json" <<'PY'
+          import json
+          import sys
+
+          source, target = sys.argv[1], sys.argv[2]
+          lines = open(source, encoding="utf-8", errors="replace").read().splitlines()
+
+          # The document is rendered with json.dumps(indent=2), so its opening
+          # brace is alone on a line at column 0 and its closing brace is the next
+          # line at column 0. Nested braces are indented and cannot be confused
+          # for either. The LAST such block wins: a run that printed more than one
+          # is a run whose later document supersedes the earlier.
+          block, start = None, None
+          for index, line in enumerate(lines):
+              if line == "{":
+                  start = index
+              elif line == "}" and start is not None:
+                  block = "\n".join(lines[start : index + 1])
+                  start = None
+
+          if block is None:
+              print("::error::no seed manifest in the seed log — the seeder did not reach the end of its run")
+              raise SystemExit(1)
+
+          try:
+              doc = json.loads(block)
+          except json.JSONDecodeError as exc:
+              print(f"::error::the seed log's manifest block is not valid JSON: {exc}")
+              raise SystemExit(1) from exc
+
+          with open(target, "w", encoding="utf-8") as handle:
+              json.dump(doc, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+
+          # A summary, not the document. Fixture NAMES are contract; persona
+          # emails, UUIDs and the tenant are not printed anywhere.
+          personas = doc.get("personas") or []
+          fixtures = sorted((doc.get("fixtures") or {}).keys())
+          print(f"manifest_version: {doc.get('manifest_version')}")
+          print(f"anchor_date:      {doc.get('anchor_date')}")
+          print(f"data_window:      {doc.get('data_window')}")
+          print(f"seed_revision:    {doc.get('seed_revision')}")
+          print(f"personas:         {len(personas)}")
+          print(f"fixtures:         {', '.join(fixtures) if fixtures else '(none)'}")
+          PY
+          echo "INSIGHT_STAND_MANIFEST=$RUNNER_TEMP/stand-manifest.json" >> "$GITHUB_ENV"
+
+      # ── Stage 3 of 3: smoke ───────────────────────────────────────────────
+      # Never reached after a failed seed: this step has no `if:`, so a failure
+      # above skips it. That is the whole mechanism — asserting against an
+      # unseeded stand would produce a failure that looks like a product bug.
+      - name: 'Stage 3/3 — smoke the stand through its public URL'
+        timeout-minutes: 5
+        env:
+          # The public origin, driven exactly as a browser would drive it: real
+          # DNS, real TLS, real IdP redirect. No port-forward, no in-cluster
+          # address — a stand that works only from inside the cluster is a stand
+          # nobody can use.
+          #
+          # SMOKE_BASE_URL and nothing else aims the suite: its conftest copies
+          # the value into the shared stand resolution itself, so passing
+          # `--base-url` as well would be a second spelling of one address.
+          SMOKE_BASE_URL: ${{ vars.TEST_STAND_BASE_URL }}
+          SMOKE_LOGIN_MODE: ${{ vars.TEST_STAND_SMOKE_LOGIN_MODE }}
+          SMOKE_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD }}
+          SMOKE_BOOTSTRAP_EMAIL: ${{ secrets.TEST_STAND_BOOTSTRAP_EMAIL }}
+          SMOKE_BOOTSTRAP_PASSWORD: ${{ secrets.TEST_STAND_BOOTSTRAP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ ! -d "$SMOKE_SUITE" ]; then
+            echo "::error::$SMOKE_SUITE does not exist."
+            echo "The smoke module is what turns this workflow from a deploy into a gate."
+            echo "It belongs there so it inherits tests/stand/conftest.py — the manifest, the"
+            echo "persona factory, the API client — without inheriting tests/stand/api's"
+            echo "scratch-row policy."
+            exit 1
+          fi
+          # Both spellings, on purpose. INSIGHT_STAND_MANIFEST is what the shared
+          # library reads; --stand-manifest is what the suite's own option reads;
+          # they point at the same file, and setting only one of them makes the
+          # run depend on which layer happens to resolve first.
+          #
+          # INSIGHT_STAND_ARTIFACT_DIR is explicit because the library computes
+          # its default from its own location on disk, and a runner is not a
+          # developer's checkout.
+          export INSIGHT_STAND_ARTIFACT_DIR="$RUNNER_TEMP/stand-artifacts"
+          mkdir -p "$INSIGHT_STAND_ARTIFACT_DIR"
+          # Redacted like everything else: the suite's assertion messages quote
+          # response bodies, and a response body is not a place anyone controls
+          # what appears. `pipefail` (set above) keeps pytest's exit status as
+          # the step's.
+          # The suite path is spelled literally here, not as $SMOKE_SUITE, for the
+          # same reason the values file is: this line is one of the anchors
+          # deploy/gitops/scripts/emulate-ci-deploy.sh greps for when it reports
+          # whether a laptop rehearsal is still running what CI runs.
+          uv run --project tests --frozen \
+            pytest tests/stand/smoke -ra --stand-manifest "$INSIGHT_STAND_MANIFEST" \
+            2>&1 | python3 "$REDACT"
+
+      # ── Diagnostics ───────────────────────────────────────────────────────
+      # One step, only on failure, and everything it can print is decided by a
+      # committed script rather than by this file — so widening what a red run
+      # publishes is a reviewable diff and not an edit to a `run:` block.
+      - name: Failure diagnostics (curated, redacted)
+        if: failure()
+        timeout-minutes: 6
+        run: |
+          set -uo pipefail
+          if [ -z "${KUBECONFIG:-}" ] || [ ! -f "$KUBECONFIG" ]; then
+            echo "the run failed before a cluster credential existed — nothing to collect"
+            exit 0
+          fi
+          bash .github/workflows/scripts/stand-diagnostics.sh "$STAND_NAMESPACE" "$STAND_RELEASE"
+
+      - name: Summarise the run
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Test stand — \`$CHART_VERSION\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| chart | \`insight-$CHART_VERSION\` |"
+            echo "| environment | \`$ENV_NAME\` (namespace \`$STAND_NAMESPACE\`, release \`$STAND_RELEASE\`) |"
+            echo "| outcome | **$OUTCOME** |"
+            echo ""
+            if [ "$OUTCOME" != "success" ]; then
+              echo "This is an after-merge alarm, not a merge gate: the chart under test did not"
+              echo "exist until the merge happened. **The author of the merge commit owns this run.**"
+              echo "Fix forward if the cause is small and obvious, revert if it is not."
+              echo ""
+              echo "A failed \`helm upgrade\` is left in place on purpose. Recovery is the next"
+              echo "merge, or a deliberate \`helm rollback\` by a human."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

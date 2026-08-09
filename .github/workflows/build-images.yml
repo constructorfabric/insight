@@ -1794,6 +1794,16 @@ jobs:
         || needs.changes.outputs.umbrella     == 'true'
       )
     runs-on: ubuntu-latest
+    # The deploy contract. `chart_version` is what a downstream job installs, and
+    # it must come from here rather than from deploy/gitops/.insight-version in a
+    # checkout: that file is written by the `Bump umbrella version` step but only
+    # reaches the branch in the [skip ci] commit at the END of this job, so any
+    # checkout of the trigger SHA reads the PREVIOUS release. `chart_digest` is
+    # the identity the SLSA attestation was made against — carried so a consumer
+    # can verify what it is about to install rather than trust the tag.
+    outputs:
+      chart_version: ${{ steps.umbrella.outputs.version }}
+      chart_digest: ${{ steps.helm_push.outputs.digest }}
     steps:
       # Mint a short-lived (1h) installation token from the
       # insight-chart-release-bot GitHub App so the auto-commit push at the
@@ -2049,3 +2059,51 @@ jobs:
             echo "recompute the bump against the new tip." >&2
             exit 1
           fi
+
+  # ─── deploy-test-stand ────────────────────────────────────────────────────
+  # The chart this run just published, put on the shared test stand, seeded, and
+  # smoked through its public URL. Issue #2244.
+  #
+  # This is an AFTER-MERGE ALARM, not a gate. It cannot be a gate: the artefact
+  # it installs does not exist until publish-chart has run, and publish-chart
+  # runs on push to main. What guards the merge is the merge-queue lanes; what
+  # this guards is the claim that the artefact those lanes approved installs and
+  # works. A red run here means main is broken — the merge author owns it, fixes
+  # forward if the cause is small, and reverts if it is not.
+  #
+  # `needs: publish-chart` waits for the WHOLE job, so there is no race with the
+  # version bump this job commits back to the branch. The hazard runs the other
+  # way, and the guard below is deliberate about it: publish-chart can push and
+  # attest the chart and STILL end in `failure`, because its final
+  # `git push origin HEAD:main` has no rebase-retry and exits 1 when the tip
+  # moved under it. In that case a chart exists in the registry that this deploy
+  # will not install. That is the right disposition — the branch and the stand
+  # must not disagree about what is deployed — but it is a choice, not an
+  # accident, and re-running the failed publish-chart job is the recovery.
+  #
+  # Do NOT rewrite this as `always()` plus a non-empty version check.
+  # `steps.umbrella.outputs.version` is set BEFORE `helm push`, so on a push
+  # failure the output holds a version that was never published, and the deploy
+  # would spend ten minutes failing to pull a chart that does not exist.
+  deploy-test-stand:
+    needs: [publish-chart]
+    # Re-asserts main even though publish-chart is upstream: publish-chart's own
+    # guard also permits `release-**` branches and `workflow_dispatch`, and
+    # inheriting it silently would deploy a release-branch chart to the test
+    # stand. A manual redeploy is done by dispatching deploy-test-stand.yml
+    # directly with the version — that is what its `workflow_dispatch` trigger
+    # is for — rather than by widening this condition.
+    if: |
+      needs.publish-chart.result == 'success'
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+    # Narrower than the workflow-level block (contents: write + packages: write +
+    # id-token: write + attestations: write), following the per-job narrowing
+    # this file already does at the CVE-gate jobs. The deploy reads the repo and
+    # talks to a cluster; it publishes nothing.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy-test-stand.yml
+    with:
+      chart_version: ${{ needs.publish-chart.outputs.chart_version }}
+    secrets: inherit
