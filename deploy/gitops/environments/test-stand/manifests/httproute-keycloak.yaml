@@ -1,0 +1,49 @@
+# /kc on the shared Gateway -> the chart's bundled Keycloak, for the test stand.
+#
+# The companion to httproute.yaml; read that file's header first — the same
+# reasoning about why the route is hand-written, why it is committed, and why
+# the deploy verifies rather than applies it holds here unchanged.
+#
+# WHY THE PREFIX WORKS WITHOUT A REWRITE
+# Keycloak serves under /kc natively (the subchart passes
+# --http-relative-path), and the same prefix is part of `keycloak.hostname`
+# in ../values.yaml, which is what the discovery document advertises. So
+# there is deliberately NO URLRewrite filter — adding one would strip a
+# prefix the server expects and break discovery.
+#
+# WHY IT SHARES THE APPLICATION HOSTNAME
+# Keycloak has no DNS record of its own. It rides the application's hostname
+# and takes /kc from it, which is only safe because Gateway API gives the
+# longest matching PathPrefix priority — the application route's "/" cannot
+# swallow /kc.
+#
+# ORDERING NOTE for a recreate: Gateway API awards a contested path to the
+# OLDEST route, so if a stale route ever claims /kc it must be deleted before
+# this one is applied, not after.
+#
+#     kubectl apply -f deploy/gitops/environments/test-stand/manifests/httproute-keycloak.yaml
+#     kubectl -n insight wait --for=condition=Accepted httproute/insight-keycloak
+#
+# Lives in the `insight` namespace so its backendRef stays namespace-local.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: insight-keycloak
+  namespace: insight
+spec:
+  parentRefs:
+    - name: insight
+      namespace: envoy-gateway-system
+      sectionName: https
+  hostnames:
+    # Same hostname as the application route, on purpose — see above.
+    - insight-test.cfabric.org
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /kc
+      backendRefs:
+        # The insight-keycloak subchart's Service, in this namespace.
+        - name: insight-keycloak
+          port: 8085
