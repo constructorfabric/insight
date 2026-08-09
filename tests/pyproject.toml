@@ -81,6 +81,7 @@ markers = [
     "requires_ingestion: needs a stand whose manifest declares the 'ingestion' capability; skipped with a reason when it does not",
     "requires_catalogue(*parts): needs rows the analytics seed writes ('table_columns', 'definition_override'); skipped with a reason on a stand seeded without that step",
     "requires_service_principal: needs a stand whose authenticator token listener this runner can reach, so a service principal can be obtained; skipped with a reason when it cannot",
+    "stand_smoke: the post-deploy gate in tests/stand/smoke — addresses a DEPLOYED stand at $SMOKE_BASE_URL rather than the compose stand, so a lane that means to run only the compose suite selects with `-m 'not stand_smoke'`",
 ]
 
 [tool.ruff]
