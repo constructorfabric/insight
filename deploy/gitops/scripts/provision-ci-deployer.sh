@@ -121,11 +121,25 @@
 #     ClusterRoleBindings, PersistentVolumes, StorageClasses.
 #   * Any other namespace. In particular the datastore namespaces, whose
 #     Secrets are the stand's crown jewels, stay out of reach.
-#   * The chart's `airbyte-auth-rbac.yaml` renders a Role into
-#     `airbyte.namespace` when that value is non-empty. A namespace-scoped
-#     credential cannot create it. Keep `airbyte.namespace: ""` (same
-#     namespace as the release) in the CI-driven environment's values, or
-#     provision a second, equally narrow supplement there by hand.
+#   * Any other namespace EXCEPT the one exception below. In particular the
+#     datastore namespaces, whose Secrets are the stand's crown jewels, stay
+#     out of reach.
+#
+#   The exception, and why it is not optional: the chart's
+#   `airbyte-auth-rbac.yaml` renders a Role AND RoleBinding named
+#   `<release>-airbyte-auth-reader` into `airbyte.namespace` whenever that
+#   value is non-empty — and the test-stand environment must set it, because
+#   leaving it empty puts the RBAC in the release namespace where Airbyte's
+#   `airbyte-auth-secrets` does not exist, and connector provisioning then
+#   fails at run time while every pod still looks healthy. A credential scoped
+#   only to the release namespace cannot write those two objects, so the FIRST
+#   `helm upgrade` is refused outright. This script therefore provisions a
+#   second, deliberately tiny supplement in that namespace: rights over
+#   `roles`/`rolebindings`, plus `get` on the one Secret name the chart's Role
+#   grants — the latter only because RBAC escalation prevention forbids
+#   creating a Role granting a permission the creator does not itself hold.
+#   It grants nothing else there; Airbyte's own workloads and its other
+#   Secrets stay out of reach.
 #
 # ═══════════════════════════════════════════════════════════════════════════
 #  SAFETY PROPERTIES OF THE SCRIPT ITSELF
@@ -210,6 +224,10 @@ APPLY=0
 MODE="provision" # provision | rotate | revoke | purge | verify
 SHOW_SERVER=0
 WITH_SUPPLEMENT=1
+# The chart renders its airbyte-auth-reader Role/RoleBinding into this
+# namespace whenever `airbyte.namespace` is non-empty in the values. Empty
+# string disables the second supplement entirely.
+AIRBYTE_NAMESPACE="airbyte"
 TOKEN_WAIT_S=60
 
 usage() {
@@ -256,6 +274,11 @@ Behaviour:
   --no-supplement          Skip the Gateway API / Argo / cert-manager
                            supplemental Role. Only for a cluster whose CRD
                            providers ship aggregate-to-admin ClusterRoles.
+  --airbyte-namespace NAME The namespace the chart renders its
+                           airbyte-auth-reader Role into, i.e. the values'
+                           `airbyte.namespace` (default: airbyte). Empty
+                           string skips that second supplement — correct only
+                           when the values leave `airbyte.namespace` unset.
   --show-server            Print the API server URL unredacted.
   --token-wait SECONDS     How long to wait for the token controller to fill
                            the Secret (default: 60).
@@ -335,6 +358,10 @@ while [ $# -gt 0 ]; do
     APPLY=1
     shift
     ;;
+  --airbyte-namespace)
+    AIRBYTE_NAMESPACE="${2-}"
+    shift
+    ;;
   --no-supplement)
     WITH_SUPPLEMENT=0
     shift
@@ -370,6 +397,8 @@ command -v kubectl >/dev/null 2>&1 || die "kubectl is required (brew install kub
 ROLE_NAME="${SA_NAME}-crd-supplement"
 RB_ADMIN="${SA_NAME}-admin"
 RB_SUPPLEMENT="${SA_NAME}-crd-supplement"
+AIRBYTE_ROLE_NAME="${SA_NAME}-airbyte-rbac"
+AIRBYTE_RB_NAME="${SA_NAME}-airbyte-rbac"
 
 # `kubectl` against the ADMIN kubeconfig. Every call in this script that uses
 # it is either read-only or gated behind $APPLY.
@@ -583,6 +612,62 @@ subjects:
     name: ${SA_NAME}
     namespace: ${NAMESPACE}
 EOF
+
+    if [ -n "$AIRBYTE_NAMESPACE" ]; then
+      cat <<EOF
+---
+# The cross-namespace exception, and the only one. The umbrella chart renders
+# \`<release>-airbyte-auth-reader\` — a Role granting \`get\` on the single Secret
+# \`airbyte-auth-secrets\`, plus its RoleBinding — into the namespace named by
+# the values' \`airbyte.namespace\`. Without rights over those two objects there,
+# the FIRST \`helm upgrade\` is refused and CI is red before it has deployed
+# anything.
+#
+# The \`secrets\` rule below looks like a widening and is the opposite: it is
+# restricted by \`resourceNames\` to the exact Secret the chart's own Role names,
+# and it exists only because RBAC escalation prevention forbids creating a Role
+# that grants a permission the creator does not hold. Removing it does not make
+# the credential smaller; it makes the deploy fail.
+#
+# Nothing else in this namespace is reachable: no pods, no other Secrets, no
+# workloads, no exec.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ${AIRBYTE_ROLE_NAME}
+  namespace: ${AIRBYTE_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: ${SA_NAME}
+    app.kubernetes.io/component: ci-credential
+    app.kubernetes.io/managed-by: provision-ci-deployer.sh
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: [roles, rolebindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [airbyte-auth-secrets]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ${AIRBYTE_RB_NAME}
+  namespace: ${AIRBYTE_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: ${SA_NAME}
+    app.kubernetes.io/component: ci-credential
+    app.kubernetes.io/managed-by: provision-ci-deployer.sh
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ${AIRBYTE_ROLE_NAME}
+subjects:
+  - kind: ServiceAccount
+    name: ${SA_NAME}
+    namespace: ${NAMESPACE}
+EOF
+    fi
   fi
 
   cat <<EOF
@@ -700,6 +785,21 @@ run_verification() {
   if [ "$WITH_SUPPLEMENT" = "1" ]; then
     expect_can yes "create WorkflowTemplates in ${NAMESPACE}" create workflowtemplates.argoproj.io -n "$NAMESPACE"
     expect_can yes "update HTTPRoutes in ${NAMESPACE}" update httproutes.gateway.networking.k8s.io -n "$NAMESPACE"
+  fi
+
+  # The cross-namespace exception, asserted in both directions. The first pair is
+  # a SUFFICIENCY check, not a containment one: without it the credential looks
+  # perfectly scoped and the first `helm upgrade` is refused, which is a worse
+  # failure than an over-broad token because it only shows up on a merge commit.
+  # The third proves the exception really is narrow — the RBAC objects are
+  # reachable there, the namespace's own workloads are not.
+  if [ -n "$AIRBYTE_NAMESPACE" ]; then
+    expect_can yes "create RoleBindings in ${AIRBYTE_NAMESPACE} (the chart's airbyte-auth-reader)" \
+      create rolebindings.rbac.authorization.k8s.io -n "$AIRBYTE_NAMESPACE"
+    expect_can yes "create Roles in ${AIRBYTE_NAMESPACE}" \
+      create roles.rbac.authorization.k8s.io -n "$AIRBYTE_NAMESPACE"
+    expect_can no "read pods in ${AIRBYTE_NAMESPACE} (the exception is RBAC-only)" \
+      get pods -n "$AIRBYTE_NAMESPACE"
   fi
 
   expect_can no "anything, anywhere (the blanket check)" '*' '*' --all-namespaces

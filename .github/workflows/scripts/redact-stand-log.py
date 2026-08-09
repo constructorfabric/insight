@@ -94,13 +94,28 @@ _PRIVATE_KEY_HEADER = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 #: Keys whose value is material wherever they appear — kubeconfig, Secret dumps,
 #: rendered values, connection errors. Matched case-insensitively against the
 #: token immediately left of a `:` or `=`.
+#:
+#: The leading boundary is `(?<![A-Za-z0-9])`, NOT `\b`, and an optional prefix
+#: is allowed to precede the keyword. This is the difference between redacting
+#: and not redacting, because `\b` does not match between `_` and a letter —
+#: underscore is a word character. With `\b` the pattern matched a bare
+#: `password:` but sailed straight past every underscore-joined name, which is
+#: the dominant convention in this stack:
+#:
+#:     MARIADB_PASSWORD=…                                     leaked
+#:     kubectl_token=…                                        leaked
+#:     APP__gears__authenticator__config__idp__client_secret: leaked
+#:
+#: On a public repository those lines are published forever, so the boundary is
+#: load-bearing rather than stylistic. The prefix group is bounded to characters
+#: that appear in env-var and YAML key names so it cannot run away across a line.
 _SECRET_KEY = re.compile(
-    r"(?i)\b("
+    r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_.\-]*(?:"
     r"password|passwd|pwd|secret|secret[_\-]?key|client[_\-]?secret|"
     r"token|access[_\-]?token|refresh[_\-]?token|id[_\-]?token|bearer[_\-]?token|"
     r"api[_\-]?key|private[_\-]?key|signing[_\-]?key|"
     r"client-key-data|client-certificate-data|certificate-authority-data"
-    r")([\"']?\s*[:=]\s*)(?!\s*$)\S+"
+    r"))([\"']?\s*[:=]\s*)(?!\s*$)\S+"
 )
 
 #: An image digest: kept, because "which image failed to pull" is the answer to
