@@ -2106,4 +2106,20 @@ jobs:
     uses: ./.github/workflows/deploy-test-stand.yml
     with:
       chart_version: ${{ needs.publish-chart.outputs.chart_version }}
-    secrets: inherit
+    # No `secrets:` key, deliberately — not an omission.
+    #
+    # `deploy-test-stand.yml` reads no caller secrets. Every credential it uses
+    # lives in the `insight-test-stand` GitHub environment, and environment
+    # secrets are resolved by the job that declares `environment:` — which is
+    # inside the called workflow, not here.
+    #
+    # `secrets: inherit` would hand it EVERY repository secret, including the
+    # GitHub App key that sits on `main`'s branch-protection bypass list. Giving
+    # a repository-write bypass credential to a job whose purpose is to run
+    # tooling against a cluster is a gratuitous blast-radius increase on a public
+    # repo, which is why semgrep's yaml.github-actions.security.secrets-inherit
+    # rule blocks it. The rule is right.
+    #
+    # The failure mode of not inheriting is loud: the called workflow's first
+    # cluster-touching step refuses with a named error listing exactly which
+    # environment secret is missing.
