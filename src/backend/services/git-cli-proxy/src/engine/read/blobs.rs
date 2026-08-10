@@ -77,8 +77,18 @@ async fn needed_oids(
     Ok(parse_raw_oids(&raw))
 }
 
+/// Tree entry mode of a submodule reference.
+const GITLINK_MODE: &str = "160000";
+
 /// Collect both sides of every changed path from `diff-tree --raw` output:
 /// `:<src_mode> <dst_mode> <src_oid> <dst_oid> <status>\t<path>`.
+///
+/// A side whose mode is [`GITLINK_MODE`] is skipped. Its object id names a
+/// commit in the SUBMODULE, which the superproject's origin has never heard
+/// of: asking for it makes the whole batch fetch fail with "not our ref",
+/// which this service reads as an origin refusing promisor wants and answers
+/// by rebuilding the entry as a full clone. One submodule would therefore
+/// force every repository containing it out of the blobless regime for good.
 fn parse_raw_oids(raw: &str) -> BTreeSet<String> {
     let mut oids = BTreeSet::new();
     for line in raw.lines() {
@@ -86,12 +96,16 @@ fn parse_raw_oids(raw: &str) -> BTreeSet<String> {
             continue;
         };
         let mut fields = rest.split_whitespace();
-        let _src_mode = fields.next();
-        let _dst_mode = fields.next();
+        let src_mode = fields.next();
+        let dst_mode = fields.next();
         let src = fields.next();
         let dst = fields.next();
-        for oid in [src, dst].into_iter().flatten() {
-            if is_object_oid(oid) {
+
+        for (mode, oid) in [(src_mode, src), (dst_mode, dst)] {
+            let (Some(mode), Some(oid)) = (mode, oid) else {
+                continue;
+            };
+            if mode != GITLINK_MODE && is_object_oid(oid) {
                 oids.insert(oid.to_owned());
             }
         }
@@ -102,6 +116,28 @@ fn parse_raw_oids(raw: &str) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_submodule_reference_is_never_requested_from_origin() {
+        // `160000` is a gitlink: the id is a commit in the submodule, which
+        // the superproject's origin does not have. Asking for it fails the
+        // whole batch with "not our ref", which this service classifies as a
+        // promisor refusal and answers by promoting the entry to a full clone.
+        let raw = concat!(
+            ":000000 100644 0000000000000000000000000000000000000000 ",
+            "1111111111111111111111111111111111111111 A\to.txt\n",
+            ":000000 160000 0000000000000000000000000000000000000000 ",
+            "2222222222222222222222222222222222222222 A\tsub\n",
+            ":160000 160000 3333333333333333333333333333333333333333 ",
+            "4444444444444444444444444444444444444444 M\tsub\n",
+        );
+        let oids = parse_raw_oids(raw);
+        assert_eq!(
+            oids.into_iter().collect::<Vec<_>>(),
+            vec!["1111111111111111111111111111111111111111".to_owned()],
+            "only the real blob may be requested"
+        );
+    }
 
     #[test]
     fn collects_both_sides_of_a_modification() {

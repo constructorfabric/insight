@@ -46,28 +46,29 @@ COPY services/git-cli-proxy/config/ ./services/git-cli-proxy/config/
 RUN cargo build --release --bin git-cli-proxy
 
 # Stage 2: Runtime
-FROM debian:bookworm-slim
+#
+# Trixie, where the sibling services use bookworm. `git` is not a utility here,
+# it is the implementation: the blob purge needs `repack --filter` together
+# with `--filter-to` (design §3.3), which arrived in git 2.42/2.43. Bookworm
+# ships 2.39 and has no git in backports at all; trixie ships 2.47. A binary
+# built against bookworm's glibc runs on trixie's newer one, so only this
+# stage moves.
+FROM debian:trixie-slim
 
 ARG TARGETARCH
 ARG WATCHEXEC_VERSION=2.3.2
 
-# Runtime deps + watchexec. `git` is the service's whole point, and it must be
-# new enough to run the blob purge: `repack --filter` with `--filter-to`,
-# which is what actually reclaims a served window's blobs (design §3.3).
-# bookworm's own git is 2.39 and cannot, so it comes from backports. The
-# service probes the invocation at boot and refuses to start if it fails, so a
-# git that regresses here is a failed deploy, not silent disk pressure.
+# The service re-runs the purge invocation against a throwaway repository at
+# boot and refuses to start if git rejects it, so a base image that regresses
+# here fails the deploy rather than quietly filling a volume.
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
       amd64) WX_ARCH=x86_64-unknown-linux-musl ;; \
       arm64) WX_ARCH=aarch64-unknown-linux-musl ;; \
       *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    echo 'deb http://deb.debian.org/debian bookworm-backports main' \
-        > /etc/apt/sources.list.d/backports.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl xz-utils; \
-    apt-get install -y --no-install-recommends -t bookworm-backports git; \
+    apt-get install -y --no-install-recommends ca-certificates git curl xz-utils; \
     curl -fsSL "https://github.com/watchexec/watchexec/releases/download/v${WATCHEXEC_VERSION}/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}.tar.xz" \
         | tar -xJ -C /tmp; \
     install -m 0755 "/tmp/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}/watchexec" /usr/local/bin/watchexec; \

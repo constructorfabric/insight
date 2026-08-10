@@ -202,6 +202,56 @@ fn branching_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("file://{}", origin.display()))
 }
 
+/// A superproject holding a submodule. The gitlink's object id is a commit in
+/// the inner repository, which the outer origin has never heard of.
+fn submodule_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let inner = root.join("inner");
+    let outer = root.join("outer");
+    std::fs::create_dir_all(&inner)?;
+    std::fs::create_dir_all(&outer)?;
+
+    let setup = |dir: &Path, script: &str| -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new("sh")
+            .arg("-ec")
+            .arg(script)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .env("GIT_AUTHOR_DATE", "2026-08-01T10:00:00+0000")
+            .env("GIT_COMMITTER_DATE", "2026-08-01T10:00:00+0000")
+            .output()?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(format!(
+            "fixture setup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into())
+    };
+
+    setup(
+        &inner,
+        "git init -q -b main . && echo i > i.txt && git add . && git commit -qm inner",
+    )?;
+    setup(
+        &outer,
+        &format!(
+            "git init -q -b main . && \
+             git config uploadpack.allowFilter true && \
+             git config uploadpack.allowAnySHA1InWant true && \
+             git -c protocol.file.allow=always submodule add -q '{}' sub && \
+             echo o > o.txt && git add -A && git commit -qm 'add a submodule'",
+            inner.display()
+        ),
+    )?;
+    Ok(format!("file://{}", outer.display()))
+}
+
 /// An origin whose filenames exercise every spelling git C-quotes: a quote, a
 /// backslash, a tab, a non-ASCII byte, a space, and a path holding the ` b/`
 /// sequence that a `diff --git` header cannot resolve on its own.
@@ -1196,5 +1246,36 @@ async fn a_file_row_carries_the_name_git_has_on_disk() -> R {
             "{name:?} must carry its own diff: {row}"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_submodule_does_not_force_a_repository_out_of_the_blobless_cache() -> R {
+    // The gitlink id belongs to the submodule. Requesting it from the
+    // superproject's origin fails with "not our ref", which this service reads
+    // as an origin refusing promisor wants — so a single submodule used to
+    // promote the whole repository to a full clone, permanently.
+    let server = spawn_server("submodule", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = submodule_origin(&server.dir)?;
+
+    let changes = get_json(server.port, "/v1/file-changes", &repo).await?;
+    let rows = changes["items"].as_array().ok_or("no items")?;
+    let names: Vec<&str> = rows
+        .iter()
+        .filter_map(|row| row["filename"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"o.txt"),
+        "the ordinary file must still be served: {names:?}"
+    );
+
+    let commits = get_json(server.port, "/v1/commits", &repo).await?;
+    assert!(
+        commits["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()),
+        "commits must be served for a repository holding a submodule"
+    );
     Ok(())
 }
