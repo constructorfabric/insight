@@ -132,6 +132,29 @@ Two consequences worth knowing while it stays this small:
 '''
 
 
+IDENTITY_RESOLUTION_HEADER = '''"""Identity-resolution response shapes — GENERATED, do not edit.
+
+Regenerate with:
+
+    uv run --project tests --frozen python tests/generate_schemas.py
+
+Source: `docs/components/backend/identity-resolution/openapi.json`, emitted by
+`cargo run -p identity-resolution -- openapi` from the same route table the
+service serves and drift-gated in CI. These models therefore describe the
+structs that serialize the wire, which the hand-written ones they replaced could
+not: the committed document used to be the retired .NET contract.
+
+`extra="forbid"` throughout: an undeclared field is drift.
+
+The four journal responses (persons-seed, persons-sync, attribute-reconcile,
+policy-publish) are separate types with identical fields, because they are
+separate operations whose summaries are free to diverge. `schemas/__init__.py`
+re-exports one of them as `Operation` for suites that assert the shared shape.
+"""
+
+'''
+
+
 @dataclass(frozen=True)
 class Generated:
     """A service whose document describes bodies: models are generated and committed."""
@@ -229,19 +252,11 @@ TARGETS: tuple[Generated | Bodyless | Untrusted, ...] = (
         spec=_SPECS / "gateway" / "openapi.json",
         reason="publishes no OpenAPI document (NGINX + Lua; `GET /healthz` is its only own route)",
     ),
-    # The committed document is still the retired .NET one — it declares routes
-    # the service does not serve, omits ones it does, and lists only `200`
-    # everywhere (enumerated in `stand/api/schemas/__init__.py`). `identity.py` is
-    # hand-written from the Rust DTOs until identity grows an `openapi`
-    # subcommand of its own, as analytics and authenticator have.
-    #
-    # NOT `Bodyless`: the document does describe one body (`POST
-    # /v1/visible-persons`), and body count says nothing about provenance.
-    Untrusted(
+    Generated(
         name="identity-resolution",
         spec=_SPECS / "identity-resolution" / "openapi.json",
-        reason="the committed document is the retired .NET contract",
-        still_the_wrong_document=declares_only_200,
+        output=_SCHEMAS / "identity.py",
+        header=IDENTITY_RESOLUTION_HEADER,
     ),
 )
 

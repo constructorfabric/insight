@@ -33,12 +33,13 @@ impl Gear for IdentityResolutionGear {
         tracing::info!("starting identity-resolution gear");
 
         // Self-managed MariaDB pool (same approach as the analytics gear).
-        // No background workers: the persons-seed runs as the `seed` CLI
-        // subcommand (CronJob / manual Job — see `crate::seed_runner`), so the
-        // server process only serves reads + the operations journal.
         let db = crate::infra::db::connect(&config.database_url).await?;
 
-        let state = AppState { db, config };
+        let state = AppState {
+            db,
+            config,
+            cancel: ctx.cancellation_token().clone(),
+        };
         self.state
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;
@@ -152,6 +153,30 @@ pub async fn run_reconcile_attributes(
     }
     let summary = crate::attribute_reconcile_runner::run(&cfg).await?;
     tracing::info!(?summary, "attribute-reconcile run finished");
+    Ok(())
+}
+
+/// `publish-policy` subcommand: publish the current person-attribute policy
+/// snapshot to ClickHouse once and exit. Same shape as [`run_seed`].
+///
+/// # Errors
+///
+/// [`crate::publish_policy_runner::PublishRunError`] — the caller maps each
+/// variant to a distinct process exit code.
+pub async fn run_publish_policy(
+    app: &toolkit::bootstrap::AppConfig,
+) -> Result<(), crate::publish_policy_runner::PublishRunError> {
+    let cfg =
+        extract_gear_config(app).map_err(crate::publish_policy_runner::PublishRunError::Failed)?;
+    if cfg.database_url.is_empty() {
+        return Err(crate::publish_policy_runner::PublishRunError::Failed(
+            anyhow::anyhow!(
+                "`gears.identity-resolution.config.database_url` is required for publish-policy"
+            ),
+        ));
+    }
+    let summary = crate::publish_policy_runner::run(&cfg).await?;
+    tracing::info!(?summary, "policy-publish run finished");
     Ok(())
 }
 

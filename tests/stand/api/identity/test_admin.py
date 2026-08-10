@@ -1,6 +1,6 @@
 """The admin-gated half of identity-resolution.
 
-Thirteen operations sit behind `require_admin`, which resolves the caller from
+Sixteen operations sit behind `require_admin`, which resolves the caller from
 the gateway JWT and requires an active `admin` row in `identity.person_roles`.
 It never reads the `insight-admin` REALM role — so the CEO, who holds that role,
 is refused exactly like everybody else. The seed grants the row to one account:

@@ -1,25 +1,3 @@
-//! CLI attribute-reconcile runner — the engine behind the
-//! `reconcile-attributes` subcommand.
-//!
-//! Discovers person-attribute fields in the warehouse claim relation and
-//! registers them in the MariaDB registry (definition + default revision-1
-//! policy: grouping allowed, comparison denied). Same execution model as the
-//! seed/sync runners: a Helm `CronJob` / manual Job runs
-//! `identity-resolution reconcile-attributes`; only GET journal routes exist
-//! on the API.
-//!
-//! One run: advisory lock → zombie sweep → `operations` journal row →
-//! discover → guards → register → journal completed/failed.
-//!
-//! Guards (exit code 3, journalled as `failed` so the journal explains why
-//! nothing was registered):
-//! - the claims relation does not exist — this service can deploy ahead of
-//!   the ingestion release that creates it; refusing beats a red `CronJob`
-//!   that alerts until the other repo ships.
-//! - fields were discovered but every one had empty key components — a run
-//!   that green-completes registering nothing would hide a broken claims
-//!   contract indefinitely (see `domain::attribute_reconcile`).
-
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -39,8 +17,6 @@ const RECONCILE_TIMEOUT: Duration = Duration::from_mins(5);
 const RUN_TIMEOUT: Duration = Duration::from_mins(7);
 const ZOMBIE_CUTOFF_HOURS: i64 = 1;
 
-/// Why a reconcile run did not complete — mapped to the shared exit-code
-/// scheme (0 ok / 1 failed / 2 lock busy / 3 guard).
 #[derive(Debug)]
 pub enum ReconcileRunError {
     LockBusy,
@@ -54,11 +30,6 @@ impl From<anyhow::Error> for ReconcileRunError {
     }
 }
 
-/// Run one CLI attribute reconciliation end to end.
-///
-/// # Errors
-///
-/// [`ReconcileRunError`] — lock busy, guard refusal, or a failed run.
 pub async fn run(config: &GearConfig) -> Result<ReconcileSummary, ReconcileRunError> {
     let db = db::connect(&config.database_url).await?;
 
@@ -206,9 +177,6 @@ async fn guarded_reconcile(
         })
 }
 
-/// Adapter feeding already-read fields through the domain reader port, so the
-/// missing-relation classification stays in the infra layer while the domain
-/// loop keeps a single entry point.
 struct PreRead(Vec<crate::domain::attribute_reconcile::DiscoveredField>);
 
 #[async_trait]

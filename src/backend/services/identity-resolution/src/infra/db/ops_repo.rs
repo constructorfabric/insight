@@ -1,27 +1,29 @@
 //! Operations audit/job-tracking store (MariaDB `operations` table).
 //!
-//! An async operation (persons-seed) moves `queued → running → completed/failed`.
-//! The POST handler enqueues a row; the worker flips it to `running`
-//! (`try_start`, so two workers can't double-run), then `complete`s or `fail`s
-//! it. GETs poll status. SQL ported from the .NET `Sql.Operations.cs`.
+//! An operation moves `queued → running → completed/failed`. Whoever starts a run
+//! enqueues the row, flips it with `try_start` (atomic, so two runs can't double-start),
+//! then `complete`s or `fail`s it. GETs poll status. SQL ported from the .NET
+//! `Sql.Operations.cs`.
 //!
 //! Raw SQL on the self-managed pool (like the rest of `infra::db`): the atomic
-//! `queued→running` transition (`try_start`) and the cross-tenant startup
-//! `sweep_zombies` are conditional DML that `toolkit-db`'s scoped builder can't
-//! express, so the whole repo stays on raw SQL for consistency. Values are
-//! bound params; see `infra::db` module docs + constructorfabric/gears-rust#4239.
+//! `queued→running` transition (`try_start`) and `sweep_zombies` are conditional DML
+//! that `toolkit-db`'s scoped builder can't express, so the whole repo stays on raw SQL
+//! for consistency. Values are bound params; see `infra::db` module docs +
+//! constructorfabric/gears-rust#4239.
 
 use sea_orm::prelude::DateTime;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
 
 /// `operation_type` value of persons-seed runs — shared by the CLI runner
-/// (writes) and the `GET /v1/persons-seed*` journal endpoints (filter).
+/// (writes) and the journal endpoints (filter).
 pub const PERSONS_SEED_OP: &str = "persons-seed";
 /// Operation type of the persons→ClickHouse sync (`sync` subcommand).
 pub const PERSONS_SYNC_OP: &str = "persons-sync";
 /// Operation type of the attribute-reconcile runner.
 pub const PERSON_ATTRIBUTES_RECONCILE_OP: &str = "person-attributes-reconcile";
+/// Operation type of the policy-snapshot publisher.
+pub const PERSON_ATTRIBUTES_POLICY_PUBLISH_OP: &str = "person-attributes-policy-publish";
 
 /// Lifecycle phase of an operation. DB column is a `VARCHAR(16)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,15 +248,14 @@ pub async fn list(
 }
 
 /// Fail every `queued`/`running` operation whose `started_at` is older than
-/// `older_than`. Run once at worker startup so a pod restart cannot leave a row
-/// stuck in `running` forever (its in-memory job is gone). Intentionally NOT
-/// tenant-scoped — the single-process worker owns all in-flight operations
-/// across tenants. Mirrors `Sql.Operations.cs::SweepZombies`. Returns the number
-/// of rows reclaimed.
+/// `older_than`, so a killed run cannot leave a row stuck in `running` forever.
+/// Called at the head of every run. Mirrors `Sql.Operations.cs::SweepZombies`.
+/// Returns the number of rows reclaimed.
 ///
 /// # Errors
 ///
 /// Returns an error if the update fails.
+// INVARIANT: deliberately not tenant-scoped — the sweep reclaims rows of every tenant.
 pub async fn sweep_zombies(db: &DatabaseConnection, older_than: DateTime) -> anyhow::Result<u64> {
     const SQL: &str = r"
         UPDATE operations

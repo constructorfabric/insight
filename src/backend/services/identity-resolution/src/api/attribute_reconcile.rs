@@ -1,12 +1,3 @@
-//! Attribute-reconcile operations journal — read-only HTTP surface.
-//!
-//! The reconcile itself is CLI-only (`identity-resolution
-//! reconcile-attributes`, run by the Helm `CronJob` or a manual Job — see
-//! `crate::attribute_reconcile_runner`); these GETs are the observability
-//! window over its `operations` rows: status, summary (discovered / created /
-//! refreshed / skipped counts), error per run. Same wire conventions and
-//! admin gate as the seed and sync journals.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -27,7 +18,6 @@ use crate::infra::db::ops_repo::{self, Operation, PERSON_ATTRIBUTES_RECONCILE_OP
 const LIST_DEFAULT_LIMIT: u64 = 50;
 const LIST_MAX_LIMIT: u64 = 500;
 
-/// One reconcile operation's status.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AttributeReconcileOperationResponse {
     pub operation_id: Uuid,
@@ -37,10 +27,6 @@ pub struct AttributeReconcileOperationResponse {
     pub author_person_id: Uuid,
     #[schema(value_type = Option<Object>)]
     pub request: Option<serde_json::Value>,
-    /// On completion: the [`ReconcileSummary`] — discovered / created /
-    /// refreshed / `skipped_invalid` counts.
-    ///
-    /// [`ReconcileSummary`]: crate::domain::attribute_reconcile::ReconcileSummary
     #[schema(value_type = Option<Object>)]
     pub summary: Option<serde_json::Value>,
     pub error_message: Option<String>,
@@ -66,8 +52,6 @@ impl From<Operation> for AttributeReconcileOperationResponse {
     }
 }
 
-/// List response wrapper (typed for OpenAPI); `next_cursor` is declared but
-/// always `null`, same non-paginating contract as the other journals.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AttributeReconcileListResponse {
     pub items: Vec<AttributeReconcileOperationResponse>,
@@ -75,7 +59,6 @@ pub struct AttributeReconcileListResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for AttributeReconcileListResponse {}
 
-/// `GET /v1/person-attributes-reconcile/{id}` — poll one operation.
 pub async fn get_attribute_reconcile(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -98,9 +81,6 @@ pub async fn get_attribute_reconcile(
     Ok(Json(AttributeReconcileOperationResponse::from(op)))
 }
 
-/// `GET /v1/person-attributes-reconcile` — list reconcile operations.
-/// Optional `?status=` (unknown values ignored) and `?limit=` (default 50,
-/// capped 500), same semantics as the seed and sync journals.
 pub async fn list_attribute_reconcile(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,

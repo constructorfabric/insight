@@ -1,15 +1,6 @@
-//! Person-attribute registry: connector-discovered attribute definitions and
-//! their append-only policy revisions.
-//!
-//! Definitions are keyed by the RAW string identifiers the warehouse claim
-//! relations carry (see the deviation note in `sql/015_person_attributes.sql`).
-//! Policy revisions never mutate; the current policy is the row with the
-//! highest revision per definition, and every revision carries its actor.
-
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, SqlErr, Statement};
 use uuid::Uuid;
 
-/// Stable identity of one discovered source field.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DefinitionKey {
     pub insight_tenant_id: String,
@@ -18,7 +9,6 @@ pub struct DefinitionKey {
     pub source_field_id: String,
 }
 
-/// One registry row joined with its current (highest-revision) policy.
 #[derive(Debug, Clone)]
 pub struct DefinitionWithPolicy {
     pub id: Uuid,
@@ -28,7 +18,6 @@ pub struct DefinitionWithPolicy {
     pub policy: PolicyRevision,
 }
 
-/// One immutable policy revision (read model).
 #[derive(Debug, Clone)]
 pub struct PolicyRevision {
     pub revision: i32,
@@ -42,8 +31,6 @@ pub struct PolicyRevision {
     pub reason: String,
 }
 
-/// Policy fields a caller may set; revision and actor are assigned by the
-/// append itself.
 #[derive(Debug, Clone)]
 pub struct PolicyInput {
     pub label_override: Option<String>,
@@ -70,9 +57,6 @@ impl ValueMode {
         }
     }
 
-    /// # Errors
-    ///
-    /// Returns an error for a value outside the `value_mode` enum.
     pub fn from_db(s: &str) -> anyhow::Result<Self> {
         match s {
             "single" => Ok(Self::Single),
@@ -82,30 +66,28 @@ impl ValueMode {
     }
 }
 
-/// Outcome of registering one discovered field.
+#[derive(Debug, Clone)]
+pub struct CurrentPolicyRow {
+    pub definition_id: Uuid,
+    pub insight_tenant_id: String,
+    pub insight_source_type: String,
+    pub insight_source_id: String,
+    pub source_field_id: String,
+    pub revision: i32,
+    pub label_override: Option<String>,
+    pub sensitivity_class: Option<String>,
+    pub grouping_enabled: bool,
+    pub comparison_enabled: bool,
+    pub value_mode: ValueMode,
+    pub retired: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterOutcome {
     Created,
     Refreshed,
 }
 
-/// Register a discovered field: insert the definition plus its revision-1
-/// default policy (grouping allowed, comparison denied) when the key is new;
-/// otherwise only advance `last_observed_at`. Idempotent per key.
-///
-/// The insert and its revision-1 row are two statements without a wrapping
-/// transaction: a crash between them leaves a definition whose revision 1 is
-/// re-inserted by the next run (the `INSERT IGNORE` below), never a definition
-/// that reconciliation refuses to touch again.
-///
-/// The outcome is classified from the `INSERT IGNORE` (1 row = the field had
-/// no revision 1, so it registers as created): the definition insert's
-/// affected-rows count is unreliable under `CLIENT_FOUND_ROWS`, which the
-/// driver enables — a duplicate-key no-op reports 1 there, not 0.
-///
-/// # Errors
-///
-/// Returns an error if a statement fails.
 pub async fn register_discovered(
     db: &DatabaseConnection,
     key: &DefinitionKey,
@@ -147,6 +129,8 @@ pub async fn register_discovered(
     );
     db.execute(insert).await?;
 
+    // WORKAROUND: the driver enables CLIENT_FOUND_ROWS, under which a duplicate-key no-op
+    // reports 1 affected row — so the outcome is classified from the INSERT IGNORE below.
     let policy = Statement::from_sql_and_values(
         DbBackend::MySql,
         INSERT_INITIAL_POLICY,
@@ -168,17 +152,6 @@ pub async fn register_discovered(
     })
 }
 
-/// Append the next policy revision iff the caller saw the current one.
-/// Returns `false` when `expected_revision` is stale (or the definition does
-/// not exist / belongs to another tenant) — the API maps that to 409. The
-/// guarded `INSERT ... SELECT` makes check-and-insert one statement; if two
-/// writers still race past it, `uq_definition_revision` rejects the loser,
-/// which is reported as the same stale-revision outcome rather than an error.
-///
-/// # Errors
-///
-/// Returns an error if the statement fails for any reason other than the
-/// revision uniqueness key.
 pub async fn append_policy_revision(
     db: &DatabaseConnection,
     tenant_id: &str,
@@ -235,12 +208,6 @@ fn is_duplicate_key(err: &sea_orm::DbErr) -> bool {
     matches!(err.sql_err(), Some(SqlErr::UniqueConstraintViolation(_)))
 }
 
-/// List a tenant's definitions with their current policy, ordered by source
-/// then field for stable presentation.
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
 pub async fn list_definitions(
     db: &DatabaseConnection,
     tenant_id: &str,
@@ -256,11 +223,6 @@ pub async fn list_definitions(
     rows.iter().map(row_to_definition).collect()
 }
 
-/// One definition with its current policy, tenant-scoped.
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
 pub async fn get_definition(
     db: &DatabaseConnection,
     tenant_id: &str,
@@ -326,6 +288,37 @@ fn row_to_definition(row: &sea_orm::QueryResult) -> anyhow::Result<DefinitionWit
             actor_person_id: Uuid::from_slice(&actor)?,
             reason: row.try_get("", "reason")?,
         },
+    })
+}
+
+pub async fn current_policies(db: &DatabaseConnection) -> anyhow::Result<Vec<CurrentPolicyRow>> {
+    let stmt = Statement::from_string(
+        DbBackend::MySql,
+        format!(
+            "{SELECT_WITH_POLICY} ORDER BY d.insight_tenant_id, d.insight_source_type, \
+             d.insight_source_id, d.source_field_id"
+        ),
+    );
+    let rows = db.query_all(stmt).await?;
+    rows.iter().map(row_to_current_policy).collect()
+}
+
+fn row_to_current_policy(row: &sea_orm::QueryResult) -> anyhow::Result<CurrentPolicyRow> {
+    let id: Vec<u8> = row.try_get("", "definition_id")?;
+    let value_mode: String = row.try_get("", "value_mode")?;
+    Ok(CurrentPolicyRow {
+        definition_id: Uuid::from_slice(&id)?,
+        insight_tenant_id: row.try_get("", "tenant_id")?,
+        insight_source_type: row.try_get("", "source_type")?,
+        insight_source_id: row.try_get("", "source_instance")?,
+        source_field_id: row.try_get("", "field_id")?,
+        revision: row.try_get("", "revision")?,
+        label_override: row.try_get("", "label_override")?,
+        sensitivity_class: row.try_get("", "sensitivity_class")?,
+        grouping_enabled: row.try_get("", "grouping_enabled")?,
+        comparison_enabled: row.try_get("", "comparison_enabled")?,
+        value_mode: ValueMode::from_db(&value_mode)?,
+        retired: row.try_get("", "retired")?,
     })
 }
 
