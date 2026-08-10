@@ -18,6 +18,10 @@ const COMMIT_MARK: &str = "\u{1e}commit ";
 /// boundary and flagged, so a consumer recomputing line counts can tell an
 /// incomplete diff from a complete one.
 ///
+/// The retained text is bounded per file, but the runner still materializes
+/// git's whole stdout before parsing — bounding that too needs a streaming
+/// runner API shared with every other reader.
+///
 /// # Errors
 ///
 /// [`GitError`] when the git invocation fails.
@@ -50,51 +54,79 @@ pub async fn read(
     Ok(parse(&text, max_bytes))
 }
 
+/// A per-file diff accumulated up to `max` bytes.
+///
+/// `seen` counts every byte the diff would have occupied, so truncation is
+/// decided on the true size while only the retained prefix is held. A single
+/// generated file — a lockfile, a vendored bundle — can carry a diff orders of
+/// magnitude larger than the cap, and buffering it whole to then throw it away
+/// is the difference between a bounded reader and an OOM.
+struct Bounded {
+    buf: String,
+    seen: usize,
+    max: usize,
+}
+
+impl Bounded {
+    fn new(max: usize) -> Self {
+        Self {
+            buf: String::new(),
+            seen: 0,
+            max,
+        }
+    }
+
+    fn push_line(&mut self, line: &str) {
+        let incoming = line.len().saturating_add(1);
+
+        let room = self.max.saturating_sub(self.seen);
+        if room > 0 {
+            let mut cut = room.min(line.len());
+            while cut > 0 && !line.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            self.buf.push_str(&line[..cut]);
+            if cut == line.len() && room > line.len() {
+                self.buf.push('\n');
+            }
+        }
+
+        self.seen = self.seen.saturating_add(incoming);
+    }
+
+    fn take(&mut self) -> (String, bool) {
+        let truncated = self.seen > self.max;
+        self.seen = 0;
+        (std::mem::take(&mut self.buf), truncated)
+    }
+}
+
 fn parse(text: &str, max_bytes: usize) -> HashMap<String, CommitPatches> {
     let mut result: HashMap<String, CommitPatches> = HashMap::new();
     let mut sha: Option<String> = None;
     let mut path: Option<String> = None;
-    let mut buffer = String::new();
+    let mut buffer = Bounded::new(max_bytes);
 
     for line in text.lines() {
         if let Some(next_sha) = line.strip_prefix(COMMIT_MARK) {
-            flush(
-                &mut result,
-                sha.as_deref(),
-                path.take(),
-                &mut buffer,
-                max_bytes,
-            );
+            flush(&mut result, sha.as_deref(), path.take(), &mut buffer);
             sha = Some(next_sha.trim().to_owned());
             result.entry(next_sha.trim().to_owned()).or_default();
             continue;
         }
 
         if let Some(next_path) = diff_header_path(line) {
-            flush(
-                &mut result,
-                sha.as_deref(),
-                path.take(),
-                &mut buffer,
-                max_bytes,
-            );
+            flush(&mut result, sha.as_deref(), path.take(), &mut buffer);
             path = Some(next_path);
             continue;
         }
 
         if path.is_some() {
-            buffer.push_str(line);
-            buffer.push('\n');
+            buffer.push_line(line);
         }
     }
 
-    flush(
-        &mut result,
-        sha.as_deref(),
-        path.take(),
-        &mut buffer,
-        max_bytes,
-    );
+    flush(&mut result, sha.as_deref(), path.take(), &mut buffer);
     result
 }
 
@@ -102,25 +134,12 @@ fn flush(
     result: &mut HashMap<String, CommitPatches>,
     sha: Option<&str>,
     path: Option<String>,
-    buffer: &mut String,
-    max_bytes: usize,
+    buffer: &mut Bounded,
 ) {
+    let (text, truncated) = buffer.take();
     let (Some(sha), Some(path)) = (sha, path) else {
-        buffer.clear();
         return;
     };
-
-    let truncated = buffer.len() > max_bytes;
-    let text = if truncated {
-        let mut cut = max_bytes;
-        while cut > 0 && !buffer.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        buffer[..cut].to_owned()
-    } else {
-        buffer.clone()
-    };
-    buffer.clear();
 
     result
         .entry(sha.to_owned())
@@ -188,6 +207,92 @@ mod tests {
             patch.text.is_char_boundary(patch.text.len()),
             "cut must not split a character"
         );
+    }
+
+    /// The pre-cap implementation: accumulate the whole diff, then truncate.
+    /// Kept as the oracle so the bounded reader is provably byte-identical.
+    fn unbounded_reference(lines: &[&str], max_bytes: usize) -> (String, bool) {
+        let mut buffer = String::new();
+        for line in lines {
+            buffer.push_str(line);
+            buffer.push('\n');
+        }
+        let truncated = buffer.len() > max_bytes;
+        if !truncated {
+            return (buffer, false);
+        }
+        let mut cut = max_bytes;
+        while cut > 0 && !buffer.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        (buffer[..cut].to_owned(), true)
+    }
+
+    #[test]
+    fn bounded_output_is_byte_identical_to_the_unbounded_parse() {
+        let bodies: Vec<Vec<&str>> = vec![
+            vec![],
+            vec![""],
+            vec!["+a"],
+            vec!["+a", "-b", " c"],
+            vec!["+日本語", "-ascii", "+ünïcödé"],
+            vec!["+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+        ];
+        for body in &bodies {
+            for max_bytes in [0, 1, 2, 3, 4, 5, 7, 8, 11, 16, 32, 1024] {
+                let (expected, expected_truncated) = unbounded_reference(body, max_bytes);
+
+                let mut bounded = Bounded::new(max_bytes);
+                for line in body {
+                    bounded.push_line(line);
+                }
+                let (actual, actual_truncated) = bounded.take();
+
+                assert_eq!(
+                    actual, expected,
+                    "text differs for body {body:?} at max_bytes={max_bytes}"
+                );
+                assert_eq!(
+                    actual_truncated, expected_truncated,
+                    "flag differs for body {body:?} at max_bytes={max_bytes}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn one_enormous_line_is_never_buffered_whole() {
+        let line = "+".repeat(4 * 1024 * 1024);
+        let mut bounded = Bounded::new(1024);
+        bounded.push_line(&line);
+        assert!(
+            bounded.buf.len() <= 1024,
+            "retained {} bytes for a 4 MiB line",
+            bounded.buf.len()
+        );
+
+        let (text, truncated) = bounded.take();
+        assert_eq!(text.len(), 1024);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn the_cap_applies_per_file_not_per_response() {
+        let big = "+".repeat(200);
+        let text =
+            format!("\u{1e}commit aaa\ndiff --git a/x b/x\n{big}\ndiff --git a/y b/y\n{big}\n");
+        let parsed = parse(&text, 64);
+
+        let Some(files) = parsed.get("aaa") else {
+            panic!("commit missing")
+        };
+        for name in ["x", "y"] {
+            let Some(patch) = files.get(name) else {
+                panic!("{name} missing")
+            };
+            assert_eq!(patch.text.len(), 64, "{name} must get its own budget");
+            assert!(patch.truncated);
+        }
     }
 
     #[test]

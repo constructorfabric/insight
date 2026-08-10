@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, header};
+use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::key::CacheKey;
@@ -68,7 +69,7 @@ pub async fn list_commits(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<CommitsQuery>,
-) -> Result<Json<Page<commits::CommitRow>>, ApiError> {
+) -> Result<Response, ApiError> {
     let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let selected = parse_sha_filter(query.sha.as_deref())?;
@@ -123,10 +124,11 @@ pub async fn list_commits(
         })
         .collect();
 
-    Ok(Json(Page {
+    json_page(Page {
         items,
         next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
-    }))
+    })
+    .await
 }
 
 /// # Errors
@@ -137,7 +139,7 @@ pub async fn list_file_changes(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<FileChangesQuery>,
-) -> Result<Json<Page<FileChangeRow>>, ApiError> {
+) -> Result<Response, ApiError> {
     let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let selected = parse_sha_filter(query.sha.as_deref())?;
@@ -180,12 +182,73 @@ pub async fn list_file_changes(
         )
         .await?
     } else {
-        std::collections::HashMap::new()
+        HashMap::new()
     };
 
-    let mut items = Vec::new();
+    let (items, early_cursor) = emit_file_changes(window, &file_stats, &texts, RowCaps::DEFAULT);
+    let cursor = early_cursor.or(cursor);
+
+    json_page(Page {
+        items,
+        next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
+    })
+    .await
+}
+
+/// Response-size bounds for `/v1/file-changes`. The page size bounds commits;
+/// a commit fans out to one row per changed file, each carrying patch text, so
+/// without these a single page can be arbitrarily large.
+#[derive(Debug, Clone, Copy)]
+struct RowCaps {
+    max_rows: usize,
+    max_patch_bytes: usize,
+}
+
+impl RowCaps {
+    const DEFAULT: Self = Self {
+        max_rows: 20_000,
+        max_patch_bytes: 64 * 1024 * 1024,
+    };
+}
+
+/// Fan commits out into file rows, stopping at a COMMIT boundary once a cap is
+/// reached, and reporting the position of the last fully emitted commit.
+///
+/// INVARIANT: a commit is emitted whole or not at all. A commit that alone
+/// exceeds a cap is emitted over budget rather than refused — otherwise the
+/// caller could never advance past it and the repository would be permanently
+/// unsyncable.
+fn emit_file_changes(
+    window: Vec<commits::CommitHeader>,
+    file_stats: &HashMap<String, Vec<numstat::FileStat>>,
+    texts: &HashMap<String, patches::CommitPatches>,
+    caps: RowCaps,
+) -> (Vec<FileChangeRow>, Option<(String, String)>) {
+    let mut items: Vec<FileChangeRow> = Vec::new();
+    let mut patch_bytes = 0usize;
+    let mut last_complete: Option<(String, String)> = None;
+    let mut stopped_early = false;
+
     for header in window {
         let files = file_stats.get(&header.sha).map_or(&[][..], Vec::as_slice);
+        let rows = files.len();
+        let bytes: usize = files
+            .iter()
+            .filter_map(|file| {
+                texts
+                    .get(&header.sha)
+                    .and_then(|per_file| per_file.get(&file.filename))
+                    .map(|patch| patch.text.len())
+            })
+            .sum();
+
+        if !items.is_empty()
+            && (items.len() + rows > caps.max_rows || patch_bytes + bytes > caps.max_patch_bytes)
+        {
+            stopped_early = true;
+            break;
+        }
+
         for file in files {
             let patch = texts
                 .get(&header.sha)
@@ -204,12 +267,12 @@ pub async fn list_file_changes(
                 patch_truncated: patch.is_some_and(|p| p.truncated),
             });
         }
+
+        patch_bytes += bytes;
+        last_complete = Some((header.committed_date, header.sha));
     }
 
-    Ok(Json(Page {
-        items,
-        next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
-    }))
+    (items, stopped_early.then_some(last_complete).flatten())
 }
 
 /// # Errors
@@ -219,7 +282,7 @@ pub async fn list_branches(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<BranchesQuery>,
-) -> Result<Json<Page<branches::BranchRow>>, ApiError> {
+) -> Result<Response, ApiError> {
     let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let guard = open(&state, &context, &paging).await?;
@@ -233,10 +296,11 @@ pub async fn list_branches(
         (row.name.clone(), String::new())
     });
 
-    Ok(Json(Page {
+    json_page(Page {
         items,
         next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
-    }))
+    })
+    .await
 }
 
 /// Resolve the snapshot: a first page honors fetch-if-stale, a continuation is
@@ -276,6 +340,20 @@ async fn open(
     Ok(guard)
 }
 
+/// Serialize off the reactor: a page carries up to ten thousand commit
+/// messages, or the patch text of every file they touched.
+async fn json_page<T>(page: Page<T>) -> Result<Response, ApiError>
+where
+    T: Serialize + Send + 'static,
+{
+    let body = tokio::task::spawn_blocking(move || serde_json::to_vec(&page))
+        .await
+        .map_err(|e| ApiError::Serialization(e.to_string()))?
+        .map_err(|e| ApiError::Serialization(e.to_string()))?;
+
+    Ok(([(header::CONTENT_TYPE, "application/json")], body).into_response())
+}
+
 fn retain_selected<T, K>(rows: Vec<T>, selected: Option<&ShaFilter>, key: K) -> Vec<T>
 where
     K: Fn(&T) -> &str,
@@ -303,4 +381,167 @@ fn encode_cursor(
         }
         .encode()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::read::numstat::{FileStat, FileStatus};
+    use crate::engine::read::patches::Patch;
+
+    fn header(sha: &str, date: &str) -> commits::CommitHeader {
+        commits::CommitHeader {
+            sha: sha.to_owned(),
+            committed_date: date.to_owned(),
+            authored_date: date.to_owned(),
+            author_name: "a".to_owned(),
+            author_email: "a@example.com".to_owned(),
+            committer_name: "c".to_owned(),
+            committer_email: "c@example.com".to_owned(),
+            parent_hashes: Vec::new(),
+            message: "m".to_owned(),
+        }
+    }
+
+    fn stat(name: &str) -> FileStat {
+        FileStat {
+            filename: name.to_owned(),
+            previous_filename: None,
+            status: FileStatus::Modified,
+            additions: Some(1),
+            deletions: Some(1),
+            is_binary: false,
+        }
+    }
+
+    type Scenario = (
+        Vec<commits::CommitHeader>,
+        HashMap<String, Vec<FileStat>>,
+        HashMap<String, patches::CommitPatches>,
+    );
+
+    /// `count` commits, each touching `files_each` files whose patch text is
+    /// `patch_bytes` long.
+    fn scenario(count: usize, files_each: usize, patch_bytes: usize) -> Scenario {
+        let mut window = Vec::new();
+        let mut stats = HashMap::new();
+        let mut texts: HashMap<String, patches::CommitPatches> = HashMap::new();
+
+        for c in 0..count {
+            let sha = format!("sha{c:04}");
+            window.push(header(&sha, &format!("2026-08-{:02}T00:00:00Z", c + 1)));
+
+            let files: Vec<FileStat> = (0..files_each).map(|f| stat(&format!("f{f}"))).collect();
+            let per_file: patches::CommitPatches = files
+                .iter()
+                .map(|file| {
+                    (
+                        file.filename.clone(),
+                        Patch {
+                            text: "x".repeat(patch_bytes),
+                            truncated: false,
+                        },
+                    )
+                })
+                .collect();
+
+            stats.insert(sha.clone(), files);
+            texts.insert(sha, per_file);
+        }
+        (window, stats, texts)
+    }
+
+    #[test]
+    fn an_unbounded_page_keeps_every_row_and_no_early_cursor() {
+        let (window, stats, texts) = scenario(3, 2, 4);
+        let (rows, cursor) = emit_file_changes(window, &stats, &texts, RowCaps::DEFAULT);
+
+        assert_eq!(rows.len(), 6);
+        assert_eq!(cursor, None, "nothing was withheld, so nothing to resume");
+    }
+
+    #[test]
+    fn stops_at_a_commit_boundary_when_the_row_cap_is_hit() {
+        let (window, stats, texts) = scenario(10, 3, 1);
+        let caps = RowCaps {
+            max_rows: 7,
+            max_patch_bytes: usize::MAX,
+        };
+        let (rows, cursor) = emit_file_changes(window, &stats, &texts, caps);
+
+        assert_eq!(rows.len(), 6, "two whole commits fit, the third would not");
+        assert_eq!(
+            cursor.map(|(_, sha)| sha),
+            Some("sha0001".to_owned()),
+            "the cursor names the last commit emitted in full"
+        );
+    }
+
+    #[test]
+    fn stops_at_a_commit_boundary_when_the_patch_byte_cap_is_hit() {
+        let (window, stats, texts) = scenario(10, 1, 100);
+        let caps = RowCaps {
+            max_rows: usize::MAX,
+            max_patch_bytes: 250,
+        };
+        let (rows, cursor) = emit_file_changes(window, &stats, &texts, caps);
+
+        assert_eq!(
+            rows.len(),
+            2,
+            "two commits of 100 bytes fit, a third does not"
+        );
+        assert_eq!(cursor.map(|(_, sha)| sha), Some("sha0001".to_owned()));
+    }
+
+    #[test]
+    fn no_commit_is_ever_half_emitted() {
+        let (window, stats, texts) = scenario(10, 3, 10);
+        let caps = RowCaps {
+            max_rows: 8,
+            max_patch_bytes: 95,
+        };
+        let (rows, _) = emit_file_changes(window, &stats, &texts, caps);
+
+        let mut per_sha: HashMap<&str, usize> = HashMap::new();
+        for row in &rows {
+            *per_sha.entry(row.sha.as_str()).or_default() += 1;
+        }
+        for (sha, count) in per_sha {
+            assert_eq!(count, 3, "commit {sha} was emitted partially");
+        }
+    }
+
+    #[test]
+    fn a_single_oversized_commit_is_emitted_whole_so_the_walk_can_advance() {
+        let (window, stats, texts) = scenario(2, 50, 1000);
+        let caps = RowCaps {
+            max_rows: 1,
+            max_patch_bytes: 1,
+        };
+        let (rows, cursor) = emit_file_changes(window, &stats, &texts, caps);
+
+        assert_eq!(
+            rows.len(),
+            50,
+            "the first commit must be served over budget, or it can never be passed"
+        );
+        assert_eq!(
+            cursor.map(|(_, sha)| sha),
+            Some("sha0000".to_owned()),
+            "and the caller must be told where to resume"
+        );
+    }
+
+    #[test]
+    fn an_empty_window_emits_nothing() {
+        let (rows, cursor) = emit_file_changes(
+            Vec::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            RowCaps::DEFAULT,
+        );
+        assert!(rows.is_empty());
+        assert_eq!(cursor, None);
+    }
 }

@@ -16,6 +16,8 @@ pub enum ApiError {
     Store(#[from] StoreError),
     #[error("git failed: {0}")]
     Git(#[from] GitError),
+    #[error("failed to serialize the response: {0}")]
+    Serialization(String),
 }
 
 #[derive(Serialize)]
@@ -45,6 +47,10 @@ impl IntoResponse for ApiError {
             }
             Self::Git(origin @ (GitError::AuthRejected | GitError::NotFound)) => origin.to_string(),
             Self::Git(internal) => {
+                tracing::error!(error = %internal, "request failed");
+                "internal error".to_owned()
+            }
+            Self::Serialization(internal) => {
                 tracing::error!(error = %internal, "request failed");
                 "internal error".to_owned()
             }
@@ -95,9 +101,8 @@ impl ApiError {
                 (StatusCode::PAYLOAD_TOO_LARGE, "repo_too_large", None)
             }
             Self::Store(StoreError::Git(_) | StoreError::Io(_))
-            | Self::Git(GitError::TimedOut(_) | GitError::Failed(_) | GitError::Io(_)) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal", None)
-            }
+            | Self::Git(GitError::TimedOut(_) | GitError::Failed(_) | GitError::Io(_))
+            | Self::Serialization(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal", None),
         }
     }
 }
