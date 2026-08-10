@@ -68,6 +68,37 @@ CAPABILITY_MARKERS: dict[str, str] = {
     "requires_service_principal": "service_principals",
 }
 
+# `requires_seed` fixtures a stand may legitimately not have, mapped to why.
+#
+# Everything else in a manifest's fixture catalog is the canonical roster, and a
+# canonical name that is absent means the stand was seeded wrong — the session
+# aborts, which is the contract `pytest_collection_modifyitems` documents below.
+# These names are different: the seeder is CONFIGURED not to write them on some
+# stands, so their absence is a property of the stand and resolves like a
+# capability marker — skip that item, with a reason, and run the rest.
+#
+# This is not a new policy, it is the one already written down. tests/stand/
+# README.md, "Cross-tenant refusal": "A cluster stand turns it off … so tests
+# declaring `requires_seed('other_tenant_lead')` skip rather than fail". The
+# seeder says the same from the other side, in
+# src/ingestion/tools/seed/insight_seed/manifest.py, where advertising an absent
+# second tenant "would turn every test that declares
+# requires_seed('other_tenant_lead') from a skip into a failure".
+#
+# Neither was true. The gate treated every declared name as mandatory, so on any
+# cluster stand these two tests aborted the whole session at collection: 264
+# tests, none run, exit 4, before a single request was made — and `--deselect`
+# could not rescue it, because this hook runs before pytest applies deselection.
+# Two optional-by-design tests took down the entire suite.
+OPTIONAL_SEED_FIXTURES: dict[str, str] = {
+    OTHER_TENANT_FIXTURE: (
+        "the second tenant is written only when SEED_CROSS_TENANT_FIXTURE is on, which "
+        "compose sets and a cluster stand does not (a second tenant aborts "
+        "identity-resolution's scheduled projection); cross-tenant refusal is covered on "
+        "compose"
+    ),
+}
+
 #: Where the coverage ledger lands at session end. Read by the gate
 #: (`insight_stand/coverage.py`) and uploaded by CI; gitignored like every other
 #: run artefact.
@@ -206,11 +237,17 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     Two different resolutions, on purpose:
 
-    * `requires_seed` — a missing fixture means the stand was seeded wrong.
-      Every collected test is inspected, every missing name is gathered, and
-      the session aborts ONCE with all of them listed. Failing per-test would
-      report the same root cause dozens of times; failing on the first miss
-      would hide the rest and force a fix-rerun-discover loop.
+    * `requires_seed` — a missing CANONICAL fixture means the stand was seeded
+      wrong. Every collected test is inspected, every missing name is gathered,
+      and the session aborts ONCE with all of them listed. Failing per-test
+      would report the same root cause dozens of times; failing on the first
+      miss would hide the rest and force a fix-rerun-discover loop.
+
+      A name in `OPTIONAL_SEED_FIXTURES` is exempt: the seeder is configured not
+      to write it on some stands, so its absence describes the stand rather than
+      a fault, and the item skips like a capability marker. An item is skipped
+      only when EVERY name it is missing is optional — one canonical name absent
+      still aborts, however many optional ones sit beside it.
     * capability markers — a missing capability is a legitimate property of
       this stand, not a defect, so it skips that item alone.
     * `requires_catalogue` — same resolution as a capability, for the rows
@@ -229,10 +266,32 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     missing: dict[str, list[str]] = {}
     for item in items:
-        for marker in item.iter_markers(name="requires_seed"):
-            for name in marker.args:
-                if name not in manifest.seeded_names:
-                    missing.setdefault(str(name), []).append(item.nodeid)
+        # An item is skipped when EVERY fixture it is missing is optional, and
+        # contributes to the abort otherwise. Collected per item rather than
+        # per name because the two resolutions are per item: a test needing
+        # both `dev_lead` and `other_tenant_lead` on a stand missing both is a
+        # seeding fault, not a skip.
+        absent = [
+            str(name)
+            for marker in item.iter_markers(name="requires_seed")
+            for name in marker.args
+            if name not in manifest.seeded_names
+        ]
+        if not absent:
+            continue
+        if all(name in OPTIONAL_SEED_FIXTURES for name in absent):
+            item.add_marker(
+                pytest.mark.skip(
+                    reason=(
+                        f"requires_seed: {', '.join(sorted(absent))} not seeded on this stand "
+                        f"({manifest.source_path}) — "
+                        + "; ".join(OPTIONAL_SEED_FIXTURES[name] for name in sorted(set(absent)))
+                    )
+                )
+            )
+            continue
+        for name in absent:
+            missing.setdefault(name, []).append(item.nodeid)
 
     if missing:
         lines = [
@@ -246,7 +305,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             + f"\n  manifest: {manifest.source_path} (seeded steps: "
             + f"{', '.join(manifest.seeded) or 'none'})"
             + f"\n  available fixtures: {available}"
-            + "\n  Re-seed the stand:  ./dev-compose.sh test-stand seed"
+            + "\n  Re-seed the stand. On compose:  ./dev-compose.sh test-stand seed"
+            + "\n  On a cluster:  src/ingestion/tools/seed/seed-stand.sh -n <namespace>"
         )
 
     for item in items:

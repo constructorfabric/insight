@@ -19,6 +19,8 @@ existed.
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 import pytest
 from insight_stand import SESSION_COOKIE_NAME, Manifest
 from playwright.sync_api import Browser, expect
@@ -52,9 +54,29 @@ def test_an_anonymous_browser_is_sent_to_the_idp(
 
         expect(KeycloakLoginPage(page).username_field()).to_be_visible()
 
-        assert not page.url.startswith(base_url), (
-            f"an anonymous visit to {route} stayed on {page.url} — the product view "
-            "was served without a session"
+        # Asserted on the PATH, not on the origin.
+        #
+        # This used to read `assert not page.url.startswith(base_url)` — "the
+        # browser left the product" — which silently assumed the IdP lives on
+        # another host. It does not have to. A deployment can publish Keycloak
+        # under a path on the application's own hostname (this repository's
+        # test-stand overlay serves it at /kc, because the IdP has no DNS record
+        # of its own and Gateway API gives the longer PathPrefix priority). On
+        # such a stand the authorization endpoint is
+        # `https://<app-host>/kc/realms/<realm>/protocol/openid-connect/auth`,
+        # which starts with the base URL — so the old assertion failed on all
+        # three routes while the product behaved perfectly, and the check
+        # immediately above it had already proved the IdP's form was on screen.
+        #
+        # What actually matters is that the browser is on the IdP's sign-in
+        # endpoint rather than on a product view. `openid-connect/auth` is that
+        # statement, it is OIDC's own spelling rather than Keycloak's, and it
+        # holds whether the IdP shares the hostname or not — which is the
+        # property the docstring above claims for this test.
+        path = urlsplit(page.url).path
+        assert "/protocol/openid-connect/auth" in path, (
+            f"an anonymous visit to {route} left the browser at {page.url}, which is not an "
+            "OIDC authorization endpoint — the product view was served without a session"
         )
         assert [c["name"] for c in context.cookies(base_url)] == [], (
             f"an anonymous visit to {route} left cookies on {base_url}: {context.cookies(base_url)}"
