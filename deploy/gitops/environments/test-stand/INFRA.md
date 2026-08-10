@@ -1033,8 +1033,8 @@ this repository takes over.
     spelled out in [`README.md` step 3](README.md#deploying-by-hand) — the same
     command CI runs — followed by the restart in step 4 (§25) and the route
     check in step 5 (§26). Rehearse it read-only first with
-    [`../../scripts/emulate-ci-deploy.sh`](../../scripts/emulate-ci-deploy.sh),
-    which runs the workflow's own invocations and changes nothing by default.
+    `make diff ENV=test-stand`, which renders the same chart through the same
+    values file and contacts no cluster.
     Note that `make deploy ENV=test-stand` is **not** the deploy path for this
     environment and would do damage; see
     [Why not `make deploy`](README.md#why-not-make-deploy).
