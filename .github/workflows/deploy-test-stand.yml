@@ -287,41 +287,50 @@ jobs:
       # A `workflow_call` always names one: it is publish-chart's output, the
       # version that run just pushed, and guessing there would install something
       # other than what was published. A `workflow_dispatch` may leave it empty,
-      # which means "whatever main published last" — the common case for a human
-      # redeploying the current stand, and one nobody should have to look up.
+      # which means "whatever is newest in the registry" — the common case for a
+      # human redeploying the current stand, and one nobody should have to look
+      # up.
       #
-      # Resolved from main's `deploy/gitops/.insight-version`, NOT from the
-      # registry's tag list. The registry paginates and does not order tags, so
-      # picking a maximum from page one is how you deploy 0.2.14 to a stand on
-      # 0.5.x. That file is written by the publish-chart job in the same commit
-      # that pushes the chart, so it names the newest published version by
-      # construction — and it is read from `main` rather than from this checkout,
-      # because a branch's copy is as old as the branch.
+      # Resolved from the REGISTRY, and this is the second attempt. The first read
+      # `deploy/gitops/.insight-version` from `main` of $GITHUB_REPOSITORY, which
+      # is correct in the upstream repository and quietly wrong anywhere else: run
+      # from a fork whose `main` is a stale mirror, it resolved 0.4.8 against a
+      # stand running 0.5.x. Reading it from the checkout has the same shape of
+      # bug, one branch instead of one fork. The registry has no such failure mode
+      # — it is the thing the input actually refers to ("must already be
+      # published") and it is the same answer whoever asks.
+      #
+      # `?n=1000` because the default page is 100 and the registry does not order
+      # tags: taking a maximum from page one is exactly how you deploy 0.2.14 to
+      # a stand on 0.5.x. The `Link: rel="next"` header is followed anyway, so a
+      # repository that outgrows one page keeps working. Only strict `X.Y.Z` tags
+      # are considered, compared as integer tuples rather than as strings.
+      #
+      # No credential: GHCR issues an anonymous pull token for a public package,
+      # and the chart repository is derived from CHART_REF so a fork resolves the
+      # same upstream chart it deploys.
+      #
+      # A release branch publishes on its own PATCH stream, so in principle its
+      # newest tag could out-sort main's. It cannot in practice: main's MINOR is
+      # bumped as soon as a release branch is cut, which is what keeps the two
+      # streams from colliding. If that ever changes, pass the version explicitly.
       - name: Resolve the chart version
         id: chart
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           version="$REQUESTED_CHART_VERSION"
           origin="the caller"
 
           if [ -z "$version" ]; then
-            if [ "$EVENT" != "workflow_dispatch" ]; then
-              echo "::error::chart_version is empty on a $EVENT. Only a dispatch may omit it;"
+            if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then
+              echo "::error::chart_version is empty on a $GITHUB_EVENT_NAME. Only a dispatch may omit it;"
               echo "a workflow_call must pass publish-chart's output, or the deploy installs"
               echo "something other than the chart that run published."
               exit 1
             fi
-            version="$(gh api "repos/${GITHUB_REPOSITORY}/contents/deploy/gitops/.insight-version?ref=main" \
-                        --jq '.content' | base64 --decode | tr -d '[:space:]')"
-            origin="main's .insight-version"
-            [ -n "$version" ] || {
-              echo "::error::could not read deploy/gitops/.insight-version from main."
-              echo "Pass chart_version explicitly."
-              exit 1
-            }
+            version="$(python3 .github/workflows/scripts/latest-chart-version.py "$CHART_REF")"
+            origin="the registry"
+            [ -n "$version" ] || { echo "::error::could not resolve a version from $CHART_REF."; exit 1; }
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
