@@ -1,16 +1,9 @@
-//! Attribute reconciliation core: turns fields discovered in the warehouse
-//! claim relations into registry registrations. Pure over its two ports —
-//! a reader of discovered fields and a registrar — so the loop, its guards
-//! and its accounting are testable without a database.
-
 use async_trait::async_trait;
 use serde::Serialize;
 use uuid::Uuid;
 
 use crate::infra::db::person_attributes_repo::{DefinitionKey, RegisterOutcome};
 
-/// One distinct (tenant, source type, source instance, field) seen in claims,
-/// with its latest observation instant (warehouse-formatted timestamp).
 #[derive(Debug, Clone)]
 pub struct DiscoveredField {
     pub insight_tenant_id: String,
@@ -20,13 +13,11 @@ pub struct DiscoveredField {
     pub last_observed_at: String,
 }
 
-/// Port: reads the distinct discovered fields from the warehouse.
 #[async_trait]
 pub trait DiscoveredFieldsReader {
     async fn discover(&self) -> anyhow::Result<Vec<DiscoveredField>>;
 }
 
-/// Port: registers one discovered field in the registry.
 #[async_trait]
 pub trait FieldRegistrar {
     async fn register(
@@ -36,24 +27,17 @@ pub trait FieldRegistrar {
     ) -> anyhow::Result<RegisterOutcome>;
 }
 
-/// Accounting of one reconciliation run, journalled as `summary_json`.
 #[derive(Debug, Default, Serialize, PartialEq, Eq)]
 pub struct ReconcileSummary {
     pub discovered: usize,
     pub created: usize,
     pub refreshed: usize,
     pub skipped_invalid: usize,
-    /// Fields registered under a tenant string that is not a canonical UUID.
-    /// They persist and reconcile fine but no gateway JWT can ever address
-    /// them through the admin API, which matches tenants in canonical form —
-    /// a nonzero count is the only signal of that mismatch.
     pub non_canonical_tenants: usize,
 }
 
-/// Why a reconciliation run refused to proceed.
 #[derive(Debug)]
 pub enum ReconcileError {
-    /// Guard refusal with an operator-facing message (journalled verbatim).
     Guard(String),
     Failed(anyhow::Error),
 }
@@ -68,9 +52,6 @@ fn is_canonical_uuid(tenant: &str) -> bool {
     Uuid::parse_str(tenant).is_ok_and(|u| u.to_string() == tenant)
 }
 
-/// A field is registrable only when every key component is non-empty; claims
-/// normalize absent values to `''`, and an empty component would mint a
-/// definition no request could ever address.
 fn to_key(field: &DiscoveredField) -> Option<DefinitionKey> {
     let all_present = !field.insight_tenant_id.is_empty()
         && !field.insight_source_type.is_empty()
@@ -84,15 +65,6 @@ fn to_key(field: &DiscoveredField) -> Option<DefinitionKey> {
     })
 }
 
-/// Register every valid discovered field. Guards rather than completes when
-/// fields were read but none was registrable — a green run that registered
-/// nothing would hide a broken contract indefinitely. An EMPTY read is fine
-/// (no claims yet), distinct from an all-invalid read.
-///
-/// # Errors
-///
-/// [`ReconcileError::Guard`] on the all-invalid case; `Failed` when a port
-/// fails.
 pub async fn run_reconcile(
     reader: &dyn DiscoveredFieldsReader,
     registrar: &dyn FieldRegistrar,

@@ -99,7 +99,7 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("POST", "/v1/metric-drilldown/export"),
 )
 
-#: identity-resolution — 17 operations. `/health` and `/healthz` are the host
+#: identity-resolution — 20 operations. `/health` and `/healthz` are the host
 #: router's, not the product API, and are deliberately absent: the real probes
 #: address the pod directly rather than passing the gateway.
 IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
@@ -110,6 +110,9 @@ IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     _i("GET", f"/v1/persons-seed/{SOME_ID}"),
     _i("GET", "/v1/persons-sync"),
     _i("GET", f"/v1/persons-sync/{SOME_ID}"),
+    _i("GET", "/v1/person-attributes-policy-publish"),
+    _i("GET", f"/v1/person-attributes-policy-publish/{SOME_ID}"),
+    _i("POST", "/v1/person-attributes-policy-publish"),
     _i("GET", "/v1/roles"),
     _i("POST", "/v1/roles"),
     _i("DELETE", f"/v1/roles/{SOME_ID}"),
@@ -126,7 +129,7 @@ IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
 
 ALL_OPERATIONS: Final[tuple[Operation, ...]] = ANALYTICS_OPERATIONS + IDENTITY_OPERATIONS
 
-#: The 13 identity operations behind `require_admin`, which resolves the caller
+#: The 16 identity operations behind `require_admin`, which resolves the caller
 #: from the gateway JWT and requires an active `admin` row in `person_roles` —
 #: it never reads the `insight-admin` REALM role. The seed grants nobody that
 #: row, so every persona is refused; see out/endpoint-coverage-preconditions.md.
@@ -135,6 +138,13 @@ ADMIN_GATED: Final[frozenset[str]] = frozenset(
     for op in IDENTITY_OPERATIONS
     if any(
         seg in op.path
-        for seg in ("/persons-seed", "/persons-sync", "/roles", "/person-roles", "/visibility")
+        for seg in (
+            "/persons-seed",
+            "/persons-sync",
+            "/person-attributes",
+            "/roles",
+            "/person-roles",
+            "/visibility",
+        )
     )
 )

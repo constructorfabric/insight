@@ -1,19 +1,3 @@
-//! ClickHouse reader for `silver.class_person_attribute_claims` — discovers
-//! which source fields exist so the attribute reconciliation can register
-//! them. Aggregate-only read: one row per distinct
-//! (tenant, source type, source instance, field) with its latest observation.
-//!
-//! Multi-tenant raw scan, same posture as `identity_inputs.rs`: claims carry
-//! RAW connector-config tenant strings, deployments are single-tenant, and
-//! the registry stores the raw string (see `sql/015_person_attributes.sql`).
-//!
-//! `silver.` is fully qualified because the client's configured database is
-//! `identity`; the deployed ClickHouse user therefore needs a `silver` grant.
-//! Aliases differ from source column names (ClickHouse "Cyclic aliases"
-//! gotcha, same as `identity_inputs.rs`). FINAL is required: the relation is
-//! `ReplacingMergeTree` and pre-merge duplicates would be harmless for
-//! `max()` but not for future aggregate changes — keep the read canonical.
-
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -37,10 +21,6 @@ const DISCOVER_SQL: &str = r"
     ORDER BY tenant, source_type, source_instance, field
 ";
 
-/// ClickHouse exception token for a missing table — the pre-ingestion-release
-/// deploy case the runner turns into a guard refusal rather than a failure.
-/// Matched as the named token, not the numeric code: a bare "Code: 60"
-/// substring would also match codes 600-609.
 const UNKNOWN_TABLE_TOKEN: &str = "UNKNOWN_TABLE";
 
 #[derive(Debug, Row, Deserialize)]
@@ -52,7 +32,6 @@ struct FieldRow {
     last_observed: String,
 }
 
-/// Reads discovered attribute fields from ClickHouse via the shared client.
 pub struct ClickHouseDiscoveredFieldsReader {
     client: Client,
 }
@@ -63,7 +42,6 @@ impl ClickHouseDiscoveredFieldsReader {
         Self { client }
     }
 
-    /// Build a reader from connection settings (empty user → no auth).
     #[must_use]
     pub fn connect(url: &str, database: &str, user: &str, password: &str) -> Self {
         let mut config = Config::new(url, database).with_query_timeout(READ_TIMEOUT);
@@ -74,7 +52,6 @@ impl ClickHouseDiscoveredFieldsReader {
     }
 }
 
-/// Read outcome distinguishing "relation absent" from real failures.
 pub enum DiscoverOutcome {
     Fields(Vec<DiscoveredField>),
     ClaimsRelationMissing,
@@ -89,15 +66,6 @@ impl DiscoveredFieldsReader for ClickHouseDiscoveredFieldsReader {
 }
 
 impl ClickHouseDiscoveredFieldsReader {
-    /// Like [`DiscoveredFieldsReader::discover`], but classifies a missing
-    /// claims relation as its own outcome so the runner can refuse (guard)
-    /// instead of failing: this service can deploy ahead of the ingestion
-    /// release that creates the relation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for any ClickHouse failure other than the missing
-    /// relation.
     pub async fn discover_or_missing(&self) -> anyhow::Result<DiscoverOutcome> {
         match self
             .client
@@ -114,6 +82,8 @@ impl ClickHouseDiscoveredFieldsReader {
     }
 }
 
+// WORKAROUND: matched on the named token rather than the numeric code — a bare
+// "Code: 60" substring also matches codes 600-609.
 fn is_unknown_table(err: &clickhouse::error::Error) -> bool {
     matches!(err, clickhouse::error::Error::BadResponse(msg) if msg.contains(UNKNOWN_TABLE_TOKEN))
 }

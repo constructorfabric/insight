@@ -1,9 +1,3 @@
-//! ClickHouse writer for `identity.identity_persons` — the persons-log copy
-//! the metrics dbt builds resolve against. Publishing mechanics (staging,
-//! count verification, watermark guard, atomic swap, staging GC) live in
-//! [`crate::infra::snapshot_writer`]; this module is the relation's spec and
-//! row mapping.
-
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -16,16 +10,8 @@ use uuid::Uuid;
 use crate::domain::sync_service::{IdentityPersonsWriter, PersonsLogRow};
 use crate::infra::snapshot_writer::{SnapshotSpec, SnapshotWriter};
 
-/// The whole snapshot (DDL + insert + verify) rides one client; generous bound,
-/// the sync operation as a whole is separately bounded by the worker.
 const WRITE_TIMEOUT: Duration = Duration::from_mins(5);
 
-/// Column block shared by the target and staging DDL. Mirrors the MariaDB
-/// `persons` log (`001_persons.sql`, nullability per
-/// `009_align_existing_tables_to_conventions.sql`) minus the generated
-/// `value_hash`, plus the `_synced_at` watermark (same convention as
-/// `identity_inputs`). Keep in sync with the dbt on-run-start hook that
-/// creates the empty table for builds that run before the first sync.
 const COLUMNS_DDL: &str = r"
     id                  UInt64,
     value_type          String,
@@ -53,10 +39,6 @@ pub(crate) const SPEC: SnapshotSpec = SnapshotSpec {
     log_label: "persons-sync",
 };
 
-/// Wire row for the `RowBinary` insert. Field order and names must match the
-/// DDL above — the clickhouse client sends `INSERT INTO … (field names)`.
-/// The watermark field is serde-renamed to `_synced_at` (a Rust field can't
-/// comfortably live with the underscore prefix under clippy).
 #[derive(Debug, Row, Serialize)]
 struct WireRow {
     id: u64,
@@ -84,13 +66,11 @@ struct WireRow {
     synced_at: chrono::DateTime<Utc>,
 }
 
-/// [`IdentityPersonsWriter`] over the shared snapshot publisher.
 pub struct ClickHouseIdentityPersonsWriter {
     writer: SnapshotWriter,
 }
 
 impl ClickHouseIdentityPersonsWriter {
-    /// Build a writer from connection settings (empty user → no auth).
     #[must_use]
     pub fn connect(url: &str, user: &str, password: &str) -> Self {
         Self {

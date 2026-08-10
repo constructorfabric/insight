@@ -34,6 +34,9 @@ pub struct AppState {
     pub db: DatabaseConnection,
     /// Gear config (`org_chart_source_type`, `clickhouse_*`, …).
     pub config: GearConfig,
+    /// Host shutdown signal, so request-spawned runs can end their journal row
+    /// instead of vanishing mid-write.
+    pub cancel: tokio_util::sync::CancellationToken,
 }
 
 /// Mount the identity-resolution routes onto the host's router.
@@ -224,6 +227,20 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(attribute_reconcile::list_attribute_reconcile)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/v1/person-attributes-policy-publish")
+        .operation_id("identity_resolution.person_attributes_policy_publish.create")
+        .summary("Trigger a policy-snapshot publish (admin)")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<policy_publish::PolicyPublishOperationResponse>(
+            openapi,
+            StatusCode::ACCEPTED,
+            "Publish accepted; poll the operation",
+        )
+        .standard_errors(openapi)
+        .handler(policy_publish::create_policy_publish)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/v1/person-attributes-policy-publish/{id}")

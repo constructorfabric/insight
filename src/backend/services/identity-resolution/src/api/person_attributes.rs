@@ -1,17 +1,3 @@
-//! Person-attribute registry — admin HTTP surface.
-//!
-//! Definitions are discovered by the `reconcile-attributes` CLI run (see
-//! `crate::attribute_reconcile_runner`); this surface reads them and revises
-//! their policy. A policy revision is append-only: `PUT …/policy` writes the
-//! next revision, never mutates one, and carries the caller as its actor.
-//! Concurrency is optimistic — the request names the revision it saw, and a
-//! stale value is a 409 `aborted` (the canonical model has no 422; see the
-//! divergence note in `super::error`).
-//!
-//! Tenant scope: definitions store the RAW warehouse tenant string; the
-//! caller's gateway-JWT tenant UUID is matched against it in canonical
-//! string form.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -30,7 +16,6 @@ use crate::infra::db::person_attributes_repo::{
     self, DefinitionWithPolicy, PolicyInput, ValueMode,
 };
 
-/// One attribute definition with its current policy.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonAttributeResponse {
     pub id: Uuid,
@@ -43,7 +28,6 @@ pub struct PersonAttributeResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonAttributeResponse {}
 
-/// The current policy revision of one definition.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PolicyResponse {
     pub revision: i32,
@@ -57,14 +41,12 @@ pub struct PolicyResponse {
     pub reason: String,
 }
 
-/// List response wrapper (typed for OpenAPI).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonAttributeListResponse {
     pub items: Vec<PersonAttributeResponse>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonAttributeListResponse {}
 
-/// Declared value mode of an attribute, as an OpenAPI enum.
 #[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ValueModeDto {
@@ -81,8 +63,6 @@ impl From<ValueModeDto> for ValueMode {
     }
 }
 
-/// Full policy body for the next revision. `expected_revision` is the
-/// revision the caller read; a stale value yields 409.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PolicyUpdateRequest {
     pub expected_revision: i32,
@@ -130,8 +110,6 @@ fn to_response(d: DefinitionWithPolicy) -> PersonAttributeResponse {
     }
 }
 
-/// `GET /v1/person-attributes` — list the tenant's discovered attribute
-/// definitions with their current policy.
 pub async fn list_person_attributes(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -151,7 +129,6 @@ pub async fn list_person_attributes(
     Ok(Json(PersonAttributeListResponse { items }))
 }
 
-/// `GET /v1/person-attributes/{id}` — one definition with its current policy.
 pub async fn get_person_attribute(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -174,10 +151,6 @@ pub async fn get_person_attribute(
     Ok(Json(to_response(definition)))
 }
 
-/// `PUT /v1/person-attributes/{id}/policy` — append the next policy revision.
-/// The 200 body re-reads the current state, which a concurrent append may
-/// already have advanced past the revision this call wrote — acceptable
-/// under optimistic concurrency (the response always shows current truth).
 pub async fn put_person_attribute_policy(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,

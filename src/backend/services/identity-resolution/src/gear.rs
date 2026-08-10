@@ -33,12 +33,13 @@ impl Gear for IdentityResolutionGear {
         tracing::info!("starting identity-resolution gear");
 
         // Self-managed MariaDB pool (same approach as the analytics gear).
-        // No background workers: the persons-seed runs as the `seed` CLI
-        // subcommand (CronJob / manual Job — see `crate::seed_runner`), so the
-        // server process only serves reads + the operations journal.
         let db = crate::infra::db::connect(&config.database_url).await?;
 
-        let state = AppState { db, config };
+        let state = AppState {
+            db,
+            config,
+            cancel: ctx.cancellation_token().clone(),
+        };
         self.state
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;

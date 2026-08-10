@@ -1,30 +1,8 @@
-//! CLI policy-publish runner — the engine behind the `publish-policy`
-//! subcommand.
-//!
-//! Publishes the registry's current per-definition policy into ClickHouse so
-//! the query path enforces it without calling this service. Same execution
-//! model as the seed/sync/reconcile runners: Helm `CronJob` or manual Job;
-//! only GET journal routes exist on the API.
-//!
-//! One run: advisory lock → zombie sweep → `operations` journal row → read →
-//! short-circuit check → publish → journal completed/failed.
-//!
-//! Two deliberate divergences from persons-sync:
-//!
-//! - An EMPTY policy set publishes an empty snapshot rather than refusing.
-//!   The registry is legitimately empty before the first reconcile, and an
-//!   empty snapshot fails CLOSED downstream (no policy row means the query
-//!   path may not compare), so the destructive-empty reasoning that guards
-//!   the persons log does not apply here.
-//! - Unchanged policy short-circuits instead of re-publishing. The check
-//!   consults BOTH the last journalled activation AND the live relation's row
-//!   count: a checksum alone would skip forever against a ClickHouse that had
-//!   been wiped or re-pointed since that activation.
-
 use std::time::Duration;
 
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::config::GearConfig;
@@ -36,9 +14,23 @@ use crate::seed_runner::{SYSTEM_AUTHOR, resolve_tenant};
 const PUBLISH_TIMEOUT: Duration = Duration::from_mins(5);
 const RUN_TIMEOUT: Duration = Duration::from_mins(7);
 const ZOMBIE_CUTOFF_HOURS: i64 = 1;
+const ABORTED_BY_SHUTDOWN: &str = "policy publish aborted by server shutdown";
 
-/// Why a publish run did not complete — mapped to the shared exit-code
-/// scheme (0 ok / 1 failed / 2 lock busy / 3 guard).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PublishTrigger {
+    Cli,
+    Http,
+}
+
+impl PublishTrigger {
+    pub(crate) fn request_json(self) -> &'static str {
+        match self {
+            Self::Cli => r#"{"trigger":"cli"}"#,
+            Self::Http => r#"{"trigger":"http"}"#,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum PublishRunError {
     LockBusy,
@@ -51,56 +43,110 @@ impl From<anyhow::Error> for PublishRunError {
     }
 }
 
-/// Accounting of one publish run, journalled as `summary_json` and read back
-/// by the next run's short-circuit check.
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PublishSummary {
     pub rows: u64,
     pub checksum: String,
-    /// True when the run verified the published snapshot already matched and
-    /// wrote nothing. Journalled anyway, so the journal still answers "did
-    /// the schedule fire".
     pub skipped: bool,
 }
 
-/// Run one CLI policy publish end to end.
-///
-/// # Errors
-///
-/// [`PublishRunError`] — lock busy or a failed run.
+pub(crate) async fn resolve_journal_tenant(
+    db: &DatabaseConnection,
+    config: &GearConfig,
+) -> anyhow::Result<Uuid> {
+    let distinct = seed_repo::distinct_tenants(db, 2).await?;
+    resolve_tenant(&config.tenant_default_id, &distinct).map_err(|msg| anyhow::anyhow!(msg))
+}
+
+pub(crate) async fn enqueue_run(
+    db: &DatabaseConnection,
+    tenant: Uuid,
+    author: Uuid,
+    trigger: PublishTrigger,
+) -> anyhow::Result<Uuid> {
+    let operation_id = Uuid::now_v7();
+    ops_repo::enqueue(
+        db,
+        operation_id,
+        ops_repo::PERSON_ATTRIBUTES_POLICY_PUBLISH_OP,
+        tenant,
+        author,
+        Some(trigger.request_json()),
+    )
+    .await?;
+    Ok(operation_id)
+}
+
 pub async fn run(config: &GearConfig) -> Result<PublishSummary, PublishRunError> {
     let db = db::connect(&config.database_url).await?;
-
-    // The snapshot spans every tenant in the registry, but its journal row
-    // needs one real tenant (the GET journal routes are tenant-scoped) —
-    // same resolution rule as seed/sync/reconcile.
-    let distinct = seed_repo::distinct_tenants(&db, 2).await?;
-    let tenant = match resolve_tenant(&config.tenant_default_id, &distinct) {
-        Ok(t) => t,
-        Err(msg) => return Err(PublishRunError::Failed(anyhow::anyhow!(msg))),
-    };
+    let tenant = resolve_journal_tenant(&db, config).await?;
 
     let Some(lock) = db::PolicyPublishLockGuard::try_acquire(&config.database_url).await? else {
         return Err(PublishRunError::LockBusy);
     };
+    let operation_id = enqueue_run(&db, tenant, SYSTEM_AUTHOR, PublishTrigger::Cli).await?;
 
-    let result = tokio::time::timeout(RUN_TIMEOUT, run_locked(&db, config, tenant))
+    let result = run_bounded(&db, config, &lock, tenant, operation_id).await;
+
+    lock.release().await;
+    result
+}
+
+pub(crate) async fn run_detached(
+    db: DatabaseConnection,
+    config: GearConfig,
+    cancel: CancellationToken,
+    tenant: Uuid,
+    operation_id: Uuid,
+    lock: db::PolicyPublishLockGuard,
+) {
+    let outcome = tokio::select! {
+        biased;
+        () = cancel.cancelled() => None,
+        result = run_bounded(&db, &config, &lock, tenant, operation_id) => Some(result),
+    };
+
+    match outcome {
+        Some(Ok(summary)) => {
+            tracing::info!(%operation_id, ?summary, "policy-publish: triggered run finished");
+        }
+        Some(Err(e)) => {
+            tracing::error!(error = ?e, %operation_id, "policy-publish: triggered run failed");
+        }
+        None => {
+            tracing::warn!(%operation_id, "policy-publish: run cut short by shutdown");
+            if let Err(e) = ops_repo::fail(&db, operation_id, ABORTED_BY_SHUTDOWN).await {
+                tracing::error!(error = %e, %operation_id, "shutdown fail-update failed");
+            }
+            return;
+        }
+    }
+
+    lock.release().await;
+}
+
+async fn run_bounded(
+    db: &DatabaseConnection,
+    config: &GearConfig,
+    _lock: &db::PolicyPublishLockGuard,
+    tenant: Uuid,
+    operation_id: Uuid,
+) -> Result<PublishSummary, PublishRunError> {
+    tokio::time::timeout(RUN_TIMEOUT, run_locked(db, config, tenant, operation_id))
         .await
         .unwrap_or_else(|_| {
             Err(PublishRunError::Failed(anyhow::anyhow!(
                 "policy publish timed out after {}s inside the lock-held critical section",
                 RUN_TIMEOUT.as_secs()
             )))
-        });
-
-    lock.release().await;
-    result
+        })
 }
 
 async fn run_locked(
     db: &DatabaseConnection,
     config: &GearConfig,
     tenant: Uuid,
+    operation_id: Uuid,
 ) -> Result<PublishSummary, PublishRunError> {
     let cutoff = chrono::Utc::now().naive_utc() - chrono::Duration::hours(ZOMBIE_CUTOFF_HOURS);
     match ops_repo::sweep_zombies(db, cutoff).await {
@@ -109,23 +155,9 @@ async fn run_locked(
         Err(e) => tracing::error!(error = %e, "policy-publish: zombie sweep failed"),
     }
 
-    // Read the previous activation BEFORE journalling this run, or the lookup
-    // would find this run's own queued row.
     let previous = last_activation(db, tenant).await;
-
-    let operation_id = Uuid::now_v7();
-    let request_json = serde_json::json!({ "trigger": "cli" }).to_string();
-    ops_repo::enqueue(
-        db,
-        operation_id,
-        ops_repo::PERSON_ATTRIBUTES_POLICY_PUBLISH_OP,
-        tenant,
-        SYSTEM_AUTHOR,
-        Some(&request_json),
-    )
-    .await?;
     ops_repo::try_start(db, operation_id).await?;
-    tracing::info!(%operation_id, %tenant, "policy-publish: cli run started");
+    tracing::info!(%operation_id, %tenant, "policy-publish: run started");
 
     match guarded_publish(db, config, previous.as_ref()).await {
         Ok(summary) => {
@@ -145,10 +177,9 @@ async fn run_locked(
     }
 }
 
-/// The most recent completed publish activation for this tenant, if any.
-/// A malformed or missing summary reads as "no previous activation", which
-/// costs one redundant publish — never a wrong skip.
 async fn last_activation(db: &DatabaseConnection, tenant: Uuid) -> Option<PublishSummary> {
+    // INVARIANT: filtering on `completed` is what keeps this run from reading its own row —
+    // it is `queued` until this same run completes it.
     let ops = ops_repo::list(
         db,
         tenant,
@@ -206,10 +237,6 @@ async fn guarded_publish(
         })
 }
 
-/// A skip is only safe when the journal AND the live relation agree: the
-/// journal proves the content is unchanged, the row count proves the
-/// snapshot the journal describes is still the one published. A ClickHouse
-/// that lost the relation reads as "not published" and re-publishes.
 async fn is_already_published(
     previous: Option<&PublishSummary>,
     checksum: &str,
@@ -231,8 +258,6 @@ async fn is_already_published(
     }
 }
 
-/// Content hash of the policy set. Stable across runs that changed nothing
-/// and sensitive to every published field, so an edit anywhere re-publishes.
 fn checksum(policies: &[CurrentPolicyRow]) -> String {
     use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -298,6 +323,20 @@ mod tests {
         let empty = checksum(&[]);
         assert_eq!(empty, checksum(&[]));
         assert_ne!(empty, checksum(&[policy("jobTitle", false)]));
+    }
+
+    #[test]
+    fn the_journalled_request_names_the_trigger() {
+        for (trigger, expected) in [
+            (PublishTrigger::Cli, r#"{"trigger":"cli"}"#),
+            (PublishTrigger::Http, r#"{"trigger":"http"}"#),
+        ] {
+            assert_eq!(
+                trigger.request_json(),
+                expected,
+                "journal request payload changed for {trigger:?}"
+            );
+        }
     }
 
     #[tokio::test]

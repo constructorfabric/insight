@@ -1,11 +1,3 @@
-//! ClickHouse publisher for `identity.person_attribute_policy_snapshot` —
-//! the analytical projection of the person-attribute registry's current
-//! policy, so the query path enforces policy without calling this service.
-//!
-//! Keys are the RAW warehouse strings the registry stores, so the snapshot
-//! joins the claim relations byte-equal (see `sql/015_person_attributes.sql`).
-//! Publishing mechanics live in [`crate::infra::snapshot_writer`].
-
 use std::time::Duration;
 
 use chrono::Utc;
@@ -18,8 +10,6 @@ use crate::infra::snapshot_writer::{SnapshotSpec, SnapshotWriter};
 
 const WRITE_TIMEOUT: Duration = Duration::from_mins(5);
 
-/// One row per definition carrying its current (highest) policy revision.
-/// Ordered by the join key the query path filters on.
 const COLUMNS_DDL: &str = r"
     definition_id       UUID,
     insight_tenant_id   String,
@@ -68,13 +58,11 @@ struct WireRow {
     published_at: chrono::DateTime<Utc>,
 }
 
-/// Publishes the current-policy projection.
 pub struct ClickHousePolicySnapshotWriter {
     writer: SnapshotWriter,
 }
 
 impl ClickHousePolicySnapshotWriter {
-    /// Build a writer from connection settings (empty user → no auth).
     #[must_use]
     pub fn connect(url: &str, user: &str, password: &str) -> Self {
         Self {
@@ -82,12 +70,6 @@ impl ClickHousePolicySnapshotWriter {
         }
     }
 
-    /// Replace the published snapshot with `rows`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if publishing fails; the live relation is untouched
-    /// unless the atomic swap succeeded.
     pub async fn replace(
         &self,
         rows: &[CurrentPolicyRow],
@@ -97,12 +79,6 @@ impl ClickHousePolicySnapshotWriter {
         self.writer.replace(&wire, published_at).await
     }
 
-    /// Rows in the live relation — half of the caller's published-state check.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the query fails (including a missing relation,
-    /// which must not be read as "nothing published").
     pub async fn published_row_count(&self) -> anyhow::Result<u64> {
         self.writer.published_row_count().await
     }
