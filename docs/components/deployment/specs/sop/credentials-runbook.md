@@ -223,6 +223,52 @@ gh api "repos/$REPO/environments/$ENVIRONMENT/deployment-branch-policies" \
   --jq '.branch_policies[].name'     # -> main
 ```
 
+#### The allow-list is the security control, not a tidiness preference
+
+Worth being explicit, because it is easy to read the list above as bookkeeping.
+No secret store protects a value from the people who can run jobs that read it:
+an environment secret is readable by **any** job that declares
+`environment: insight-test-stand` on an allowed branch, and someone with write
+access can add a step that prints it. Encryption at rest does nothing about
+that.
+
+So what actually bounds this credential is the pair "allow-list says `main`" and
+"`main` is branch-protected". Together they mean a change that reads the secret
+has to survive review before it can run. Widen the allow-list and that property
+is gone — not degraded, gone — which is why:
+
+* a pull request from a fork cannot read it (GitHub withholds environment
+  secrets from fork PRs, and the allow-list would refuse anyway);
+* `secrets: inherit` was removed from the calling job. Inheriting would have
+  handed this job every repository secret, including the App key that bypasses
+  branch protection on `main` — a worse exposure than the kubeconfig, and one
+  that would have undone the control described here;
+* a **rehearsal** environment on a personal fork may legitimately allow a
+  feature branch, and that widening is exactly why it must stay on the fork.
+  Never copy a rehearsal allow-list into `constructorfabric/insight`.
+
+#### This credential is a deliberate stopgap
+
+A GitHub environment secret is a static string with no refresh path, so this is
+a long-lived, non-expiring token by necessity rather than by preference. That is
+an accepted trade, not an oversight: the token is namespace-scoped, its blast
+radius is asserted on every provisioning run, and revoking it is one command
+with no cluster-wide consequence.
+
+The property it cannot have is expiry. Treat the 90-day cadence in §5 as a real
+obligation rather than a suggestion — nothing else ages this credential out.
+Kubernetes' legacy-token cleanup only reaps tokens unused for a year, and a
+token used on every merge never qualifies.
+
+The durable answer is a credential that is never stored: Kubernetes 1.30+
+structured authentication config can trust GitHub's OIDC issuer directly, so the
+workflow presents a short-lived token minted per run and the cluster maps its
+claims (`repository`, `ref`, `environment`) onto the same namespace-scoped RBAC
+this script already creates. Trust then reads "runs from this repository, on this
+ref, in this environment" instead of "whoever holds this string", and there is
+nothing in GitHub left to leak. It is a cluster-operator change rather than a
+repository one, which is the only reason it is not the starting point.
+
 ### 4.2 Load the secrets
 
 | Secret | Value | Notes |
