@@ -55,6 +55,8 @@ pub enum GitError {
     NotFound,
     #[error("origin refuses to serve explicitly requested objects")]
     PromisorRefused,
+    #[error("the cache cannot take more disk right now")]
+    AdmissionRejected,
     #[error("git timed out after {0:?}")]
     TimedOut(Duration),
     #[error("git failed: {0}")]

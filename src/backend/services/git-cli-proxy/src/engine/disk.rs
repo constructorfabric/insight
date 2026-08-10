@@ -1,3 +1,5 @@
+use std::path::Path;
+
 const HIGH_WATERMARK_PCT: u64 = 85;
 const LOW_WATERMARK_PCT: u64 = 65;
 /// A repo must have grown by at least this fraction of its blobless baseline
@@ -62,7 +64,47 @@ pub struct Budget {
     pub total_bytes: u64,
 }
 
+/// Free bytes on the filesystem backing `path`, from `statvfs`.
+///
+/// The per-entry accounting is a LOWER bound on what the volume holds: it sees
+/// only published entries, never a clone still staging under `tmp/`, and never
+/// anything else sharing the volume. Effective free space is therefore the
+/// minimum of the two views, and this is the second one.
+///
+/// `None` when the syscall fails — a missing view must not be read as "no
+/// space", which would refuse every request.
+#[must_use]
+pub fn volume_available_bytes(path: &Path) -> Option<u64> {
+    let stat = rustix::fs::statvfs(path).ok()?;
+
+    // `blocks_available` is what an unprivileged process may actually use;
+    // `blocks_free` includes the reserved blocks it cannot touch.
+    Some(stat.f_frsize.saturating_mul(stat.f_bavail))
+}
+
 impl Budget {
+    /// `u64::MAX` is the "no budget" sentinel used by the test constructor.
+    /// An unbounded budget makes every derived figure — watermarks, headroom,
+    /// the volume comparison — meaningless, so callers must ask first.
+    #[must_use]
+    pub fn is_bounded(self) -> bool {
+        self.total_bytes != u64::MAX
+    }
+
+    /// Usage as the budget sees it, given both views of free space.
+    ///
+    /// §3.6: effective free space is the MINIMUM of the per-entry accounting
+    /// and the volume itself, so effective usage is the maximum of the two.
+    /// The volume view is what notices a clone staging under `tmp/`, or
+    /// another writer on the same mount.
+    #[must_use]
+    pub fn effective_used(self, accounted: u64, volume_available: Option<u64>) -> u64 {
+        let Some(available) = volume_available.filter(|_| self.is_bounded()) else {
+            return accounted;
+        };
+        accounted.max(self.total_bytes.saturating_sub(available))
+    }
+
     #[must_use]
     pub fn high_watermark(self) -> u64 {
         self.total_bytes / 100 * HIGH_WATERMARK_PCT
@@ -150,6 +192,50 @@ mod tests {
             in_use: false,
             full_clone: false,
         }
+    }
+
+    #[test]
+    fn effective_usage_takes_the_stricter_of_the_two_views() {
+        let budget = Budget {
+            total_bytes: 1_000_000,
+        };
+        // The volume says 100k free, so 900k is in use — more than the
+        // per-entry accounting can see (a clone staging under tmp/, say).
+        assert_eq!(
+            budget.effective_used(400_000, Some(100_000)),
+            900_000,
+            "the volume view must win when it is stricter"
+        );
+        assert_eq!(
+            budget.effective_used(900_000, Some(800_000)),
+            900_000,
+            "the accounting view must win when it is stricter"
+        );
+    }
+
+    #[test]
+    fn a_missing_volume_reading_falls_back_to_the_accounting() {
+        let budget = Budget {
+            total_bytes: 1_000_000,
+        };
+        assert_eq!(
+            budget.effective_used(400_000, None),
+            400_000,
+            "a failed statvfs must not be read as a full volume"
+        );
+    }
+
+    #[test]
+    fn an_unbounded_budget_ignores_the_volume() {
+        let budget = Budget {
+            total_bytes: u64::MAX,
+        };
+        assert!(!budget.is_bounded());
+        assert_eq!(
+            budget.effective_used(42, Some(1)),
+            42,
+            "with no budget every derived figure is meaningless, including this one"
+        );
     }
 
     #[test]

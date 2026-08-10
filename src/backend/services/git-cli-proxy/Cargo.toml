@@ -23,6 +23,13 @@ toolkit = { workspace = true, features = ["bootstrap"] }
 toolkit-canonical-errors = { workspace = true }
 # Pinned to match the `ToSchema` the toolkit OperationBuilder compiles against.
 utoipa = { version = "5.5" }
+chrono = { workspace = true }
+# Pinned to the toolkit's major: instruments must register against the global
+# meter provider the host installs, and a different major is a different global.
+opentelemetry = "0.31"
+# statvfs: the volume is the ground truth the per-entry accounting cannot
+# see. rustix rather than libc — the workspace forbids unsafe code.
+rustix = { version = "1.1", features = ["fs"] }
 
 # System gears linked for the REST host. Discovered at link time via inventory
 # (`use … as _;` in main.rs is load-bearing). Deliberately minimal: no

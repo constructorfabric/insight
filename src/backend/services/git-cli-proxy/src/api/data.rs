@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Extension;
 use axum::extract::Query;
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::engine::key::CacheKey;
+use crate::engine::metrics;
 use crate::engine::page::PageToken;
 use crate::engine::read::{self, Page, blobs, branches, commits, numstat, patches};
 use crate::engine::runner::GitError;
@@ -128,6 +129,14 @@ pub async fn list_commits(
     headers: HeaderMap,
     Query(query): Query<CommitsQuery>,
 ) -> Result<Response, ApiError> {
+    observed("/v1/commits", list_commits_inner(state, headers, query)).await
+}
+
+async fn list_commits_inner(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    query: CommitsQuery,
+) -> Result<Response, ApiError> {
     let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let selected = parse_sha_filter(query.sha.as_deref())?;
@@ -138,7 +147,8 @@ pub async fn list_commits(
         let selected = selected.as_ref();
         Box::pin(async move {
             let runner = state.store.runner();
-            let all = commits::headers(runner, guard.git_dir(), since, &context.creds).await?;
+            let all = commits::headers(runner, guard.git_dir(), &context.creds).await?;
+            let all = commits::retain_since(all, since);
             let (window, cursor) = read::slice_page(
                 retain_selected(all, selected, |header| &header.sha),
                 paging.token.as_ref(),
@@ -201,6 +211,18 @@ pub async fn list_file_changes(
     headers: HeaderMap,
     Query(query): Query<FileChangesQuery>,
 ) -> Result<Response, ApiError> {
+    observed(
+        "/v1/file-changes",
+        list_file_changes_inner(state, headers, query),
+    )
+    .await
+}
+
+async fn list_file_changes_inner(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    query: FileChangesQuery,
+) -> Result<Response, ApiError> {
     let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let selected = parse_sha_filter(query.sha.as_deref())?;
@@ -213,7 +235,8 @@ pub async fn list_file_changes(
         let selected = selected.as_ref();
         Box::pin(async move {
             let runner = state.store.runner();
-            let all = commits::headers(runner, guard.git_dir(), since, &context.creds).await?;
+            let all = commits::headers(runner, guard.git_dir(), &context.creds).await?;
+            let all = commits::retain_since(all, since);
             // Parity with the CDK connectors: merge commits contribute no file rows.
             let non_merge: Vec<commits::CommitHeader> =
                 retain_selected(all, selected, |header| &header.sha)
@@ -350,6 +373,14 @@ pub async fn list_branches(
     headers: HeaderMap,
     Query(query): Query<BranchesQuery>,
 ) -> Result<Response, ApiError> {
+    observed("/v1/branches", list_branches_inner(state, headers, query)).await
+}
+
+async fn list_branches_inner(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    query: BranchesQuery,
+) -> Result<Response, ApiError> {
     let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
 
@@ -476,6 +507,34 @@ where
         .map_err(|e| ApiError::Serialization(e.to_string()))?;
 
     Ok(([(header::CONTENT_TYPE, "application/json")], body).into_response())
+}
+
+/// Time a handler and record §4.3's per-endpoint histograms.
+///
+/// Wrapping the whole handler — not just the happy path — is the point: a
+/// request that 429s or 409s is exactly the one an operator wants timed.
+async fn observed<F>(endpoint: &'static str, handler: F) -> Result<Response, ApiError>
+where
+    F: Future<Output = Result<Response, ApiError>>,
+{
+    let started = Instant::now();
+    let outcome = handler.await;
+
+    let (status, bytes) = match &outcome {
+        Ok(response) => (
+            response.status().as_u16(),
+            response
+                .headers()
+                .get(header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
+        ),
+        Err(e) => (e.status_code(), 0),
+    };
+    metrics::record_request(endpoint, status, started.elapsed().as_secs_f64(), bytes);
+
+    outcome
 }
 
 fn retain_selected<T, K>(rows: Vec<T>, selected: Option<&ShaFilter>, key: K) -> Vec<T>

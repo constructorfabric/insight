@@ -53,9 +53,17 @@ impl CommitHeader {
 const FIELD: char = '\u{1f}';
 const RECORD: char = '\u{1e}';
 
-/// Every commit reachable from any branch with `committed_date >= since`,
-/// ordered ascending by `(committed_date, sha)` — the walk order the page
-/// tokens depend on.
+/// Every commit reachable from any branch, ordered ascending by
+/// `(committed_date, sha)` — the walk order the page tokens depend on.
+///
+/// The walk is deliberately unfiltered. `git log --since` is a traversal
+/// cutoff, not a predicate: it stops descending a parent chain at the first
+/// commit older than the bound, so a qualifying commit sitting behind an older
+/// parent is never reached at all. Committer dates are not monotonic along
+/// ancestry — merges of long-lived branches, cherry-picks, date-preserving
+/// rebases and clock skew all break it — so the date bound is applied to the
+/// enumerated result instead (see [`retain_since`]), which is what the API
+/// contract promises: every reachable commit at or after `since`.
 ///
 /// # Errors
 ///
@@ -63,18 +71,12 @@ const RECORD: char = '\u{1e}';
 pub async fn headers(
     runner: &GitRunner,
     git_dir: &Path,
-    since: Option<&str>,
     creds: &GitCredentials,
 ) -> Result<Vec<CommitHeader>, GitError> {
     let format = format!(
         "--pretty=format:{RECORD}%H{FIELD}%P{FIELD}%aI{FIELD}%cI{FIELD}%an{FIELD}%ae{FIELD}%cn{FIELD}%ce{FIELD}%B"
     );
-    let mut args = vec!["log", "--all", "--no-color", &format];
-
-    let since_arg = since.map(|value| format!("--since={value}"));
-    if let Some(arg) = since_arg.as_deref() {
-        args.push(arg);
-    }
+    let args = vec!["log", "--all", "--no-color", &format];
 
     let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
     let text = String::from_utf8_lossy(&output.stdout);
@@ -82,6 +84,31 @@ pub async fn headers(
     let mut headers = parse_headers(&text);
     headers.sort_by(|a, b| (&a.committed_date, &a.sha).cmp(&(&b.committed_date, &b.sha)));
     Ok(headers)
+}
+
+/// Drop commits committed before `since`, comparing ISO-8601 instants rather
+/// than the raw `%cI` strings: those carry the committer's UTC offset, so
+/// `2026-08-01T10:00:00+02:00` sorts after `2026-08-01T09:30:00Z` as text
+/// while being the earlier instant.
+#[must_use]
+pub fn retain_since(headers: Vec<CommitHeader>, since: Option<&str>) -> Vec<CommitHeader> {
+    let Some(bound) = since.and_then(parse_instant) else {
+        return headers;
+    };
+    headers
+        .into_iter()
+        .filter(|header| parse_instant(&header.committed_date).is_none_or(|at| at >= bound))
+        .collect()
+}
+
+/// Seconds since the epoch for an ISO-8601 timestamp with an explicit offset
+/// (`%cI`) or a `Z` suffix. `None` for anything else — an unparseable bound
+/// filters nothing, and an unparseable row is kept rather than silently
+/// dropped.
+fn parse_instant(raw: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(raw.trim())
+        .ok()
+        .map(|at| at.timestamp())
 }
 
 /// Which of `shas` are reachable from the default branch.
@@ -212,6 +239,46 @@ mod tests {
         format!(
             "{RECORD}{sha}{FIELD}{parents}{FIELD}2026-08-01T09:00:00+00:00{FIELD}{committed}{FIELD}A{FIELD}a@example.com{FIELD}C{FIELD}c@example.com{FIELD}{message}"
         )
+    }
+
+    fn at(committed: &str) -> CommitHeader {
+        let text = record("aaa", "", committed, "m");
+        let mut parsed = parse_headers(&text);
+        parsed.remove(0)
+    }
+
+    #[test]
+    fn retain_since_bounds_on_the_instant_not_the_text() {
+        // %cI carries the committer's UTC offset, so an earlier instant can
+        // sort LATER as a string. Comparing text would keep the wrong rows.
+        let headers = vec![
+            at("2026-08-01T09:30:00+00:00"),
+            at("2026-08-01T10:00:00+02:00"),
+        ];
+        let kept = retain_since(headers, Some("2026-08-01T09:00:00Z"));
+        assert_eq!(kept.len(), 1, "08:00Z is before the 09:00Z bound");
+        assert_eq!(kept[0].committed_date, "2026-08-01T09:30:00+00:00");
+    }
+
+    #[test]
+    fn retain_since_is_inclusive_of_the_bound() {
+        let headers = vec![at("2026-08-01T10:00:00+00:00")];
+        assert_eq!(
+            retain_since(headers, Some("2026-08-01T10:00:00Z")).len(),
+            1,
+            "the contract is committed_date >= since"
+        );
+    }
+
+    #[test]
+    fn retain_since_without_a_usable_bound_filters_nothing() {
+        let headers = vec![at("2026-08-01T10:00:00+00:00")];
+        assert_eq!(retain_since(headers.clone(), None).len(), 1);
+        assert_eq!(
+            retain_since(headers, Some("last tuesday")).len(),
+            1,
+            "an unparseable bound must not silently drop everything"
+        );
     }
 
     #[test]

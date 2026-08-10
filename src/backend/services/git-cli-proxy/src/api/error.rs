@@ -36,6 +36,11 @@ pub enum ApiError {
 /// only the status is overridden.
 const REPO_TOO_LARGE: StatusCode = StatusCode::PAYLOAD_TOO_LARGE;
 
+/// §3.6: admission is refused when the cache is full and nothing can be
+/// reclaimed. That clears as soon as a reader releases an entry, so the
+/// caller is asked back rather than failed.
+const ADMISSION_RETRY_AFTER_SECONDS: u64 = 30;
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let retry_after = self.retry_after();
@@ -69,6 +74,29 @@ impl IntoResponse for ApiError {
 }
 
 impl ApiError {
+    /// The status this error will carry on the wire. Exposed so a request can
+    /// be recorded against its outcome without first consuming the error.
+    #[must_use]
+    pub fn status_code(&self) -> u16 {
+        if let Some(status) = self.status_override() {
+            return status.as_u16();
+        }
+        match self {
+            Self::BadRequest(_) => StatusCode::BAD_REQUEST.as_u16(),
+            Self::Store(StoreError::AuthRejected) | Self::Git(GitError::AuthRejected) => {
+                StatusCode::UNAUTHORIZED.as_u16()
+            }
+            Self::Store(StoreError::NotFound) | Self::Git(GitError::NotFound) => {
+                StatusCode::NOT_FOUND.as_u16()
+            }
+            Self::Store(StoreError::SnapshotChanged { .. }) => StatusCode::CONFLICT.as_u16(),
+            Self::Store(StoreError::Busy { .. }) | Self::Git(GitError::AdmissionRejected) => {
+                StatusCode::TOO_MANY_REQUESTS.as_u16()
+            }
+            _ => StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+        }
+    }
+
     fn status_override(&self) -> Option<StatusCode> {
         match self {
             Self::Store(StoreError::TooLarge { .. }) | Self::Git(GitError::TooLarge { .. }) => {
@@ -81,6 +109,7 @@ impl ApiError {
     fn retry_after(&self) -> Option<u64> {
         match self {
             Self::Store(StoreError::Busy { retry_after }) => Some(retry_after.as_secs()),
+            Self::Git(GitError::AdmissionRejected) => Some(ADMISSION_RETRY_AFTER_SECONDS),
             _ => None,
         }
     }
@@ -108,6 +137,12 @@ impl ApiError {
                     .with_resource("repository")
                     .create()
             }
+            Self::Git(GitError::AdmissionRejected) => RepositoryError::resource_exhausted(
+                "the cache is full and nothing can be reclaimed",
+            )
+            .with_quota_violation("cache_disk_budget", "no reclaimable entry")
+            .with_quota_violation_retry_after_seconds(ADMISSION_RETRY_AFTER_SECONDS)
+            .create(),
             Self::Store(StoreError::Busy { retry_after }) => {
                 RepositoryError::resource_exhausted("repository is being prepared")
                     .with_quota_violation("repository_preparation", "clone or fetch in progress")
@@ -245,6 +280,11 @@ mod tests {
                 GitError::PromisorRefused.into(),
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
+            // §3.6: the cache is full and nothing could be reclaimed.
+            (
+                GitError::AdmissionRejected.into(),
+                StatusCode::TOO_MANY_REQUESTS,
+            ),
         ];
         for (error, expected) in cases {
             let label = error.to_string();
@@ -271,6 +311,14 @@ mod tests {
 
         let (_, retry_after, _) = problem(StoreError::NotFound.into()).await;
         assert_eq!(retry_after, None, "only a preparing repo asks for a retry");
+
+        let (status, retry_after, _) = problem(GitError::AdmissionRejected.into()).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            retry_after.as_deref(),
+            Some("30"),
+            "a refused admission must tell the caller when to come back"
+        );
     }
 
     #[tokio::test]

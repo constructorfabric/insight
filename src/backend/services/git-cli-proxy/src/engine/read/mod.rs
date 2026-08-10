@@ -163,7 +163,7 @@ mod live_tests {
         let runner = f.store.runner();
         let git_dir = guard.git_dir();
 
-        let headers = match commits::headers(runner, git_dir, None, &creds()).await {
+        let headers = match commits::headers(runner, git_dir, &creds()).await {
             Ok(h) => h,
             Err(e) => panic!("commits::headers: {e}"),
         };
@@ -258,25 +258,24 @@ mod live_tests {
         let guard = open_until_ready(&f, &k, refresh()).await;
         let runner = f.store.runner();
 
-        let all = match commits::headers(runner, guard.git_dir(), None, &creds()).await {
+        let all = match commits::headers(runner, guard.git_dir(), &creds()).await {
             Ok(h) => h,
             Err(e) => panic!("headers: {e}"),
         };
         assert_eq!(all.len(), 2);
 
-        let recent = match commits::headers(
-            runner,
-            guard.git_dir(),
-            Some("2026-08-02T00:00:00Z"),
-            &creds(),
-        )
-        .await
-        {
-            Ok(h) => h,
-            Err(e) => panic!("headers with since: {e}"),
-        };
-        assert_eq!(recent.len(), 1, "only the newer commit survives the cutoff");
+        let recent = commits::retain_since(all.clone(), Some("2026-08-02T00:00:00Z"));
+        assert_eq!(recent.len(), 1, "only the newer commit survives the bound");
         assert_eq!(recent[0].message, "second");
+
+        // The bound is an instant, not a string: an offset timestamp before
+        // the bound must be dropped even though it sorts after it as text.
+        let all_utc = commits::retain_since(all.clone(), Some("2026-08-02T00:00:00+00:00"));
+        assert_eq!(
+            all_utc.len(),
+            1,
+            "an equivalent offset form bounds the same"
+        );
     }
 
     #[tokio::test]

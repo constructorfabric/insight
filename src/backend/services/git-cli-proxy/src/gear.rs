@@ -38,10 +38,12 @@ impl Gear for GitCliProxyGear {
             config.max_repo_bytes,
         )?;
 
-        let state = AppState {
-            store: Arc::new(store),
-            config,
-        };
+        let store = Arc::new(store);
+        // §4.3: the gauges observe a cached snapshot the store refreshes on
+        // every admission check, so the collector's callback does no I/O.
+        crate::engine::metrics::register_disk_gauges(store.gauges());
+
+        let state = AppState { store, config };
         self.state
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;

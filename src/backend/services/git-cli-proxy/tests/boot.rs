@@ -561,6 +561,54 @@ async fn a_commit_only_on_a_side_branch_is_not_in_the_default_branch() -> R {
 }
 
 #[tokio::test]
+async fn since_returns_every_reachable_commit_at_or_after_it() -> R {
+    let server = spawn_server("sincefilter", TOKEN)?;
+    wait_healthy(server.port).await?;
+    // Ancestry: 08-03 (root) <- 08-01 <- 08-02. `git log --since` stops
+    // descending at the first commit older than the bound, so asking for
+    // >= 08-02 would reach only the tip and prune the 08-03 root behind it.
+    let repo = skewed_origin(&server.dir, "sincefilter")?;
+
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", server.port);
+    get_json(server.port, "/v1/commits", &repo).await?;
+
+    let filtered: serde_json::Value = client
+        .get(format!("{base}/v1/commits"))
+        .query(&[("repo", repo.as_str()), ("since", "2026-08-02T00:00:00Z")])
+        .bearer_auth(TOKEN)
+        .header("x-tenant-id", "tenant-1")
+        .header("x-source-id", "source-1")
+        .header("x-git-username", "u")
+        .header("x-git-token", "p")
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let messages: Vec<&str> = filtered["items"]
+        .as_array()
+        .ok_or("no items")?
+        .iter()
+        .filter_map(|row| row["message"].as_str())
+        .collect();
+
+    assert!(
+        messages.contains(&"newest ancestor"),
+        "a qualifying commit behind an older parent must still be returned: {messages:?}"
+    );
+    assert!(
+        messages.contains(&"middle descendant"),
+        "the tip at the bound must be returned: {messages:?}"
+    );
+    assert!(
+        !messages.contains(&"older descendant"),
+        "a commit before the bound must be excluded: {messages:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_page_token_from_another_repository_is_refused() -> R {
     let server = spawn_server("crossrepo", TOKEN)?;
     wait_healthy(server.port).await?;

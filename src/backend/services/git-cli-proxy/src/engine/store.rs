@@ -9,6 +9,7 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, Semaphore, watch};
 use super::disk::{Budget, Candidate, Reclaim};
 use super::key::CacheKey;
 use super::meta::{RepoMeta, now_epoch_s};
+use super::metrics::{self, DiskGauges, EvictionTier, FetchResult};
 use super::runner::{GitCredentials, GitError, GitRunner};
 
 const HEAVY_OP_TIMEOUT: Duration = Duration::from_mins(30);
@@ -24,6 +25,7 @@ pub enum RefreshFailure {
     Auth,
     NotFound,
     PromisorRefused,
+    AdmissionRejected,
     Timeout,
     TooLarge { cap_bytes: u64 },
     Other(String),
@@ -35,6 +37,7 @@ impl From<&GitError> for RefreshFailure {
             GitError::AuthRejected => Self::Auth,
             GitError::NotFound => Self::NotFound,
             GitError::PromisorRefused => Self::PromisorRefused,
+            GitError::AdmissionRejected => Self::AdmissionRejected,
             GitError::TimedOut(_) => Self::Timeout,
             GitError::Failed(message) => Self::Other(message.clone()),
             GitError::Io(e) => Self::Other(e.to_string()),
@@ -71,6 +74,11 @@ impl From<RefreshFailure> for StoreError {
             RefreshFailure::Auth => Self::AuthRejected,
             RefreshFailure::NotFound => Self::NotFound,
             RefreshFailure::PromisorRefused => Self::PromisorRefused,
+            // §3.6: nothing could be freed, so the caller is asked to come
+            // back rather than being served a half-prepared cache.
+            RefreshFailure::AdmissionRejected => Self::Busy {
+                retry_after: COLD_RETRY_AFTER,
+            },
             RefreshFailure::Timeout => Self::Git("git timed out".to_owned()),
             RefreshFailure::TooLarge { cap_bytes } => Self::TooLarge { cap_bytes },
             RefreshFailure::Other(message) => Self::Git(message),
@@ -116,6 +124,13 @@ impl RepoGuard {
 
 type RefreshResult = Result<u64, RefreshFailure>;
 
+/// Whether the cache may take more disk right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Admission {
+    Ok,
+    Rejected,
+}
+
 /// What a background flight is supposed to do to the entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum RefreshKind {
@@ -143,6 +158,7 @@ pub struct RepoStore {
     entries: Mutex<HashMap<String, Arc<RwLock<()>>>>,
     inflight: Mutex<HashMap<FlightKey, watch::Receiver<Option<RefreshResult>>>>,
     tmp_counter: AtomicU64,
+    gauges: Arc<DiskGauges>,
 }
 
 impl RepoStore {
@@ -182,12 +198,20 @@ impl RepoStore {
             entries: Mutex::new(HashMap::new()),
             inflight: Mutex::new(HashMap::new()),
             tmp_counter: AtomicU64::new(0),
+            gauges: Arc::new(DiskGauges::default()),
         })
     }
 
     #[must_use]
     pub fn runner(&self) -> &GitRunner {
         &self.runner
+    }
+
+    /// The disk figures the §4.3 gauges observe. Shared so the collector's
+    /// callback reads a cached snapshot instead of hitting the filesystem.
+    #[must_use]
+    pub fn gauges(&self) -> &Arc<DiskGauges> {
+        &self.gauges
     }
 
     fn entry_dir(&self, key: &CacheKey) -> PathBuf {
@@ -393,7 +417,9 @@ impl RepoStore {
     ) -> Result<u64, GitError> {
         // Reclaim BEFORE taking disk, not after: an admission check that runs
         // post-clone has already overshot the budget.
-        self.reclaim_if_needed().await;
+        if self.admit().await == Admission::Rejected {
+            return Err(GitError::AdmissionRejected);
+        }
 
         // INVARIANT: the permit spans the whole clone — the semaphore IS the
         // global heavy-ops cap.
@@ -407,6 +433,7 @@ impl RepoStore {
         let _ = std::fs::remove_dir_all(&tmp);
 
         let tmp_str = tmp.to_string_lossy().into_owned();
+        metrics::record_cold_clone();
         let cloned = self
             .runner
             .run(
@@ -465,7 +492,9 @@ impl RepoStore {
         git_dir: &Path,
         creds: &GitCredentials,
     ) -> Result<u64, GitError> {
-        self.reclaim_if_needed().await;
+        if self.admit().await == Admission::Rejected {
+            return Err(GitError::AdmissionRejected);
+        }
 
         // INVARIANT: the permit spans the whole fetch — the semaphore IS the
         // global heavy-ops cap.
@@ -477,7 +506,9 @@ impl RepoStore {
                 &["fetch", "--prune", "origin", BARE_REFSPEC],
                 Some(creds),
             )
-            .await?;
+            .await
+            .inspect(|_| metrics::record_fetch(FetchResult::Updated))
+            .inspect_err(|_| metrics::record_fetch(FetchResult::Error))?;
 
         // A fetch does not update the mirrored HEAD, so a default-branch
         // rename at origin would stay invisible until the entry is evicted —
@@ -561,7 +592,9 @@ impl RepoStore {
         }
 
         // A full clone is much larger than the skeleton it replaces.
-        self.reclaim_if_needed().await;
+        if self.admit().await == Admission::Rejected {
+            return Err(GitError::AdmissionRejected);
+        }
 
         // INVARIANT: the permit spans the whole promotion — the semaphore IS
         // the global heavy-ops cap.
@@ -671,11 +704,21 @@ impl RepoStore {
     /// Bring usage back under the low watermark when it has crossed the high
     /// one. Best-effort by design: a cache that cannot reclaim still serves
     /// warm repositories, and the per-repo cap is what refuses oversized work.
-    async fn reclaim_if_needed(&self) {
+    /// Reclaim to the low watermark if the cache is over the high one, then
+    /// report whether there is room to take more disk.
+    ///
+    /// Two views are consulted, and the stricter wins. The per-entry sum knows
+    /// what the cache published; `statvfs` knows what the VOLUME holds —
+    /// including a clone still staging under `tmp/` and anything else sharing
+    /// the mount. Neither alone is sufficient.
+    async fn admit(&self) -> Admission {
         let candidates = self.candidates().await;
-        let used: u64 = candidates.iter().map(|c| c.size_bytes).sum();
+        let accounted: u64 = candidates.iter().map(|c| c.size_bytes).sum();
+        let used = self.effective_used(accounted);
+        self.gauges
+            .set(used, self.budget.total_bytes, candidates.len() as u64);
         if !self.budget.over_high_watermark(used) {
-            return;
+            return Admission::Ok;
         }
 
         let target = self.budget.excess_over_low(used);
@@ -692,6 +735,7 @@ impl RepoStore {
                 Reclaim::PurgeBlobs { dir_name, frees } => {
                     match self.purge_blobs_by_dir(&dir_name).await {
                         Ok(()) => {
+                            metrics::record_eviction(EvictionTier::Blob, frees);
                             tracing::info!(dir = %dir_name, freed_bytes = frees, "purged blobs");
                         }
                         Err(e) => tracing::warn!(error = %e, dir = %dir_name, "blob purge failed"),
@@ -707,6 +751,7 @@ impl RepoStore {
                     };
                     match std::fs::remove_dir_all(&path) {
                         Ok(()) => {
+                            metrics::record_eviction(EvictionTier::Full, frees);
                             tracing::info!(dir = %dir_name, freed_bytes = frees, "evicted repo");
                         }
                         Err(e) => tracing::warn!(error = %e, dir = %dir_name, "eviction failed"),
@@ -714,6 +759,30 @@ impl RepoStore {
                 }
             }
         }
+
+        // Re-read: the plan is what we intended, not what we achieved — a
+        // step can fail, and an in-use entry is skipped entirely.
+        let remaining = self.candidates().await;
+        let accounted: u64 = remaining.iter().map(|c| c.size_bytes).sum();
+        let after = self.effective_used(accounted);
+        self.gauges
+            .set(after, self.budget.total_bytes, remaining.len() as u64);
+        if self.budget.over_high_watermark(after) {
+            tracing::warn!(
+                used_bytes = after,
+                high_watermark = self.budget.high_watermark(),
+                "nothing left to reclaim and still over the high watermark; refusing admission"
+            );
+            metrics::record_admission_reject();
+            return Admission::Rejected;
+        }
+        Admission::Ok
+    }
+
+    /// Usage as the budget sees it, folding in the volume's own view.
+    fn effective_used(&self, accounted: u64) -> u64 {
+        let available = super::disk::volume_available_bytes(&self.data_dir);
+        self.budget.effective_used(accounted, available)
     }
 
     /// Every cache entry with the facts the reclaim planner needs. `in_use` is
@@ -1006,13 +1075,16 @@ pub(crate) mod tests {
 
     /// The tip commit of the cached clone.
     pub(crate) async fn newest_sha(f: &Fixture, git_dir: &Path) -> String {
-        let headers =
-            match crate::engine::read::commits::headers(f.store.runner(), git_dir, None, &creds())
-                .await
-            {
-                Ok(headers) => headers,
-                Err(e) => panic!("read headers: {e}"),
-            };
+        let headers = match crate::engine::read::commits::headers(
+            f.store.runner(),
+            git_dir,
+            &creds(),
+        )
+        .await
+        {
+            Ok(headers) => headers,
+            Err(e) => panic!("read headers: {e}"),
+        };
         let Some(last) = headers.last() else {
             panic!("fixture must have commits")
         };
@@ -1531,7 +1603,7 @@ pub(crate) mod tests {
         )
         .await;
 
-        f.store.reclaim_if_needed().await;
+        let _ = f.store.admit().await;
         assert!(
             guard.git_dir().is_dir(),
             "a repository with a live reader must never be deleted"

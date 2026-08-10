@@ -4,6 +4,7 @@
 pub mod disk;
 pub mod key;
 pub mod meta;
+pub mod metrics;
 pub mod page;
 pub mod read;
 pub mod runner;
