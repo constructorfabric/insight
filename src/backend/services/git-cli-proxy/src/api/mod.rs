@@ -10,10 +10,20 @@ use axum::routing::get;
 
 use crate::config::GearConfig;
 use crate::engine::store::RepoStore;
+use crate::engine::url::CloneUrlPolicy;
 
 pub struct AppState {
     pub store: Arc<RepoStore>,
     pub config: GearConfig,
+}
+
+impl AppState {
+    #[must_use]
+    pub fn clone_url_policy(&self) -> CloneUrlPolicy {
+        CloneUrlPolicy {
+            allow_file: self.config.allow_file_repos,
+        }
+    }
 }
 
 /// Mount the git-cli-proxy routes onto the host's router.
@@ -61,6 +71,7 @@ mod tests {
                 heavy_ops_concurrency: 2,
                 proxy_token: "t0ken".to_owned(),
                 ca_cert_path: String::new(),
+                allow_file_repos: true,
             },
         })
     }

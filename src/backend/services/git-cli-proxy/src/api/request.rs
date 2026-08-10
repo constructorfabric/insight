@@ -5,6 +5,7 @@ use axum::http::HeaderMap;
 use crate::engine::key::CacheKey;
 use crate::engine::page::PageToken;
 use crate::engine::runner::GitCredentials;
+use crate::engine::url::{CloneUrl, CloneUrlError, CloneUrlPolicy};
 
 pub const TENANT_HEADER: &str = "x-tenant-id";
 pub const SOURCE_HEADER: &str = "x-source-id";
@@ -82,6 +83,8 @@ pub enum BadRequest {
     NotANumber(&'static str),
     #[error("`sha` entry is not a hex commit id of at least 7 characters: {0}")]
     MalformedSha(String),
+    #[error(transparent)]
+    BadRepoUrl(#[from] CloneUrlError),
 }
 
 /// Everything a data request carries besides its own filters: who is asking,
@@ -96,22 +99,23 @@ pub struct RequestContext {
 impl RequestContext {
     /// # Errors
     ///
-    /// [`BadRequest`] when an identity/credential header is absent or empty.
-    pub fn from_parts(headers: &HeaderMap, clone_url: &str) -> Result<Self, BadRequest> {
+    /// [`BadRequest`] when an identity/credential header is absent or empty, or
+    /// when `repo` is not an origin this service will clone from.
+    pub fn from_parts(
+        headers: &HeaderMap,
+        clone_url: &str,
+        policy: CloneUrlPolicy,
+    ) -> Result<Self, BadRequest> {
         let tenant_id = required_header(headers, TENANT_HEADER)?;
         let source_id = required_header(headers, SOURCE_HEADER)?;
         let username = required_header(headers, GIT_USER_HEADER)?;
         let token = required_header(headers, GIT_TOKEN_HEADER)?;
 
-        if clone_url.trim().is_empty() {
-            return Err(BadRequest::MissingParam("repo"));
-        }
-
         Ok(Self {
             key: CacheKey {
                 tenant_id,
                 source_id,
-                clone_url: clone_url.to_owned(),
+                clone_url: CloneUrl::parse(clone_url, policy)?,
             },
             creds: GitCredentials { username, token },
             max_staleness: staleness(headers)?,
@@ -200,15 +204,18 @@ mod tests {
         headers
     }
 
+    const HTTP_ONLY: CloneUrlPolicy = CloneUrlPolicy::http_only();
+
     #[test]
     fn builds_a_context_from_complete_headers() {
-        let Ok(context) = RequestContext::from_parts(&full_headers(), "https://example.com/a.git")
+        let Ok(context) =
+            RequestContext::from_parts(&full_headers(), "https://example.com/a.git", HTTP_ONLY)
         else {
             panic!("complete headers must parse")
         };
         assert_eq!(context.key.tenant_id, "tenant-1");
         assert_eq!(context.key.source_id, "source-1");
-        assert_eq!(context.key.clone_url, "https://example.com/a.git");
+        assert_eq!(context.key.clone_url.as_str(), "https://example.com/a.git");
         assert_eq!(context.creds.username, "oauth2");
         assert_eq!(
             context.max_staleness, None,
@@ -226,7 +233,8 @@ mod tests {
         ] {
             let mut headers = full_headers();
             headers.remove(name);
-            let outcome = RequestContext::from_parts(&headers, "https://example.com/a.git");
+            let outcome =
+                RequestContext::from_parts(&headers, "https://example.com/a.git", HTTP_ONLY);
             match outcome {
                 Err(BadRequest::MissingHeader(missing)) => assert_eq!(missing, name),
                 Err(e) => panic!("wrong error for {name}: {e}"),
@@ -240,18 +248,29 @@ mod tests {
         let mut headers = full_headers();
         headers.insert(TENANT_HEADER, HeaderValue::from_static("   "));
         assert!(
-            RequestContext::from_parts(&headers, "https://example.com/a.git").is_err(),
+            RequestContext::from_parts(&headers, "https://example.com/a.git", HTTP_ONLY).is_err(),
             "whitespace is not an identity"
         );
     }
 
     #[test]
     fn empty_repo_parameter_is_rejected() {
-        let outcome = RequestContext::from_parts(&full_headers(), "  ");
+        let outcome = RequestContext::from_parts(&full_headers(), "  ", HTTP_ONLY);
         match outcome {
-            Err(BadRequest::MissingParam(name)) => assert_eq!(name, "repo"),
+            Err(BadRequest::BadRepoUrl(CloneUrlError::Empty)) => {}
             Err(e) => panic!("wrong error: {e}"),
             Ok(_) => panic!("must reject an empty repo"),
+        }
+    }
+
+    #[test]
+    fn a_non_http_repo_never_reaches_the_cache_key() {
+        for raw in ["ext::sh -c id", "file:///tmp/x", "/etc/passwd", "-u/tmp/x"] {
+            let outcome = RequestContext::from_parts(&full_headers(), raw, HTTP_ONLY);
+            assert!(
+                matches!(outcome, Err(BadRequest::BadRepoUrl(_))),
+                "should reject: {raw:?}"
+            );
         }
     }
 
@@ -259,13 +278,14 @@ mod tests {
     fn staleness_header_parses_and_validates() {
         let mut headers = full_headers();
         headers.insert(STALENESS_HEADER, HeaderValue::from_static("120"));
-        let Ok(context) = RequestContext::from_parts(&headers, "url") else {
+        let repo = "https://example.com/a.git";
+        let Ok(context) = RequestContext::from_parts(&headers, repo, HTTP_ONLY) else {
             panic!("numeric staleness must parse")
         };
         assert_eq!(context.max_staleness, Some(Duration::from_mins(2)));
 
         headers.insert(STALENESS_HEADER, HeaderValue::from_static("soon"));
-        match RequestContext::from_parts(&headers, "url") {
+        match RequestContext::from_parts(&headers, repo, HTTP_ONLY) {
             Err(BadRequest::NotANumber(name)) => assert_eq!(name, STALENESS_HEADER),
             Err(e) => panic!("wrong error: {e}"),
             Ok(_) => panic!("non-numeric staleness must be rejected"),

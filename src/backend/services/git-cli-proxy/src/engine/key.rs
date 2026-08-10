@@ -1,5 +1,7 @@
 use sha2::{Digest, Sha256};
 
+use crate::engine::url::CloneUrl;
+
 /// Cache identity of one repository: `(tenant, source, clone URL)`. Identical
 /// clone URLs under two sources are two isolated entries — access rights
 /// differ per source.
@@ -7,7 +9,7 @@ use sha2::{Digest, Sha256};
 pub struct CacheKey {
     pub tenant_id: String,
     pub source_id: String,
-    pub clone_url: String,
+    pub clone_url: CloneUrl,
 }
 
 impl CacheKey {
@@ -21,7 +23,7 @@ impl CacheKey {
         hasher.update([0u8]);
         hasher.update(self.source_id.as_bytes());
         hasher.update([0u8]);
-        hasher.update(self.clone_url.as_bytes());
+        hasher.update(self.clone_url.as_str().as_bytes());
         hex::encode(hasher.finalize())
     }
 }
@@ -31,10 +33,14 @@ mod tests {
     use super::*;
 
     fn key(tenant: &str, source: &str, url: &str) -> CacheKey {
+        let Ok(clone_url) = CloneUrl::parse(url, crate::engine::url::CloneUrlPolicy::http_only())
+        else {
+            panic!("fixture url must parse: {url}")
+        };
         CacheKey {
             tenant_id: tenant.to_owned(),
             source_id: source.to_owned(),
-            clone_url: url.to_owned(),
+            clone_url,
         }
     }
 

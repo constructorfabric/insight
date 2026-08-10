@@ -42,6 +42,9 @@ data:
           default_max_staleness_seconds: {{ required "cache.defaultMaxStalenessSeconds is required" .Values.cache.defaultMaxStalenessSeconds | int64 }}
           heavy_ops_concurrency: {{ required "cache.heavyOpsConcurrency is required" .Values.cache.heavyOpsConcurrency | int64 }}
           ca_cert_path: {{ .Values.cache.caCertPath | quote }}
+          # Not a values knob on purpose: a file:// origin reads the pod's own
+          # filesystem, so no deployment may turn this on.
+          allow_file_repos: false
           # proxy_token is NEVER rendered here — it arrives via envFrom from
           # the config Secret (APP__gears__git_cli_proxy__config__proxy_token).
           proxy_token: ""

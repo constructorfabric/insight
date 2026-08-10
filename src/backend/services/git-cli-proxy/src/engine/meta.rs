@@ -144,7 +144,10 @@ mod tests {
         let Some(published) = RepoMeta::load(&dir) else {
             panic!("a spliced document was renamed into place")
         };
-        assert!(published.generation < writers, "generation must be one writer's own value");
+        assert!(
+            published.generation < writers,
+            "generation must be one writer's own value"
+        );
         assert_eq!(
             published,
             RepoMeta {
@@ -161,7 +164,10 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .filter(|name| name.contains(".tmp."))
             .collect();
-        assert!(leftovers.is_empty(), "temporary files left behind: {leftovers:?}");
+        assert!(
+            leftovers.is_empty(),
+            "temporary files left behind: {leftovers:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

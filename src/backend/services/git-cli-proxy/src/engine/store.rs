@@ -354,13 +354,7 @@ impl RepoStore {
             .runner
             .run(
                 None,
-                &[
-                    "clone",
-                    "--bare",
-                    "--filter=blob:none",
-                    &key.clone_url,
-                    &tmp_str,
-                ],
+                &clone_argv(key.clone_url.as_str(), &tmp_str),
                 Some(creds),
             )
             .await;
@@ -392,7 +386,7 @@ impl RepoStore {
 
         let now = now_epoch_s();
         let meta = RepoMeta {
-            clone_url: key.clone_url.clone(),
+            clone_url: key.clone_url.as_str().to_owned(),
             tenant_id: key.tenant_id.clone(),
             source_id: key.source_id.clone(),
             last_fetched_at_epoch_s: now,
@@ -439,7 +433,7 @@ impl RepoStore {
         let previous = RepoMeta::load(entry_dir);
         let generation = previous.as_ref().map_or(0, |m| m.generation) + 1;
         let meta = RepoMeta {
-            clone_url: key.clone_url.clone(),
+            clone_url: key.clone_url.as_str().to_owned(),
             tenant_id: key.tenant_id.clone(),
             source_id: key.source_id.clone(),
             last_fetched_at_epoch_s: now,
@@ -627,6 +621,14 @@ impl RepoStore {
     }
 }
 
+/// The clone invocation, isolated so the option/operand boundary is testable.
+/// `--` is what keeps a hostile URL from being read as a git option; the URL is
+/// already an [`crate::engine::url::CloneUrl`], so this is the second of two
+/// independent guards.
+fn clone_argv<'a>(url: &'a str, target: &'a str) -> [&'a str; 6] {
+    ["clone", "--bare", "--filter=blob:none", "--", url, target]
+}
+
 /// The entry's meta when the repo exists and the caller's credentials match
 /// the ones that proved origin access.
 fn usable_meta(entry_dir: &Path, fingerprint: &str) -> Option<RepoMeta> {
@@ -634,6 +636,9 @@ fn usable_meta(entry_dir: &Path, fingerprint: &str) -> Option<RepoMeta> {
         return None;
     }
     let meta = RepoMeta::load(entry_dir)?;
+    // Both sides are locally derived sha256 digests, never a presented secret,
+    // so a plain compare leaks nothing an attacker can use; the one bearer
+    // comparison in the service (`api::auth`) is constant-time.
     (meta.cred_fingerprint == fingerprint).then_some(meta)
 }
 
@@ -767,8 +772,19 @@ pub(crate) mod tests {
         CacheKey {
             tenant_id: "t".to_owned(),
             source_id: "s".to_owned(),
-            clone_url: fixture.origin_url.clone(),
+            clone_url: fixture_url(&fixture.origin_url),
         }
+    }
+
+    /// Fixtures clone from local repositories, which production refuses.
+    pub(crate) fn fixture_url(raw: &str) -> crate::engine::url::CloneUrl {
+        let Ok(url) = crate::engine::url::CloneUrl::parse(
+            raw,
+            crate::engine::url::CloneUrlPolicy::with_file_origins(),
+        ) else {
+            panic!("fixture url must parse: {raw}")
+        };
+        url
     }
 
     pub(crate) fn creds() -> GitCredentials {
@@ -1016,7 +1032,7 @@ pub(crate) mod tests {
     async fn unknown_origin_reports_a_typed_error() {
         let f = fixture("missing");
         let k = CacheKey {
-            clone_url: format!("file://{}", f.root.join("no-such-repo").display()),
+            clone_url: fixture_url(&format!("file://{}", f.root.join("no-such-repo").display())),
             ..key(&f)
         };
         for _ in 0..100u32 {
@@ -1100,7 +1116,7 @@ pub(crate) mod tests {
              GIT_COMMITTER_DATE='2026-08-01T10:00:00+0000' git commit -qm x",
         );
         let second = CacheKey {
-            clone_url: format!("file://{}", origin_two.display()),
+            clone_url: fixture_url(&format!("file://{}", origin_two.display())),
             ..key(&f)
         };
         open_until_ready(

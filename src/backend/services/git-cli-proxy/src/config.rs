@@ -39,6 +39,10 @@ pub struct GearConfig {
     /// only", which is correct for the public clouds, so this is the one
     /// optional field.
     pub ca_cert_path: String,
+    /// Accept `file://` origins. Test-harness escape hatch only: the hermetic
+    /// suite clones from local fixture repositories. No deployment sets it —
+    /// the chart hard-codes `false`.
+    pub allow_file_repos: bool,
 }
 
 /// Manual `Debug` that never prints the token — the config is logged on boot
@@ -55,6 +59,7 @@ impl std::fmt::Debug for GearConfig {
             )
             .field("heavy_ops_concurrency", &self.heavy_ops_concurrency)
             .field("ca_cert_path", &self.ca_cert_path)
+            .field("allow_file_repos", &self.allow_file_repos)
             .field("proxy_token", &"<redacted>")
             .finish()
     }
@@ -116,6 +121,7 @@ mod tests {
             heavy_ops_concurrency: 4,
             proxy_token: "secret".to_owned(),
             ca_cert_path: String::new(),
+            allow_file_repos: false,
         }
     }
 

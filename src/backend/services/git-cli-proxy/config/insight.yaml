@@ -71,3 +71,6 @@ gears:
       # system trust store, which is correct for the public clouds. This is the
       # only optional field.
       ca_cert_path: ""
+      # Accept file:// origins. Test-harness escape hatch: the hermetic suite
+      # clones from local fixture repositories. Never enable in a deployment.
+      allow_file_repos: false

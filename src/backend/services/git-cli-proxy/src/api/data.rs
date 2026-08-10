@@ -67,7 +67,7 @@ pub async fn list_commits(
     headers: HeaderMap,
     Query(query): Query<CommitsQuery>,
 ) -> Result<Json<Page<commits::CommitRow>>, ApiError> {
-    let context = RequestContext::from_parts(&headers, &query.repo)?;
+    let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let selected = parse_sha_filter(query.sha.as_deref())?;
     let guard = open(&state, &context, &paging).await?;
@@ -131,7 +131,7 @@ pub async fn list_file_changes(
     headers: HeaderMap,
     Query(query): Query<FileChangesQuery>,
 ) -> Result<Json<Page<FileChangeRow>>, ApiError> {
-    let context = RequestContext::from_parts(&headers, &query.repo)?;
+    let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let selected = parse_sha_filter(query.sha.as_deref())?;
     let include_patch = query.include_patch.unwrap_or(true);
@@ -208,7 +208,7 @@ pub async fn list_branches(
     headers: HeaderMap,
     Query(query): Query<BranchesQuery>,
 ) -> Result<Json<Page<branches::BranchRow>>, ApiError> {
-    let context = RequestContext::from_parts(&headers, &query.repo)?;
+    let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let guard = open(&state, &context, &paging).await?;
 

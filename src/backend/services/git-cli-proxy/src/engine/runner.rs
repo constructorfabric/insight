@@ -171,7 +171,10 @@ impl GitRunner {
         // to completion first would deadlock the producer once it writes past
         // the stderr pipe buffer, and the call would surface as a timeout.
         let joined = async {
-            tokio::try_join!(right_child.wait_with_output(), left_child.wait_with_output())
+            tokio::try_join!(
+                right_child.wait_with_output(),
+                left_child.wait_with_output()
+            )
         };
 
         let (right_output, left_output) = match tokio::time::timeout(self.timeout, joined).await {

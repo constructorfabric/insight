@@ -44,7 +44,12 @@ fn test_dir(tag: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(dir)
 }
 
-fn write_config(dir: &Path, port: u16, token: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn write_config(
+    dir: &Path,
+    port: u16,
+    token: &str,
+    allow_file_repos: bool,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let config = format!(
         r#"server:
   home_dir: "{home}"
@@ -74,6 +79,7 @@ gears:
       default_max_staleness_seconds: 300
       heavy_ops_concurrency: 2
       proxy_token: "{token}"
+      allow_file_repos: {allow_file_repos}
 "#,
         home = dir.join("home").display(),
         data = dir.join("data").display(),
@@ -84,9 +90,17 @@ gears:
 }
 
 fn spawn_server(tag: &str, token: &str) -> Result<Server, Box<dyn std::error::Error>> {
+    spawn_server_with(tag, token, true)
+}
+
+fn spawn_server_with(
+    tag: &str,
+    token: &str,
+    allow_file_repos: bool,
+) -> Result<Server, Box<dyn std::error::Error>> {
     let port = free_port()?;
     let dir = test_dir(tag)?;
-    let config = write_config(&dir, port, token)?;
+    let config = write_config(&dir, port, token, allow_file_repos)?;
 
     let child = Command::new(env!("CARGO_BIN_EXE_git-cli-proxy"))
         .arg("--config")
@@ -226,6 +240,33 @@ async fn boots_and_enforces_bearer_auth() -> R {
         400,
         "the proxy token alone is not an identity"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn non_http_origins_are_refused_in_the_shipped_configuration() -> R {
+    let server = spawn_server_with("scheme", TOKEN, false)?;
+    wait_healthy(server.port).await?;
+    let repo = fixture_origin(&server.dir)?;
+
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", server.port);
+
+    // The fixture origin is a real, reachable repository — only its transport
+    // is refused, so a 400 here cannot be a false pass from an unreachable URL.
+    for origin in [repo.as_str(), "ext::sh -c id", "/etc/passwd"] {
+        let response = client
+            .get(format!("{base}/v1/branches"))
+            .query(&[("repo", origin)])
+            .bearer_auth(TOKEN)
+            .header("x-tenant-id", "t")
+            .header("x-source-id", "s")
+            .header("x-git-username", "u")
+            .header("x-git-token", "p")
+            .send()
+            .await?;
+        assert_eq!(response.status(), 400, "must refuse origin {origin:?}");
+    }
     Ok(())
 }
 
@@ -498,7 +539,7 @@ async fn branches_honour_page_size_and_paginate_by_name() -> R {
 async fn refuses_to_boot_on_empty_required_config() -> R {
     let port = free_port()?;
     let dir = test_dir("invalid")?;
-    let config = write_config(&dir, port, "")?;
+    let config = write_config(&dir, port, "", false)?;
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_git-cli-proxy"))
         .arg("--config")
