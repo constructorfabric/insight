@@ -11,9 +11,8 @@ use super::disk::{Budget, Candidate, Reclaim, dir_size, worth_purging};
 use super::key::CacheKey;
 use super::meta::{RepoMeta, now_epoch_s};
 use super::metrics::{self, DiskGauges, EvictionTier, FetchResult};
-use super::runner::{GitCredentials, GitError, GitRunner};
+use super::runner::{GitCredentials, GitError, GitRunner, Timeouts};
 
-const HEAVY_OP_TIMEOUT: Duration = Duration::from_mins(30);
 const INLINE_WAIT: Duration = Duration::from_secs(15);
 const COLD_RETRY_AFTER: Duration = Duration::from_secs(30);
 const REPROOF_ATTEMPTS: usize = 2;
@@ -205,7 +204,7 @@ impl RepoStore {
         std::fs::create_dir_all(&tmp)?;
         Ok(Self {
             data_dir: data_dir.to_owned(),
-            runner: GitRunner::new(HEAVY_OP_TIMEOUT).with_ca_cert(ca_cert_path),
+            runner: GitRunner::new(Timeouts::default()).with_ca_cert(ca_cert_path),
             budget,
             max_repo_bytes,
             heavy: Semaphore::new(heavy_ops_concurrency),
@@ -659,7 +658,7 @@ impl RepoStore {
         remove_promisor_markers(&git_dir);
 
         self.runner
-            .run(
+            .run_heavy(
                 Some(&git_dir),
                 &["repack", "-a", "-d", "--no-write-bitmap-index"],
                 Some(creds),
@@ -801,7 +800,7 @@ impl RepoStore {
         remove_promisor_markers(&git_dir);
         let repacked = self
             .runner
-            .run(
+            .run_heavy(
                 Some(&git_dir),
                 &[
                     "repack",

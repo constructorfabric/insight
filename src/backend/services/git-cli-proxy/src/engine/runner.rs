@@ -67,12 +67,40 @@ pub enum GitError {
     TooLarge { cap_bytes: u64 },
 }
 
+/// How long each class of git invocation may take.
+///
+/// One budget for all of them cannot work. A read holds the entry's READ
+/// lock, so a stalled one blocks fetch and eviction for its whole budget
+/// while every other stream 429-loops past the connector's own ceiling and
+/// fails the sync. A clone genuinely needs half an hour.
+#[derive(Debug, Clone, Copy)]
+pub struct Timeouts {
+    /// Local plumbing: `log`, `for-each-ref`, `rev-list`, `patch-id`. No
+    /// network, so anything approaching this is a stall — most likely a lazy
+    /// promisor fetch behind what looks like a local read.
+    pub read: Duration,
+    /// The per-page blob prefetch. Network, but bounded by one page.
+    pub prefetch: Duration,
+    /// Clone, fetch, repack, promotion: whole-repository work.
+    pub heavy: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self {
+            read: READ_TIMEOUT,
+            prefetch: PREFETCH_TIMEOUT,
+            heavy: HEAVY_OP_TIMEOUT,
+        }
+    }
+}
+
 /// Spawns git subprocesses with a hermetic environment: explicit `--git-dir`
 /// or working dir (process cwd is never relied on), no user/system gitconfig,
 /// no interactive prompts, credentials via env only.
 #[derive(Debug, Clone)]
 pub struct GitRunner {
-    timeout: Duration,
+    timeouts: Timeouts,
     /// How often a capped run re-measures. Trades overshoot against the cost
     /// of walking a tree that is actively being written.
     cap_poll: Duration,
@@ -82,6 +110,9 @@ pub struct GitRunner {
 }
 
 const STDERR_TAIL_BYTES: usize = 4096;
+const READ_TIMEOUT: Duration = Duration::from_mins(5);
+const PREFETCH_TIMEOUT: Duration = Duration::from_mins(10);
+const HEAVY_OP_TIMEOUT: Duration = Duration::from_mins(30);
 /// How often a capped run re-measures the tree it is filling. The cap can be
 /// overshot by one interval's worth of download; the post-hoc check is what
 /// catches that remainder.
@@ -89,9 +120,9 @@ const CAP_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 impl GitRunner {
     #[must_use]
-    pub fn new(timeout: Duration) -> Self {
+    pub fn new(timeouts: Timeouts) -> Self {
         Self {
-            timeout,
+            timeouts,
             cap_poll: CAP_POLL_INTERVAL,
             ca_cert_path: None,
         }
@@ -109,14 +140,54 @@ impl GitRunner {
         self
     }
 
-    /// Run `git <args>` against `git_dir` (None for `clone`, which creates
-    /// the dir). Non-zero exit is classified into [`GitError`].
+    /// Run local git plumbing against `git_dir` under the read budget.
     ///
     /// # Errors
     ///
     /// [`GitError`] on spawn failure, timeout, or non-zero exit.
     pub async fn run(
         &self,
+        git_dir: Option<&Path>,
+        args: &[&str],
+        creds: Option<&GitCredentials>,
+    ) -> Result<Output, GitError> {
+        self.run_within(self.timeouts.read, git_dir, args, creds)
+            .await
+    }
+
+    /// Run the per-page blob prefetch under its own budget.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError`] on spawn failure, timeout, or non-zero exit.
+    pub async fn run_prefetch(
+        &self,
+        git_dir: &Path,
+        args: &[&str],
+        creds: &GitCredentials,
+    ) -> Result<Output, GitError> {
+        self.run_within(self.timeouts.prefetch, Some(git_dir), args, Some(creds))
+            .await
+    }
+
+    /// Run whole-repository work — repack, promotion — under the heavy budget.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError`] on spawn failure, timeout, or non-zero exit.
+    pub async fn run_heavy(
+        &self,
+        git_dir: Option<&Path>,
+        args: &[&str],
+        creds: Option<&GitCredentials>,
+    ) -> Result<Output, GitError> {
+        self.run_within(self.timeouts.heavy, git_dir, args, creds)
+            .await
+    }
+
+    async fn run_within(
+        &self,
+        budget: Duration,
         git_dir: Option<&Path>,
         args: &[&str],
         creds: Option<&GitCredentials>,
@@ -132,10 +203,10 @@ impl GitRunner {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        let waited = tokio::time::timeout(self.timeout, command.output()).await;
+        let waited = tokio::time::timeout(budget, command.output()).await;
         let output = match waited {
             Ok(result) => result?,
-            Err(_elapsed) => return Err(GitError::TimedOut(self.timeout)),
+            Err(_elapsed) => return Err(GitError::TimedOut(budget)),
         };
 
         if output.status.success() {
@@ -207,9 +278,10 @@ impl GitRunner {
             }
         };
 
-        let output = match tokio::time::timeout(self.timeout, capped).await {
+        let budget = self.timeouts.heavy;
+        let output = match tokio::time::timeout(budget, capped).await {
             Ok(result) => result?,
-            Err(_elapsed) => return Err(GitError::TimedOut(self.timeout)),
+            Err(_elapsed) => return Err(GitError::TimedOut(budget)),
         };
 
         if output.status.success() {
@@ -269,9 +341,10 @@ impl GitRunner {
             )
         };
 
-        let (right_output, left_output) = match tokio::time::timeout(self.timeout, joined).await {
+        let budget = self.timeouts.read;
+        let (right_output, left_output) = match tokio::time::timeout(budget, joined).await {
             Ok(result) => result?,
-            Err(_elapsed) => return Err(GitError::TimedOut(self.timeout)),
+            Err(_elapsed) => return Err(GitError::TimedOut(budget)),
         };
 
         if !left_output.status.success() {
@@ -460,7 +533,7 @@ mod tests {
             username: "oauth2".to_owned(),
             token: "tok".to_owned(),
         };
-        let plain = GitRunner::new(Duration::from_secs(1));
+        let plain = GitRunner::new(Timeouts::default());
         assert!(
             plain.config_pairs(None).is_empty(),
             "no creds and no CA means no git config at all"
@@ -471,7 +544,7 @@ mod tests {
         assert_eq!(with_creds[0].0, "http.extraheader");
 
         let with_ca =
-            GitRunner::new(Duration::from_secs(1)).with_ca_cert(Some("/certs/ca.pem".to_owned()));
+            GitRunner::new(Timeouts::default()).with_ca_cert(Some("/certs/ca.pem".to_owned()));
         let both = with_ca.config_pairs(Some(&creds));
         assert_eq!(both.len(), 2, "on-prem origins need the CA pair too");
         assert!(
@@ -483,7 +556,7 @@ mod tests {
 
     #[test]
     fn empty_ca_path_is_treated_as_unset() {
-        let runner = GitRunner::new(Duration::from_secs(1)).with_ca_cert(Some(String::new()));
+        let runner = GitRunner::new(Timeouts::default()).with_ca_cert(Some(String::new()));
         assert!(
             runner.config_pairs(None).is_empty(),
             "an empty CA path must not become a git config value"
@@ -492,7 +565,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_reports_version() {
-        let runner = GitRunner::new(Duration::from_secs(10));
+        let runner = GitRunner::new(Timeouts::default());
         let output = match runner.run(None, &["--version"], None).await {
             Ok(o) => o,
             Err(e) => panic!("git --version failed: {e}"),
@@ -511,7 +584,7 @@ mod tests {
             panic!("create temp dir: {e}");
         }
 
-        let runner = GitRunner::new(Duration::from_secs(10));
+        let runner = GitRunner::new(Timeouts::default());
         let init = tokio::process::Command::new("git")
             .args(["init", "--bare", "-q"])
             .arg(&dir)
@@ -594,7 +667,7 @@ mod tests {
         // breach against how fast git happens to write would make this a race,
         // not a test.
         let runner =
-            GitRunner::new(Duration::from_mins(1)).with_cap_poll(Duration::from_millis(1));
+            GitRunner::new(Timeouts::default()).with_cap_poll(Duration::from_millis(1));
         let result = runner
             .run_capped(
                 None,
@@ -626,7 +699,7 @@ mod tests {
         let url = format!("file://{}", root.join("origin").display());
 
         let runner =
-            GitRunner::new(Duration::from_mins(1)).with_cap_poll(Duration::from_millis(1));
+            GitRunner::new(Timeouts::default()).with_cap_poll(Duration::from_millis(1));
         if let Err(e) = runner
             .run_capped(
                 None,
@@ -648,8 +721,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_read_gives_up_long_before_whole_repository_work() {
+        let defaults = Timeouts::default();
+        assert!(
+            defaults.read < defaults.prefetch && defaults.prefetch < defaults.heavy,
+            "a read holds the entry's read lock; it must give up first: {defaults:?}"
+        );
+
+        let root = heavy_origin("budgets");
+        let url = format!("file://{}", root.join("origin").display());
+        let runner = GitRunner::new(Timeouts {
+            read: Duration::from_millis(1),
+            prefetch: Duration::from_mins(1),
+            heavy: Duration::from_mins(1),
+        });
+
+        let as_read = runner
+            .run(
+                None,
+                &[
+                    "clone",
+                    "--bare",
+                    "--quiet",
+                    &url,
+                    &root.join("read.git").to_string_lossy(),
+                ],
+                None,
+            )
+            .await;
+        match as_read {
+            Err(GitError::TimedOut(budget)) => assert_eq!(budget, Duration::from_millis(1)),
+            other => panic!("a read must expire on the read budget, got {other:?}"),
+        }
+
+        if let Err(e) = runner
+            .run_heavy(
+                None,
+                &[
+                    "clone",
+                    "--bare",
+                    "--quiet",
+                    &url,
+                    &root.join("heavy.git").to_string_lossy(),
+                ],
+                None,
+            )
+            .await
+        {
+            panic!("the same work must fit inside the heavy budget: {e}");
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
     async fn run_times_out_and_kills() {
-        let runner = GitRunner::new(Duration::from_millis(200));
+        let runner = GitRunner::new(Timeouts {
+            read: Duration::from_millis(200),
+            ..Timeouts::default()
+        });
         let result = runner
             .run(
                 None,

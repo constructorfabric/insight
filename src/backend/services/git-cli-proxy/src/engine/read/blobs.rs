@@ -44,7 +44,7 @@ pub async fn prefetch(
     for batch in ordered.chunks(FETCH_BATCH) {
         let mut args = vec!["fetch", "--no-write-fetch-head", "origin"];
         args.extend(batch.iter().map(String::as_str));
-        runner.run(Some(git_dir), &args, Some(creds)).await?;
+        runner.run_prefetch(git_dir, &args, creds).await?;
     }
     Ok(ordered.len())
 }
