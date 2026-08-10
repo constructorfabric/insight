@@ -22,10 +22,13 @@
 ##                      (`make system-<svc>`)          namespace, installed and
 ##                                                     owned outside this repo
 ##   edge               ingress-nginx + Ingress        Envoy Gateway + Gateway
-##                      objects rendered by the        API HTTPRoute; the chart
-##                      chart                          renders no HTTPRoute, so
-##                                                     the route is a committed
-##                                                     manifest (manifests/)
+##                      objects rendered by the        API HTTPRoutes, RENDERED
+##                      chart                          BY THE CHART from
+##                                                     `gateway.route` and
+##                                                     `keycloak.route`, and
+##                                                     attached to a shared
+##                                                     Gateway this repo does
+##                                                     not own
 ##   secrets            sealed-secrets controller +    plain Secrets, pre-created
 ##                      `make seal` + committed        once and composed from the
 ##                      SealedSecret manifests         datastore namespaces by the
@@ -37,7 +40,8 @@
 ## nothing is sealed. This env is a values overlay plus a cluster address —
 ## the L0 (cluster prereqs) and L2 (datastores, Envoy Gateway, Airbyte,
 ## Argo) layers are brought up and owned elsewhere. See README.md in this
-## directory for the ownership boundary and the exact deploy command.
+## directory for the ownership boundary and the exact deploy command, and
+## INFRA.md for what those layers must be, component by component.
 ##
 
 # ─── Cluster targeting ─────────────────────────────────────────────────
@@ -177,8 +181,16 @@ system:
 #                                     it breaks the token exchange until the
 #                                     realm is updated to match.
 #   insight-keycloak-admin            bootstrap admin for the bundled Keycloak.
-#   insight-keycloak-config           keycloak-config-cli login + the realm's
-#                                     external-IdP passthrough values.
+#   insight-keycloak-config           the keycloak-config-cli login, plus the
+#                                     confidential client secret the realm
+#                                     document substitutes in. Nothing more on
+#                                     this stand: the realm is seeded from the
+#                                     demo organisation with LOCAL password
+#                                     users, so there is no external IdP and
+#                                     nothing to broker to. External-IdP
+#                                     passthrough values (an upstream
+#                                     provider's client id/secret) exist only
+#                                     on a federated stand shape.
 #
 # There is also no sealed-secrets CONTROLLER and no SealedSecret CRD on this
 # cluster, so the manifests would not reconcile even if they were committed.

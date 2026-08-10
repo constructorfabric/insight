@@ -21,16 +21,22 @@ that data?*
 ```text
 environments/test-stand/
 ├── README.md                        # this file
+├── INFRA.md                         # what has to exist BENEATH the umbrella, and in what order
 ├── inventory.yaml                   # cluster address + "this env manages the umbrella only"
-├── values.yaml                      # the umbrella overlay — the file the deploy passes to helm
-└── manifests/
-    ├── httproute.yaml               # public hostname -> insight-gateway (the chart renders none)
-    └── httproute-keycloak.yaml      # /kc on the same hostname -> the bundled Keycloak
+└── values.yaml                      # the umbrella overlay — the file the deploy passes to helm
 ```
 
 There is deliberately no `sealed-secrets/` directory, no `keycloak/realms/`
-directory and no `<svc>-values.yaml` here. Each absence is a decision, and
+directory, no `<svc>-values.yaml` and — since the chart grew native Gateway API
+templates — no `manifests/` directory either. Each absence is a decision, and
 each one is explained below.
+
+[`INFRA.md`](INFRA.md) answers the question this file does not: *how do I get a
+cluster to run any of this against?* It is the L0/L2 capture — the operators,
+the datastores, the edge, the order they have to come up in, and the handful of
+settings whose absence produces a release that reports `deployed` while the
+stand silently does not work. Read it before building a second stand; read this
+file to change the one that exists.
 
 ## The ownership boundary
 
@@ -42,9 +48,9 @@ the cluster.
 | L0 | Cluster prereqs: cert-manager and its ClusterIssuer, Envoy Gateway and the `Gateway` object, the namespaces themselves | the deployment repository (outside this repo) | a human, deliberately |
 | L2 | Datastores — ClickHouse, MariaDB, Redis, Redpanda — each under its own operator in its own namespace; plus Airbyte and Argo Workflows | the deployment repository | a human, deliberately |
 | L2 | Generate-once Secrets: `insight-db-creds`, `insight-authenticator-signing-keys`, `insight-oidc`, `insight-keycloak-admin`, `insight-keycloak-config` | the deployment repository | a human, deliberately |
-| L2 | The Keycloak realm content (the `insight-keycloak-config-realms` ConfigMap) | the deployment repository | a human, deliberately |
+| L2 | The Keycloak realm content (the `insight-keycloak-config-realms` ConfigMap) — on this stand, the roster realm generated from the seeder's own organisation | the deployment repository | a human, deliberately |
 | **L3** | **The umbrella Helm release `insight` in namespace `insight` — every value in `values.yaml`** | **this directory** | **CI, on every merge to `main`** |
-| L3 | The two `HTTPRoute`s in `manifests/` | source of truth here; applied by the deployment repository | a human, from the files here |
+| L3 | The two `HTTPRoute`s, rendered by the release from `gateway.route` and `keycloak.route` in `values.yaml` | **this directory** | **CI, on every merge to `main`** |
 | L3 | The `argo-workflow` ServiceAccount + Role + RoleBinding that the chart's WorkflowTemplates pin but do not create | the deployment repository | a human, deliberately |
 
 Two consequences worth stating plainly:
@@ -59,23 +65,33 @@ Two consequences worth stating plainly:
 
 ### What this env does not own, but depends on
 
-Four objects live outside the Helm release and outside this directory. If any
+Five things live outside the Helm release and outside this directory. If any
 of them disappears, the release still installs and reports `deployed`, and the
 stand is broken anyway:
 
 | Object | Symptom if missing |
 |---|---|
-| `HTTPRoute/insight-gateway` | the public URL answers nothing; every smoke check fails at the first request |
-| `HTTPRoute/insight-keycloak` | `/kc` is unreachable, so OIDC discovery fails and nobody can log in |
+| `Gateway/insight` in the gateway controller's namespace — what both routes `parentRef` | the release renders its two `HTTPRoute`s and neither ever attaches: `Accepted` stays false because the parent resolves to nothing. The public URL answers nothing; every smoke check fails at the first request |
+| `ClusterIssuer/insight-ca` — what `authenticator.tlsDiscovery.issuerRef` names | the authenticator's authn-TLS Certificate never issues, and the chart mounts the Secret it would have produced **non-optionally** into analytics and identity-resolution. Both sit in `ContainerCreating` until `--wait` gives up, and nothing in that failure names an issuer |
+| `ConfigMap/insight-keycloak-config-realms` — the realm content | the chart's `keycloak-config` hook Job has nothing to apply and fails the whole upgrade. Worse if it is present but wrong: a realm that lost its `idp_sub` mapper authenticates every persona and then denies them, with a fully populated identity projection |
 | `ServiceAccount/argo-workflow` (+ its Role/RoleBinding) | every scheduled transform and data-quality run fails with `serviceaccount "argo-workflow" not found`, while all app pods stay healthy — nothing surfaces until a scheduled run |
 | The Secrets in the table above | services fail to start, or start with blank configuration |
 
-The two routes are committed here (`manifests/`) because the acceptance
-criteria travel through them. They are **verified, not applied**, by the
-deploy — see the header comment in `manifests/httproute.yaml` for why re-applying
-would create two writers on one object. The Argo RBAC is not copied here: it
-is Argo plumbing rather than application configuration, and it sits outside the
-deploy/seed/smoke scope this environment was created for.
+The two routes used to be committed here, as manifests, because the chart
+rendered none and every acceptance criterion travels through them. The umbrella
+has since grown native Gateway API templates — `gateway.route` and
+`keycloak.route` replaced the old `ingress` blocks — so the release renders both
+`HTTPRoute`s and owns them, and the manifests are gone. The check that used to
+guard them has not disappeared, it has inverted: `helm --wait` does not wait on
+HTTPRoute *status*, so a route helm wrote successfully can still be refused by
+the Gateway (a `parentRef` naming a Gateway that is not there, a `sectionName`
+naming a listener that is not, a `backendRef` pointed at a Service a chart
+upgrade renamed), and every one of those leaves the release `deployed` and the
+stand dark. Step 5 below therefore asserts `Accepted` on what the upgrade has
+just written — a post-condition of the deploy, not a check on somebody else's
+object. The Argo RBAC is still not copied here: it is Argo plumbing rather than
+application configuration, and it sits outside the deploy/seed/smoke scope this
+environment was created for.
 
 ## Deploying by hand
 
@@ -131,7 +147,7 @@ helm upgrade --install insight \
   --namespace insight \
   --values deploy/gitops/environments/test-stand/values.yaml \
   --set-string authenticator.oidc.clientSecret="$(kubectl -n insight \
-      get secret insight-oidc -o jsonpath='{.data.client-secret}' | base64 -d)" \
+      get secret insight-oidc -o jsonpath='{.data.client-secret}' | base64 --decode)" \
   --wait --timeout 10m --history-max 10
 ```
 
@@ -150,6 +166,21 @@ Three things about that command are load-bearing:
   or a human running `make rollback` (below).
 * **`--timeout 10m`**, not the Makefile's 30m default. A deploy that is going
   to fail should say so inside the CI budget.
+
+Then ask the second question, which the upgrade's exit status does not answer:
+*is the release the chart you meant?* A resumed run, a hand-deploy that raced
+CI, or a mistyped version answers "did it succeed?" with yes and this with no.
+CI runs the same check as its own step:
+
+```bash
+helm list -n insight --deployed --failed --pending --uninstalling \
+  --filter '^insight$' -o json | jq -r '.[] | "\(.status) \(.chart) rev=\(.revision)"'
+```
+
+Expect `deployed insight-<chart-version> rev=<n>`. The status flags are
+enumerated rather than passed as `--all`, which Helm 4 removed — on a runner or
+laptop carrying v4, `--all` exits `unknown flag` and the check silently reports
+every release as absent.
 
 **4. Restart what the chart cannot know to restart.** Each subchart's
 `checksum/config` annotation hashes its own ConfigMap. It does **not** cover
@@ -170,21 +201,43 @@ All three are listed on purpose. Each of the three consumes its config Secret
 with `envFrom`, so all three are subject to the same staleness — a restart
 list of two would leave one service holding old configuration.
 
-**5. Check the edge is still routing.** The chart renders no route, so a
-successful upgrade tells you nothing about whether the stand is reachable:
+**5. Check the edge accepted the routes the upgrade just wrote.** The release
+renders both of them, but `helm --wait` does not wait on their status — so a
+route the Gateway refuses leaves the upgrade green and the stand dark. This is
+the command CI runs:
 
 ```bash
 kubectl -n insight get httproute insight-gateway insight-keycloak \
   -o custom-columns='NAME:.metadata.name,ACCEPTED:.status.parents[0].conditions[?(@.type=="Accepted")].status'
 ```
 
-**6. Seed and smoke.** Seeding reuses the seeder verbatim — no test-stand
-variant, no per-stand flags beyond the ones below (it discovers the tenant,
-the datastore coordinates and the IdP source type from the cluster itself):
+Both must read `True`. When one does not, read `ResolvedRefs` in the same
+breath — `Accepted` says the Gateway took the attachment, `ResolvedRefs` says
+its `backendRef` resolves, and a route that is accepted with unresolved refs
+serves 503s rather than nothing:
 
 ```bash
-src/ingestion/tools/seed/seed-stand.sh -n insight --email <address> --days 730
+kubectl -n insight get httproute insight-gateway insight-keycloak \
+  -o 'jsonpath={range .items[*]}{.metadata.name}{"\t"}{range .status.parents[0].conditions[*]}{.type}{"="}{.status}{" "}{end}{"\n"}{end}'
 ```
+
+**6. Seed.** Seeding reuses the seeder verbatim — no test-stand variant, no
+per-stand flags beyond the ones below (it discovers the tenant, the datastore
+coordinates, the seed image and the IdP source type from the cluster itself):
+
+```bash
+./src/ingestion/tools/seed/seed-stand.sh \
+  -n insight \
+  --context insight-test-stand \
+  --email <address> \
+  --days 730
+```
+
+`--context` is passed even though the ambient kubeconfig already points there:
+the script prints the context it resolved before it writes anything, and a run
+whose target is stated rather than inherited is one a reader of the log can
+check. `--days`, spelled exactly like that — the seeder rejects unknown
+arguments, so a plausible-looking synonym fails every time.
 
 The seeder's manifest — the list of personas, fixtures, the tenant and the
 data window that the smoke suite reads — is **printed to the seed Job's
@@ -192,6 +245,23 @@ stdout** and written to a path inside a pod whose filesystem is discarded.
 Capture it from the Job log before the Job's TTL reaps it. Treat that JSON as
 run-internal: it carries persona addresses, UUIDs and in-cluster service URLs,
 so it must not become a CI artifact on a public repository.
+
+**7. Smoke.** Driven through the public URL exactly as a browser would drive
+it — real DNS, real TLS, real IdP redirect. `SMOKE_BASE_URL` is what aims the
+suite; nothing else does:
+
+```bash
+export SMOKE_BASE_URL=https://insight-test.cfabric.org
+export SMOKE_LOGIN_MODE=password
+export SMOKE_PERSONA_PASSWORD=<the realm generator's DEV_PASSWORD — see below>
+
+uv run --project tests --frozen \
+  pytest tests/stand/smoke -ra --stand-manifest <the manifest from step 6>
+```
+
+Nothing in the suite has a default: a missing value is reported by name before
+a single request is made. See `tests/stand/smoke/README.md` for the full
+variable table.
 
 ### Rollback
 
@@ -205,6 +275,65 @@ Both work for this env unchanged (they take the context from
 prerequisite for both). `rollback` is a human action by design: an
 automated rollback on failure is exactly what `--atomic` would have done, and
 what step 3 deliberately does not do.
+
+## How login works here — the seeded realm
+
+The stand's IdP is the bundled Keycloak, published at `/kc` on the same public
+hostname, and the realm it serves is `insight`: not the GitHub-federated
+`insight-broker` realm the deployment repository's other login mode uses, but a
+realm **generated from the demo seed's own organisation** — one local user per
+person on the roster, each with a password credential. That single decision is
+what makes an automated multi-persona login possible here at all, and it is why
+`password` is the correct mode for the smoke suite on this stand.
+
+Four consequences, roughly in the order they bite:
+
+* **The stand is useless between deploy and seed.** Authentication and
+  authorisation are two systems here. Keycloak authenticates; the login
+  bootstrap then resolves the principal to a row in `identity.persons` by
+  `(source_type, external_id)` and **fails closed** when there is no match —
+  there is no email fallback, by design. So a freshly deployed, unseeded stand
+  accepts a correct password and *then* denies the person, which reads like a
+  broken login and is really an empty projection. Deploy → seed → smoke is a
+  sequence, not a convenience, and the identity-resolution seed CronJob failing
+  on a stand with no data yet is the documented healthy state rather than a
+  fault.
+* **The external id is `idp_sub`, not `sub`.** The realm generator sets each
+  realm user's id to that person's roster UUID, which would be enough for a
+  realm *import* — but the chart applies realms with keycloak-config-cli, which
+  creates users one at a time through the admin REST API, where Keycloak assigns
+  its own id and silently discards the document's. The bring-up outside this
+  repository therefore copies the roster UUID into an `idp_sub` user attribute
+  and adds the mapper that emits it as a claim, and
+  `authenticator.oidc.externalIdClaim` names that claim. Point it at `sub` and
+  every login authenticates and is then denied, against a fully populated
+  identity projection — the most expensive way this stand can fail, because
+  nothing about it looks like a configuration error. [`INFRA.md`](INFRA.md#11-authenticatoroidcexternalidclaim-idp_sub--not-sub)
+  carries the full contract the generated realm has to satisfy, including the
+  declarative user profile that otherwise discards the attribute before the
+  mapper ever sees it.
+* **`sourceType` and the seeder have to agree.** `authenticator.oidc.sourceType`
+  is `keycloak` here, and the seeder writes
+  `(source_type='keycloak', value_type='id', value_id=<the roster UUID>)`.
+  Neither value is repeated in CI: `seed-stand.sh` reads the source type back
+  out of `insight-authenticator-config` rather than being told. Changing one
+  without the other produces exactly the same authenticate-then-deny.
+* **The persona password is a shared constant, not a per-stand secret.** Every
+  user the realm generator emits carries its `DEV_PASSWORD` constant
+  (`insight_seed.keycloak_realm`), so `SMOKE_PERSONA_PASSWORD` — and its CI
+  spelling `TEST_STAND_PERSONA_PASSWORD` — is one value derived from the
+  checkout rather than minted per stand. The per-persona
+  `SMOKE_PERSONA_PASSWORD__<FIXTURE>` override therefore cannot do anything on a
+  realm the seeder generated: all of its users share the one value. It is stored
+  as a GitHub environment secret so it stays masked in a public run log, but it
+  is not a secret in the sense the word usually carries. See Known gaps.
+
+For CI that means `vars.TEST_STAND_SMOKE_LOGIN_MODE` is `password`. The suite's
+`override` mode — one principal authenticates and every persona session is
+minted from it through `/auth/login?__override=<email>` — still works and is
+kept for a stand whose realm federates to an external provider and can serve no
+password form at all. This stand is not that stand, and nothing in the gate
+depends on `authenticator.overrideEnabled` any more.
 
 ## Why not `make deploy`
 
@@ -269,14 +398,26 @@ commit would read the previous version).
 
 ## Known gaps
 
-* **Scripted login.** The stand's realm federates login to an external OAuth
-  provider and has no local password users, so a username+password login
-  cannot be scripted against it as configured. Resolving that is a decision
-  about who owns the realm and what credential CI is allowed to hold — see the
-  `keycloakConfig` comment in `values.yaml` for the ownership half of it.
+* **The persona password is a published constant.** Every user in the generated
+  realm carries the seeder's `DEV_PASSWORD`, so an internet-reachable stand
+  serves local accounts on a value anybody can read out of this repository.
+  Nothing in CI is blocked by it — the gate signs in as its personas with it,
+  which is the point — but it is not the "no well-known passwords on a public
+  stand" posture this environment was specified with. Closing it means teaching
+  the realm generator to take a password instead of embedding one, which is a
+  change to the seeder rather than to this directory.
+* **Realm ownership still sits outside this repository.** The
+  `insight-keycloak-config-realms` ConfigMap is written by the bring-up, not by
+  this tree, and the deploy only reads it. That is deliberate — see the
+  `keycloakConfig` comment in `values.yaml` — but it does mean a login failure
+  can have a cause no file here can show you.
 * **`authenticator.overrideEnabled: true`** is carried forward from the
   installed release. It is a standing impersonation primitive on an
-  internet-reachable stand, gated on that flag alone. Tracked separately;
-  see the comment on the key in `values.yaml`.
+  internet-reachable stand, gated on that flag alone. The conditional that used
+  to hang over it has resolved in the good direction: the smoke suite reaches
+  every persona through a real password login and never sends `__override`, so
+  turning the flag off is now an unblocked change rather than one that would
+  take the gate with it. Tracked separately; see the comment on the key in
+  `values.yaml`.
 * **The identity CronJobs** can un-seed logins once their input table stops
   being empty. See the comment at the bottom of `values.yaml`.
