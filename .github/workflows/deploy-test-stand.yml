@@ -55,14 +55,13 @@ name: Deploy test stand
 #   * No alerting. The red X is the whole notification story.
 #   * No rollback, and no `--atomic`. A failed upgrade is LEFT failed so the next
 #     person to look has the evidence (see the deploy stage).
-#   * No infrastructure bootstrap. Datastores, the gateway, cert-manager and the
-#     IdP realm are somebody else's lifecycle; this workflow installs the
-#     application chart and nothing beneath it.
-#   * No `kubectl rollout restart` after the upgrade. The composed *-config
-#     Secrets reach pods through `envFrom`, which is read once at container
-#     start, so a changed coordinate can produce a healthy-looking release with
-#     stale configuration. Adding the restart is a real improvement and a real
-#     behaviour change; it belongs in its own change with its own reasoning.
+#   * No infrastructure bootstrap. Datastores, the shared Envoy Gateway,
+#     cert-manager and the realm ConfigMap the bundled IdP is configured from
+#     are somebody else's lifecycle; this workflow installs the application
+#     chart and nothing beneath it. One thing that used to be on that list has
+#     moved: the two edge HTTPRoutes are rendered BY the chart, from this
+#     environment's `gateway.route` and `keycloak.route`, so the release owns
+#     them. What stays external is the Gateway they attach to.
 #   * No exact-value assertions on seeded data. The smoke proves shape and
 #     non-emptiness. Reading a number off a running stand and asserting it back
 #     is a test of nothing.
@@ -135,11 +134,19 @@ name: Deploy test stand
 #      given straight into the authenticator's config. An upgrade without that
 #      value produces a confidential OIDC client with a blank secret: pods Ready,
 #      release `deployed`, every login broken.
-#   3. The stand's IdP can complete the login the smoke stage attempts. At the
-#      time of writing the stand's realm federates to an external provider and
-#      has no local users, which no amount of test code can work around; the
-#      smoke suite carries two modes and fails — loudly, naming the step it got
-#      stuck at — rather than pretending. See tests/stand/smoke/README.md.
+#   3. The stand's IdP can complete the login the smoke stage attempts. This
+#      stand's realm is `insight` — the roster realm generated from the demo
+#      seed's own organisation, carrying a local password user per seeded
+#      person — so a scripted username+password login is the supported path
+#      here and the smoke's `password` mode is the one that fits. What the
+#      precondition still buys is the half nobody expects: AUTHENTICATING IS
+#      NOT RESOLVING. The callback looks the signed-in principal up in
+#      `identity.persons` by the id the seeder wrote, and fails closed when
+#      there is no match, so a deployed-but-unseeded stand signs a persona in
+#      and then denies them. That is why the smoke stage runs after the seed
+#      and never instead of it, and why the suite fails — loudly, naming the
+#      step it got stuck at — rather than pretending. See
+#      tests/stand/smoke/README.md.
 #
 # ── COST ────────────────────────────────────────────────────────────────────
 #
@@ -248,8 +255,11 @@ jobs:
       # is therefore read exactly once, at container start. See stage 1's restart
       # step for why a list of two would be a silent bug.
       RESTART_TARGETS: deploy/insight-authenticator deploy/insight-analytics deploy/insight-identity-resolution
-      # The edge objects the chart does not render and this release does not own,
-      # but every acceptance criterion travels through.
+      # The two edge routes the chart renders from this environment's
+      # `gateway.route` and `keycloak.route`. The release owns them, so the
+      # upgrade below is what writes them; what the check after it asks is
+      # whether the Gateway ACCEPTED them, which helm does not wait for. Every
+      # acceptance criterion travels through both.
       ROUTE_NAMES: insight-gateway insight-keycloak
       CHART_VERSION: ${{ inputs.chart_version }}
       REDACT: .github/workflows/scripts/redact-stand-log.py
@@ -362,6 +372,23 @@ jobs:
           # `password` (every persona authenticates as themselves) or `override`
           # (one principal authenticates and every persona session is minted from
           # it). Unset means the suite's own default, which is `password`.
+          #
+          # `password` is the mode THIS stand serves. Its realm carries a local
+          # password user per seeded person, so each persona signs in as itself
+          # and a green run is evidence of a login rather than of an
+          # impersonation. `override` is for a stand whose realm federates to an
+          # external provider and therefore serves no password form at all: it
+          # proves strictly less, and it additionally depends on the
+          # authenticator's `overrideEnabled` staying on — a flag the chart's own
+          # values say must be false anywhere real users log in.
+          #
+          # Still read from a repository variable rather than pinned in this
+          # file, because which mode fits is a fact about the stand's realm and
+          # not about this workflow: a stand can be redeployed into the other
+          # shape without a line here changing. Setting it explicitly to
+          # `password` is better than leaving it unset — an unset variable and a
+          # stale `override` look identical in the settings page, and only one of
+          # them quietly keeps the gate in impersonation mode.
           LOGIN_MODE: ${{ vars.TEST_STAND_SMOKE_LOGIN_MODE }}
           RUN_SMOKE: ${{ steps.stages.outputs.run_smoke }}
         run: |
@@ -414,10 +441,13 @@ jobs:
             echo "  TEST_STAND_SEED_EMAIL          address the seeded dev-lead persona resolves to."
             echo "                                 A secret rather than a variable purely so it is"
             echo "                                 masked in this public log."
-            echo "  TEST_STAND_PERSONA_PASSWORD    'password' mode: the credential every persona"
-            echo "                                 signs in with."
-            echo "  TEST_STAND_BOOTSTRAP_EMAIL     'override' mode: the one principal that really"
-            echo "  TEST_STAND_BOOTSTRAP_PASSWORD  authenticates; persona sessions are minted from it."
+            echo "  TEST_STAND_PERSONA_PASSWORD    'password' mode — the mode this stand's realm"
+            echo "                                 serves: the credential every persona signs in"
+            echo "                                 with. The runbook says where its value comes from."
+            echo "  TEST_STAND_BOOTSTRAP_EMAIL     'override' mode, for a stand whose realm serves no"
+            echo "  TEST_STAND_BOOTSTRAP_PASSWORD  password form at all: the one principal that really"
+            echo "                                 authenticates; persona sessions are minted from it."
+            echo "                                 Not needed here while the mode is 'password'."
             echo "  TEST_STAND_BASE_URL            the stand's public HTTPS origin, scheme and host,"
             echo "                                 no trailing slash. A variable, not a secret: the"
             echo "                                 smoke drives it as a browser would."
@@ -663,15 +693,24 @@ jobs:
       - name: 'Stage 1/3 — confirm the edge still routes'
         run: |
           set -euo pipefail
-          # The chart renders NO HTTPRoute. These two objects live outside the
-          # release, are owned by the deployment repository, and every acceptance
-          # criterion travels through them — so a successful upgrade says nothing
-          # about whether the stand is reachable.
+          # The chart renders both of these, from this environment's
+          # `gateway.route` and `keycloak.route`, so the release owns them and
+          # the upgrade above is what wrote them. This step is therefore a
+          # POST-CONDITION on the deploy — "did what I just write take effect" —
+          # and not, as it once was, a check on an object somebody else applied.
           #
-          # Read, never applied: the files under
-          # deploy/gitops/environments/test-stand/manifests/ are the source of
-          # truth, and applying them from here would make CI a second writer on an
-          # object a human owns.
+          # It still earns its place, because `helm --wait` waits on workloads
+          # and not on HTTPRoute status. A route helm stored successfully can be
+          # refused by the Gateway it names: a parentRef pointing at a Gateway
+          # that is not there, a sectionName naming a listener that does not
+          # exist, a hostname the listener will not widen to. Every one of those
+          # leaves the release reporting `deployed` with all pods Ready and the
+          # stand unreachable, and `Accepted=False` on the route is the only
+          # place that failure is written down.
+          #
+          # Nothing is applied from here, and there is nothing to apply: the
+          # routes arrive with the release, and the Gateway they attach to lives
+          # in a namespace this credential cannot see at all.
           # shellcheck disable=SC2086  # ROUTE_NAMES is a deliberate word list
           kubectl -n "$STAND_NAMESPACE" get httproute $ROUTE_NAMES \
             -o 'custom-columns=NAME:.metadata.name,ACCEPTED:.status.parents[0].conditions[?(@.type=="Accepted")].status'
@@ -684,8 +723,11 @@ jobs:
           if [ -n "$not_accepted" ]; then
             echo "::error::an edge route is not Accepted:"
             printf '%s\n' "$not_accepted"
-            echo "The release may be perfectly healthy; the stand is still unreachable, and the"
-            echo "smoke below would fail at its first request with a much less useful message."
+            echo "The release is 'deployed' and its pods are Ready; the stand is still unreachable,"
+            echo "and the smoke below would fail at its first request with a much less useful"
+            echo "message. The route came out of this deploy, so start in the values file that"
+            echo "produced it — $VALUES_FILE, keys gateway.route and keycloak.route — and check the"
+            echo "parentRef they name against the Gateway the cluster actually has."
             exit 1
           fi
 
@@ -744,57 +786,26 @@ jobs:
           # record, and the smoke suite needs the document to know which personas
           # exist. Extracted here rather than uploaded anywhere: it names every
           # persona and the tenant.
-          python3 - "$RUNNER_TEMP/seed.log" "$RUNNER_TEMP/stand-manifest.json" <<'PY'
-          import json
-          import sys
+          #
+          # The algorithm lives in a committed script rather than in this heredoc
+          # because deploy/gitops/scripts/emulate-ci-deploy.sh needs the same one,
+          # and when this step was fixed for interleaved log lines that harness's
+          # copy was not — while its comment went on claiming the two matched. One
+          # file, two callers, no drift. Read that script's header for why a naive
+          # brace scan cannot work: the manifest is stdout and the seeder's log is
+          # stderr, and this log is the two merged and interleaved.
+          #
+          # Diagnostics arrive on stderr in plain text; the `::error::` framing is
+          # this caller's, which is why the script does not bake it in.
+          if ! python3 .github/workflows/scripts/extract-seed-manifest.py \
+                 "$RUNNER_TEMP/seed.log" "$RUNNER_TEMP/stand-manifest.json" 2> "$RUNNER_TEMP/extract.err"; then
+            echo "::error::could not recover the seed manifest from the seed log"
+            python3 "$REDACT" < "$RUNNER_TEMP/extract.err"
+            echo "The seed stage's redacted output is immediately above — the document is in it,"
+            echo "along with whatever landed inside it."
+            exit 1
+          fi
 
-          source, target = sys.argv[1], sys.argv[2]
-          lines = open(source, encoding="utf-8", errors="replace").read().splitlines()
-
-          # The document is rendered with json.dumps(indent=2), so its opening
-          # brace is alone on a line at column 0 and its closing brace is the next
-          # line at column 0. Nested braces are indented and cannot be confused
-          # for either. The LAST such block wins: a run that printed more than one
-          # is a run whose later document supersedes the earlier.
-          block, start = None, None
-          for index, line in enumerate(lines):
-              if line == "{":
-                  start = index
-              elif line == "}" and start is not None:
-                  block = "\n".join(lines[start : index + 1])
-                  start = None
-
-          if block is None:
-              print("::error::no seed manifest in the seed log — the seeder did not reach the end of its run")
-              raise SystemExit(1)
-
-          try:
-              doc = json.loads(block)
-          except json.JSONDecodeError as exc:
-              print(f"::error::the seed log's manifest block is not valid JSON: {exc}")
-              raise SystemExit(1) from exc
-
-          with open(target, "w", encoding="utf-8") as handle:
-              json.dump(doc, handle, indent=2, sort_keys=True)
-              handle.write("\n")
-
-          # A summary, not the document. Fixture NAMES are contract; persona
-          # emails, UUIDs and the tenant are not printed anywhere.
-          personas = doc.get("personas") or []
-          fixtures = sorted((doc.get("fixtures") or {}).keys())
-          print(f"manifest_version: {doc.get('manifest_version')}")
-          print(f"anchor_date:      {doc.get('anchor_date')}")
-          print(f"data_window:      {doc.get('data_window')}")
-          print(f"seed_revision:    {doc.get('seed_revision')}")
-          print(f"personas:         {len(personas)}")
-          print(f"fixtures:         {', '.join(fixtures) if fixtures else '(none)'}")
-          PY
-          echo "INSIGHT_STAND_MANIFEST=$RUNNER_TEMP/stand-manifest.json" >> "$GITHUB_ENV"
-
-      # ── Stage 3 of 3: smoke ───────────────────────────────────────────────
-      # Never reached after a failed seed: this step has no `if:`, so a failure
-      # above skips it. That is the whole mechanism — asserting against an
-      # unseeded stand would produce a failure that looks like a product bug.
       - name: 'Stage 3/3 — smoke the stand through its public URL'
         if: steps.stages.outputs.run_smoke == 'true'
         timeout-minutes: 5

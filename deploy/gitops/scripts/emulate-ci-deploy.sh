@@ -29,7 +29,8 @@
 #               deliberately no `--atomic`; then three checks the upgrade's exit
 #               status cannot answer — that the live release is the chart this
 #               run asked for, that the three envFrom-configured services were
-#               restarted, and that the two edge routes are still Accepted.
+#               restarted, and that the Gateway ACCEPTED the two edge routes the
+#               release just rendered.
 #               NOT `make deploy`: `deploy-insight` chains apply-app-secrets,
 #               which hard-requires a sealed manifest this stand has no
 #               controller for and then rewrites the chart's config Secrets from
@@ -57,8 +58,10 @@
 #
 #   deploy  ->  `make diff` (helm template plus a diff against the last render;
 #               contacts the OCI registry and the local git tree, never the
-#               cluster), then read-only checks of the two objects the upgrade
-#               depends on and does not own.
+#               cluster), then read-only checks of the two things a render can
+#               never answer: that the OIDC client secret the upgrade injects
+#               really is in the cluster, and that the Gateway has accepted the
+#               edge routes the release renders.
 #   seed    ->  `seed-stand.sh --dry-run`, which performs the SAME cluster
 #               discovery the real run performs and prints the Job it would
 #               apply. Read-only, and a genuine RBAC probe.
@@ -107,8 +110,13 @@
 #   * It does not roll back, retry, or clean up. A failed deploy is left exactly
 #     where it failed so the evidence survives; recovery is the next merge or a
 #     deliberate `make rollback ENV=test-stand`.
-#   * It does not apply the HTTPRoutes. They are owned outside this repository;
-#     applying them from here would make a second writer on one object.
+#   * It does not apply the HTTPRoutes, and there is nothing left to apply: the
+#     umbrella renders both of them from the environment's `gateway.route` and
+#     `keycloak.route`, so they arrive with the release and the release owns
+#     them. All this harness does with them is read the `Accepted` condition
+#     back — which is worth doing on its own account, because `helm --wait`
+#     waits on workloads and not on HTTPRoute status, so a route the Gateway
+#     refuses leaves the release reporting `deployed` and the stand dark.
 #   * It does not print its own failure diagnostics. Those belong to the
 #     workflow's stand-diagnostics.sh, a curated redacted allowlist, and reusing
 #     it by path is what keeps a laptop run from showing evidence the red CI run
@@ -183,8 +191,10 @@ DEPLOY_TIMEOUT="10m"
 # service holding yesterday's configuration with nothing to show for it.
 RESTART_TARGETS="deploy/insight-authenticator deploy/insight-analytics deploy/insight-identity-resolution"
 
-# The edge objects the chart does not render and this release does not own, but
-# every acceptance criterion travels through.
+# The two edge routes the chart renders from the environment's `gateway.route`
+# and `keycloak.route`. The release owns them, so a deploy is what writes them;
+# what gets checked afterwards is whether the Gateway ACCEPTED them, which helm
+# does not wait for. Every acceptance criterion travels through both.
 ROUTE_NAMES="insight-gateway insight-keycloak"
 
 KUBECONFIG_PATH=""
@@ -243,7 +253,9 @@ Selection:
       --stage <s>           deploy | seed | smoke | all             [default: all]
       --env <name>          gitops environment directory            [default: test-stand]
       --chart-version <v>   umbrella version to deploy — the value CI hands over
-                            from publish-chart.
+                            from publish-chart. ALWAYS pass it explicitly with
+                            --apply: the default lags the stand by construction
+                            and an omitted flag is a silent DOWNGRADE.
                             [default: deploy/gitops/.insight-version]
       --timeout <dur>       helm --timeout for the upgrade           [default: 10m]
 
@@ -411,10 +423,34 @@ if [ ! -f "$VALUES" ] && [ "$PRINT_ONLY" -eq 0 ]; then
   die "no values file at $VALUES — the '$GITOPS_ENV' environment is incomplete."
 fi
 
+# The default is a CONVENIENCE FOR THE READ-ONLY MODES and nothing more, and the
+# reason is structural rather than a matter of the file being out of date: CI
+# never reads .insight-version at all. It takes the version from publish-chart's
+# output, and publish-chart commits the bump as its LAST step — so a checkout of
+# any commit names the release BEFORE the one the stand is running, and the lag
+# grows by one for every merge since this branch was cut.
+#
+# Under --apply that turns an omitted flag into an unannounced ROLLBACK of a
+# published stand, and — this is the part worth stating out loud — the
+# post-upgrade verification below would call it a success: it compares the live
+# chart against the version this run REQUESTED, not against the version that was
+# on the stand a minute ago. There is no check anywhere on this path that a
+# deploy moves forward.
+#
+# So name --chart-version explicitly for anything that mutates. Making the script
+# refuse to default under --apply, or refuse a version older than the deployed
+# release, is a behaviour change and belongs in its own reviewed commit.
 if [ -z "$CHART_VERSION" ]; then
   CHART_VERSION="$(cat "$GITOPS_DIR/.insight-version" 2>/dev/null || true)"
   [ -n "$CHART_VERSION" ] \
     || die "no --chart-version, and deploy/gitops/.insight-version is empty. In CI this value is the publish-chart job's output; locally you must name it."
+  if [ "$APPLY" -eq 1 ]; then
+    printf 'WARNING: no --chart-version, so this run would install %s, read out of\n' "$CHART_VERSION" >&2
+    printf '         deploy/gitops/.insight-version. That file names the release published\n' >&2
+    printf '         BEFORE the stand was last deployed, so this may be a downgrade — and\n' >&2
+    printf '         the post-upgrade check compares against the version requested, not\n' >&2
+    printf '         against what was there, so it would report success either way.\n' >&2
+  fi
 fi
 
 # ── Where the stand answers ─────────────────────────────────────────────────
@@ -456,6 +492,7 @@ mkdir -p "$ARTIFACT_DIR"
 ARTIFACT_REL="${ARTIFACT_DIR#"$REPO_ROOT"/}"
 RUN_STAMP="$(date -u +%Y%m%d-%H%M%S)"
 SEED_LOG="$ARTIFACT_DIR/seed-$RUN_STAMP.log"
+MANIFEST_EXTRACTOR="$REPO_ROOT/.github/workflows/scripts/extract-seed-manifest.py"
 SEED_LOG_REL="${SEED_LOG#"$REPO_ROOT"/}"
 [ -n "$MANIFEST_PATH" ] || MANIFEST_PATH="$ARTIFACT_DIR/seed-manifest.json"
 MANIFEST_REL="${MANIFEST_PATH#"$REPO_ROOT"/}"
@@ -556,7 +593,7 @@ print_plan() {
   note "then, because envFrom configuration is read once at container start:"
   show_cmd "KUBECONFIG=<file> " "${deploy_restart_cmd[@]}"
   show_cmd "KUBECONFIG=<file> " "${deploy_rollout_cmd[@]}"
-  note "then, because the chart renders no route at all:"
+  note "then, because helm --wait does not wait on HTTPRoute status:"
   show_cmd "KUBECONFIG=<file> " "${route_table_cmd[@]}"
   note "dry-run substitute for the upgrade (offline render and diff):"
   show_cmd "" "${deploy_cmd_dry[@]}"
@@ -859,11 +896,17 @@ check_oidc_secret() {
   return 1
 }
 
-# The chart renders NO HTTPRoute, so a successful upgrade says nothing about
-# whether the stand is reachable. Read, never applied: the files under
-# environments/<env>/manifests/ are the source of truth and a human owns them.
+# The chart renders both routes, from the environment's `gateway.route` and
+# `keycloak.route`, so the release owns them and a deploy is what writes them.
+# This is therefore a POST-CONDITION on the upgrade rather than a check on an
+# object somebody else applied — and it is still needed, because `helm --wait`
+# waits on workloads and not on HTTPRoute status. A route helm stored
+# successfully can be refused by the Gateway it names (a parentRef pointing at a
+# Gateway that is not there, a sectionName naming a listener that does not
+# exist), which leaves the release `deployed`, every pod Ready, and nobody able
+# to reach the stand. Nothing is applied from here; there is nothing to apply.
 check_routes() {
-  head2 "the edge routes (verified, never applied)"
+  head2 "the edge routes (read back, never applied from here)"
   show_cmd "KUBECONFIG=$KUBECONFIG_PATH " "${route_table_cmd[@]}"
   if ! kc "${route_table_cmd[@]:1}" 2>&1; then
     note "could not read the routes at all."
@@ -874,9 +917,12 @@ check_routes() {
   if [ -n "$not_accepted" ]; then
     note "an edge route is not Accepted:"
     printf '%s\n' "$not_accepted"
-    note "The release may be perfectly healthy; the stand is still unreachable,"
-    note "and the smoke would fail at its first request with a much less useful"
-    note "message. Fix the route, not the release."
+    note "The release is 'deployed' and its pods are Ready; the stand is still"
+    note "unreachable, and the smoke would fail at its first request with a much"
+    note "less useful message. The route came out of the deploy, so start in the"
+    note "values file that produced it — $VALUES_REL, keys gateway.route and"
+    note "keycloak.route — and check the parentRef they name against the Gateway"
+    note "the cluster actually has."
     return 1
   fi
   return 0
@@ -1049,31 +1095,35 @@ stage_seed() {
   note "issue, a PR, or a CI artifact."
 }
 
-# The manifest is a pretty-printed JSON object with sorted keys, so its opening
-# brace is alone on a line at column 0 and its closing brace is the next line at
-# column 0; nested braces are indented and cannot be confused for either. The
-# LAST such block wins, matching the workflow's extractor: a run that printed
-# more than one is a run whose later document supersedes the earlier. The result
-# is parsed before it is trusted, so a stream that interleaved badly fails here
-# with a message rather than three stages later as an opaque pytest error.
+# Manifest recovery is DELEGATED, not reimplemented.
+#
+# This used to be a local awk scan for the last `^{$` through the next `^}$`,
+# with a comment claiming it matched the workflow's extractor. When the
+# workflow's was fixed for interleaved log lines, this one was not — and the
+# comment went on asserting a parity that no longer held, which is worse than
+# not checking at all. The whole point of this harness is that the laptop path
+# and the CI path run the same commands; a divergence hidden inside it is the
+# one bug it cannot report.
+#
+# So both callers now invoke .github/workflows/scripts/extract-seed-manifest.py.
+# The parity is structural rather than asserted: there is one algorithm, and
+# neither side can drift without deleting that file. Read its header for why the
+# naive brace scan is wrong (the manifest is stdout, the seeder's log is stderr,
+# and the two arrive merged and interleaved).
 extract_manifest() {
-  local start end
-  start="$(grep -n '^{$' "$SEED_LOG" | tail -n1 | cut -d: -f1 || true)"
-  if [ -z "$start" ]; then
-    note "no seed manifest in the seed log — the seeder did not reach the end of"
-    note "its run. Read $SEED_LOG_REL."
+  local out rc
+  if [ ! -x "$MANIFEST_EXTRACTOR" ] && [ ! -f "$MANIFEST_EXTRACTOR" ]; then
+    note "the shared manifest extractor is missing: ${MANIFEST_EXTRACTOR#"$REPO_ROOT"/}"
+    note "This harness does not carry its own copy on purpose — see the comment above."
     return 1
   fi
-  end="$(awk -v s="$start" 'NR>=s && /^}$/ {print NR; exit}' "$SEED_LOG")"
-  if [ -z "$end" ]; then
-    note "the manifest block in the seed log is not closed — the stream was truncated."
-    return 1
-  fi
-  awk -v s="$start" -v e="$end" 'NR>=s && NR<=e' "$SEED_LOG" > "$MANIFEST_PATH"
-  if ! jq -e 'has("manifest_version")' "$MANIFEST_PATH" >/dev/null 2>&1; then
-    note "the extracted block is not a seed manifest (invalid JSON, or no"
-    note "manifest_version key) — the seed log interleaved. Recover it by hand"
-    note "from $SEED_LOG_REL and pass --manifest."
+  # Diagnostics on stderr, summary on stdout, exit status is the verdict. The
+  # script is deliberately annotation-agnostic so CI can wrap a failure in a
+  # `::error::` and this can print it plainly.
+  out="$(python3 "$MANIFEST_EXTRACTOR" "$SEED_LOG" "$MANIFEST_PATH" 2>&1)" && rc=0 || rc=$?
+  printf '%s\n' "$out" | while IFS= read -r line; do note "$line"; done
+  if [ "$rc" -ne 0 ]; then
+    note "Recover it by hand from $SEED_LOG_REL and pass --manifest."
     return 1
   fi
   return 0

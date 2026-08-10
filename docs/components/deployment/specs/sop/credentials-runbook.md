@@ -2,7 +2,7 @@
 
 **Audience**: platform engineers with an admin kubeconfig for the test-stand cluster, and repo admins on `constructorfabric/insight`.
 **Covers**: provisioning, verifying, storing, rotating, revoking and cleaning up the credential CI uses to deploy the Insight umbrella chart onto the test stand (issue #2244, decision D5).
-**Last verified**: 2026-08-09.
+**Last verified**: 2026-08-10.
 
 > Every value in this document is a placeholder. Substitute your own and never
 > paste a real one back in — this repository is public, and so are its issues,
@@ -17,8 +17,8 @@
 | Admin kubeconfig for the stand | An operator's laptop / password manager | Humans only. **Never** goes into GitHub. |
 | `ServiceAccount insight/ci-deployer` + its RBAC | The cluster | Anyone with cluster read access |
 | The CI kubeconfig (server + CA + SA token), base64-encoded | GitHub environment `insight-test-stand`, secret `TEST_STAND_KUBECONFIG` | Jobs that declare that environment, on `main` only |
-| Persona email / password, OIDC client secret | Same GitHub environment | Same |
-| Public stand URL | Same environment, as **variable** `TEST_STAND_BASE_URL` (not a secret) | Same, and it is public anyway |
+| Persona email / password (and, in `override` mode only, the bootstrap principal's credentials) | Same GitHub environment | Same |
+| Public stand URL, and the smoke login mode | Same environment, as **variables** `TEST_STAND_BASE_URL` and `TEST_STAND_SMOKE_LOGIN_MODE` (not secrets) | Same, and both are public anyway |
 
 The split is the whole point of D5: **admin kubeconfigs stay human-only.** CI gets
 a credential that is namespace-scoped and destroyable, and nothing else.
@@ -70,13 +70,20 @@ cd deploy/gitops
   --expect-cluster '<cluster-name>'
 ```
 
-Read the printed manifests. You are looking for four things:
+Read the printed manifests. You are looking for five things:
 
 - the binding is a `RoleBinding`, not a `ClusterRoleBinding`;
 - its `roleRef` is `ClusterRole/admin` — a cluster role bound namespace-wide, which
   is not the same as a cluster-wide grant;
 - the supplemental `Role` lists only `gateway.networking.k8s.io`, `argoproj.io`,
   `onepassword.com` and `cert-manager.io`;
+- there is a **second, much smaller** `Role` + `RoleBinding` in the `airbyte`
+  namespace. The umbrella renders its `insight-airbyte-auth-reader` Role and
+  RoleBinding *there* rather than in `insight` (that is what `airbyte.namespace`
+  in the values file decides), so a credential scoped only to `insight` fails
+  every upgrade. That supplement grants exactly `create`/`update` on Roles and
+  RoleBindings in `airbyte`, plus `get` on the single Secret `airbyte-auth-secrets`
+  by name — it deliberately cannot read anything else in that namespace;
 - the token `Secret` carries no `data:` block (the token controller fills it).
 
 If the cluster name does not match, the script prints a refusal banner and exits
@@ -145,19 +152,22 @@ re-provisioning:
 | `update deployments.apps -n insight` | `helm upgrade`, and the post-upgrade rollout restart |
 | `create roles.rbac.authorization.k8s.io -n insight` | the chart renders its own reconcile RBAC |
 | `create workflowtemplates.argoproj.io -n insight` | the chart renders WorkflowTemplates and CronWorkflows |
-| `update httproutes.gateway.networking.k8s.io -n insight` | the edge routes are applied alongside the release |
+| `update httproutes.gateway.networking.k8s.io -n insight` | the umbrella renders both edge routes from `gateway.route` / `keycloak.route`, so `helm upgrade` writes them on every run |
+| `create roles.rbac.authorization.k8s.io -n airbyte` | the chart renders `insight-airbyte-auth-reader` into the Airbyte namespace, not the release one |
+| `create rolebindings.rbac.authorization.k8s.io -n airbyte` | same object, the binding half |
 
 **Must be `no`** — this is the containment claim:
 
 | Check | |
 |---|---|
 | `'*' '*' --all-namespaces` | the blanket check |
+| `get pods -n airbyte` | the cross-namespace grant is RBAC-only; it reads one Secret by name and nothing else |
 | `list namespaces --all-namespaces` | cannot enumerate the cluster |
 | `create namespaces --all-namespaces` | see §7 |
 | `get secrets --all-namespaces` | the datastore namespaces' credentials stay out of reach |
 | `list nodes --all-namespaces` | no cluster-scoped reads |
 | `create clusterrolebindings… --all-namespaces` | cannot widen its own grant |
-| `get pods -n kube-system` | no other namespace, control plane included |
+| `get pods -n kube-system` | no unrelated namespace, control plane included |
 
 ### 3.2 One RBAC subtlety worth knowing
 
@@ -275,8 +285,10 @@ repository one, which is the only reason it is not the starting point.
 |---|---|---|
 | `TEST_STAND_KUBECONFIG` | **base64 of** the file from §2.2 | the only credential CI needs for the cluster |
 | `TEST_STAND_SEED_EMAIL` | the address `seed-stand.sh --email` is given, e.g. `email_development_lead@company.nonpresent` | kept as a secret rather than a variable purely so it is masked in run logs |
-| `TEST_STAND_PERSONA_PASSWORD` | the password the smoke stage logs in with | reaches pytest as `INSIGHT_STAND_PERSONA_PASSWORD` |
-| `TEST_STAND_OIDC_CLIENT_SECRET` | the confidential OIDC client secret | **only if** the deploy has to inject it; see §4.3 |
+| `TEST_STAND_PERSONA_PASSWORD` | the password every seeded persona signs in with — on a seeded-realm stand this is the realm generator's `DEV_PASSWORD` constant (`insight_seed.keycloak_realm`), which every generated user shares | required in `password` mode. The workflow exports it to pytest as **`SMOKE_PERSONA_PASSWORD`** — not `INSIGHT_STAND_PERSONA_PASSWORD`, which belongs to a different helper the smoke suite deliberately does not use |
+| `TEST_STAND_BOOTSTRAP_EMAIL` | the one principal that really authenticates in `override` mode | **`override` mode only.** Not needed on a stand whose realm serves a password form — leave both unset there rather than provisioning credentials nothing reads |
+| `TEST_STAND_BOOTSTRAP_PASSWORD` | that principal's IdP password | as above |
+| `TEST_STAND_OIDC_CLIENT_SECRET` | the confidential OIDC client secret | **normally unnecessary** — the deploy workflow reads the value out of the cluster instead. See §4.3 |
 
 The kubeconfig goes in **base64-encoded**, single-line. The workflow decodes it
 with `base64 -d` before writing it to the runner's temp directory. A raw
@@ -302,29 +314,58 @@ Never `echo '<value>' | gh secret set …` and never `--body '<value>'`: both pu
 the cleartext into shell history and into `ps` output for the duration of the
 call.
 
-The public stand URL is not a secret and should not be one — a masked value in a
-log is harder to debug and buys nothing. The workflow reads it as a **variable**:
+Two values are **variables**, not secrets. Neither is sensitive, and a masked
+value in a log is harder to debug and buys nothing:
 
 ```bash
+# The stand's public HTTPS origin — scheme and host, no trailing slash. The
+# workflow refuses to start without it: nothing else aims the smoke suite.
 gh variable set TEST_STAND_BASE_URL --env "$ENVIRONMENT" --repo "$REPO" \
   --body 'https://<public-stand-url>'
+
+# How the smoke stage logs in. Set it EXPLICITLY, even though unset falls
+# through to the suite's own default of `password`: a value left over from an
+# earlier configuration keeps the gate in impersonation mode silently, and an
+# environment whose variable list states the mode is one a reader can check.
+gh variable set TEST_STAND_SMOKE_LOGIN_MODE --env "$ENVIRONMENT" --repo "$REPO" \
+  --body 'password'
 
 gh variable list --env "$ENVIRONMENT" --repo "$REPO"
 ```
 
+`password` means every persona authenticates as themselves, which is what a
+stand whose realm carries a local user per persona can serve, and it is the mode
+to use on the test stand. `override` means one principal authenticates and every
+persona session is minted from it through the product's own view-as path; it is
+the fallback for a stand whose realm federates login to an external provider and
+therefore serves no password form at all. The mode decides which secrets above
+are required — `password` needs `TEST_STAND_PERSONA_PASSWORD`, `override` needs
+the two `TEST_STAND_BOOTSTRAP_*` values — and the workflow checks that before it
+touches the cluster rather than twenty minutes later.
+
 ### 4.3 When `TEST_STAND_OIDC_CLIENT_SECRET` is needed
 
-Only when the deploy path is the one that materialises the authenticator's
-config Secret. The gitops path reads the client secret from the in-cluster
-Secret `insight-oidc` under the key `oidc-client-secret`. A stand whose Secret
-uses a different key name has the secret present but invisible to that lookup,
-and the composed config silently lands with an **empty** client secret — the
-confidential-client token exchange then fails and login breaks.
+**On the test stand, it is not.** The deploy workflow reads the value out of the
+cluster at deploy time — `kubectl -n insight get secret insight-oidc -o
+jsonpath='{.data.client-secret}'` — and refuses to run the upgrade if that key
+is empty, so there is exactly one copy of the value and it is the one the realm
+was configured with. A second copy in GitHub would be a second thing to rotate
+and a second way for the two to disagree.
 
-Preferred fix: add the expected key to the existing in-cluster Secret, once, by
-hand, with a human credential. Then this GitHub secret is unnecessary and should
-not exist. Add it only if you consciously choose to inject the value from CI
-instead, and record that choice in the workflow header.
+It matters only for a deploy path that *composes* the authenticator's config
+Secret itself. The gitops Makefile's `compose-app-secrets.sh` is such a path,
+and it reads a different key name — `oidc-client-secret` — from the same Secret;
+a stand whose Secret spells the key `client-secret` therefore has the value
+present but invisible to that lookup, and the composed config lands with an
+**empty** client secret. Pods stay Ready, the release reports `deployed`, and
+the confidential-client token exchange fails for every login. That is one of the
+reasons this environment does not use `make deploy` at all.
+
+So: leave this GitHub secret unset unless you consciously choose to inject the
+value from CI, and record that choice in the workflow header if you do. If you
+are chasing the empty-client-secret symptom on some other path, the fix is to
+add the key that path expects to the existing in-cluster Secret, once, by hand,
+with a human credential — not to introduce a second copy in GitHub.
 
 ### 4.4 Why the secrets may look missing to a job
 
@@ -378,10 +419,17 @@ gh workflow run build-images.yml --repo "$REPO" --ref main
 
 Then do §8 (cleanup).
 
-Rotating the persona password or the seed email is just `gh secret set` again —
-no cluster action — but a persona password also has to change wherever the
-identity provider holds it, and the two must be changed in the same sitting or
-the smoke stage fails on the next merge.
+Rotating the seed email is just `gh secret set` again — no cluster action. The
+persona password is not, and it is worth being precise about why. On a stand
+whose realm is generated from the seed roster, the IdP's copy of that password
+is a constant in the realm generator (`insight_seed.keycloak_realm`), shared by
+every user it emits: changing the GitHub secret alone changes nothing on the
+stand and breaks the gate on the next merge. Moving that value means changing
+the generator, regenerating and re-applying the realm, and setting the secret —
+in that order, in one sitting. Until the generator learns to take a password
+instead of embedding one, treat this secret as *masking* a published constant in
+a public log rather than as a rotatable credential, and see the stand
+environment's README ("Known gaps") for the follow-up that fixes it properly.
 
 ---
 
@@ -474,10 +522,16 @@ The generated kubeconfig's context name and the environment inventory's
 pass `KUBE_CTX=<generated name>` on the make invocation.
 
 **A Gateway or an object in another namespace is unreadable**
-Expected. The gateway controller's own namespace is out of scope for this
-credential. A preflight that inspects the `Gateway` object needs either a human
-credential or a separate, equally narrow read-only grant in that namespace —
-file it as a follow-up rather than widening this one.
+Expected, and it does not block the deploy. The gateway controller's own
+namespace is out of scope for this credential, and the only exception anywhere
+is the narrow RBAC-plus-one-Secret grant in `airbyte` described in §2.1. The
+release's two `HTTPRoute`s attach to a `Gateway` in that controller namespace by
+reference, and the `Accepted` / `ResolvedRefs` conditions the deploy checks are
+written back onto the routes **in `insight`** — so the post-upgrade route check
+works without ever reading the `Gateway`. A preflight that wants to inspect the
+`Gateway` object itself needs either a human credential or a separate, equally
+narrow read-only grant in that namespace; file it as a follow-up rather than
+widening this one.
 
 **The workflow reports empty secrets**
 See §4.4.
@@ -530,7 +584,12 @@ gitleaks detect --source <path-to-repo> --config <path-to-repo>/deploy/gitops/.g
 - `gh api "repos/$REPO/environments/$ENVIRONMENT/deployment-branch-policies"`
   lists exactly `main`.
 - `gh secret list --env "$ENVIRONMENT"` shows the kubeconfig, the seed email and
-  the persona password (and the OIDC client secret only if §4.3 applies).
+  the persona password — and nothing else, unless you consciously chose the
+  `override` login mode (the two `TEST_STAND_BOOTSTRAP_*` values) or the
+  injected client secret of §4.3.
+- `gh variable list --env "$ENVIRONMENT"` shows `TEST_STAND_BASE_URL` and
+  `TEST_STAND_SMOKE_LOGIN_MODE`, the latter reading `password` on a stand whose
+  realm serves a password form.
 - One full deploy run on `main` is green.
 - No kubeconfig, token or password exists anywhere in the repository work tree,
   and every local kubeconfig is mode 0600.
