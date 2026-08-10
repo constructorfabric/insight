@@ -25,6 +25,8 @@ pub enum ApiError {
     Store(#[from] StoreError),
     #[error("git failed: {0}")]
     Git(#[from] GitError),
+    #[error("the proxy token was missing or wrong")]
+    ProxyTokenRejected,
     #[error("failed to serialize the response: {0}")]
     Serialization(String),
 }
@@ -83,9 +85,9 @@ impl ApiError {
         }
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST.as_u16(),
-            Self::Store(StoreError::AuthRejected) | Self::Git(GitError::AuthRejected) => {
-                StatusCode::UNAUTHORIZED.as_u16()
-            }
+            Self::ProxyTokenRejected
+            | Self::Store(StoreError::AuthRejected)
+            | Self::Git(GitError::AuthRejected) => StatusCode::UNAUTHORIZED.as_u16(),
             Self::Store(StoreError::NotFound) | Self::Git(GitError::NotFound) => {
                 StatusCode::NOT_FOUND.as_u16()
             }
@@ -129,6 +131,12 @@ impl ApiError {
                     .with_reason("ORIGIN_CREDENTIALS_REJECTED")
                     .create()
             }
+            // Distinct reason: the caller's own token, not the git credentials
+            // it forwarded. Confusing the two sends an operator to the wrong
+            // secret.
+            Self::ProxyTokenRejected => CanonicalError::unauthenticated()
+                .with_reason("PROXY_TOKEN_REJECTED")
+                .create(),
             Self::Store(StoreError::NotFound) | Self::Git(GitError::NotFound) => {
                 RepositoryError::not_found("repository not found at origin")
                     // The caller's own `repo` value is not echoed back: the
@@ -191,6 +199,7 @@ fn bad_request_field(error: &BadRequest) -> String {
         BadRequest::MalformedToken => "page_token".to_owned(),
         BadRequest::MalformedSha(_) => "sha".to_owned(),
         BadRequest::BadRepoUrl(_) => "repo".to_owned(),
+        BadRequest::MalformedQuery => "query".to_owned(),
     }
 }
 

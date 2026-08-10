@@ -454,10 +454,17 @@ disk figures are gauges (§4.3), not a health payload.
 ### 4.3 Prometheus metrics
 
 `git_proxy_disk_used_bytes`, `git_proxy_disk_budget_bytes`,
-`git_proxy_repos_total`, `git_proxy_evictions_total{tier=blob|full}`,
+`git_proxy_repos`, `git_proxy_evictions_total{tier=blob|full}`,
 `git_proxy_admission_rejects_total`, `git_proxy_cold_clones_total`,
-`git_proxy_fetches_total{result=noop|updated|error}`, request
-latency/size histograms per endpoint.
+`git_proxy_fetches_total{result=noop|updated|error}`,
+`git_proxy_request_duration_seconds{endpoint,status}`,
+`git_proxy_response_size_bytes{endpoint}`.
+
+`git_proxy_repos` carries no `_total` suffix: it is a gauge, and the exporter
+appends that suffix only to counters. `endpoint` is the matched route
+template, never a request path, so the label set stays bounded by the route
+table. Requests refused by the bearer check are recorded too — a token
+rotation gone wrong shows up as `status="401"`, not as silence.
 
 ### 4.4 Error semantics
 

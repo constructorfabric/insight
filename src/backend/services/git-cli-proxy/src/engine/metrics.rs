@@ -120,9 +120,12 @@ pub fn record_fetch(result: FetchResult) {
         .add(1, &[KeyValue::new("result", result.as_str())]);
 }
 
-pub fn record_request(endpoint: &'static str, status: u16, seconds: f64, bytes: usize) {
+pub fn record_request(endpoint: &str, status: u16, seconds: f64, bytes: usize) {
+    // INVARIANT: `endpoint` is a ROUTE template, never a request path, so the
+    // label set stays bounded by the route table.
+    let endpoint = endpoint.to_owned();
     let attributes = [
-        KeyValue::new("endpoint", endpoint),
+        KeyValue::new("endpoint", endpoint.clone()),
         KeyValue::new("status", i64::from(status)),
     ];
     instruments().request_duration.record(seconds, &attributes);

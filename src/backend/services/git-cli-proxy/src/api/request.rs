@@ -1,11 +1,16 @@
 use std::time::Duration;
 
+use axum::extract::{FromRequestParts, Query};
 use axum::http::HeaderMap;
+use axum::http::request::Parts;
+use serde::de::DeserializeOwned;
 
 use crate::engine::key::CacheKey;
 use crate::engine::page::PageToken;
 use crate::engine::runner::GitCredentials;
 use crate::engine::url::{CloneUrl, CloneUrlError, CloneUrlPolicy};
+
+use super::error::ApiError;
 
 pub const TENANT_HEADER: &str = "x-tenant-id";
 pub const SOURCE_HEADER: &str = "x-source-id";
@@ -85,6 +90,45 @@ pub enum BadRequest {
     MalformedSha(String),
     #[error(transparent)]
     BadRepoUrl(#[from] CloneUrlError),
+    #[error("query parameters could not be parsed")]
+    MalformedQuery,
+}
+
+/// `Query<T>`, but a rejection leaves through [`ApiError`] like every other
+/// failure this API has.
+///
+/// Axum's own rejection is `text/plain` and escapes the RFC 9457 envelope the
+/// contract promises — and it happens BEFORE the handler runs, so nothing
+/// downstream can repair it.
+pub struct ValidatedQuery<T>(pub T);
+
+impl<T, S> FromRequestParts<S> for ValidatedQuery<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // The rejection's own message is not forwarded: it quotes the caller's
+        // query string back at them, and this envelope is not the place for it.
+        Query::<T>::from_request_parts(parts, state)
+            .await
+            .map(|Query(value)| Self(value))
+            .map_err(|_| BadRequest::MalformedQuery.into())
+    }
+}
+
+/// A query parameter the route cannot proceed without.
+///
+/// # Errors
+///
+/// [`BadRequest::MissingParam`] naming `name` when it is absent or blank.
+pub fn required_param<'a>(value: Option<&'a str>, name: &'static str) -> Result<&'a str, BadRequest> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or(BadRequest::MissingParam(name))
 }
 
 /// Everything a data request carries besides its own filters: who is asking,

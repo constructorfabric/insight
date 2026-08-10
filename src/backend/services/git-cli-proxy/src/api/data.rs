@@ -2,17 +2,15 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::Extension;
-use axum::extract::Query;
 use axum::http::{HeaderMap, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::engine::key::CacheKey;
-use crate::engine::metrics;
 use crate::engine::page::PageToken;
 use crate::engine::read::{self, Page, blobs, branches, commits, numstat, patches};
 use crate::engine::runner::GitError;
@@ -21,14 +19,15 @@ use crate::engine::store::{Freshness, RepoGuard, StoreError};
 use super::AppState;
 use super::error::ApiError;
 use super::request::{
-    BadRequest, Paging, RequestContext, ShaFilter, clamp_patch_bytes, parse_sha_filter,
+    BadRequest, Paging, RequestContext, ShaFilter, ValidatedQuery, clamp_patch_bytes,
+    parse_sha_filter, required_param,
 };
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Debug, Deserialize)]
 pub struct CommitsQuery {
-    repo: String,
+    repo: Option<String>,
     since: Option<String>,
     sha: Option<String>,
     page_size: Option<u32>,
@@ -37,7 +36,7 @@ pub struct CommitsQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct FileChangesQuery {
-    repo: String,
+    repo: Option<String>,
     since: Option<String>,
     sha: Option<String>,
     page_size: Option<u32>,
@@ -48,7 +47,7 @@ pub struct FileChangesQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct BranchesQuery {
-    repo: String,
+    repo: Option<String>,
     page_size: Option<u32>,
     page_token: Option<String>,
 }
@@ -127,17 +126,10 @@ pub struct FileChangeRow {
 pub async fn list_commits(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
-    Query(query): Query<CommitsQuery>,
+    ValidatedQuery(query): ValidatedQuery<CommitsQuery>,
 ) -> Result<Response, ApiError> {
-    observed("/v1/commits", list_commits_inner(state, headers, query)).await
-}
-
-async fn list_commits_inner(
-    state: Arc<AppState>,
-    headers: HeaderMap,
-    query: CommitsQuery,
-) -> Result<Response, ApiError> {
-    let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
+    let repo = required_param(query.repo.as_deref(), "repo")?;
+    let context = RequestContext::from_parts(&headers, repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let selected = parse_sha_filter(query.sha.as_deref())?;
 
@@ -215,21 +207,10 @@ async fn list_commits_inner(
 pub async fn list_file_changes(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
-    Query(query): Query<FileChangesQuery>,
+    ValidatedQuery(query): ValidatedQuery<FileChangesQuery>,
 ) -> Result<Response, ApiError> {
-    observed(
-        "/v1/file-changes",
-        list_file_changes_inner(state, headers, query),
-    )
-    .await
-}
-
-async fn list_file_changes_inner(
-    state: Arc<AppState>,
-    headers: HeaderMap,
-    query: FileChangesQuery,
-) -> Result<Response, ApiError> {
-    let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
+    let repo = required_param(query.repo.as_deref(), "repo")?;
+    let context = RequestContext::from_parts(&headers, repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let selected = parse_sha_filter(query.sha.as_deref())?;
     let include_patch = query.include_patch.unwrap_or(true);
@@ -375,17 +356,10 @@ fn emit_file_changes(
 pub async fn list_branches(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
-    Query(query): Query<BranchesQuery>,
+    ValidatedQuery(query): ValidatedQuery<BranchesQuery>,
 ) -> Result<Response, ApiError> {
-    observed("/v1/branches", list_branches_inner(state, headers, query)).await
-}
-
-async fn list_branches_inner(
-    state: Arc<AppState>,
-    headers: HeaderMap,
-    query: BranchesQuery,
-) -> Result<Response, ApiError> {
-    let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
+    let repo = required_param(query.repo.as_deref(), "repo")?;
+    let context = RequestContext::from_parts(&headers, repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
 
     let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
@@ -525,35 +499,17 @@ where
         .map_err(|e| ApiError::Serialization(e.to_string()))?
         .map_err(|e| ApiError::Serialization(e.to_string()))?;
 
-    Ok(([(header::CONTENT_TYPE, "application/json")], body).into_response())
-}
-
-/// Time a handler and record §4.3's per-endpoint histograms.
-///
-/// Wrapping the whole handler — not just the happy path — is the point: a
-/// request that 429s or 409s is exactly the one an operator wants timed.
-async fn observed<F>(endpoint: &'static str, handler: F) -> Result<Response, ApiError>
-where
-    F: Future<Output = Result<Response, ApiError>>,
-{
-    let started = Instant::now();
-    let outcome = handler.await;
-
-    let (status, bytes) = match &outcome {
-        Ok(response) => (
-            response.status().as_u16(),
-            response
-                .headers()
-                .get(header::CONTENT_LENGTH)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(0),
-        ),
-        Err(e) => (e.status_code(), 0),
-    };
-    metrics::record_request(endpoint, status, started.elapsed().as_secs_f64(), bytes);
-
-    outcome
+    // Set explicitly, not left to the wire layer: the metrics middleware reads
+    // it off the response, long before hyper would compute one.
+    let length = body.len();
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/json".to_owned()),
+            (header::CONTENT_LENGTH, length.to_string()),
+        ],
+        body,
+    )
+        .into_response())
 }
 
 fn retain_selected<T, K>(rows: Vec<T>, selected: Option<&ShaFilter>, key: K) -> Vec<T>
@@ -590,6 +546,36 @@ mod tests {
     use super::*;
     use crate::engine::read::numstat::{FileStat, FileStatus};
     use crate::engine::read::patches::Patch;
+
+    #[tokio::test]
+    async fn a_page_declares_its_own_length() {
+        // The response-size histogram reads this header. Left to the wire
+        // layer it is absent here, and every page is recorded as zero bytes.
+        let page = BranchesPage {
+            items: vec![branches::BranchRow {
+                name: "main".to_owned(),
+                head_sha: "0".repeat(40),
+                head_committed_date: "2026-08-01T10:00:00+00:00".to_owned(),
+                is_default: true,
+            }],
+            next_page_token: None,
+        };
+        let Ok(response) = json_page(page).await else {
+            panic!("a page must serialize")
+        };
+
+        let declared: usize = match response.headers().get(header::CONTENT_LENGTH) {
+            Some(value) => match value.to_str().ok().and_then(|v| v.parse().ok()) {
+                Some(parsed) => parsed,
+                None => panic!("content-length must be a number: {value:?}"),
+            },
+            None => panic!("a page must declare its length"),
+        };
+        let Ok(body) = axum::body::to_bytes(response.into_body(), usize::MAX).await else {
+            panic!("body must be readable")
+        };
+        assert_eq!(declared, body.len(), "the declared length must be the body");
+    }
 
     fn header(sha: &str, date: &str) -> commits::CommitKey {
         commits::CommitKey {

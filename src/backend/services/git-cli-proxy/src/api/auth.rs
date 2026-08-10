@@ -7,9 +7,11 @@
 //! provisioned by Helm); callers send `Authorization: Bearer <token>`.
 
 use axum::extract::Request;
-use axum::http::{StatusCode, header};
+use axum::http::header;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+
+use super::error::ApiError;
 
 /// Shared middleware state: the expected token.
 #[derive(Clone)]
@@ -46,8 +48,9 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Axum middleware: require `Authorization: Bearer <proxy_token>` on every
-/// request it wraps. Rejections are uniform `401` with no detail (the caller
-/// is another service; nothing to explain beyond "wrong credentials").
+/// request it wraps. Rejections are a uniform `401` in the same RFC 9457
+/// envelope as every other failure — the reason says which credential was
+/// refused, and nothing more.
 pub async fn require_bearer(
     axum::extract::State(auth): axum::extract::State<ProxyAuth>,
     request: Request,
@@ -60,7 +63,7 @@ pub async fn require_bearer(
         .and_then(|v| v.strip_prefix("Bearer "));
     match presented {
         Some(token) if auth.matches(token) => next.run(request).await,
-        _ => StatusCode::UNAUTHORIZED.into_response(),
+        _ => ApiError::ProxyTokenRejected.into_response(),
     }
 }
 

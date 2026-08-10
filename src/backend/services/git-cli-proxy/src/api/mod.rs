@@ -4,12 +4,17 @@ pub mod error;
 pub mod request;
 
 use std::sync::Arc;
+use std::time::Instant;
 
-use axum::http::StatusCode;
+use axum::extract::{MatchedPath, Request};
+use axum::http::{StatusCode, header};
+use axum::middleware::Next;
+use axum::response::Response;
 use axum::{Extension, Router};
 use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationBuilder};
 
 use crate::config::GearConfig;
+use crate::engine::metrics;
 use crate::engine::store::RepoStore;
 use crate::engine::url::CloneUrlPolicy;
 
@@ -43,9 +48,44 @@ pub fn register_routes(
             bearer,
             auth::require_bearer,
         ))
-        .layer(Extension(state));
+        .layer(Extension(state))
+        // Outside the bearer layer, so a rejected request is timed too — an
+        // operator watching a token rotation needs exactly those.
+        .layer(axum::middleware::from_fn(observe));
 
     host_router.merge(v1)
+}
+
+/// Record §4.3's per-endpoint histograms for every request that reached a
+/// route.
+///
+/// The label is the matched ROUTE, not the request path: a path would make the
+/// label set unbounded. A request that matched nothing has no endpoint to
+/// attribute and is not recorded.
+async fn observe(request: Request, next: Next) -> Response {
+    let endpoint = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|matched| matched.as_str().to_owned());
+
+    let started = Instant::now();
+    let response = next.run(request).await;
+
+    if let Some(endpoint) = endpoint {
+        let bytes = response
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        metrics::record_request(
+            &endpoint,
+            response.status().as_u16(),
+            started.elapsed().as_secs_f64(),
+            bytes,
+        );
+    }
+    response
 }
 
 /// Title/version/description of the emitted document.
@@ -271,7 +311,7 @@ mod tests {
         })
     }
 
-    async fn status_of(uri: &str, bearer: Option<&str>, identity: bool) -> StatusCode {
+    async fn response_for(uri: &str, bearer: Option<&str>, identity: bool) -> axum::response::Response {
         let mut builder = Request::builder().uri(uri);
         if let Some(token) = bearer {
             builder = builder.header("authorization", format!("Bearer {token}"));
@@ -288,9 +328,13 @@ mod tests {
             .oneshot(request)
             .await
         {
-            Ok(response) => response.status(),
+            Ok(response) => response,
             Err(never) => match never {},
         }
+    }
+
+    async fn status_of(uri: &str, bearer: Option<&str>, identity: bool) -> StatusCode {
+        response_for(uri, bearer, identity).await.status()
     }
 
     #[test]
@@ -375,6 +419,60 @@ mod tests {
             status_of("/v1/commits?repo=x&page_token=!!!", Some("t0ken"), true).await,
             StatusCode::BAD_REQUEST
         );
+    }
+
+    #[tokio::test]
+    async fn every_rejection_carries_the_problem_envelope() {
+        // §4.4 promises one envelope for every failure. Two paths used to
+        // escape it: the bearer layer answered with an empty body, and axum
+        // rejected a bad query string as text/plain before any handler ran.
+        let cases: Vec<(&str, &str, Option<&str>, bool)> = vec![
+            ("no bearer", "/v1/commits?repo=x", None, true),
+            ("wrong bearer", "/v1/commits?repo=x", Some("wrong"), true),
+            ("missing repo", "/v1/commits", Some("t0ken"), true),
+            (
+                "non-numeric page_size",
+                "/v1/commits?repo=x&page_size=abc",
+                Some("t0ken"),
+                true,
+            ),
+            (
+                "non-boolean include_patch",
+                "/v1/file-changes?repo=x&include_patch=yes",
+                Some("t0ken"),
+                true,
+            ),
+            (
+                "missing identity headers",
+                "/v1/branches?repo=x",
+                Some("t0ken"),
+                false,
+            ),
+        ];
+
+        for (name, uri, bearer, identity) in cases {
+            let response = response_for(uri, bearer, identity).await;
+            assert!(
+                response.status().is_client_error(),
+                "case {name}: expected a client error, got {}",
+                response.status()
+            );
+            let content_type = response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned();
+            assert!(
+                content_type.starts_with("application/problem+json"),
+                "case {name}: expected problem+json, got {content_type:?}"
+            );
+
+            let Ok(body) = axum::body::to_bytes(response.into_body(), usize::MAX).await else {
+                panic!("case {name}: body must be readable")
+            };
+            assert!(!body.is_empty(), "case {name}: the envelope must have a body");
+        }
     }
 
     #[tokio::test]
