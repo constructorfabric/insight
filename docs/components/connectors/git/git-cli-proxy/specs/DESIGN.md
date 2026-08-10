@@ -91,7 +91,7 @@ with someone else's token.
 **Layout.**
 
 ```
-${DATA_DIR}/repos/<sha256(tenant_id \0 source_id \0 clone_url)>/
+<data_dir>/repos/<sha256(tenant_id \0 source_id \0 clone_url)>/
     repo.git/        # bare, blobless
     meta.json        # clone_url, tenant_id, source_id, sizes,
                      # last_fetched_at, last_accessed_at, generation
@@ -183,6 +183,20 @@ Initial backfills of large repositories are processed in **windows** (page-
 sized commit ranges): prefetch → serve → purge, keeping peak disk usage
 bounded regardless of repository history size.
 
+**Promotion out of the partial clone.** Some origins serve a blobless clone
+and then refuse explicit promisor wants for individual objects — a GitLab
+fork-network object pool behaves this way — so every batch prefetch fails, on
+every retry, permanently. That is a property of the repository, not a transient
+fault, so the entry is healed once: drop the filter, refetch, remove the
+`*.promisor` markers, repack, and record `full_clone` in `meta.json`.
+
+A promoted entry leaves the blobless regime for good. Its blobs cannot be
+fetched back, so it is exempt from the purge tier and only whole-entry eviction
+reclaims it — `reclaimable_by_purge` is `size − skeleton`, and for a promoted
+entry the full clone *is* the skeleton. Sizing must account for this (§6). A
+first page retries transparently after promotion; a continuation gets the
+standard `409`, because promotion bumps the generation its cursor is pinned to.
+
 ### 3.4 Git invocation rules
 
 Every git subprocess invocation MUST:
@@ -225,12 +239,15 @@ let a reader observe a partially deleted one.
 The proxy owns its disk budget; kubelet-level enforcement (pod eviction) is
 the last-resort backstop, not the mechanism.
 
-- **Budget**: `DISK_BUDGET_BYTES` — required env, no default (fail-fast). Must
+- **Budget**: `disk_budget_bytes` — required, no default (fail-fast). Must
   be set 10–15% below the volume size to leave headroom for transient packs
   and git temp files (avoiding ENOSPC mid-pack-write).
 - **Accounting**: per-repo size recomputed after every clone/fetch/repack,
-  stored in `meta.json`; total = sum. Backstop: periodic `statfs` of the
-  volume — effective free space is the minimum of the two views.
+  stored in `meta.json`; total = sum. That sum is a LOWER bound — it sees only
+  published entries, never a clone still staging under `tmp/`, nor another
+  writer on the mount. `statvfs` supplies the second view, and effective free
+  space is the minimum of the two, so effective usage is the maximum. Both
+  feed the same watermark.
 - **Watermarks with hysteresis**: crossing the high watermark (e.g. 85% of
   budget) triggers eviction down to the low watermark (e.g. 65%).
 - **Two-tier eviction**, cheap to expensive, in LRU order by
@@ -241,7 +258,7 @@ the last-resort backstop, not the mechanism.
   (anti-thrashing).
 - **Admission control**: before clone/fetch, check headroom; evict
   synchronously if needed; if nothing can be evicted respond `429`.
-- **Per-repo cap**: `MAX_REPO_BYTES` — clone/fetch is aborted when the entry
+- **Per-repo cap**: `max_repo_bytes` — clone/fetch is aborted when the entry
   exceeds the cap; surfaced as a **permanent** (non-retryable) error to the
   connector. Protects the shared cache from a single oversized monorepo.
 
@@ -290,7 +307,16 @@ nowhere else:
 
 ### 4.1 Conventions
 
-- Repo identity: `repo=<clone_url>` query parameter (URL-encoded).
+- Repo identity: `repo=<clone_url>` query parameter (URL-encoded). Only
+  `http://` and `https://` origins are accepted. git reads the URL as a
+  transport selector — `ext::` runs a shell command, a bare path reads the
+  pod's own filesystem — so the value is parsed at the boundary and anything
+  else is `400`. Embedded credentials are refused too: they would override the
+  header the service injects and reach git's stderr.
+- `sha=<id>[,<id>…]`: optional explicit selection on `/v1/commits` and
+  `/v1/file-changes`, taking full ids or hex prefixes of at least 7
+  characters. A debugging and incident-review affordance — the sync path pages
+  by cursor instead.
 - Required headers: `X-Tenant-Id`, `X-Source-Id`, `X-Git-Username`,
   `X-Git-Token`, `Authorization` (proxy bearer). Optional:
   `X-Max-Staleness: <seconds>`.
@@ -387,11 +413,21 @@ never silently under-count. Commit-level dedup does not depend on patch text
 | `sha`, `committed_date` | | join keys to commits |
 | `filename` | string | |
 | `previous_filename` | string \| null | renames |
-| `status` | string | `added` \| `modified` \| `removed` \| `renamed` |
+| `status` | string | `added` \| `modified` \| `removed` \| `renamed` \| `copied` \| `type_changed` — git's raw statuses; collapsing `copied` into `modified` would misreport it |
 | `additions`, `deletions`, `changes` | int \| null | null for binary |
 | `is_binary` | bool | |
 | `patch` | string \| null | per-file unified diff; truncated at `max_patch_bytes` |
 | `patch_truncated` | bool | true when `patch` was cut at the cap |
+
+`page_size` bounds COMMITS, and a commit fans out to one row per changed file,
+each carrying patch text — so the response carries its own bounds as well: it
+stops at a commit boundary once it would exceed the row or total-patch-byte
+cap, and the cursor names the last commit emitted in full. A page can
+therefore return fewer commits than `page_size`, and a caller must page until
+`next_page_token` is null rather than until a short page. A commit whose own
+rows exceed a cap is emitted whole and over budget: refusing it would leave
+the walk unable to advance past it, making the repository permanently
+unsyncable. `max_patch_bytes` is capped at 8 MiB.
 
 #### `GET /v1/branches`
 
@@ -409,8 +445,11 @@ two-part ordering key rather than a date and a sha.
 
 #### `GET /healthz`
 
-Liveness/readiness plus disk gauges (used bytes, budget, repo count).
-Readiness does **not** fail on disk pressure (warm reads still work).
+Served by the `api-gateway` host gear, not by this service — the platform owns
+that route for every gear, and one service overriding it would diverge from
+the rest. Liveness is process health, readiness is HTTP serving; neither fails
+on disk pressure, because warm reads keep working when the cache is full. The
+disk figures are gauges (§4.3), not a health payload.
 
 ### 4.3 Prometheus metrics
 
@@ -428,20 +467,36 @@ latency/size histograms per endpoint.
 | `401` | proxy bearer token wrong, or origin rejected the supplied git credentials | fail the sync (config error) |
 | `404` | repo not found at origin | fail the slice; parent record is stale |
 | `409` | the pinned snapshot is gone (§4.1) | restart the stream slice from its cursor |
-| `413` | repo exceeds `MAX_REPO_BYTES` | permanent — do not retry |
+| `413` | repo exceeds `max_repo_bytes` | permanent — do not retry |
 | `429` + `Retry-After` | preparation did not finish within `INLINE_WAIT`, or admission was rejected | retry with backoff (declarative error handler) |
 | `5xx` | internal/transient | retry with backoff |
 
-Error bodies are `{ "error": "<code>", "message": "…" }`. Caller-actionable
-failures name the problem (which header is missing); internal failures carry a
-generic message and the detail goes to the log only — paths and cache internals
-never reach the wire.
+Error bodies are RFC 9457 `application/problem+json`, produced by the
+platform's canonical-error types (`DNA REST/API.md §7`) rather than a shape of
+this service's own: no error type of ours crosses the API boundary.
+Caller-actionable failures name the offending field in
+`context.field_violations`; internal failures carry a generic `detail` and the
+diagnosis goes to the log only — the crate `serde`-skips it, so paths and cache
+internals cannot reach the wire.
+
+Two deviations are deliberate. `413` has no canonical category, so the envelope
+is canonical and only the status is overridden; and the catalogue carries the
+retry hint for `429` in the body, while the connectors' backoff reads the
+`Retry-After` header, so it is set explicitly. Both predate the catalogue and
+are the connector contract.
 
 The `429` path is the **only** cold-start mechanism: connector-side retry
 absorbs clone latency with zero orchestration changes (no Argo pre-steps, no
 prefetch endpoint).
 
 ## 5. Nocode Connector Consumption
+
+> The connectors themselves ship separately
+> ([PR #2366](https://github.com/constructorfabric/insight/pull/2366)); this
+> section is the proxy-side contract they consume, not their manifest. Where
+> the two could drift — spec fields, the error-handler policy — the connector
+> change is authoritative and this section states only what the proxy
+> guarantees.
 
 Each vendor gets one declarative connector whose manifest mixes two base URLs.
 Per-stream `url_base` is standard declarative CDK (precedent in-repo: the
@@ -638,9 +693,14 @@ bronze branches (append-only → RMT)                    unique_key excludes hea
   with `cache.maxRepoBytes` above the largest repository intended to sync (a
   repository over it is refused `413` permanently, §4.4) and
   `cache.diskBudgetBytes` at 85–90% of the volume.
-- **Config (env, all required — no defaults):** `DATA_DIR`,
-  `DISK_BUDGET_BYTES`, `MAX_REPO_BYTES`, `DEFAULT_MAX_STALENESS_SECONDS`,
-  `HEAVY_OPS_CONCURRENCY`, `PROXY_BEARER_TOKEN` (secret).
+- **Config.** The gears-rust host reads `gears.git-cli-proxy.config`, with env
+  overrides `APP__gears__git_cli_proxy__config__<field>`. Required, no
+  defaults, validated at boot: `data_dir`, `disk_budget_bytes`,
+  `max_repo_bytes`, `default_max_staleness_seconds`, `heavy_ops_concurrency`,
+  `proxy_token` (secret, never rendered into the ConfigMap). Optional:
+  `ca_cert_path` for an origin behind a private CA. One field exists solely for
+  the test harness — `allow_file_repos`, which admits `file://` origins and is
+  hard-coded `false` in the chart; no deployment may enable it.
 - **Probes**: liveness = process health; readiness = HTTP serving (not disk
   pressure).
 - **Network**: cluster-internal Service only, no ingress exposure; egress to
@@ -731,16 +791,23 @@ credential that last succeeded, never that the credential is still valid. See
    email; otherwise design a cheap enrichment stream. Similarly `protected`
    on branches is API-only: either drop it or keep `repository_branches` on
    the vendor API (it is cheap — one call per page of branches).
-2. **Bitbucket Cloud partial clone.** `--filter` support must be verified
-   live; fallback per DD-GP-05.
+2. ~~**Bitbucket Cloud partial clone.**~~ ANSWERED: Bitbucket Cloud honours
+   `--filter=blob:none` — a pristine clone produces a promisor pack with the
+   blobs absent. The DD-GP-05 fallback stays for origins that do not, and
+   §3.3's promotion covers origins that accept the filter but then refuse the
+   objects.
 3. **Per-partition state limits.** Validate the declarative CDK's partition
    cap (~10k) against the largest tenant's repo count.
-4. **`incremental_dependency` semantics** on the pinned CDK version (parent
-   state persists only via an incremental child) — verify with a spike before
-   committing to the stream topology.
+4. ~~**`incremental_dependency` semantics**~~ ANSWERED: verified end to end
+   against the declarative runtime — parent state persists only via an
+   incremental child, which is why `repo_branches` (full refresh) does not
+   carry it while the two commit streams do.
 5. **Bitbucket PR pressure.** PR child streams remain per-PR API calls;
    measure whether PR-only traffic fits Bitbucket limits after commits move to
    the proxy.
+
+Items 1, 3 and 5 are connector-side and close in PR #2366 or later; nothing in
+this service depends on them.
 
 ## 9. Traceability
 

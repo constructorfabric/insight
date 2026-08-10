@@ -379,10 +379,19 @@ it after any Builder round-trip.
 | 6 | Helm subchart (first PVC chart in the repo), umbrella registration, config Secret, image build jobs, render-contract workflow | `src/…/git-cli-proxy/helm`, `charts/insight`, `.github/workflows` |
 | 7 | Nocode connectors for GitLab and Bitbucket Cloud — **moved out of this change**, see §8.1 | separate change |
 | 8 | Hardening: repo origins restricted to http(s) at the boundary, in-flight refresh joins re-prove credentials, page tokens bound to their cache entry, continuations stop narrowing `--since`, `/v1/file-changes` row/byte caps with commit-boundary cursoring, patch buffer capped while reading, `run_piped` drains producer stderr, per-write-unique `meta.json` tmp names, full-clone promotion for origins refusing promisor wants (§7.9), `branch_names` → `is_in_default_branch`, canonical problem+json errors, `OperationBuilder` + committed OpenAPI + drift gate, `proxyToken` supplied-or-fail, disk-budget render guard, `global.storageClass`, `git_cli_proxy` wired into the `changes`/bump/publish CI graph | proxy + `charts/insight` + `.github/workflows` |
+| 9 | Design alignment: `since` applied as a predicate rather than git's traversal cutoff, `statvfs` as the second free-space view, admission able to refuse (`429`), and the §4.3 metrics implemented | `src/…/engine/{read/commits,disk,store,metrics}.rs`, `src/…/api/*` |
 
-Quality: 139 Rust tests, clippy clean (pedantic, `-D warnings`), 18 Helm
+Quality: 148 Rust tests, clippy clean (pedantic, `-D warnings`), 18 Helm
 render-contract assertions, connector wiring guard green, the committed
 OpenAPI document matching its drift gate.
+
+A review of DESIGN against the implementation drove phase 9. Four sections
+promised behaviour the service did not have — §4.2's `since` predicate, §3.6's
+second free-space view and its admission refusal, and every metric in §4.3 —
+and the rollout notes below already told an operator to watch two of those
+metrics. The design was right in each case and the code followed it; the
+reverse edits (an error envelope the platform mandates, the host owning
+`/healthz`, config names the gears host fixes) are recorded in DESIGN itself.
 
 ### 8.1 The connectors moved to their own change
 
@@ -656,9 +665,13 @@ cap far sooner.
   one could not be re-derived there and would rotate on every GitOps reconcile)
   and provision the connector Secrets carrying the same `git_proxy_token`;
   reconcile then creates the Airbyte sources.
-- Watch `git_proxy_evictions_total` and the 429 rate: a sustained rise means
-  the budget is too small for the working set — that, not utilisation, is the
-  alert condition (an LRU cache is full by design).
+- Watch `git_proxy_evictions_total{tier}` and
+  `git_proxy_admission_rejects_total`: a sustained rise means the budget is too
+  small for the working set — that, not utilisation, is the alert condition (an
+  LRU cache is full by design). A non-zero admission-reject rate is the
+  stronger signal: it means a request was refused outright because nothing
+  could be reclaimed. `git_proxy_disk_used_bytes` against
+  `git_proxy_disk_budget_bytes` shows how much headroom is left.
 
 ## 10. Deliberately out of scope
 
