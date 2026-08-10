@@ -161,6 +161,12 @@ on:
           Exact umbrella chart version to install, as published to oci://ghcr.io/constructorfabric/charts/insight — e.g. 0.5.101. Comes from publish-chart's output, never from deploy/gitops/.insight-version: that file is only committed at the END of publish-chart, so a checkout of the trigger SHA reads the PREVIOUS release.
         required: true
         type: string
+      stages:
+        description: >-
+          Which stages to run, as a prefix of deploy -> seed -> smoke: `all`, `deploy+seed`, or `deploy`. The caller has no reason to pass anything but the default; it exists on this trigger only so the value has one definition rather than two. A partial run is never a pass — the summary and the run title both say which stages were skipped.
+        required: false
+        default: all
+        type: string
   # The human path: redeploy a specific version by hand, e.g. after fixing the
   # stand by hand and wanting CI's view of it back. Same input, same code path —
   # there is no manual-only branch anywhere below.
@@ -170,6 +176,15 @@ on:
         description: "Umbrella chart version to install (e.g. 0.5.101). Must already be published."
         required: true
         type: string
+      stages:
+        description: "Stages to run. A prefix only: you cannot smoke without seeding, or seed without deploying."
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - deploy+seed
+          - deploy
 
 # One stand, one deploy at a time. `cancel-in-progress: false` because the thing
 # being cancelled would be a `helm upgrade` mid-flight: killing it leaves the
@@ -260,17 +275,74 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          # Absolute for workflow_call, advisory for workflow_dispatch, and the
+          # asymmetry is deliberate. A CALL comes from build-images.yml after a
+          # publish, and a publish only happens on main: a call carrying any
+          # other ref means the caller's guard has broken, which is a bug rather
+          # than a request. A DISPATCH is a person with write access asking for a
+          # specific version on purpose — typically to rehearse this workflow on
+          # the branch that changes it, which cannot be done from main by
+          # definition. What actually decides whether a dispatch may touch the
+          # stand is the environment's deployment-branch policy, which is
+          # enforced by GitHub before this job starts and cannot be talked out of
+          # by anything written here. So dispatch reports the ref and continues.
           if [ "$REF_NAME" != "main" ]; then
-            echo "::error::this workflow deploys main and only main (ref was '$REF_NAME', event '$EVENT')."
-            echo "The insight-test-stand environment's deployment-branch policy is the real control;"
-            echo "this check exists so the refusal is readable instead of a missing-secret failure."
-            exit 1
+            if [ "$EVENT" = "workflow_dispatch" ]; then
+              echo "::warning::dispatched from '$REF_NAME', not main. Allowed because the" \
+                   "insight-test-stand environment's deployment-branch policy already" \
+                   "decided this ref may deploy — but what lands on the stand is that" \
+                   "branch's idea of the deploy, not main's."
+            else
+              echo "::error::this workflow deploys main and only main (ref was '$REF_NAME', event '$EVENT')."
+              echo "A workflow_call arrives from build-images.yml after a publish, which only"
+              echo "happens on main, so a call from anywhere else means the caller's guard broke."
+              exit 1
+            fi
           fi
           if ! printf '%s' "$CHART_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
             echo "::error::chart_version '$CHART_VERSION' is not a semver. Refusing to pass it to make."
             exit 1
           fi
           echo "deploying umbrella chart $CHART_VERSION to ENV=$ENV_NAME"
+
+      # ── Which stages run ──────────────────────────────────────────────────
+      # `stages` is a PREFIX of deploy -> seed -> smoke, never a set. You cannot
+      # smoke without seeding or seed without deploying, because each stage is
+      # the previous one's precondition: the smoke reads personas the seed
+      # writes, and the seed reads coordinates the deploy settles. Offering the
+      # stages as independent checkboxes would let someone smoke yesterday's data
+      # against today's chart and call it a pass.
+      #
+      # A partial run is a REHEARSAL, not a green light, and this workflow says
+      # so in three places rather than trusting anyone to remember: a warning
+      # annotation here, the per-stage lines in the summary, and the skipped
+      # steps in the UI. The reason it exists at all is that the smoke needs a
+      # credential the deploy does not, so "does this chart install and seed on
+      # this stand" is a question worth being able to answer on its own.
+      - name: Resolve which stages run
+        id: stages
+        env:
+          STAGES: ${{ inputs.stages }}
+        run: |
+          set -euo pipefail
+          case "${STAGES:-all}" in
+            all)          deploy=true seed=true  smoke=true  ;;
+            deploy+seed)  deploy=true seed=true  smoke=false ;;
+            deploy)       deploy=true seed=false smoke=false ;;
+            *)
+              echo "::error::stages '$STAGES' is not one of: all, deploy+seed, deploy"
+              exit 1 ;;
+          esac
+          {
+            echo "run_deploy=$deploy"
+            echo "run_seed=$seed"
+            echo "run_smoke=$smoke"
+          } >> "$GITHUB_OUTPUT"
+          echo "stages: ${STAGES:-all}  (deploy=$deploy seed=$seed smoke=$smoke)"
+          if [ "$smoke" != "true" ]; then
+            echo "::warning::partial run — stages='${STAGES:-all}'. The smoke gate did NOT run," \
+                 "so this run says the chart installs, not that the stand works."
+          fi
 
       - name: Confirm the environment is wired up
         env:
@@ -291,6 +363,7 @@ jobs:
           # (one principal authenticates and every persona session is minted from
           # it). Unset means the suite's own default, which is `password`.
           LOGIN_MODE: ${{ vars.TEST_STAND_SMOKE_LOGIN_MODE }}
+          RUN_SMOKE: ${{ steps.stages.outputs.run_smoke }}
         run: |
           set -euo pipefail
           missing=""
@@ -302,6 +375,22 @@ jobs:
           # same thing far better than this does — but only after a deploy and a
           # seed have already run. Twenty minutes is too long to wait to be told
           # a password is missing.
+          #
+          # Skipped entirely when the smoke stage is not running: demanding a
+          # credential for work that will not happen turns a deliberate partial
+          # rehearsal into an unrunnable one, which is exactly the trap this
+          # input exists to avoid. The mode string is still validated, because a
+          # typo there should be caught on the run that introduces it rather than
+          # on the first full run afterwards.
+          if [ "$RUN_SMOKE" != "true" ]; then
+            case "${LOGIN_MODE:-password}" in
+              password|override) ;;
+              *)
+                echo "::error::vars.TEST_STAND_SMOKE_LOGIN_MODE is '$LOGIN_MODE'; it must be 'password' or 'override'"
+                exit 1 ;;
+            esac
+            echo "smoke stage not selected — its credentials are not required for this run"
+          else
           case "${LOGIN_MODE:-password}" in
             override)
               [ "$HAVE_BOOTSTRAP_EMAIL" = "true" ]    || missing="$missing secrets.TEST_STAND_BOOTSTRAP_EMAIL"
@@ -312,6 +401,7 @@ jobs:
               echo "::error::vars.TEST_STAND_SMOKE_LOGIN_MODE is '$LOGIN_MODE'; it must be 'password' or 'override'"
               exit 1 ;;
           esac
+          fi
 
           if [ -n "$missing" ]; then
             echo "::error::the insight-test-stand environment is missing:$missing"
@@ -611,6 +701,7 @@ jobs:
       # --deadline should come down with the step budget, in one change, with the
       # measurement quoted.
       - name: 'Stage 2/3 — seed the stand'
+        if: steps.stages.outputs.run_seed == 'true'
         timeout-minutes: 65
         env:
           SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL }}
@@ -645,6 +736,7 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/seed.log" | python3 "$REDACT"
 
       - name: 'Stage 2/3 — capture the seed manifest'
+        if: steps.stages.outputs.run_seed == 'true'
         run: |
           set -euo pipefail
           # A cluster seed Job's filesystem dies with its pod, so the seeder
@@ -704,6 +796,7 @@ jobs:
       # above skips it. That is the whole mechanism — asserting against an
       # unseeded stand would produce a failure that looks like a product bug.
       - name: 'Stage 3/3 — smoke the stand through its public URL'
+        if: steps.stages.outputs.run_smoke == 'true'
         timeout-minutes: 5
         env:
           # The public origin, driven exactly as a browser would drive it: real
@@ -770,6 +863,9 @@ jobs:
         if: always()
         env:
           OUTCOME: ${{ job.status }}
+          RUN_SEED: ${{ steps.stages.outputs.run_seed }}
+          RUN_SMOKE: ${{ steps.stages.outputs.run_smoke }}
+          STAGES: ${{ inputs.stages }}
         run: |
           set -euo pipefail
           {
@@ -779,8 +875,19 @@ jobs:
             echo "|---|---|"
             echo "| chart | \`insight-$CHART_VERSION\` |"
             echo "| environment | \`$ENV_NAME\` (namespace \`$STAND_NAMESPACE\`, release \`$STAND_RELEASE\`) |"
+            echo "| stages | \`${STAGES:-all}\` — deploy ✓, seed $([ "$RUN_SEED" = "true" ] && echo '✓' || echo '— skipped'), smoke $([ "$RUN_SMOKE" = "true" ] && echo '✓' || echo '— skipped') |"
             echo "| outcome | **$OUTCOME** |"
             echo ""
+            # A partial run that says nothing about being partial is worse than
+            # no run: the next person reads a green tick and believes the stand
+            # was proven. Said here as well as in the warning annotation because
+            # this table is what gets screenshotted into a thread.
+            if [ "$RUN_SMOKE" != "true" ]; then
+              echo "> **Partial run — this is a rehearsal, not a pass.** The smoke gate did not"
+              echo "> run, so nothing here claims a person can sign in or that any metric returns"
+              echo "> data. It says the chart installs$([ "$RUN_SEED" = "true" ] && echo ' and the stand seeds' || echo ''), and no more."
+              echo ""
+            fi
             if [ "$OUTCOME" != "success" ]; then
               echo "This is an after-merge alarm, not a merge gate: the chart under test did not"
               echo "exist until the merge happened. **The author of the merge commit owns this run.**"
