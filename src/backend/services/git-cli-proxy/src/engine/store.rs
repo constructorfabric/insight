@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, Semaphore, watch};
 
 use super::disk::{Budget, Candidate, Reclaim};
@@ -188,7 +189,15 @@ impl RepoStore {
         max_repo_bytes: u64,
     ) -> Result<Self, StoreError> {
         std::fs::create_dir_all(data_dir.join("repos"))?;
-        std::fs::create_dir_all(data_dir.join("tmp"))?;
+        // A clone stages under tmp/ and is renamed into place on success. A
+        // crash mid-clone strands it, and nothing else ever collects it: the
+        // reclaim planner only walks repos/, so the loss is invisible to the
+        // budget and permanent. Startup is the one moment no clone is running.
+        let tmp = data_dir.join("tmp");
+        if tmp.is_dir() {
+            let _ = std::fs::remove_dir_all(&tmp);
+        }
+        std::fs::create_dir_all(&tmp)?;
         Ok(Self {
             data_dir: data_dir.to_owned(),
             runner: GitRunner::new(HEAVY_OP_TIMEOUT).with_ca_cert(ca_cert_path),
@@ -500,14 +509,15 @@ impl RepoStore {
         // global heavy-ops cap.
         let _permit = self.heavy.acquire().await;
 
+        let before = self.ref_digest(git_dir).await;
+
         self.runner
             .run(
                 Some(git_dir),
-                &["fetch", "--prune", "origin", BARE_REFSPEC],
+                &["fetch", "--prune", "--atomic", "origin", BARE_REFSPEC],
                 Some(creds),
             )
             .await
-            .inspect(|_| metrics::record_fetch(FetchResult::Updated))
             .inspect_err(|_| metrics::record_fetch(FetchResult::Error))?;
 
         // A fetch does not update the mirrored HEAD, so a default-branch
@@ -523,6 +533,13 @@ impl RepoStore {
             )
             .await;
 
+        // INVARIANT: the generation identifies a REF SNAPSHOT, not a fetch
+        // attempt. Bumping it when nothing moved would 409 every page token
+        // already in flight — and a sync outliving the staleness window
+        // refreshes routinely, so that is the common case, not a rare one.
+        let after = self.ref_digest(git_dir).await;
+        let unchanged = before.is_some() && before == after;
+
         let fetched_bytes = dir_size(git_dir);
         if fetched_bytes > self.max_repo_bytes {
             let _ = std::fs::remove_dir_all(entry_dir);
@@ -531,9 +548,18 @@ impl RepoStore {
             });
         }
 
+        metrics::record_fetch(if unchanged {
+            FetchResult::Noop
+        } else {
+            FetchResult::Updated
+        });
+
         let now = now_epoch_s();
         let previous = RepoMeta::load(entry_dir);
-        let generation = previous.as_ref().map_or(0, |m| m.generation) + 1;
+        let generation = match (&previous, unchanged) {
+            (Some(meta), true) => meta.generation,
+            (previous, _) => previous.as_ref().map_or(0, |m| m.generation) + 1,
+        };
         let meta = RepoMeta {
             clone_url: key.clone_url.as_str().to_owned(),
             tenant_id: key.tenant_id.clone(),
@@ -779,6 +805,39 @@ impl RepoStore {
         Admission::Ok
     }
 
+    /// Fingerprint of the entry's branch heads and default branch.
+    ///
+    /// `None` when it cannot be read, which is treated as "changed": failing
+    /// open here would pin a stale generation, and a spurious bump is merely
+    /// expensive where a missed one is wrong.
+    async fn ref_digest(&self, git_dir: &Path) -> Option<String> {
+        let refs = self
+            .runner
+            .run(
+                Some(git_dir),
+                &[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    "refs/heads",
+                ],
+                None,
+            )
+            .await
+            .ok()?;
+        let head = self
+            .runner
+            .run(Some(git_dir), &["symbolic-ref", "--quiet", "HEAD"], None)
+            .await
+            .map(|out| out.stdout)
+            .unwrap_or_default();
+
+        let mut hasher = Sha256::new();
+        hasher.update(&refs.stdout);
+        hasher.update([0u8]);
+        hasher.update(&head);
+        Some(hex::encode(hasher.finalize()))
+    }
+
     /// Usage as the budget sees it, folding in the volume's own view.
     fn effective_used(&self, accounted: u64) -> u64 {
         let available = super::disk::volume_available_bytes(&self.data_dir);
@@ -885,8 +944,19 @@ fn remove_promisor_markers(git_dir: &Path) {
 /// `--` is what keeps a hostile URL from being read as a git option; the URL is
 /// already an [`crate::engine::url::CloneUrl`], so this is the second of two
 /// independent guards.
-fn clone_argv<'a>(url: &'a str, target: &'a str) -> [&'a str; 6] {
-    ["clone", "--bare", "--filter=blob:none", "--", url, target]
+fn clone_argv<'a>(url: &'a str, target: &'a str) -> [&'a str; 7] {
+    // `--no-tags`: the mirror refspec only ever prunes refs/heads, so a tag
+    // taken at clone time is kept forever and keeps its commits reachable
+    // long after their branch is gone (§4.2).
+    [
+        "clone",
+        "--bare",
+        "--filter=blob:none",
+        "--no-tags",
+        "--",
+        url,
+        target,
+    ]
 }
 
 /// The entry's meta when the repo exists and the caller's credentials match
@@ -1272,23 +1342,28 @@ pub(crate) mod tests {
         };
         // Unknown credentials must never short-circuit onto the warm entry:
         // the caller is forced to prove origin access first. This file://
-        // origin accepts anyone, so the proof succeeds and lands on a NEW
-        // generation — against a real vendor the same path is where the
-        // caller gets rejected.
+        // origin accepts anyone, so the proof succeeds — against a real vendor
+        // the same path is where the caller gets rejected.
+        //
+        // The observable is the fingerprint, NOT the generation. Only `clone`
+        // and `fetch` write cred_fingerprint, and both only after git has
+        // actually run against origin, so the intruder's fingerprint landing
+        // on the entry IS the proof that origin was contacted. The generation
+        // deliberately does not move here: origin had nothing new, and bumping
+        // it would 409 every page token already in flight.
         let outcome = f.store.open(&k, &intruder, refresh()).await;
         match outcome {
-            Err(StoreError::Busy { .. }) => {}
-            Ok(guard) => assert!(
-                guard.generation() > warm_generation,
-                "served the warm snapshot (generation {}) without re-proving access",
-                guard.generation()
-            ),
+            Err(StoreError::Busy { .. }) | Ok(_) => {}
             Err(e) => panic!("unexpected error: {e}"),
         }
 
         let Some(meta) = RepoMeta::load(&f.store.entry_dir(&k)) else {
             panic!("meta must exist")
         };
+        assert_eq!(
+            meta.generation, warm_generation,
+            "an unchanged origin must not invalidate live page tokens"
+        );
         assert_eq!(
             meta.cred_fingerprint,
             intruder.fingerprint(),

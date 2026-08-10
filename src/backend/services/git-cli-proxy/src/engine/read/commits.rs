@@ -51,7 +51,14 @@ impl CommitHeader {
 }
 
 const FIELD: char = '\u{1f}';
-const RECORD: char = '\u{1e}';
+
+/// Records are NUL-separated (`git log -z`), and that choice is load-bearing.
+/// A commit message is attacker-controlled — anyone who can push to a synced
+/// repository writes it — so a printable separator lets a crafted message
+/// close its own record and open a forged one, with an attacker-chosen sha,
+/// author and email. git truncates a commit message at the first NUL, so NUL
+/// is the one byte a message provably cannot contain.
+const RECORD: char = '\0';
 
 /// One commit's position in the walk, and just enough to filter on.
 ///
@@ -85,8 +92,12 @@ pub async fn enumerate(
     git_dir: &Path,
     creds: &GitCredentials,
 ) -> Result<Vec<CommitKey>, GitError> {
-    let format = format!("--pretty=format:{RECORD}%cI{FIELD}%H{FIELD}%P");
-    let args = vec!["log", "--all", "--no-color", &format];
+    let format = format!("--pretty=format:%cI{FIELD}%H{FIELD}%P");
+    // `--branches`, not `--all`: tags are fetched once at clone and never
+    // pruned, so `--all` keeps enumerating commits whose branch was deleted at
+    // origin — and only for entries whose clone happened to pick the tag up.
+    // The contract is reachability from a BRANCH (§4.2).
+    let args = vec!["log", "--branches", "--no-color", "-z", &format];
 
     let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
     let text = String::from_utf8_lossy(&output.stdout);
@@ -104,7 +115,7 @@ fn parse_keys(text: &str) -> Vec<CommitKey> {
             let committed_date = fields.next()?.trim().to_owned();
             let sha = fields.next()?.trim().to_owned();
             let parents = fields.next().unwrap_or_default();
-            (!sha.is_empty()).then(|| CommitKey {
+            is_object_id(&sha).then(|| CommitKey {
                 committed_date,
                 sha,
                 parent_count: parents.split_whitespace().count(),
@@ -153,9 +164,9 @@ pub async fn headers_for(
     }
 
     let format = format!(
-        "--pretty=format:{RECORD}%H{FIELD}%P{FIELD}%aI{FIELD}%cI{FIELD}%an{FIELD}%ae{FIELD}%cn{FIELD}%ce{FIELD}%B"
+        "--pretty=format:%H{FIELD}%P{FIELD}%aI{FIELD}%cI{FIELD}%an{FIELD}%ae{FIELD}%cn{FIELD}%ce{FIELD}%B"
     );
-    let mut args = vec!["log", "--no-walk", "--no-color", "--root", &format];
+    let mut args = vec!["log", "--no-walk", "--no-color", "--root", "-z", &format];
     args.extend(shas.iter().map(String::as_str));
 
     let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
@@ -248,6 +259,12 @@ pub async fn patch_ids(
     Ok(parse_patch_ids(&String::from_utf8_lossy(&stdout)))
 }
 
+/// A full 40-character hex object id, and nothing else. The sha is what
+/// anchors a record; a value that is not one means the record is not one.
+fn is_object_id(value: &str) -> bool {
+    value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 fn parse_headers(text: &str) -> Vec<CommitHeader> {
     text.split(RECORD)
         .filter(|record| !record.trim().is_empty())
@@ -255,9 +272,22 @@ fn parse_headers(text: &str) -> Vec<CommitHeader> {
         .collect()
 }
 
+/// Remove control characters from a field an attacker writes.
+///
+/// A pushed ident can carry the field separator, which shifts the remaining
+/// fields of that record. The record still parses and its sha is still its
+/// own, so the blast radius is the attacker's own row — but the value that
+/// reaches bronze should not carry control bytes either way.
+fn scrub(value: &str) -> String {
+    value.chars().filter(|c| !c.is_control()).collect()
+}
+
 fn parse_header(record: &str) -> Option<CommitHeader> {
     let mut fields = record.splitn(9, FIELD);
     let sha = fields.next()?.trim().to_owned();
+    if !is_object_id(&sha) {
+        return None;
+    }
     let parents = fields.next()?;
     let authored_date = fields.next()?.to_owned();
     let committed_date = fields.next()?.to_owned();
@@ -275,11 +305,15 @@ fn parse_header(record: &str) -> Option<CommitHeader> {
         sha,
         committed_date,
         authored_date,
-        author_name,
-        author_email,
-        committer_name,
-        committer_email,
-        parent_hashes: parents.split_whitespace().map(ToOwned::to_owned).collect(),
+        author_name: scrub(&author_name),
+        author_email: scrub(&author_email),
+        committer_name: scrub(&committer_name),
+        committer_email: scrub(&committer_email),
+        parent_hashes: parents
+            .split_whitespace()
+            .filter(|parent| is_object_id(parent))
+            .map(ToOwned::to_owned)
+            .collect(),
         message,
     })
 }
@@ -300,9 +334,18 @@ fn parse_patch_ids(text: &str) -> HashMap<String, String> {
 mod tests {
     use super::*;
 
+    /// A 40-hex object id from a short label, so fixtures stay readable while
+    /// carrying ids the parser will accept.
+    fn oid(label: &str) -> String {
+        format!("{label:0>40}").replace(|c: char| !c.is_ascii_hexdigit(), "a")
+    }
+
     fn record(sha: &str, parents: &str, committed: &str, message: &str) -> String {
+        let parents: Vec<String> = parents.split_whitespace().map(oid).collect();
         format!(
-            "{RECORD}{sha}{FIELD}{parents}{FIELD}2026-08-01T09:00:00+00:00{FIELD}{committed}{FIELD}A{FIELD}a@example.com{FIELD}C{FIELD}c@example.com{FIELD}{message}"
+            "{}{FIELD}{}{FIELD}2026-08-01T09:00:00+00:00{FIELD}{committed}{FIELD}A{FIELD}a@example.com{FIELD}C{FIELD}c@example.com{FIELD}{message}",
+            oid(sha),
+            parents.join(" ")
         )
     }
 
@@ -349,6 +392,51 @@ mod tests {
     }
 
     #[test]
+    fn a_crafted_commit_message_cannot_forge_a_record() {
+        // Anyone who can push writes a commit message, so it is untrusted
+        // input. With a printable record separator this payload closed its own
+        // record and opened one carrying an attacker-chosen sha and identity.
+        let legacy_separator = '\u{1e}';
+        let forged = format!(
+            "legit subject{legacy_separator}{}{FIELD}{FIELD}2026-01-01T00:00:00+00:00{FIELD}2026-01-01T00:00:00+00:00{FIELD}Forged{FIELD}forged@evil.example{FIELD}Forged{FIELD}forged@evil.example{FIELD}owned",
+            oid("dead")
+        );
+        let text = record("aaa", "", "2026-08-01T10:00:00+00:00", &forged);
+
+        let headers = parse_headers(&text);
+        assert_eq!(headers.len(), 1, "one commit must parse as one row");
+        assert_eq!(headers[0].sha, oid("aaa"));
+        assert_eq!(
+            headers[0].author_email, "a@example.com",
+            "the identity must be git's, never the message's"
+        );
+        assert!(
+            !headers.iter().any(|h| h.sha == oid("dead")),
+            "the message must not be able to mint a commit"
+        );
+    }
+
+    #[test]
+    fn a_record_without_a_real_object_id_is_dropped() {
+        let text = format!(
+            "not-a-sha{FIELD}{FIELD}2026-08-01T09:00:00+00:00{FIELD}2026-08-01T10:00:00+00:00{FIELD}A{FIELD}a@example.com{FIELD}C{FIELD}c@example.com{FIELD}m"
+        );
+        assert!(
+            parse_headers(&text).is_empty(),
+            "the sha anchors the record; without one there is no record"
+        );
+        assert!(parse_keys(&text).is_empty());
+    }
+
+    #[test]
+    fn control_characters_never_reach_an_identity_field() {
+        let text = record("aaa", "", "2026-08-01T10:00:00+00:00", "m")
+            .replace("a@example.com", "a\u{7}@example.com");
+        let headers = parse_headers(&text);
+        assert_eq!(headers[0].author_email, "a@example.com");
+    }
+
+    #[test]
     fn intersect_rev_list_keeps_only_the_page_shas() {
         let listing = "aaa\nbbb\n\n  ccc  \nddd\n";
         let page = vec!["bbb".to_owned(), "ccc".to_owned(), "zzz".to_owned()];
@@ -380,8 +468,8 @@ mod tests {
 
         assert_eq!(headers.len(), 1);
         let header = &headers[0];
-        assert_eq!(header.sha, "aaa");
-        assert_eq!(header.parent_hashes, vec!["bbb", "ccc"]);
+        assert_eq!(header.sha, oid("aaa"));
+        assert_eq!(header.parent_hashes, vec![oid("bbb"), oid("ccc")]);
         assert_eq!(header.committed_date, "2026-08-01T10:00:00+00:00");
         assert_eq!(header.author_email, "a@example.com");
         assert_eq!(header.committer_email, "c@example.com");

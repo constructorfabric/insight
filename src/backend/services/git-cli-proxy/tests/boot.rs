@@ -608,6 +608,191 @@ async fn since_returns_every_reachable_commit_at_or_after_it() -> R {
     Ok(())
 }
 
+/// A branch that exists only to be deleted, plus a tag pinning its tip.
+fn taggable_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let origin = root.join("taggable");
+    std::fs::create_dir_all(&origin)?;
+    let script = "git init -q -b main . && \
+         git config uploadpack.allowFilter true && \
+         git config uploadpack.allowAnySHA1InWant true && \
+         echo a > a.txt && git add a.txt && \
+         GIT_AUTHOR_DATE='2026-08-01T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-01T10:00:00+0000' \
+           git commit -qm 'on main' && \
+         git checkout -q -b doomed && \
+         echo b > b.txt && git add b.txt && \
+         GIT_AUTHOR_DATE='2026-08-02T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-02T10:00:00+0000' \
+           git commit -qm 'only on the doomed branch' && \
+         git tag v1 && git checkout -q main";
+    let output = Command::new("sh")
+        .arg("-ec")
+        .arg(script)
+        .current_dir(&origin)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "fixture setup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(format!("file://{}", origin.display()))
+}
+
+fn run_in(dir: &Path, script: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let output = Command::new("sh")
+        .arg("-ec")
+        .arg(script)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_deleted_branch_stops_being_enumerated_even_when_a_tag_pins_it() -> R {
+    let server = spawn_server("tagprune", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = taggable_origin(&server.dir)?;
+
+    let before = get_json(server.port, "/v1/commits", &repo).await?;
+    let count = |v: &serde_json::Value| {
+        v["items"].as_array().map_or(0, |rows| {
+            rows.iter()
+                .filter(|r| r["message"] == "only on the doomed branch")
+                .count()
+        })
+    };
+    assert_eq!(
+        count(&before),
+        1,
+        "the commit is reachable while the branch lives"
+    );
+
+    // Delete the branch at origin. The tag still pins its tip — and a mirror
+    // refspec prunes refs/heads only, so `--all` would keep enumerating it.
+    run_in(&server.dir.join("taggable"), "git branch -qD doomed")?;
+
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let after: serde_json::Value = client
+        .get(format!("{base}/v1/commits"))
+        .query(&[("repo", repo.as_str())])
+        .bearer_auth(TOKEN)
+        .header("x-tenant-id", "tenant-1")
+        .header("x-source-id", "source-1")
+        .header("x-git-username", "u")
+        .header("x-git-token", "p")
+        .header("x-max-staleness", "0")
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    assert_eq!(
+        count(&after),
+        0,
+        "a commit whose branch is gone must stop being enumerated: {after}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_fetch_that_changed_nothing_keeps_live_page_tokens_valid() -> R {
+    let server = spawn_server("noopfetch", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = fixture_origin(&server.dir)?;
+    get_json(server.port, "/v1/commits", &repo).await?;
+
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let page = |token: Option<String>, staleness: &'static str| {
+        let (client, base, repo) = (client.clone(), base.clone(), repo.clone());
+        async move {
+            let mut params = vec![
+                ("repo".to_owned(), repo),
+                ("page_size".to_owned(), "1".to_owned()),
+            ];
+            if let Some(token) = token {
+                params.push(("page_token".to_owned(), token));
+            }
+            client
+                .get(format!("{base}/v1/commits"))
+                .query(&params)
+                .bearer_auth(TOKEN)
+                .header("x-tenant-id", "tenant-1")
+                .header("x-source-id", "source-1")
+                .header("x-git-username", "u")
+                .header("x-git-token", "p")
+                .header("x-max-staleness", staleness)
+                .send()
+                .await
+        }
+    };
+
+    let first: serde_json::Value = page(None, "300").await?.json().await?;
+    let token = first["next_page_token"]
+        .as_str()
+        .ok_or("a truncated page must carry a cursor")?
+        .to_owned();
+
+    // Force a refresh against an origin that has not moved — what a second
+    // stream of the same sync does routinely once the window lapses.
+    let _ = page(None, "0").await?;
+
+    let continued = page(Some(token), "300").await?;
+    assert_eq!(
+        continued.status(),
+        200,
+        "an unchanged origin must not invalidate a cursor mid-walk"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn file_changes_cover_every_branch_not_just_the_default() -> R {
+    // The CDK gitlab connector collects commits for all branches but file
+    // changes only for the default branch's head. The proxy must not inherit
+    // that: a side-branch commit has file rows like any other.
+    let server = spawn_server("branchfiles", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = branching_origin(&server.dir)?;
+
+    let commits = get_json(server.port, "/v1/commits", &repo).await?;
+    let side = commits["items"]
+        .as_array()
+        .ok_or("no items")?
+        .iter()
+        .find(|row| row["message"] == "on the side branch")
+        .ok_or("the side-branch commit must be enumerated")?;
+    let side_sha = side["sha"].as_str().ok_or("no sha")?.to_owned();
+    assert_eq!(side["is_in_default_branch"], false);
+
+    let changes = get_json(server.port, "/v1/file-changes", &repo).await?;
+    let rows: Vec<&serde_json::Value> = changes["items"]
+        .as_array()
+        .ok_or("no items")?
+        .iter()
+        .filter(|row| row["sha"] == side_sha.as_str())
+        .collect();
+
+    assert!(
+        !rows.is_empty(),
+        "a commit off the default branch must still yield file rows: {changes}"
+    );
+    assert_eq!(rows[0]["filename"], "b.txt");
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_page_token_from_another_repository_is_refused() -> R {
     let server = spawn_server("crossrepo", TOKEN)?;

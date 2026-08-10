@@ -36,6 +36,8 @@ impl EvictionTier {
 /// Outcome of a fetch, for `git_proxy_fetches_total{result=…}`.
 #[derive(Debug, Clone, Copy)]
 pub enum FetchResult {
+    /// Origin had nothing new; the snapshot generation is unchanged.
+    Noop,
     Updated,
     Error,
 }
@@ -43,6 +45,7 @@ pub enum FetchResult {
 impl FetchResult {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::Noop => "noop",
             Self::Updated => "updated",
             Self::Error => "error",
         }
@@ -192,6 +195,7 @@ mod tests {
     fn tier_and_result_labels_are_the_documented_values() {
         assert_eq!(EvictionTier::Blob.as_str(), "blob");
         assert_eq!(EvictionTier::Full.as_str(), "full");
+        assert_eq!(FetchResult::Noop.as_str(), "noop");
         assert_eq!(FetchResult::Updated.as_str(), "updated");
         assert_eq!(FetchResult::Error.as_str(), "error");
     }
