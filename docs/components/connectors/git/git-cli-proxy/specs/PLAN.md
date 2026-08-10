@@ -1,4 +1,4 @@
-# Work plan — git-cli-proxy and the nocode git connectors
+# Work plan — git-cli-proxy
 
 > Status: working document. Companion to [DESIGN.md](DESIGN.md) (the contract)
 > and [issue #2224](https://github.com/constructorfabric/insight/issues/2224)
@@ -7,14 +7,15 @@
 >
 > Delivery: [PR #2237](https://github.com/constructorfabric/insight/pull/2237)
 > (design, merged) and
-> [PR #2288](https://github.com/constructorfabric/insight/pull/2288) (code,
-> open) on `claude/git-connectors-rate-limits-edceb4`.
+> [PR #2288](https://github.com/constructorfabric/insight/pull/2288) (the
+> proxy). The nocode connectors were split into
+> [PR #2366](https://github.com/constructorfabric/insight/pull/2366) — see
+> §8.1 — so several sections here span both.
 >
-> Last updated 2026-08-07: live validation of both connectors done (§9.1,
-> §9.2), all PR #2288 review comments worked through (§9.3), full-mirror
-> promotion shipped (§7.9). Next, in order: vendor-API streams (§9.4),
-> default-branch membership rework (§9.5), rebase lookback (§9.6), silver
-> dbt models (§9.7), patch_id spec (§9.8).
+> Last updated 2026-08-10: hardening and the review pass are in #2288 (§8,
+> §9.3), including full-clone promotion (§7.9) and the default-branch rework
+> (§9.5). Next, in order: vendor-API streams (§9.4), rebase resilience beyond
+> the lookback (§9.6), silver dbt models (§9.7), patch_id spec (§9.8).
 
 ## 1. Problem and premise
 
@@ -203,9 +204,16 @@ canonical hash of the *change itself*, computed in the batch form
 3. Doing it in the proxy costs nothing extra: the blobs are already local for
    numstat.
 
-**Downstream use**: group by `(tenant, source, patch_id)` to collapse
-cherry-picked or rebased work; keep `sha` as the identity of the commit object
-itself. Which instance of a group a metric should count depends on the lens —
+**Downstream use**: group by `(tenant, source, repository, patch_id)` to
+collapse cherry-picked or rebased work; keep `sha` as the identity of the
+commit object itself. The repository component is load-bearing: `patch_id` is
+derived from diff CONTENT alone, so unrelated repositories collide on it
+routinely — a vendored file, a licence header, an identical one-line fix — and
+one source contains many repositories. Which repository identity to group on
+must be settled with §9.8: a clone URL is what the connector's keys carry but
+is not canonical (host aliases, a `.git` suffix, http vs ssh all vary for one
+repository), so either the normalization is specified or the vendor id is used.
+A cross-repository collision test belongs with those rules. Which instance of a group a metric should count depends on the lens —
 the selection rules (last-of-group for default-branch reports, first-of-group
 for all-branches views) are §9.8 and belong in the git domain spec, not in
 individual dashboards.
@@ -309,10 +317,9 @@ manifests are fully inlined. Duplication is the price of Builder compatibility.
 
 ### 7.9 GitLab fork-network pools refuse explicit-OID wants
 
-The 2026-08-07 live run's biggest find. On repositories deduplicated into a
-fork-network object pool (`insight/cyber-insight`(-front) on
-`gitlab.constr.dev`), Gitaly serves a plain clone fine but refuses SOME blobs
-as explicit promisor wants: the batch prefetch dies with
+Found by running the connectors against a self-hosted GitLab. On a repository
+deduplicated into a fork-network object pool, Gitaly serves a plain clone fine
+but refuses SOME blobs as explicit promisor wants: the batch prefetch dies with
 `did not send all necessary objects` on every retry, permanently. A blobless
 clone is therefore **unreliable against pooled GitLab repos** — this is a
 property of the repository, not a transient fault. The proxy heals it once:
@@ -324,10 +331,10 @@ standard `409` (the promotion bumps the generation).
 
 ### 7.10 `membership=true` is useless for a stats account
 
-The only real GitLab credential (`gitlab.stats`, `read_api` +
-`read_repository`) is a member of **nothing** while seeing 1598 projects —
-`/projects?membership=true` returns zero rows. Discovery therefore scopes by
-an explicit required `gitlab_groups` list via
+A read-only service account (`read_api` + `read_repository`) can be a member
+of no project while still seeing many, so `/projects?membership=true` returns
+zero rows and the connector silently syncs nothing. Discovery therefore scopes
+by an explicit required `gitlab_groups` list via
 `/groups/{g}/projects?include_subgroups=true`, which works by group
 **visibility** (and honours `order_by=last_activity_at` + `last_activity_after`,
 verified live). Mirrors `bitbucket_workspaces`.
@@ -366,67 +373,80 @@ it after any Builder round-trip.
 |---|---|---|
 | 1 | Service skeleton: gears-rust host, minimal system-gear set, static bearer auth on `/v1`, fail-fast config, Dockerfile, CI registration (workspace, `components.py`, manifest lists in every backend Dockerfile) | `src/backend/services/git-cli-proxy` |
 | 2 | Git engine: hashed cache layout, hermetic git runner, per-repo RW-lock + single-flight, blobless clone, fetch-if-stale | `src/…/engine/{key,meta,runner,store}.rs` |
-| 3 | Extraction: commits (incl. `patch_id`, `branch_names`), file changes (statuses from `--raw` merged with `--numstat` counts, renames, patches), branches, windowed blob prefetch + purge | `src/…/engine/read/*` |
+| 3 | Extraction: commits (incl. `patch_id`, `is_in_default_branch`), file changes (statuses from `--raw` merged with `--numstat` counts, renames, patches), branches, windowed blob prefetch + purge | `src/…/engine/read/*` |
 | 4 | HTTP API v1 with the error contract and snapshot-pinned pagination | `src/…/api/*` |
 | 5 | Disk budget, watermarks, two-tier LRU reclaim, per-repo cap → 413 | `src/…/engine/disk.rs` + store |
 | 6 | Helm subchart (first PVC chart in the repo), umbrella registration, config Secret, image build jobs, render-contract workflow | `src/…/git-cli-proxy/helm`, `charts/insight`, `.github/workflows` |
-| 7 | Nocode connectors for GitLab and Bitbucket Cloud | `src/ingestion/connectors/git/{gitlab,bitbucket}-nocode` |
-| 8 | Live validation of both connectors + review hardening (2026-08-07, uncommitted at the time of writing): full-mirror promotion for pooled GitLab repos (§7.9), `gitlab_groups` discovery (§7.10), Bitbucket git-auth username (§7.11), repo-scheme allowlist (`allow_file_repos`, default off), page tokens bound to the cache entry, in-flight refresh joins re-prove credentials, `/v1/file-changes` row/byte caps (20k rows / 64 MiB) with commit-boundary cursoring, `branch_membership` inverted to one `rev-list` per branch, `run_piped` drains producer stderr, patch buffer capped while reading, per-write-unique `meta.json` tmp names, continuations stop narrowing `--since` (traversal cutoff), `git_cli_proxy` wired into the `changes`/bump/publish CI graph, umbrella `proxyToken` supplied-or-lookup-or-fail (no `randAlphaNum`) | proxy + manifests + `charts/insight` + `.github/workflows/build-images.yml` |
+| 7 | Nocode connectors for GitLab and Bitbucket Cloud — **moved out of this change**, see §8.1 | separate change |
+| 8 | Hardening: repo origins restricted to http(s) at the boundary, in-flight refresh joins re-prove credentials, page tokens bound to their cache entry, continuations stop narrowing `--since`, `/v1/file-changes` row/byte caps with commit-boundary cursoring, patch buffer capped while reading, `run_piped` drains producer stderr, per-write-unique `meta.json` tmp names, full-clone promotion for origins refusing promisor wants (§7.9), `branch_names` → `is_in_default_branch`, canonical problem+json errors, `OperationBuilder` + committed OpenAPI + drift gate, `proxyToken` supplied-or-fail, disk-budget render guard, `global.storageClass`, `git_cli_proxy` wired into the `changes`/bump/publish CI graph | proxy + `charts/insight` + `.github/workflows` |
 
-Quality at the time of writing: 114 Rust tests, clippy clean (pedantic,
-`-D warnings`), 11 Helm render-contract assertions, connector wiring guard
-green, both manifests accepted by the Builder strict validator and by the CDK
-runtime, and both connectors driven end-to-end through the declarative runtime
-against the local proxy with real credentials (§9.1).
+Quality: 139 Rust tests, clippy clean (pedantic, `-D warnings`), 18 Helm
+render-contract assertions, connector wiring guard green, the committed
+OpenAPI document matching its drift gate.
+
+### 8.1 The connectors moved to their own change
+
+The GitLab and Bitbucket nocode connectors were split out. Only the proxy can
+be verified here — it carries hermetic tests, a committed API contract and a
+drift gate, whereas nothing in CI validates a declarative connector manifest,
+and the connectors' hardest defects were found against live vendor instances
+rather than in tests. §7.9–§7.14 and §9.1–§9.2 below record findings from
+those live runs; the fixes for §7.10–§7.14 now live in the connector change,
+and §7.9's fix is in this one.
 
 ## 9. Remaining work, in order
 
-### 9.1 Live verification of both connectors — ✅ DONE (2026-08-07)
+### 9.1 Live verification of both connectors — DONE ONCE, NEEDS RE-RUN
 
-Both connectors driven end-to-end through
-`airbyte/source-declarative-manifest:7.23.6` against the local proxy with real
-credentials, all four streams each, **zero errors**:
+Both connectors were driven end-to-end through
+`airbyte/source-declarative-manifest:7.23.6` against a local proxy and real
+vendor instances, all four streams each, with every stream returning records
+and no errors. What each stream must produce is asserted by the connector
+change's own checks; the counts are environment-specific and are not recorded
+here.
 
-| | gitlab-nocode (group `insight`) | bitbucket-nocode (`test-insight`) |
-|---|---|---|
-| `repositories` | 5, distinct keys | 6, distinct keys |
-| `commits` | 1522 (`branch_names` on all; `patch_id` on all 1267 non-merges; `additions>0` on 1245) | 715 (`patch_id` on all 645 non-merges) |
-| `commit_files` | 8146 (7698 with patch text, 48 binary, none truncated) | 738 (all with patch text) |
-| `repo_branches` | 137, `is_default` on exactly 5 | 143, `is_default` on 5 of 6 (`home-assistant` is empty — correct) |
-
-The 429 path was forced explicitly (small repos clone inside the 15 s inline
-wait): SIGSTOP the cloning git child → `429` + `Retry-After: 30`, SIGCONT →
-retried request serves. `unique_key` carries the clone URL on every proxy
-stream. The GitLab run also exercised the full-mirror promotion live — two
-pooled repos (§7.9) healed automatically and served afterwards.
+The 429 path was forced explicitly, since a small repository clones inside the
+15 s inline wait: SIGSTOP the cloning git child → `429` + `Retry-After: 30`,
+SIGCONT → the retried request serves. The GitLab run also exercised full-clone
+promotion live — pooled repositories (§7.9) healed automatically and served
+afterwards.
 
 The run was not a formality: it surfaced six real defects, all fixed
-(§7.9–§7.14 plus the `record['id']` → `uuid` repository key).
+(§7.9–§7.14 plus the `record['id']` → `uuid` repository key). Those fixes are
+re-derived in the connector change but have NOT been re-observed against a
+vendor since; that re-run is a precondition for taking it out of draft.
 
-### 9.2 Settle the Bitbucket partial-clone question — ✅ SETTLED (2026-08-07)
+### 9.2 Settle the Bitbucket partial-clone question — ✅ SETTLED
 
-Bitbucket Cloud honours `--filter=blob:none`: a pristine clone of a
-test-workspace repo produced a promisor pack with 176 of 722 objects missing
-(the blobs), 168 KiB vs 188 KiB for the full clone. PVC caveat recorded in
+Bitbucket Cloud honours `--filter=blob:none`: a pristine clone of a test
+repository produced a promisor pack with the blobs absent, measurably smaller
+than the full clone. PVC caveat recorded in
 DESIGN §8: with `include_patch=true` (the default) the first backfill lazily
 pulls essentially every blob, so size the Bitbucket cache for ~full-clone
 weight; the skeleton pays off only after the blob-purge reclaim tier runs.
 Opposite finding on GitLab: filter honoured, but pooled repos need the §7.9
 promotion.
 
-### 9.3 Work through the PR #2288 review comments — ✅ DONE (2026-08-07)
+### 9.3 Work through the PR #2288 review comments — ✅ DONE
 
-21 comments (1 human, 20 CodeRabbit; 4 critical). All addressed in code/docs
-except two reply-only items: the Python 3.12 question (repo-wide standard —
-every workflow pins it) and the full handler→engine row-assembly move
-(partially done: assembly extracted into named per-endpoint functions; the
-engine move is deliberate follow-up, not a defect). Highlights, all live in
-phase 8's row above: repo-scheme allowlist (`ext::`/`file://` rejected),
-cross-credential in-flight join re-proof, repo-bound page tokens,
-`git-cli-proxy` actually wired into the CI publish graph (a proxy-only push
-previously built nothing and could still publish an umbrella), and the
-umbrella `proxyToken` no longer silently rotates on client-side renders.
-Replies to the PR threads are drafted but NOT posted (needs explicit approval).
+29 open threads (5 human, 24 CodeRabbit; 4 critical). Every one that is a
+defect in this change is fixed in phase 8's row above, each with a test that
+fails against the previous behaviour.
+
+Three were answered rather than actioned:
+
+- **Rust 1.97 / Python 3.13.** The repo standard is `rust:1.95-bookworm`
+  (four sibling Dockerfiles, `rust-version = "1.95.0"` at the workspace, four
+  CI pins) and Python 3.12 (every workflow). 1.97 appears only in the local
+  cargo-watch dev image, which ships nothing. Changing either is a
+  cross-cutting bump, not this change.
+- **Tenant spoofing.** `X-Tenant-Id` is an unauthenticated cache-partition
+  input. The reviewer asked for a tech-debt issue and proper interservice JWT
+  plus gateway auth, not an in-PR fix — the API is deliberately not behind the
+  gateway (§6). Tracked separately; §3.7 states the boundary.
+- **Handler→engine row assembly.** The row assembly is now a pure free
+  function with its own unit tests, which is what made the response caps
+  testable. Moving it into the engine layer buys nothing further.
 
 ### 9.4 Finish the vendor-API streams — NOT STARTED (contract collected)
 
@@ -494,7 +514,7 @@ Residual rate-limit exposure: Bitbucket PR children are per-PR calls. Measure
 whether PR-only traffic fits the ~1000 req/h budget once commits move to the
 proxy.
 
-### 9.5 Rework commit branch membership → default-branch only — NOT STARTED
+### 9.5 Rework commit branch membership → default-branch only — ✅ DONE
 
 Decision from PR review discussion: consumers do NOT need every branch that
 contains a commit — they need to know whether the commit is in the DEFAULT
@@ -505,29 +525,50 @@ reworked to `is_in_default_branch: bool`:
 - proxy: resolve the default branch once per request (`HEAD` symref — the
   same fact `/v1/branches` already exposes as `is_default`), run ONE
   `rev-list` over it, intersect with the page. Drops the per-branch loop
-  entirely — cost stops scaling with branch count (137 branches on a
-  5-repo group in the live run).
+  entirely — cost stops scaling with branch count, which on a repository with
+  many branches was the dominant term.
 - both nocode manifests: replace `branch_names` in the `commits` schema.
 - DESIGN.md §4.2 field table + this plan's §3/§8 mentions.
 
-Do this BEFORE the silver models (§9.7) so they are written against the final
-schema. Note the enumeration itself stays `--all`: commits on non-default
-branches must still be extracted (the patch_id selection rules in §9.8 need
-them); only the membership computation narrows.
+Landed as described. The enumeration still walks `--all`: commits on
+non-default branches are still extracted (the patch_id selection rules in §9.8
+need them); only the membership computation narrowed. `fetch` additionally
+runs `git remote set-head origin --auto`, because a fetch does not update the
+mirrored `HEAD` and a default-branch rename at origin would otherwise leave
+the new boolean wrong for every row until the entry was evicted.
 
-### 9.6 Rebase resilience for date-cursored enumeration — NOT STARTED
+**The loss mode is worse than the field it replaced, and is documented rather
+than hidden.** `branch_names` degraded gracefully — a stale row was merely
+incomplete. `is_in_default_branch` asserts a boolean that flips exactly once
+in the normal lifecycle, and is emitted on the wrong side of that flip: a
+commit first seen on a feature branch is emitted `false`, and merging it later
+does not change its committed date, so a date-cursored sync never revisits it.
+Squash-merge is fine (the merge is a new commit, emitted `true`);
+fast-forward and true merge leave the original commits permanently wrong.
+Downstream can reconstruct reachability from `parent_hashes` + `is_merge` with
+no proxy change, and §9.6's lookback corrects anything merged inside the
+window. See DESIGN §4.2.
+
+### 9.6 Rebase resilience for date-cursored enumeration — MITIGATED, NOT SOLVED
 
 `git log --since=<cursor>` is a traversal cutoff. After a rebase the branch
 head is rewritten; replacement commits whose committer dates fall BEFORE the
 cursor are silently lost forever, because no later sync ever looks behind the
 cursor again.
 
-Mitigation to implement now — a **lookback window**: always enumerate from
-`cursor − window` instead of `cursor`. The declarative CDK has this as a
-first-class knob (`DatetimeBasedCursor.lookback_window`, ISO-8601 duration —
-e.g. `P1M`); bronze dedups the re-read rows, so the only cost is re-serving
-one window of commits per sync. One month covers our branch lifetimes in
-practice; make it a config field with a default, not a constant.
+Mitigation, shipped in the connector change — a **lookback window**: always
+enumerate from `cursor − window` instead of `cursor`. The declarative CDK has
+this as a first-class knob (`DatetimeBasedCursor.lookback_window`, ISO-8601
+duration); bronze dedups the re-read rows, so the only cost is re-serving one
+window of commits per sync. It is a config field with a `P1M` default, not a
+constant.
+
+**It is a heuristic and must not be read as a completeness guarantee.** A
+rewrite that moves commits below `cursor − window` still loses them
+permanently, and nothing detects that it happened. The window buys coverage
+proportional to its length, not correctness. The correctness boundary is
+reachability, not dates: the adaptive mechanism below is what would actually
+close this, and it is unbuilt.
 
 Recorded hypothesis for an **adaptive mechanism** (design exploration, not
 committed work): store the last known branch head sha in the cursor state;
@@ -573,7 +614,11 @@ metric applies it consistently rather than each dashboard reinventing it:
   same change, not new work.
 
 Both rules need `is_in_default_branch` (§9.5) and the full multi-branch
-enumeration the proxy already does. Deliverable: a spec section + the silver
+enumeration the proxy already does. Both also group by
+`(tenant, source, repository, patch_id)` — never without the repository (§4):
+`patch_id` is content-derived, so unrelated repositories collide on it, and
+the spec section must settle which repository identity is canonical and carry
+a cross-repository collision test. Deliverable: a spec section + the silver
 models (§9.7) exposing the group key so metrics can apply either rule.
 
 ### 9.9 Identity fields git does not carry
@@ -598,10 +643,17 @@ cap far sooner.
 - Enable `gitCliProxy.deploy=true` in the target environment's values and set
   `networkPolicy.allowedNamespaceLabels` to the namespace running Airbyte
   connector jobs — an empty allow-list denies all ingress by design.
-- Size `persistence.size` from the measured skeleton sizes; keep
-  `cache.diskBudgetBytes` 10–15% below it.
+- Size `persistence.size` from the worst-case FULL-CLONE working set, not
+  from skeleton sizes: with `include_patch=true` the first backfill lazily
+  pulls essentially every blob, and an entry promoted to `full_clone` (§7.9)
+  is exempt from blob purging, so only whole-entry eviction reclaims it. Allow
+  the sum of the repositories expected warm at once, plus the largest single
+  repository again as fetch/repack scratch, plus 15%. Keep
+  `cache.diskBudgetBytes` at 85–90% of the volume — the chart now refuses to
+  render outside 50–90%, and refuses a `cache.maxRepoBytes` above the budget.
 - Set `gitCliProxy.proxyToken` in the environment's values (the render fails
-  without it — a generated token would silently rotate on client-side renders)
+  without it — the token has a second holder in the connectors, so a generated
+  one could not be re-derived there and would rotate on every GitOps reconcile)
   and provision the connector Secrets carrying the same `git_proxy_token`;
   reconcile then creates the Airbyte sources.
 - Watch `git_proxy_evictions_total` and the 429 rate: a sustained rise means

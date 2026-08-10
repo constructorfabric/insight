@@ -109,7 +109,8 @@ cloned objects do not depend on the credential, only the transport does.
 There is **no prefetch/warm-up mechanism**. Freshness is a local, per-request
 rule:
 
-1. Repo not on disk → enqueue clone, respond `429 Retry-After` (§4.4).
+1. Repo not on disk → enqueue clone, join it, wait up to `INLINE_WAIT`;
+   serve if it finishes, else `429 Retry-After` (§4.4) while it continues.
 2. Repo on disk, `now − last_fetched_at > max_staleness` → run
    `git fetch --prune` (single-flight), then serve.
 3. Otherwise → serve immediately from the local clone.
@@ -133,12 +134,20 @@ hang for the length of a clone, and a client giving up never cancels the work.
 Single-flight guarantees concurrent requests for one repo trigger at most one
 clone/fetch regardless of which of them time out.
 
-**Credential re-proof.** Each entry records a one-way fingerprint of the
+**Credential continuity.** Each entry records a one-way fingerprint of the
 credentials that last proved origin access (`meta.json`). A warm read is served
-only to a caller whose credentials match; a mismatch forces a fetch, so a
-caller must prove access to origin before seeing cached data. Rotation costs
-one fetch, never a re-clone. The cache key alone is never treated as an
+only to a caller whose credentials match; a mismatch forces a fetch. Rotation
+costs one fetch, never a re-clone. The cache key alone is never treated as an
 authorization claim (§3.7).
+
+This is continuity, **not** current authorization: it proves the caller
+presents the same credential that last succeeded, never that the credential is
+still valid at origin. A revoked or scope-reduced credential keeps reading
+cached data for up to `max_staleness` — and **without bound** for as long as a
+caller keeps paginating, because §4.1 guarantees a request carrying a page
+token never fetches. Revocation is therefore not enforced by this service;
+where that matters, the control is the freshness window and the lifetime of a
+page sequence, both of which an operator sets.
 
 ### 3.3 Blob lifecycle
 
@@ -270,8 +279,8 @@ nowhere else:
 - **`X-Tenant-Id` / `X-Source-Id` are cache partition inputs, not
   authorization claims.** One deployment-wide bearer token authenticates *the
   caller class*, not a tenant, so those headers alone must never grant access
-  to a warm entry: the credential re-proof of §3.2 is what binds a caller to
-  an entry. A caller that cannot satisfy origin auth for a repository cannot
+  to a warm entry: the credential continuity check of §3.2 is what binds a
+  caller to an entry. A caller that cannot satisfy origin auth for a repository cannot
   read its cached data, whatever tenant/source it names.
 - Proxy-level authentication (service-to-service): static bearer token via
   `Authorization`, provisioned by deployment; independent from git
@@ -285,9 +294,13 @@ nowhere else:
 - Required headers: `X-Tenant-Id`, `X-Source-Id`, `X-Git-Username`,
   `X-Git-Token`, `Authorization` (proxy bearer). Optional:
   `X-Max-Staleness: <seconds>`.
-- Pagination: all list endpoints order rows **ascending by
-  `(committed_date, sha)`** and return an opaque `next_page_token` encoding the
-  last emitted pair **plus the snapshot generation** it came from. Ascending
+- Pagination: list endpoints order rows **ascending by a two-part key** and
+  return an opaque `next_page_token` encoding the last emitted pair **plus the
+  snapshot generation** it came from. The key is `(committed_date, sha)` for
+  `/v1/commits` and `/v1/file-changes`. `/v1/branches` is the exception: a
+  branch has no date to walk by, so it orders by `(name, "")` — the second
+  component is the empty string, since branch names are unique within a
+  snapshot and nothing is left to break a tie on. Ascending
   order makes pagination deterministic and is friendly to Airbyte cursor
   checkpointing. `page_size` default 1000, max 10000.
 - **Snapshot pinning.** The generation in the token binds a page sequence to
@@ -300,6 +313,11 @@ nowhere else:
   mid-walk be skipped. The consumer restarts the stream slice from its own
   cursor; bronze is append-only, so replayed rows dedup downstream.
   INVARIANT: the token selects a position, never a repository or a tenant.
+  It carries a binding to the cache entry it was minted from, so a cursor
+  cannot continue a *different* repository that happens to be at the same
+  generation; a mismatch is `400`, not `409`, because resuming from a stored
+  cursor cannot fix it. The binding grants nothing — access is decided by the
+  credential fingerprint on every request, token or not.
 - Responses: `{ "items": [ … ], "next_page_token": "…" | null }`.
 - The proxy returns **pure git data**. Envelope fields are the connector's
   job (§5.4).
@@ -325,12 +343,30 @@ append-only bronze behavior (dedup is downstream RMT's job).
 | `parent_hashes` | string[] | |
 | `is_merge` | bool | `len(parents) > 1` |
 | `additions`, `deletions`, `changed_files` | int | numstat pass (shared with file-changes) |
-| `branch_names` | string[] | `--contains` in the same pass |
+| `is_in_default_branch` | bool | one `rev-list` over the `HEAD` symref, intersected with the page |
 | `patch_id` | string | `git patch-id --stable` over the commit's full diff — canonical, whitespace- and hunk-order-insensitive hash for duplicate/cherry-pick detection. Always computed from the untruncated diff, so dedup never depends on stored patch text. |
 
-`branch_names` subsumes the Bitbucket CDK connector's
-`commit_branch_reachability` stream; a flat bronze table is produced
-downstream via `ARRAY JOIN` if required.
+`is_in_default_branch` is evaluated **at emit time**, against the snapshot
+the page was served from. A commit first seen on a feature branch is emitted
+`false`, and merging it later does not change its committed date, so a
+date-cursored incremental sync never revisits it and the bronze row keeps
+`false` permanently. Under squash-merge the merge is a new commit and is
+emitted `true`, so the field is right for what the default branch actually
+contains; under fast-forward or a true merge the original commits are the ones
+that matter, and they stay wrong.
+
+Consumers needing *present-tense* reachability must derive it downstream from
+`parent_hashes` and `is_merge`, which this endpoint already emits — no proxy
+change is required for that. The connector's `lookback_window` also re-reads a
+trailing window each sync, which corrects anything merged inside it. Re-emitting
+or tombstoning superseded rows is deliberately out of scope.
+
+The endpoint no longer reports every branch containing a commit. That form cost
+one `git branch --contains` per commit in the page — up to ten thousand
+subprocess spawns for one request, each walking reachability across all refs —
+and it answered a question no consumer asked. Per-branch reachability is
+therefore not available here; the enumeration itself still walks `--all`, so
+commits off the default branch are still extracted.
 
 #### `GET /v1/file-changes`
 
@@ -393,7 +429,7 @@ latency/size histograms per endpoint.
 | `404` | repo not found at origin | fail the slice; parent record is stale |
 | `409` | the pinned snapshot is gone (§4.1) | restart the stream slice from its cursor |
 | `413` | repo exceeds `MAX_REPO_BYTES` | permanent — do not retry |
-| `429` + `Retry-After` | repo cold (clone queued), fetch in flight, or admission rejected | retry with backoff (declarative error handler) |
+| `429` + `Retry-After` | preparation did not finish within `INLINE_WAIT`, or admission was rejected | retry with backoff (declarative error handler) |
 | `5xx` | internal/transient | retry with backoff |
 
 Error bodies are `{ "error": "<code>", "message": "…" }`. Caller-actionable
@@ -580,7 +616,28 @@ bronze branches (append-only → RMT)                    unique_key excludes hea
   shared volume.
 - **Volume**: PVC preferred (cache survives restarts; no re-clone storm after
   deploys). `emptyDir` + `sizeLimit` is acceptable but its enforcement is pod
-  eviction — the app budget must sit safely below either way.
+  eviction — the app budget must sit safely below either way. The chart
+  enforces that: a `cache.diskBudgetBytes` outside 50–90% of
+  `persistence.size`, or a `cache.maxRepoBytes` above the budget, fails the
+  render rather than the pod.
+- **Sizing** is a *full-clone* calculation, not a skeleton one. The blobless
+  skeleton is the steady state only after the purge tier has run; with
+  `include_patch=true` (the connector default) the first backfill lazily pulls
+  essentially every blob, and an entry promoted to `full_clone` (§3.3) is
+  exempt from blob purging entirely — `reclaimable_by_purge` is
+  `size − skeleton`, and for a promoted entry the full clone *is* the
+  skeleton, so purging frees nothing and only whole-entry eviction reclaims
+  it. Size for:
+
+  ```
+  persistence.size ≥ Σ(full-clone bytes of repositories expected warm at once)
+                   + max(single-repo full-clone bytes)   # fetch/repack scratch
+                   + 15%
+  ```
+
+  with `cache.maxRepoBytes` above the largest repository intended to sync (a
+  repository over it is refused `413` permanently, §4.4) and
+  `cache.diskBudgetBytes` at 85–90% of the volume.
 - **Config (env, all required — no defaults):** `DATA_DIR`,
   `DISK_BUDGET_BYTES`, `MAX_REPO_BYTES`, `DEFAULT_MAX_STALENESS_SECONDS`,
   `HEAVY_OPS_CONCURRENCY`, `PROXY_BEARER_TOKEN` (secret).
@@ -591,10 +648,13 @@ bronze branches (append-only → RMT)                    unique_key excludes hea
   proxy bearer token, so the connector→proxy hop must be restricted at two
   levels: a `NetworkPolicy` admitting ingress only from the Airbyte job
   namespace (the sole consumer — no other service and no user calls this API),
-  and `git_proxy_url` restricted to `https` unless the deployment is explicitly
-  opted into plaintext in-cluster traffic. In-cluster TLS has a precedent here
-  (the authenticator serves https with a mounted CA), so preferring it over
-  plaintext costs no new machinery.
+  and a `git_proxy_url` whose scheme is validated (`^https?://`) so a missing
+  or malformed scheme fails `check` instead of rendering an empty `url_base`.
+  Plaintext in-cluster is the intended default and the shipped example: the hop
+  is pod-to-pod, the chart issues no certificate for it, and the NetworkPolicy
+  — not transport encryption — is what restricts who may call the API. A
+  deployment that terminates TLS in front of the Service simply configures an
+  `https` URL; nothing here prevents that.
 - **Image**: minimal base + git ≥ 2.36 (≥ 2.49 preferred).
 
 ## 7. Design Decisions
@@ -648,7 +708,7 @@ commit reachable, which a position-only cursor would skip. The token therefore
 carries the snapshot generation, continuation requests never fetch, and a
 superseded generation fails `409` instead of splicing two histories (§4.1).
 
-### DD-GP-07: Credential re-proof instead of trusting caller-supplied identity
+### DD-GP-07: Credential continuity instead of trusting caller-supplied identity
 
 One deployment-wide bearer token cannot express "this caller may read this
 tenant's repository", and `X-Tenant-Id`/`X-Source-Id` are caller-supplied.
@@ -658,6 +718,10 @@ warm read to anyone else (forcing a fetch, where the vendor itself is the
 authority). Access to cached data therefore requires access to the origin —
 the property that matters — with no key distribution beyond the git PAT the
 connector already holds.
+
+The bound is continuity, not liveness: it proves the caller presents the same
+credential that last succeeded, never that the credential is still valid. See
+§3.2 for the exposure window a revoked credential retains.
 
 ## 8. Open Questions / Pre-build Validation
 
