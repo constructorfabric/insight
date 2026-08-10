@@ -883,6 +883,29 @@ jobs:
           # `--days`, spelled exactly like that: the seeder rejects unknown
           # arguments, so a plausible-looking synonym fails the stage every time.
           #
+          # 365 AND NOT MORE, and this is a correctness constraint rather than a
+          # taste in history depth. The analytics API refuses any period spanning
+          # 400 days or more — `MAX_PERIOD_DAYS` in
+          # src/backend/services/analytics/src/domain/metric_results/validation.rs,
+          # checked as `(to - from).num_days() >= MAX_PERIOD_DAYS`. The deployed
+          # -stand suites derive the period they ask about from the manifest's
+          # `data_window`, which is exactly this window. So a seed wider than the
+          # cap produces a stand whose own data cannot be queried over the range
+          # it was seeded over, and the suites fail with
+          #
+          #     400 Invalid Argument — "period must not exceed 400 days"
+          #
+          # on every window-derived request. This stage used to pass 730, and the
+          # cost was 68 red tests across tests/stand/api and tests/stand/smoke —
+          # all reporting a data problem, on a stand whose data was fine.
+          #
+          # 365 is a year of history and 364 days of span, comfortably inside the
+          # cap with room for the seeder's own end-inclusive arithmetic. The
+          # seeder's default is 60 (config.DEFAULT_SEED_DAYS) and compose uses
+          # the same; more is wanted here because a deploy stand is also where
+          # year-over-year views get looked at. Anything at or above 400 is not a
+          # tuning choice, it is a broken stand.
+          #
           # `tee` keeps the raw stream in $RUNNER_TEMP — it is the only copy of
           # the seed manifest, which the next step reads — while only the redacted
           # form reaches this public log. `pipefail` (set above) is what makes
@@ -922,7 +945,7 @@ jobs:
             -n "$STAND_NAMESPACE" \
             --context "$kube_context" \
             "${email_args[@]}" \
-            --days 730 \
+            --days 365 \
             "${force_args[@]}" \
             2>&1 | tee "$RUNNER_TEMP/seed.log" | python3 "$REDACT"
 

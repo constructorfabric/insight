@@ -42,6 +42,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Final
 from urllib.parse import parse_qs, urlsplit
 
@@ -91,6 +92,31 @@ SEED_GUARANTEED_METRIC_KEYS: Final[tuple[str, ...]] = (
     "tasks.closed",
     "collab.messages_sent",
 )
+
+#: The widest `period` the analytics API will answer, in days.
+#:
+#: `MAX_PERIOD_DAYS` in
+#: src/backend/services/analytics/src/domain/metric_results/validation.rs is 400
+#: and the guard there rejects `(to - from).num_days() >= MAX_PERIOD_DAYS`, so
+#: 399 is the largest span that is actually accepted — 400 is already refused.
+#:
+#: This exists because the seeded window and a QUERYABLE window are two
+#: different things, and conflating them made this check unpassable. The deploy
+#: workflow seeds `--days 730`, so the manifest's `data_window` is 730 days
+#: wide; asking for all of it earned
+#:
+#:     400 Invalid Argument — "period must not exceed 400 days"
+#:
+#: for every metric key, which the check then reported as "no seed-guaranteed
+#: metric answered with data" — a data problem, on a stand whose data was fine.
+#: A validation refusal is not an empty answer, and the gate should not need a
+#: reader to know the difference.
+#:
+#: Restated as a rule for whoever changes the seed window next: `--days` may be
+#: anything the seeder can generate, and this check asks about the most recent
+#: slice of it that the API will accept. The two numbers are unrelated and
+#: neither one constrains the other.
+MAX_QUERY_SPAN_DAYS: Final[int] = 399
 
 
 # ---------------------------------------------------------------------------
@@ -295,9 +321,12 @@ def test_a_seeded_metric_answers_over_the_seeded_window(
     whose tenant on the session does not match the tenant the rows carry — and a
     user would see a dashboard of dashes. This is the check that notices.
 
-    The period is the manifest's own `data_window`, so the request asks for the
-    range the stand was actually seeded over rather than a guess, and the anchor
-    moves with the seed instead of being pinned to a date in a test.
+    The period is derived from the manifest's own `data_window`, so the request
+    asks about the range the stand was actually seeded over rather than a guess,
+    and the anchor moves with the seed instead of being pinned to a date in a
+    test. It is the most RECENT part of that range rather than all of it: the
+    API caps a single query at `MAX_QUERY_SPAN_DAYS`, and the seed window is
+    routinely wider. See `_query_window`.
 
     Values are asserted NON-NULL and FINITE and nothing more. Not the number:
     the seed's golden set is empty by design (see
@@ -310,12 +339,7 @@ def test_a_seeded_metric_answers_over_the_seeded_window(
     definition change look like a broken deployment.
     """
     persona = smoke_login(smoke_personas[METRIC_PROBE_ROLE]).require()
-    start, _, end = stand_manifest.data_window.partition("..")
-    assert start and end, (
-        f"the manifest at {stand_manifest.source_path} carries data_window "
-        f"{stand_manifest.data_window!r}, which is not a `from..to` range — there is no "
-        f"period to ask about."
-    )
+    start, end = _query_window(stand_manifest)
 
     probes = tuple(
         _probe(persona.client, persona.person.uuid, start, end, metric_key)
@@ -329,14 +353,15 @@ def test_a_seeded_metric_answers_over_the_seeded_window(
     # the sentence that matters.
     answered = [probe for probe in probes if probe.plausible]
     assert answered, (
-        f"no seed-guaranteed metric answered with data for {persona.email} over the seeded "
-        f"window {stand_manifest.data_window}:\n{report}\n"
+        f"no seed-guaranteed metric answered with data for {persona.email} over {start}..{end} "
+        f"(the queryable tail of the seeded window {stand_manifest.data_window}):\n{report}\n"
         f"  Every probe reached the API through the public URL with a real session, so this "
         f"is not an auth failure. The usual causes, in order: the stand was deployed but "
         f"never seeded; the seed wrote silver but the gold models were not rebuilt after it; "
         f"the rows carry a different tenant than the session does "
         f"({stand_manifest.tenant}); or all three metric keys have been retired from the "
-        f"registry, which the statuses above would show as 400."
+        f"registry. A 400 above is NOT any of those — it is the request being refused before "
+        f"it was answered, and the body names the field."
     )
 
     malformed = [probe for probe in probes if probe.status == 200 and probe.note]
@@ -416,6 +441,43 @@ class MetricProbe:
             f"{self.points} points ({self.non_null_points} non-null)"
         )
         return f"{self.metric_key}: HTTP {self.status} — {detail}"
+
+
+def _query_window(manifest: Manifest) -> tuple[str, str]:
+    """The widest slice of the seeded window this API will actually answer for.
+
+    Returns `(from, to)` as ISO dates: the manifest's `data_window` end, and a
+    start no more than `MAX_QUERY_SPAN_DAYS` before it. A seed window narrower
+    than the cap is returned unchanged, so the ordinary case still asks about
+    everything that was seeded.
+
+    The TAIL rather than the head, deliberately. Both ends carry seeded rows, so
+    either would answer — but the recent end is the one a dashboard opens on, and
+    it is the end that keeps answering as the seed's anchor moves. Anchoring to
+    the start would slowly walk the query off the data as the window grows.
+
+    Raises `AssertionError` rather than returning something plausible when the
+    manifest's window is unreadable: a malformed `data_window` means the seed
+    manifest is not what this suite thinks it is, and every date arithmetic
+    below would otherwise invent a period out of a parse failure.
+    """
+    start_text, _, end_text = manifest.data_window.partition("..")
+    assert start_text and end_text, (
+        f"the manifest at {manifest.source_path} carries data_window "
+        f"{manifest.data_window!r}, which is not a `from..to` range — there is no period "
+        f"to ask about."
+    )
+    try:
+        start = date.fromisoformat(start_text)
+        end = date.fromisoformat(end_text)
+    except ValueError as exc:
+        raise AssertionError(
+            f"the manifest at {manifest.source_path} carries data_window "
+            f"{manifest.data_window!r}, whose ends are not ISO dates: {exc}"
+        ) from None
+
+    earliest = end - timedelta(days=MAX_QUERY_SPAN_DAYS)
+    return max(start, earliest).isoformat(), end.isoformat()
 
 
 def _probe(client: ApiClient, person_id: str, start: str, end: str, metric_key: str) -> MetricProbe:

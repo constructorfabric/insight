@@ -83,7 +83,10 @@ Discovered from the stand (pass a flag only to override):
       --idp-source-type <t> identity source_type the login rows are written under
 
 Seed options:
-      --step <step>        identity | silver | analytics | all       [default: all]
+      --step <step>        identity | silver | analytics | gold | all [default: all]
+                           `gold` rebuilds the dbt gold models over the identity
+                           map as it stands NOW; run it after the persons-sync,
+                           never instead of `all`.
       --days <n>           activity-window length in days
       --anchor <date>      last day carrying activity (YYYY-MM-DD)
       --cross-tenant       also write the second-tenant refusal fixture
@@ -165,9 +168,30 @@ need envsubst
 # address that can be neither discovered nor supplied is reported by the
 # missing-values block further down, in the same named-flag list as an
 # undiscoverable tenant — one report, one shape, one place to look.
+# `gold` is here and is NOT part of `all`, deliberately — see the seeder's own
+# note in insight_seed/silver.py: "Gold builds unresolved here — the
+# orchestrator runs the persons-seed/sync pair and then the `gold` subcommand to
+# rebuild it."
+#
+# Gold resolves entity ids at BUILD time. On a cluster the roster reaches
+# ClickHouse only when identity-resolution's persons-sync publishes it, and that
+# runs on its own schedule, so a gold built during `all` binds against whatever
+# was published BEFORE this seed — on a freshly installed stand, nothing. The
+# result is the failure mode this flag exists to fix: every `*_metric_evidence`
+# row written with an empty `entity_id`, every `*_metric_observations` model
+# selecting zero rows, and an API that answers 200 with a null for every metric
+# while the release reports `deployed` and every pod is Ready.
+#
+# So the caller runs: `all`, then the sync, then `--step gold`. That ordering is
+# the deploy workflow's seed stage, and it is why this is a step a caller can ask
+# for rather than one `all` performs.
+#
+# `insight-seed` has always accepted this argument and seed-job.yaml.tpl has
+# always passed ${SEED_STEP} through verbatim; only this allow-list refused it,
+# which made the documented recovery impossible to run on a cluster.
 case "$STEP" in
-  identity|silver|analytics|all) ;;
-  *) die "--step must be one of identity, silver, analytics, all (got '$STEP')." ;;
+  identity|silver|analytics|gold|all) ;;
+  *) die "--step must be one of identity, silver, analytics, gold, all (got '$STEP')." ;;
 esac
 # Checked here rather than by the apiserver: this value is also the script's own
 # polling budget, and a non-numeric one turns the wait loop's arithmetic into a

@@ -670,12 +670,36 @@ identityResolution:
   # authenticates and then resolves to nobody.
   #
   # This CronJob rebuilds the same projection from a different source:
-  # ClickHouse `identity_inputs`, which connectors populate. A stand with no
-  # connectors has none, so today it fails its own input guard every morning
-  # and writes nothing — the guard working, not a fault, but a daily failed Job
-  # in every diagnostics dump. The moment connectors did land data here it
-  # would stop being harmless and start competing with the seeded roster for
-  # the same table.
+  # ClickHouse `identity_inputs`.
+  #
+  # CORRECTION, measured on this stand rather than assumed. An earlier version
+  # of this comment said `identity_inputs` is populated by CONNECTORS, that a
+  # stand without them therefore has none, and that the Job consequently fails
+  # its own input guard every morning and writes nothing. All three are false.
+  # THE SEEDER populates it: a seeded stand carries hundreds of
+  # `identity.identity_inputs` rows (email, id, department, job_title and the
+  # rest) under the HR directory's source type, with no connector anywhere.
+  #
+  # What that costs while this stays false is not nothing, and it is worth
+  # writing down because every pod is Ready throughout. `resolve_person_id()`
+  # (src/ingestion/dbt/macros/resolve_person_id.sql) binds an account to a
+  # person by INNER JOINing the seeded account evidence in `identity_inputs`
+  # to the `value_type='id'` rows in `identity.identity_persons` on
+  # (source_type, source_id, account_id). The seeder writes login bindings
+  # under the IdP's source type — `keycloak`, per `authenticator.oidc.sourceType`
+  # above — while the account evidence it writes carries the HR directory's.
+  # Those two source types are not equal, so the join returns zero rows, every
+  # `*_metric_evidence` row is built with an empty `entity_id`, and every
+  # `*_metric_observations` model — which filters `entity_id != ''` — selects
+  # nothing. The API then answers 200 with a null for every metric.
+  #
+  # This CronJob is what would create the missing bindings, by rebuilding
+  # `persons` from that evidence. Turning it on is therefore NOT obviously
+  # wrong, but it is not obviously right either: the rebuild replaces `persons`
+  # from ClickHouse alone, and the seeder's own login rows are not in ClickHouse
+  # — so it could bind the accounts and un-seed the logins in the same run.
+  # Deciding that needs a stand to try it on and a deliberate change, not a flag
+  # flipped while reading this.
   #
   # Turned off HERE rather than with `kubectl patch cronjob … suspend=true`,
   # because the CronJob is chart-rendered and helm-owned: a hand-suspend is
@@ -720,12 +744,15 @@ identityResolution:
   #   kubectl -n insight create job --from=cronjob/insight-identity-resolution-sync sync-manual
   #
   # OPEN RISK for a CI-seeded stand, stated here because this is where
-  # somebody will look: the seed CronJob rebuilds `persons` from ClickHouse
-  # observations, and the fixture seeder does not write those observations.
-  # While the observation table is empty the Job's guard fires and the
-  # seeded rows survive. Once anything populates that table, the rebuild
-  # would replace `persons` and drop the seeder's login-bootstrap rows —
-  # un-seeding logins between merges, overnight, with no signal until the
-  # next smoke run. Suspending these two CronJobs on this stand is a values
-  # change (`enabled: false`) and a deliberate decision, not something to do
-  # by reflex.
+  # somebody will look. The seed CronJob rebuilds `persons` from the ClickHouse
+  # evidence, and — see the CORRECTION above — that evidence is NOT empty on a
+  # seeded stand: the seeder writes it. So the guard does not fire, and the
+  # rebuild would replace `persons` with what it can derive from ClickHouse
+  # alone. The seeder's login-bootstrap rows are not derivable from there, so
+  # the risk is real and runs in the direction of un-seeding logins between
+  # merges, overnight, with no signal until the next smoke run.
+  #
+  # That is why `seed.enabled` is false above, and it is also why leaving it
+  # false has a price — the unresolved account bindings described in that
+  # correction. Both directions are a deliberate decision with a cost; neither
+  # is a flag to flip by reflex.
