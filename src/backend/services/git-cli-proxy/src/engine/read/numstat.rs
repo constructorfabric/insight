@@ -69,12 +69,18 @@ pub async fn read(
     }
 
     let format = format!("--pretty=format:{COMMIT_MARK}%H");
+    // `-z` is what makes a path a field instead of a substring. Without it git
+    // C-quotes any path holding a quote, a backslash, a control character or a
+    // non-ASCII byte (`core.quotePath` defaults on, and `env_clear` guarantees
+    // the default), and the row carries the escaped spelling rather than the
+    // file's actual name.
     let mut args = vec![
         "log",
         "--no-walk",
         "--raw",
         "--numstat",
         "-M",
+        "-z",
         "--no-color",
         "--root",
         &format,
@@ -91,6 +97,15 @@ type Statuses = HashMap<String, (FileStatus, Option<String>)>;
 /// Counts per new-path, harvested from `--numstat` lines.
 type Counts = HashMap<String, (Option<u64>, Option<u64>, bool)>;
 
+/// Walk the NUL-delimited stream git emits under `-z`.
+///
+/// INVARIANT: a path is only ever taken by POSITION — the field after a
+/// record head, never a field scanned for structure. A file whose name
+/// happens to look like a record head therefore cannot forge one.
+///
+/// Records come in two shapes, both NUL-terminated:
+///   `:<modes> <oids> <status>` then one path, or two for a rename or copy
+///   `<added>\t<deleted>\t<path>`, or `<added>\t<deleted>\t` then two paths
 fn parse(text: &str) -> HashMap<String, Vec<FileStat>> {
     let mut result: HashMap<String, Vec<FileStat>> = HashMap::new();
     let mut sha: Option<String> = None;
@@ -98,28 +113,38 @@ fn parse(text: &str) -> HashMap<String, Vec<FileStat>> {
     let mut counts = Counts::new();
     let mut order: Vec<String> = Vec::new();
 
-    for line in text.lines() {
-        if let Some(next_sha) = line.strip_prefix(COMMIT_MARK) {
+    let mut fields = text.split('\0');
+    while let Some(field) = fields.next() {
+        let mut head = field;
+
+        if let Some(rest) = head.strip_prefix(COMMIT_MARK) {
             if let Some(previous) = sha.take() {
                 result.insert(previous, merge(&order, &statuses, &counts));
             }
             statuses.clear();
             counts.clear();
             order.clear();
+
+            // The pretty format is not NUL-terminated: git glues the first
+            // record's head onto it after a newline.
+            let (next_sha, tail) = rest.split_once('\n').unwrap_or((rest, ""));
             sha = Some(next_sha.trim().to_owned());
-            continue;
+            head = tail;
         }
-        if sha.is_none() || line.trim().is_empty() {
+
+        if sha.is_none() || head.is_empty() {
             continue;
         }
 
-        if line.starts_with(':') {
-            if let Some((path, status, previous)) = parse_raw_line(line) {
-                statuses.insert(path, (status, previous));
-            }
+        if let Some(meta) = head.strip_prefix(':') {
+            let Some((path, status, previous)) = raw_record(meta, &mut fields) else {
+                continue;
+            };
+            statuses.insert(path, (status, previous));
             continue;
         }
-        if let Some((path, additions, deletions, is_binary)) = parse_numstat_line(line) {
+
+        if let Some((path, additions, deletions, is_binary)) = numstat_record(head, &mut fields) {
             if !counts.contains_key(&path) {
                 order.push(path.clone());
             }
@@ -155,77 +180,98 @@ fn merge(order: &[String], statuses: &Statuses, counts: &Counts) -> Vec<FileStat
         .collect()
 }
 
-/// `:<src_mode> <dst_mode> <src_oid> <dst_oid> <status>\t<path>[\t<new_path>]`
-fn parse_raw_line(line: &str) -> Option<(String, FileStatus, Option<String>)> {
-    let rest = line.strip_prefix(':')?;
-    let (meta, paths) = rest.split_once('\t')?;
-    let status_field = meta.split_whitespace().nth(4)?;
-    let status = FileStatus::from_raw(status_field);
+/// `:<src_mode> <dst_mode> <src_oid> <dst_oid> <status>` and the path(s) that
+/// follow it. A rename or a copy carries two: the pre-image, then the post.
+fn raw_record<'a>(
+    meta: &str,
+    fields: &mut impl Iterator<Item = &'a str>,
+) -> Option<(String, FileStatus, Option<String>)> {
+    let status = FileStatus::from_raw(meta.split_whitespace().nth(4)?);
+    let first = fields.next()?;
 
-    let mut path_fields = paths.split('\t');
-    let first = path_fields.next()?;
-    match path_fields.next() {
-        Some(second) if !second.is_empty() => {
-            Some((second.to_owned(), status, Some(first.to_owned())))
-        }
-        _ => Some((first.to_owned(), status, None)),
+    if matches!(status, FileStatus::Renamed | FileStatus::Copied) {
+        let second = fields.next()?;
+        return Some((second.to_owned(), status, Some(first.to_owned())));
     }
+    Some((first.to_owned(), status, None))
 }
 
-/// `<added>\t<deleted>\t<path>` — binary files report `-`; renames spell the
-/// path as `old => new` or `dir/{old => new}`.
-fn parse_numstat_line(line: &str) -> Option<(String, Option<u64>, Option<u64>, bool)> {
-    let mut fields = line.split('\t');
-    let added = fields.next()?;
-    let deleted = fields.next()?;
-    let path = fields.next()?;
+/// `<added>\t<deleted>\t<path>` — binary files report `-` for both counts. A
+/// rename leaves the path field empty and follows with the two paths, which is
+/// why `-z` needs no equivalent of the `{old => new}` spelling.
+fn numstat_record<'a>(
+    head: &str,
+    fields: &mut impl Iterator<Item = &'a str>,
+) -> Option<(String, Option<u64>, Option<u64>, bool)> {
+    // `splitn`, not `split`: git leaves a tab inside a path untouched under
+    // `-z`, so only the FIRST two tabs are field separators.
+    let mut parts = head.splitn(3, '\t');
+    let added = parts.next()?;
+    let deleted = parts.next()?;
+    let inline = parts.next()?;
     if !(added == "-" || added.chars().all(|c| c.is_ascii_digit())) {
         return None;
     }
 
-    let is_binary = added == "-" || deleted == "-";
-    let filename = match fields.next() {
-        Some(new_path) if !new_path.is_empty() => new_path.to_owned(),
-        _ => new_path_of(path),
+    let filename = if inline.is_empty() {
+        let _pre_image = fields.next()?;
+        fields.next()?.to_owned()
+    } else {
+        inline.to_owned()
     };
 
     Some((
         filename,
         added.parse().ok(),
         deleted.parse().ok(),
-        is_binary,
+        added == "-" || deleted == "-",
     ))
-}
-
-/// The post-rename path of a numstat path field.
-fn new_path_of(path: &str) -> String {
-    let Some(arrow) = path.find(" => ") else {
-        return path.to_owned();
-    };
-
-    let (head, tail) = path.split_at(arrow);
-    let tail = tail.trim_start_matches(" => ");
-    match head.find('{') {
-        Some(open) => format!("{}{}", &head[..open], tail.trim_end_matches('}')),
-        None => tail.to_owned(),
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const MARK: &str = COMMIT_MARK;
+
+    /// One commit's worth of the NUL-delimited stream, as git lays it out:
+    /// the pretty format, a newline, then every record's head glued to the
+    /// paths that follow it.
+    fn stream(commits: &[(&str, &[&str])]) -> String {
+        let mut out = String::new();
+        for (i, (sha, records)) in commits.iter().enumerate() {
+            if i > 0 {
+                out.push('\0');
+            }
+            out.push_str(MARK);
+            out.push_str(sha);
+            out.push('\n');
+            out.push_str(&records.join("\0"));
+            out.push('\0');
+        }
+        out
+    }
+
     #[test]
     fn groups_stats_per_commit_with_exact_statuses() {
-        let text = "\u{1e}commit aaa\n\
-                    :100644 100644 a1 b1 M\tsrc/a.rs\n\
-                    :000000 100644 0000000 c1 A\tsrc/new.rs\n\
-                    3\t1\tsrc/a.rs\n\
-                    9\t0\tsrc/new.rs\n\
-                    \u{1e}commit bbb\n\
-                    :100644 000000 d1 0000000 D\tgone.rs\n\
-                    0\t4\tgone.rs\n";
-        let parsed = parse(text);
+        let text = stream(&[
+            (
+                "aaa",
+                &[
+                    ":100644 100644 a1 b1 M",
+                    "src/a.rs",
+                    ":000000 100644 0000000 c1 A",
+                    "src/new.rs",
+                    "3\t1\tsrc/a.rs",
+                    "9\t0\tsrc/new.rs",
+                ],
+            ),
+            (
+                "bbb",
+                &[":100644 000000 d1 0000000 D", "gone.rs", "0\t4\tgone.rs"],
+            ),
+        ]);
+        let parsed = parse(&text);
 
         let Some(first) = parsed.get("aaa") else {
             panic!("commit aaa missing")
@@ -244,8 +290,11 @@ mod tests {
 
     #[test]
     fn binary_files_report_null_counts() {
-        let text = "\u{1e}commit aaa\n:100644 100644 a1 b1 M\tlogo.png\n-\t-\tlogo.png\n";
-        let Some(stats) = parse(text).get("aaa").cloned() else {
+        let text = stream(&[(
+            "aaa",
+            &[":100644 100644 a1 b1 M", "logo.png", "-\t-\tlogo.png"],
+        )]);
+        let Some(stats) = parse(&text).get("aaa").cloned() else {
             panic!("commit missing")
         };
         assert!(stats[0].is_binary, "dash counts mean binary");
@@ -254,10 +303,18 @@ mod tests {
 
     #[test]
     fn renames_carry_both_paths() {
-        let text = "\u{1e}commit aaa\n\
-                    :100644 100644 a1 a1 R100\tsrc/old.rs\tsrc/new.rs\n\
-                    1\t1\tsrc/{old.rs => new.rs}\n";
-        let Some(stats) = parse(text).get("aaa").cloned() else {
+        let text = stream(&[(
+            "aaa",
+            &[
+                ":100644 100644 a1 a1 R100",
+                "src/old.rs",
+                "src/new.rs",
+                "1\t1\t",
+                "src/old.rs",
+                "src/new.rs",
+            ],
+        )]);
+        let Some(stats) = parse(&text).get("aaa").cloned() else {
             panic!("commit missing")
         };
         assert_eq!(stats.len(), 1);
@@ -267,38 +324,87 @@ mod tests {
     }
 
     #[test]
-    fn numstat_rename_spellings_resolve_to_the_new_path() {
+    fn a_path_is_reported_exactly_however_it_is_spelled() {
+        // Every one of these is C-quoted by git without `-z`, so the row would
+        // otherwise carry the escaped spelling instead of the file's name.
         let cases = vec![
-            ("braced", "src/{old.rs => new.rs}", "src/new.rs"),
-            ("plain", "old.rs => new.rs", "new.rs"),
-            ("no rename", "src/app.rs", "src/app.rs"),
+            ("space", "dir with space/a b.txt"),
+            ("tab", "tab\there.txt"),
+            ("quote", "quote\".txt"),
+            ("backslash", "back\\slash.txt"),
+            ("non-ascii", "unicode-ä.txt"),
+            ("looks like a path separator", "has b/nested.txt"),
+            ("looks like a record head", ":100644 100644 a1 b1 M"),
+            ("looks like a commit header", "\u{1e}commit deadbeef"),
         ];
-        for (name, field, expected) in cases {
-            assert_eq!(new_path_of(field), expected, "case: {name}");
+        for (name, path) in cases {
+            let text = stream(&[(
+                "aaa",
+                &[
+                    ":000000 100644 0000000 c1 A",
+                    path,
+                    &format!("1\t0\t{path}"),
+                ],
+            )]);
+            let Some(stats) = parse(&text).get("aaa").cloned() else {
+                panic!("case {name}: commit missing")
+            };
+            assert_eq!(stats.len(), 1, "case {name}: exactly one row");
+            assert_eq!(stats[0].filename, path, "case {name}");
+            assert_eq!(stats[0].status, FileStatus::Added, "case {name}");
         }
+    }
+
+    #[test]
+    fn a_rename_onto_an_existing_name_keeps_both_sides() {
+        let text = stream(&[(
+            "aaa",
+            &[
+                ":100644 000000 a1 0000000 D",
+                "docs/new.md",
+                ":100644 100644 b1 b1 R100",
+                "docs/old.md",
+                "docs/new.md",
+                "0\t2\tdocs/new.md",
+                "5\t0\t",
+                "docs/old.md",
+                "docs/new.md",
+            ],
+        )]);
+        let Some(stats) = parse(&text).get("aaa").cloned() else {
+            panic!("commit missing")
+        };
+        // Both records name `docs/new.md`; the last status wins, as it did
+        // before `-z`, and the row is not duplicated.
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].filename, "docs/new.md");
+        assert_eq!(stats[0].previous_filename.as_deref(), Some("docs/old.md"));
     }
 
     #[test]
     fn commit_with_no_changes_still_appears() {
         assert_eq!(
-            parse("\u{1e}commit aaa\n").get("aaa").map(Vec::len),
+            parse(&stream(&[("aaa", &[])])).get("aaa").map(Vec::len),
             Some(0),
             "an empty commit must not vanish from the map"
         );
     }
 
     #[test]
-    fn ignores_lines_before_the_first_commit_marker() {
-        let parsed = parse("3\t1\torphan.rs\n\u{1e}commit aaa\n1\t0\treal.rs\n");
+    fn ignores_fields_before_the_first_commit_marker() {
+        let parsed = parse(&format!("3\t1\torphan.rs\0{}", stream(&[("aaa", &["1\t0\treal.rs"])])));
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed.get("aaa").map(Vec::len), Some(1));
     }
 
     #[test]
     fn rejects_non_numstat_noise() {
-        let cases = vec!["", "just text", "x\ty\tz.rs"];
-        for line in cases {
-            assert!(parse_numstat_line(line).is_none(), "must reject: {line:?}");
+        for head in ["", "just text", "x\ty\tz.rs"] {
+            let mut empty = std::iter::empty();
+            assert!(
+                numstat_record(head, &mut empty).is_none(),
+                "must reject: {head:?}"
+            );
         }
     }
 

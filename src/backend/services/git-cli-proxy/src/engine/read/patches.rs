@@ -121,6 +121,15 @@ fn parse(text: &str, max_bytes: usize) -> HashMap<String, CommitPatches> {
             continue;
         }
 
+        // A rename or copy is the one case the header cannot resolve on its
+        // own, and the one case git spells out on a line of its own. It
+        // arrives before any hunk, so correcting the key here still keys the
+        // whole diff correctly.
+        if let Some(exact) = rename_target(line) {
+            path = Some(exact);
+            continue;
+        }
+
         if path.is_some() {
             buffer.push_line(line);
         }
@@ -147,13 +156,103 @@ fn flush(
         .insert(path, Patch { text, truncated });
 }
 
-/// The post-image path of a `diff --git a/<old> b/<new>` header. Paths with
-/// spaces are handled by taking everything after the ` b/` marker.
+/// The post-image path of a `diff --git a/<old> b/<new>` header.
+///
+/// The header is genuinely ambiguous for an unquoted path holding a space:
+/// `a/has b/x b/has b/x` contains three ` b/`, and the last one is inside the
+/// filename. Two facts resolve every case. Git C-quotes BOTH halves when
+/// either needs quoting, so a leading quote means the halves can be read as
+/// escaped strings. Otherwise the two halves are the same path unless this is
+/// a rename or a copy — and those spell their post-image out on a
+/// `rename to`/`copy to` line of their own ([`rename_target`]).
 fn diff_header_path(line: &str) -> Option<String> {
     let rest = line.strip_prefix("diff --git ")?;
-    let marker = rest.rfind(" b/")?;
-    let new_path = &rest[marker + 3..];
-    (!new_path.is_empty()).then(|| new_path.to_owned())
+
+    if rest.starts_with('"') {
+        let (_pre_image, after) = unquote(rest)?;
+        let (post_image, _) = unquote(after.strip_prefix(' ')?)?;
+        return post_image.strip_prefix("b/").map(ToOwned::to_owned);
+    }
+
+    symmetric_post_image(rest).or_else(|| {
+        // A rename or copy: a guess good enough to open the section, which the
+        // `rename to` line then corrects.
+        let marker = rest.rfind(" b/")?;
+        let guess = &rest[marker + 3..];
+        (!guess.is_empty()).then(|| guess.to_owned())
+    })
+}
+
+/// `a/<path> b/<path>` where both halves are the same, which is every diff
+/// but a rename or a copy. The split point follows from the length alone.
+fn symmetric_post_image(rest: &str) -> Option<String> {
+    let span = rest.len().checked_sub(5)?;
+    if span % 2 != 0 {
+        return None;
+    }
+    let half = span / 2;
+
+    let pre_image = rest.get(..2 + half)?.strip_prefix("a/")?;
+    let post_image = rest.get(2 + half..)?.strip_prefix(" b/")?;
+    (pre_image == post_image).then(|| post_image.to_owned())
+}
+
+/// The post-image path of a `rename to`/`copy to` extended-header line.
+///
+/// Unambiguous where the `diff --git` header is not: one path, the rest of the
+/// line. Hunk content cannot be confused with it — every content line carries
+/// a ` `, `+`, `-` or `\` prefix.
+fn rename_target(line: &str) -> Option<String> {
+    let path = line
+        .strip_prefix("rename to ")
+        .or_else(|| line.strip_prefix("copy to "))?;
+
+    if path.starts_with('"') {
+        return unquote(path).map(|(unquoted, _)| unquoted);
+    }
+    (!path.is_empty()).then(|| path.to_owned())
+}
+
+/// Read one C-quoted string, returning it and whatever follows the closing
+/// quote. Git's own `quote_c_style`, in reverse: the named escapes plus
+/// three-digit octal for every byte outside printable ASCII.
+fn unquote(quoted: &str) -> Option<(String, &str)> {
+    let body = quoted.strip_prefix('"')?;
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut chars = body.char_indices();
+
+    while let Some((at, ch)) = chars.next() {
+        match ch {
+            '"' => {
+                let text = String::from_utf8(bytes).ok()?;
+                return Some((text, body.get(at + 1..)?));
+            }
+            '\\' => {
+                let (_, escape) = chars.next()?;
+                let byte = match escape {
+                    'a' => 0x07,
+                    'b' => 0x08,
+                    'f' => 0x0c,
+                    'n' => b'\n',
+                    'r' => b'\r',
+                    't' => b'\t',
+                    'v' => 0x0b,
+                    '\\' => b'\\',
+                    '"' => b'"',
+                    digit => {
+                        let mut value = digit.to_digit(8)?;
+                        for _ in 0..2 {
+                            value = value * 8 + chars.next()?.1.to_digit(8)?;
+                        }
+                        u8::try_from(value).ok()?
+                    }
+                };
+                bytes.push(byte);
+            }
+            other => bytes.extend_from_slice(other.encode_utf8(&mut [0u8; 4]).as_bytes()),
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -161,6 +260,89 @@ mod tests {
     use super::*;
 
     const LARGE: usize = 1024;
+
+    #[test]
+    fn a_diff_header_names_the_file_however_it_is_spelled() {
+        // Exactly the header lines git emits for these paths. Each one used to
+        // key the patch under a truncated or escaped name, which silently
+        // detached it from the row `--numstat` produced.
+        let cases: Vec<(&str, &str, &str)> = vec![
+            ("plain", "diff --git a/src/a.rs b/src/a.rs", "src/a.rs"),
+            (
+                "space",
+                "diff --git a/dir with space/a b.txt b/dir with space/a b.txt",
+                "dir with space/a b.txt",
+            ),
+            (
+                "path holding the b-prefix marker",
+                "diff --git a/has b/nested.txt b/has b/nested.txt",
+                "has b/nested.txt",
+            ),
+            (
+                "quote",
+                "diff --git \"a/quote\\\".txt\" \"b/quote\\\".txt\"",
+                "quote\".txt",
+            ),
+            (
+                "backslash",
+                "diff --git \"a/back\\\\slash.txt\" \"b/back\\\\slash.txt\"",
+                "back\\slash.txt",
+            ),
+            (
+                "tab",
+                "diff --git \"a/tab\\there.txt\" \"b/tab\\there.txt\"",
+                "tab\there.txt",
+            ),
+            (
+                "non-ascii",
+                "diff --git \"a/unicode-\\303\\244.txt\" \"b/unicode-\\303\\244.txt\"",
+                "unicode-ä.txt",
+            ),
+        ];
+        for (name, header, expected) in cases {
+            assert_eq!(
+                diff_header_path(header).as_deref(),
+                Some(expected),
+                "case {name}: {header}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rename_keys_the_patch_under_its_new_name() {
+        let text = "\u{1e}commit aaa\n\
+                    diff --git a/has b/nested.txt b/has b/moved b/file.txt\n\
+                    similarity index 100%\n\
+                    rename from has b/nested.txt\n\
+                    rename to has b/moved b/file.txt\n";
+        let parsed = parse(text, LARGE);
+        let Some(patches) = parsed.get("aaa") else {
+            panic!("commit missing")
+        };
+        assert!(
+            patches.contains_key("has b/moved b/file.txt"),
+            "the rename target must key the patch: {:?}",
+            patches.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_hunk_line_is_never_mistaken_for_a_rename() {
+        let text = "\u{1e}commit aaa\n\
+                    diff --git a/notes.txt b/notes.txt\n\
+                    @@ -1 +1 @@\n\
+                    -rename to elsewhere.txt\n\
+                    +rename to somewhere.txt\n";
+        let parsed = parse(text, LARGE);
+        let Some(patches) = parsed.get("aaa") else {
+            panic!("commit missing")
+        };
+        assert_eq!(
+            patches.keys().collect::<Vec<_>>(),
+            vec!["notes.txt"],
+            "content lines carry a diff prefix and must not move the key"
+        );
+    }
 
     #[test]
     fn splits_patches_per_file_and_commit() {

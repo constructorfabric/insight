@@ -202,6 +202,46 @@ fn branching_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("file://{}", origin.display()))
 }
 
+/// An origin whose filenames exercise every spelling git C-quotes: a quote, a
+/// backslash, a tab, a non-ASCII byte, a space, and a path holding the ` b/`
+/// sequence that a `diff --git` header cannot resolve on its own.
+fn awkward_paths_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let origin = root.join("awkward");
+    std::fs::create_dir_all(&origin)?;
+    let script = "git init -q -b main . && \
+         git config uploadpack.allowFilter true && \
+         git config uploadpack.allowAnySHA1InWant true && \
+         mkdir -p 'dir with space' 'has b' && \
+         echo s > 'dir with space/a b.txt' && \
+         echo q > 'quote\".txt' && \
+         echo k > 'back\\slash.txt' && \
+         echo u > 'unicode-ä.txt' && \
+         echo n > 'has b/nested.txt' && \
+         echo t > \"$(printf 'tab\\there.txt')\" && \
+         git add -A && \
+         GIT_AUTHOR_DATE='2026-08-01T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-01T10:00:00+0000' \
+           git commit -qm 'awkward names'";
+    let output = Command::new("sh")
+        .arg("-ec")
+        .arg(script)
+        .current_dir(&origin)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "fixture setup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(format!("file://{}", origin.display()))
+}
+
 /// A history whose committer dates run BACKWARDS along ancestry — routine after
 /// a rebase, a cherry-pick, or a clock-skewed contributor. `git log --since` is
 /// a traversal cutoff, so any walk narrowed to a cursor date prunes the older
@@ -1115,5 +1155,46 @@ async fn refuses_to_boot_on_empty_required_config() -> R {
         "boot failure must name the missing field, got: {stderr}"
     );
     let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_file_row_carries_the_name_git_has_on_disk() -> R {
+    let server = spawn_server("awkward", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = awkward_paths_origin(&server.dir)?;
+
+    let changes = get_json(server.port, "/v1/file-changes", &repo).await?;
+    let rows = changes["items"].as_array().ok_or("no items")?;
+
+    let names: Vec<&str> = rows
+        .iter()
+        .filter_map(|row| row["filename"].as_str())
+        .collect();
+    let expected = [
+        "dir with space/a b.txt",
+        "quote\".txt",
+        "back\\slash.txt",
+        "unicode-ä.txt",
+        "has b/nested.txt",
+        "tab\there.txt",
+    ];
+    for name in expected {
+        assert!(
+            names.contains(&name),
+            "the literal path must reach the row, not its escaped spelling: \
+             {name:?} missing from {names:?}"
+        );
+    }
+
+    // The patch text is keyed by the same name, or it silently detaches from
+    // the row it belongs to.
+    for row in rows {
+        let name = row["filename"].as_str().unwrap_or_default();
+        assert!(
+            row["patch"].is_string(),
+            "{name:?} must carry its own diff: {row}"
+        );
+    }
     Ok(())
 }
