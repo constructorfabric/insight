@@ -3,7 +3,7 @@
     materialized='incremental',
     incremental_strategy='append',
     schema='staging',
-    tags=['github_directory']
+    tags=['github-directory']
 ) }}
 
 -- SCD2 snapshot of the GitHub organization roster — appends a new version only

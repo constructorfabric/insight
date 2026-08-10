@@ -128,6 +128,18 @@ One idea per sentence. Short declarative lines a tired on-call reader parses on 
 
 The second version is also the shape this skill asks for: four things observed, no claim about which side owns the fix.
 
+**Use words the reader already has.** The issue is read by whoever is on triage, not only by someone who has just been in that code. Two habits lose that reader:
+
+- **Shorthand you picked up while debugging.** "Token mint failed", "the reconcile cannot mint", "the hook is lost" — each is a compressed insider phrase. Write what actually happens: *"cannot get an access token"*, *"the token request to the Airbyte API fails"*, *"the Job is never created"*.
+- **A verb doing a noun's job.** If a phrase needs a paragraph to unpack, it is not saving anyone time. Prefer the longer plain phrase over the shorter clever one.
+
+Keep the product's own vocabulary where you *observed* it — table, view and column names inside an error, the API route you called, the metric key on the tile, the medallion layer names. That is what makes the report greppable. The rule is about phrases you invented, not terms the system printed.
+
+- ✗ *"Token mint fails, so no connector is provisioned."*
+- ✓ *"The pipeline cannot get an access token from Airbyte, so no connector is created. The request to `POST /api/v1/applications/token` returns 404."*
+
+The check that catches this: read the Summary as if you had not spent the last hour in the system. If any phrase you invented would send that reader to ask "what is that?", replace it — terms the system printed stay.
+
 **Say each fact once.** Every fact lives in exactly one section. Repetition teaches the reader to skim, and skimming is how the one load-bearing line gets missed.
 
 **Title = the plain, user-visible symptom.** No metric IDs, table or column symbols, or migration names — those live in the body. Don't append the diagnosis as a trailing clause, don't reach for filler adverbs, and don't use a qualifier the reader can't resolve from the title alone ("after a database migration" — which one?).
@@ -135,7 +147,7 @@ The second version is also the shape this skill asks for: four things observed, 
 - ✗ *"YouTrack sync is reported failed and its transforms are skipped even though the data synced successfully"* → ✓ *"YouTrack sync is reported failed and its transforms never run"*
 - ✗ *"A connector sync fails **outright** when the previous sync is still running"* → ✓ drop `outright`; "fails" already says it.
 
-**No prescribed fix and no acceptance criteria** — that is the assignee's call. Describe an expected result in plain language and point at the prototype as the source of truth; don't specify exact colours or pixel values.
+**No prescribed fix and no acceptance criteria** — that is the assignee's call. Describe an expected result in plain language and, where a prototype exists, point at it as the source of truth; don't specify exact colours or pixel values.
 
 ## Worked example
 
