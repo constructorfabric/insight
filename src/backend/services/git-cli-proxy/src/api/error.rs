@@ -1,12 +1,21 @@
-use axum::Json;
+//! Resource-scoped canonical errors for the proxy's `/v1` handlers.
+//!
+//! One GTS namespace covers every failure this API has: each one is about the
+//! repository the request names. Envelopes come from `toolkit-canonical-errors`
+//! (RFC 9457 `application/problem+json`) — no error type of ours crosses the
+//! API boundary.
+
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use serde::Serialize;
+use toolkit_canonical_errors::{CanonicalError, Problem, resource_error};
 
 use crate::engine::runner::GitError;
 use crate::engine::store::StoreError;
 
 use super::request::BadRequest;
+
+#[resource_error("gts.cf.insight.git_cli_proxy.repository.v1~")]
+pub struct RepositoryError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
@@ -20,55 +29,39 @@ pub enum ApiError {
     Serialization(String),
 }
 
-#[derive(Serialize)]
-struct Body {
-    error: String,
-    message: String,
-}
+/// `413` has no canonical category: the catalogue maps `failed_precondition`
+/// to `400`, and its only `429` category is the one the connector RETRIES. The
+/// connector contract predates the catalogue and pins `413` as the permanent
+/// "this repository is too big" signal, so the envelope stays canonical and
+/// only the status is overridden.
+const REPO_TOO_LARGE: StatusCode = StatusCode::PAYLOAD_TOO_LARGE;
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, code, retry_after) = self.classify();
+        let retry_after = self.retry_after();
+        let status_override = self.status_override();
+        let error = self.into_canonical();
 
-        // Detail goes to the log; the wire carries a caller-actionable message
-        // only. Internal failures name paths, which never leave the process.
-        let message = match &self {
-            Self::BadRequest(e) => e.to_string(),
-            Self::Store(
-                store @ (StoreError::AuthRejected
-                | StoreError::NotFound
-                | StoreError::Busy { .. }
-                | StoreError::SnapshotChanged { .. }
-                | StoreError::TooLarge { .. }),
-            ) => store.to_string(),
-            Self::Store(internal @ (StoreError::Git(_) | StoreError::Io(_))) => {
-                tracing::error!(error = %internal, "request failed");
-                "internal error".to_owned()
-            }
-            Self::Store(internal @ StoreError::PromisorRefused) => {
-                tracing::error!(error = %internal, "request failed");
-                "internal error".to_owned()
-            }
-            Self::Git(origin @ (GitError::AuthRejected | GitError::NotFound)) => origin.to_string(),
-            Self::Git(internal) => {
-                tracing::error!(error = %internal, "request failed");
-                "internal error".to_owned()
-            }
-            Self::Serialization(internal) => {
-                tracing::error!(error = %internal, "request failed");
-                "internal error".to_owned()
-            }
-        };
+        if status_override.is_none() && retry_after.is_none() {
+            // The crate's own `IntoResponse` stashes the error in the response
+            // extensions so the host middleware can log `diagnostic()` without
+            // putting it on the wire. Prefer it whenever nothing needs doctoring.
+            return error.into_response();
+        }
 
-        let body = Json(Body {
-            error: code.to_owned(),
-            message,
-        });
+        let mut problem = Problem::from(error);
+        if let Some(status) = status_override {
+            problem.status = status.as_u16();
+        }
 
-        let mut response = (status, body).into_response();
+        let mut response = problem.into_response();
         if let Some(seconds) = retry_after
             && let Ok(value) = HeaderValue::from_str(&seconds.to_string())
         {
+            // The crate deliberately keeps this hint in the body for
+            // `resource_exhausted` (the header is reserved for
+            // `service_unavailable`), but the connector's backoff strategy
+            // reads the header, and that contract predates the catalogue.
             response.headers_mut().insert(header::RETRY_AFTER, value);
         }
         response
@@ -76,176 +69,245 @@ impl IntoResponse for ApiError {
 }
 
 impl ApiError {
-    /// Wire mapping the connector's declarative error handler depends on:
-    /// `429` is retried with `Retry-After`, `409`/`4xx` are not.
-    fn classify(&self) -> (StatusCode, &'static str, Option<u64>) {
+    fn status_override(&self) -> Option<StatusCode> {
         match self {
-            Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request", None),
+            Self::Store(StoreError::TooLarge { .. }) | Self::Git(GitError::TooLarge { .. }) => {
+                Some(REPO_TOO_LARGE)
+            }
+            _ => None,
+        }
+    }
+
+    fn retry_after(&self) -> Option<u64> {
+        match self {
+            Self::Store(StoreError::Busy { retry_after }) => Some(retry_after.as_secs()),
+            _ => None,
+        }
+    }
+
+    fn into_canonical(self) -> CanonicalError {
+        match self {
+            Self::BadRequest(e) => RepositoryError::invalid_argument()
+                .with_field_violation(bad_request_field(&e), e.to_string(), "INVALID")
+                .create(),
+
             // A reader hits the same origin failures as the clone: a partial
             // clone lazily fetches from the promisor remote, so any git step
             // can be rejected by the vendor. Classify by kind, never by which
             // layer raised it.
             Self::Store(StoreError::AuthRejected) | Self::Git(GitError::AuthRejected) => {
-                (StatusCode::UNAUTHORIZED, "origin_auth_rejected", None)
+                CanonicalError::unauthenticated()
+                    .with_reason("ORIGIN_CREDENTIALS_REJECTED")
+                    .create()
             }
             Self::Store(StoreError::NotFound) | Self::Git(GitError::NotFound) => {
-                (StatusCode::NOT_FOUND, "repo_not_found", None)
+                RepositoryError::not_found("repository not found at origin")
+                    // The caller's own `repo` value is not echoed back: the
+                    // envelope names the kind of thing, the detail says what
+                    // happened, and the request already carries the URL.
+                    .with_resource("repository")
+                    .create()
             }
-            Self::Store(StoreError::Busy { retry_after }) => (
-                StatusCode::TOO_MANY_REQUESTS,
-                "repo_preparing",
-                Some(retry_after.as_secs()),
-            ),
-            Self::Store(StoreError::SnapshotChanged { .. }) => {
-                (StatusCode::CONFLICT, "snapshot_changed", None)
+            Self::Store(StoreError::Busy { retry_after }) => {
+                RepositoryError::resource_exhausted("repository is being prepared")
+                    .with_quota_violation("repository_preparation", "clone or fetch in progress")
+                    .with_quota_violation_retry_after_seconds(retry_after.as_secs())
+                    .create()
             }
+            Self::Store(StoreError::SnapshotChanged { current }) => RepositoryError::aborted(
+                format!("repository snapshot changed (current generation {current})"),
+            )
+            .with_reason("SNAPSHOT_CHANGED")
+            .create(),
             // Permanent by design: retrying an oversized repository just burns
             // the budget again. The operator raises the cap or excludes it.
-            Self::Store(StoreError::TooLarge { .. }) | Self::Git(GitError::TooLarge { .. }) => {
-                (StatusCode::PAYLOAD_TOO_LARGE, "repo_too_large", None)
-            }
-            // Reaching the wire means promotion did not heal the entry; the
-            // caller can do nothing about it, so it is an internal failure.
-            Self::Store(StoreError::Git(_) | StoreError::Io(_) | StoreError::PromisorRefused)
-            | Self::Git(
-                GitError::TimedOut(_)
-                | GitError::Failed(_)
-                | GitError::Io(_)
-                | GitError::PromisorRefused,
-            )
-            | Self::Serialization(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal", None),
+            Self::Store(StoreError::TooLarge { cap_bytes })
+            | Self::Git(GitError::TooLarge { cap_bytes }) => RepositoryError::failed_precondition()
+                .with_precondition_violation(
+                    "REPOSITORY_SIZE_CAP",
+                    "repository",
+                    format!("repository exceeds the per-repository cap of {cap_bytes} bytes"),
+                )
+                .create(),
+
+            Self::Store(
+                internal @ (StoreError::Git(_) | StoreError::Io(_) | StoreError::PromisorRefused),
+            ) => internal_error(&internal),
+            Self::Git(internal) => internal_error(&internal),
+            Self::Serialization(internal) => internal_error(&internal),
         }
+    }
+}
+
+/// Detail naming a path or a git invocation is logged here and never reaches
+/// the wire; the crate additionally `serde(skip)`s an internal description.
+fn internal_error(error: &dyn std::fmt::Display) -> CanonicalError {
+    tracing::error!(error = %error, "request failed");
+    CanonicalError::internal(error.to_string()).create()
+}
+
+/// The request part a [`BadRequest`] is about, so the envelope's field
+/// violation points the caller at something actionable.
+fn bad_request_field(error: &BadRequest) -> String {
+    match error {
+        BadRequest::MissingHeader(name)
+        | BadRequest::NotANumber(name)
+        | BadRequest::MissingParam(name) => (*name).to_owned(),
+        BadRequest::MalformedToken => "page_token".to_owned(),
+        BadRequest::MalformedSha(_) => "sha".to_owned(),
+        BadRequest::BadRepoUrl(_) => "repo".to_owned(),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    //! Wire-shape contract for the proxy's error responses.
+    //!
+    //! The connectors' declarative error handlers key on the STATUS and the
+    //! `Retry-After` header — never on the body — so those are what these
+    //! tests pin, alongside the RFC 9457 envelope the platform requires.
+
     use std::time::Duration;
+
+    use axum::body::to_bytes;
 
     use super::*;
 
-    #[test]
-    fn maps_every_failure_to_its_documented_status() {
-        let cases: Vec<(ApiError, StatusCode, &str)> = vec![
+    async fn problem(error: ApiError) -> (StatusCode, Option<String>, serde_json::Value) {
+        let response = error.into_response();
+        let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .map(ToOwned::to_owned);
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(ToOwned::to_owned);
+        assert_eq!(
+            content_type.as_deref(),
+            Some("application/problem+json"),
+            "every error is an RFC 9457 envelope"
+        );
+
+        let bytes = match to_bytes(response.into_body(), 1 << 20).await {
+            Ok(bytes) => bytes,
+            Err(e) => panic!("read body: {e}"),
+        };
+        let Ok(body) = serde_json::from_slice(&bytes) else {
+            panic!("body must be JSON")
+        };
+        (status, retry_after, body)
+    }
+
+    #[tokio::test]
+    async fn maps_every_failure_to_its_documented_status() {
+        let cases: Vec<(ApiError, StatusCode)> = vec![
             (
                 BadRequest::MissingHeader("x-tenant-id").into(),
                 StatusCode::BAD_REQUEST,
-                "bad_request",
             ),
-            (
-                StoreError::AuthRejected.into(),
-                StatusCode::UNAUTHORIZED,
-                "origin_auth_rejected",
-            ),
-            (
-                StoreError::NotFound.into(),
-                StatusCode::NOT_FOUND,
-                "repo_not_found",
-            ),
+            (StoreError::AuthRejected.into(), StatusCode::UNAUTHORIZED),
+            (StoreError::NotFound.into(), StatusCode::NOT_FOUND),
             (
                 StoreError::Busy {
                     retry_after: Duration::from_secs(30),
                 }
                 .into(),
                 StatusCode::TOO_MANY_REQUESTS,
-                "repo_preparing",
             ),
             (
                 StoreError::SnapshotChanged { current: 5 }.into(),
                 StatusCode::CONFLICT,
-                "snapshot_changed",
-            ),
-            (
-                StoreError::Git("boom".to_owned()).into(),
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-            ),
-            // Same failures raised by a reader step, not by the clone.
-            (
-                GitError::AuthRejected.into(),
-                StatusCode::UNAUTHORIZED,
-                "origin_auth_rejected",
-            ),
-            (
-                GitError::NotFound.into(),
-                StatusCode::NOT_FOUND,
-                "repo_not_found",
-            ),
-            (
-                GitError::Failed("boom".to_owned()).into(),
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
             ),
             (
                 StoreError::TooLarge { cap_bytes: 1024 }.into(),
                 StatusCode::PAYLOAD_TOO_LARGE,
-                "repo_too_large",
+            ),
+            (
+                StoreError::Git("boom".to_owned()).into(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            // The same failures raised by a reader step, not by the clone.
+            (GitError::AuthRejected.into(), StatusCode::UNAUTHORIZED),
+            (GitError::NotFound.into(), StatusCode::NOT_FOUND),
+            (
+                GitError::TooLarge { cap_bytes: 1024 }.into(),
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+            (
+                GitError::Failed("boom".to_owned()).into(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                GitError::PromisorRefused.into(),
+                StatusCode::INTERNAL_SERVER_ERROR,
             ),
         ];
-        for (error, expected_status, expected_code) in cases {
-            let (status, code, _) = error.classify();
-            assert_eq!(status, expected_status, "for {error}");
-            assert_eq!(code, expected_code, "for {error}");
+        for (error, expected) in cases {
+            let label = error.to_string();
+            let (status, _, body) = problem(error).await;
+            assert_eq!(status, expected, "for {label}");
+            assert_eq!(body["status"], expected.as_u16(), "for {label}");
         }
     }
 
-    #[test]
-    fn busy_carries_retry_after_and_others_do_not() {
-        let busy = ApiError::from(StoreError::Busy {
-            retry_after: Duration::from_secs(42),
-        });
-        let response = busy.into_response();
+    #[tokio::test]
+    async fn busy_carries_retry_after_and_others_do_not() {
+        let (_, retry_after, body) = problem(
+            StoreError::Busy {
+                retry_after: Duration::from_secs(42),
+            }
+            .into(),
+        )
+        .await;
+        assert_eq!(retry_after.as_deref(), Some("42"));
         assert_eq!(
-            response
-                .headers()
-                .get(header::RETRY_AFTER)
-                .and_then(|v| v.to_str().ok()),
-            Some("42")
+            body["context"]["violations"][0]["retry_after_seconds"], 42,
+            "the envelope carries the same hint as the header"
         );
 
-        let conflict = ApiError::from(StoreError::SnapshotChanged { current: 2 });
-        let response = conflict.into_response();
-        assert!(
-            response.headers().get(header::RETRY_AFTER).is_none(),
-            "a changed snapshot is not retryable by waiting"
-        );
+        let (_, retry_after, _) = problem(StoreError::NotFound.into()).await;
+        assert_eq!(retry_after, None, "only a preparing repo asks for a retry");
     }
 
     #[tokio::test]
     async fn internal_errors_do_not_leak_paths_to_the_wire() {
-        let secret_path = "/data/repos/abc123/repo.git";
-        let error = ApiError::from(StoreError::Io(std::io::Error::other(format!(
-            "{secret_path}: permission denied"
-        ))));
-        let (status, code, _) = error.classify();
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(code, "internal");
-
-        let response = error.into_response();
-        let bytes = match axum::body::to_bytes(response.into_body(), 4096).await {
-            Ok(b) => b,
-            Err(e) => panic!("body read failed: {e}"),
-        };
-        let body = String::from_utf8_lossy(&bytes);
+        let (_, _, body) = problem(
+            StoreError::Io(std::io::Error::other(
+                "/var/lib/insight/repos/abc123 exploded",
+            ))
+            .into(),
+        )
+        .await;
+        let rendered = body.to_string();
         assert!(
-            !body.contains(secret_path),
-            "internal detail must stay in the log, got: {body}"
+            !rendered.contains("/var/lib/insight"),
+            "internal detail must stay in the log: {rendered}"
         );
-        assert!(body.contains("internal error"), "got: {body}");
     }
 
     #[tokio::test]
-    async fn caller_actionable_errors_keep_their_message() {
-        let error = ApiError::from(BadRequest::MissingHeader("x-git-token"));
-        let response = error.into_response();
-        let bytes = match axum::body::to_bytes(response.into_body(), 4096).await {
-            Ok(b) => b,
-            Err(e) => panic!("body read failed: {e}"),
-        };
-        let body = String::from_utf8_lossy(&bytes);
-        assert!(
-            body.contains("x-git-token"),
-            "the caller must learn which header is missing, got: {body}"
+    async fn caller_actionable_errors_name_the_offending_field() {
+        let (_, _, body) = problem(BadRequest::MissingHeader("x-git-token").into()).await;
+        assert_eq!(
+            body["context"]["field_violations"][0]["field"],
+            "x-git-token"
+        );
+
+        let (_, _, body) =
+            problem(BadRequest::BadRepoUrl(crate::engine::url::CloneUrlError::Empty).into()).await;
+        assert_eq!(body["context"]["field_violations"][0]["field"], "repo");
+    }
+
+    #[tokio::test]
+    async fn the_gts_resource_type_is_the_service_namespace() {
+        let (_, _, body) = problem(StoreError::NotFound.into()).await;
+        assert_eq!(
+            body["context"]["resource_type"],
+            "gts.cf.insight.git_cli_proxy.repository.v1~"
         );
     }
 }

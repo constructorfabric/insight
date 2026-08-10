@@ -20,6 +20,7 @@ workspace = true
 # host runs with `auth_disabled: true` and every /v1 route is guarded by our
 # own static bearer token middleware (`api::auth`), provisioned via Helm.
 toolkit = { workspace = true, features = ["bootstrap"] }
+toolkit-canonical-errors = { workspace = true }
 
 # System gears linked for the REST host. Discovered at link time via inventory
 # (`use … as _;` in main.rs is load-bearing). Deliberately minimal: no

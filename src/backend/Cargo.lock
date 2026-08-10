@@ -2576,6 +2576,7 @@ dependencies = [
  "cf-gears-gear-orchestrator",
  "cf-gears-grpc-hub",
  "cf-gears-toolkit",
+ "cf-gears-toolkit-canonical-errors",
  "cf-gears-types-registry",
  "clap",
  "hex",
