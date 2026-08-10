@@ -434,7 +434,9 @@ where
     F: Fn(RepoGuard) -> BoxFuture<'a, Result<Page<T>, ApiError>>,
 {
     let guard = open(state, context, paging).await?;
-    match read(guard).await {
+    let outcome = read(guard).await;
+    check_for_drift(state, context);
+    match outcome {
         Ok(page) => return Ok(page),
         Err(e) if !refuses_promisor_wants(&e) => return Err(e),
         Err(_) => {}
@@ -452,7 +454,20 @@ where
     }
 
     let guard = open(state, context, paging).await?;
-    read(guard).await
+    let outcome = read(guard).await;
+    check_for_drift(state, context);
+    outcome
+}
+
+/// Hand the entry to the store's post-serve purge, detached.
+///
+/// INVARIANT: the reader's guard is already dropped when this is called. The
+/// purge probes the write side without waiting, so calling it any earlier
+/// would simply find the entry busy and do nothing.
+fn check_for_drift(state: &Arc<AppState>, context: &RequestContext) {
+    let store = Arc::clone(&state.store);
+    let key = context.key.clone();
+    tokio::spawn(async move { store.purge_if_drifted(&key).await });
 }
 
 fn refuses_promisor_wants(error: &ApiError) -> bool {

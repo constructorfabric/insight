@@ -29,11 +29,41 @@ impl Candidate {
     }
 
     fn worth_purging(&self) -> bool {
-        !self.full_clone
-            && self.skeleton_bytes > 0
-            && self.size_bytes
-                > self.skeleton_bytes + self.skeleton_bytes / PURGE_MIN_GROWTH_DIVISOR
+        !self.full_clone && worth_purging(self.size_bytes, self.skeleton_bytes)
     }
+}
+
+/// Bytes held under `dir`, following subdirectories.
+///
+/// Blocking, recursive I/O: call it from `spawn_blocking` on any path where a
+/// large tree is plausible. A path it cannot read counts as zero — a size it
+/// cannot see must not be reported as a breach.
+#[must_use]
+pub fn dir_size(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut total = 0;
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            total += dir_size(&entry.path());
+        } else if file_type.is_file() {
+            total += entry.metadata().map_or(0, |m| m.len());
+        }
+    }
+    total
+}
+
+/// Whether an entry has taken on enough blob weight to be worth a repack.
+///
+/// The single definition of "drifted": the reclaim planner and the post-serve
+/// purge must agree, or one of them repacks entries the other considers fine.
+#[must_use]
+pub fn worth_purging(size_bytes: u64, skeleton_bytes: u64) -> bool {
+    skeleton_bytes > 0 && size_bytes > skeleton_bytes + skeleton_bytes / PURGE_MIN_GROWTH_DIVISOR
 }
 
 /// One step of a reclaim plan. Blob purge first — it keeps the repo warm, so

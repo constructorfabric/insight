@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, Semaphore, watch};
 
-use super::disk::{Budget, Candidate, Reclaim};
+use super::disk::{Budget, Candidate, Reclaim, dir_size, worth_purging};
 use super::key::CacheKey;
 use super::meta::{RepoMeta, now_epoch_s};
 use super::metrics::{self, DiskGauges, EvictionTier, FetchResult};
@@ -18,6 +18,8 @@ const INLINE_WAIT: Duration = Duration::from_secs(15);
 const COLD_RETRY_AFTER: Duration = Duration::from_secs(30);
 const REPROOF_ATTEMPTS: usize = 2;
 const BARE_REFSPEC: &str = "+refs/heads/*:refs/heads/*";
+/// How often one entry's on-disk size is re-measured after being served.
+const DRIFT_CHECK_INTERVAL: Duration = Duration::from_mins(1);
 
 /// Why a refresh failed, in a form that survives being broadcast to every
 /// waiter (`GitError` is not `Clone`).
@@ -160,6 +162,9 @@ pub struct RepoStore {
     inflight: Mutex<HashMap<FlightKey, watch::Receiver<Option<RefreshResult>>>>,
     tmp_counter: AtomicU64,
     gauges: Arc<DiskGauges>,
+    /// When each entry last had its on-disk size re-measured. Without it a
+    /// 200-page walk pays a full `dir_size` per page.
+    drift_checks: Mutex<HashMap<String, Instant>>,
 }
 
 impl RepoStore {
@@ -208,6 +213,7 @@ impl RepoStore {
             inflight: Mutex::new(HashMap::new()),
             tmp_counter: AtomicU64::new(0),
             gauges: Arc::new(DiskGauges::default()),
+            drift_checks: Mutex::new(HashMap::new()),
         })
     }
 
@@ -445,10 +451,12 @@ impl RepoStore {
         metrics::record_cold_clone();
         let cloned = self
             .runner
-            .run(
+            .run_capped(
                 None,
                 &clone_argv(key.clone_url.as_str(), &tmp_str),
                 Some(creds),
+                &tmp,
+                self.max_repo_bytes,
             )
             .await;
         if let Err(e) = cloned {
@@ -512,10 +520,12 @@ impl RepoStore {
         let before = self.ref_digest(git_dir).await;
 
         self.runner
-            .run(
+            .run_capped(
                 Some(git_dir),
                 &["fetch", "--prune", "--atomic", "origin", BARE_REFSPEC],
                 Some(creds),
+                git_dir,
+                self.max_repo_bytes,
             )
             .await
             .inspect_err(|_| metrics::record_fetch(FetchResult::Error))?;
@@ -634,11 +644,15 @@ impl RepoStore {
                 .await;
         }
 
+        // The hungriest operation in the service: a refetch pulls every blob
+        // in history, which is exactly what the cap exists for.
         self.runner
-            .run(
+            .run_capped(
                 Some(&git_dir),
                 &["fetch", "--refetch", "--prune", "origin", BARE_REFSPEC],
                 Some(creds),
+                &git_dir,
+                self.max_repo_bytes,
             )
             .await?;
 
@@ -680,29 +694,113 @@ impl RepoStore {
         Ok(generation)
     }
 
-    /// Drop fetched blobs, returning the entry to its blobless skeleton.
+    /// Return an entry to its skeleton once a served window has left blobs
+    /// behind, and in every case re-measure it.
     ///
-    /// `--no-write-bitmap-index` is required, not cosmetic: `--filter` splits
-    /// objects across packs, and bitmap writing assumes a single pack — with
-    /// bitmaps enabled the repack fails and the blobs stay on disk.
+    /// The re-measurement is not incidental. `blobs::prefetch` grows the entry
+    /// and writes nothing back, so `size_bytes` stays at whatever the last
+    /// clone or purge recorded — under which the reclaim planner believes
+    /// every entry is skeleton-sized, never plans the cheap purge tier, and
+    /// evicts whole warm repositories instead.
     ///
-    /// # Errors
-    ///
-    /// [`StoreError`] when the repack fails.
-    pub async fn purge_blobs(&self, key: &CacheKey) -> Result<(), StoreError> {
-        let lock = self.entry_lock(key).await;
+    /// Best-effort throughout: a reader holding the entry, unreadable metadata
+    /// or a failed repack all leave the entry as it is. The reclaim path is
+    /// the backstop.
+    pub async fn purge_if_drifted(&self, key: &CacheKey) {
+        if !self.drift_check_due(&key.dir_name()).await {
+            return;
+        }
+
         let entry_dir = self.entry_dir(key);
         let git_dir = entry_dir.join("repo.git");
         if !git_dir.is_dir() {
-            return Ok(());
+            return;
         }
 
-        // INVARIANT: repack DELETES packs — it must run with zero readers, so
-        // it takes the write side even though it changes no refs.
-        let _write = lock.write().await;
+        let lock = self.entry_lock(key).await;
+        // INVARIANT: a repack may follow, and repack DELETES packs. Both the
+        // measurement and the repack take the write side, and neither ever
+        // waits for it: a reader that still holds the entry gets served, not
+        // repacked under.
+        let Ok(_write) = lock.try_write() else {
+            return;
+        };
+
+        let Some(mut meta) = RepoMeta::load(&entry_dir) else {
+            return;
+        };
+        let measured = dir_size(&git_dir);
+        if meta.size_bytes != measured {
+            meta.size_bytes = measured;
+            let _ = meta.store(&entry_dir);
+        }
+
+        // A promoted entry holds the only copy of its blobs: origin refuses to
+        // serve them again, so purging would strand it.
+        if meta.full_clone || !worth_purging(measured, meta.skeleton_bytes) {
+            return;
+        }
+
+        match self.repack_blobless(&entry_dir).await {
+            Ok(freed) => {
+                metrics::record_eviction(EvictionTier::Blob, freed);
+                tracing::debug!(dir = %key.dir_name(), freed_bytes = freed, "purged a served window");
+            }
+            Err(e) => tracing::warn!(error = %e, dir = %key.dir_name(), "post-serve purge failed"),
+        }
+    }
+
+    /// Whether this entry is due a size re-measurement, marking it checked.
+    async fn drift_check_due(&self, dir_name: &str) -> bool {
+        let now = Instant::now();
+        let mut checks = self.drift_checks.lock().await;
+        match checks.get(dir_name) {
+            Some(last) if now.duration_since(*last) < DRIFT_CHECK_INTERVAL => false,
+            _ => {
+                checks.insert(dir_name.to_owned(), now);
+                true
+            }
+        }
+    }
+
+    /// Repack to the blobless skeleton, rewrite the entry's accounting, and
+    /// report the bytes reclaimed.
+    ///
+    /// Two git behaviours make the obvious invocation free nothing at all:
+    ///
+    /// - `repack` repacks promisor packs SEPARATELY and never applies
+    ///   `--filter` to them. In a blobless clone every pack is a promisor pack
+    ///   — the clone's own and one per lazy fetch — so the filter has nothing
+    ///   to act on. The markers come off first, and go back on after, because
+    ///   the objects did come from origin and git must keep tolerating the
+    ///   ones this purge is about to drop.
+    /// - `--filter` alone writes the filtered-out objects to a second pack
+    ///   beside the first. `--filter-to` is what puts them somewhere the
+    ///   purge can delete.
+    ///
+    /// `--no-write-bitmap-index` is required, not cosmetic: the filter splits
+    /// objects across packs, and bitmap writing assumes a single pack — with
+    /// bitmaps enabled the repack fails and the blobs stay on disk.
+    ///
+    /// The caller must hold the entry's write guard.
+    async fn repack_blobless(&self, entry_dir: &Path) -> Result<u64, StoreError> {
+        let git_dir = entry_dir.join("repo.git");
+        let before = dir_size(&git_dir);
+
+        // Under the store's own tmp/, which is wiped at startup: a crash
+        // mid-repack must not strand the evicted pack somewhere permanent.
+        let evicted = self.data_dir.join("tmp").join(format!(
+            "evicted-{}",
+            self.tmp_counter.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&evicted)?;
+        let filter_to = format!("--filter-to={}", evicted.display());
+
         let _permit = self.heavy.acquire().await;
 
-        self.runner
+        remove_promisor_markers(&git_dir);
+        let repacked = self
+            .runner
             .run(
                 Some(&git_dir),
                 &[
@@ -710,19 +808,23 @@ impl RepoStore {
                     "-a",
                     "-d",
                     "--filter=blob:none",
+                    &filter_to,
                     "--no-write-bitmap-index",
                 ],
                 None,
             )
-            .await?;
+            .await;
+        mark_promisor_packs(&git_dir);
+        let _ = std::fs::remove_dir_all(&evicted);
+        repacked?;
 
-        if let Some(mut meta) = RepoMeta::load(&entry_dir) {
-            let purged = dir_size(&git_dir);
+        let purged = dir_size(&git_dir);
+        if let Some(mut meta) = RepoMeta::load(entry_dir) {
             meta.size_bytes = purged;
             meta.skeleton_bytes = purged;
-            let _ = meta.store(&entry_dir);
+            let _ = meta.store(entry_dir);
         }
-        Ok(())
+        Ok(before.saturating_sub(purged))
     }
 }
 
@@ -878,10 +980,15 @@ impl RepoStore {
         entries.entry(dir_name.to_owned()).or_default().clone()
     }
 
-    async fn purge_blobs_by_dir(&self, dir_name: &str) -> Result<(), StoreError> {
+    pub(crate) async fn purge_blobs_by_dir(&self, dir_name: &str) -> Result<(), StoreError> {
         let entry_dir = self.data_dir.join("repos").join(dir_name);
-        let git_dir = entry_dir.join("repo.git");
-        if !git_dir.is_dir() {
+        if !entry_dir.join("repo.git").is_dir() {
+            return Ok(());
+        }
+
+        // A promoted entry has no promisor remote behind it: re-marking its
+        // packs would make git tolerate blobs nothing can serve again.
+        if RepoMeta::load(&entry_dir).is_none_or(|meta| meta.full_clone) {
             return Ok(());
         }
 
@@ -890,34 +997,31 @@ impl RepoStore {
         let Ok(_write) = lock.try_write() else {
             return Ok(());
         };
-        let _permit = self.heavy.acquire().await;
 
-        self.runner
-            .run(
-                Some(&git_dir),
-                &[
-                    "repack",
-                    "-a",
-                    "-d",
-                    "--filter=blob:none",
-                    "--no-write-bitmap-index",
-                ],
-                None,
-            )
-            .await?;
-
-        if let Some(mut meta) = RepoMeta::load(&entry_dir) {
-            let purged = dir_size(&git_dir);
-            meta.size_bytes = purged;
-            meta.skeleton_bytes = purged;
-            let _ = meta.store(&entry_dir);
-        }
-        Ok(())
+        self.repack_blobless(&entry_dir).await.map(|_| ())
     }
 
     /// Current cache usage, as accounted per entry.
     pub async fn used_bytes(&self) -> u64 {
         self.candidates().await.iter().map(|c| c.size_bytes).sum()
+    }
+}
+
+/// Re-assert that every pack came from the promisor remote.
+///
+/// A blobless purge strips the markers so `repack --filter` will touch the
+/// packs at all; without restoring them git stops tolerating the very objects
+/// the purge just dropped.
+fn mark_promisor_packs(git_dir: &Path) {
+    let pack_dir = git_dir.join("objects").join("pack");
+    let Ok(entries) = std::fs::read_dir(&pack_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "pack") {
+            let _ = std::fs::File::create(path.with_extension("promisor"));
+        }
     }
 }
 
@@ -988,23 +1092,6 @@ fn touch_access(entry_dir: &Path, mut meta: RepoMeta) {
     let _ = meta.store(entry_dir);
 }
 
-fn dir_size(dir: &Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return 0;
-    };
-    let mut total = 0;
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            total += dir_size(&entry.path());
-        } else if file_type.is_file() {
-            total += entry.metadata().map_or(0, |m| m.len());
-        }
-    }
-    total
-}
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -1237,6 +1324,159 @@ pub(crate) mod tests {
             meta.cred_fingerprint,
             creds().fingerprint(),
             "the credentials that proved access are fingerprinted"
+        );
+    }
+
+    /// Grow the origin by a blob big enough that pulling it dwarfs the
+    /// blobless skeleton, so drift is unambiguous rather than noise.
+    /// Incompressible on purpose: zeros pack down to nothing, and the entry
+    /// would never look as though it had drifted.
+    async fn entry_with_fetched_blobs(tag: &str) -> (Fixture, CacheKey, u64) {
+        let f = fixture(tag);
+        sh(
+            &f.root.join("origin"),
+            "dd if=/dev/urandom of=big.bin bs=1024 count=4096 status=none && \
+             git add big.bin && \
+             GIT_AUTHOR_DATE='2026-08-01T11:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-01T11:00:00+0000' git commit -qm big",
+        );
+
+        let k = key(&f);
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        let skeleton = match RepoMeta::load(&f.store.entry_dir(&k)) {
+            Some(m) => m.skeleton_bytes,
+            None => panic!("meta must exist after a clone"),
+        };
+
+        let head = head_of(guard.git_dir());
+        if let Err(e) =
+            crate::engine::read::blobs::prefetch(f.store.runner(), guard.git_dir(), &[head], &creds())
+                .await
+        {
+            panic!("prefetch: {e}");
+        }
+        drop(guard);
+
+        (f, k, skeleton)
+    }
+
+    #[tokio::test]
+    async fn a_served_window_purges_the_blobs_it_pulled() {
+        let (f, k, skeleton) = entry_with_fetched_blobs("drift-purge").await;
+        let entry_dir = f.store.entry_dir(&k);
+        assert!(
+            dir_size(&entry_dir.join("repo.git")) > skeleton * 2,
+            "the prefetch must have inflated the entry, or the test proves nothing"
+        );
+
+        f.store.purge_if_drifted(&k).await;
+
+        let Some(after) = RepoMeta::load(&entry_dir) else {
+            panic!("meta must survive a purge")
+        };
+        assert!(
+            after.size_bytes < skeleton * 2,
+            "a served window must not leave its blobs behind: {} vs skeleton {skeleton}",
+            after.size_bytes
+        );
+        assert_eq!(
+            after.size_bytes,
+            dir_size(&entry_dir.join("repo.git")),
+            "accounting must match the disk after a purge"
+        );
+    }
+
+    #[tokio::test]
+    async fn accounting_reflects_blobs_even_when_no_purge_is_warranted() {
+        // A promoted entry holds the only copy of its blobs, so it is never
+        // purged — but the planner still has to see its true size, or it
+        // evicts warm entries believing everything is skeleton-sized.
+        let (f, k, _) = entry_with_fetched_blobs("drift-accounting").await;
+        let entry_dir = f.store.entry_dir(&k);
+        let Some(mut meta) = RepoMeta::load(&entry_dir) else {
+            panic!("meta must exist")
+        };
+        let understated = meta.size_bytes;
+        meta.full_clone = true;
+        if let Err(e) = meta.store(&entry_dir) {
+            panic!("meta store: {e}");
+        }
+
+        f.store.purge_if_drifted(&k).await;
+
+        let Some(after) = RepoMeta::load(&entry_dir) else {
+            panic!("meta must exist")
+        };
+        assert!(
+            after.size_bytes > understated,
+            "the fetched blobs must be accounted: {} was already {understated}",
+            after.size_bytes
+        );
+        assert_eq!(
+            after.size_bytes,
+            dir_size(&entry_dir.join("repo.git")),
+            "accounting must match the disk"
+        );
+        assert!(after.full_clone, "a promoted entry must stay promoted");
+    }
+
+    #[tokio::test]
+    async fn a_purge_never_runs_while_a_reader_holds_the_entry() {
+        let (f, k, _) = entry_with_fetched_blobs("drift-reader").await;
+        let entry_dir = f.store.entry_dir(&k);
+        let inflated = dir_size(&entry_dir.join("repo.git"));
+
+        let reader = match f.store.open(&k, &creds(), Freshness::Pinned { generation: 1 }).await {
+            Ok(g) => g,
+            Err(e) => panic!("pinned open: {e}"),
+        };
+        f.store.purge_if_drifted(&k).await;
+
+        assert_eq!(
+            dir_size(&entry_dir.join("repo.git")),
+            inflated,
+            "repack deletes packs; it must never run under a reader"
+        );
+        drop(reader);
+    }
+
+    #[tokio::test]
+    async fn a_purged_entry_still_serves_and_refetches() {
+        // The dangerous half of a purge: an entry that frees bytes but can no
+        // longer produce the objects it dropped is worse than one that frees
+        // nothing.
+        let (f, k, _) = entry_with_fetched_blobs("drift-refetch").await;
+        f.store.purge_if_drifted(&k).await;
+
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        let head = head_of(guard.git_dir());
+        match crate::engine::read::blobs::prefetch(
+            f.store.runner(),
+            guard.git_dir(),
+            &[head],
+            &creds(),
+        )
+        .await
+        {
+            Ok(_) => {}
+            Err(e) => panic!("a purged entry must re-fetch what it dropped: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_drift_check_is_throttled_per_entry() {
+        let f = fixture("drift-throttle");
+        assert!(
+            f.store.drift_check_due("repo-a").await,
+            "the first serve of an entry measures it"
+        );
+        assert!(
+            !f.store.drift_check_due("repo-a").await,
+            "a paginating caller must not pay a dir_size per page"
+        );
+        assert!(
+            f.store.drift_check_due("repo-b").await,
+            "the throttle is per entry, not global"
         );
     }
 
@@ -1696,7 +1936,7 @@ pub(crate) mod tests {
         // Bitmap writing on + `--filter` is exactly the combination that fails
         // without `--no-write-bitmap-index`.
         sh(&git_dir, "git config repack.writeBitmaps true");
-        if let Err(e) = f.store.purge_blobs(&k).await {
+        if let Err(e) = f.store.purge_blobs_by_dir(&k.dir_name()).await {
             panic!("purge must survive repack.writeBitmaps=true: {e}");
         }
     }

@@ -73,20 +73,34 @@ pub enum GitError {
 #[derive(Debug, Clone)]
 pub struct GitRunner {
     timeout: Duration,
+    /// How often a capped run re-measures. Trades overshoot against the cost
+    /// of walking a tree that is actively being written.
+    cap_poll: Duration,
     /// PEM bundle for origins whose TLS chain is not in the system store
     /// (a self-hosted vendor behind a private CA). Empty = system store only.
     ca_cert_path: Option<String>,
 }
 
 const STDERR_TAIL_BYTES: usize = 4096;
+/// How often a capped run re-measures the tree it is filling. The cap can be
+/// overshot by one interval's worth of download; the post-hoc check is what
+/// catches that remainder.
+const CAP_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 impl GitRunner {
     #[must_use]
     pub fn new(timeout: Duration) -> Self {
         Self {
             timeout,
+            cap_poll: CAP_POLL_INTERVAL,
             ca_cert_path: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_cap_poll(mut self, interval: Duration) -> Self {
+        self.cap_poll = interval;
+        self
     }
 
     #[must_use]
@@ -120,6 +134,80 @@ impl GitRunner {
 
         let waited = tokio::time::timeout(self.timeout, command.output()).await;
         let output = match waited {
+            Ok(result) => result?,
+            Err(_elapsed) => return Err(GitError::TimedOut(self.timeout)),
+        };
+
+        if output.status.success() {
+            return Ok(output);
+        }
+        Err(classify_failure(&output))
+    }
+
+    /// Run `git <args>` while watching `watch` grow, killing the child as soon
+    /// as it passes `cap_bytes`.
+    ///
+    /// Measuring only after the command returns is too late: the disk the cap
+    /// exists to protect has already been spent, and a repository an order of
+    /// magnitude over the cap can fill the volume before anything objects.
+    /// The caller keeps its post-hoc check for the remainder a poll interval
+    /// can miss.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError`] on spawn failure, timeout, non-zero exit, or
+    /// [`GitError::TooLarge`] when `watch` passes the cap mid-run.
+    pub async fn run_capped(
+        &self,
+        git_dir: Option<&Path>,
+        args: &[&str],
+        creds: Option<&GitCredentials>,
+        watch: &Path,
+        cap_bytes: u64,
+    ) -> Result<Output, GitError> {
+        let mut command = self.base_command(creds);
+        if let Some(dir) = git_dir {
+            command.arg("--git-dir").arg(dir);
+        }
+        command
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            // INVARIANT: this is what enforces the cap. Returning early drops
+            // the wait future, which owns the child, which kills it.
+            .kill_on_drop(true);
+
+        let child = command.spawn()?;
+        let watch = watch.to_path_buf();
+        let cap_poll = self.cap_poll;
+
+        let capped = async move {
+            let wait = child.wait_with_output();
+            tokio::pin!(wait);
+
+            let mut poll = tokio::time::interval(cap_poll);
+            poll.tick().await;
+
+            loop {
+                tokio::select! {
+                    finished = &mut wait => return finished.map_err(GitError::Io),
+                    _ = poll.tick() => {
+                        let measured = {
+                            let watch = watch.clone();
+                            tokio::task::spawn_blocking(move || super::disk::dir_size(&watch))
+                                .await
+                                .unwrap_or(0)
+                        };
+                        if measured > cap_bytes {
+                            return Err(GitError::TooLarge { cap_bytes });
+                        }
+                    }
+                }
+            }
+        };
+
+        let output = match tokio::time::timeout(self.timeout, capped).await {
             Ok(result) => result?,
             Err(_elapsed) => return Err(GitError::TimedOut(self.timeout)),
         };
@@ -458,6 +546,105 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An origin holding one incompressible blob, so a clone of it takes long
+    /// enough to be interrupted and large enough to breach a small cap.
+    fn heavy_origin(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "git-cli-proxy-cap-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let origin = root.join("origin");
+        if let Err(e) = std::fs::create_dir_all(&origin) {
+            panic!("create origin: {e}");
+        }
+        let script = "git init -q -b main . && \
+             dd if=/dev/urandom of=big.bin bs=1024 count=16384 status=none && \
+             git add big.bin && git commit -qm big";
+        let output = std::process::Command::new("sh")
+            .arg("-ec")
+            .arg(script)
+            .current_dir(&origin)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .output();
+        match output {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => panic!("origin setup: {}", String::from_utf8_lossy(&o.stderr)),
+            Err(e) => panic!("origin setup: {e}"),
+        }
+        root
+    }
+
+    #[tokio::test]
+    async fn a_run_past_the_cap_is_killed_mid_flight() {
+        let root = heavy_origin("kill");
+        let target = root.join("clone.git");
+        let url = format!("file://{}", root.join("origin").display());
+
+        // The watched tree is over the cap from the first poll, which is the
+        // shape a fetch presents: the entry already holds a clone. Timing the
+        // breach against how fast git happens to write would make this a race,
+        // not a test.
+        let runner =
+            GitRunner::new(Duration::from_mins(1)).with_cap_poll(Duration::from_millis(1));
+        let result = runner
+            .run_capped(
+                None,
+                &["clone", "--bare", "--quiet", &url, &target.to_string_lossy()],
+                None,
+                &root,
+                1024 * 1024,
+            )
+            .await;
+
+        // `run_capped` has no post-hoc check: only the watcher can produce
+        // this, and only by killing the child.
+        match result {
+            Err(GitError::TooLarge { cap_bytes }) => assert_eq!(cap_bytes, 1024 * 1024),
+            other => panic!("a run past the cap must be killed, got {other:?}"),
+        }
+        assert!(
+            !target.join("packed-refs").is_file(),
+            "the clone must have died before it finished"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn a_run_under_the_cap_is_left_alone() {
+        let root = heavy_origin("allow");
+        let target = root.join("clone.git");
+        let url = format!("file://{}", root.join("origin").display());
+
+        let runner =
+            GitRunner::new(Duration::from_mins(1)).with_cap_poll(Duration::from_millis(1));
+        if let Err(e) = runner
+            .run_capped(
+                None,
+                &["clone", "--bare", "--quiet", &url, &target.to_string_lossy()],
+                None,
+                &root,
+                1024 * 1024 * 1024,
+            )
+            .await
+        {
+            panic!("a run inside the cap must finish: {e}");
+        }
+        assert!(
+            target.join("HEAD").is_file(),
+            "the watcher must not disturb a clone under the cap"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]
