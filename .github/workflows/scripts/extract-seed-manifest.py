@@ -3,20 +3,17 @@
 
 Usage:  extract-seed-manifest.py <seed-log> <manifest-out>
 
-WHY THIS FILE EXISTS AT ALL, RATHER THAN INLINE IN ITS TWO CALLERS
------------------------------------------------------------------
-Two things read a seed log for its manifest: the `Stage 2/3 — capture the seed
-manifest` step in .github/workflows/deploy-test-stand.yml, and
-`extract_manifest()` in deploy/gitops/scripts/emulate-ci-deploy.sh. That harness
-exists to prove the laptop path and the CI path run the SAME commands, and it
-prints a parity report saying so.
-
-They were two implementations. When the CI one was fixed for interleaved log
-lines the shell one was not, and its comment went on claiming it matched — the
-harness asserting a parity it no longer had, which is worse than not checking.
-Extracting the logic here makes the parity structural instead of asserted: there
-is one algorithm and both callers invoke it, so neither can drift from the other
-without deleting this file.
+WHY THIS FILE EXISTS AT ALL, RATHER THAN INLINE IN ITS CALLER
+-------------------------------------------------------------
+The `Stage 2/3 — capture the seed manifest` step in
+.github/workflows/deploy-test-stand.yml is the only automated caller, and it
+could have carried this in a heredoc. It does not, because the manifest is also
+recovered BY HAND: a cluster seed Job's filesystem dies with its pod, so
+`kubectl logs job/insight-seed-all-<stamp>` is the only copy, and anyone pointing
+the smoke suite at a stand needs that document. A hand recovery that used a
+different parser from CI's would disagree with CI in exactly the cases that
+matter — which is what happened when there were two implementations of the naive
+scan and only one of them was fixed.
 
 WHY THE SCAN IS NOT "the last `{` at column 0 through the next `}` at column 0"
 ------------------------------------------------------------------------------

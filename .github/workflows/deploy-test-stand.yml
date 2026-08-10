@@ -105,19 +105,19 @@ name: Deploy test stand
 # a failed upgrade back and destroy the evidence this stand exists to produce.
 #
 # So the deploy stage runs the invocation written down in
-# deploy/gitops/environments/test-stand/README.md, step by step. "CI and humans
-# run the same code path" is preserved by that README plus
-# deploy/gitops/scripts/emulate-ci-deploy.sh, which runs these same commands from
-# a laptop and prints a parity report against THIS FILE. If you change a command
-# here, run that harness: it greps for each command's anchor and tells you which
-# one drifted. `make diff`, `make status` and `make rollback` do still work for
-# this environment and are the right tools for their jobs.
+# deploy/gitops/environments/test-stand/README.md, step by step. That README is
+# the authority for what this stage does and why `make deploy` is not it — the
+# sealed-secrets prerequisite alone makes that target unable to run against this
+# stand at all, with or without an `--atomic` knob. `make diff`, `make status`
+# and `make rollback` do still work for this environment and are the right tools
+# for their jobs.
 #
-# If that harness's parity report says `make deploy` and `ATOMIC=` are ABSENT
-# from this file: that is this decision, not a regression. The authority is
-# deploy/gitops/environments/test-stand/README.md, "Why not `make deploy`" —
-# the sealed-secrets prerequisite alone makes that target unable to run against
-# this stand at all, with or without an `--atomic` knob.
+# "CI and humans run the same code path" is therefore kept by that README rather
+# than by a second executable. A rehearsal harness that ran these commands from a
+# laptop and diffed itself against this file was built and then dropped: it was
+# a third copy of the invocation to keep in step, and it drifted from this file
+# within a day of being written. The README is the one copy; when a command here
+# changes, change it there.
 #
 # ── PRECONDITIONS THIS WORKFLOW ASSERTS RATHER THAN ASSUMES ─────────────────
 #
@@ -180,8 +180,9 @@ on:
   workflow_dispatch:
     inputs:
       chart_version:
-        description: "Umbrella chart version to install (e.g. 0.5.101). Must already be published."
-        required: true
+        description: "Umbrella chart version to install (e.g. 0.5.101). Leave empty to take the newest one published from main."
+        required: false
+        default: ""
         type: string
       stages:
         description: "Stages to run. A prefix only: you cannot smoke without seeding, or seed without deploying."
@@ -244,11 +245,9 @@ jobs:
       # gets its own directory and an input, not a fork of this file.
       #
       # The two paths are spelled out in full rather than composed from
-      # ENV_NAME. Composing them would read fine and cost two things: a reader
-      # would have to resolve a variable to learn which file the upgrade
-      # actually passes to helm, and deploy/gitops/scripts/emulate-ci-deploy.sh's
-      # parity report — which greps this file for the literal commands it
-      # rehearses — would stop finding them.
+      # ENV_NAME. Composing them would read fine and cost the thing that matters
+      # most in a file nobody runs locally: a reader would have to resolve a
+      # variable to learn which file the upgrade actually passes to helm.
       ENV_NAME: test-stand
       VALUES_FILE: deploy/gitops/environments/test-stand/values.yaml
       INVENTORY_FILE: deploy/gitops/environments/test-stand/inventory.yaml
@@ -266,7 +265,12 @@ jobs:
       # whether the Gateway ACCEPTED them, which helm does not wait for. Every
       # acceptance criterion travels through both.
       ROUTE_NAMES: insight-gateway insight-keycloak
-      CHART_VERSION: ${{ inputs.chart_version }}
+      # The REQUESTED version, which on a dispatch may be empty. The resolver
+      # step below exports what is ACTUALLY installed as CHART_VERSION into
+      # $GITHUB_ENV, so every later step reads a plain shell variable and no
+      # GitHub expression is interpolated into a shell body — the same rule the
+      # ref/semver guard is written to.
+      REQUESTED_CHART_VERSION: ${{ inputs.chart_version }}
       REDACT: .github/workflows/scripts/redact-stand-log.py
 
     steps:
@@ -279,6 +283,51 @@ jobs:
       # here, in order of how cheap it is to check. A deploy that fails after
       # `helm upgrade` has started costs a stand; one that fails now costs
       # nothing.
+      # ── Which chart version ────────────────────────────────────────────────
+      # A `workflow_call` always names one: it is publish-chart's output, the
+      # version that run just pushed, and guessing there would install something
+      # other than what was published. A `workflow_dispatch` may leave it empty,
+      # which means "whatever main published last" — the common case for a human
+      # redeploying the current stand, and one nobody should have to look up.
+      #
+      # Resolved from main's `deploy/gitops/.insight-version`, NOT from the
+      # registry's tag list. The registry paginates and does not order tags, so
+      # picking a maximum from page one is how you deploy 0.2.14 to a stand on
+      # 0.5.x. That file is written by the publish-chart job in the same commit
+      # that pushes the chart, so it names the newest published version by
+      # construction — and it is read from `main` rather than from this checkout,
+      # because a branch's copy is as old as the branch.
+      - name: Resolve the chart version
+        id: chart
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          version="$REQUESTED_CHART_VERSION"
+          origin="the caller"
+
+          if [ -z "$version" ]; then
+            if [ "$EVENT" != "workflow_dispatch" ]; then
+              echo "::error::chart_version is empty on a $EVENT. Only a dispatch may omit it;"
+              echo "a workflow_call must pass publish-chart's output, or the deploy installs"
+              echo "something other than the chart that run published."
+              exit 1
+            fi
+            version="$(gh api "repos/${GITHUB_REPOSITORY}/contents/deploy/gitops/.insight-version?ref=main" \
+                        --jq '.content' | base64 --decode | tr -d '[:space:]')"
+            origin="main's .insight-version"
+            [ -n "$version" ] || {
+              echo "::error::could not read deploy/gitops/.insight-version from main."
+              echo "Pass chart_version explicitly."
+              exit 1
+            }
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "CHART_VERSION=$version" >> "$GITHUB_ENV"
+          echo "chart version: $version (from $origin)"
+
       - name: Refuse anything that is not main, and anything that is not a version
         env:
           # Through the environment rather than interpolated into the script
@@ -879,12 +928,12 @@ jobs:
           # persona and the tenant.
           #
           # The algorithm lives in a committed script rather than in this heredoc
-          # because deploy/gitops/scripts/emulate-ci-deploy.sh needs the same one,
-          # and when this step was fixed for interleaved log lines that harness's
-          # copy was not — while its comment went on claiming the two matched. One
-          # file, two callers, no drift. Read that script's header for why a naive
-          # brace scan cannot work: the manifest is stdout and the seeder's log is
-          # stderr, and this log is the two merged and interleaved.
+          # so that anyone recovering a manifest by hand — from
+          # `kubectl logs job/insight-seed-all-<stamp>`, which is the only copy
+          # once the pod is gone — runs the same parser this step does. Read that
+          # script's header for why a naive brace scan cannot work: the manifest
+          # is stdout and the seeder's log is stderr, and this log is the two
+          # merged and interleaved.
           #
           # Diagnostics arrive on stderr in plain text; the `::error::` framing is
           # this caller's, which is why the script does not bake it in.
@@ -938,10 +987,9 @@ jobs:
           # response bodies, and a response body is not a place anyone controls
           # what appears. `pipefail` (set above) keeps pytest's exit status as
           # the step's.
-          # The suite path is spelled literally here, not as $SMOKE_SUITE, for the
-          # same reason the values file is: this line is one of the anchors
-          # deploy/gitops/scripts/emulate-ci-deploy.sh greps for when it reports
-          # whether a laptop rehearsal is still running what CI runs.
+          # The suite path is spelled literally here, not as $SMOKE_SUITE, for
+          # the same reason the values file is: a reader should not have to
+          # resolve a variable to learn which tests gate a deployment.
           uv run --project tests --frozen \
             pytest tests/stand/smoke -ra --stand-manifest "$INSIGHT_STAND_MANIFEST" \
             2>&1 | python3 "$REDACT"
