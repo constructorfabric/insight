@@ -42,13 +42,29 @@ struct Cli {
 enum Commands {
     /// Start the server (default).
     Run,
+    /// Print the `OpenAPI` document as JSON and exit.
+    Openapi,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let config = AppConfig::load_or_default(cli.config.as_ref())?;
-    match cli.command.unwrap_or(Commands::Run) {
-        Commands::Run => run_server(config).await,
+    let mut cli = Cli::parse();
+    let command = cli.command.take().unwrap_or(Commands::Run);
+
+    // Loaded per command rather than up front, so the offline `openapi` emit
+    // cannot fail on a config file it never reads.
+    let load_config = || AppConfig::load_or_default(cli.config.as_ref());
+
+    match command {
+        Commands::Run => run_server(load_config()?).await,
+        Commands::Openapi => print_openapi(),
     }
+}
+
+/// Offline emit — no config, no listener. No logging subscriber is installed
+/// on this path, so stdout stays pure JSON for the drift gate to consume.
+fn print_openapi() -> Result<()> {
+    let doc = git_cli_proxy::api::openapi_document()?;
+    println!("{}", serde_json::to_string_pretty(&doc)?);
+    Ok(())
 }

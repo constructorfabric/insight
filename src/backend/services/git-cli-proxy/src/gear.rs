@@ -54,13 +54,13 @@ impl RestApiCapability for GitCliProxyGear {
         &self,
         _ctx: &GearCtx,
         router: axum::Router,
-        _openapi: &dyn toolkit::api::OpenApiRegistry,
+        openapi: &dyn toolkit::api::OpenApiRegistry,
     ) -> anyhow::Result<axum::Router> {
         let state = self
             .state
             .get()
             .ok_or_else(|| anyhow::anyhow!("git-cli-proxy gear not initialized"))?
             .clone();
-        Ok(crate::api::register_routes(router, state))
+        Ok(crate::api::register_routes(router, openapi, state))
     }
 }

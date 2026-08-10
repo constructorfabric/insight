@@ -4,10 +4,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Query, State};
+use axum::Extension;
+use axum::extract::Query;
 use axum::http::{HeaderMap, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::engine::key::CacheKey;
 use crate::engine::page::PageToken;
@@ -50,12 +52,64 @@ pub struct BranchesQuery {
     page_token: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+/// Concrete page wrappers, one per endpoint: `Page<T>` cannot be a schema
+/// because the registry keys components on the type's own name, so all three
+/// instantiations would collide on one component.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CommitsPage {
+    pub items: Vec<commits::CommitRow>,
+    pub next_page_token: Option<String>,
+}
+impl toolkit::api::api_dto::ResponseApiDto for CommitsPage {}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct FileChangesPage {
+    pub items: Vec<FileChangeRow>,
+    pub next_page_token: Option<String>,
+}
+impl toolkit::api::api_dto::ResponseApiDto for FileChangesPage {}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BranchesPage {
+    pub items: Vec<branches::BranchRow>,
+    pub next_page_token: Option<String>,
+}
+impl toolkit::api::api_dto::ResponseApiDto for BranchesPage {}
+
+impl From<Page<commits::CommitRow>> for CommitsPage {
+    fn from(page: Page<commits::CommitRow>) -> Self {
+        Self {
+            items: page.items,
+            next_page_token: page.next_page_token,
+        }
+    }
+}
+
+impl From<Page<FileChangeRow>> for FileChangesPage {
+    fn from(page: Page<FileChangeRow>) -> Self {
+        Self {
+            items: page.items,
+            next_page_token: page.next_page_token,
+        }
+    }
+}
+
+impl From<Page<branches::BranchRow>> for BranchesPage {
+    fn from(page: Page<branches::BranchRow>) -> Self {
+        Self {
+            items: page.items,
+            next_page_token: page.next_page_token,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct FileChangeRow {
     pub sha: String,
     pub committed_date: String,
     pub filename: String,
     pub previous_filename: Option<String>,
+    #[schema(value_type = String)]
     pub status: &'static str,
     pub additions: Option<u64>,
     pub deletions: Option<u64>,
@@ -70,7 +124,7 @@ pub struct FileChangeRow {
 /// [`ApiError`] on malformed input, origin failures, or a snapshot that moved
 /// out from under a page cursor.
 pub async fn list_commits(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<CommitsQuery>,
 ) -> Result<Response, ApiError> {
@@ -135,7 +189,7 @@ pub async fn list_commits(
     })
     .await?;
 
-    json_page(page).await
+    json_page(CommitsPage::from(page)).await
 }
 
 /// # Errors
@@ -143,7 +197,7 @@ pub async fn list_commits(
 /// [`ApiError`] on malformed input, origin failures, or a snapshot that moved
 /// out from under a page cursor.
 pub async fn list_file_changes(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<FileChangesQuery>,
 ) -> Result<Response, ApiError> {
@@ -205,7 +259,7 @@ pub async fn list_file_changes(
     })
     .await?;
 
-    json_page(page).await
+    json_page(FileChangesPage::from(page)).await
 }
 
 /// Response-size bounds for `/v1/file-changes`. The page size bounds commits;
@@ -292,7 +346,7 @@ fn emit_file_changes(
 ///
 /// [`ApiError`] on malformed input or an origin failure.
 pub async fn list_branches(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<BranchesQuery>,
 ) -> Result<Response, ApiError> {
@@ -321,7 +375,7 @@ pub async fn list_branches(
     })
     .await?;
 
-    json_page(page).await
+    json_page(BranchesPage::from(page)).await
 }
 
 /// Read one page from a snapshot, healing an entry whose origin refuses to
@@ -412,7 +466,7 @@ async fn open(
 
 /// Serialize off the reactor: a page carries up to ten thousand commit
 /// messages, or the patch text of every file they touched.
-async fn json_page<T>(page: Page<T>) -> Result<Response, ApiError>
+async fn json_page<T>(page: T) -> Result<Response, ApiError>
 where
     T: Serialize + Send + 'static,
 {

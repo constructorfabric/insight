@@ -21,6 +21,8 @@ workspace = true
 # own static bearer token middleware (`api::auth`), provisioned via Helm.
 toolkit = { workspace = true, features = ["bootstrap"] }
 toolkit-canonical-errors = { workspace = true }
+# Pinned to match the `ToSchema` the toolkit OperationBuilder compiles against.
+utoipa = { version = "5.5" }
 
 # System gears linked for the REST host. Discovered at link time via inventory
 # (`use … as _;` in main.rs is load-bearing). Deliberately minimal: no

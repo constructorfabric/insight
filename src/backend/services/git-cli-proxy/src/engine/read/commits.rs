@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::engine::runner::{GitCredentials, GitError, GitRunner};
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, utoipa::ToSchema)]
 pub struct CommitRow {
     pub sha: String,
     pub message: String,
