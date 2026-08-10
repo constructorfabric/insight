@@ -793,6 +793,109 @@ async fn file_changes_cover_every_branch_not_just_the_default() -> R {
     Ok(())
 }
 
+/// Two commits whose TEXT order is the reverse of their chronological order:
+/// `%cI` keeps the committer's offset, so `10:00+02:00` (08:00Z) renders after
+/// `09:00Z` as text while being an hour earlier.
+fn mixed_timezone_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let origin = root.join("timezones");
+    std::fs::create_dir_all(&origin)?;
+    let script = "git init -q -b main . && \
+         git config uploadpack.allowFilter true && \
+         git config uploadpack.allowAnySHA1InWant true && \
+         echo a > a.txt && git add a.txt && \
+         GIT_AUTHOR_DATE='2026-08-01T09:00:00+0000' GIT_COMMITTER_DATE='2026-08-01T09:00:00+0000' \
+           git commit -qm 'utc nine' && \
+         echo b > b.txt && git add b.txt && \
+         GIT_AUTHOR_DATE='2026-08-01T10:00:00+0200' GIT_COMMITTER_DATE='2026-08-01T10:00:00+0200' \
+           git commit -qm 'berlin ten'";
+    let output = Command::new("sh")
+        .arg("-ec")
+        .arg(script)
+        .current_dir(&origin)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "fixture setup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(format!("file://{}", origin.display()))
+}
+
+#[tokio::test]
+async fn an_interrupted_sync_resumes_without_losing_a_commit() -> R {
+    let server = spawn_server("resume", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = mixed_timezone_origin(&server.dir)?;
+    get_json(server.port, "/v1/commits", &repo).await?;
+
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let ask = |params: Vec<(String, String)>| {
+        let (client, base) = (client.clone(), base.clone());
+        async move {
+            client
+                .get(format!("{base}/v1/commits"))
+                .query(&params)
+                .bearer_auth(TOKEN)
+                .header("x-tenant-id", "tenant-1")
+                .header("x-source-id", "source-1")
+                .header("x-git-username", "u")
+                .header("x-git-token", "p")
+                .send()
+                .await?
+                .json::<serde_json::Value>()
+                .await
+        }
+    };
+
+    // One page, then the sync dies — exactly what a 429 or a restart does.
+    let first = ask(vec![
+        ("repo".to_owned(), repo.clone()),
+        ("page_size".to_owned(), "1".to_owned()),
+    ])
+    .await?;
+    let row = &first["items"][0];
+    let checkpoint = row["committed_date"]
+        .as_str()
+        .ok_or("a row must carry a committed_date")?
+        .to_owned();
+    let mut seen = vec![
+        row["message"]
+            .as_str()
+            .ok_or("a row must carry a message")?
+            .to_owned(),
+    ];
+
+    // The connector resumes from the cursor it checkpointed.
+    let resumed = ask(vec![
+        ("repo".to_owned(), repo.clone()),
+        ("since".to_owned(), checkpoint.clone()),
+    ])
+    .await?;
+    for item in resumed["items"].as_array().ok_or("no items")? {
+        let message = item["message"].as_str().ok_or("no message")?.to_owned();
+        if !seen.contains(&message) {
+            seen.push(message);
+        }
+    }
+
+    seen.sort();
+    assert_eq!(
+        seen,
+        vec!["berlin ten".to_owned(), "utc nine".to_owned()],
+        "a resumed sync must not skip a commit whose offset makes it sort          later than it happened (checkpoint was {checkpoint})"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_page_token_from_another_repository_is_refused() -> R {
     let server = spawn_server("crossrepo", TOKEN)?;

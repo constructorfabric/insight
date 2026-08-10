@@ -154,7 +154,7 @@ async fn list_commits_inner(
                 retain_selected(all, selected, |key| &key.sha),
                 paging.token.as_ref(),
                 paging.page_size,
-                |key| (key.committed_date.clone(), key.sha.clone()),
+                |key| (key.ordinal.clone(), key.sha.clone()),
             );
 
             let shas: Vec<String> = keys.iter().map(|key| key.sha.clone()).collect();
@@ -251,7 +251,7 @@ async fn list_file_changes_inner(
                 .collect();
             let (window, cursor) =
                 read::slice_page(non_merge, paging.token.as_ref(), paging.page_size, |key| {
-                    (key.committed_date.clone(), key.sha.clone())
+                    (key.ordinal.clone(), key.sha.clone())
                 });
 
             let shas: Vec<String> = window.iter().map(|key| key.sha.clone()).collect();
@@ -579,6 +579,7 @@ mod tests {
     fn header(sha: &str, date: &str) -> commits::CommitKey {
         commits::CommitKey {
             sha: sha.to_owned(),
+            ordinal: commits::ordinal_of(date),
             committed_date: date.to_owned(),
             parent_count: 1,
         }

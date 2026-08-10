@@ -243,9 +243,15 @@ mod tests {
 
     use super::*;
 
+    /// A store per caller, never a shared directory: constructing a store
+    /// clears its `tmp/`, so two tests sharing one data dir race each other.
     fn state() -> Arc<AppState> {
-        let data_dir =
-            std::env::temp_dir().join(format!("git-cli-proxy-api-tests-{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let data_dir = std::env::temp_dir().join(format!(
+            "git-cli-proxy-api-tests-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         let store = match RepoStore::new(&data_dir, 2) {
             Ok(s) => s,
             Err(e) => panic!("store init: {e}"),

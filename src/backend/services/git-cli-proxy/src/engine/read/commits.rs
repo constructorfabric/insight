@@ -68,7 +68,19 @@ const RECORD: char = '\0';
 /// makes the whole-history walk affordable to hold and to cache.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitKey {
+    /// git's `%cI`, carrying the committer's own UTC offset. This is what a
+    /// row reports, because it is what the commit actually says.
     pub committed_date: String,
+    /// The same instant normalised to UTC, and the ONLY thing the walk orders
+    /// by. `%cI` keeps the committer's offset, so `2026-08-01T10:00:00+02:00`
+    /// sorts after `2026-08-01T09:00:00Z` as text while being an hour EARLIER
+    /// — and `since` is applied as an instant. Ordering by text while
+    /// filtering by instant loses commits across an interrupted walk: the
+    /// consumer checkpoints a row that sorted last, resumes from that instant,
+    /// and anything textually later but chronologically earlier is filtered
+    /// away having never been emitted. Normalising makes text order and
+    /// chronological order the same order.
+    pub ordinal: String,
     pub sha: String,
     pub parent_count: usize,
 }
@@ -78,6 +90,17 @@ impl CommitKey {
     pub fn is_merge(&self) -> bool {
         self.parent_count > 1
     }
+}
+
+/// `committed_date` rendered as a fixed-width UTC instant, so lexicographic
+/// order IS chronological order. Falls back to the raw value when the date is
+/// unparseable, which keeps such a row in a deterministic position rather than
+/// dropping it.
+pub(crate) fn ordinal_of(committed_date: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(committed_date.trim()).map_or_else(
+        |_| committed_date.to_owned(),
+        |at| at.to_utc().format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+    )
 }
 
 /// Every commit reachable from any branch, ascending by `(committed_date,
@@ -103,7 +126,7 @@ pub async fn enumerate(
     let text = String::from_utf8_lossy(&output.stdout);
 
     let mut keys = parse_keys(&text);
-    keys.sort_by(|a, b| (&a.committed_date, &a.sha).cmp(&(&b.committed_date, &b.sha)));
+    keys.sort_by(|a, b| (&a.ordinal, &a.sha).cmp(&(&b.ordinal, &b.sha)));
     Ok(keys)
 }
 
@@ -116,6 +139,7 @@ fn parse_keys(text: &str) -> Vec<CommitKey> {
             let sha = fields.next()?.trim().to_owned();
             let parents = fields.next().unwrap_or_default();
             is_object_id(&sha).then(|| CommitKey {
+                ordinal: ordinal_of(&committed_date),
                 committed_date,
                 sha,
                 parent_count: parents.split_whitespace().count(),
@@ -351,6 +375,7 @@ mod tests {
 
     fn at(committed: &str) -> CommitKey {
         CommitKey {
+            ordinal: ordinal_of(committed),
             committed_date: committed.to_owned(),
             sha: "aaa".to_owned(),
             parent_count: 1,
