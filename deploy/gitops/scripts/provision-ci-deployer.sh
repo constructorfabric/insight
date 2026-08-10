@@ -556,15 +556,35 @@ metadata:
     app.kubernetes.io/component: ci-credential
     app.kubernetes.io/managed-by: provision-ci-deployer.sh
 rules:
-  # Gateway API. The umbrella chart renders NO HTTPRoute — the stand's edge
-  # routes are applied alongside the release, and CI has to be able to apply
-  # and re-read them (and to read \`.status\` for the Accepted/ResolvedRefs
-  # check before the smoke stage). \`referencegrants\` is the companion object
-  # the moment any HTTPRoute backendRef crosses a namespace; granting it in a
-  # namespaced Role costs nothing and avoids a second provisioning round when
-  # that day comes. \`gateways\` is read-only here: it is namespaced, but the
-  # Gateway itself normally lives in the gateway controller's namespace,
-  # which this credential cannot see at all — see the runbook.
+  # Gateway API — and this grant is load-bearing, not defensive. The umbrella
+  # chart RENDERS both edge HTTPRoutes itself, from the environment's
+  # \`gateway.route\` and \`keycloak.route\` values, so they are release objects
+  # like every Deployment and Service: \`helm upgrade\` creates them on the
+  # first deploy and patches them on every deploy after that. Without
+  # create/update/patch here that upgrade is REFUSED — and refused partway
+  # through applying the release, which is the worst failure shape available,
+  # because it lands on a merge commit with the stand already half-changed.
+  #
+  # This block predates the cutover and used to be justified the other way
+  # round: the routes were committed manifests applied ALONGSIDE the release,
+  # and CI needed the verbs to apply them. Same resources, same verbs — they
+  # are MORE necessary now, not less, so nothing here was narrowed when the
+  # reason changed. \`get\`/\`list\`/\`watch\` additionally cover reading
+  # \`.status\` for the Accepted/ResolvedRefs check before the smoke stage,
+  # which is the only proof the route actually attached to anything.
+  #
+  # \`referencegrants\` is the companion object the moment any HTTPRoute
+  # backendRef crosses a namespace; granting it in a namespaced Role costs
+  # nothing and avoids a second provisioning round when that day comes.
+  #
+  # \`gateways\` is read-only, and on this stand it resolves to nothing: the
+  # routes' parentRef names a SHARED Gateway living in the gateway
+  # controller's namespace — infrastructure this repo does not own and this
+  # credential cannot see. The read verbs stay anyway (a same-namespace
+  # Gateway is the ordinary case elsewhere, and a 403 rather than an empty
+  # list sends whoever is debugging down the wrong path), but nobody should
+  # expect them to answer "did my parent accept me" here. Only the
+  # HTTPRoute's own \`.status\` can. See the runbook.
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: [httproutes, referencegrants]
     verbs: [get, list, watch, create, update, patch, delete]
@@ -784,7 +804,7 @@ run_verification() {
 
   if [ "$WITH_SUPPLEMENT" = "1" ]; then
     expect_can yes "create WorkflowTemplates in ${NAMESPACE}" create workflowtemplates.argoproj.io -n "$NAMESPACE"
-    expect_can yes "update HTTPRoutes in ${NAMESPACE}" update httproutes.gateway.networking.k8s.io -n "$NAMESPACE"
+    expect_can yes "update HTTPRoutes in ${NAMESPACE} (the chart renders the edge routes)" update httproutes.gateway.networking.k8s.io -n "$NAMESPACE"
   fi
 
   # The cross-namespace exception, asserted in both directions. The first pair is

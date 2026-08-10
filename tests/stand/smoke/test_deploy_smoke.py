@@ -192,8 +192,10 @@ def test_each_seeded_persona_can_log_in(
     match are all indistinguishable from a working stand until a second person
     tries.
 
-    The whole diagnosis lives in the assertion message, including which stand
-    configuration is missing when the IdP cannot serve a password form at all.
+    The whole diagnosis lives in the assertion message, chosen by the step the
+    chain stopped at — a credential the IdP refused, a callback the product
+    refused, and a realm that never rendered a form are three different pages
+    and `describe_login_failure` leads with the right one.
     `require()` rather than `assert attempt.ok, attempt.failure`: the bare assert
     makes pytest append its own rewritten `where False = SmokeLogin(...)` line,
     which repeats the diagnosis inside a truncated dataclass repr and buries it.

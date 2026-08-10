@@ -25,8 +25,9 @@ lane red for a suite it was never aimed at. So the rule is:
   variable. `-ra` is in `addopts`, so the reason is printed; it is not silent.
 * `$SMOKE_BASE_URL` is set → everything else required is mandatory, and a
   missing value aborts the session naming the variable. Nothing after this
-  point skips, and in particular a login that cannot work FAILS (see
-  `login.py`'s "the login blocker").
+  point skips, and in particular a login that cannot work FAILS, with the cause
+  diagnosed from the step it stopped at (see `login.py`'s
+  `describe_login_failure`).
 
 When this conftest is an INITIAL conftest — which it is whenever the command
 line names a path inside this directory — its `pytest_configure` runs before the
