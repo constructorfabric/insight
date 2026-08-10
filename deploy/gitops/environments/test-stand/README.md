@@ -73,7 +73,7 @@ stand is broken anyway:
 |---|---|
 | `Gateway/insight` in the gateway controller's namespace — what both routes `parentRef` | the release renders its two `HTTPRoute`s and neither ever attaches: `Accepted` stays false because the parent resolves to nothing. The public URL answers nothing; every smoke check fails at the first request |
 | `ClusterIssuer/insight-ca` — what `authenticator.tlsDiscovery.issuerRef` names | the authenticator's authn-TLS Certificate never issues, and the chart mounts the Secret it would have produced **non-optionally** into analytics and identity-resolution. Both sit in `ContainerCreating` until `--wait` gives up, and nothing in that failure names an issuer |
-| `ConfigMap/insight-keycloak-config-realms` — the realm content | the chart's `keycloak-config` hook Job has nothing to apply and fails the whole upgrade. Worse if it is present but wrong: a realm that lost its `idp_sub` mapper authenticates every persona and then denies them, with a fully populated identity projection |
+| `ConfigMap/insight-keycloak-config-realms` — the realm content, and now also what the seeder reads the dev-lead address out of | the chart's `keycloak-config` hook Job has nothing to apply and fails the whole upgrade, and step 6's seed stops naming `--email` rather than seeding a roster the realm does not carry. Worse if it is present but wrong: a realm that lost its `idp_sub` mapper authenticates every persona and then denies them, with a fully populated identity projection |
 | `ServiceAccount/argo-workflow` (+ its Role/RoleBinding) | every scheduled transform and data-quality run fails with `serviceaccount "argo-workflow" not found`, while all app pods stay healthy — nothing surfaces until a scheduled run |
 | The Secrets in the table above | services fail to start, or start with blank configuration |
 
@@ -222,14 +222,14 @@ kubectl -n insight get httproute insight-gateway insight-keycloak \
 ```
 
 **6. Seed.** Seeding reuses the seeder verbatim — no test-stand variant, no
-per-stand flags beyond the ones below (it discovers the tenant, the datastore
-coordinates, the seed image and the IdP source type from the cluster itself):
+per-stand flags beyond the ones below. It discovers the tenant, the datastore
+coordinates, the seed image, the IdP source type **and the dev-lead persona
+address** from the cluster itself:
 
 ```bash
 ./src/ingestion/tools/seed/seed-stand.sh \
   -n insight \
   --context insight-test-stand \
-  --email <address> \
   --days 730
 ```
 
@@ -238,6 +238,31 @@ the script prints the context it resolved before it writes anything, and a run
 whose target is stated rather than inherited is one a reader of the log can
 check. `--days`, spelled exactly like that — the seeder rejects unknown
 arguments, so a plausible-looking synonym fails every time.
+
+**There is no `--email` here, and its absence is the point.** The dev-lead
+address is read out of the realm this stand applied — the
+`insight-keycloak-config-realms` ConfigMap, the user whose `id` is the roster's
+dev-lead UUID — so the realm is the source of truth for who exists and the seed
+follows it. The script prints both the address and where it came from before it
+writes anything:
+
+```text
+==> idp:       source_type=keycloak dev_user=<address> (from ConfigMap insight-keycloak-config-realms)
+```
+
+That parenthesis is the check. An address alone cannot be verified by eye; which
+side supplied it can. `--email` still exists and still wins when passed — the
+origin then reads `(from --email)` — for a stand whose realm is provisioned some
+other way. Pass it on *this* stand and the seeder prints a multi-line warning
+naming both addresses and seeds yours anyway, because an explicit flag wins;
+that warning is the sound of the two projections coming apart, so pass the flag
+only deliberately and say why.
+
+If discovery finds nothing the script stops and names `--email`. That is a
+statement about the stand rather than about the seeder: the realm ConfigMap is
+absent, or holds no user carrying the dev-lead UUID, or the realm was never
+applied because step 3 has not run yet. Seeding is downstream of deploying, and
+this is where that ordering becomes visible.
 
 The seeder's manifest — the list of personas, fixtures, the tenant and the
 data window that the smoke suite reads — is **printed to the seed Job's
@@ -286,7 +311,7 @@ person on the roster, each with a password credential. That single decision is
 what makes an automated multi-persona login possible here at all, and it is why
 `password` is the correct mode for the smoke suite on this stand.
 
-Four consequences, roughly in the order they bite:
+Five consequences, roughly in the order they bite:
 
 * **The stand is useless between deploy and seed.** Authentication and
   authorisation are two systems here. Keycloak authenticates; the login
@@ -318,6 +343,21 @@ Four consequences, roughly in the order they bite:
   Neither value is repeated in CI: `seed-stand.sh` reads the source type back
   out of `insight-authenticator-config` rather than being told. Changing one
   without the other produces exactly the same authenticate-then-deny.
+* **The realm decides who exists; the seed follows.** Same argument as the
+  source type, applied to the one persona address an operator could supply. The
+  dev-lead is the only person on the roster whose address is not derived —
+  everyone else's falls out of the roster module and passes through no input at
+  all — so the dev-lead is the only one that can drift, and drifting means the
+  realm names one person and `identity.persons` names another. `seed-stand.sh`
+  therefore reads the address back out of the applied realm ConfigMap, keyed on
+  the roster's dev-lead UUID (`insight_seed.profiles.DEV_LEAD_UUID`, which the
+  realm generator writes as each realm user's `id`), rather than taking a flag.
+  One writer, not two copies. Regenerating the realm moves the address and the
+  next seed follows it; passing `--email` overrides the read, which is the
+  supported way to seed a stand whose realm came from somewhere else and the
+  unsupported way to break this one.
+  [`INFRA.md`](INFRA.md#one-roster-two-projections) states the invariant on its
+  own, because it is the one a future change is most likely to break.
 * **The persona password is a shared constant, not a per-stand secret.** Every
   user the realm generator emits carries its `DEV_PASSWORD` constant
   (`insight_seed.keycloak_realm`), so `SMOKE_PERSONA_PASSWORD` — and its CI
@@ -410,7 +450,17 @@ commit would read the previous version).
   `insight-keycloak-config-realms` ConfigMap is written by the bring-up, not by
   this tree, and the deploy only reads it. That is deliberate — see the
   `keycloakConfig` comment in `values.yaml` — but it does mean a login failure
-  can have a cause no file here can show you.
+  can have a cause no file here can show you. The seed now reads that same
+  object for the dev-lead address, which cuts both ways: a wrong realm is a
+  failed or wrongly-scoped seed instead of a silent mismatch, and an object this
+  repository does not own has become an input to a stage this repository does.
+  That is why `--email` survives as an override rather than being deleted.
+* **Nothing asserts that the realm and the seeded rows agree.** Discovery
+  removes the one place they could be told to disagree; it does not compare
+  them. A realm regenerated from a different roster, or a stale seed manifest,
+  still shows up only as a login that authenticates and resolves to nobody. The
+  comparison exists (`tests/lib/insight_stand/personas.py`) and skips itself on
+  a cluster for want of a realm document — which the applied ConfigMap now is.
 * **`authenticator.overrideEnabled: true`** is carried forward from the
   installed release. It is a standing impersonation primitive on an
   internet-reachable stand, gated on that flag alone. The conditional that used

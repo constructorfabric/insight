@@ -38,13 +38,25 @@
 #               after $(HELM_UPGRADE_FLAGS) so no knob turns the rollback off.
 #               `make diff` DOES work here unchanged, which is why it is this
 #               stage's read-only form.
-#   2. seed     `seed-stand.sh -n insight --context … --email … --days 730`,
+#   2. seed     `seed-stand.sh -n insight --context … --days 730`,
 #               verbatim. No wrapper: the seeder discovers the tenant, the
-#               datastore coordinates and the IdP source type (there is no
+#               datastore coordinates, the IdP source type (there is no
 #               --auth-mode any more — it was folded into --idp-source-type,
-#               which is itself read off the release)
+#               which is itself read off the release) and the dev-lead address
 #               from the cluster, and a value supplied from outside is a value
 #               that can be wrong while looking right.
+#
+#               The dev-lead address is the newest member of that list and the
+#               one that proves the rule. It used to be supplied — by a GitHub
+#               secret in CI, by this script's own committed default locally —
+#               while the realm that decides who can actually log in was written
+#               by the deploy. Two writers for one roster, no check between
+#               them, and they drifted: the realm named one person, the seed
+#               another, and the login resolved to nobody. The seeder now reads
+#               the address out of the realm ConfigMap the stand applied, so
+#               this harness stops supplying one too. `--seed-email` survives as
+#               exactly the override CI's secret is — which is the point, since
+#               a rehearsal that took the old path would prove the wrong thing.
 #   3. smoke    `uv run --project tests --frozen pytest tests/stand/smoke
 #               --stand-manifest <captured>` against the public URL. Real DNS,
 #               real TLS, real IdP redirect — a stand that works only from
@@ -165,12 +177,24 @@ DIAGNOSTICS_DEFAULT_REL=".github/workflows/scripts/stand-diagnostics.sh"
 # refused when it points inside the tree.
 ARTIFACT_DIR="$GITOPS_DIR/.deploy/ci-emulation"
 
-# The dev-lead persona the seeder binds `--email` to. In CI this arrives from the
-# environment secret TEST_STAND_SEED_EMAIL; locally the seeder's own committed
-# canonical value (src/ingestion/tools/seed/PROFILE.md), on a deliberately
-# non-routable domain, is a safe default that addresses the person the roster
-# describes.
-SEED_DEV_EMAIL_DEFAULT="email_development_lead@company.nonpresent"
+# There is deliberately NO default dev-lead address here any more.
+#
+# There used to be one — the seeder's committed canonical value, on a
+# non-routable domain, justified in this very comment as "a safe default that
+# addresses the person the roster describes". It was not safe and it did not
+# address that person: the realm applied to a stand is what decides who can log
+# in, and a committed constant here is a guess about a value another repository's
+# bring-up wrote. CI made the same guess from a GitHub secret, the two guesses
+# disagreed with the realm, and a stand came up whose dev-lead authenticated and
+# then resolved to nobody.
+#
+# Removing the default is what makes this harness a rehearsal again rather than a
+# demonstration of the old path: with nothing to fall back to, the seeder
+# discovers the address from the realm exactly as it does in CI, and the
+# --dry-run mode exercises that discovery before any apply. $TEST_STAND_SEED_EMAIL
+# is still honoured, because the same-named secret is still honoured in CI and
+# parity is the whole product here — but an unset variable now means "let the
+# seeder read the stand", not "use the committed guess".
 
 # The seed window. `--days`, NOT `--window-days`: seed-stand.sh's argument parser
 # has no such flag and refuses unknown arguments, so the wrong spelling aborts
@@ -260,9 +284,17 @@ Selection:
       --timeout <dur>       helm --timeout for the upgrade           [default: 10m]
 
 Seed and smoke inputs:
-      --seed-email <addr>   persona the seeder binds the dev-lead login to.
-                            [default: $TEST_STAND_SEED_EMAIL, else the seeder's
-                            committed canonical dev-lead address]
+      --seed-email <addr>   OVERRIDE the dev-lead address that the seeder would
+                            otherwise read out of the realm this stand applied.
+                            Unset is the normal case and the one CI runs: the
+                            realm says who the dev-lead is and the seed follows
+                            it, so the two cannot end up describing different
+                            people. Pass this only for a stand whose realm the
+                            seeder cannot read — and know that naming anyone but
+                            the realm's dev-lead seeds a person nobody can log
+                            in as, with every stage still green.
+                            [default: $TEST_STAND_SEED_EMAIL, else discovered
+                            from the stand]
       --manifest <path>     seed manifest for pytest. [default: captured out of
                             the seed stage into the artefact directory]
       --base-url <url>      the stand's public URL. [default: $SMOKE_BASE_URL,
@@ -393,7 +425,18 @@ need kubectl
 need jq
 need make
 
-[ -n "$SEED_DEV_EMAIL" ] || SEED_DEV_EMAIL="${TEST_STAND_SEED_EMAIL:-$SEED_DEV_EMAIL_DEFAULT}"
+# The override chain, and it ends in EMPTY on purpose — this line used to end in
+# a committed address, which is what let a local rehearsal pass the seeder a
+# dev-lead the stand's realm had never heard of. Empty is not a missing value
+# here; it is the instruction to let seed-stand.sh read the realm, which is the
+# path CI takes and therefore the only path worth rehearsing.
+#
+# $TEST_STAND_SEED_EMAIL is still consulted so the two sides stay the same shape:
+# CI reads the same-named environment secret and appends --email only when it is
+# non-empty. Set it in neither place and both discover; set it in one and that
+# side overrides — which is a divergence you can see in the printed command
+# rather than one hiding in a default.
+[ -n "$SEED_DEV_EMAIL" ] || SEED_DEV_EMAIL="${TEST_STAND_SEED_EMAIL:-}"
 
 # ── The environment the harness drives ──────────────────────────────────────
 # Read from the committed gitops environment rather than taken as flags: the
@@ -561,11 +604,27 @@ deploy_render_cmd=(
   --values "$VALUES_REL"
 )
 
+# `--email` is APPENDED, not interpolated, and the difference is load-bearing:
+# `--email ""` is not "no address, go and discover one", it is
+# `${2:?--email needs a value}` in the seeder's argument parser killing the run
+# before it reads anything. An argument that is only sometimes present has to be
+# absent, not empty — which is the same reason the workflow builds its own
+# email_args array instead of passing the secret through unconditionally.
+#
+# The bash-3.2-safe `${arr[@]+"${arr[@]}"}` spelling is used for the same reason
+# it is used for the RBAC probe's --as-user args below: macOS ships bash 3.2,
+# where a bare "${arr[@]}" on an empty array is an unbound-variable error under
+# `set -u`, and this script's normal case is now precisely the empty one.
+seed_email_args=()
+if [ -n "$SEED_DEV_EMAIL" ]; then
+  seed_email_args=(--email "$SEED_DEV_EMAIL")
+fi
+
 seed_cmd_apply=(
   "$SEED_REL"
   -n "$NS_APP"
   --context "$KUBE_CTX"
-  --email "$SEED_DEV_EMAIL"
+  ${seed_email_args[@]+"${seed_email_args[@]}"}
   --days "$SEED_WINDOW_DAYS"
 )
 
@@ -599,6 +658,21 @@ print_plan() {
   show_cmd "" "${deploy_cmd_dry[@]}"
 
   head2 "stage 2 - seed"
+  # Said in the plan rather than only in the source, because the absence of a
+  # flag is the one thing a printed command cannot show. A reader diffing this
+  # against the workflow needs to know that the missing --email is deliberate on
+  # both sides and that the address is coming from the same place on both.
+  if [ -n "$SEED_DEV_EMAIL" ]; then
+    note "dev-lead address: OVERRIDDEN (--seed-email / \$TEST_STAND_SEED_EMAIL)."
+    note "  The stand's own realm is not being consulted. An address that is not"
+    note "  the realm's dev-lead seeds a person who cannot log in, and every"
+    note "  stage stays green while it happens."
+  else
+    note "dev-lead address: none passed — seed-stand.sh reads it from the realm"
+    note "  ConfigMap the stand applied. The workflow omits --email for the same"
+    note "  reason: the realm is where the roster is written, and the seed follows"
+    note "  it so a regenerated realm cannot leave the data behind."
+  fi
   note "apply:"
   show_cmd "KUBECONFIG=<file> " "${seed_cmd_apply[@]}"
   note "dry-run:"
@@ -810,6 +884,28 @@ parity_report() {
   # unknown arguments, so a workflow carrying it fails the seed stage every run.
   if grep -qF -- "--window-days" "$WORKFLOW_FILE"; then
     printf '     %-6s %s\n' "BUG" "the workflow passes --window-days; seed-stand.sh only accepts --days"
+  fi
+
+  # The dev-lead address. Deliberately NOT an anchor in the list above: --email
+  # is now conditional on both sides, so the literal appears in the workflow's
+  # text whether or not any run passes it, and an anchor asserting its presence
+  # would prove nothing while an anchor asserting its absence would fire on the
+  # override machinery itself. What can be asserted is the workflow's disposition
+  # towards the value, and these two checks cover the two ways it can be wrong.
+  #
+  # The first is loud but harmless: a workflow that still hard-requires the
+  # secret fails its own preflight the moment an operator unsets a secret nothing
+  # reads. The second is the dangerous one — a workflow that still passes
+  # --email unconditionally seeds an address that the realm may never have
+  # carried, the Job succeeds, the release stays `deployed`, and the only
+  # symptom is a persona who authenticates and resolves to nobody. That is the
+  # exact failure the discovery removes, so a harness that discovered while CI
+  # supplied would be rehearsing the fixed path against the broken one.
+  if grep -qF -- 'missing="$missing secrets.TEST_STAND_SEED_EMAIL"' "$WORKFLOW_FILE"; then
+    printf '     %-6s %s\n' "BUG" "the workflow REQUIRES secrets.TEST_STAND_SEED_EMAIL; seed-stand.sh discovers the dev-lead address from the stand's realm, so nothing needs it"
+  fi
+  if grep -qE '^[[:space:]]*--email "\$SEED_EMAIL"' "$WORKFLOW_FILE"; then
+    printf '     %-6s %s\n' "BUG" "the workflow passes --email unconditionally; it must append the flag only when the override secret is set, or the realm is never consulted"
   fi
 
   # The smoke suite is aimed by $SMOKE_BASE_URL and by nothing else: its conftest
