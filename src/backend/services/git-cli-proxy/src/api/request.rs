@@ -355,6 +355,7 @@ mod tests {
     #[test]
     fn paging_rejects_foreign_tokens_but_accepts_its_own() {
         let token = PageToken {
+            entry: String::new(),
             generation: 4,
             primary: "2026-08-01T00:00:00Z".to_owned(),
             secondary: "aaa".to_owned(),

@@ -6,6 +6,7 @@ use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 
+use crate::engine::key::CacheKey;
 use crate::engine::page::PageToken;
 use crate::engine::read::{self, Page, blobs, branches, commits, numstat, patches};
 use crate::engine::store::{Freshness, RepoGuard};
@@ -13,7 +14,8 @@ use crate::engine::store::{Freshness, RepoGuard};
 use super::AppState;
 use super::error::ApiError;
 use super::request::{
-    Paging, RequestContext, ShaFilter, clamp_page_size, clamp_patch_bytes, parse_sha_filter,
+    BadRequest, Paging, RequestContext, ShaFilter, clamp_page_size, clamp_patch_bytes,
+    parse_sha_filter,
 };
 
 #[derive(Debug, Deserialize)]
@@ -73,8 +75,13 @@ pub async fn list_commits(
     let guard = open(&state, &context, &paging).await?;
 
     let runner = state.store.runner();
-    let walk_from = narrowed_since(query.since.as_deref(), &paging);
-    let all = commits::headers(runner, guard.git_dir(), walk_from, &context.creds).await?;
+    let all = commits::headers(
+        runner,
+        guard.git_dir(),
+        query.since.as_deref(),
+        &context.creds,
+    )
+    .await?;
     let (window, cursor) = read::slice_page(
         retain_selected(all, selected.as_ref(), |header| &header.sha),
         paging.token.as_ref(),
@@ -118,7 +125,7 @@ pub async fn list_commits(
 
     Ok(Json(Page {
         items,
-        next_page_token: encode_cursor(cursor, guard.generation()),
+        next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
     }))
 }
 
@@ -139,8 +146,13 @@ pub async fn list_file_changes(
     let guard = open(&state, &context, &paging).await?;
 
     let runner = state.store.runner();
-    let walk_from = narrowed_since(query.since.as_deref(), &paging);
-    let all = commits::headers(runner, guard.git_dir(), walk_from, &context.creds).await?;
+    let all = commits::headers(
+        runner,
+        guard.git_dir(),
+        query.since.as_deref(),
+        &context.creds,
+    )
+    .await?;
     // Parity with the CDK connectors: merge commits contribute no file rows.
     let non_merge: Vec<commits::CommitHeader> =
         retain_selected(all, selected.as_ref(), |header| &header.sha)
@@ -196,7 +208,7 @@ pub async fn list_file_changes(
 
     Ok(Json(Page {
         items,
-        next_page_token: encode_cursor(cursor, guard.generation()),
+        next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
     }))
 }
 
@@ -223,21 +235,34 @@ pub async fn list_branches(
 
     Ok(Json(Page {
         items,
-        next_page_token: encode_cursor(cursor, guard.generation()),
+        next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
     }))
 }
 
 /// Resolve the snapshot: a first page honors fetch-if-stale, a continuation is
 /// pinned to the generation its token carries.
+///
+/// INVARIANT: every paginated endpoint resolves its snapshot here, so this is
+/// the one place a continuation token is checked against the repository it was
+/// minted for.
 async fn open(
     state: &Arc<AppState>,
     context: &RequestContext,
     paging: &Paging,
 ) -> Result<RepoGuard, ApiError> {
     let freshness = match paging.token.as_ref() {
-        Some(token) => Freshness::Pinned {
-            generation: token.generation,
-        },
+        Some(token) => {
+            if !token.binds_to(&context.key) {
+                // A cursor from another repository is indistinguishable, from
+                // the caller's side, from a corrupted one. Not 409: the
+                // connector answers that by resuming from its stored cursor,
+                // which would loop forever on a permanently foreign token.
+                return Err(BadRequest::MalformedToken.into());
+            }
+            Freshness::Pinned {
+                generation: token.generation,
+            }
+        }
         None => Freshness::Refresh {
             max_staleness: context.max_staleness.unwrap_or(Duration::from_secs(
                 state.config.default_max_staleness_seconds,
@@ -249,17 +274,6 @@ async fn open(
         .open(&context.key, &context.creds, freshness)
         .await?;
     Ok(guard)
-}
-
-/// Tighten the walk to the page's remainder. The token's date is always at or
-/// after the caller's `since` (it names a commit that already passed that
-/// filter), so it is the stricter bound — and `slice_page` still applies the
-/// exact `(date, sha)` position, so this only saves work, never rows.
-fn narrowed_since<'a>(since: Option<&'a str>, paging: &'a Paging) -> Option<&'a str> {
-    match paging.token.as_ref() {
-        Some(token) => Some(token.primary.as_str()),
-        None => since,
-    }
 }
 
 fn retain_selected<T, K>(rows: Vec<T>, selected: Option<&ShaFilter>, key: K) -> Vec<T>
@@ -275,9 +289,14 @@ where
     }
 }
 
-fn encode_cursor(cursor: Option<(String, String)>, generation: u64) -> Option<String> {
+fn encode_cursor(
+    cursor: Option<(String, String)>,
+    key: &CacheKey,
+    generation: u64,
+) -> Option<String> {
     cursor.map(|(primary, secondary)| {
         PageToken {
+            entry: PageToken::binding_for(key),
             generation,
             primary,
             secondary,

@@ -166,6 +166,46 @@ fn fixture_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("file://{}", origin.display()))
 }
 
+/// A history whose committer dates run BACKWARDS along ancestry — routine after
+/// a rebase, a cherry-pick, or a clock-skewed contributor. `git log --since` is
+/// a traversal cutoff, so any walk narrowed to a cursor date prunes the older
+/// parents and never reaches the commits behind them.
+fn skewed_origin(root: &Path, name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let origin = root.join(name);
+    std::fs::create_dir_all(&origin)?;
+    let script = "git init -q -b main . && \
+         git config uploadpack.allowFilter true && \
+         git config uploadpack.allowAnySHA1InWant true && \
+         echo a > a.txt && git add a.txt && \
+         GIT_AUTHOR_DATE='2026-08-03T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-03T10:00:00+0000' \
+           git commit -qm 'newest ancestor' && \
+         echo b > b.txt && git add b.txt && \
+         GIT_AUTHOR_DATE='2026-08-01T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-01T10:00:00+0000' \
+           git commit -qm 'older descendant' && \
+         echo c > c.txt && git add c.txt && \
+         GIT_AUTHOR_DATE='2026-08-02T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-02T10:00:00+0000' \
+           git commit -qm 'middle descendant'";
+    let output = Command::new("sh")
+        .arg("-ec")
+        .arg(script)
+        .current_dir(&origin)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "fixture setup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(format!("file://{}", origin.display()))
+}
+
 /// Poll an endpoint until the cold clone finishes (the connector's 429 loop).
 async fn get_json(
     port: u16,
@@ -400,6 +440,112 @@ async fn paginates_commits_with_a_snapshot_bound_cursor() -> R {
     assert!(
         second_page["next_page_token"].is_null(),
         "the walk ends after the last commit"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn pagination_never_drops_commits_with_non_monotonic_dates() -> R {
+    let server = spawn_server("skew", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = skewed_origin(&server.dir, "skewed")?;
+
+    let unpaged = get_json(server.port, "/v1/commits", &repo).await?;
+    let expected: Vec<String> = unpaged["items"]
+        .as_array()
+        .ok_or("no items")?
+        .iter()
+        .filter_map(|row| row["sha"].as_str().map(ToOwned::to_owned))
+        .collect();
+    assert_eq!(expected.len(), 3, "the fixture has three commits");
+
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let mut seen: Vec<String> = Vec::new();
+    let mut token: Option<String> = None;
+
+    loop {
+        let mut params = vec![("repo", repo.clone()), ("page_size", "1".to_owned())];
+        if let Some(cursor) = &token {
+            params.push(("page_token", cursor.clone()));
+        }
+        let page: serde_json::Value = client
+            .get(format!("{base}/v1/commits"))
+            .query(&params)
+            .bearer_auth(TOKEN)
+            .header("x-tenant-id", "tenant-1")
+            .header("x-source-id", "source-1")
+            .header("x-git-username", "u")
+            .header("x-git-token", "p")
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        for row in page["items"].as_array().ok_or("no items")? {
+            seen.push(row["sha"].as_str().ok_or("no sha")?.to_owned());
+        }
+        match page["next_page_token"].as_str() {
+            Some(next) => token = Some(next.to_owned()),
+            None => break,
+        }
+    }
+
+    assert_eq!(
+        seen, expected,
+        "paging must return exactly the unpaginated walk, in the same order"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_page_token_from_another_repository_is_refused() -> R {
+    let server = spawn_server("crossrepo", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let mine = fixture_origin(&server.dir)?;
+    let theirs = skewed_origin(&server.dir, "other")?;
+
+    get_json(server.port, "/v1/commits", &mine).await?;
+    get_json(server.port, "/v1/commits", &theirs).await?;
+
+    let client = reqwest::Client::new();
+    let base = format!("http://127.0.0.1:{}", server.port);
+    let first: serde_json::Value = client
+        .get(format!("{base}/v1/commits"))
+        .query(&[("repo", mine.as_str()), ("page_size", "1")])
+        .bearer_auth(TOKEN)
+        .header("x-tenant-id", "tenant-1")
+        .header("x-source-id", "source-1")
+        .header("x-git-username", "u")
+        .header("x-git-token", "p")
+        .send()
+        .await?
+        .json()
+        .await?;
+    let token = first["next_page_token"]
+        .as_str()
+        .ok_or("a truncated page must carry a cursor")?;
+
+    // Both repositories are warm at generation 1, so nothing but the entry
+    // binding stands between this token and the wrong repository's history.
+    let replayed = client
+        .get(format!("{base}/v1/commits"))
+        .query(&[
+            ("repo", theirs.as_str()),
+            ("page_size", "1"),
+            ("page_token", token),
+        ])
+        .bearer_auth(TOKEN)
+        .header("x-tenant-id", "tenant-1")
+        .header("x-source-id", "source-1")
+        .header("x-git-username", "u")
+        .header("x-git-token", "p")
+        .send()
+        .await?;
+    assert_eq!(
+        replayed.status(),
+        400,
+        "a cursor must not continue a repository it was not minted for"
     );
     Ok(())
 }
