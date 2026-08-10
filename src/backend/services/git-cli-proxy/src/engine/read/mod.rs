@@ -163,11 +163,21 @@ mod live_tests {
         let runner = f.store.runner();
         let git_dir = guard.git_dir();
 
-        let headers = match commits::headers(runner, git_dir, &creds()).await {
-            Ok(h) => h,
-            Err(e) => panic!("commits::headers: {e}"),
+        let keys = match commits::enumerate(runner, git_dir, &creds()).await {
+            Ok(k) => k,
+            Err(e) => panic!("commits::enumerate: {e}"),
         };
-        assert_eq!(headers.len(), 3, "all branches are walked");
+        assert_eq!(keys.len(), 3, "all branches are walked");
+        let all_shas: Vec<String> = keys.iter().map(|k| k.sha.clone()).collect();
+        let headers = match commits::headers_for(runner, git_dir, &all_shas, &creds()).await {
+            Ok(h) => h,
+            Err(e) => panic!("commits::headers_for: {e}"),
+        };
+        assert_eq!(
+            headers.len(),
+            3,
+            "the window read returns every requested sha"
+        );
         assert!(
             headers
                 .windows(2)
@@ -258,19 +268,18 @@ mod live_tests {
         let guard = open_until_ready(&f, &k, refresh()).await;
         let runner = f.store.runner();
 
-        let all = match commits::headers(runner, guard.git_dir(), &creds()).await {
-            Ok(h) => h,
-            Err(e) => panic!("headers: {e}"),
+        let all = match commits::enumerate(runner, guard.git_dir(), &creds()).await {
+            Ok(k) => k,
+            Err(e) => panic!("enumerate: {e}"),
         };
         assert_eq!(all.len(), 2);
 
-        let recent = commits::retain_since(all.clone(), Some("2026-08-02T00:00:00Z"));
+        let recent = commits::retain_keys_since(all.clone(), Some("2026-08-02T00:00:00Z"));
         assert_eq!(recent.len(), 1, "only the newer commit survives the bound");
-        assert_eq!(recent[0].message, "second");
 
         // The bound is an instant, not a string: an offset timestamp before
         // the bound must be dropped even though it sorts after it as text.
-        let all_utc = commits::retain_since(all.clone(), Some("2026-08-02T00:00:00+00:00"));
+        let all_utc = commits::retain_keys_since(all.clone(), Some("2026-08-02T00:00:00+00:00"));
         assert_eq!(
             all_utc.len(),
             1,

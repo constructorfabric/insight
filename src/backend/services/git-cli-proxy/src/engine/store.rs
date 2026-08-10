@@ -1075,17 +1075,17 @@ pub(crate) mod tests {
 
     /// The tip commit of the cached clone.
     pub(crate) async fn newest_sha(f: &Fixture, git_dir: &Path) -> String {
-        let headers = match crate::engine::read::commits::headers(
+        let keys = match crate::engine::read::commits::enumerate(
             f.store.runner(),
             git_dir,
             &creds(),
         )
         .await
         {
-            Ok(headers) => headers,
-            Err(e) => panic!("read headers: {e}"),
+            Ok(keys) => keys,
+            Err(e) => panic!("enumerate: {e}"),
         };
-        let Some(last) = headers.last() else {
+        let Some(last) = keys.last() else {
             panic!("fixture must have commits")
         };
         last.sha.clone()

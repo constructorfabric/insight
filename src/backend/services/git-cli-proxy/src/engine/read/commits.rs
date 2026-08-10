@@ -53,6 +53,80 @@ impl CommitHeader {
 const FIELD: char = '\u{1f}';
 const RECORD: char = '\u{1e}';
 
+/// One commit's position in the walk, and just enough to filter on.
+///
+/// The enumeration is deliberately NOT `CommitHeader`: a header carries the
+/// full commit message, which is unbounded, so an enumeration of them is
+/// bounded by nothing. A key is ~100 bytes whatever the message, which is what
+/// makes the whole-history walk affordable to hold and to cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitKey {
+    pub committed_date: String,
+    pub sha: String,
+    pub parent_count: usize,
+}
+
+impl CommitKey {
+    #[must_use]
+    pub fn is_merge(&self) -> bool {
+        self.parent_count > 1
+    }
+}
+
+/// Every commit reachable from any branch, ascending by `(committed_date,
+/// sha)` — the walk order the page tokens depend on, and the only walk that
+/// touches whole history.
+///
+/// # Errors
+///
+/// [`GitError`] when the git invocation fails.
+pub async fn enumerate(
+    runner: &GitRunner,
+    git_dir: &Path,
+    creds: &GitCredentials,
+) -> Result<Vec<CommitKey>, GitError> {
+    let format = format!("--pretty=format:{RECORD}%cI{FIELD}%H{FIELD}%P");
+    let args = vec!["log", "--all", "--no-color", &format];
+
+    let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
+    let text = String::from_utf8_lossy(&output.stdout);
+
+    let mut keys = parse_keys(&text);
+    keys.sort_by(|a, b| (&a.committed_date, &a.sha).cmp(&(&b.committed_date, &b.sha)));
+    Ok(keys)
+}
+
+fn parse_keys(text: &str) -> Vec<CommitKey> {
+    text.split(RECORD)
+        .filter(|record| !record.trim().is_empty())
+        .filter_map(|record| {
+            let mut fields = record.splitn(3, FIELD);
+            let committed_date = fields.next()?.trim().to_owned();
+            let sha = fields.next()?.trim().to_owned();
+            let parents = fields.next().unwrap_or_default();
+            (!sha.is_empty()).then(|| CommitKey {
+                committed_date,
+                sha,
+                parent_count: parents.split_whitespace().count(),
+            })
+        })
+        .collect()
+}
+
+/// Drop keys committed before `since`, comparing ISO-8601 instants rather
+/// than the raw `%cI` strings: those carry the committer's UTC offset, so
+/// `2026-08-01T10:00:00+02:00` sorts after `2026-08-01T09:30:00Z` as text
+/// while being the earlier instant.
+#[must_use]
+pub fn retain_keys_since(keys: Vec<CommitKey>, since: Option<&str>) -> Vec<CommitKey> {
+    let Some(bound) = since.and_then(parse_instant) else {
+        return keys;
+    };
+    keys.into_iter()
+        .filter(|key| parse_instant(&key.committed_date).is_none_or(|at| at >= bound))
+        .collect()
+}
+
 /// Every commit reachable from any branch, ordered ascending by
 /// `(committed_date, sha)` — the walk order the page tokens depend on.
 ///
@@ -62,21 +136,27 @@ const RECORD: char = '\u{1e}';
 /// parent is never reached at all. Committer dates are not monotonic along
 /// ancestry — merges of long-lived branches, cherry-picks, date-preserving
 /// rebases and clock skew all break it — so the date bound is applied to the
-/// enumerated result instead (see [`retain_since`]), which is what the API
+/// enumerated result instead (see [`retain_keys_since`]), which is what the API
 /// contract promises: every reachable commit at or after `since`.
 ///
 /// # Errors
 ///
 /// [`GitError`] when the git invocation fails.
-pub async fn headers(
+pub async fn headers_for(
     runner: &GitRunner,
     git_dir: &Path,
+    shas: &[String],
     creds: &GitCredentials,
 ) -> Result<Vec<CommitHeader>, GitError> {
+    if shas.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let format = format!(
         "--pretty=format:{RECORD}%H{FIELD}%P{FIELD}%aI{FIELD}%cI{FIELD}%an{FIELD}%ae{FIELD}%cn{FIELD}%ce{FIELD}%B"
     );
-    let args = vec!["log", "--all", "--no-color", &format];
+    let mut args = vec!["log", "--no-walk", "--no-color", "--root", &format];
+    args.extend(shas.iter().map(String::as_str));
 
     let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
     let text = String::from_utf8_lossy(&output.stdout);
@@ -84,21 +164,6 @@ pub async fn headers(
     let mut headers = parse_headers(&text);
     headers.sort_by(|a, b| (&a.committed_date, &a.sha).cmp(&(&b.committed_date, &b.sha)));
     Ok(headers)
-}
-
-/// Drop commits committed before `since`, comparing ISO-8601 instants rather
-/// than the raw `%cI` strings: those carry the committer's UTC offset, so
-/// `2026-08-01T10:00:00+02:00` sorts after `2026-08-01T09:30:00Z` as text
-/// while being the earlier instant.
-#[must_use]
-pub fn retain_since(headers: Vec<CommitHeader>, since: Option<&str>) -> Vec<CommitHeader> {
-    let Some(bound) = since.and_then(parse_instant) else {
-        return headers;
-    };
-    headers
-        .into_iter()
-        .filter(|header| parse_instant(&header.committed_date).is_none_or(|at| at >= bound))
-        .collect()
 }
 
 /// Seconds since the epoch for an ISO-8601 timestamp with an explicit offset
@@ -241,41 +306,43 @@ mod tests {
         )
     }
 
-    fn at(committed: &str) -> CommitHeader {
-        let text = record("aaa", "", committed, "m");
-        let mut parsed = parse_headers(&text);
-        parsed.remove(0)
+    fn at(committed: &str) -> CommitKey {
+        CommitKey {
+            committed_date: committed.to_owned(),
+            sha: "aaa".to_owned(),
+            parent_count: 1,
+        }
     }
 
     #[test]
-    fn retain_since_bounds_on_the_instant_not_the_text() {
+    fn retain_keys_since_bounds_on_the_instant_not_the_text() {
         // %cI carries the committer's UTC offset, so an earlier instant can
         // sort LATER as a string. Comparing text would keep the wrong rows.
-        let headers = vec![
+        let keys = vec![
             at("2026-08-01T09:30:00+00:00"),
             at("2026-08-01T10:00:00+02:00"),
         ];
-        let kept = retain_since(headers, Some("2026-08-01T09:00:00Z"));
+        let kept = retain_keys_since(keys, Some("2026-08-01T09:00:00Z"));
         assert_eq!(kept.len(), 1, "08:00Z is before the 09:00Z bound");
         assert_eq!(kept[0].committed_date, "2026-08-01T09:30:00+00:00");
     }
 
     #[test]
-    fn retain_since_is_inclusive_of_the_bound() {
-        let headers = vec![at("2026-08-01T10:00:00+00:00")];
+    fn retain_keys_since_is_inclusive_of_the_bound() {
+        let keys = vec![at("2026-08-01T10:00:00+00:00")];
         assert_eq!(
-            retain_since(headers, Some("2026-08-01T10:00:00Z")).len(),
+            retain_keys_since(keys, Some("2026-08-01T10:00:00Z")).len(),
             1,
             "the contract is committed_date >= since"
         );
     }
 
     #[test]
-    fn retain_since_without_a_usable_bound_filters_nothing() {
-        let headers = vec![at("2026-08-01T10:00:00+00:00")];
-        assert_eq!(retain_since(headers.clone(), None).len(), 1);
+    fn retain_keys_since_without_a_usable_bound_filters_nothing() {
+        let keys = vec![at("2026-08-01T10:00:00+00:00")];
+        assert_eq!(retain_keys_since(keys.clone(), None).len(), 1);
         assert_eq!(
-            retain_since(headers, Some("last tuesday")).len(),
+            retain_keys_since(keys, Some("last tuesday")).len(),
             1,
             "an unparseable bound must not silently drop everything"
         );

@@ -379,7 +379,7 @@ it after any Builder round-trip.
 | 6 | Helm subchart (first PVC chart in the repo), umbrella registration, config Secret, image build jobs, render-contract workflow | `src/…/git-cli-proxy/helm`, `charts/insight`, `.github/workflows` |
 | 7 | Nocode connectors for GitLab and Bitbucket Cloud — **moved out of this change**, see §8.1 | separate change |
 | 8 | Hardening: repo origins restricted to http(s) at the boundary, in-flight refresh joins re-prove credentials, page tokens bound to their cache entry, continuations stop narrowing `--since`, `/v1/file-changes` row/byte caps with commit-boundary cursoring, patch buffer capped while reading, `run_piped` drains producer stderr, per-write-unique `meta.json` tmp names, full-clone promotion for origins refusing promisor wants (§7.9), `branch_names` → `is_in_default_branch`, canonical problem+json errors, `OperationBuilder` + committed OpenAPI + drift gate, `proxyToken` supplied-or-fail, disk-budget render guard, `global.storageClass`, `git_cli_proxy` wired into the `changes`/bump/publish CI graph | proxy + `charts/insight` + `.github/workflows` |
-| 9 | Design alignment: `since` applied as a predicate rather than git's traversal cutoff, `statvfs` as the second free-space view, admission able to refuse (`429`), and the §4.3 metrics implemented | `src/…/engine/{read/commits,disk,store,metrics}.rs`, `src/…/api/*` |
+| 9 | Design alignment: `since` applied as a predicate rather than git's traversal cutoff, `statvfs` as the second free-space view, admission able to refuse (`429`), and the §4.3 metrics implemented. The enumeration walk was split from the window read — keys only (~100 B/commit) for the whole-history pass, full headers for the page's own commits — so per-page memory is bounded by the page, not by history × message size | `src/…/engine/{read/commits,disk,store,metrics}.rs`, `src/…/api/*` |
 
 Quality: 148 Rust tests, clippy clean (pedantic, `-D warnings`), 18 Helm
 render-contract assertions, connector wiring guard green, the committed
@@ -672,6 +672,27 @@ cap far sooner.
   stronger signal: it means a request was refused outright because nothing
   could be reclaimed. `git_proxy_disk_used_bytes` against
   `git_proxy_disk_budget_bytes` shows how much headroom is left.
+
+### 9.12 Enumeration cache — measured, and rejected
+
+Applying `since` as a predicate means every page enumerates whole history.
+Snapshot pinning makes that walk immutable per `(entry, generation)`, so
+caching it looked like the obvious follow-up. Measured on a synthetic
+50k-commit repository before building it: the keys-only walk is ~0.25 s and
+~5 MB; the per-page window work around it (blob prefetch over the network,
+patch and numstat reads) dwarfs it. In steady state an incremental sync with
+the default lookback yields about one page, so a cache saves nothing; on a
+backfill it saves tens of seconds once, against a clone and blob transfer
+measured in minutes. What a cache costs is a stateful component in a
+deliberately stateless service (DD-GP-02) with real coherence obligations —
+it must be invalidated on eviction, re-clone and promotion, or it serves a
+previous incarnation's history.
+
+Not built. What WAS kept from the same investigation is the walk/window
+split in phase 9: the whole-history pass now reads ~100 bytes per commit
+instead of full messages, which bounds per-page memory regardless of any
+cache. Revisit only if paging shows up slow against a measured repository,
+and bring these numbers.
 
 ## 10. Deliberately out of scope
 

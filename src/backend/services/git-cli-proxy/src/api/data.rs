@@ -147,16 +147,22 @@ async fn list_commits_inner(
         let selected = selected.as_ref();
         Box::pin(async move {
             let runner = state.store.runner();
-            let all = commits::headers(runner, guard.git_dir(), &context.creds).await?;
-            let all = commits::retain_since(all, since);
-            let (window, cursor) = read::slice_page(
-                retain_selected(all, selected, |header| &header.sha),
+            let all =
+                commits::enumerate(state.store.runner(), guard.git_dir(), &context.creds).await?;
+            let all = commits::retain_keys_since(all, since);
+            let (keys, cursor) = read::slice_page(
+                retain_selected(all, selected, |key| &key.sha),
                 paging.token.as_ref(),
                 paging.page_size,
-                |header| (header.committed_date.clone(), header.sha.clone()),
+                |key| (key.committed_date.clone(), key.sha.clone()),
             );
 
-            let shas: Vec<String> = window.iter().map(|header| header.sha.clone()).collect();
+            let shas: Vec<String> = keys.iter().map(|key| key.sha.clone()).collect();
+            // Only the page's own commits are read in full: a header carries
+            // the whole commit message, so reading them for all of history
+            // would dwarf everything else on the request.
+            let window =
+                commits::headers_for(runner, guard.git_dir(), &shas, &context.creds).await?;
             blobs::prefetch(runner, guard.git_dir(), &shas, &context.creds).await?;
 
             let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
@@ -235,22 +241,20 @@ async fn list_file_changes_inner(
         let selected = selected.as_ref();
         Box::pin(async move {
             let runner = state.store.runner();
-            let all = commits::headers(runner, guard.git_dir(), &context.creds).await?;
-            let all = commits::retain_since(all, since);
+            let all =
+                commits::enumerate(state.store.runner(), guard.git_dir(), &context.creds).await?;
+            let all = commits::retain_keys_since(all, since);
             // Parity with the CDK connectors: merge commits contribute no file rows.
-            let non_merge: Vec<commits::CommitHeader> =
-                retain_selected(all, selected, |header| &header.sha)
-                    .into_iter()
-                    .filter(|header| !header.is_merge())
-                    .collect();
-            let (window, cursor) = read::slice_page(
-                non_merge,
-                paging.token.as_ref(),
-                paging.page_size,
-                |header| (header.committed_date.clone(), header.sha.clone()),
-            );
+            let non_merge: Vec<commits::CommitKey> = retain_selected(all, selected, |key| &key.sha)
+                .into_iter()
+                .filter(|key| !key.is_merge())
+                .collect();
+            let (window, cursor) =
+                read::slice_page(non_merge, paging.token.as_ref(), paging.page_size, |key| {
+                    (key.committed_date.clone(), key.sha.clone())
+                });
 
-            let shas: Vec<String> = window.iter().map(|header| header.sha.clone()).collect();
+            let shas: Vec<String> = window.iter().map(|key| key.sha.clone()).collect();
             blobs::prefetch(runner, guard.git_dir(), &shas, &context.creds).await?;
 
             let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
@@ -309,7 +313,7 @@ impl RowCaps {
 /// caller could never advance past it and the repository would be permanently
 /// unsyncable.
 fn emit_file_changes(
-    window: Vec<commits::CommitHeader>,
+    window: Vec<commits::CommitKey>,
     file_stats: &HashMap<String, Vec<numstat::FileStat>>,
     texts: &HashMap<String, patches::CommitPatches>,
     caps: RowCaps,
@@ -572,17 +576,11 @@ mod tests {
     use crate::engine::read::numstat::{FileStat, FileStatus};
     use crate::engine::read::patches::Patch;
 
-    fn header(sha: &str, date: &str) -> commits::CommitHeader {
-        commits::CommitHeader {
+    fn header(sha: &str, date: &str) -> commits::CommitKey {
+        commits::CommitKey {
             sha: sha.to_owned(),
             committed_date: date.to_owned(),
-            authored_date: date.to_owned(),
-            author_name: "a".to_owned(),
-            author_email: "a@example.com".to_owned(),
-            committer_name: "c".to_owned(),
-            committer_email: "c@example.com".to_owned(),
-            parent_hashes: Vec::new(),
-            message: "m".to_owned(),
+            parent_count: 1,
         }
     }
 
@@ -598,7 +596,7 @@ mod tests {
     }
 
     type Scenario = (
-        Vec<commits::CommitHeader>,
+        Vec<commits::CommitKey>,
         HashMap<String, Vec<FileStat>>,
         HashMap<String, patches::CommitPatches>,
     );
