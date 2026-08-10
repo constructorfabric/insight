@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * Portal PREFERENCES (feature-flagged behind `insight.portal`).
+ * Portal PREFERENCES (`insight.portal` — ON unless the reader opts out).
  *
  * `enabled` and `showPlanned` persist to localStorage (mirroring the metrics-v2
  * flag pattern in feature-flags.ts). Nothing else lives here: every piece of
@@ -29,17 +29,16 @@ interface PortalState {
   enabled: boolean;
   /**
    * Whether navigation shows entries we have not built yet (`unbuilt` in the
-   * nav model). Default ON while the whole portal is itself a preview: for us
-   * and for demos the dead entries ARE the roadmap. Turn it off — or flip the
-   * default — the day the portal stops being opt-in, so a customer never has
-   * to tell our backlog apart from their own missing data.
+   * nav model). Default ON: for us and for demos the dead entries ARE the
+   * roadmap. Flip it before a reader has to tell our backlog apart from their
+   * own missing data.
    */
   showPlanned: boolean;
 }
 
 /** Router-safe read: `beforeLoad` runs outside React, so it cannot use a hook. */
 export function readPortalEnabled(): boolean {
-  return readEnabled();
+  return readBoolPref(ENABLED_KEY);
 }
 
 /**
@@ -57,18 +56,14 @@ function readKey(key: string): string | null {
   }
 }
 
-function readEnabled(): boolean {
-  return readKey(ENABLED_KEY) === "true";
-}
-
-/** Absent key = default ON (see `showPlanned`); only an explicit "false" hides. */
-function readShowPlanned(): boolean {
-  return readKey(SHOW_PLANNED_KEY) !== "false";
+/** Absent key = ON; both preferences are opt-OUT, so only "false" turns one off. */
+function readBoolPref(key: string): boolean {
+  return readKey(key) !== "false";
 }
 
 let state: PortalState = {
-  enabled: readEnabled(),
-  showPlanned: readShowPlanned(),
+  enabled: readBoolPref(ENABLED_KEY),
+  showPlanned: readBoolPref(SHOW_PLANNED_KEY),
 };
 
 const listeners = new Set<() => void>();
@@ -93,7 +88,7 @@ function persist(key: string, value: string): void {
   }
 }
 
-/** Turn the portal preview on or off for this reader. */
+/** Turn the portal on or off for this reader. */
 export function setPortalEnabled(enabled: boolean): void {
   state = { ...state, enabled };
   persist(ENABLED_KEY, enabled ? "true" : "false");
@@ -107,12 +102,12 @@ export function setPortalShowPlanned(show: boolean): void {
   emit();
 }
 
-/** Whether this reader has the portal preview on. */
+/** Whether this reader has the portal on. */
 export function usePortalEnabled(): boolean {
   return useSyncExternalStore(
     subscribe,
     () => state.enabled,
-    () => false,
+    readPortalEnabled,
   );
 }
 

@@ -458,7 +458,7 @@
             "type": "string"
           },
           "last_observed_date": {
-            "description": "Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`.",
+            "description": "Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`. Not maintained for `custom`\nmetrics (see `origin`).",
             "format": "date",
             "type": [
               "string",
@@ -467,6 +467,10 @@
           },
           "metric_key": {
             "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/MetricOrigin",
+            "description": "`builtin` metrics read managed observation relations; `custom` metrics\nexecute inline SQL at query time. The validator stamps `schema_status`\nand `last_observed_date` from materialized relations only, so for\n`custom` those fields stay `unchecked` / absent regardless of data —\nreaders must not interpret them as \"never measured\" for custom metrics."
           },
           "schema_error_code": {
             "oneOf": [
@@ -503,6 +507,7 @@
           "direction",
           "dimensions",
           "is_enabled",
+          "origin",
           "schema_status"
         ],
         "type": "object"
@@ -862,6 +867,13 @@
           "value",
           "numerator",
           "denominator"
+        ],
+        "type": "string"
+      },
+      "MetricOrigin": {
+        "enum": [
+          "builtin",
+          "custom"
         ],
         "type": "string"
       },

@@ -1219,6 +1219,28 @@ mod tests {
         assert!(!all_measures_covered(&windows, missing));
     }
 
+    // A custom_observation_sql source is executed at query time and
+    // materialises nothing, and the validator must not run tenant-authored SQL
+    // to probe it. It is therefore left inconclusive, which keeps the previous
+    // status: custom definitions stay `unchecked` and never get a
+    // last_observed_date. Returns without touching the (disconnected) backends.
+    #[tokio::test]
+    async fn custom_observation_sql_sources_are_never_probed() {
+        let validator = MetricDefinitionValidator::new(
+            sea_orm::DatabaseConnection::Disconnected,
+            insight_clickhouse::Client::new(insight_clickhouse::Config::new(
+                "http://unused",
+                "silver",
+            )),
+        );
+
+        let outcome = validator
+            .validate_source(SourceKind::CustomObservationSql.as_db(), "unused")
+            .await;
+
+        assert!(matches!(outcome, ProbeOutcome::Inconclusive));
+    }
+
     // Drives the two-probe granularity check (observation dates, then
     // granularities) against an in-process mock server, so the bounded query
     // paths run end-to-end.

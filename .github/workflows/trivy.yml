@@ -169,7 +169,7 @@ jobs:
         # The hashFiles guard keeps a failed scan from producing a second, misleading error that
         # points at Code Scanning rather than at the scan that actually broke.
         if: ${{ always() && hashFiles('trivy-fs.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/upload-sarif@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
@@ -274,7 +274,7 @@ jobs:
       - name: Upload rendered-chart SARIF
         # Own category: `.helm-rendered/*` paths do not exist in the tree.
         if: ${{ always() && hashFiles('trivy-helm.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/upload-sarif@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5
         with:
           sarif_file: trivy-helm.sarif
           category: trivy-helm

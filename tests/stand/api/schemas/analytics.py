@@ -267,6 +267,11 @@ class MetricInputRole(StrEnum):
     denominator = 'denominator'
 
 
+class MetricOrigin(StrEnum):
+    builtin = 'builtin'
+    custom = 'custom'
+
+
 class Computation4(StrEnum):
     sum = 'sum'
 
@@ -629,8 +634,9 @@ class MetricDefinitionView(BaseModel):
     format: MetricFormat
     is_enabled: bool
     label: str
-    last_observed_date: date_aliased | None = Field(None, description="Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`.")
+    last_observed_date: date_aliased | None = Field(None, description="Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`. Not maintained for `custom`\nmetrics (see `origin`).")
     metric_key: str
+    origin: MetricOrigin = Field(..., description='`builtin` metrics read managed observation relations; `custom` metrics\nexecute inline SQL at query time. The validator stamps `schema_status`\nand `last_observed_date` from materialized relations only, so for\n`custom` those fields stay `unchecked` / absent regardless of data —\nreaders must not interpret them as "never measured" for custom metrics.')
     schema_error_code: MetricSchemaErrorCode | None = None
     schema_status: SchemaStatus
     short_label: str | None = Field(None, description='Compact label for dense surfaces; absent when the full label is\nalready compact enough.')

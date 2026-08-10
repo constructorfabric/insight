@@ -23,8 +23,10 @@
 - [Custom Metrics](#custom-metrics)
   - [Execution wire](#execution-wire)
   - [Observation contract the custom SQL must emit](#observation-contract-the-custom-sql-must-emit)
+  - [Catalog visibility](#catalog-visibility)
   - [Reconcile-safety of custom rows](#reconcile-safety-of-custom-rows)
   - [Validation and execution role](#validation-and-execution-role)
+  - [Tenant safety of custom SQL](#tenant-safety-of-custom-sql)
 - [Frontend Contract](#frontend-contract)
 - [Non-Goals](#non-goals)
 
@@ -609,6 +611,12 @@ Schema validation checks:
   `unchecked`, never `error`: filtered measures legitimately go quiet, and
   absence of data is indistinguishable from an unemitted measure.
 - probe failures never overwrite a previously established status.
+- custom observation SQL sources are not probed: the validator reads
+  materialized relations only, and executing tenant-authored SQL would leave
+  the `presentation_ro` execution role custom SQL is confined to. Custom
+  definitions therefore keep `schema_status = 'unchecked'` and never receive
+  `last_observed_date`; the listing exposes `origin` so readers can tell
+  these fields do not apply, instead of reading them as "never measured".
 - the validator sweeps periodically, not once at startup: managed relations
   are dbt-created and may appear after the service boots (fresh deploys) or
   regress later (a bad model change); both converge within one sweep with no
@@ -773,6 +781,15 @@ measure_key, observed_at, value, subject_key, dimensions
 ```
 
 Column semantics match the Source Measure Observation Contract above.
+
+### Catalog visibility
+
+`GET /v1/metric-definitions` exposes each definition's `origin` (`builtin` /
+`custom`). `schema_status` and `last_observed_date` are stamped by the
+managed-relation validator only, so for `origin = 'custom'` they stay
+`unchecked` / absent regardless of the data the metric serves; a consumer
+that treats a missing `last_observed_date` as "this metric has never
+measured anything" must scope that reading to `origin = 'builtin'`.
 
 ### Reconcile-safety of custom rows
 

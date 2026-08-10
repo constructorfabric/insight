@@ -18,7 +18,7 @@ export const Route = createFileRoute("/")({
 function IndexRoute() {
   const { personId } = useViewer();
   const portal = usePortalEnabled();
-  // `beforeLoad` only runs on navigation, so a reader who turns the preview on
+  // `beforeLoad` only runs on navigation, so a reader who turns the portal on
   // while standing here would sit on the dashboard until a reload.
   if (portal) return <Navigate to="/portal" replace />;
   // An authenticated session always carries the person id (the gateway JWT

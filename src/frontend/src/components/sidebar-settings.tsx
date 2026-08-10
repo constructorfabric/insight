@@ -41,7 +41,7 @@ export function SidebarSettings() {
         >
           <span className="flex items-center gap-2">
             <PanelsTopLeft className="size-4" />
-            <span>Portal (preview)</span>
+            <span>Portal</span>
           </span>
           <Switch
             checked={portal}

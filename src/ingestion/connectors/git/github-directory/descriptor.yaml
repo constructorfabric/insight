@@ -20,7 +20,7 @@ type: nocode
 schedule: "30 3 * * *"       # 03:30 UTC daily
 workflow: sync               # Argo workflow template: ingestion-pipeline
 
-dbt_select: "tag:github_directory+"
+dbt_select: "tag:github-directory+"
 
 connection:
   namespace: "bronze_github_directory"
