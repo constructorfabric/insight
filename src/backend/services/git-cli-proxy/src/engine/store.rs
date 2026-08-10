@@ -14,6 +14,7 @@ use super::runner::{GitCredentials, GitError, GitRunner};
 const HEAVY_OP_TIMEOUT: Duration = Duration::from_mins(30);
 const INLINE_WAIT: Duration = Duration::from_secs(15);
 const COLD_RETRY_AFTER: Duration = Duration::from_secs(30);
+const REPROOF_ATTEMPTS: usize = 2;
 const BARE_REFSPEC: &str = "+refs/heads/*:refs/heads/*";
 
 /// Why a refresh failed, in a form that survives being broadcast to every
@@ -110,6 +111,13 @@ impl RepoGuard {
 
 type RefreshResult = Result<u64, RefreshFailure>;
 
+/// Identity of one in-flight refresh: the entry AND the credentials driving it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FlightKey {
+    dir_name: String,
+    cred_fingerprint: String,
+}
+
 pub struct RepoStore {
     data_dir: PathBuf,
     runner: GitRunner,
@@ -117,7 +125,7 @@ pub struct RepoStore {
     max_repo_bytes: u64,
     heavy: Semaphore,
     entries: Mutex<HashMap<String, Arc<RwLock<()>>>>,
-    inflight: Mutex<HashMap<String, watch::Receiver<Option<RefreshResult>>>>,
+    inflight: Mutex<HashMap<FlightKey, watch::Receiver<Option<RefreshResult>>>>,
     tmp_counter: AtomicU64,
 }
 
@@ -229,12 +237,29 @@ impl RepoStore {
                     }
                 }
 
-                let generation = self.await_refresh(key, creds, max_staleness).await?;
-                let read = lock.read_owned().await;
-                Ok(RepoGuard {
-                    git_dir,
-                    generation,
-                    _read: read,
+                // INVARIANT: a refresh joined from the in-flight map may have
+                // been driven by a DIFFERENT caller's credentials, so the
+                // generation it publishes is not by itself proof that THIS
+                // caller may read the entry. Re-check the fingerprint under
+                // the read guard and refresh again on a mismatch.
+                for _ in 0..REPROOF_ATTEMPTS {
+                    self.await_refresh(key, creds, max_staleness).await?;
+
+                    let read = lock.clone().read_owned().await;
+                    if let Some(meta) = usable_meta(&entry_dir, &fingerprint) {
+                        return Ok(RepoGuard {
+                            git_dir,
+                            generation: meta.generation,
+                            _read: read,
+                        });
+                    }
+                }
+
+                // Two callers with different valid credentials can keep
+                // invalidating each other's proof. Bounded, and the loser is
+                // told to retry rather than served someone else's snapshot.
+                Err(StoreError::Busy {
+                    retry_after: COLD_RETRY_AFTER,
                 })
             }
         }
@@ -270,20 +295,29 @@ impl RepoStore {
         }
     }
 
+    /// INVARIANT: flights are keyed per credential, not per entry. Joining a
+    /// flight means adopting its result, and a flight started with someone
+    /// else's credentials proves nothing about this caller's access. Callers
+    /// presenting the same credentials — the ordinary case of one connector
+    /// running several streams — still collapse onto one clone.
     async fn refresh_task(
         self: &Arc<Self>,
         key: &CacheKey,
         creds: &GitCredentials,
         max_staleness: Duration,
     ) -> watch::Receiver<Option<RefreshResult>> {
-        let dir_name = key.dir_name();
+        let flight = FlightKey {
+            dir_name: key.dir_name(),
+            cred_fingerprint: creds.fingerprint(),
+        };
+
         let mut inflight = self.inflight.lock().await;
-        if let Some(existing) = inflight.get(&dir_name) {
+        if let Some(existing) = inflight.get(&flight) {
             return existing.clone();
         }
 
         let (sender, receiver) = watch::channel(None);
-        inflight.insert(dir_name.clone(), receiver.clone());
+        inflight.insert(flight.clone(), receiver.clone());
         drop(inflight);
 
         let store = self.clone();
@@ -295,7 +329,7 @@ impl RepoStore {
                 Ok(generation) => Ok(*generation),
                 Err(error) => Err(RefreshFailure::from(error)),
             };
-            store.inflight.lock().await.remove(&key.dir_name());
+            store.inflight.lock().await.remove(&flight);
             let _ = sender.send(Some(published));
         });
 
@@ -990,6 +1024,78 @@ pub(crate) mod tests {
             intruder.fingerprint(),
             "the fingerprint tracks whoever last proved access"
         );
+    }
+
+    #[tokio::test]
+    async fn refresh_flights_are_keyed_per_credential() {
+        let f = fixture("flightkey");
+        let k = key(&f);
+        let intruder = GitCredentials {
+            username: "u".to_owned(),
+            token: "someone-elses-token".to_owned(),
+        };
+
+        // Hold the entry's write lock so both refreshes stay in flight while
+        // the map is inspected.
+        let lock = f.store.entry_lock(&k).await;
+        let held = lock.write_owned().await;
+
+        let mine = f.store.refresh_task(&k, &creds(), Duration::ZERO).await;
+        let mine_again = f.store.refresh_task(&k, &creds(), Duration::ZERO).await;
+        assert_eq!(
+            f.store.inflight.lock().await.len(),
+            1,
+            "the same credentials must collapse onto one flight"
+        );
+
+        let theirs = f.store.refresh_task(&k, &intruder, Duration::ZERO).await;
+        assert_eq!(
+            f.store.inflight.lock().await.len(),
+            2,
+            "different credentials must not adopt another caller's proof"
+        );
+
+        drop((mine, mine_again, theirs));
+        drop(held);
+    }
+
+    #[tokio::test]
+    async fn a_joined_refresh_never_serves_a_foreign_proof() {
+        let f = fixture("reproof");
+        let k = key(&f);
+        let intruder = GitCredentials {
+            username: "u".to_owned(),
+            token: "someone-elses-token".to_owned(),
+        };
+
+        // Alternating callers force the entry's fingerprint to flip on every
+        // open, which is exactly when a joined flight could hand back someone
+        // else's proof. A guard must never outlive its own proof, so each is
+        // dropped before the next caller runs.
+        let mut served = 0;
+        for who in [creds(), intruder.clone(), creds(), intruder] {
+            match f.store.open(&k, &who, refresh()).await {
+                Ok(guard) => {
+                    served += 1;
+                    let Some(meta) = RepoMeta::load(&f.store.entry_dir(&k)) else {
+                        panic!("meta must exist alongside a served guard")
+                    };
+                    assert_eq!(
+                        meta.cred_fingerprint,
+                        who.fingerprint(),
+                        "served a snapshot proved by someone else's credentials"
+                    );
+                    assert_eq!(
+                        guard.generation(),
+                        meta.generation,
+                        "the guard must carry the generation the reader will see"
+                    );
+                }
+                Err(StoreError::Busy { .. }) => {}
+                Err(e) => panic!("unexpected error: {e}"),
+            }
+        }
+        assert_eq!(served, 4, "every sequential caller must be served");
     }
 
     #[tokio::test]
