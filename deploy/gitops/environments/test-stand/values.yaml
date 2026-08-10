@@ -662,9 +662,31 @@ identityResolution:
 
   # Rebuilds the identity org projection — `persons`, `account_person_map`,
   # `org_chart` — in MariaDB from the observation history in ClickHouse.
+  #
+  # OFF ON THIS STAND, and the reason is what this environment is for. CI owns
+  # the stand's state: every merge redeploys and reseeds it, and the demo
+  # seeder writes the roster that both the realm and `identity.persons` are
+  # generated from — one roster, two projections that have to agree, or a login
+  # authenticates and then resolves to nobody.
+  #
+  # This CronJob rebuilds the same projection from a different source:
+  # ClickHouse `identity_inputs`, which connectors populate. A stand with no
+  # connectors has none, so today it fails its own input guard every morning
+  # and writes nothing — the guard working, not a fault, but a daily failed Job
+  # in every diagnostics dump. The moment connectors did land data here it
+  # would stop being harmless and start competing with the seeded roster for
+  # the same table.
+  #
+  # Turned off HERE rather than with `kubectl patch cronjob … suspend=true`,
+  # because the CronJob is chart-rendered and helm-owned: a hand-suspend is
+  # reverted by the next `helm upgrade`, which on this stand is the next merge.
+  #
+  # `sync` below stays ON: it publishes the seeded roster into ClickHouse,
+  # which is where the metrics models resolve email -> person_id. Disabling
+  # that would leave every seeded metric unable to attribute anything.
   seed:
-    enabled: true
-    schedule: "30 6 * * *" # chart default; after the overnight syncs
+    enabled: false
+    schedule: "30 6 * * *" # chart default; inert while enabled is false
     # Trimmed from the chart's 100m/128Mi request: these are transient Jobs
     # and two of them fire within fifteen minutes of each other. Limits stay
     # at the chart's ceiling so a real run can burst.
