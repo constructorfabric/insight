@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde::Serialize;
@@ -20,7 +20,12 @@ pub struct CommitRow {
     pub additions: u64,
     pub deletions: u64,
     pub changed_files: u64,
-    pub branch_names: Vec<String>,
+    /// Reachable from the default branch **in the snapshot this page was
+    /// served from**. A commit first seen on a feature branch is emitted
+    /// `false`, and merging it later does not change its committed date, so a
+    /// date-cursored incremental sync never revisits it. Consumers needing
+    /// present-tense reachability derive it downstream from `parent_hashes`.
+    pub is_in_default_branch: bool,
     pub patch_id: Option<String>,
 }
 
@@ -79,41 +84,51 @@ pub async fn headers(
     Ok(headers)
 }
 
-/// Branch names containing each of `shas`.
+/// Which of `shas` are reachable from the default branch.
+///
+/// One `rev-list` over the default branch, intersected with the page — the
+/// cost is the branch's history, not the page size. An empty or unborn `HEAD`
+/// yields an empty set: a repository with no default branch has no commits on
+/// it, which is a defined answer rather than an error.
 ///
 /// # Errors
 ///
 /// [`GitError`] when the git invocation fails.
-pub async fn branch_membership(
+pub async fn default_branch_membership(
     runner: &GitRunner,
     git_dir: &Path,
     shas: &[String],
     creds: &GitCredentials,
-) -> Result<HashMap<String, Vec<String>>, GitError> {
-    let mut membership: HashMap<String, Vec<String>> =
-        shas.iter().map(|sha| (sha.clone(), Vec::new())).collect();
+) -> Result<HashSet<String>, GitError> {
     if shas.is_empty() {
-        return Ok(membership);
+        return Ok(HashSet::new());
     }
 
-    for sha in shas {
-        let output = runner
-            .run(
-                Some(git_dir),
-                &["branch", "--format=%(refname:short)", "--contains", sha],
-                Some(creds),
-            )
-            .await?;
-        let listing = String::from_utf8_lossy(&output.stdout);
-        let names: Vec<String> = listing
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(ToOwned::to_owned)
-            .collect();
-        membership.insert(sha.clone(), names);
-    }
-    Ok(membership)
+    let Some(default) = super::branches::default_branch(runner, git_dir).await? else {
+        return Ok(HashSet::new());
+    };
+
+    // `refs/heads/` keeps the name unambiguous and unreadable as an option;
+    // `--` separates revisions from paths.
+    let reference = format!("refs/heads/{default}");
+    let output = runner
+        .run(Some(git_dir), &["rev-list", &reference, "--"], Some(creds))
+        .await?;
+
+    let listing = String::from_utf8_lossy(&output.stdout);
+    Ok(intersect_rev_list(&listing, shas))
+}
+
+/// The `shas` present in a `rev-list` listing. Streams the listing against the
+/// page so peak memory is page-sized, not history-sized.
+fn intersect_rev_list(listing: &str, shas: &[String]) -> HashSet<String> {
+    let wanted: HashSet<&str> = shas.iter().map(String::as_str).collect();
+    listing
+        .lines()
+        .map(str::trim)
+        .filter(|line| wanted.contains(line))
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 /// Canonical patch ids (`git patch-id --stable`) for `shas`, keyed by sha.
@@ -197,6 +212,26 @@ mod tests {
         format!(
             "{RECORD}{sha}{FIELD}{parents}{FIELD}2026-08-01T09:00:00+00:00{FIELD}{committed}{FIELD}A{FIELD}a@example.com{FIELD}C{FIELD}c@example.com{FIELD}{message}"
         )
+    }
+
+    #[test]
+    fn intersect_rev_list_keeps_only_the_page_shas() {
+        let listing = "aaa\nbbb\n\n  ccc  \nddd\n";
+        let page = vec!["bbb".to_owned(), "ccc".to_owned(), "zzz".to_owned()];
+
+        let found = intersect_rev_list(listing, &page);
+        assert_eq!(
+            found,
+            HashSet::from(["bbb".to_owned(), "ccc".to_owned()]),
+            "only page shas the branch actually reaches"
+        );
+    }
+
+    #[test]
+    fn intersect_rev_list_on_an_empty_listing_finds_nothing() {
+        let page = vec!["aaa".to_owned()];
+        assert!(intersect_rev_list("", &page).is_empty());
+        assert!(intersect_rev_list("\n \n", &page).is_empty());
     }
 
     #[test]

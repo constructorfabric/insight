@@ -479,6 +479,19 @@ impl RepoStore {
             )
             .await?;
 
+        // A fetch does not update the mirrored HEAD, so a default-branch
+        // rename at origin would stay invisible until the entry is evicted —
+        // and `is_in_default_branch` would then be wrong for every row.
+        // Best-effort: a vendor that refuses it must not fail the sync.
+        let _ = self
+            .runner
+            .run(
+                Some(git_dir),
+                &["remote", "set-head", "origin", "--auto"],
+                Some(creds),
+            )
+            .await;
+
         let fetched_bytes = dir_size(git_dir);
         if fetched_bytes > self.max_repo_bytes {
             let _ = std::fs::remove_dir_all(entry_dir);

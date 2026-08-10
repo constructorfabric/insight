@@ -42,7 +42,10 @@ pub async fn read(
 
 /// The remote's default branch, from the mirrored `HEAD` symref. `None` when
 /// the clone recorded no symref (an empty repository).
-async fn default_branch(runner: &GitRunner, git_dir: &Path) -> Result<Option<String>, GitError> {
+pub(super) async fn default_branch(
+    runner: &GitRunner,
+    git_dir: &Path,
+) -> Result<Option<String>, GitError> {
     let output = runner
         .run(Some(git_dir), &["symbolic-ref", "--short", "HEAD"], None)
         .await;

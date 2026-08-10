@@ -96,8 +96,9 @@ pub async fn list_commits(
             blobs::prefetch(runner, guard.git_dir(), &shas, &context.creds).await?;
 
             let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
-            let membership =
-                commits::branch_membership(runner, guard.git_dir(), &shas, &context.creds).await?;
+            let in_default =
+                commits::default_branch_membership(runner, guard.git_dir(), &shas, &context.creds)
+                    .await?;
             let ids = commits::patch_ids(runner, guard.git_dir(), &shas, &context.creds).await?;
 
             let items = window
@@ -111,7 +112,7 @@ pub async fn list_commits(
                         changed_files: files.len() as u64,
                         additions,
                         deletions,
-                        branch_names: membership.get(&header.sha).cloned().unwrap_or_default(),
+                        is_in_default_branch: in_default.contains(&header.sha),
                         patch_id: ids.get(&header.sha).cloned(),
                         sha: header.sha,
                         message: header.message,

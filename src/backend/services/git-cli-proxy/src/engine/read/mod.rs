@@ -215,17 +215,18 @@ mod live_tests {
         };
         assert_eq!(ids.len(), 3, "every non-merge commit gets a patch id");
 
-        let membership = match commits::branch_membership(runner, git_dir, &shas, &creds()).await {
-            Ok(m) => m,
-            Err(e) => panic!("commits::branch_membership: {e}"),
-        };
-        let Some(feature_only) = membership.get(&headers[2].sha) else {
-            panic!("no membership for the feature commit")
-        };
-        assert_eq!(
-            feature_only,
-            &vec!["feature".to_owned()],
-            "the tip commit lives only on its branch"
+        let in_default =
+            match commits::default_branch_membership(runner, git_dir, &shas, &creds()).await {
+                Ok(m) => m,
+                Err(e) => panic!("commits::default_branch_membership: {e}"),
+            };
+        assert!(
+            !in_default.contains(&headers[2].sha),
+            "a commit living only on a feature branch is not in the default branch"
+        );
+        assert!(
+            in_default.contains(&headers[0].sha),
+            "the root commit is reachable from the default branch"
         );
 
         let rows = match branches::read(runner, git_dir, &creds()).await {
@@ -313,7 +314,7 @@ mod live_tests {
             Some(0)
         );
         assert_eq!(
-            commits::branch_membership(runner, guard.git_dir(), &none, &creds())
+            commits::default_branch_membership(runner, guard.git_dir(), &none, &creds())
                 .await
                 .ok()
                 .map(|m| m.len()),

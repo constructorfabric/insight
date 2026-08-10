@@ -168,7 +168,7 @@ streams:
           additions: {type: [integer, "null"]}
           deletions: {type: [integer, "null"]}
           changed_files: {type: [integer, "null"]}
-          branch_names: {type: [array, "null"], items: {type: string}}
+          is_in_default_branch: {type: [boolean, "null"]}
           patch_id: {type: [string, "null"]}
         required:
           - unique_key

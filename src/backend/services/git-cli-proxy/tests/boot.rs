@@ -166,6 +166,42 @@ fn fixture_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("file://{}", origin.display()))
 }
 
+/// A default branch plus a side branch that was never merged into it.
+fn branching_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let origin = root.join("branching");
+    std::fs::create_dir_all(&origin)?;
+    let script = "git init -q -b main . && \
+         git config uploadpack.allowFilter true && \
+         git config uploadpack.allowAnySHA1InWant true && \
+         echo a > a.txt && git add a.txt && \
+         GIT_AUTHOR_DATE='2026-08-01T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-01T10:00:00+0000' \
+           git commit -qm 'on main' && \
+         git checkout -q -b side && \
+         echo b > b.txt && git add b.txt && \
+         GIT_AUTHOR_DATE='2026-08-02T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-02T10:00:00+0000' \
+           git commit -qm 'on the side branch' && \
+         git checkout -q main";
+    let output = Command::new("sh")
+        .arg("-ec")
+        .arg(script)
+        .current_dir(&origin)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "fixture setup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(format!("file://{}", origin.display()))
+}
+
 /// A history whose committer dates run BACKWARDS along ancestry — routine after
 /// a rebase, a cherry-pick, or a clock-skewed contributor. `git log --since` is
 /// a traversal cutoff, so any walk narrowed to a cursor date prunes the older
@@ -327,11 +363,8 @@ async fn serves_commits_file_changes_and_branches_from_a_clone() -> R {
     assert_eq!(first["author_email"], "test@example.com");
     assert_eq!(first["is_merge"], false);
     assert_eq!(
-        first["branch_names"]
-            .as_array()
-            .map(|names| names.iter().any(|n| n == "main")),
-        Some(true),
-        "branch membership must be reported"
+        first["is_in_default_branch"], true,
+        "default-branch membership must be reported"
     );
     assert!(
         first["patch_id"].is_string(),
@@ -494,6 +527,35 @@ async fn pagination_never_drops_commits_with_non_monotonic_dates() -> R {
     assert_eq!(
         seen, expected,
         "paging must return exactly the unpaginated walk, in the same order"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_commit_only_on_a_side_branch_is_not_in_the_default_branch() -> R {
+    let server = spawn_server("sidebranch", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = branching_origin(&server.dir)?;
+
+    let commits = get_json(server.port, "/v1/commits", &repo).await?;
+    let items = commits["items"].as_array().ok_or("no items")?;
+
+    let by_message = |message: &str| -> Option<bool> {
+        items
+            .iter()
+            .find(|row| row["message"] == message)
+            .and_then(|row| row["is_in_default_branch"].as_bool())
+    };
+
+    assert_eq!(
+        by_message("on main"),
+        Some(true),
+        "a commit on the default branch must be marked"
+    );
+    assert_eq!(
+        by_message("on the side branch"),
+        Some(false),
+        "a commit that never reached the default branch must not be"
     );
     Ok(())
 }
