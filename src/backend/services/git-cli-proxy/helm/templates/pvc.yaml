@@ -1,3 +1,4 @@
+{{- include "insight-git-cli-proxy.validateDiskBudget" . }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -18,6 +19,12 @@ spec:
   resources:
     requests:
       storage: {{ required "persistence.size is required" .Values.persistence.size }}
-  {{- with .Values.persistence.storageClass }}
+  {{- /* The umbrella documents global.storageClass as visible to every
+         subchart, and the bundled dependencies honour it; a per-subchart
+         value overrides it. Getting this wrong is expensive to undo — the
+         PVC carries resource-policy: keep, so a wrong class means a manual
+         delete. */ -}}
+  {{- $storageClass := .Values.persistence.storageClass | default (default dict .Values.global).storageClass }}
+  {{- with $storageClass }}
   storageClassName: {{ . | quote }}
   {{- end }}

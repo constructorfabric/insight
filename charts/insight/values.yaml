@@ -522,6 +522,11 @@ gitCliProxy:
     heavyOpsConcurrency: 4
     caCertPath: ""
   caCertSecret: ""
+  # Bearer token the proxy requires on every /v1 request. REQUIRED when
+  # deploy=true and never generated: the connectors must present the same
+  # value in their Airbyte source config, so a generated one could not be
+  # re-derived there and would rotate on every GitOps reconcile.
+  proxyToken: ""
   # Composed by templates/secrets.yaml (carries the bearer token).
   existingSecret: "insight-git-cli-proxy-config"
   networkPolicy:

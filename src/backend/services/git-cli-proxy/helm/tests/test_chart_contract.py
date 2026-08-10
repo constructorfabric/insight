@@ -140,3 +140,58 @@ def test_missing_secret_fails_the_render():
     with pytest.raises(subprocess.CalledProcessError) as excinfo:
         subprocess.run(["helm", "template", RELEASE, str(CHART)], capture_output=True, text=True, check=True)
     assert "existingSecret is required" in excinfo.value.stderr
+
+
+def render_fails(**overrides: str) -> str:
+    """The stderr of a render that must be refused."""
+    args = ["helm", "template", RELEASE, str(CHART), "--set", "existingSecret=cfg"]
+    for key, value in overrides.items():
+        args += ["--set", f"{key.replace('__', '.')}={value}"]
+    done = subprocess.run(args, capture_output=True, text=True, check=False)
+    assert done.returncode != 0, f"render should have failed, got:\n{done.stdout}"
+    return done.stderr
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        # The volume filling up is enforced by kubelet as a pod eviction, so
+        # the app budget has to leave headroom rather than track the volume.
+        ({"cache__diskBudgetBytes": "49000000000"}, "at most 90%"),
+        ({"cache__diskBudgetBytes": "20000000000"}, "under 50%"),
+        # A repository admitted at the per-repo cap must fit in the cache.
+        ({"cache__maxRepoBytes": "99000000000"}, "exceeds cache.diskBudgetBytes"),
+        # An unparseable size would make the guard vacuous, so it is refused
+        # rather than read as zero.
+        ({"persistence__size": "50Gigs"}, "unsupported unit"),
+        ({"persistence__size": "big"}, "not a Kubernetes quantity"),
+    ],
+)
+def test_a_budget_that_cannot_fit_the_volume_is_refused(overrides, expected):
+    assert expected in render_fails(**overrides)
+
+
+def test_the_shipped_budget_fits_the_shipped_volume():
+    """The committed defaults must satisfy the guard they ship with."""
+    claim = one(render(), "PersistentVolumeClaim")
+    assert claim["spec"]["resources"]["requests"]["storage"] == "50Gi"
+
+
+def test_the_cache_volume_follows_the_global_storage_class():
+    """The umbrella documents global.storageClass as visible to every
+    subchart. The PVC is resource-policy: keep, so a wrong class costs a
+    manual delete."""
+    assert "storageClassName" not in one(render(), "PersistentVolumeClaim")["spec"], (
+        "unset must mean the cluster default, not an empty string"
+    )
+
+    from_global = one(render(global__storageClass="fast-ssd"), "PersistentVolumeClaim")
+    assert from_global["spec"]["storageClassName"] == "fast-ssd"
+
+    explicit = one(
+        render(global__storageClass="fast-ssd", persistence__storageClass="local-path"),
+        "PersistentVolumeClaim",
+    )
+    assert explicit["spec"]["storageClassName"] == "local-path", (
+        "an explicit subchart value must win over the global default"
+    )
