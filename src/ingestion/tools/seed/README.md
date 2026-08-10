@@ -35,6 +35,72 @@ directory — for the compose service that is the bind-mounted seeder directory,
 which is where the stand test suite reads it; `SEED_MANIFEST_PATH` names it
 explicitly anywhere else.
 
+## What a seed emulates
+
+A seed replays the production data pipeline with the schedulers swapped out:
+the generators stand in for the Argo `ingestion-pipeline` workflow's
+`airbyte-sync` step, the silver step's dbt invocation stands in for its
+`dbt-run` step, and two `docker compose exec` calls stand in for the
+identity-resolution `persons-seed`/`persons-sync` CronJobs. Every table and
+transformation below is the production one.
+
+```mermaid
+flowchart TB
+  classDef actor fill:none,stroke:#4a4e9e,stroke-width:2px,stroke-dasharray:6 3
+  classDef map stroke:#4a4e9e,stroke-width:2px
+
+  GEN(["seeder generators — every seed run"]):::actor
+  DBT1(["seed dbt run — apply-ch-migrations.sh, tag:gold +identity_inputs"]):::actor
+  PSEED(["compose exec identity-resolution seed"]):::actor
+  PSYNC(["compose exec identity-resolution sync"]):::actor
+  DBT2(["insight-seed gold — final rebuild"]):::actor
+
+  subgraph BZ["bronze_* — ClickHouse"]
+    EMP["bamboohr.employees with raw_data JSON"]
+  end
+  subgraph ST["staging — ClickHouse"]
+    direction TB
+    SNAP["employees_snapshot"] --> FH["employees_fields_history"] --> FEED["bamboohr__identity_inputs"]
+  end
+  subgraph IDD["identity — ClickHouse"]
+    direction LR
+    II["identity_inputs"]:::map
+    IP["identity_persons"]:::map
+  end
+  subgraph MDB["identity — MariaDB"]
+    PER["persons log: roster, id bindings, org_chart"]
+  end
+  subgraph SV["silver — ClickHouse"]
+    CLS["class_* activity"]
+  end
+  subgraph GD["insight gold — ClickHouse"]
+    direction TB
+    EVD["*_metric_evidence"] -->|"keep resolved rows, aggregate"| OBS["*_metric_observations"]
+  end
+
+  GEN -->|"1 INSERT"| EMP
+  GEN -->|"1 INSERT, silver written directly"| CLS
+  EMP --> DBT1
+  DBT1 -->|"2 snapshot + diff"| SNAP
+  FEED -->|"2 union model identity_inputs.sql, same run"| II
+  II --> PSEED -->|"3 link accounts to persons by email"| PER
+  PER --> PSYNC -->|"4 atomic snapshot copy"| IP
+  CLS --> DBT2
+  II -.->|"email claims"| DBT2
+  IP -.->|"person bindings"| DBT2
+  DBT2 -->|"5 resolve + build"| EVD
+  OBS --> GATE["readiness gate: 4 observation tables rebuilt + populated"]
+
+  style MDB stroke:#0e7c7b,stroke-width:2px
+```
+
+The dashed arrows are the resolve join: gold keeps a row only where an email
+claim (`identity_inputs`) meets a matching account binding (`identity_persons`),
+so skipping steps 3–4 builds gold "successfully" empty. Gold is therefore built
+twice per seed — once inside the silver step while the map is still empty, and
+again after the sync. On a real stand the same chain is driven by connector
+syncs, the two daily identity CronJobs, and scheduled gold rebuilds.
+
 ## Run it on a Kubernetes stand
 
 ```bash

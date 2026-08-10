@@ -1089,15 +1089,58 @@ Populate the demo dataset. Stack must be up first.
              ~24k rows of 60-day per-team activity in ClickHouse.
   all        Both (default if no arg).
 
-After `silver` or `all` runs, analytics is restarted so its
-metric-catalog schema validator re-checks the freshly-populated tables.
-Without that bounce, every metric stays cached at the boot-time
-`schema_status='error'`, the FE flags every bullet row schema_error=true,
-and section badges read "no peer data" everywhere.
-Tracking upstream as constructorfabric/insight#1307.
+After `silver` or `all` runs, three follow-up steps run automatically:
+the identity projection is refreshed (persons-seed + persons-sync in the
+identity-resolution container — the same pair the k8s CronJobs run), gold
+is rebuilt so observation rows resolve through the refreshed map, and
+analytics is restarted so its metric-catalog schema validator re-checks
+the freshly-populated tables. Without the bounce, every metric stays
+cached at the boot-time `schema_status='error'`, the FE flags every
+bullet row schema_error=true, and section badges read "no peer data"
+everywhere. Tracking upstream as constructorfabric/insight#1307.
 
 See src/ingestion/tools/seed/README.md for the ruff/mypy/venv setup.
 EOF
+}
+
+# One value from a compose env file: last assignment wins, leading whitespace
+# and one pair of surrounding quotes tolerated. `KEY=value` lines only — the
+# subset every writer of these files (the example + update_env_var) emits.
+env_file_value() {
+  local file="$1" key="$2" value
+  [[ -f "$file" ]] || return 0
+  value="$(sed -nE "s/^[[:space:]]*${key}=//p" "$file" | tail -1)"
+  if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+  printf '%s' "$value"
+}
+
+# The persons-seed/sync pair the k8s CronJobs run: gold resolves identities
+# only through the bindings and snapshot these two publish, and compose has
+# no cron to run them.
+seed_identity_projection() {
+  local env_file="$1"; shift
+  local compose_cmd=("$@")
+
+  # Explicit tenant: the cross-tenant fixture makes inference ambiguous.
+  # Same default as docker-compose.yml's seed-sample.
+  local tenant
+  tenant="$(env_file_value "$env_file" TENANT_DEFAULT_ID)"
+  tenant="${tenant:-00000000-df51-5b42-9538-d2b56b7ee953}"
+
+  local subcommand
+  for subcommand in seed sync; do
+    echo "=== identity projection: persons-${subcommand} (as the k8s CronJob runs it) ==="
+    "${compose_cmd[@]}" exec -T \
+        -e "APP__gears__identity_resolution__config__tenant_default_id=${tenant}" \
+        identity-resolution /app/identity-resolution -c /app/config/insight.yaml "$subcommand" || {
+      local status=$?
+      echo "ERROR: persons-${subcommand} failed (exit ${status}; 2 = another run holds the lock," >&2
+      echo "       3 = input guard refused — see the container log above)." >&2
+      return "$status"
+    }
+  done
 }
 
 cmd_seed() {
@@ -1136,12 +1179,20 @@ cmd_seed() {
     return $seed_status
   fi
 
-  # Restart analytics when ClickHouse data was touched. Its schema
-  # validator caches schema_status at startup and never re-checks; without
-  # this nudge the catalog keeps serving the pre-seed 'table_not_found'
-  # verdict and the FE shows "no peer data" everywhere.
   case "${args[0]}" in
     silver|all)
+      # Gold built unresolved above; mint bindings, publish the snapshot,
+      # rebuild. No --build: the seed run above just built the image.
+      echo
+      seed_identity_projection "$env_file" "${compose_cmd[@]}" || return $?
+      echo
+      echo "=== rebuilding gold over the refreshed identity map ==="
+      "${compose_cmd[@]}" --profile seed run --rm seed-sample gold || return $?
+
+      # Restart analytics when ClickHouse data was touched. Its schema
+      # validator caches schema_status at startup and never re-checks; without
+      # this nudge the catalog keeps serving the pre-seed 'table_not_found'
+      # verdict and the FE shows "no peer data" everywhere.
       echo
       echo "=== restarting analytics so it re-validates schema (cf/insight#1307) ==="
       "${compose_cmd[@]}" restart analytics >/dev/null

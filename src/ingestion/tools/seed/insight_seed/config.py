@@ -26,6 +26,9 @@ from pathlib import Path
 #: `identity.py` composes every reason from it rather than spelling it out.
 SEED_REASON_PREFIX = "seed.py "
 
+#: The persons-seed's email-link reason (AUTO_SEED_LINK_REASON): a rebuildable projection, not foreign data.
+PERSONS_SEED_LINK_REASON = "auto-seed-link"
+
 TENANT_ENV = "TENANT_DEFAULT_ID"
 ANALYTICS_DB_ENV = "MARIADB_ANALYTICS_DB"
 IDENTITY_DB_ENV = "MARIADB_DB"

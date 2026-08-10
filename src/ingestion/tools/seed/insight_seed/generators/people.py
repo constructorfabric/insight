@@ -28,12 +28,15 @@ re-runs stay clean. `class_people` is a versionless RMT (its dbt model
 
 from __future__ import annotations
 
-import datetime as _dt
+import json
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ..profiles import Person
 from .base import bulk_insert, deterministic_uuid, truncate
+
+# Identity keys bindings on (source_type, source_id, account_id): one stable value must span claims and bindings.
+_BAMBOOHR_SOURCE_ID = "seed-bamboohr"
 
 if TYPE_CHECKING:
     import clickhouse_connect.driver.client
@@ -137,69 +140,10 @@ def seed_class_people(
     return bulk_insert(client, "silver", "class_people", cols, rows)
 
 
-def seed_identity_persons(
-    client: clickhouse_connect.driver.client.Client,
-    roster: Sequence[Person],
-    tenant_uuid: str,
-) -> int:
-    """The `email -> person_id` map every gold observation model resolves through.
-
-    Since the metrics identity cutover (#2098) the gold models join
-    `dbt/macros/resolve_person_id.sql` over this table and DROP any row that
-    does not resolve (`resolved_only()`), because `entity_id` in gold IS the
-    canonical person id now. Without these rows every observation family builds
-    EMPTY — dbt reports success, the tables exist, and nothing is in them.
-
-    Not written by any connector: in a deployment this log is filled by the
-    identity service's persons-sync. The stand runs no sync, so the seed has to
-    stand in for it, exactly as it stands in for the connectors upstream.
-
-    `value_effective` is what the macro reads (lowercased and trimmed on both
-    sides of the join); `id` is the resolution tiebreak, so it must be distinct
-    and stable per person or which row wins becomes arbitrary.
-    """
-    truncate(client, "identity", "identity_persons")
-
-    cols = [
-        "id",
-        "value_type",
-        "insight_source_type",
-        "insight_source_id",
-        "insight_tenant_id",
-        "value_effective",
-        "person_id",
-        "author_person_id",
-        "created_at",
-        "_synced_at",
-    ]
-    source_id = deterministic_uuid("identity_persons", "source")
-    author = deterministic_uuid("identity_persons", "author")
-    stamped = _dt.datetime(2026, 1, 1, tzinfo=_dt.UTC)
-
-    rows: list[tuple[object, ...]] = [
-        (
-            index + 1,
-            "email",
-            "seed",
-            source_id,
-            tenant_uuid,
-            p.email.lower(),
-            p.uuid,
-            author,
-            stamped,
-            stamped,
-        )
-        # The whole roster, not `_measured_persons`: the admin operator holds no
-        # activity but still has to RESOLVE, or any request naming them reads as
-        # an unknown person rather than a person with nothing.
-        for index, p in enumerate(roster)
-    ]
-    return bulk_insert(client, "identity", "identity_persons", cols, rows)
-
-
 def seed_bamboohr_employees(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
+    tenant_uuid: str,
 ) -> int:
     truncate(client, "bronze_bamboohr", "employees")
     cols = [
@@ -214,6 +158,9 @@ def seed_bamboohr_employees(
         "jobTitle",
         "supervisorEmail",
         "supervisor",
+        "tenant_id",
+        "source_id",
+        "raw_data",
     ]
     rows: list[tuple[object, ...]] = []
     for p in _measured_persons(roster):
@@ -224,19 +171,37 @@ def seed_bamboohr_employees(
         if sup_email is not None:
             sup = next(q for q in roster if q.email == sup_email)
             sup_name = _display_name(sup)
+
+        # The identity chain diffs raw_data, not the typed columns: NULL emits no identity observation.
+        record = {
+            "id": deterministic_uuid("bamboohr.employee", p.email),
+            "status": "Active",
+            "firstName": first or full,
+            "lastName": last or "",
+            "displayName": full,
+            "workEmail": p.email,
+            "department": _TEAM_DEPARTMENT.get(p.team or "", "Executive"),
+            "division": _TEAM_DIVISION.get(p.team or "", "Executive"),
+            "jobTitle": _job_title(p),
+            "supervisorEmail": sup_email or "",
+            "supervisor": sup_name,
+        }
         rows.append(
             (
-                deterministic_uuid("bamboohr.employee", p.email),
-                "Active",
-                first or full,
-                last or "",
-                full,
-                p.email,
-                _TEAM_DEPARTMENT.get(p.team or "", "Executive"),
-                _TEAM_DIVISION.get(p.team or "", "Executive"),
-                _job_title(p),
-                (sup_email or ""),
-                sup_name,
+                record["id"],
+                record["status"],
+                record["firstName"],
+                record["lastName"],
+                record["displayName"],
+                record["workEmail"],
+                record["department"],
+                record["division"],
+                record["jobTitle"],
+                record["supervisorEmail"],
+                record["supervisor"],
+                tenant_uuid,
+                _BAMBOOHR_SOURCE_ID,
+                json.dumps(record),
             )
         )
     return bulk_insert(client, "bronze_bamboohr", "employees", cols, rows)
@@ -249,6 +214,5 @@ def generate(
 ) -> dict[str, int]:
     return {
         "silver.class_people": seed_class_people(client, roster, tenant_uuid),
-        "identity.identity_persons": seed_identity_persons(client, roster, tenant_uuid),
-        "bronze_bamboohr.employees": seed_bamboohr_employees(client, roster),
+        "bronze_bamboohr.employees": seed_bamboohr_employees(client, roster, tenant_uuid),
     }

@@ -81,12 +81,13 @@ def test_the_personal_dashboard_renders_every_metric_domain(
     view.go(persona.person.uuid)
     expect(view.person_heading(persona.person.display_name)).to_be_visible()
 
+    # The dev lead's first KPI_ROW_MAX (4) observed candidates, in KPI_ROW
+    # order — the row fills its four-column line, later candidates stay off.
     for label in (
         "Issues closed",
         "Focus Time",
         "Pull requests merged",
         "AI active days",
-        "AI-added lines",
     ):
         expect(view.kpi_tile(label)).to_be_visible()
         expect(view.kpi_value(label)).not_to_have_text("—")

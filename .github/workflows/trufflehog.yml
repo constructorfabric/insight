@@ -70,59 +70,16 @@ jobs:
 
       - name: Summarize (redacted)
         if: always()
+        # Blocks on findings whose fingerprint is not in the allowlist. Known false
+        # positives live there with a reason, so adding one is reviewed like any diff.
         run: |
           [ -f trufflehog-findings.jsonl ] || exit 0
-          python3 - trufflehog-findings.jsonl "${GITHUB_STEP_SUMMARY:-/dev/null}" <<'PY'
-          import json, sys, collections
-          rows, unparsable, skipped = [], 0, 0
-          with open(sys.argv[1], encoding="utf-8") as fh:
-              for line in fh:
-                  line = line.strip()
-                  if not line:
-                      continue
-                  try:
-                      d = json.loads(line)
-                  except json.JSONDecodeError:
-                      # A truncated or non-JSON line must not take the whole summary down with
-                      # it; it is counted and reported instead.
-                      unparsable += 1
-                      continue
-                  if "DetectorName" not in d:
-                      # Only findings carry a detector. Anything else on stdout is not a finding
-                      # and must not inflate the count.
-                      skipped += 1
-                      continue
-                  git = (d.get("SourceMetadata") or {}).get("Data", {}).get("Git", {})
-                  rows.append({
-                      "detector": d.get("DetectorName", "?"),
-                      "verified": bool(d.get("Verified")),
-                      "commit": (git.get("commit") or "")[:8],
-                      "file": git.get("file") or "?",
-                      "line": git.get("line") or "",
-                  })
-          out = open(sys.argv[2], "a", encoding="utf-8")
-          w = out.write
-          w("## TruffleHog — commits added by this PR\n\n")
-          if unparsable or skipped:
-              w(f"_{unparsable} unparsable line(s), {skipped} non-finding record(s) skipped._\n\n")
-          if not rows:
-              w("No secrets detected in the added commits (all result kinds enabled).\n")
-              sys.exit(0)
-          ver = sum(1 for r in rows if r["verified"])
-          w(f"**{len(rows)}** finding(s) — {ver} live-verified, {len(rows) - ver} unverified. "
-            "Values are redacted here on purpose; read them from the source commit.\n\n")
-          w("| Detector | Verified | Commit | Path |\n|---|---|---|---|\n")
-          for r in sorted(rows, key=lambda r: (not r["verified"], r["detector"])):
-              w(f"| `{r['detector']}` | {'yes' if r['verified'] else 'no'} | `{r['commit']}` | `{r['file']}`{':' + str(r['line']) if r['line'] else ''} |\n")
-          by_det = collections.Counter(r["detector"] for r in rows)
-          w(f"\nBy detector: {', '.join(f'{k} x{v}' for k, v in by_det.most_common())}\n")
-          w("\n**Revoke and rotate every credential listed above.** Removing the commit is not "
-            "remediation — assume the value is compromised the moment it was pushed. If a finding "
-            "is a detector false positive on synthetic data, say so in the PR and add a narrow, "
-            "reviewed exclusion rather than widening the filter.\n")
-          out.close()
-          sys.exit(1)
-          PY
+          python3 .github/scripts/trufflehog_gate.py \
+            trufflehog-findings.jsonl \
+            "${GITHUB_STEP_SUMMARY:-/dev/null}" \
+            .github/trufflehog-allowlist.txt \
+            block \
+            "commits added by this PR"
 
   secrets-history:
     name: secrets (full history)
@@ -163,64 +120,16 @@ jobs:
 
       - name: Summarize (redacted) — report only
         if: always()
-        # Never fails the run. A rise above the triaged baseline of 253, or any live-verified
-        # finding, is the signal to act; both are visible in the table.
+        # Never fails the run. Anything outside the allowlist is the signal to act, and it
+        # is listed by fingerprint so an accepted finding can be added there in one line.
         run: |
           [ -f trufflehog-findings.jsonl ] || exit 0
-          python3 - trufflehog-findings.jsonl "${GITHUB_STEP_SUMMARY:-/dev/null}" <<'PY'
-          import json, sys, collections
-          BASELINE = 253  # triaged 2026-07-28: all unverified detector false positives
-          rows, unparsable, skipped = [], 0, 0
-          with open(sys.argv[1], encoding="utf-8") as fh:
-              for line in fh:
-                  line = line.strip()
-                  if not line:
-                      continue
-                  try:
-                      d = json.loads(line)
-                  except json.JSONDecodeError:
-                      # A truncated or non-JSON line must not take the whole summary down with
-                      # it; it is counted and reported instead.
-                      unparsable += 1
-                      continue
-                  if "DetectorName" not in d:
-                      # Only findings carry a detector. Anything else on stdout is not a finding
-                      # and must not inflate the count.
-                      skipped += 1
-                      continue
-                  git = (d.get("SourceMetadata") or {}).get("Data", {}).get("Git", {})
-                  rows.append({
-                      "detector": d.get("DetectorName", "?"),
-                      "verified": bool(d.get("Verified")),
-                      "file": git.get("file") or "?",
-                  })
-          out = open(sys.argv[2], "a", encoding="utf-8")
-          w = out.write
-          ver = sum(1 for r in rows if r["verified"])
-          w("## TruffleHog — full history (report-only)\n\n")
-          if unparsable or skipped:
-              w(f"_{unparsable} unparsable line(s), {skipped} non-finding record(s) skipped._\n\n")
-          w(f"**{len(rows)}** finding(s) over every ref — {ver} live-verified, "
-            f"{len(rows) - ver} unverified. Triaged baseline: **{BASELINE}**, all unverified "
-            "detector false positives.\n\n")
-          if ver:
-              w("> **A live-verified secret is present.** Revoke and rotate it now; rewriting "
-                "history is not remediation.\n\n")
-          if len(rows) > BASELINE:
-              w(f"> Count is **{len(rows) - BASELINE} above** the triaged baseline — new findings "
-                "entered the history. Re-triage before adjusting the baseline.\n\n")
-          if rows:
-              by_det = collections.Counter(r["detector"] for r in rows)
-              w("| Detector | Count |\n|---|---:|\n")
-              for k, v in by_det.most_common():
-                  w(f"| `{k}` | {v} |\n")
-              by_file = collections.Counter(r["file"] for r in rows)
-              w("\n<details><summary>Top paths</summary>\n\n| Count | Path |\n|---:|---|\n")
-              for k, v in by_file.most_common(20):
-                  w(f"| {v} | `{k}` |\n")
-              w("\n</details>\n")
-          out.close()
-          PY
+          python3 .github/scripts/trufflehog_gate.py \
+            trufflehog-findings.jsonl \
+            "${GITHUB_STEP_SUMMARY:-/dev/null}" \
+            .github/trufflehog-allowlist.txt \
+            report \
+            "every ref (report-only)"
 
   # The git scan above only reaches commits that some ref still points at. Two classes of leak
   # sit outside it, and only the GitHub API can see them: objects orphaned by a force push or a
@@ -267,54 +176,9 @@ jobs:
         if: always()
         run: |
           [ -f trufflehog-api-findings.jsonl ] || exit 0
-          python3 - trufflehog-api-findings.jsonl "${GITHUB_STEP_SUMMARY:-/dev/null}" <<'PY'
-          import json, sys, collections
-          rows, unparsable, skipped = [], 0, 0
-          with open(sys.argv[1], encoding="utf-8") as fh:
-              for line in fh:
-                  line = line.strip()
-                  if not line:
-                      continue
-                  try:
-                      d = json.loads(line)
-                  except json.JSONDecodeError:
-                      # A truncated or non-JSON line must not take the whole summary down with
-                      # it; it is counted and reported instead.
-                      unparsable += 1
-                      continue
-                  if "DetectorName" not in d:
-                      # Only findings carry a detector. Anything else on stdout is not a finding
-                      # and must not inflate the count.
-                      skipped += 1
-                      continue
-                  meta = (d.get("SourceMetadata") or {}).get("Data", {})
-                  # The GitHub source reports under Github for commits and comments alike.
-                  loc = meta.get("Github") or meta.get("Git") or {}
-                  rows.append({
-                      "detector": d.get("DetectorName", "?"),
-                      "verified": bool(d.get("Verified")),
-                      # A comment hit carries a link instead of a path.
-                      "where": loc.get("file") or loc.get("link") or "?",
-                  })
-          out = open(sys.argv[2], "a", encoding="utf-8")
-          w = out.write
-          w("## TruffleHog — GitHub API source (report-only)\n\n")
-          if unparsable or skipped:
-              w(f"_{unparsable} unparsable line(s), {skipped} non-finding record(s) skipped._\n\n")
-          if not rows:
-              w("No secrets detected in commits, pull request and issue comments, or wikis "
-                "(all result kinds enabled).\n")
-              sys.exit(0)
-          ver = sum(1 for r in rows if r["verified"])
-          w(f"**{len(rows)}** finding(s) — {ver} live-verified, {len(rows) - ver} unverified. "
-            "Values are redacted; open the linked location to read them.\n\n")
-          w("| Detector | Verified | Where |\n|---|---|---|\n")
-          for r in sorted(rows, key=lambda r: (not r["verified"], r["detector"])):
-              w(f"| `{r['detector']}` | {'yes' if r['verified'] else 'no'} | `{r['where']}` |\n")
-          by_det = collections.Counter(r["detector"] for r in rows)
-          w(f"\nBy detector: {', '.join(f'{k} x{v}' for k, v in by_det.most_common())}\n")
-          w("\nA hit here that the git scan did not report means the value lives outside the "
-            "current refs — an orphaned commit or a comment. **Rotate it; deleting the comment "
-            "does not.**\n")
-          out.close()
-          PY
+          python3 .github/scripts/trufflehog_gate.py \
+            trufflehog-api-findings.jsonl \
+            "${GITHUB_STEP_SUMMARY:-/dev/null}" \
+            .github/trufflehog-allowlist.txt \
+            report \
+            "GitHub API source (report-only)"

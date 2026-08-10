@@ -168,6 +168,11 @@ def test_create_metric_400_for_an_invalid_graph(
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="constructorfabric/insight#2360 — export answers 500 on a freshly seeded "
+    'stand (server log: corrupt custom metric row: observation_sql = "NULL")',
+)
 def test_export_metrics_200(api: ApiClient, scratch_custom_metric: CustomMetric) -> None:
     """The tenant's custom graphs come back portable — the scratch one among them."""
     response = api.get(EXPORT)

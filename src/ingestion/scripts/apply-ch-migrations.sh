@@ -196,7 +196,10 @@ heal_task_id_column silver class_task_comments comment_id
 if [[ "${SKIP_DBT_GOLD:-}" == "1" ]]; then
   echo "=== Skipping gold dbt build (SKIP_DBT_GOLD=1; gold pre-built by generation) ==="
 else
-echo "=== Building gold models (dbt run --select tag:gold) ==="
+# DBT_GOLD_SELECT widens the selection (space-separated dbt selectors);
+# the seed's silver step adds +identity_inputs, deploys leave it unset.
+read -r -a _dbt_select <<<"${DBT_GOLD_SELECT:-tag:gold}"
+echo "=== Building gold models (dbt run --select ${_dbt_select[*]}) ==="
 # Gold views are dbt-owned but must exist at DEPLOY time, not first-sync
 # time: the analytics service marks metric definitions schema-error while
 # an observation view is missing, which blanks those metrics for every
@@ -249,7 +252,7 @@ profile = {
 with open(os.path.join(os.environ["DBT_PROFILES_DIR"], "profiles.yml"), "w") as f:
     yaml.safe_dump(profile, f)
 PY
-(cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select tag:gold)
+(cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select "${_dbt_select[@]}")
 rm -rf "$DBT_PROFILES_DIR"
 fi
 
