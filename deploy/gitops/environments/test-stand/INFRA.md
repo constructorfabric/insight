@@ -450,7 +450,10 @@ because that hop never leaves the cluster.
 **The setting.** `keycloak` on a seeded stand. The seeder writes
 `(insight_source_type='keycloak', value_type='id', value_id=<roster uuid>)`, and
 `seed-stand.sh` reads the source type back out of `insight-authenticator-config`
-rather than taking it as a flag — so there is one writer, not two copies.
+rather than taking it as a flag — so there is one writer, not two copies. The
+dev-lead persona address is read back the same way, out of the realm ConfigMap;
+see [One roster, two projections](#one-roster-two-projections), which is the
+general form of this argument.
 
 **What breaks if they disagree.** Nothing, visibly. Both halves succeed.
 
@@ -777,6 +780,18 @@ generator's password constant must match the copy the validator signs in with,
 or the deploy refuses. The generated document is then post-processed to add the
 `idp_sub` attribute and mapper (§11) and the declarative user profile (§12).
 
+This ConfigMap is now **read back by the seed**, not only applied by the config
+Job: `seed-stand.sh` takes the dev-lead persona address from the user whose `id`
+is the roster's dev-lead UUID, so the realm is the source of truth for who
+exists and the seed follows it. Two consequences for anyone changing how it is
+packed. The post-processing must keep `.users[].id` and `.users[].email` intact
+— the discovery depends on those two fields and on nothing else about the
+document's shape, deliberately, because the applied realm is a derivative this
+repository does not produce. And a stand that packs a *broker* realm here, or
+packs several files naming different people, offers no unambiguous answer; the
+seed then stops and names `--email` rather than guessing, which is the intended
+disposition. See [One roster, two projections](#one-roster-two-projections).
+
 ### 5. The `argo-workflow` ServiceAccount in `insight`
 
 A ServiceAccount, a Role granting `create` and `patch` on
@@ -855,6 +870,49 @@ stand needs nothing. The chart's route names were chosen to match the old ones
 exactly, which makes the adoption an update-in-place with no traffic blip and no
 creation-timestamp tie (§16).
 
+## One roster, two projections
+
+**This is the invariant a future change is most likely to break, so it is stated
+here on its own rather than left implicit in the sections that depend on it.**
+
+The realm and `identity.persons` are two projections of **one** roster. The
+realm decides who can authenticate; the seeded rows decide who a login resolves
+to. If they disagree, a persona authenticates and resolves to nobody — or, as
+observed, three personas work and the fourth silently cannot sign in, with every
+pod Ready and the release reporting `deployed`. Adding people to the seed
+therefore means regenerating the realm from the same roster, and the seeder now
+reads the dev-lead address back from the applied realm so the two cannot drift
+on the one value an operator supplies.
+
+Three things follow, and each one is a way this has already gone wrong or could:
+
+* **Only the dev-lead can drift.** Every other persona's address is derived
+  deterministically from the roster module and passes through no input at all.
+  The dev-lead's was the last operator-supplied value in the seed path, which is
+  exactly why it is the one that came apart — and why removing that input, not
+  adding a check downstream of it, is the fix.
+* **The realm is the source of truth for who exists.** `seed-stand.sh` reads the
+  dev-lead address out of the `<release>-keycloak-config-realms` ConfigMap, from
+  the user whose `id` is the roster's dev-lead UUID
+  (`insight_seed.profiles.DEV_LEAD_UUID`; the generator writes that UUID as each
+  realm user's `id`, which is what makes the lookup total and unambiguous
+  whatever address the user carries). Regenerate the realm and the next seed
+  follows it. `--email` overrides the read for a stand whose realm came from
+  somewhere else, and overriding it on a stand whose realm *is* the roster is
+  how you reproduce the failure above on purpose.
+* **Nothing below this line checks it.** The seed Job's own preflight asserts
+  that a dev-lead address is *set*, never that anybody in the IdP answers to it,
+  and the only detector further downstream is the smoke gate — which the deploy
+  workflow's `stages` input can legitimately skip. Treat any design that leaves
+  a realm/roster disagreement as a warning as relying on a gate that is optional
+  by construction.
+
+The sibling failures with the same signature are [§11](#11-authenticatoroidcexternalidclaim-idp_sub--not-sub)
+(the external-id claim names the wrong claim) and [§15](#15-authenticatoroidcsourcetype-must-equal-what-the-seeder-writes)
+(the source type disagrees with what the seeder writes). All three end in a
+login that authenticates and then resolves to nobody, against a fully populated
+projection, and telling them apart is most of the work of diagnosing one.
+
 ## Between deploy and seed
 
 **A seeded stand is not usable between `deploy` and `seed`, and that is not a
@@ -877,8 +935,16 @@ Seeding itself is a thin wrapper around the application repository's own
 `src/ingestion/tools/seed/seed-stand.sh`. It discovers everything from the
 cluster — datastore hosts from `insight-platform`, tenant and identity database
 from `insight-identity-resolution-config`, the seeder image from the chart's
-`ingestion.seedImage`, the login source type from `insight-authenticator-config`
-— so nothing is copied from the deployment repository and nothing can drift.
+`ingestion.seedImage`, the login source type from `insight-authenticator-config`,
+and the dev-lead persona address from the realm ConfigMap (§4 below, and
+[One roster, two projections](#one-roster-two-projections)) — so nothing is
+copied from the deployment repository and nothing can drift.
+
+That last one was the exception until recently: the address arrived as a flag,
+which meant the realm and the seeded rows had two independent inputs and could
+be pointed at different people while both halves reported success. The list
+above is now literally complete, which is the property that sentence was always
+claiming.
 
 ## Stand-specific versus stand-shape
 

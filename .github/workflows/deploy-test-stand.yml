@@ -369,6 +369,20 @@ jobs:
           # docs/components/deployment/specs/sop/credentials-runbook.md — that
           # runbook is how they get set, and a rename has to happen in both.
           HAVE_KUBECONFIG: ${{ secrets.TEST_STAND_KUBECONFIG != '' }}
+          # Read, but NOT required — and the difference is the whole point of
+          # this entry. The dev-lead address used to be handed to the seeder from
+          # here, which made this environment a second place the roster was
+          # written down; the realm the deploy stage applies was the first. Two
+          # writers, one value, and they drifted: the realm named one person, the
+          # secret named another, both halves looked healthy, and the login the
+          # smoke gate performs resolved to nobody.
+          #
+          # seed-stand.sh now reads the address out of the realm ConfigMap the
+          # stand actually applied, so the realm is the single writer and the
+          # seeded rows follow it. This secret survives only as an override for a
+          # stand whose realm is provisioned some other way, and the preflight
+          # below therefore reports what it MEANS rather than demanding it: a
+          # required secret nothing needs is a required opportunity to be wrong.
           HAVE_SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL != '' }}
           HAVE_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD != '' }}
           HAVE_BOOTSTRAP_EMAIL: ${{ secrets.TEST_STAND_BOOTSTRAP_EMAIL != '' }}
@@ -400,7 +414,6 @@ jobs:
           set -euo pipefail
           missing=""
           [ "$HAVE_KUBECONFIG" = "true" ] || missing="$missing secrets.TEST_STAND_KUBECONFIG"
-          [ "$HAVE_SEED_EMAIL" = "true" ] || missing="$missing secrets.TEST_STAND_SEED_EMAIL"
           [ "$HAVE_BASE_URL" = "true" ]   || missing="$missing vars.TEST_STAND_BASE_URL"
 
           # Checked HERE rather than left to the smoke suite, which validates the
@@ -443,9 +456,6 @@ jobs:
             echo "                                 'ci-deployer' ServiceAccount, as produced by"
             echo "                                 deploy/gitops/scripts/provision-ci-deployer.sh."
             echo "                                 Admin kubeconfigs stay with humans."
-            echo "  TEST_STAND_SEED_EMAIL          address the seeded dev-lead persona resolves to."
-            echo "                                 A secret rather than a variable purely so it is"
-            echo "                                 masked in this public log."
             echo "  TEST_STAND_PERSONA_PASSWORD    'password' mode — the mode this stand's realm"
             echo "                                 serves: the credential every persona signs in"
             echo "                                 with. The runbook says where its value comes from."
@@ -459,6 +469,24 @@ jobs:
             exit 1
           fi
           echo "smoke login mode: ${LOGIN_MODE:-password (suite default)}"
+
+          # Stated on every run, not only when something is wrong, because the
+          # interesting case is the quiet one: an operator who set this secret
+          # believing it decides which persona gets seeded needs to see, in the
+          # log, that it is now an override on top of the realm rather than the
+          # source. The address itself is never echoed here — the seed stage
+          # prints what it resolved, through the redactor.
+          if [ "$HAVE_SEED_EMAIL" = "true" ]; then
+            echo "dev-lead address: OVERRIDDEN by secrets.TEST_STAND_SEED_EMAIL."
+            echo "  The seeder would otherwise read it out of the realm this deploy applies."
+            echo "  An override that names anybody but the realm's dev-lead reproduces exactly"
+            echo "  the drift this stopped being a required secret to prevent: unset it unless"
+            echo "  this stand's realm is provisioned outside deploy/gitops."
+          else
+            echo "dev-lead address: discovered by seed-stand.sh from the stand's realm ConfigMap."
+            echo "  Set secrets.TEST_STAND_SEED_EMAIL only to override that, for a stand whose"
+            echo "  realm the seeder cannot read."
+          fi
 
       # ── Toolchain ─────────────────────────────────────────────────────────
       # All of it before anything touches the cluster: a broken lockfile or a
@@ -751,6 +779,9 @@ jobs:
         if: steps.stages.outputs.run_seed == 'true'
         timeout-minutes: 65
         env:
+          # Empty on every normal run — see the block below. Declared anyway so
+          # that a stand which genuinely needs the override does not need a
+          # workflow edit to get one.
           SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL }}
           # `inputs.seed_force` is unset on a workflow_call, so this is the
           # empty string there and the branch below is never taken.
@@ -763,6 +794,28 @@ jobs:
           # why CI must not hand it any: a value CI supplied would be a value CI
           # could get wrong, and a stand seeded against the wrong tenant looks
           # seeded.
+          #
+          # That now includes the dev-lead address, and it is the reason this
+          # step no longer passes `--email`. The realm and `identity.persons` are
+          # two projections of ONE roster: the realm says who can log in, the
+          # seeded rows say who those logins resolve to, and they have to
+          # describe the same people or a login authenticates and then resolves
+          # to nobody. While the realm was written at deploy time and the address
+          # was handed to the seeder from a GitHub secret, that invariant had two
+          # writers and no check between them — so they drifted, silently, and
+          # the only thing that noticed was the smoke gate failing one persona's
+          # login on a release that reported `deployed` with every pod Ready.
+          #
+          # So the realm is the source of truth and the seed follows it:
+          # seed-stand.sh reads the dev-lead out of the realm ConfigMap this
+          # stand applied, keyed on the roster's own dev-lead UUID. Regenerating
+          # the realm now moves both projections at once, because there is only
+          # one place the address is written. `secrets.TEST_STAND_SEED_EMAIL`
+          # survives purely as an escape hatch for a stand whose realm the
+          # seeder cannot read (it is created outside the Helm release, by a
+          # bring-up this repository does not own), which is why it is appended
+          # CONDITIONALLY: `--email ""` is not a fallback to discovery, it is
+          # `${2:?--email needs a value}` aborting the stage on argument parsing.
           #
           # `--context` is passed even though the ambient kubeconfig already
           # points there. The script prints the context it resolved before it
@@ -792,11 +845,25 @@ jobs:
             echo "::warning::seeding with --force — the seeder's foreign-person-rows guard is overridden for this run."
           fi
 
+          # Built the same way as force_args, and for the same reason: an
+          # argument that is only sometimes present has to be absent, not empty.
+          # The warning is deliberately loud. Overriding here is the one thing
+          # that can put the realm and the seeded roster back out of step, and it
+          # will do so without any stage failing — the Job succeeds, the release
+          # stays `deployed`, and the mismatch only surfaces as a persona that
+          # cannot log in. The address is masked by the redactor like every other
+          # one in this log, so the warning names the SECRET, not its value.
+          email_args=()
+          if [ -n "${SEED_EMAIL:-}" ]; then
+            email_args+=(--email "$SEED_EMAIL")
+            echo "::warning::seeding with an explicit --email from secrets.TEST_STAND_SEED_EMAIL — the dev-lead address is NOT being read from the realm this deploy applied. Unset that secret unless this stand's realm is provisioned outside deploy/gitops."
+          fi
+
           kube_context="$(yq -r '.kubeContext' "$INVENTORY_FILE")"
           ./src/ingestion/tools/seed/seed-stand.sh \
             -n "$STAND_NAMESPACE" \
             --context "$kube_context" \
-            --email "$SEED_EMAIL" \
+            "${email_args[@]}" \
             --days 730 \
             "${force_args[@]}" \
             2>&1 | tee "$RUNNER_TEMP/seed.log" | python3 "$REDACT"

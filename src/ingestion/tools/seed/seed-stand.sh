@@ -10,6 +10,10 @@
 #   Secret insight-identity-resolution-*  the stand's tenant, and the database
 #                                         holding `persons`
 #   helm get values <release>             the seed image the release pins
+#   ConfigMap <realms config map>         the realm the stand applies, and with
+#                                         it the dev-lead persona's address —
+#                                         see "the dev-lead address" below for
+#                                         why that one has to come from there
 #
 # Credentials are never read: the rendered Job references the release's own
 # database Secret by key, so nothing sensitive passes through this shell.
@@ -49,20 +53,27 @@ FOLLOW=1
 
 usage() {
   cat <<'USAGE'
-Usage: seed-stand.sh -n <namespace> --email <address> [options]
+Usage: seed-stand.sh -n <namespace> [options]
 
 Runs the demo-data seeder as a one-shot Job on a chart-deployed stand, using the
 seeder image the release already pins.
 
 Required:
   -n, --namespace <ns>     namespace the Insight release runs in
-      --email <address>    persona the dev-lead login resolves to. A user with
-                           this email must already exist in the stand's IdP —
-                           the authenticator resolves people by the email claim.
 
 Discovered from the stand (pass a flag only to override):
       --context <name>     kube context to act on         [default: the current one]
       --release <name>     helm release name                 [default: same as -n]
+      --email <address>    persona the dev-lead login resolves to. A user with
+                           this email must already exist in the stand's IdP —
+                           the authenticator resolves people by the email claim —
+                           which is precisely why it is read back out of the realm
+                           the stand applies rather than supplied: the realm and
+                           the rows this Job writes are two projections of one
+                           roster, and the realm is the one that already exists.
+                           Pass it for a stand whose realm came from somewhere
+                           else; a supplied address that disagrees with the realm
+                           is used, loudly.
       --tenant <uuid>      tenant every seeded row is scoped to
       --image <ref>        seeder image to run (chart: ingestion.seedImage)
       --analytics-db <db>  database holding metric_definitions
@@ -85,9 +96,10 @@ Output:
   -h, --help               this text
 
 Examples:
-  seed-stand.sh -n insight --email you@example.com --dry-run
-  seed-stand.sh -n insight --email you@example.com
-  seed-stand.sh -n insight --email you@example.com --step identity
+  seed-stand.sh -n insight --dry-run
+  seed-stand.sh -n insight
+  seed-stand.sh -n insight --step identity
+  seed-stand.sh -n insight --email you@example.com   # realm provisioned elsewhere
 USAGE
 }
 
@@ -147,7 +159,12 @@ need kubectl
 need envsubst
 [[ -f "$JOB_TEMPLATE" ]] || die "Job template not found at $JOB_TEMPLATE."
 [[ -n "$NAMESPACE" ]] || { usage >&2; die "--namespace is required."; }
-[[ -n "$DEV_EMAIL" ]] || { usage >&2; die "--email is required."; }
+# --email is deliberately NOT gated here. It used to be, and it could not stay:
+# the value is now discovered from the stand, and discovery needs --release
+# defaulted and the cluster reachable, neither of which is true this early. An
+# address that can be neither discovered nor supplied is reported by the
+# missing-values block further down, in the same named-flag list as an
+# undiscoverable tenant — one report, one shape, one place to look.
 case "$STEP" in
   identity|silver|analytics|all) ;;
   *) die "--step must be one of identity, silver, analytics, all (got '$STEP')." ;;
@@ -272,6 +289,11 @@ if [[ -z "$IDP_SOURCE_TYPE" ]]; then
     'APP__gears__authenticator__config__idp__source_type')"
 fi
 
+# Declared out here because two blocks read it and only one of them always runs:
+# a caller passing both --image and --pull-secret skips the fetch below entirely,
+# and the dev-lead discovery that follows would then reference an unset variable
+# — which under `set -u` is a fatal error rather than a missing value.
+release_values=""
 if [[ -z "$IMAGE" || -z "$PULL_SECRETS" ]]; then
   need helm
   need jq
@@ -312,6 +334,253 @@ if [[ -z "$DB_SECRET" ]]; then
   done
 fi
 
+# ── The dev-lead address ────────────────────────────────────────────────────
+# A stand's Keycloak realm and the `identity.persons` rows this Job writes are
+# two projections of ONE roster. They have to describe the same people: the
+# authenticator resolves a login by its email claim, so an address present in
+# the realm and absent from `persons` authenticates and then resolves to nobody.
+#
+# Every persona's address except one is derived deterministically from the
+# roster module — `email_<team>_<NN>@company.nonpresent` — and passes through no
+# input at all, so the two projections cannot disagree about them. The dev
+# lead's is the exception: it is the roster's one operator-supplied slot, and
+# therefore the only address that can be typed differently on the two sides.
+#
+# It has been. When the realm is generated at deploy time with one address and
+# the seed is invoked with another, the result is the quietest failure this
+# stand can produce: three of four personas sign in, the dev-lead alone cannot,
+# every pod stays Ready and the release reports `deployed`. Nothing below this
+# script catches it either — the seeder's own preflight only asserts that
+# DEV_USER_EMAIL is SET, never that the IdP has a user by that name — so the
+# first thing that notices is a login check, and only if one is run at all.
+#
+# So the address is discovered, exactly as the tenant, the datastore
+# coordinates, the seed image and the IdP source type already are, and for the
+# same stated reason: a value supplied from outside is a value that can be wrong
+# while looking right. This was the last operator input still doing what the
+# tenant used to do.
+#
+# The realm is the side that gets to be right, because it is the side that
+# already exists when this script runs and the side a human logs in against.
+#
+# THE KEY. `insight-seed-realm` writes each realm user's `id` as the roster
+# person's UUID (see keycloak_realm.py `_user()`), so the realm user whose id is
+# the roster's DEV_LEAD_UUID IS the dev-lead, whatever address it happens to
+# carry. That makes the lookup total and tie-break-free — no name matching, no
+# guessing from group membership, no assuming a position in the array.
+#
+# A stand may also rewrite that `id`: keycloak-config-cli creates users through
+# the admin REST API, which assigns ids of its own, so a deployment can copy the
+# roster UUID into an `idp_sub` attribute instead and point the authenticator's
+# externalIdClaim at it. Both are accepted below. The ConfigMap holds the
+# DOCUMENT rather than what Keycloak stored, so `id` is normally still there;
+# the second clause costs one `or` and covers the stand where it is not.
+#
+# This runs on --dry-run as well, which is deliberate: a rehearsal that did not
+# resolve the address would not be rehearsing the thing most likely to be wrong.
+# It stays a read — --dry-run still writes nothing — but it does now need the
+# cluster to answer, so a --dry-run against a half-brought-up stand can report a
+# missing address where it used to print a manifest.
+DEV_EMAIL_ORIGIN="--email"
+realm_dev_email=""
+realms_cm=""
+
+# The UUID is read out of the roster module rather than copied into this file.
+# A copy would be a second projection of one constant maintained in two places,
+# which is structurally the identical bug being fixed one layer down — and a
+# stale copy would fail OPEN: it would match no realm user, discovery would go
+# quiet, and the script would fall back to demanding --email with nothing said
+# about why. Reading it means a renamed or restructured constant yields EMPTY
+# and is reported by name. The anchor is deliberately column-0 `DEV_LEAD_UUID`
+# so it cannot match `profiles.DEV_LEAD_UUID` references elsewhere, and it
+# demands a 36-character UUID-shaped literal so a changed shape is a miss rather
+# than a wrong value.
+#
+# Not read from the seed image: this value is an INPUT to rendering the Job, so
+# taking it from the image would mean pulling and running a pod before the
+# script has decided it can seed at all — and would make --dry-run, which today
+# touches nothing, need a running container to print a manifest.
+#
+# Required only on this path. If --email was supplied and the module is
+# unreadable, the run proceeds exactly as it did before this block existed.
+roster_module="$SCRIPT_DIR/insight_seed/profiles.py"
+dev_lead_uuid=""
+if [[ -r "$roster_module" ]]; then
+  dev_lead_uuid="$(sed -n \
+    's/^DEV_LEAD_UUID[[:space:]]*=[[:space:]]*"\([0-9a-fA-F-]\{36\}\)".*/\1/p' \
+    "$roster_module" 2>/dev/null | head -n1 || true)"
+fi
+
+# The release values carry the realm ConfigMap's name, so top them up if the
+# image/pull-secret block above never fetched them.
+#
+# `command -v` rather than `need`: `need` DIES, and making helm and jq hard
+# requirements of every run would break a caller who passes --image and
+# --pull-secret and has neither installed. Tooling that is absent means
+# "discovered nothing", which is this file's existing convention for an empty
+# string — not a new failure.
+if [[ -z "$release_values" ]] \
+   && command -v helm >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  release_values="$(helm_release get values "$RELEASE" -n "$NAMESPACE" -a -o json 2>/dev/null || true)"
+fi
+
+# NOT "${RELEASE}-keycloak-config-realms". The chart names this volume
+# `default (printf "%s-keycloak-config-realms" (include "insight.fullname" .))
+# .Values.keycloakConfig.realmsConfigMap` — an explicit override first, then the
+# fullname helper, which honours fullnameOverride and truncates to 63. That is a
+# DIFFERENT rule from the platform ConfigMap above, which the chart names from a
+# bare .Release.Name; copying `platform_cm`'s pattern here would read the wrong
+# object on any stand that sets either value.
+if [[ -n "$release_values" ]] && command -v jq >/dev/null 2>&1; then
+  # Gated on keycloakConfig.enabled: with the hook off the chart renders no
+  # config Job, so nothing applies a realm at all. The ConfigMap is created
+  # outside the Helm release and carries no owner reference, so Helm never
+  # garbage-collects it — a disabled stand can still be carrying one from a
+  # previous bring-up, and letting a dead object have an opinion about who the
+  # dev-lead is would be worse than having none.
+  if [[ "$(printf '%s' "$release_values" | jq -r '.keycloakConfig.enabled // false')" == "true" ]]; then
+    realms_cm="$(printf '%s' "$release_values" | jq -r '.keycloakConfig.realmsConfigMap // empty')"
+    if [[ -z "$realms_cm" ]]; then
+      realm_fullname="$(printf '%s' "$release_values" | jq -r '.fullnameOverride // empty')"
+      [[ -n "$realm_fullname" ]] || realm_fullname="$RELEASE"
+      realm_fullname="${realm_fullname:0:63}"
+      realm_fullname="${realm_fullname%-}"
+      realms_cm="${realm_fullname}-keycloak-config-realms"
+    fi
+  fi
+fi
+
+if [[ -n "$realms_cm" && -n "$dev_lead_uuid" ]] && command -v jq >/dev/null 2>&1; then
+  # Told apart from an empty result, exactly as the identity-resolution Secret
+  # is: a ConfigMap that is absent or unreadable is a bring-up or access
+  # problem, and reporting it only as "pass --email" would send the operator
+  # after the wrong thing.
+  if ! kube -n "$NAMESPACE" get configmap "$realms_cm" -o name >/dev/null 2>&1; then
+    echo "WARNING: ConfigMap $realms_cm is absent or not readable in namespace $NAMESPACE;" >&2
+    echo "         the dev-lead address cannot be read from the realm this stand applies." >&2
+    echo "         Deploy the stand's realm first, or pass --email to name the persona." >&2
+  else
+    # The whole document is fetched because the key name is not a contract —
+    # but ONLY the matched user's address ever leaves this expansion. The realm
+    # document also carries the realm's client secret and the shared persona
+    # password, so `realm_json` is never echoed, in the same spirit as the
+    # database_url handling above that refuses to let an authority string out.
+    realm_json="$(kube -n "$NAMESPACE" get configmap "$realms_cm" -o json 2>/dev/null || true)"
+    # Every clause here is load-bearing:
+    #   (.data // {})[]  — iterate EVERY key. The packer decides the filename
+    #                      (the gitops target packs a whole directory) and the
+    #                      chart's filesLocations glob decides which are applied,
+    #                      so `realm-insight.json` is a per-stand fact, not a
+    #                      contract worth hardcoding.
+    #   fromjson?        — silently drop a key that is not JSON. A federated
+    #                      stand legitimately packs a YAML broker realm under
+    #                      this same ConfigMap name; that is a stand shape, not
+    #                      an error, and it must fall through to "pass --email".
+    #   .users? // empty
+    #   .[]?             — a realm with no users, or a key whose JSON is a
+    #                      scalar, yields nothing rather than a jq error.
+    #   | strings        — never call ascii_downcase on a non-string.
+    #   .email? // .username?
+    #                    — the generator writes both and they are equal; a
+    #                      document carrying only the username still resolves.
+    #   ascii_downcase   — the seeder lowercases DEV_USER_EMAIL before it writes
+    #                      a single row, while the realm generator does not
+    #                      lowercase what it is given. Normalising here is what
+    #                      stops a mixed-case realm from "disagreeing" with an
+    #                      address the seeder would have folded to the same
+    #                      string anyway.
+    #   unique | .[]     — two keys naming the same person are ONE answer; two
+    #                      keys naming different people are two, which is the
+    #                      ambiguity refused below rather than resolved by
+    #                      whichever key jq happened to visit first.
+    realm_matches="$(printf '%s' "$realm_json" | jq -r --arg id "$dev_lead_uuid" '
+      [ (.data // {})[]
+        | (fromjson? | .users? // empty)
+        | .[]?
+        | select(
+            ((.id? | strings | ascii_downcase) == ($id | ascii_downcase))
+            or (([.attributes.idp_sub?] | flatten | map(strings) | map(ascii_downcase))
+                 | index($id | ascii_downcase))
+          )
+        | (.email? // .username?) | strings | ascii_downcase
+      ] | unique | .[]' 2>/dev/null || true)"
+
+    match_count=0
+    if [[ -n "$realm_matches" ]]; then
+      match_count="$(printf '%s\n' "$realm_matches" | wc -l | tr -d '[:space:]')"
+    fi
+
+    if [[ "$match_count" -gt 1 ]]; then
+      # Named, not resolved. jq's key order is stable but arbitrary, so picking
+      # the first would hand the stand a dev-lead nobody chose — and the whole
+      # point of this block is that nobody should be choosing.
+      echo "WARNING: ConfigMap $realms_cm names more than one dev-lead address" >&2
+      echo "         (users carrying the roster UUID $dev_lead_uuid):" >&2
+      while IFS= read -r realm_addr; do
+        if [[ -n "$realm_addr" ]]; then
+          echo "           $realm_addr" >&2
+        fi
+      done <<< "$realm_matches"
+      echo "         That is more than one roster packed into one realm ConfigMap." >&2
+      echo "         Pack a single roster realm, or pass --email to say which persona" >&2
+      echo "         this seed is for." >&2
+    elif [[ "$match_count" -eq 1 ]]; then
+      # Shape-asserted before it is accepted, exactly as the identity database
+      # name is: this value is substituted into `value: "${SEED_DEV_USER_EMAIL}"`
+      # in the Job template, so a newline or a double quote reaching it would
+      # not produce a bad address — it would produce a broken manifest applied
+      # to a live cluster. Held in a variable because the pattern contains a
+      # quote, which is unreliable to write inline in a [[ =~ ]] test.
+      realm_email_shape='^[^[:space:]"]+@[^[:space:]"]+$'
+      if [[ "$realm_matches" =~ $realm_email_shape ]]; then
+        realm_dev_email="$realm_matches"
+      else
+        echo "WARNING: the user carrying the roster UUID $dev_lead_uuid in ConfigMap" >&2
+        echo "         $realms_cm has no address-shaped email; ignoring it." >&2
+        echo "         Fix the realm, or pass --email to name the persona." >&2
+      fi
+    fi
+  fi
+fi
+
+if [[ -z "$DEV_EMAIL" ]]; then
+  DEV_EMAIL="$realm_dev_email"
+  [[ -z "$DEV_EMAIL" ]] || DEV_EMAIL_ORIGIN="ConfigMap $realms_cm"
+elif [[ -n "$realm_dev_email" ]]; then
+  # Case-folded on both sides. bash 3.2 — still /bin/bash on macOS, which this
+  # file already accommodates elsewhere — has no ${var,,}, hence `tr`.
+  supplied_folded="$(printf '%s' "$DEV_EMAIL" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$supplied_folded" != "$realm_dev_email" ]]; then
+    # WHY A WARNING AND NOT A REFUSAL, since a refusal is defensible and was
+    # weighed. Every other discovered value in this script lets the flag win
+    # silently, and can afford to: a wrong --tenant or --identity-db fails
+    # loudly inside the Job within seconds. This one cannot — a wrong address
+    # produces a Job that SUCCEEDS and a stand that looks seeded — so there is a
+    # real argument for making a disagreement fatal here.
+    #
+    # It is not made fatal today for one reason: refusing would break every
+    # caller that currently passes --email, at the moment this lands and before
+    # those callers have been changed. `--email` was REQUIRED until this commit,
+    # so every existing invocation supplies one, and a stand whose realm was
+    # provisioned some other way is a caller with a legitimate answer that
+    # disagrees with nothing. Refusing belongs in the change that also stops the
+    # callers passing the flag — not in the one that merely makes the flag
+    # optional. Until then this says the whole thing out loud, on stderr, naming
+    # both addresses and which one is being used, and the seed still runs.
+    echo "WARNING: --email $DEV_EMAIL disagrees with the realm this stand applies." >&2
+    echo "         ConfigMap $realms_cm names the dev-lead as $realm_dev_email" >&2
+    echo "         (the realm user whose id is the roster's DEV_LEAD_UUID $dev_lead_uuid)." >&2
+    echo "         Seeding with the supplied address, $DEV_EMAIL, because an" >&2
+    echo "         explicit flag wins — but the realm and identity.persons are two" >&2
+    echo "         projections of ONE roster and they now describe different people." >&2
+    echo "         The consequence is silent: the dev-lead login authenticates" >&2
+    echo "         against the realm and resolves to nobody, every other persona" >&2
+    echo "         signs in normally, every pod stays Ready and the release still" >&2
+    echo "         reports 'deployed'." >&2
+    echo "         Drop --email to seed the address the realm already carries." >&2
+  fi
+fi
+
 # ── Every value, or the flag that supplies it ───────────────────────────────
 # Accumulated as newline-delimited text rather than an array: `${#arr[@]}` on an
 # empty array is an unbound-variable error under `set -u` in bash 3.2, which is
@@ -341,6 +610,20 @@ check "$IMAGE" \
     insight-seed alongside every toolbox build" \
   "--image"
 check "$DB_SECRET" "database-credentials Secret" "--db-secret"
+# Named the same way as the rest, so an address that could be neither read nor
+# supplied lands in one list with the tenant and the image rather than in an
+# early exit of its own. The description carries the two things an operator has
+# to know to act: which object was consulted, and that the answer lives in the
+# realm rather than in whatever they were about to type.
+realms_cm_reported="$realms_cm"
+[[ -n "$realms_cm_reported" ]] || realms_cm_reported="none — this release does not enable keycloakConfig, or its values could not be read"
+check "$DEV_EMAIL" \
+  "the dev-lead persona's address. It is read from the realm the stand applies
+    (ConfigMap: $realms_cm_reported) — the user whose id is the roster's
+    DEV_LEAD_UUID — so the realm and the seeded persons table stay one roster.
+    A stand whose realm is provisioned some other way has to name the persona
+    itself, and the address must already exist as a user in that stand's IdP" \
+  "--email"
 check "$IDP_SOURCE_TYPE" \
   "the identity source_type the stand's logins resolve under. Newer charts
     publish it as authenticator.oidc.sourceType; a chart that predates that field
@@ -357,7 +640,10 @@ fi
 echo "==> tenant:    $TENANT"
 echo "==> databases: identity=$IDENTITY_DB analytics=$ANALYTICS_DB clickhouse=$CLICKHOUSE_DATABASE"
 echo "==> image:     $IMAGE"
-echo "==> idp:       source_type=$IDP_SOURCE_TYPE dev_user=$DEV_EMAIL"
+# The origin is printed, not just the value: an address alone cannot be checked
+# by eye, but "which side said so" can. This is the line that shows, before
+# anything is written, whether the seed is following the realm or overriding it.
+echo "==> idp:       source_type=$IDP_SOURCE_TYPE dev_user=$DEV_EMAIL (from $DEV_EMAIL_ORIGIN)"
 
 # ── Render ──────────────────────────────────────────────────────────────────
 # A name per run: a Job's pod spec is immutable, so reusing one name would make

@@ -131,6 +131,26 @@ projections: a realm and a person table that disagree produce a login that
 authenticates and then resolves to nobody. `password` is therefore the mode this
 stand runs, and the mode this suite defaults to.
 
+**This suite holds no persona address of its own, and that is why it can be
+trusted to detect a disagreement.** Every address it uses comes out of the seed
+manifest (`--stand-manifest`), and personas are selected by realm *role* rather
+than by name or address — so the suite reports whatever the seed actually wrote
+instead of asserting against a copy that could itself be stale. The seeder in
+turn no longer takes the dev-lead address as an operator input: it reads it out
+of the realm the stand applied, keyed on the roster's dev-lead UUID. The chain
+is therefore realm → seed → manifest → this suite, with one writer at the top,
+which makes checks 2 and 3 a genuine end-to-end assertion that the realm and the
+seeded rows describe the same person rather than two configurations that were
+set to agree. The one time they did *not* agree, the symptom was exactly what
+this section predicts: most personas signed in, one authenticated and resolved
+to nobody, and nothing else on the stand looked wrong.
+
+The residual gap is worth naming, because it is easy to assume it is covered:
+nothing here compares the manifest to the realm *document*.
+`tests/lib/insight_stand/personas.py` can do that and skips it on a cluster for
+want of a realm export, so a divergence introduced some other way still reaches
+you as a login failure rather than as a named mismatch.
+
 Three consequences worth stating, because each one fails late and reads like
 something else:
 

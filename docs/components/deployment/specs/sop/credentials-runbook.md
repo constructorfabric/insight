@@ -17,7 +17,7 @@
 | Admin kubeconfig for the stand | An operator's laptop / password manager | Humans only. **Never** goes into GitHub. |
 | `ServiceAccount insight/ci-deployer` + its RBAC | The cluster | Anyone with cluster read access |
 | The CI kubeconfig (server + CA + SA token), base64-encoded | GitHub environment `insight-test-stand`, secret `TEST_STAND_KUBECONFIG` | Jobs that declare that environment, on `main` only |
-| Persona email / password (and, in `override` mode only, the bootstrap principal's credentials) | Same GitHub environment | Same |
+| The persona password — plus, in `override` mode only, the bootstrap principal's credentials, and optionally an explicit seed dev-lead address | Same GitHub environment | Same |
 | Public stand URL, and the smoke login mode | Same environment, as **variables** `TEST_STAND_BASE_URL` and `TEST_STAND_SMOKE_LOGIN_MODE` (not secrets) | Same, and both are public anyway |
 
 The split is the whole point of D5: **admin kubeconfigs stay human-only.** CI gets
@@ -284,11 +284,11 @@ repository one, which is the only reason it is not the starting point.
 | Secret | Value | Notes |
 |---|---|---|
 | `TEST_STAND_KUBECONFIG` | **base64 of** the file from §2.2 | the only credential CI needs for the cluster |
-| `TEST_STAND_SEED_EMAIL` | the address `seed-stand.sh --email` is given, e.g. `email_development_lead@company.nonpresent` | kept as a secret rather than a variable purely so it is masked in run logs |
+| `TEST_STAND_SEED_EMAIL` | an explicit dev-lead address for `seed-stand.sh --email`, e.g. `email_development_lead@company.nonpresent` | **normally unset** — the seeder reads that address back out of the realm the deploy just applied. Kept as a secret rather than a variable purely so it is masked in run logs. See §4.3 |
 | `TEST_STAND_PERSONA_PASSWORD` | the password every seeded persona signs in with — on a seeded-realm stand this is the realm generator's `DEV_PASSWORD` constant (`insight_seed.keycloak_realm`), which every generated user shares | required in `password` mode. The workflow exports it to pytest as **`SMOKE_PERSONA_PASSWORD`** — not `INSIGHT_STAND_PERSONA_PASSWORD`, which belongs to a different helper the smoke suite deliberately does not use |
 | `TEST_STAND_BOOTSTRAP_EMAIL` | the one principal that really authenticates in `override` mode | **`override` mode only.** Not needed on a stand whose realm serves a password form — leave both unset there rather than provisioning credentials nothing reads |
 | `TEST_STAND_BOOTSTRAP_PASSWORD` | that principal's IdP password | as above |
-| `TEST_STAND_OIDC_CLIENT_SECRET` | the confidential OIDC client secret | **normally unnecessary** — the deploy workflow reads the value out of the cluster instead. See §4.3 |
+| `TEST_STAND_OIDC_CLIENT_SECRET` | the confidential OIDC client secret | **normally unnecessary** — the deploy workflow reads the value out of the cluster instead. See §4.4 |
 
 The kubeconfig goes in **base64-encoded**, single-line. The workflow decodes it
 with `base64 -d` before writing it to the runner's temp directory. A raw
@@ -304,8 +304,12 @@ base64 < ~/.kube/insight-test-stand-ci-deployer.kubeconfig | tr -d '\n' \
 
 # Typed values: omit --body and let gh prompt, so the value never enters
 # the shell history or the process table.
-gh secret set TEST_STAND_SEED_EMAIL       --env "$ENVIRONMENT" --repo "$REPO"
 gh secret set TEST_STAND_PERSONA_PASSWORD --env "$ENVIRONMENT" --repo "$REPO"
+
+# TEST_STAND_SEED_EMAIL is deliberately absent from this block. Leave it unset
+# and the seed stage reads the dev-lead address out of the realm the deploy
+# stage just applied, which is the only way the two can be guaranteed to agree.
+# §4.3 is when you would set it anyway, and what setting it means.
 
 gh secret list --env "$ENVIRONMENT" --repo "$REPO"
 ```
@@ -343,7 +347,67 @@ are required — `password` needs `TEST_STAND_PERSONA_PASSWORD`, `override` need
 the two `TEST_STAND_BOOTSTRAP_*` values — and the workflow checks that before it
 touches the cluster rather than twenty minutes later.
 
-### 4.3 When `TEST_STAND_OIDC_CLIENT_SECRET` is needed
+### 4.3 When `TEST_STAND_SEED_EMAIL` is needed
+
+**On a stand whose realm was generated from this repository's roster module, it
+is not.** Leave it unset. `seed-stand.sh` reads the dev-lead address out of the
+realm the stand actually applied — the `<release>-keycloak-config-realms`
+ConfigMap, the user whose `id` is the roster's dev-lead UUID — and seeds that
+address. An explicit `--email` still wins where one is passed, so this remains
+an escape hatch rather than a capability that was taken away.
+
+Why it stopped being part of the required set is worth a paragraph, because the
+failure it used to enable is one of the expensive ones. A stand's realm and its
+seeded `identity.persons` rows are two projections of **one** roster: the realm
+decides who can authenticate, the rows decide who a login resolves to. Every
+persona address except the dev-lead's is derived from the roster and passes
+through no input at all — which is precisely why the dev-lead is the only one
+that can drift, and it did drift, because the realm was generated at deploy time
+with one address while the seed was handed a different one out of this secret.
+The result is not an error anybody sees: some personas sign in, the dev-lead
+authenticates and resolves to nobody, every pod stays Ready and the release
+reports `deployed`. Discovery removes the second input, so there is one writer
+and nothing left for two copies to disagree about.
+
+Note the mechanism, because "just blank the secret" is not it: an unset secret
+expands to an empty string, and `--email ""` is an argument error rather than a
+fallback. The workflow therefore **omits the flag entirely** when the secret is
+empty. Deleting the secret and passing it through anyway are not the same thing.
+
+Two shapes of stand still want the override, and they are the reason the secret
+was made optional rather than deleted:
+
+* **A realm provisioned some other way.** The realm ConfigMap is written by the
+  bring-up outside this repository, not by the Helm release — its name, its key
+  and its contents are not this repo's to guarantee. A stand that packs a broker
+  realm, or no roster realm at all, offers nothing to discover; there the seeder
+  has to be told, and this secret is how CI tells it. Discovery that finds
+  nothing falls back to demanding `--email` by name, so such a stand fails
+  loudly at the seed stage instead of seeding the wrong person.
+* **Deliberately seeding a persona other than the realm's dev-lead.** Rare, and
+  worth being explicit about the cost: the seeded roster and the realm then
+  describe different people, which is the drift above, reintroduced on purpose.
+  Expect the smoke gate's dev-lead login to fail, and say why in the change that
+  sets it.
+
+Setting it is not silent, but it is also not fatal. The seed stage annotates the
+run with a warning naming the secret (never its value — the redactor masks
+addresses either way), and where the seeder *can* read the realm it prints a
+multi-line warning giving both addresses and states that it is using yours,
+because an explicit flag wins. Nothing fails. Nothing downstream compares the
+two either: the seed Job's preflight asserts only that an address is set, and
+the sole detector is the smoke gate, which the workflow's `stages` input can
+legitimately skip. That is the whole argument for keeping this out of the
+required set — a required secret is a required opportunity to be wrong, and this
+one has no check under it, only a louder log.
+
+Removing it from an environment that already carries it:
+
+```bash
+gh secret delete TEST_STAND_SEED_EMAIL --env "$ENVIRONMENT" --repo "$REPO"
+```
+
+### 4.4 When `TEST_STAND_OIDC_CLIENT_SECRET` is needed
 
 **On the test stand, it is not.** The deploy workflow reads the value out of the
 cluster at deploy time — `kubectl -n insight get secret insight-oidc -o
@@ -367,7 +431,7 @@ are chasing the empty-client-secret symptom on some other path, the fix is to
 add the key that path expects to the existing in-cluster Secret, once, by hand,
 with a human credential — not to introduce a second copy in GitHub.
 
-### 4.4 Why the secrets may look missing to a job
+### 4.5 Why the secrets may look missing to a job
 
 Environment secrets are readable only by a job that declares
 `environment: <name>`. GitHub Actions does **not** allow `environment:` on a job
@@ -419,8 +483,14 @@ gh workflow run build-images.yml --repo "$REPO" --ref main
 
 Then do §8 (cleanup).
 
-Rotating the seed email is just `gh secret set` again — no cluster action. The
-persona password is not, and it is worth being precise about why. On a stand
+The seed email has no rotation, because on a stand that discovers it there is no
+stored copy to rotate: the address moves when the realm is regenerated, and the
+next seed follows it. If the environment carries an explicit
+`TEST_STAND_SEED_EMAIL` (§4.3), changing it is `gh secret set` again with no
+cluster action — but changing it *alone* re-opens the drift, because the realm
+still names whoever it named. Move both, or delete the secret and let the realm
+be the one writer. The persona password is a third case, and it is worth being
+precise about why. On a stand
 whose realm is generated from the seed roster, the IdP's copy of that password
 is a constant in the realm generator (`insight_seed.keycloak_realm`), shared by
 every user it emits: changing the GitHub secret alone changes nothing on the
@@ -534,7 +604,17 @@ narrow read-only grant in that namespace; file it as a follow-up rather than
 widening this one.
 
 **The workflow reports empty secrets**
-See §4.4.
+See §4.5.
+
+**The seed stage fails naming `--email`**
+Discovery found no dev-lead address in the realm, and no `--email` was supplied.
+Read it as a statement about the stand, not about the seeder: either the realm
+ConfigMap is absent, or it holds no user carrying the roster's dev-lead UUID
+(a broker realm does not), or `keycloakConfig` is disabled so nothing applies it.
+Confirm which before reaching for `TEST_STAND_SEED_EMAIL` — setting the secret
+makes the seed run, and on a stand whose realm genuinely lacks that person it
+makes it run into a roster the realm cannot authenticate. §4.3 has the two cases
+where setting it is the right answer.
 
 ---
 
@@ -583,10 +663,11 @@ gitleaks detect --source <path-to-repo> --config <path-to-repo>/deploy/gitops/.g
 - `--verify-only` passes every assertion against the credential CI will use.
 - `gh api "repos/$REPO/environments/$ENVIRONMENT/deployment-branch-policies"`
   lists exactly `main`.
-- `gh secret list --env "$ENVIRONMENT"` shows the kubeconfig, the seed email and
-  the persona password — and nothing else, unless you consciously chose the
-  `override` login mode (the two `TEST_STAND_BOOTSTRAP_*` values) or the
-  injected client secret of §4.3.
+- `gh secret list --env "$ENVIRONMENT"` shows the kubeconfig and the persona
+  password — and nothing else, unless you consciously chose the `override` login
+  mode (the two `TEST_STAND_BOOTSTRAP_*` values), an explicit dev-lead address
+  (§4.3) or the injected client secret of §4.4. A `TEST_STAND_SEED_EMAIL` nobody
+  meant to set is not inert: it silently outranks the realm.
 - `gh variable list --env "$ENVIRONMENT"` shows `TEST_STAND_BASE_URL` and
   `TEST_STAND_SMOKE_LOGIN_MODE`, the latter reading `password` on a stand whose
   realm serves a password form.
