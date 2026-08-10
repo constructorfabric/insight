@@ -13,6 +13,7 @@ import { Route as WhatsNewRouteImport } from './routes/whats-new'
 import { Route as QueriesRouteImport } from './routes/queries'
 import { Route as PortalRouteImport } from './routes/portal'
 import { Route as MetricsRouteImport } from './routes/metrics'
+import { Route as CustomMetricsRouteImport } from './routes/custom-metrics'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as IcPersonRouteImport } from './routes/ic.$person'
 import { Route as IcPersonIndexRouteImport } from './routes/ic.$person.index'
@@ -37,6 +38,11 @@ const PortalRoute = PortalRouteImport.update({
 const MetricsRoute = MetricsRouteImport.update({
   id: '/metrics',
   path: '/metrics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CustomMetricsRoute = CustomMetricsRouteImport.update({
+  id: '/custom-metrics',
+  path: '/custom-metrics',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -67,6 +73,7 @@ const IcPersonPersonalRoute = IcPersonPersonalRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/custom-metrics': typeof CustomMetricsRoute
   '/metrics': typeof MetricsRoute
   '/portal': typeof PortalRoute
   '/queries': typeof QueriesRoute
@@ -78,6 +85,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/custom-metrics': typeof CustomMetricsRoute
   '/metrics': typeof MetricsRoute
   '/portal': typeof PortalRoute
   '/queries': typeof QueriesRoute
@@ -89,6 +97,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/custom-metrics': typeof CustomMetricsRoute
   '/metrics': typeof MetricsRoute
   '/portal': typeof PortalRoute
   '/queries': typeof QueriesRoute
@@ -102,6 +111,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/custom-metrics'
     | '/metrics'
     | '/portal'
     | '/queries'
@@ -113,6 +123,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/custom-metrics'
     | '/metrics'
     | '/portal'
     | '/queries'
@@ -123,6 +134,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/custom-metrics'
     | '/metrics'
     | '/portal'
     | '/queries'
@@ -135,6 +147,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CustomMetricsRoute: typeof CustomMetricsRoute
   MetricsRoute: typeof MetricsRoute
   PortalRoute: typeof PortalRoute
   QueriesRoute: typeof QueriesRoute
@@ -170,6 +183,13 @@ declare module '@tanstack/react-router' {
       path: '/metrics'
       fullPath: '/metrics'
       preLoaderRoute: typeof MetricsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/custom-metrics': {
+      id: '/custom-metrics'
+      path: '/custom-metrics'
+      fullPath: '/custom-metrics'
+      preLoaderRoute: typeof CustomMetricsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -228,6 +248,7 @@ const IcPersonRouteWithChildren = IcPersonRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CustomMetricsRoute: CustomMetricsRoute,
   MetricsRoute: MetricsRoute,
   PortalRoute: PortalRoute,
   QueriesRoute: QueriesRoute,

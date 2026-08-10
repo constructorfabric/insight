@@ -12,8 +12,8 @@ use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationB
 
 use crate::config::AuthenticatorConfig;
 use crate::identity::PersonResolver;
+use crate::issuers::IssuerSelector;
 use crate::jwt::KeyStore;
-use crate::oidc::OidcClient;
 use crate::service_token::ServiceRegistry;
 use crate::session::SessionManager;
 
@@ -23,7 +23,9 @@ pub struct AppState {
     pub cfg: AuthenticatorConfig,
     pub sessions: SessionManager,
     pub keystore: Arc<KeyStore>,
-    pub oidc: OidcClient,
+    /// The configured OIDC issuer(s): host-keyed at `/auth/login`, pinned by
+    /// issuer everywhere else (ADR-0003).
+    pub oidc: IssuerSelector,
     pub resolver: Arc<dyn PersonResolver>,
     /// Parsed service-token registry (DD-AUTH-05); used by the token listener.
     pub service_registry: ServiceRegistry,
@@ -72,10 +74,11 @@ fn register_auth_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router
 
     router = OperationBuilder::get("/auth/login")
         .operation_id("authenticator.login")
-        .summary("Start the OIDC code+PKCE login flow")
+        .summary("Start the OIDC code+PKCE login flow (the request Host selects the issuer)")
         .tag("auth")
         .public()
         .no_content_response(StatusCode::FOUND, "Redirect to the IdP authorize endpoint")
+        .error_403(openapi)
         .handler(handlers::login)
         .register(router, openapi);
 

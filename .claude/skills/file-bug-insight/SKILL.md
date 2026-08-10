@@ -32,7 +32,7 @@ Each of these owns a slice of the work. Some are still being built out here, so 
 | Skill | Owns | Reach for it when |
 |---|---|---|
 | `playwright-cli` | the browser command surface — snapshots, refs, clicks, screenshots, console, network | exploring a stand or reproducing any UI defect |
-| `drive-ui` | getting an *authenticated* browser on any stand — fakeidp and the `DEV_USER_EMAIL` seed locally, a passkey attach on a remote one — plus the routes and the evidence set | any UI defect, local or remote |
+| `drive-ui` | getting an *authenticated* browser on any stand — the Keycloak realm login and the `DEV_USER_EMAIL` seed locally, a passkey attach on a remote one — plus the routes and the evidence set | any UI defect, local or remote |
 | `metric-parity` | the full bronze → silver → gold walk | collecting the same query at every layer |
 | `release-verify` | install and seed health | settling "product bug, or empty instance?" |
 

@@ -9,6 +9,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { GROUPS } from "@/lib/insight/groups";
+import { usePersonSectionStandings } from "@/lib/portal/use-person-sections";
+import { STATUS_BG_CLASS } from "@/lib/status";
 import { lensEntry } from "@/lib/portal/lens-configs";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
 import { useZoneNav } from "@/lib/portal/use-zone-nav";
@@ -485,6 +487,11 @@ function PersonSectionsNav() {
   const { setItem } = usePortalNavActions();
   const dismiss = useDismissDrawer();
   const active = usePortalItem();
+  const { activePerson } = useActiveZone();
+  // Costs no request: these are the section screens' own queries, so
+  // react-query serves them from cache.
+  const standings = usePersonSectionStandings(activePerson);
+  const standingById = new Map(standings.map((st) => [st.id as string, st]));
   const groups = GROUPS;
   const groupIds = groups.map((g) => g.id) as string[];
   const glance = active == null || !groupIds.includes(active);
@@ -505,20 +512,42 @@ function PersonSectionsNav() {
               <span>At a glance</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
-          {groups.map((g) => (
-            <SidebarMenuItem key={g.id}>
-              <SidebarMenuButton
-                isActive={active === g.id}
-                onClick={() => {
-                  setItem(g.id);
-                  dismiss();
-                }}
-              >
-                <Layers />
-                <span>{g.title}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
+          {groups.map((g) => {
+            const standing = standingById.get(g.id as string);
+            return (
+              <SidebarMenuItem key={g.id}>
+                <SidebarMenuButton
+                  isActive={active === g.id}
+                  onClick={() => {
+                    setItem(g.id);
+                    dismiss();
+                  }}
+                  title={
+                    standing?.hasData === false
+                      ? "No data this period"
+                      : standing?.phrase
+                  }
+                >
+                  <Layers />
+                  <span className="min-w-0 flex-1 truncate">{g.title}</span>
+                  {/* The mark that answers "which section is worth opening",
+                      beside the thing you click. Grey means the section has
+                      nothing this period — worth knowing before you open it. */}
+                  {standing && !standing.isPending ? (
+                    <span
+                      className={cn(
+                        "size-1.5 shrink-0 rounded-full",
+                        standing.hasData
+                          ? STATUS_BG_CLASS[standing.status]
+                          : "bg-muted-foreground/30",
+                      )}
+                      aria-hidden
+                    />
+                  ) : null}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            );
+          })}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>

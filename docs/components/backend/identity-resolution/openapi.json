@@ -1,35 +1,197 @@
 {
   "components": {
     "schemas": {
-      "CreatePersonRoleCommandModel": {
+      "AccountBindingResponse": {
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryEntry"
+            },
+            "type": "array"
+          },
+          "person_id": {
+            "description": "The binding in force now, if the account has one.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "source_id",
+          "account_id",
+          "history"
+        ],
+        "type": "object"
+      },
+      "AccountRef": {
+        "description": "A source-native account, as named by the caller.\n\nAddressing by an observed value (e-mail / username) instead of the account\ntriple is the reserved extension for importing a prepared matching table:\nthe fields arrive optional, exactly one form is required per item, a value\nresolving to zero or several active accounts is reported per item and never\nguessed. The response already carries per-item outcomes, so adding it does\nnot change the shape of this contract.",
+        "properties": {
+          "id": {
+            "description": "Account id within that instance.",
+            "type": "string"
+          },
+          "source": {
+            "description": "Connector type, e.g. `github`.",
+            "type": "string"
+          },
+          "source_id": {
+            "description": "Connector instance id.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "source_id",
+          "id"
+        ],
+        "type": "object"
+      },
+      "AccountRequest": {
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/AccountRef"
+          },
+          "comment": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "type": "object"
+      },
+      "AttentionResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/QueueItemResponse"
+            },
+            "type": "array"
+          },
+          "rates": {
+            "$ref": "#/components/schemas/ResolutionRatesResponse"
+          }
+        },
+        "required": [
+          "items",
+          "rates"
+        ],
+        "type": "object"
+      },
+      "BindItem": {
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/AccountRef"
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account",
+          "person_id"
+        ],
+        "type": "object"
+      },
+      "BindRequest": {
+        "properties": {
+          "bindings": {
+            "description": "One or more bindings; a prepared matching table is submitted as one call.",
+            "items": {
+              "$ref": "#/components/schemas/BindItem"
+            },
+            "type": "array"
+          },
+          "comment": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bindings"
+        ],
+        "type": "object"
+      },
+      "CorrectionResponse": {
+        "properties": {
+          "already_decided": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "applied": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ItemResult"
+            },
+            "type": "array"
+          },
+          "new_person_id": {
+            "description": "Set by `detach` when the account reached the new person; absent when\nthe write was refused, since no binding points at that id.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "applied",
+          "already_decided",
+          "items"
+        ],
+        "type": "object"
+      },
+      "CreatePersonRoleRequest": {
+        "description": "Body of `POST /v1/person-roles` — grant a role to a person.",
         "properties": {
           "person_id": {
             "format": "uuid",
             "type": "string"
           },
           "reason": {
-            "nullable": true,
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "role_id": {
             "format": "uuid",
             "type": "string"
           },
           "valid_from": {
+            "description": "Optional assignment start; defaults to now when omitted. Accepts RFC-3339\n(`Z`/offset), zone-less, or date-only, normalised to naive-UTC.",
             "format": "date-time",
-            "nullable": true,
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
           "person_id",
-          "role_id",
-          "valid_from",
-          "reason"
+          "role_id"
         ],
         "type": "object"
       },
-      "CreateRoleCommandModel": {
+      "CreateRoleRequest": {
+        "description": "Body of `POST /v1/roles`.",
         "properties": {
           "name": {
             "type": "string"
@@ -40,21 +202,29 @@
         ],
         "type": "object"
       },
-      "CreateVisibilityCommandModel": {
+      "CreateVisibilityRequest": {
+        "description": "Body of `POST /v1/visibility` — grant a viewer visibility over a target\n(or the whole tree when `viewed_person_id` is omitted).",
         "properties": {
           "reason": {
-            "nullable": true,
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "valid_from": {
+            "description": "Optional grant start; defaults to now when omitted. Accepts RFC-3339\n(`Z`/offset), zone-less, or date-only, normalised to naive-UTC.",
             "format": "date-time",
-            "nullable": true,
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "viewed_person_id": {
             "format": "uuid",
-            "nullable": true,
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "viewer_person_id": {
             "format": "uuid",
@@ -62,82 +232,965 @@
           }
         },
         "required": [
-          "viewer_person_id",
-          "viewed_person_id",
-          "valid_from",
-          "reason"
+          "viewer_person_id"
         ],
         "type": "object"
       },
-      "PersonsSeedRequest": {
-        "nullable": true,
+      "HistoryEntry": {
+        "description": "One decision in an account's history.",
         "properties": {
-          "mode": {
-            "nullable": true,
+          "author_person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "by_operator": {
+            "description": "`true` when a person made this decision, `false` for automation.",
+            "type": "boolean"
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recorded_at": {
             "type": "string"
           }
         },
         "required": [
-          "mode"
+          "person_id",
+          "author_person_id",
+          "by_operator",
+          "recorded_at"
         ],
         "type": "object"
       },
-      "ResolveProfileCommandModel": {
+      "ItemResult": {
+        "description": "What happened to one requested account.",
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "description": "`applied` — the binding is in force;\n`already_decided` — the same operator decision was already recorded;\n`refused` — the write could not place the row (a concurrent operation\nheld the key); the account keeps its previous binding.\nOpen vocabulary: value-addressed items will report their skip reasons\n(`ambiguous_value`, `unknown_value`) here.",
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "source_id",
+          "account_id",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "MergeRequest": {
+        "properties": {
+          "comment": {
+            "type": "string"
+          },
+          "source_person_id": {
+            "description": "The person being absorbed — its accounts move to the target.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "target_person_id": {
+            "description": "The surviving person, named explicitly by the operator.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_person_id",
+          "target_person_id"
+        ],
+        "type": "object"
+      },
+      "PersonAccountEntry": {
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "bound_by_operator": {
+            "description": "`true` when the account's current binding was made by a person.",
+            "type": "boolean"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "source",
+          "source_id",
+          "account_id",
+          "bound_by_operator"
+        ],
+        "type": "object"
+      },
+      "PersonAccountsResponse": {
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/PersonAccountEntry"
+            },
+            "type": "array"
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_id",
+          "accounts"
+        ],
+        "type": "object"
+      },
+      "PersonResponse": {
+        "description": "A person node in the org tree (subordinate of a profile), matching the .NET\n`PersonResponse`. Unlike `ProfileResponse`, the attribute fields are plain\nstrings (empty when absent, not omitted) and the `supervisor_*`/`parent_*`\nfields serialize as `null` rather than being dropped.",
+        "properties": {
+          "department": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "division": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "job_title": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "parent_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_person_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subordinates": {
+            "items": {
+              "$ref": "#/components/schemas/PersonResponse"
+            },
+            "type": "array"
+          },
+          "supervisor_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supervisor_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "person_id",
+          "email",
+          "display_name",
+          "first_name",
+          "last_name",
+          "department",
+          "division",
+          "job_title",
+          "status",
+          "subordinates"
+        ],
+        "type": "object"
+      },
+      "PersonRoleListResponse": {
+        "description": "List wrapper.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PersonRoleResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "PersonRoleResponse": {
+        "description": "One role assignment.",
+        "properties": {
+          "author_person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "insight_tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "person_role_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "valid_from": {
+            "type": "string"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "person_role_id",
+          "insight_tenant_id",
+          "person_id",
+          "role_id",
+          "valid_from",
+          "author_person_id",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "PersonsSeedListResponse": {
+        "description": "List response wrapper (typed for OpenAPI).",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PersonsSeedOperationResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "PersonsSeedOperationResponse": {
+        "description": "One operation's status. Wire shape mirrors the .NET\n`PersonsSeedOperationResponse`: `request` and `summary` are surfaced as\nparsed JSON (not double-encoded strings), the tenant/author ids are\nincluded, timestamps are ISO-8601, and null fields are emitted (the .NET\nserializer does not drop nulls).",
+        "properties": {
+          "author_person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "insight_tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operation_type": {
+            "type": "string"
+          },
+          "request": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "operation_id",
+          "operation_type",
+          "status",
+          "insight_tenant_id",
+          "author_person_id",
+          "started_at"
+        ],
+        "type": "object"
+      },
+      "PersonsSyncListResponse": {
+        "description": "List response wrapper (typed for OpenAPI). `next_cursor` is declared but\nalways `null` — same non-paginating contract as the seed journal.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PersonsSyncOperationResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "PersonsSyncOperationResponse": {
+        "description": "One operation's status. Wire shape matches the seed journal's:\n`request` and `summary` surfaced as parsed JSON, ISO-8601 timestamps,\nnull fields emitted.",
+        "properties": {
+          "author_person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "insight_tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operation_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operation_type": {
+            "type": "string"
+          },
+          "request": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {
+            "description": "On completion: the [`SyncSummary`] — rows copied, `max_id` /\n`max_created_at` watermarks, `synced_at`.\n\n[`SyncSummary`]: crate::domain::sync_service::SyncSummary",
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "operation_id",
+          "operation_type",
+          "status",
+          "insight_tenant_id",
+          "author_person_id",
+          "started_at"
+        ],
+        "type": "object"
+      },
+      "Problem": {
+        "description": "RFC 9457 problem+json. `context` varies by error category.",
+        "properties": {
+          "context": {
+            "type": "object"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "status": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail",
+          "context"
+        ],
+        "type": "object"
+      },
+      "ProfileIdEntry": {
+        "description": "One source-native account id bound to the person — the latest\n`value_type='id'` observation per source instance. Ported from the .NET\n`ProfileIdEntry`.",
         "properties": {
           "insight_source_id": {
             "format": "uuid",
-            "nullable": true,
             "type": "string"
           },
           "insight_source_type": {
-            "nullable": true,
             "type": "string"
           },
           "value": {
-            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "insight_source_type",
+          "insight_source_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "ProfileResponse": {
+        "description": "Response body of `POST /v1/profiles` — the resolved person's profile:\ncurrent attributes, the org tree (`supervisor_*` / `parent_*` /\n`subordinates[]`), and every current source-native id (`ids[]`). Null\nattribute fields are omitted from JSON; `subordinates`/`ids` are always\npresent (empty when none), matching the .NET contract.",
+        "properties": {
+          "department": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "division": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "employee_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "first_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ids": {
+            "description": "Every current source-native id for the person (one per source instance).\nAlways serialized — an empty array when the person has no ids — matching\nthe .NET contract (unlike the attributes above, which are omitted).",
+            "items": {
+              "$ref": "#/components/schemas/ProfileIdEntry"
+            },
+            "type": "array"
+          },
+          "insight_tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "job_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_person_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subordinates": {
+            "description": "Recursive subordinates subtree (direct reports and their reports), on the\nconfigured `org_chart` source. Always serialized (empty when none).",
+            "items": {
+              "$ref": "#/components/schemas/PersonResponse"
+            },
+            "type": "array"
+          },
+          "supervisor_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supervisor_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "person_id",
+          "insight_tenant_id",
+          "subordinates",
+          "ids"
+        ],
+        "type": "object"
+      },
+      "QueueItemResponse": {
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "candidates": {
+            "description": "Persons this account could belong to, if any are known.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "description": "`contested` | `binding_conflict` | `no_evidence`.",
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "source",
+          "source_id",
+          "account_id",
+          "candidates"
+        ],
+        "type": "object"
+      },
+      "ResolutionRatesResponse": {
+        "description": "Share of observed accounts per resolution state — the operator-visible match\nrate.",
+        "properties": {
+          "bound": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "excluded": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "no_evidence": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "observed": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pending": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "observed",
+          "bound",
+          "pending",
+          "no_evidence",
+          "excluded"
+        ],
+        "type": "object"
+      },
+      "ResolveProfileRequest": {
+        "description": "Body of `POST /v1/profiles`. `value_type = \"email\"` matches across all\nsources for the tenant; `value_type = \"id\"` matches a source-native account\nid within one source instance (needs `insight_source_type` + `insight_source_id`);\n`value_type = \"person_id\"` takes the canonical person UUID itself — the key\nthe metrics runtime and its routes use since the identity cutover.",
+        "properties": {
+          "insight_source_id": {
+            "description": "Required when `value_type = \"id\"`.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "insight_source_type": {
+            "description": "Required when `value_type = \"id\"` — the source instance to scope to.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
             "type": "string"
           },
           "value_type": {
-            "description": "Which key `value` carries: an email (tenant-wide), a source-native account id (needs both source fields), or the canonical person UUID.",
-            "enum": [
-              "email",
-              "id",
-              "person_id"
-            ],
-            "nullable": true,
             "type": "string"
           }
         },
         "required": [
           "value_type",
-          "value",
-          "insight_source_type",
-          "insight_source_id"
+          "value"
         ],
         "type": "object"
       },
-      "RevokeReasonModel": {
-        "nullable": true,
+      "RevokeReasonRequest": {
+        "description": "Optional `DELETE` body carrying a revoke reason.",
         "properties": {
           "reason": {
-            "nullable": true,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RoleListResponse": {
+        "description": "List wrapper.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RoleResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "RoleResponse": {
+        "description": "One role in the catalogue.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "role_id": {
+            "format": "uuid",
             "type": "string"
           }
         },
         "required": [
-          "reason"
+          "role_id",
+          "name"
         ],
         "type": "object"
       },
-      "VisiblePersonsCommandModel": {
+      "SubchartForestResponse": {
+        "description": "`{ \"roots\": [ … ] }` — forest wrapper (#344). Empty when the caller has no\nvisible-in-source membership.",
+        "properties": {
+          "roots": {
+            "items": {
+              "$ref": "#/components/schemas/SubchartNode"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "roots"
+        ],
+        "type": "object"
+      },
+      "SubchartNode": {
+        "description": "One node in the org subchart tree.",
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "job_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subordinates": {
+            "items": {
+              "$ref": "#/components/schemas/SubchartNode"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "person_id",
+          "subordinates"
+        ],
+        "type": "object"
+      },
+      "SubchartResponse": {
+        "description": "`{ \"root\": { … } }` — single-root wrapper (locked by the #348 acceptance\ncriteria so the response can gain sibling fields without breaking clients).",
+        "properties": {
+          "root": {
+            "$ref": "#/components/schemas/SubchartNode"
+          }
+        },
+        "required": [
+          "root"
+        ],
+        "type": "object"
+      },
+      "VisibilityListResponse": {
+        "description": "List wrapper.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/VisibilityResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "VisibilityResponse": {
+        "description": "One visibility grant.",
+        "properties": {
+          "author_person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "insight_tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "valid_from": {
+            "type": "string"
+          },
+          "valid_to": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "viewed_person_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "viewer_person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "visibility_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "visibility_id",
+          "insight_tenant_id",
+          "viewer_person_id",
+          "valid_from",
+          "author_person_id",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "VisiblePersonsRequest": {
+        "description": "Canonical person UUIDs to check (the metric runtime's key since the\nidentity cutover — the earlier email-based draft of this endpoint never\nshipped).",
         "properties": {
           "person_ids": {
             "items": {
               "format": "uuid",
               "type": "string"
             },
-            "maxItems": 1000,
-            "minItems": 1,
             "type": "array"
           }
         },
@@ -161,113 +1214,265 @@
         ],
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "bearerFormat": "JWT",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
-    "description": "Resolves people, org-chart parent/subordinates, roles, and row-level visibility for Insight. Backed by MariaDB (identity tables) with a ClickHouse-sourced bulk re-seed. Fronted by the API Gateway.",
-    "title": "Identity API",
+    "description": "Person identity for the product: profile resolution, the operator correction surface over account-to-person bindings, org-chart reads, roles and visibility, plus the persons-seed and persons-sync operation journals. The API Gateway mounts this service at /api/identity.",
+    "title": "Insight Identity Resolution API",
     "version": "1.0.0"
   },
-  "openapi": "3.0.1",
+  "openapi": "3.1.0",
   "paths": {
-    "/health": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
-      }
-    },
-    "/healthz": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
-      }
-    },
     "/v1/person-roles": {
       "get": {
+        "operationId": "identity_resolution.person_roles.list",
         "parameters": [
           {
+            "description": "Only assignments of this person",
             "in": "query",
             "name": "person",
+            "required": false,
             "schema": {
-              "format": "uuid",
               "type": "string"
             }
           },
           {
+            "description": "Only assignments of this role",
             "in": "query",
             "name": "role",
+            "required": false,
             "schema": {
-              "format": "uuid",
               "type": "string"
             }
           },
           {
+            "description": "Only assignments still in force",
             "in": "query",
             "name": "active",
+            "required": false,
             "schema": {
               "type": "boolean"
             }
           },
           {
+            "description": "Cap on returned assignments (1..=500, default 50)",
             "in": "query",
             "name": "limit",
+            "required": false,
             "schema": {
-              "format": "int32",
               "type": "integer"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonRoleListResponse"
+                }
+              }
+            },
+            "description": "Assignments"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List role assignments (admin)"
       },
       "post": {
+        "operationId": "identity_resolution.person_roles.create",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreatePersonRoleCommandModel"
+                "$ref": "#/components/schemas/CreatePersonRoleRequest"
               }
             }
           },
+          "description": "Assignment to create",
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "OK"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonRoleResponse"
+                }
+              }
+            },
+            "description": "Created assignment"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Grant a role to a person (admin)"
       }
     },
     "/v1/person-roles/{id}": {
       "delete": {
+        "operationId": "identity_resolution.person_roles.delete",
         "parameters": [
           {
+            "description": "Role assignment id",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "type": "string"
             }
           }
@@ -276,98 +1481,433 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RevokeReasonModel"
+                "$ref": "#/components/schemas/RevokeReasonRequest"
               }
             }
-          }
+          },
+          "description": "Why the assignment is revoked"
         },
         "responses": {
-          "200": {
-            "description": "OK"
+          "204": {
+            "description": "Assignment revoked"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Revoke a role assignment (admin)"
       }
     },
     "/v1/persons-seed": {
       "get": {
+        "operationId": "identity_resolution.persons_seed.list",
         "parameters": [
           {
+            "description": "Filter by operation status",
             "in": "query",
             "name": "status",
+            "required": false,
             "schema": {
               "type": "string"
             }
           },
           {
+            "description": "Cap on returned operations (1..=500, default 50)",
             "in": "query",
             "name": "limit",
+            "required": false,
             "schema": {
-              "format": "int32",
               "type": "integer"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "OK"
-          }
-        },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
-      },
-      "post": {
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PersonsSeedRequest"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonsSeedListResponse"
+                }
               }
-            }
+            },
+            "description": "Operations"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "responses": {
-          "200": {
-            "description": "OK"
+        "security": [
+          {
+            "bearerAuth": []
           }
-        },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        ],
+        "summary": "List persons-seed operations"
       }
     },
     "/v1/persons-seed/{id}": {
       "get": {
+        "operationId": "identity_resolution.persons_seed.get",
         "parameters": [
           {
+            "description": "Operation id",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "type": "string"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonsSeedOperationResponse"
+                }
+              }
+            },
+            "description": "Operation status"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get a persons-seed operation"
       }
     },
-    "/v1/persons/{email}": {
+    "/v1/persons-sync": {
       "get": {
+        "operationId": "identity_resolution.persons_sync.list",
         "parameters": [
           {
+            "description": "Filter by operation status",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Cap on returned operations (1..=500, default 50)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonsSyncListResponse"
+                }
+              }
+            },
+            "description": "Operations"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List persons-sync operations"
+      }
+    },
+    "/v1/persons-sync/{id}": {
+      "get": {
+        "operationId": "identity_resolution.persons_sync.get",
+        "parameters": [
+          {
+            "description": "Operation id",
             "in": "path",
-            "name": "email",
+            "name": "id",
             "required": true,
             "schema": {
               "type": "string"
@@ -376,234 +1916,1714 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonsSyncOperationResponse"
+                }
+              }
+            },
+            "description": "Operation status"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get a persons-sync operation"
       }
     },
     "/v1/profiles": {
       "post": {
+        "operationId": "identity_resolution.profiles.resolve",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ResolveProfileCommandModel"
+                "$ref": "#/components/schemas/ResolveProfileRequest"
               }
             }
           },
+          "description": "Identity to resolve",
           "required": true
         },
         "responses": {
           "200": {
-            "description": "OK"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileResponse"
+                }
+              }
+            },
+            "description": "Resolved person"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Resolve a profile by email or source-native id"
+      }
+    },
+    "/v1/resolution/accounts/{source}/{source_id}/{account_id}": {
+      "get": {
+        "operationId": "identity_resolution.resolution.account_binding",
+        "parameters": [
+          {
+            "description": "Connector type, e.g. `github`",
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Connector instance id",
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Account id within that connector instance",
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountBindingResponse"
+                }
+              }
+            },
+            "description": "Binding and history"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Current binding of an account and every decision behind it"
+      }
+    },
+    "/v1/resolution/attention": {
+      "get": {
+        "operationId": "identity_resolution.resolution.attention",
+        "parameters": [
+          {
+            "description": "Cap on returned items (1..=1000, default 100). The rates always cover every observed account, whatever the cap.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttentionResponse"
+                }
+              }
+            },
+            "description": "Queue items and rates"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Accounts awaiting an operator decision, with the resolution rates"
+      }
+    },
+    "/v1/resolution/bind": {
+      "post": {
+        "operationId": "identity_resolution.resolution.bind",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindRequest"
+              }
+            }
+          },
+          "description": "Bindings to record",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorrectionResponse"
+                }
+              }
+            },
+            "description": "Per-account outcomes"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Bind accounts to persons (single or bulk; also confirms an automatic binding)"
+      }
+    },
+    "/v1/resolution/detach": {
+      "post": {
+        "operationId": "identity_resolution.resolution.detach",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountRequest"
+              }
+            }
+          },
+          "description": "Account to detach",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorrectionResponse"
+                }
+              }
+            },
+            "description": "Outcome and the new person id"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Detach an account into a freshly minted person"
+      }
+    },
+    "/v1/resolution/exclude": {
+      "post": {
+        "operationId": "identity_resolution.resolution.exclude",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountRequest"
+              }
+            }
+          },
+          "description": "Account to exclude",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorrectionResponse"
+                }
+              }
+            },
+            "description": "Outcome"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Exclude an account as not a person (bot, CI, service account)"
+      }
+    },
+    "/v1/resolution/merge": {
+      "post": {
+        "operationId": "identity_resolution.resolution.merge",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeRequest"
+              }
+            }
+          },
+          "description": "Persons to merge",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorrectionResponse"
+                }
+              }
+            },
+            "description": "Per-account outcomes"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Merge two persons: rebind every account of the absorbed person"
+      }
+    },
+    "/v1/resolution/persons/{person_id}/accounts": {
+      "get": {
+        "operationId": "identity_resolution.resolution.person_accounts",
+        "parameters": [
+          {
+            "description": "Person whose accounts to list",
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonAccountsResponse"
+                }
+              }
+            },
+            "description": "Accounts of the person"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Every account bound to a person, with the values behind each link"
       }
     },
     "/v1/roles": {
       "get": {
+        "operationId": "identity_resolution.roles.list",
         "responses": {
           "200": {
-            "description": "OK"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleListResponse"
+                }
+              }
+            },
+            "description": "Roles"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List roles (admin)"
       },
       "post": {
+        "operationId": "identity_resolution.roles.create",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateRoleCommandModel"
+                "$ref": "#/components/schemas/CreateRoleRequest"
               }
             }
           },
+          "description": "Role to create",
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "OK"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleResponse"
+                }
+              }
+            },
+            "description": "Created role"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a role (admin)"
       }
     },
     "/v1/roles/{id}": {
       "delete": {
+        "operationId": "identity_resolution.roles.delete",
         "parameters": [
           {
+            "description": "Role id",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "type": "string"
             }
           }
         ],
         "responses": {
-          "200": {
-            "description": "OK"
+          "204": {
+            "description": "Role deleted"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Delete a role (admin)"
       }
     },
     "/v1/subchart": {
       "get": {
+        "operationId": "identity_resolution.subchart.forest",
         "parameters": [
           {
+            "description": "Max descent depth (>= 0); capped at the server's maximum, which is also the default",
             "in": "query",
             "name": "depth",
+            "required": false,
             "schema": {
-              "format": "int32",
               "type": "integer"
             }
           },
           {
+            "description": "Point-in-time lens (ISO-8601 / RFC-3339); absent reads the current state",
             "in": "query",
             "name": "valid_at",
+            "required": false,
             "schema": {
-              "format": "date-time",
               "type": "string"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubchartForestResponse"
+                }
+              }
+            },
+            "description": "Visible forest"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Org forest the caller can see"
       }
     },
-    "/v1/subchart/{personId}": {
+    "/v1/subchart/{person_id}": {
       "get": {
+        "operationId": "identity_resolution.subchart.get",
         "parameters": [
           {
+            "description": "Person the subtree is rooted at",
             "in": "path",
-            "name": "personId",
+            "name": "person_id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "type": "string"
             }
           },
           {
+            "description": "Max descent depth (>= 0); capped at the server's maximum, which is also the default",
             "in": "query",
             "name": "depth",
+            "required": false,
             "schema": {
-              "format": "int32",
               "type": "integer"
             }
           },
           {
+            "description": "Point-in-time lens (ISO-8601 / RFC-3339); absent reads the current state",
             "in": "query",
             "name": "valid_at",
+            "required": false,
             "schema": {
-              "format": "date-time",
               "type": "string"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubchartResponse"
+                }
+              }
+            },
+            "description": "Subchart"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Depth-bounded org subtree rooted at a person"
       }
     },
     "/v1/visibility": {
       "get": {
+        "operationId": "identity_resolution.visibility.list",
         "parameters": [
           {
+            "description": "Only grants held by this viewer",
             "in": "query",
             "name": "viewer",
+            "required": false,
             "schema": {
-              "format": "uuid",
               "type": "string"
             }
           },
           {
+            "description": "Only grants over this person",
             "in": "query",
             "name": "viewed",
+            "required": false,
             "schema": {
-              "format": "uuid",
               "type": "string"
             }
           },
           {
+            "description": "Only grants still in force",
             "in": "query",
             "name": "active",
+            "required": false,
             "schema": {
               "type": "boolean"
             }
           },
           {
+            "description": "Cap on returned grants (1..=500, default 50)",
             "in": "query",
             "name": "limit",
+            "required": false,
             "schema": {
-              "format": "int32",
               "type": "integer"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VisibilityListResponse"
+                }
+              }
+            },
+            "description": "Grants"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List visibility grants (admin)"
       },
       "post": {
+        "operationId": "identity_resolution.visibility.create",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateVisibilityCommandModel"
+                "$ref": "#/components/schemas/CreateVisibilityRequest"
               }
             }
           },
+          "description": "Grant to create",
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "OK"
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VisibilityResponse"
+                }
+              }
+            },
+            "description": "Created grant"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a visibility grant (admin)"
       }
     },
     "/v1/visibility/{id}": {
       "delete": {
+        "operationId": "identity_resolution.visibility.delete",
         "parameters": [
           {
+            "description": "Visibility grant id",
             "in": "path",
             "name": "id",
             "required": true,
             "schema": {
-              "format": "uuid",
               "type": "string"
             }
           }
@@ -612,31 +3632,107 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RevokeReasonModel"
+                "$ref": "#/components/schemas/RevokeReasonRequest"
               }
             }
-          }
+          },
+          "description": "Why the grant is revoked"
         },
         "responses": {
-          "200": {
-            "description": "OK"
+          "204": {
+            "description": "Grant revoked"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Revoke a visibility grant (admin)"
       }
     },
     "/v1/visible-persons": {
       "post": {
+        "operationId": "identity_resolution.visible_persons.create",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/VisiblePersonsCommandModel"
+                "$ref": "#/components/schemas/VisiblePersonsRequest"
               }
             }
           },
+          "description": "Person ids to check",
           "required": true
         },
         "responses": {
@@ -648,18 +3744,86 @@
                 }
               }
             },
-            "description": "OK"
+            "description": "Visible subset"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "tags": [
-          "Insight.Identity.Api"
-        ]
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Filter person ids to the ones the caller may see"
       }
     }
-  },
-  "tags": [
-    {
-      "name": "Insight.Identity.Api"
-    }
-  ]
+  }
 }

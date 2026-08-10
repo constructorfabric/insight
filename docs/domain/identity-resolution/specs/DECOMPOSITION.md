@@ -4,9 +4,10 @@
 
 - [1. Overview](#1-overview)
 - [2. Entries](#2-entries)
-  - [2.1 Initial Seed — HIGH](#21-initial-seed--high)
-  - [2.2 Bootstrap Pipeline — HIGH](#22-bootstrap-pipeline--high)
+  - [2.1 Identity Store & Read Paths — HIGH](#21-identity-store--read-paths--high)
+  - [2.2 Evidence Intake & Seed Fold — HIGH](#22-evidence-intake--seed-fold--high)
   - [2.3 Matching Engine — MEDIUM](#23-matching-engine--medium)
+  - [2.4 Manual Resolution — HIGH](#24-manual-resolution--high)
 - [3. Feature Dependencies](#3-feature-dependencies)
 
 <!-- /toc -->
@@ -15,23 +16,23 @@
 
 ## 1. Overview
 
-The Identity Resolution DESIGN is decomposed into three features aligned to the implementation phases defined in the PRD. Each feature builds on the previous, delivering incremental value while maintaining a working system at each step.
+The Identity Resolution DESIGN is decomposed into four features. Features 1–2 cover the implemented journal architecture (DESIGN v3.0); Feature 3 is the future matcher; Feature 4 is the manual-resolution capability of the current iteration.
+
+> **History note**: Features 1–2 were originally planned around an alias-table pipeline (`aliases` store, BootstrapJob, `unmapped`/`conflicts` queues, resolve API, ClickHouse Dictionary). That plan was not built; the entries below describe what shipped instead, and the corresponding alias-pipeline requirements are marked superseded in the PRD. The historical entries remain in this file's git history.
 
 **Decomposition Strategy**:
-- Features grouped by **implementation phase**: seed → bootstrap → matching. Each phase delivers independently testable capabilities.
-- Feature 1 (Initial Seed) establishes the `aliases` table and resolution API — the minimum viable system where HR data is directly loaded.
-- Feature 2 (Bootstrap Pipeline) introduces the `identity_inputs` ingestion mechanism, BootstrapJob processing, and conflict/unmapped tracking — enabling automated alias creation from connector data.
-- Feature 3 (Matching Engine) adds configurable matching rules with three-phase evaluation (B1/B2/B3), confidence scoring, and operator workflows — enabling intelligent alias resolution beyond exact matches.
-- Dependencies are linear: Feature 1 → Feature 2 → Feature 3. No circular dependencies.
+- Feature 1 (Identity Store & Read Paths) establishes the `persons` journal with stable `person_id` (ADR-0002), its derived caches, and both read paths — the service read API and the analytics mirror + resolve macro.
+- Feature 2 (Evidence Intake & Seed Fold) introduces the `identity_inputs` evidence contract and the scheduled persons-seed fold that binds accounts to persons, plus the persons-sync mirror publisher.
+- Feature 3 (Matching Engine, future) adds configurable matching rules with confidence-scored proposals — never auto-applied.
+- Feature 4 (Manual Resolution) adds operator correction verbs over the journal (ADR-0003) with the resolver upgrade and seed hardening they require.
+- Dependencies: Feature 1 → Feature 2 → Feature 3, and Feature 4 → Feature 3 (proposal acceptance flows through the Feature 4 operator API); Feature 1 → Feature 4. No circular dependencies.
 - 100% coverage of all DESIGN components, tables, and sequences verified.
 
-**Late-Phase Items (Future Scope)**:
-The following capabilities are defined in the PRD (p3 priority) and DESIGN but are not decomposed into features in this release:
-- **Merge/split operations**: `merge_audits` table, merge/split API endpoints, `cpt-insightspec-ir-seq-merge` sequence. PRD FRs: `cpt-ir-fr-merge`, `cpt-ir-fr-split`, `cpt-ir-fr-merge-audit`, `cpt-ir-fr-idempotent-mutations`. NFR: `cpt-ir-nfr-merge-reversibility`.
-- **GDPR alias deletion**: `alias_gdpr_deleted` table, purge API endpoint. PRD FRs: `cpt-ir-fr-gdpr-purge`. NFR: `cpt-ir-nfr-gdpr-erasure`.
-- **Operator API endpoints** for merge/split/purge: These will be added when late-phase features are planned.
+**Manual Resolution (current iteration)**: operator corrections were re-scoped from "late phase" to `p1` by [ADR-0003](ADR/0003-operator-decisions-as-persons-observations.md) — the journal-based model replaced the snapshot-based merge/split plan, and the v1 merge/split/audit/idempotency requirements were superseded by their `-v2` forms in the PRD. Entry 2.4 below tracks this feature; its FEATURE.md follows with the implementation PR (design reviewed in constructorfabric/insight#2180).
 
-These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-merge-audits`, `cpt-insightspec-ir-dbtable-alias-gdpr-deleted`) for forward reference. Implementation will be planned in a separate DECOMPOSITION cycle.
+**Late-Phase Items (Future Scope)**:
+- **GDPR alias deletion**: erasure archive table and purge flow. PRD FRs: `cpt-ir-fr-gdpr-purge`. NFR: `cpt-ir-nfr-gdpr-erasure`. Schema retained as a future-table summary in DESIGN §3.7; implementation will be planned in a separate DECOMPOSITION cycle.
+- **Admin identity console**: a required product surface per the umbrella epic (#1873) — scheduled as the next step once the Feature 4 API stabilizes; not decomposed here.
 
 ---
 
@@ -41,75 +42,70 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
 
 - [ ] `p1` - **ID**: `cpt-ir-status-overall`
 
-### 2.1 [Initial Seed](feature-initial-seed/) — HIGH
+### 2.1 Identity Store & Read Paths — HIGH
 
 - [ ] `p1` - **ID**: `cpt-ir-feature-initial-seed`
 
-- **Purpose**: Establish the `aliases` table and Resolution API to enable cross-platform analytics from day one. HR Bronze data is loaded directly into `persons` (person domain) and `aliases` via dbt seed models, providing the minimum viable identity resolution: every Gold analytics query can resolve `person_id` for HR-sourced aliases.
+- **Purpose**: Establish the `persons` observation journal as the source of truth for the account-to-person binding (stable random `person_id`, ADR-0002), its derived `account_person_map` cache, and the two read paths every consumer uses: the identity-resolution service read API (request-time person lookups) and the analytics mirror + `resolve_person_id` macro (build-time resolution for gold).
 
 - **Depends On**: None
 
 - **Scope**:
-  - Create `aliases` table in ClickHouse with PR #55 schema
-  - dbt seed models to load HR Bronze data (BambooHR employees) into `aliases`
-  - Resolution API: `POST /resolve`, `POST /batch-resolve`
-  - Hot-path alias lookup in `aliases` table
-  - ClickHouse Dictionary for analytical Silver step 2 enrichment
-  - Tenant isolation on all queries
-  - Cross-domain integration: `aliases.person_id` references `persons.person_id` (person domain creates person records; identity-resolution seeds the initial `persons` from `identity_inputs`, see ADR-0002)
+  - `persons` journal and `account_person_map` in MariaDB, schema owned by the service (SeaORM migrations, ADR-0006)
+  - Service read API: person profile and visibility lookups over the journal (component spec)
+  - Analytics read path: `identity.identity_persons` mirror + build-time resolution through the resolve macro
+  - Tenant isolation on all queries (see the known gap on the evidence read path in the PRD)
+  - Legacy: dbt seed models still populate the ClickHouse `aliases` table; it is not consumed by resolution and is retained until retirement (DESIGN §3.7)
 
 - **Out of scope**:
-  - `identity_inputs` table (Feature 2)
-  - BootstrapJob incremental processing (Feature 2)
+  - `identity_inputs` evidence contract and the seed fold (Feature 2)
   - Match rules and MatchingEngine (Feature 3)
-  - Unmapped queue (Feature 2)
-  - Conflict detection (Feature 2)
-  - Merge/split operations (late phase)
+  - Operator corrections (Feature 4)
   - GDPR deletion (late phase)
 
 - **Requirements Covered**:
 
-  - [ ] `p1` - `cpt-ir-fr-seed-aliases`
-  - [ ] `p1` - `cpt-ir-fr-resolve-alias`
-  - [ ] `p1` - `cpt-ir-fr-batch-resolve`
+  - [ ] `p1` - `cpt-ir-fr-seed-aliases` (superseded — legacy dbt seeds)
+  - [ ] `p1` - `cpt-ir-fr-resolve-alias` (superseded)
+  - [ ] `p1` - `cpt-ir-fr-batch-resolve` (superseded)
   - [ ] `p1` - `cpt-ir-fr-tenant-isolation`
   - [ ] `p1` - `cpt-ir-nfr-alias-lookup-latency`
   - [ ] `p1` - `cpt-ir-nfr-tenant-isolation`
 
 - **Design Principles Covered**:
 
-  - [ ] `p2` - `cpt-insightspec-ir-principle-alias-centric`
-  - [ ] `p2` - `cpt-insightspec-ir-principle-ch-native`
+  - [ ] `p2` - `cpt-insightspec-ir-principle-alias-centric` (v1 framing — retained; see the storage-split principle)
+  - [ ] `p2` - `cpt-insightspec-ir-principle-ch-native-v2`
   - [ ] `p2` - `cpt-insightspec-ir-principle-domain-isolation`
 
 - **Design Constraints Covered**:
 
-  - [ ] `p2` - `cpt-insightspec-ir-constraint-ch-only`
+  - [ ] `p2` - `cpt-insightspec-ir-constraint-storage-split-v2`
   - [ ] `p2` - `cpt-insightspec-ir-constraint-naming`
   - [ ] `p2` - `cpt-insightspec-ir-constraint-domain-boundary`
   - [ ] `p2` - `cpt-insightspec-ir-constraint-half-open-intervals`
 
 - **Domain Model Entities**:
-  - `aliases` (create — primary table for this feature)
-  - `persons` (cross-domain reference — created by person domain dbt seed)
+  - `aliases` (create — legacy seed target, see DESIGN §3.7)
+  - `persons` (journal — seeded by this domain per ADR-0002)
 
 - **Design Components**:
 
-  - [ ] `p2` - `cpt-insightspec-ir-component-resolution-service`
+  - [x] `p1` - `cpt-insightspec-ir-component-identity-read-api`
 
 - **API**:
-  - POST /api/identity/resolve
-  - POST /api/identity/batch-resolve
+  - Person lookup endpoints of the identity-resolution service (see component spec)
 
 - **Sequences**:
 
-  - [ ] `p1` - `cpt-insightspec-ir-seq-resolve-hot`
+  - `cpt-insightspec-ir-seq-build-resolution`
 
 - **Data**:
 
   - [ ] `p3` - `cpt-insightspec-ir-db-schemas`
-  - [ ] `p1` - `cpt-insightspec-ir-dbtable-aliases`
-  - [x] `p1` - `cpt-insightspec-ir-dbtable-persons-mariadb`
+  - `cpt-insightspec-ir-dbtable-aliases` (legacy — not consumed by resolution)
+  - `cpt-insightspec-ir-dbtable-persons-mariadb`
+  - `cpt-insightspec-ir-dbtable-account-person-map`
 
 - **Interfaces**:
 
@@ -118,46 +114,38 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
 
 ---
 
-### 2.2 [Bootstrap Pipeline](feature-bootstrap-pipeline/) — HIGH
+### 2.2 Evidence Intake & Seed Fold — HIGH
 
 - [ ] `p1` - **ID**: `cpt-ir-feature-bootstrap-pipeline`
 
-- **Purpose**: Enable automated, incremental alias creation from connector data. Connectors write alias observations to `identity_inputs`; the BootstrapJob processes them into the `aliases` table, routing unresolvable aliases to the `unmapped` queue and detecting alias-level conflicts. This replaces the one-time dbt seed with a continuous pipeline that handles new connectors and ongoing syncs.
+- **Purpose**: Give connectors one uniform write target for identity observations and fold that evidence into the journal automatically. Connectors populate `identity_inputs` through dbt (`identity_inputs_from_history` macro, incremental append models); the scheduled persons-seed groups accounts by e-mail and binds them (reuse / link-by-e-mail / mint / skip, never merging existing persons); persons-sync republishes the journal to ClickHouse for analytics.
 
-- **Depends On**: `cpt-ir-feature-initial-seed` (aliases table and Resolution API must exist)
+- **Depends On**: `cpt-ir-feature-initial-seed` (the `persons` journal and read paths must exist)
 
 - **Scope**:
-  - Create `identity_inputs` table in ClickHouse
-  - Create `unmapped` table for unresolved aliases
-  - Create `conflicts` table for alias-level disagreements
-  - BootstrapJob: reads identity_inputs incrementally (`_synced_at > last_watermark`). See DESIGN §5 REC-IR-02 for recommended watermark mechanism (dbt incremental + `bootstrap_watermarks` table)
-  - Alias normalization: email/username → `lower(trim())`; others → `trim()`
-  - Auto-create alias on exact match (confidence >= 1.0 from direct lookup)
-  - Route unresolved aliases to `unmapped` table
-  - Detect alias conflicts when same alias claimed by different persons
-  - Track `last_observed_at` for existing aliases
-  - Auto-resolve unmapped entries when matching aliases are created
-  - Idempotent bootstrap runs (dedup on natural key)
-  - Argo Workflow integration for scheduling
+  - `identity_inputs` table and write contract; per-connector dbt models via the shared macro (incremental `append` on `_synced_at`)
+  - persons-seed as a scheduled service subcommand: run-lock, input guards with explicit `--force`, run journal in `operations` with per-branch counters
+  - Seed fold semantics per DESIGN §3.2 PersonsSeed (including the documented divergent-group known gap, addressed in Feature 4)
+  - persons-sync: atomic republish of the journal into `identity.identity_persons`
+  - Idempotent re-runs (journal natural key; deterministic `created_at` from `_synced_at`)
 
 - **Out of scope**:
-  - Configurable match rules (Feature 3 — bootstrap uses direct lookup only in this feature)
-  - Fuzzy matching (Feature 3)
-  - Operator unmapped queue management UI (Feature 3)
-  - Merge/split (late phase)
+  - Incremental watermark processing — each run currently folds the full evidence set (`cpt-ir-fr-bootstrap-incremental` open; DESIGN §5 REC-IR-02)
+  - Configurable match rules and fuzzy matching (Feature 3)
+  - Operator corrections and seed hardening (Feature 4)
   - GDPR deletion (late phase)
 
 - **Requirements Covered**:
 
   - [x] `p1` - `cpt-ir-fr-accept-bootstrap-inputs`
-  - [x] `p1` - `cpt-ir-fr-bootstrap-incremental`
-  - [ ] `p1` - `cpt-ir-fr-normalize-aliases`
-  - [ ] `p1` - `cpt-ir-fr-create-alias-exact`
-  - [ ] `p1` - `cpt-ir-fr-route-unmapped`
-  - [ ] `p1` - `cpt-ir-fr-track-observations`
-  - [ ] `p1` - `cpt-ir-fr-bootstrap-idempotent`
-  - [ ] `p2` - `cpt-ir-fr-alias-conflict-detection`
-  - [ ] `p2` - `cpt-ir-fr-auto-resolve-unmapped`
+  - [ ] `p1` - `cpt-ir-fr-bootstrap-incremental` (open: full-set fold today; watermark per REC-IR-02)
+  - [ ] `p1` - `cpt-ir-fr-normalize-aliases` (superseded)
+  - [ ] `p1` - `cpt-ir-fr-create-alias-exact` (superseded)
+  - [ ] `p3` - `cpt-ir-fr-route-unmapped` (future — with the matcher)
+  - [ ] `p1` - `cpt-ir-fr-track-observations` (superseded)
+  - [ ] `p1` - `cpt-ir-fr-bootstrap-idempotent` (superseded)
+  - [ ] `p2` - `cpt-ir-fr-alias-conflict-detection` (superseded)
+  - [ ] `p2` - `cpt-ir-fr-auto-resolve-unmapped` (future — with the matcher)
   - [ ] `p1` - `cpt-ir-nfr-bootstrap-throughput`
   - [ ] `p1` - `cpt-ir-nfr-bootstrap-idempotency`
 
@@ -171,28 +159,25 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
 
 - **Domain Model Entities**:
   - `identity_inputs` (create)
-  - `aliases` (update — add new aliases from bootstrap)
-  - `unmapped` (create)
-  - `conflicts` (create)
+  - `persons` (append observations per ADR-0002 — never updated)
+  - `unmapped` / `conflicts` (future tables — the v1 review queue is derived; see DESIGN §3.7)
 
 - **Design Components**:
 
-  - [ ] `p2` - `cpt-insightspec-ir-component-bootstrap-job`
-  - [ ] `p2` - `cpt-insightspec-ir-component-conflict-detector`
+  - [x] `p1` - `cpt-insightspec-ir-component-persons-seed`
+  - [x] `p1` - `cpt-insightspec-ir-component-persons-sync`
 
 - **API**:
-  - (No new API endpoints — BootstrapJob is a batch job, not an API service)
+  - (No new API endpoints — the seed is a scheduled job, not an API service)
   - Connector write contract: dbt `identity_inputs_from_history` macro applied to `fields_history` models (implemented for BambooHR and Zoom)
 
 - **Sequences**:
 
-  - [ ] `p1` - `cpt-insightspec-ir-seq-bootstrap-processing`
+  - `cpt-insightspec-ir-seq-seed-run`
 
 - **Data**:
 
-  - [x] `p1` - `cpt-insightspec-ir-dbtable-identity-inputs`
-  - [ ] `p2` - `cpt-insightspec-ir-dbtable-unmapped`
-  - [ ] `p2` - `cpt-insightspec-ir-dbtable-conflicts`
+  - `cpt-insightspec-ir-dbtable-identity-inputs`
 
 - **Interfaces**:
 
@@ -204,25 +189,20 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
 
 - [ ] `p2` - **ID**: `cpt-ir-feature-matching-engine`
 
-- **Purpose**: Enable intelligent alias resolution beyond exact matches. Configurable match rules evaluate candidates using three-phase scoring (B1 deterministic, B2 normalization/cross-system, B3 fuzzy). Integrates with BootstrapJob for cold-path evaluation and provides operator workflows for unmapped queue management and manual alias CRUD.
+- **Purpose** (future): Enable matching beyond the seed's exact-e-mail link. Configurable match rules evaluate candidates using three-phase scoring (B1 deterministic, B2 normalization/cross-system, B3 fuzzy) and produce confidence-scored **proposals** for operator review. Two ADR-0003 invariants bind this feature: the matcher never writes bindings (acceptance is an operator act through the Feature 4 API), and operator decisions in the journal override any rule.
 
-- **Depends On**: `cpt-ir-feature-bootstrap-pipeline` (BootstrapJob must exist to invoke MatchingEngine on cold path; unmapped table must exist for suggestions)
+- **Depends On**: `cpt-ir-feature-bootstrap-pipeline` (evidence stream and journal), `cpt-ir-feature-manual-resolution` (the accept/reject surface for proposals)
 
 - **Scope**:
-  - Create `match_rules` table with seed data for B1/B2/B3 rules
-  - MatchingEngine component: loads rules, evaluates against candidates, computes composite confidence
-  - Three-phase pipeline: B1 (exact email, exact HR ID), B2 (case-insensitive email, domain alias, cross-system username), B3 (Jaro-Winkler, Soundex)
-  - Confidence thresholds: >= 1.0 auto-link, 0.50-0.99 suggestion, < 0.50 unmapped
-  - Fuzzy rules disabled by default; NEVER auto-link
-  - Integration with BootstrapJob cold path: when direct lookup fails, invoke MatchingEngine
-  - Integration with ResolutionService cold path: `POST /resolve` falls through to MatchingEngine
-  - Operator API: `GET /unmapped`, `POST /unmapped/:id/resolve`, `POST /unmapped/:id/ignore`
-  - Operator API: `GET /rules`, `PUT /rules/:id`
-  - Operator API: `GET /persons/:id/aliases`, `POST /persons/:id/aliases`, `DELETE /persons/:id/aliases/:alias_id`
-  - ClickHouse Dictionary for analytical alias lookup
+  - `match_rules` storage with seed data for B1/B2/B3 rules (future table — DESIGN §3.7)
+  - MatchingEngine component: loads rules, evaluates candidates over evidence and journal, computes composite confidence
+  - Three-phase pipeline: B1 (exact e-mail, exact HR ID), B2 (case-insensitive e-mail, domain alias, cross-system username), B3 (Jaro-Winkler, Soundex)
+  - Confidence thresholds ordering proposals; fuzzy rules disabled by default and NEVER auto-link
+  - Proposal review integration with the operator resolution API (accept / reject / defer)
+  - Rule configuration surface for operators
 
 - **Out of scope**:
-  - Merge/split operations (late phase)
+  - Any automatic application of proposals (structurally excluded — ADR-0003)
   - GDPR deletion (late phase)
 
 - **Requirements Covered**:
@@ -231,7 +211,7 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
   - [ ] `p2` - `cpt-ir-fr-three-phase-matching`
   - [ ] `p2` - `cpt-ir-fr-no-fuzzy-autolink`
   - [ ] `p2` - `cpt-ir-fr-unmapped-management`
-  - [ ] `p2` - `cpt-ir-fr-manual-alias-crud`
+  - [ ] `p2` - `cpt-ir-fr-manual-alias-crud` (superseded)
   - [ ] `p2` - `cpt-ir-nfr-no-fuzzy-autolink`
 
 - **Design Principles Covered**:
@@ -243,35 +223,96 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
   - [ ] `p2` - `cpt-insightspec-ir-constraint-no-fuzzy-autolink`
 
 - **Domain Model Entities**:
-  - `match_rules` (create + seed default rules)
-  - `unmapped` (update — add suggestions from MatchingEngine)
-  - `aliases` (update — auto-link from MatchingEngine results)
+  - `match_rules` (create + seed default rules — future table, DESIGN §3.7)
+  - Proposal storage or derivation (design decision of this feature)
+  - `persons` journal (read-only for the matcher; bindings are written only by operator acceptance through the Feature 4 API)
 
 - **Design Components**:
 
   - [ ] `p2` - `cpt-insightspec-ir-component-matching-engine`
 
 - **API**:
-  - GET /api/identity/unmapped
-  - POST /api/identity/unmapped/:id/resolve
-  - POST /api/identity/unmapped/:id/ignore
-  - GET /api/identity/rules
-  - PUT /api/identity/rules/:id
-  - GET /api/identity/persons/:id/aliases
-  - POST /api/identity/persons/:id/aliases
-  - DELETE /api/identity/persons/:id/aliases/:alias_id
+  - Match-rule configuration and proposal review endpoints (to be designed with this feature; proposals are accepted through the Feature 4 operator surface)
 
 - **Sequences**:
 
-  (MatchingEngine is invoked within `cpt-insightspec-ir-seq-bootstrap-processing` and `cpt-insightspec-ir-seq-resolve-hot` — both already assigned to Features 1 and 2. No new sequences unique to this feature.)
+  (The MatchingEngine is invoked within the seed-run and build-resolution sequences already assigned to Features 1 and 2. No new sequences unique to this feature.)
 
 - **Data**:
+  - `match_rules` (future table — summary in DESIGN §3.7)
 
-  - [ ] `p2` - `cpt-insightspec-ir-dbtable-match-rules`
+- **Interfaces**:
+  - Match-rule configuration API (future; will be specified with this feature)
+
+---
+
+### 2.4 Manual Resolution — HIGH
+
+- [ ] `p1` - **ID**: `cpt-ir-feature-manual-resolution`
+
+- **Purpose**: Give the operator correction verbs over the account-to-person binding — bind (single/bulk), merge, detach, exclude — plus the derived review queue and binding history, per [ADR-0003](ADR/0003-operator-decisions-as-persons-observations.md). Corrections are appended to the `persons` journal and survive every seed re-run. Reviewed design with scenarios: constructorfabric/insight#2180. FEATURE.md to be authored with the implementation PR.
+
+- **Depends On**: `cpt-ir-feature-initial-seed` (the `persons` journal, seed, and read API must exist)
+
+- **Scope**:
+  - Operator write verbs appending binding observations authored by the operator
+  - Derived review queue (accounts pending a decision, contested-binding groups not explained by an operator decision, and no-evidence accounts surfaced from `identity_inputs`) with candidates and counts
+  - Resolution-rate reporting (bound / pending / no-evidence / excluded shares — the operator-visible match rate of the umbrella epic)
+  - Per-account binding history (explain) and per-person account listing (matching table)
+  - Seed hardening: per-account bindings win over group collapse (removing the path that can silently re-derive a binding); author-aware conflict classification (bindings loader returns author); contested e-mails stop auto-linking
+  - Evidence reader fix: honor empty-value DELETE (closure) rows — the current non-empty filter drops them, leaving tombstones inert; required for correct seed closure handling and for the queue's UPSERT/DELETE fold
+  - Reserved excluded-person sentinel treated as "no person" by every consumer — resolve macro (NULL), service read API, person domain, review queue (normative definition in DESIGN par. 4.3)
+  - dbt resolver upgrade: account-first person resolution (latest `value_type='id'` binding per source account) with e-mail fallback; contested e-mail resolves to NULL — required for corrections to reach gold (DESIGN par. 4.4)
+  - Decision-aware API idempotency + unique per-row observation timestamps (natural key has no account discriminator — DESIGN par. 3.7 index note)
+  - Account-derived e-mail fallback in the resolver: `identity_inputs` provides the account-to-value linkage (`source_account_id` on every row); an e-mail resolves through the current bindings of its observing accounts
+
+- **Out of scope**:
+  - Stored negative rules, value blocklists, proposals with confidence, automatic revert, multi-operator concurrency — deferred with explicit triggers (ADR-0003)
+  - Ignore/defer (snooze) for queue items — deliberate narrowing; returns with the proposal store
+  - GDPR deletion (late phase)
+
+- **Requirements Covered**:
+
+  - [ ] `p1` - `cpt-ir-fr-merge-v2`
+  - [ ] `p1` - `cpt-ir-fr-split-v2`
+  - [ ] `p1` - `cpt-ir-fr-operator-bind`
+  - [ ] `p1` - `cpt-ir-fr-operator-exclude`
+  - [ ] `p1` - `cpt-ir-fr-review-queue`
+  - [ ] `p1` - `cpt-ir-fr-correction-durability`
+  - [ ] `p1` - `cpt-ir-fr-merge-audit-v2`
+  - [ ] `p1` - `cpt-ir-fr-idempotent-mutations-v2`
+  - [ ] `p2` - `cpt-ir-fr-binding-history`
+  - [ ] `p1` - `cpt-ir-nfr-merge-reversibility`
+
+- **Design Principles Covered**:
+
+  - [ ] `p1` - `cpt-insightspec-ir-principle-append-only-journal`
+  - [ ] `p2` - `cpt-insightspec-ir-principle-fail-safe`
+
+- **Design Constraints Covered**:
+
+  (Inherits all constraints from Feature 1)
+
+- **Domain Model Entities**:
+  - `persons` (append operator corrections)
+  - `operations` (journal operator calls)
+  - `account_person_map` (rebuild after corrections)
+
+- **Design Components**:
+
+  - [ ] `p1` - `cpt-insightspec-ir-component-operator-resolution-api`
+
+- **API**:
+  - Operator resolution endpoints (working shapes in DESIGN §3.3; contracts fixed at FEATURE level)
+
+- **Sequences**:
+
+  - `cpt-insightspec-ir-seq-operator-correction`
 
 - **Interfaces**:
 
-  - [ ] `p2` - `cpt-ir-interface-ch-dictionary`
+  - [ ] `p1` - `cpt-ir-interface-analytics-resolution`
+  - [ ] `p1` - `cpt-insightspec-ir-interface-api-v2`
 
 ---
 
@@ -281,68 +322,77 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
 cpt-ir-feature-initial-seed (HIGH, p1)
     |
     +---> cpt-ir-feature-bootstrap-pipeline (HIGH, p1)
-              |
-              +---> cpt-ir-feature-matching-engine (MEDIUM, p2)
+    |         |
+    |         +---> cpt-ir-feature-matching-engine (MEDIUM, p2)
+    |                   ^
+    +---> cpt-ir-feature-manual-resolution (HIGH, p1)
+                        (proposal acceptance surface)
 ```
 
 **Late-phase items (not yet decomposed):**
 ```text
-cpt-ir-feature-matching-engine
+cpt-ir-feature-manual-resolution
     |
-    +---> [future] merge/split operations (p3)
+    +---> [future] stored negative rules / value blocklists (with the matcher)
     +---> [future] GDPR alias deletion (p3)
-    +---> [future] operator merge/split/purge API (p3)
 ```
 
 **Dependency Rationale**:
 
-- `cpt-ir-feature-bootstrap-pipeline` requires `cpt-ir-feature-initial-seed`: The `aliases` table and Resolution API must exist before the BootstrapJob can create/update alias records and invoke resolution lookups. The dbt seed provides the initial person+alias foundation that bootstrap extends.
+- `cpt-ir-feature-bootstrap-pipeline` requires `cpt-ir-feature-initial-seed`: the `persons` journal, its schema ownership, and the read paths must exist before the seed can fold evidence into them and persons-sync can publish the result.
 
-- `cpt-ir-feature-matching-engine` requires `cpt-ir-feature-bootstrap-pipeline`: The MatchingEngine is invoked by the BootstrapJob on the cold path (when direct alias lookup fails). The `unmapped` table must exist for the MatchingEngine to write suggestions. Without the bootstrap pipeline, there is no invocation path for the MatchingEngine.
+- `cpt-ir-feature-matching-engine` requires `cpt-ir-feature-bootstrap-pipeline`: the matcher consumes the evidence stream and the journal produced by the intake/fold pipeline, and its proposals are only meaningful once automatic binding runs continuously.
+
+- `cpt-ir-feature-manual-resolution` requires `cpt-ir-feature-initial-seed`: correction verbs append to the journal and are served by the same service; its resolver upgrade extends the analytics read path established there.
 
 **Coverage Verification**:
 
 | DESIGN Element | Feature |
 |---|---|
-| `cpt-insightspec-ir-component-resolution-service` | Feature 1 (initial-seed) |
-| `cpt-insightspec-ir-component-bootstrap-job` | Feature 2 (bootstrap-pipeline) |
-| `cpt-insightspec-ir-component-conflict-detector` | Feature 2 (bootstrap-pipeline) |
+| `cpt-insightspec-ir-component-identity-read-api` | Feature 1 (initial-seed) |
+| `cpt-insightspec-ir-component-persons-seed` | Feature 2 (bootstrap-pipeline) |
+| `cpt-insightspec-ir-component-persons-sync` | Feature 2 (bootstrap-pipeline) |
 | `cpt-insightspec-ir-component-matching-engine` | Feature 3 (matching-engine) |
-| `cpt-insightspec-ir-dbtable-aliases` | Feature 1 (initial-seed) |
+| `cpt-insightspec-ir-component-operator-resolution-api` | Feature 4 (manual-resolution) |
+| `cpt-insightspec-ir-dbtable-aliases` | Feature 1 (initial-seed, legacy) |
 | `cpt-insightspec-ir-dbtable-identity-inputs` | Feature 2 (bootstrap-pipeline) |
 | `cpt-insightspec-ir-dbtable-persons-mariadb` | Feature 1 (initial-seed) |
-| `cpt-insightspec-ir-dbtable-unmapped` | Feature 2 (bootstrap-pipeline) |
-| `cpt-insightspec-ir-dbtable-conflicts` | Feature 2 (bootstrap-pipeline) |
-| `cpt-insightspec-ir-dbtable-match-rules` | Feature 3 (matching-engine) |
-| `cpt-insightspec-ir-dbtable-merge-audits` | Late phase (future) |
-| `cpt-insightspec-ir-dbtable-alias-gdpr-deleted` | Late phase (future) |
-| `cpt-insightspec-ir-seq-resolve-hot` | Feature 1 (initial-seed) |
-| `cpt-insightspec-ir-seq-bootstrap-processing` | Feature 2 (bootstrap-pipeline) |
-| `cpt-insightspec-ir-seq-merge` | Late phase (future) |
-| `cpt-insightspec-ir-interface-api` | Feature 1 (initial-seed) |
+| `cpt-insightspec-ir-dbtable-account-person-map` | Feature 1 (initial-seed) |
+| `cpt-insightspec-ir-seq-build-resolution` | Feature 1 (initial-seed) |
+| `cpt-insightspec-ir-seq-seed-run` | Feature 2 (bootstrap-pipeline) |
+| `cpt-insightspec-ir-seq-operator-correction` | Feature 4 (manual-resolution) |
+| `cpt-insightspec-ir-interface-api-v2` | Feature 4 (manual-resolution) |
+| future tables (`match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) | Future (DESIGN §3.7 summaries) |
 
 | PRD Requirement | Feature |
 |---|---|
-| `cpt-ir-fr-seed-aliases` (p1) | Feature 1 |
-| `cpt-ir-fr-resolve-alias` (p1) | Feature 1 |
-| `cpt-ir-fr-batch-resolve` (p1) | Feature 1 |
+| `cpt-ir-fr-seed-aliases` (p1, superseded — legacy dbt seeds) | Feature 1 |
+| `cpt-ir-fr-resolve-alias` (p1, superseded) | Feature 1 |
+| `cpt-ir-fr-batch-resolve` (p1, superseded) | Feature 1 |
 | `cpt-ir-fr-tenant-isolation` (p1) | Feature 1 |
+| `cpt-ir-fr-persons-history` (p1) | Feature 1 |
+| `cpt-ir-fr-persons-initial-seed` (p1) | Feature 1 |
 | `cpt-ir-fr-accept-bootstrap-inputs` (p1) | Feature 2 |
 | `cpt-ir-fr-bootstrap-incremental` (p1) | Feature 2 |
-| `cpt-ir-fr-normalize-aliases` (p1) | Feature 2 |
-| `cpt-ir-fr-create-alias-exact` (p1) | Feature 2 |
-| `cpt-ir-fr-route-unmapped` (p1) | Feature 2 |
-| `cpt-ir-fr-track-observations` (p1) | Feature 2 |
-| `cpt-ir-fr-bootstrap-idempotent` (p1) | Feature 2 |
-| `cpt-ir-fr-alias-conflict-detection` (p2) | Feature 2 |
-| `cpt-ir-fr-auto-resolve-unmapped` (p2) | Feature 2 |
+| `cpt-ir-fr-normalize-aliases` (p1, superseded) | Feature 2 |
+| `cpt-ir-fr-create-alias-exact` (p1, superseded) | Feature 2 |
+| `cpt-ir-fr-route-unmapped` (p3, future) | Feature 3 |
+| `cpt-ir-fr-track-observations` (p1, superseded) | Feature 2 |
+| `cpt-ir-fr-bootstrap-idempotent` (p1, superseded) | Feature 2 |
+| `cpt-ir-fr-alias-conflict-detection` (p2, superseded) | Feature 4 (derived queue) |
+| `cpt-ir-fr-auto-resolve-unmapped` (p3, future) | Feature 3 |
 | `cpt-ir-fr-configurable-rules` (p2) | Feature 3 |
 | `cpt-ir-fr-three-phase-matching` (p2) | Feature 3 |
 | `cpt-ir-fr-no-fuzzy-autolink` (p2) | Feature 3 |
-| `cpt-ir-fr-unmapped-management` (p2) | Feature 3 |
-| `cpt-ir-fr-manual-alias-crud` (p2) | Feature 3 |
-| `cpt-ir-fr-merge` (p3) | Late phase |
-| `cpt-ir-fr-split` (p3) | Late phase |
-| `cpt-ir-fr-merge-audit` (p3) | Late phase |
+| `cpt-ir-fr-unmapped-management` (p2, superseded) | Feature 3 → Feature 4 |
+| `cpt-ir-fr-manual-alias-crud` (p2, superseded) | Feature 4 |
+| `cpt-ir-fr-merge-v2` (p1) | Feature 4 |
+| `cpt-ir-fr-split-v2` (p1) | Feature 4 |
+| `cpt-ir-fr-operator-bind` (p1) | Feature 4 |
+| `cpt-ir-fr-operator-exclude` (p1) | Feature 4 |
+| `cpt-ir-fr-review-queue` (p1) | Feature 4 |
+| `cpt-ir-fr-correction-durability` (p1) | Feature 4 |
+| `cpt-ir-fr-merge-audit-v2` (p1) | Feature 4 |
+| `cpt-ir-fr-idempotent-mutations-v2` (p1) | Feature 4 |
+| `cpt-ir-fr-binding-history` (p2) | Feature 4 |
 | `cpt-ir-fr-gdpr-purge` (p3) | Late phase |
-| `cpt-ir-fr-idempotent-mutations` (p3) | Late phase |

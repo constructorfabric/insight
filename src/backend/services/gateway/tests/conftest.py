@@ -1,35 +1,68 @@
 """Session orchestrator for the gateway e2e (NGINX_BFF step-05 scenarios).
 
-Owns the compose stack lifecycle (real authenticator + fakeidp behind the
+Owns the compose stack lifecycle (real authenticator + Keycloak behind the
 OpenResty gateway, with stub identity + echo upstream) and exposes a small HTTP
 client plus fixtures for the fail-closed scenarios (authenticator / upstream
 down). Tests live in test_gateway.py.
 
-pytest runs on the host; the OIDC redirect chain uses in-network hostnames, so
-the client rewrites them to the published localhost ports (see GatewayClient).
+The IdP is a real Keycloak importing the generated roster realm
+(`insight-seed-realm`, from src/ingestion/tools/seed — generated here into
+./keycloak-import). pytest runs on the host; the OIDC redirect chain uses
+in-network hostnames, so the client rewrites them to the published localhost
+ports (see GatewayClient).
 """
 
 from __future__ import annotations
 
+import http.cookiejar
 import json
+import os
+import re
+import shutil
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 import pytest
 
 HERE = Path(__file__).parent
+REPO_ROOT = HERE.parents[4]
 COMPOSE = ["docker", "compose", "-f", str(HERE / "docker-compose.e2e.yml")]
-CORE_SERVICES = ["redis", "identity-stub", "fakeidp", "authenticator", "echo", "gateway"]
+CORE_SERVICES = ["redis", "identity-stub", "keycloak", "authenticator", "echo", "gateway"]
 
 GW = "http://localhost:18080"
-FAKEIDP = "http://localhost:18084"
+KEYCLOAK = "http://localhost:18084"
 AUTHENTICATOR = "http://localhost:18083"
 
-# In-network hostnames the authenticator emits in redirects -> published ports.
-REWRITES = {"http://gateway:8080": GW, "http://fakeidp:8084": FAKEIDP}
+# In-network hostnames the authenticator and Keycloak emit in redirects and
+# form actions -> published ports.
+REWRITES = {"http://gateway:8080": GW, "http://keycloak:8085": KEYCLOAK}
+
+KC_REALM = "insight"
+KC_DISCOVERY = f"{KEYCLOAK}/realms/{KC_REALM}/.well-known/openid-configuration"
+# The realm's dev-lead persona; the generator bakes one dev password for all users.
+E2E_USER = "dev@company.nonpresent"
+E2E_PASSWORD = "insight-dev"
+# The generator requires a tenant; the identity-stub resolves any external id,
+# so the value only has to be named.
+TENANT_ID = "00000000-df51-5b42-9538-d2b56b7ee953"
+
+# Anchored on login-actions/authenticate, not "the first <form>".
+_LOGIN_FORM = re.compile(r'<form[^>]+action="([^"]*login-actions/authenticate[^"]*)"', re.IGNORECASE)
+
+
+class _SendSecureOverHttp(http.cookiejar.DefaultCookiePolicy):
+    """Keycloak marks its auth-session cookies Secure even over plain http, and
+    the stdlib jar then refuses to send them back over the rig's published http
+    port — the credential POST would arrive session-less and 400. A browser at
+    http://localhost has no such problem (secure context)."""
+
+    def return_ok_secure(self, cookie, request):
+        return True
+
 
 # Must match the authenticator's authz_cache_max_age_seconds in the compose file.
 AUTHZ_CACHE_MAX_AGE = 3
@@ -41,16 +74,25 @@ def _compose(*args: str, check: bool = True) -> subprocess.CompletedProcess:
 
 class GatewayClient:
     """Minimal HTTP client: no auto-redirects, case-insensitive headers, and an
-    OIDC login helper that rewrites in-network redirect hosts to localhost."""
+    OIDC login helper that drives Keycloak's HTML login form, rewriting
+    in-network redirect hosts to localhost."""
 
-    def request(self, url, headers=None, method="GET"):
-        req = urllib.request.Request(url, headers=headers or {}, method=method)
+    def request(self, url, headers=None, method="GET", data=None, jar=None):
+        body = None
+        hdrs = dict(headers or {})
+        if data is not None:
+            body = urllib.parse.urlencode(data).encode()
+            hdrs["Content-Type"] = "application/x-www-form-urlencoded"
+        req = urllib.request.Request(url, headers=hdrs, method=method, data=body)
 
         class _NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, *a, **k):
                 return None
 
-        opener = urllib.request.build_opener(_NoRedirect)
+        handlers: list = [_NoRedirect]
+        if jar is not None:
+            handlers.append(urllib.request.HTTPCookieProcessor(jar))
+        opener = urllib.request.build_opener(*handlers)
         try:
             resp = opener.open(req, timeout=15)
             return resp.status, self._lower(resp.headers), resp.read()
@@ -68,9 +110,27 @@ class GatewayClient:
         return url
 
     def login(self):
-        """Drive the OIDC code flow through the gateway; return the __Host-sid value."""
+        """Drive the OIDC code flow through the gateway; return the __Host-sid value.
+
+        Keycloak serves a real HTML login form, so the middle of the chain is:
+        GET the authorize URL (collecting the IdP's auth-session cookies), parse
+        the form action, POST the credentials, then deliver the code redirect to
+        the gateway callback.
+        """
         _, h, _ = self.request(f"{GW}/auth/login?return_to=/")
-        _, h, _ = self.request(self._rewrite(h["location"]))  # fakeidp /authorize
+
+        jar = http.cookiejar.CookieJar(policy=_SendSecureOverHttp())
+        status, _, body = self.request(self._rewrite(h["location"]), jar=jar)
+        assert status == 200, f"authorize expected the login form, got {status}"
+        match = _LOGIN_FORM.search(body.decode())
+        assert match, "no Keycloak login form in the authorize response"
+        action = self._rewrite(match.group(1).replace("&amp;", "&"))
+
+        status, h, _ = self.request(
+            action, method="POST", data={"username": E2E_USER, "password": E2E_PASSWORD}, jar=jar
+        )
+        assert status == 302, f"credential POST expected 302, got {status}"
+
         status, h, _ = self.request(self._rewrite(h["location"]))  # gateway /auth/callback
         assert status == 302, f"callback expected 302, got {status}"
         for part in h.get("set-cookie", "").split(";"):
@@ -102,6 +162,33 @@ def _wait_http(url, want, timeout_s=90):
             pass
         time.sleep(1)
     raise TimeoutError(f"not ready: {url} (last={last})")
+
+
+def _generate_realm(import_dir: Path) -> None:
+    """Generate the Keycloak import realm with `insight-seed-realm`.
+
+    The redirect is passed explicitly: --authenticator-redirect REPLACES the
+    defaults, which would deregister the gateway callback."""
+    seed = REPO_ROOT / "src" / "ingestion" / "tools" / "seed"
+    import_dir.mkdir(exist_ok=True)
+    subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(seed),
+            "insight-seed-realm",
+            "--dev-email",
+            E2E_USER,
+            "--authenticator-redirect",
+            "http://gateway:8080/auth/callback",
+            "--out",
+            str(import_dir / "realm-insight.json"),
+        ],
+        check=True,
+        capture_output=True,
+        env={**os.environ, "TENANT_DEFAULT_ID": TENANT_ID},
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -153,8 +240,14 @@ def stack():
         capture_output=True,
     )
     (keys / "testclient.pub.pem").chmod(0o644)
+    kc_import = HERE / "keycloak-import"
+    _generate_realm(kc_import)
     try:
         _compose("up", "-d", "--build", *CORE_SERVICES)
+        # Keycloak start + realm import runs tens of seconds; the realm
+        # discovery document answers only once its import committed. The
+        # authenticator discovers per-op, so it needs no restart after this.
+        _wait_http(KC_DISCOVERY, want={200}, timeout_s=240)
         _wait_http(f"{GW}/healthz", want={200})
         _wait_http(f"{GW}/auth/login", want={302})  # 302 once the authenticator is reachable
         yield
@@ -164,6 +257,7 @@ def stack():
         for leftover in ("current.pem", "testclient.key.pem", "testclient.pub.pem"):
             (keys / leftover).unlink(missing_ok=True)
         keys.rmdir()
+        shutil.rmtree(kc_import, ignore_errors=True)
 
 
 @pytest.fixture

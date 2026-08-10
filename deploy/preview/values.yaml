@@ -15,7 +15,7 @@ podAnnotations: {}
 
 # The FE image. Only the FE varies per experiment; the backend never does.
 image:
-  repository: ghcr.io/constructorfabric/insight-front
+  repository: ghcr.io/constructorfabric/insight-frontend
   tag: "" # REQUIRED per experiment (a build tag; rendered as repository:tag). No `:latest` default.
   pullPolicy: IfNotPresent
 

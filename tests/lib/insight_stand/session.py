@@ -151,7 +151,7 @@ class LoginSession:
         if response.status_code not in (301, 302, 303, 307, 308) or not location:
             raise LoginNotCompletedError(
                 f"GET {self.login_path} did not redirect to the IdP "
-                f"(status {response.status_code}); is AUTH_MODE=keycloak on this stand?",
+                f"(status {response.status_code})",
                 stopped_at=str(response.url),
             )
         return str(location)

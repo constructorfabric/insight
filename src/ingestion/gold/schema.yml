@@ -425,6 +425,7 @@ models:
                 values:
                   - tasks_closed
                   - bugs_fixed
+                  - closed_non_bug
                   - due_date_on_time
                   - due_date_with_due
                   - slip_days_total
@@ -452,8 +453,11 @@ models:
         description: "Unused by this family (no distinct-count measure); always NULL."
       - name: dimensions
         description: >
-          Array(Tuple(key, value, label)). Empty for every task measure — the
-          family carries no breakdown dimension.
+          Array(Tuple(key, value, label)). Per-issue count measures carry `type`
+          — the issue type, keyed on its locale-independent name and labelled
+          with its display name, so the closed-issue total splits into parts that
+          add back up to it. An issue whose type is not reported at all falls in
+          `__unknown__`. Empty for the day-grain and duration measures.
 
   - name: task_issue_state
     description: >
@@ -564,6 +568,54 @@ models:
         description: >
           Array(Tuple(key, value, label)). Empty for every wiki measure — the
           family carries no breakdown dimension.
+
+  - name: account_attribute_values
+    description: >
+      Effective-dated person-attribute values per stable source account, built
+      deterministically from silver.class_person_attribute_claims. Half-open
+      validity [valid_from, valid_to); valid_to IS NULL is the currently
+      effective value; a cleared attribute has no current row. Carries NO
+      canonical person_id by design: account facts stay independent of person
+      assignment, which is joined at query time, so identity corrections never
+      rebuild this relation. Interval disjointness is asserted by
+      tests/hr/assert_account_attribute_values_no_overlap.sql.
+    columns:
+      - name: insight_tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: insight_source_type
+        description: "Source system discriminator (bamboohr, workday, ms-entra, active-directory)"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: source_account_id
+        description: "Stable native source-account identifier"
+        tests:
+          - not_null
+      - name: field_id
+        description: "Source field key exactly as delivered; source-instance scoped"
+        tests:
+          - not_null
+      - name: value_id
+        description: "Immutable source value identifier when available; NULL for all current HR sources"
+      - name: value_label
+        description: "Exact source value effective over the interval"
+        tests:
+          - not_null
+      - name: valid_from
+        description: "Inclusive start of validity"
+        tests:
+          - not_null
+      - name: valid_to
+        description: "Exclusive end of validity; NULL = currently effective"
+      - name: ingested_at
+        description: "Ingestion watermark of the opening claim"
+        tests:
+          - not_null
 
   - name: metric_entity_cohorts_current
     description: >

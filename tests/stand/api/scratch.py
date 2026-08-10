@@ -28,7 +28,7 @@ from typing import Final
 
 from insight_stand import ANALYTICS_PREFIX, ApiClient, analytics_path, identity_path
 
-from .schemas import ListResponse, SavedQuery
+from .schemas import CustomMetric, ListResponse, SavedQuery
 
 #: A listing reduced to the two fields the sweep needs. Deliberately not the
 #: real per-resource models: this walks four listings across two services
@@ -54,6 +54,30 @@ UNKNOWN_ID: Final[str] = "01900000-0000-7000-8000-000000000000"
 #: `Path<Uuid>`, whose deserialization failure is a 400 raised before any
 #: handler logic runs.
 NON_UUID: Final[str] = "not-a-uuid"
+
+#: A well-formed dotted metric_key nothing claims, for the unknown-key 404 cases.
+#: NOT a UUID: `/v1/metrics/{metric_key}` binds `Path<String>`, so an unknown key
+#: is a handler 404, never a path-parse 400.
+UNKNOWN_METRIC_KEY: Final[str] = "example.absent_metric"
+
+#: Observation SQL that the single-SELECT gate accepts and the author-time column
+#: probe passes: one read emitting every observation-contract column, wrapped by
+#: the compiler as `FROM (<sql>)`. Self-contained so it runs on any ClickHouse —
+#: `system.one` has exactly one row — and carries only synthetic placeholder data.
+SCRATCH_OBSERVATION_SQL: Final[str] = (
+    "SELECT "
+    "generateUUIDv4() AS tenant_id, "
+    "'scratch' AS source_key, "
+    "'person' AS entity_type, "
+    "'' AS entity_id, "
+    "toDate('2026-01-01') AS metric_date, "
+    "'events' AS measure_key, "
+    "now() AS observed_at, "
+    "toFloat64(0) AS value, "
+    "'' AS subject_key, "
+    "map('bucket', 'default') AS dimensions "
+    "FROM system.one"
+)
 
 #: Names handed out this session, checked for survivors at the end.
 _ISSUED: set[str] = set()
@@ -118,6 +142,60 @@ def create_saved_query(client: ApiClient, tag: str, sql: str = SCRATCH_QUERY_REF
     assert query.name == name
     assert query.sql == sql
     return query
+
+
+def scratch_metric_identity(tag: str) -> tuple[str, str]:
+    """A fresh, attributable `(metric_key, source_key)` for this run.
+
+    Both carry `RUN_TAG` so a leak points back at the run that made it. The key
+    is a dotted `family.name` and the source key is a simple snake_case name,
+    each starting `[a-z]` — the shapes `validate_graph` requires.
+    """
+    slug = f"scratch_{RUN_TAG}_{tag}_{uuid.uuid4().hex[:8]}"
+    return f"example.{slug}", slug
+
+
+def custom_metric_body(metric_key: str, source_key: str) -> dict[str, object]:
+    """A minimal valid custom-metric graph: a sum over one measure.
+
+    The create/import/update body. Callers mutate a copy for the rejection cases
+    — a bad key, a non-single-select statement, or SQL that omits a contract
+    column.
+    """
+    return {
+        "metric_key": metric_key,
+        "label": "Scratch probe metric",
+        "entity_type": "person",
+        "format": "integer",
+        "direction": "neutral",
+        "computation": "sum",
+        "source_key": source_key,
+        "observation_sql": SCRATCH_OBSERVATION_SQL,
+        "measures": ["events"],
+        "dimensions": [],
+        "inputs": [{"role": "value", "measure_key": "events"}],
+    }
+
+
+def create_custom_metric(client: ApiClient, tag: str) -> CustomMetric:
+    """`POST /v1/metrics` → 201, validated. The caller hard-deletes it.
+
+    The metric is registered for the survivor sweep by its `metric_key`: a custom
+    metric is removed rather than temporal, so mere presence at session end is a
+    leak.
+    """
+    metric_key, source_key = scratch_metric_identity(tag)
+    response = client.post(
+        analytics_path("/v1/metrics"),
+        json_body=custom_metric_body(metric_key, source_key),
+    )
+    assert response.status_code == 201, (
+        f"create custom metric: status={response.status_code} body={response.text[:300]}"
+    )
+    metric = response.parse(CustomMetric)
+    assert metric.metric_key == metric_key
+    track(analytics_path("/v1/metrics"), "metric_key", metric_key)
+    return metric
 
 
 #: Named resources, and the listing that would still show a leaked one.
@@ -188,11 +266,16 @@ def surviving_scratch_rows(*, analytics: ApiClient, identity: ApiClient) -> list
 __all__: Sequence[str] = (
     "NON_UUID",
     "RUN_TAG",
+    "SCRATCH_OBSERVATION_SQL",
     "SCRATCH_PREFIX",
     "SCRATCH_QUERY_REF",
     "UNKNOWN_ID",
+    "UNKNOWN_METRIC_KEY",
+    "create_custom_metric",
     "create_saved_query",
+    "custom_metric_body",
     "issued_names",
+    "scratch_metric_identity",
     "scratch_name",
     "surviving_scratch_rows",
     "track",

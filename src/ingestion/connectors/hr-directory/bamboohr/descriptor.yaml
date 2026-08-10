@@ -1,8 +1,18 @@
 name: bamboohr
-version: "2026.05.04"
+type: cdk
+version: "1.1.0"
 schedule: 0 4 * * *
 dbt_select: tag:bamboohr+
 workflow: sync
+# CI build metadata + runtime image ref (ADR-0016). bump-descriptors keeps
+# images.cdk.image pinned to the tag built by each main run; reconcile
+# WARN+skips this connector whenever the ref is empty.
+images:
+  cdk:
+    name: source-bamboohr-insight
+    dockerfile: ./Dockerfile
+    context: .
+    image: "ghcr.io/constructorfabric/source-bamboohr-insight:2026.08.07.07.40-d6705a5"
 connection:
   namespace: bronze_bamboohr
 secret:

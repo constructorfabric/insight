@@ -588,6 +588,7 @@ task_tracker_field_history.author_id
 | `task_tracker_field_history` (status field) | Cycle time: first `In Progress` to first `Done` |
 | `task_tracker_field_history` (status field) | Status periods: time between consecutive status events |
 | `class_task_statuses` (joined in Gold on `value_ids[1]`) | Close detection: an issue/event is "done" when `status_category = 'done'`. Gold (`task_issue_current_state`, `task_status_intervals`) joins the status dimension and matches no label. Replaces the hardcoded `status_name IN ('Closed','Resolved','Verified')` (issue #1541). Cycle-time / status-period rows above read the same `status_category`. (Future: move the join into a Silver `task_tracker_status_history` so Gold joins nothing.) |
+| `class_task_issuetypes` (joined in Gold on the issue's type id) | Bug identification: an issue is bug work when `issue_kind = 'bug'`, known non-bug work when `issue_kind = 'other'`, and otherwise reported as an unclassified type. Gold matches no type display name, which is per-instance and per-language. Each per-source projection reconciles its own naming (Jira `untranslatedName`; YouTrack Type-bundle value names) to the same enum, so Gold carries no per-source type logic. |
 | `task_tracker_field_history` (assignee field) | WIP: count of active issues per person at any point |
 | `task_tracker_field_history` (sprint field) | Sprint velocity: story points completed per sprint |
 | `task_tracker_worklogs` | Worklog hours per person per project |

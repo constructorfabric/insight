@@ -5,7 +5,8 @@
 # pytest suite (conftest.py + test_gateway.py). This just runs pytest from the
 # tests directory; pass extra pytest args through (e.g. `-k revocation -v`).
 #
-# Requires: docker, openssl, and pytest (`pip install pytest`).
+# Requires: docker, openssl, pytest (`pip install pytest`), and uv (conftest
+# generates the Keycloak import realm with `uv run ... insight-seed-realm`).
 set -euo pipefail
 
 cd "$(dirname "$0")"

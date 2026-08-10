@@ -10,6 +10,47 @@
 use sqlparser::ast::Statement;
 use sqlparser::dialect::ClickHouseDialect;
 use sqlparser::parser::Parser;
+use sqlparser::tokenizer::{Token, Tokenizer};
+
+/// Table functions a custom observation source may not call. These reach data
+/// outside the read-only warehouse contract — remote/clustered nodes, external
+/// systems, and the local filesystem — so a custom SQL that used one could
+/// exfiltrate to, or read tenant-crossing data from, a source the
+/// `presentation_ro` grants and the outer tenant predicate cannot govern.
+/// Matched case-insensitively as a bare `name(` call token pair.
+const DENIED_TABLE_FUNCTIONS: &[&str] = &[
+    "remote",
+    "remotesecure",
+    "cluster",
+    "clusterallreplicas",
+    "url",
+    "urlcluster",
+    "file",
+    "filecluster",
+    "s3",
+    "s3cluster",
+    "gcs",
+    "hdfs",
+    "hdfscluster",
+    "azureblobstorage",
+    "azureblobstoragecluster",
+    "mysql",
+    "postgresql",
+    "jdbc",
+    "odbc",
+    "mongodb",
+    "redis",
+    "sqlite",
+    "deltalake",
+    "deltalakecluster",
+    "hudi",
+    "hudicluster",
+    "iceberg",
+    "icebergcluster",
+    "executable",
+    "merge",
+    "dictionary",
+];
 
 /// Reject anything that is not a single read statement (`SELECT`/`WITH`).
 /// Returns a short, user-facing reason on rejection.
@@ -27,9 +68,104 @@ pub fn validate_single_select(sql: &str) -> Result<(), String> {
     }
 }
 
+/// Gate a custom observation source's SQL: a single read (as above) that calls
+/// no external/remote table function. The compiler wraps this SQL as
+/// `FROM (<sql>)` and executes it as `presentation_ro`; the outer tenant
+/// predicate filters the rows it *emits*, not the tables it *reads*, so denying
+/// the functions that escape the warehouse contract is what keeps a custom
+/// source inside the same boundary a managed one has. Tenant-row isolation of
+/// the warehouse relations themselves is the authorship-trust + experimental
+/// gate, the same posture as the saved-query console.
+pub fn validate_custom_observation_sql(sql: &str) -> Result<(), String> {
+    validate_single_select(sql)?;
+
+    if let Some(name) = first_denied_table_function(sql) {
+        return Err(format!(
+            "table function `{name}` is not allowed in a custom observation source"
+        ));
+    }
+
+    Ok(())
+}
+
+/// Return the first denied table-function name called in `sql`, if any. A call
+/// is a denied identifier token immediately followed by `(`; a column or alias
+/// merely *named* like one is not (it is not followed by a paren).
+fn first_denied_table_function(sql: &str) -> Option<String> {
+    let tokens = Tokenizer::new(&ClickHouseDialect {}, sql).tokenize().ok()?;
+
+    let mut significant = tokens
+        .iter()
+        .filter(|token| !matches!(token, Token::Whitespace(_)));
+
+    let mut previous: Option<&Token> = None;
+    for token in significant.by_ref() {
+        if !matches!(token, Token::LParen) {
+            previous = Some(token);
+            continue;
+        }
+        if let Some(Token::Word(word)) = previous {
+            let lowered = word.value.to_ascii_lowercase();
+            if DENIED_TABLE_FUNCTIONS.contains(&lowered.as_str()) {
+                return Some(word.value.clone());
+            }
+        }
+        previous = Some(token);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
+    use super::validate_custom_observation_sql as custom;
     use super::validate_single_select as check;
+
+    #[test]
+    fn custom_gate_accepts_a_contract_shaped_read() {
+        assert!(
+            custom(
+                "SELECT tenant_id, source_key, entity_type, entity_id, metric_date, measure_key, \
+                 observed_at, value, subject_key, dimensions FROM silver.a JOIN gold.b USING (id)"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn custom_gate_rejects_external_table_functions() {
+        for sql in [
+            "SELECT * FROM remote('host:9000', db.t)",
+            "SELECT * FROM url('http://x/y', CSV)",
+            "SELECT * FROM file('/etc/passwd', CSV)",
+            "SELECT * FROM s3('s3://bucket/key', CSV)",
+            "SELECT * FROM mysql('h', 'db', 't', 'u', 'p')",
+            "WITH x AS (SELECT * FROM cluster('c', system.one)) SELECT * FROM x",
+            "SELECT * FROM MERGE(currentDatabase(), '.*')",
+            // The *Cluster variants run the same reader across cluster nodes.
+            "SELECT * FROM fileCluster('c', '/x', CSV)",
+            "SELECT * FROM s3Cluster('c', 's3://b/k', CSV)",
+            "SELECT * FROM azureBlobStorageCluster('c', 'conn', 'ct', 'b')",
+            "SELECT * FROM icebergCluster('c', 's3://b/k')",
+            "SELECT * FROM deltaLakeCluster('c', 's3://b/k')",
+            "SELECT * FROM hudiCluster('c', 's3://b/k')",
+        ] {
+            assert!(custom(sql).is_err(), "must reject external source: {sql:?}");
+        }
+    }
+
+    #[test]
+    fn custom_gate_allows_a_column_named_like_a_function() {
+        // A denied name only matters as a `name(` call; a column or alias that
+        // merely shares the name is not a table function.
+        assert!(custom("SELECT file FROM gold.events").is_ok());
+        assert!(custom("SELECT value AS url FROM gold.events").is_ok());
+    }
+
+    #[test]
+    fn custom_gate_still_enforces_single_select() {
+        assert!(custom("SELECT 1; DROP TABLE t").is_err());
+        assert!(custom("INSERT INTO t VALUES (1)").is_err());
+    }
 
     #[test]
     fn accepts_read_queries() {

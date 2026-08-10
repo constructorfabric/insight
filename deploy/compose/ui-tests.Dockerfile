@@ -8,7 +8,8 @@
 #   docker run --rm --network container:insight-gateway \
 #     -e INSIGHT_STAND_BASE_URL=http://localhost:8080 \
 #     -e INSIGHT_STAND_PERSONA_PASSWORD=... \
-#     -v "$PWD/deploy/seed/manifest.json:/deploy/seed/manifest.json:ro" \
+#     -v "$PWD/src/ingestion/tools/seed/manifest.json:/stand/manifest.json:ro" \
+#     -e INSIGHT_STAND_MANIFEST=/stand/manifest.json \
 #     insight-ui-tests:dev
 #
 # The network namespace is shared with the gateway rather than joining the

@@ -332,21 +332,29 @@ this file and the registry disagree.
 - Shape: integer, neutral, unit meetings
 - Notes: Scheduled meetings a person attended. Reported only by tools that distinguish ad-hoc from scheduled meetings.
 
-## tasks.closed — Tasks closed
+## tasks.closed — Issues closed
 
 - Source: task (task_metric_observations)
 - Reads: tasks_closed
 - Formula: sum(tasks_closed)
-- Shape: integer, higher_is_better, unit tasks
-- Notes: Tasks a person moved into a closed status during the period.
+- Shape: integer, higher_is_better, unit issues
+- Notes: All issues a person moved into a closed status during the period. Bugs are part of this number and are listed separately by type.
 
-## tasks.bugs_fixed — Bugs fixed
+## tasks.bugs_fixed — Bugs closed
 
 - Source: task (task_metric_observations)
 - Reads: bugs_fixed
 - Formula: sum(bugs_fixed)
-- Shape: integer, higher_is_better, unit tasks
-- Notes: Bug-type tasks a person closed during the period.
+- Shape: integer, higher_is_better, unit issues
+- Notes: Issues of a bug type a person closed during the period. Part of issues closed, not a separate total.
+
+## tasks.closed_non_bug — Non-bug issues closed
+
+- Source: task (task_metric_observations)
+- Reads: closed_non_bug
+- Formula: sum(closed_non_bug)
+- Shape: integer, higher_is_better, unit issues
+- Notes: Issues of a known non-bug type a person closed during the period. Issues whose type cannot be determined are excluded rather than counted here.
 
 ## tasks.dev_time — Development time
 
@@ -354,7 +362,7 @@ this file and the registry disagree.
 - Reads: dev_time_hours
 - Formula: median(dev_time_hours)
 - Shape: decimal, lower_is_better, unit h
-- Notes: Median time closed tasks spent in in-progress statuses, from first pickup to close.
+- Notes: Median time closed issues spent in in-progress statuses, from first pickup to close.
 
 ## tasks.resolution_time — Time to resolution
 
@@ -362,7 +370,7 @@ this file and the registry disagree.
 - Reads: resolution_days
 - Formula: median(resolution_days)
 - Shape: decimal, lower_is_better, unit d
-- Notes: Median time from task creation to close.
+- Notes: Median time from issue creation to close.
 
 ## tasks.pickup_time — Pickup time
 
@@ -370,7 +378,7 @@ this file and the registry disagree.
 - Reads: pickup_days
 - Formula: median(pickup_days)
 - Shape: decimal, lower_is_better, unit d
-- Notes: Median time from task creation to first entering an in-progress status.
+- Notes: Median time from issue creation to first entering an in-progress status.
 
 ## tasks.flow_efficiency — Flow efficiency
 
@@ -378,7 +386,7 @@ this file and the registry disagree.
 - Reads: flow_dev_seconds, flow_lead_seconds
 - Formula: 100 * (flow_dev_seconds / flow_lead_seconds) -> x, clamped to <= 100
 - Shape: percent, higher_is_better
-- Notes: Time in active development as a share of total task lifetime, across closed tasks.
+- Notes: Time in active development as a share of total issue lifetime, across closed issues.
 
 ## tasks.reopen_rate — Reopen rate
 
@@ -386,7 +394,7 @@ this file and the registry disagree.
 - Reads: reopened_within_14d, close_events
 - Formula: 100 * (reopened_within_14d / close_events)
 - Shape: percent, lower_is_better
-- Notes: Share of task closes followed by a reopen within 14 days.
+- Notes: Share of issue closes followed by a reopen within 14 days.
 
 ## tasks.due_date_compliance — Due date compliance
 
@@ -394,7 +402,7 @@ this file and the registry disagree.
 - Reads: due_date_on_time, due_date_with_due
 - Formula: 100 * (due_date_on_time / due_date_with_due)
 - Shape: percent, higher_is_better
-- Notes: Share of tasks that had a due date and were closed on or before it.
+- Notes: Share of issues that had a due date and were closed on or before it.
 
 ## tasks.on_time_delivery — On-time delivery
 
@@ -402,7 +410,7 @@ this file and the registry disagree.
 - Reads: due_date_on_time, tasks_closed
 - Formula: 100 * (due_date_on_time / tasks_closed)
 - Shape: percent, higher_is_better
-- Notes: Share of all closed tasks that were closed on or before their due date.
+- Notes: Share of all closed issues that were closed on or before their due date.
 
 ## tasks.avg_slip — Average slip
 
@@ -410,7 +418,7 @@ this file and the registry disagree.
 - Reads: slip_days_total, late_count
 - Formula: slip_days_total / late_count
 - Shape: decimal, lower_is_better, unit d
-- Notes: Average days past the due date for tasks closed late.
+- Notes: Average days past the due date for issues closed late.
 
 ## tasks.estimation_accuracy — Estimation accuracy
 
@@ -426,23 +434,23 @@ this file and the registry disagree.
 - Reads: worklog_seconds, in_progress_seconds
 - Formula: 100 * (worklog_seconds / in_progress_seconds) -> x, clamped to <= 100
 - Shape: percent, higher_is_better
-- Notes: Logged work time as a share of time tasks spent in in-progress statuses.
+- Notes: Logged work time as a share of time issues spent in in-progress statuses.
 
-## tasks.bugs_ratio — Bug ratio
+## tasks.bugs_ratio — Bugs share of closed issues
 
 - Source: task (task_metric_observations)
 - Reads: bugs_fixed, tasks_closed
 - Formula: 100 * (bugs_fixed / tasks_closed)
 - Shape: percent, lower_is_better
-- Notes: Bug-type tasks as a share of all closed tasks.
+- Notes: Bug-type issues as a share of all closed issues, issues of an undetermined type included in the denominator. A share, so it cannot exceed 100%.
 
 ## tasks.stale_in_progress — Stale in progress
 
 - Source: task (task_metric_observations)
 - Reads: stale_in_progress
 - Formula: sum(stale_in_progress)
-- Shape: integer, lower_is_better, unit tasks
-- Notes: Open tasks with no status change in more than 14 days.
+- Shape: integer, lower_is_better, unit issues
+- Notes: Open issues with no status change in more than 14 days.
 
 ## wiki.pages_created — Pages created
 

@@ -87,11 +87,12 @@ pub struct VisibilityListResponse {
 impl toolkit::api::api_dto::ResponseApiDto for VisibilityListResponse {}
 
 /// Optional `DELETE` body carrying a revoke reason.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct RevokeReasonRequest {
     #[serde(default)]
     pub reason: Option<String>,
 }
+impl toolkit::api::api_dto::RequestApiDto for RevokeReasonRequest {}
 
 #[derive(Debug, Deserialize)]
 pub struct ListParams {

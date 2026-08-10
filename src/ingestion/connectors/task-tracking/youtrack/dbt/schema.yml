@@ -47,6 +47,8 @@ models:
     description: "Per-source projection of YouTrack project-scoped custom-field catalog. Unioned into silver.class_task_field_metadata."
   - name: youtrack__task_statuses
     description: "Per-source status dimension: YouTrack State-bundle values → status_category (isResolved→done). Unioned into silver.class_task_statuses. See issue #1541."
+  - name: youtrack__task_issuetypes
+    description: "Per-source issue-type dimension: YouTrack Type-bundle values → issue_kind. Unioned into silver.class_task_issuetypes."
 
   # Profile / identity trio (mirrors jira + bamboohr): snapshot → fields_history → identity_inputs.
   - name: youtrack__users_snapshot

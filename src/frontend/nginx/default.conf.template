@@ -1,5 +1,5 @@
 map $sent_http_content_type $csp_header {
-    default "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'";
+    default "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ${SENTRY_CONNECT_SRC}; frame-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'";
 }
 
 server {
@@ -15,9 +15,8 @@ server {
     # location block that declares its own add_header (nginx replaces rather
     # than merges across levels). CSP: 'unsafe-inline' for style-src is
     # required for React inline styles + recharts; tighten via nonce in a
-    # later iteration. The SPA is same-origin only (it calls /api/* and
-    # /auth/* through the gateway that fronts this container), so connect-src
-    # and frame-src stay at 'self'.
+    # later iteration. The SPA reaches /api/* and /auth/* through the gateway
+    # that fronts this container, so 'self' covers them.
     include /etc/nginx/snippets/security-headers.conf;
 
     # MSW service worker ships in dist/ from public/ but is inert without

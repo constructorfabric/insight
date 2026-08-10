@@ -67,7 +67,7 @@ describe("<TeamMembersAttention>", () => {
           new Map([
             [
               "alice@example.com",
-              [bottomEntry("Tasks closed", 1), bottomEntry("Focus time", 3)],
+              [bottomEntry("Issues closed", 1), bottomEntry("Focus time", 3)],
             ],
           ])
         }

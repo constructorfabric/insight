@@ -88,11 +88,12 @@ pub struct PersonRoleListResponse {
 impl toolkit::api::api_dto::ResponseApiDto for PersonRoleListResponse {}
 
 /// Optional `DELETE` body carrying a revoke reason.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct RevokeReasonRequest {
     #[serde(default)]
     pub reason: Option<String>,
 }
+impl toolkit::api::api_dto::RequestApiDto for RevokeReasonRequest {}
 
 #[derive(Debug, Deserialize)]
 pub struct ListParams {

@@ -36,7 +36,6 @@ Ask the user (skip questions where context already provides the answer):
 Builder-UI-compatible references (OK to copy):
 - `src/ingestion/connectors/collaboration/zoom/connector.yaml`
 - `src/ingestion/connectors/collaboration/m365/connector.yaml`
-- `src/ingestion/connectors/hr-directory/bamboohr/connector.yaml`
 
 **Do NOT copy from**:
 - `src/ingestion/connectors/task-tracking/jira/connector.yaml` — uses whole-object `$ref` (`#/definitions/auth`, `#/definitions/paginator`, `#/streams/N`) which the Builder strict validator rejects. It loads via the CDK runtime but cannot be opened in the Builder UI without full expansion.
@@ -635,7 +634,7 @@ The minor version bump makes reconcile classify the diff as `bump_kind: minor` p
 
 Because that job runs **only on the push to `main`**, a bad version does not fail your PR — it fails after merge and leaves `images.<key>.image` empty, so reconcile WARN+skips the connector and it never deploys (issue #2048). Verify locally before merge with the guard in §3.8; do NOT rely on a green PR.
 
-Existing descriptors that carry legacy non-semver values (`ai/openai`, `collaboration/slack`, `hr-directory/bamboohr` — all `2026.05.04`) are tolerated in place per ADR-0015 §"Legacy non-semver values": they declare no `images:` block, so `bump-descriptors` never sees them. Do NOT "fix" them as drive-by work — reconcile classifies legacy→semver as `bump_kind: migration`, and churning a live connector's version buys nothing.
+Existing descriptors that carry legacy non-semver values (`ai/openai`, `collaboration/slack` — both `2026.05.04`) are tolerated in place per ADR-0015 §"Legacy non-semver values": they declare no `images:` block, so `bump-descriptors` never sees them. Do NOT "fix" them as drive-by work — reconcile classifies legacy→semver as `bump_kind: migration`, and churning a live connector's version buys nothing.
 
 No per-connector wiring in `bump-descriptors` itself. Your descriptor declaring `images:` plus a strict-semver `version:` IS your wiring.
 

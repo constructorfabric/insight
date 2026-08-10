@@ -49,30 +49,21 @@ from insight_stand import ApiClient, Manifest, PersonaSession, identity_path
 
 from ..schemas import IdentityValue
 
-# The dev lead's fixed external id under fakeidp — mirrors
-# `deploy/seed/profiles.py::_FAKEIDP_DEV_LEAD_EXTERNAL_ID`. fakeidp's
-# users.yaml pins its first user's `sub` to this value regardless of which
-# email the dev lead persona was seeded under, so it cannot be derived from
-# the manifest fixture and has to be duplicated here, same as the seed does.
-_FAKEIDP_DEV_LEAD_EXTERNAL_ID = "fakeidp|dev"
-
 
 def _dev_lead_login_id(stand_manifest: Manifest) -> tuple[str, str]:
     """`(source_type, external_id)` the dev lead's login-bootstrap row was
-    seeded under, for whichever IdP this stand runs.
+    seeded under.
 
-    Mirrors `deploy/seed/profiles.py::get_login_id_pairs` /
-    `get_idp_source_type`: on `keycloak` every persona's external id is their
-    own roster uuid; on `fakeidp` only the dev lead can log in at all, under
-    the fixed id above. `capabilities.idp` (`"keycloak"` | `"fakeidp"`) is
-    usable directly as `source_type` because compose always seeds
-    `AUTHENTICATOR_IDP_SOURCE_TYPE` from the same `AUTH_MODE` (see
-    `dev-compose.sh`, `docker-compose.yml`).
+    Mirrors `src/ingestion/tools/seed/profiles.py::get_login_id_pairs` /
+    `get_idp_source_type`: every persona's external id is their own roster
+    uuid (`keycloak_realm` pins each realm user's Keycloak id to it, and
+    Keycloak issues `sub` verbatim). `capabilities.idp` is the identity
+    source_type those rows were written under, so it is usable directly as
+    `source_type` here.
     """
     source_type = stand_manifest.capabilities.idp
     person = stand_manifest.fixture("dev_lead")
-    external_id = person.uuid if source_type == "keycloak" else _FAKEIDP_DEV_LEAD_EXTERNAL_ID
-    return source_type, external_id
+    return source_type, person.uuid
 
 
 @pytest.mark.requires_service_principal
@@ -198,10 +189,15 @@ def test_by_external_id_refuses_a_person(
 
 
 @pytest.mark.requires_service_principal
-def test_by_external_id_of_an_unknown_id_is_404(stand_manifest: Manifest, service_client: ApiClient) -> None:
+def test_by_external_id_of_an_unknown_id_is_404(
+    stand_manifest: Manifest, service_client: ApiClient
+) -> None:
     response = service_client.get(
         "/internal/persons/by-external-id",
-        params={"source_type": stand_manifest.capabilities.idp, "external_id": "nobody-external-id"},
+        params={
+            "source_type": stand_manifest.capabilities.idp,
+            "external_id": "nobody-external-id",
+        },
     )
     assert response.status_code == 404, (
         f"an unknown external id answered {response.status_code} to a service principal: "

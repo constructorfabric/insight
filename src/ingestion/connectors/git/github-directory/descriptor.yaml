@@ -1,0 +1,31 @@
+# GitHub organization directory descriptor.
+#
+# Loaded by insight-toolbox at reconcile time to create/update the Airbyte
+# connection for this connector.
+#
+# Stream: org_members — the GitHub account roster that feeds
+# identity.identity_inputs so GitHub-brokered logins resolve to a person.
+# Deliberately separate from the `github` connector: that one carries
+# repository/PR/commit data and a much larger blast radius, and identity must
+# not wait on it.
+
+name: github-directory
+# Strict semver per ADR-0015.
+version: "1.0.0"
+# `nocode` = declarative-manifest connector (connector.yaml published to the
+# Airbyte builder), as opposed to `cdk`. MUST be `nocode`/absent for
+# declarative connectors: reconcile only branches on `nocode` vs `cdk` — any
+# other value falls through to the cdk image path and fails with no image.
+type: nocode
+schedule: "30 3 * * *"       # 03:30 UTC daily
+workflow: sync               # Argo workflow template: ingestion-pipeline
+
+dbt_select: "tag:github_directory+"
+
+connection:
+  namespace: "bronze_github_directory"
+
+secret:
+  required_fields:
+    - github_token
+    - github_organizations

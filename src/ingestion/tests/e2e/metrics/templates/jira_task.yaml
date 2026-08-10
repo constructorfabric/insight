@@ -273,3 +273,42 @@ templates:
     category_id: 3
     category_name: Done
     category_key: done
+
+  # ── Issue-type lookup (bronze_jira.jira_issuetypes) ──────────────────────
+  # Drives jira__task_issuetypes → silver.class_task_issuetypes. Each seeded
+  # issue references one of these ids in custom_fields_json `issuetype.id`.
+  jira_issuetype:
+    unique_key: null
+    source_id: jira-test
+    tenant_id: "00000000-0000-0000-0000-000000000000"
+    id: null
+    name: null
+    untranslatedName: null
+    collected_at: "2026-01-15T18:00:00.000+0000"
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-01-15T18:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+
+  issuetype_task:
+    $ref: "#/templates/jira_issuetype"
+    unique_key: jira-test-issuetype-10001
+    id: "10001"
+    name: Task
+    untranslatedName: Task
+
+  # Id ends in zero on purpose: a normalising regex over the id would truncate
+  # it and silently drop every bug.
+  issuetype_bug:
+    $ref: "#/templates/jira_issuetype"
+    unique_key: jira-test-issuetype-10000
+    id: "10000"
+    name: Bug
+    untranslatedName: Bug
+
+  issuetype_unclassified:
+    $ref: "#/templates/jira_issuetype"
+    unique_key: jira-test-issuetype-10099
+    id: "10099"
+    name: Incident
+    untranslatedName: Incident

@@ -45,7 +45,19 @@ RUN_AS="$(id -u):$(id -g)"
 
 echo "[${NAME}] discover"
 if [[ "${CONNECTOR_TYPE}" == "cdk" ]]; then
-  SOURCE_IMAGE="$(yq -r '.images.cdk.image' "${DESCRIPTOR}")"
+  SOURCE_IMAGE="$(yq -r '.images.cdk.image // ""' "${DESCRIPTOR}")"
+  if [[ -z "${SOURCE_IMAGE}" || "${SOURCE_IMAGE}" == "null" ]]; then
+    # bump-descriptors pins images.cdk.image only after the branch lands, so on
+    # the branch that introduces a CDK connector there is nothing to pull yet.
+    # Building from the descriptor's own Dockerfile keeps this lane
+    # credential-less and keeps `discover` running against the real connector.
+    DOCKERFILE="$(yq -r '.images.cdk.dockerfile' "${DESCRIPTOR}")"
+    CONTEXT="$(yq -r '.images.cdk.context' "${DESCRIPTOR}")"
+    SOURCE_IMAGE="insight-connectors-ddl/${NAME}:local"
+    echo "[${NAME}] no pinned image ref, building ${SOURCE_IMAGE} from ${DOCKERFILE}"
+    docker build --quiet -t "${SOURCE_IMAGE}" \
+      -f "${CONNECTOR_DIR}/${DOCKERFILE}" "${CONNECTOR_DIR}/${CONTEXT}" >&2
+  fi
   docker run --rm --user "${RUN_AS}" -e HOME=/tmp -v "${WORKDIR}:/work:ro" "${SOURCE_IMAGE}" \
     discover --config /work/config.json \
     > "${WORKDIR}/discover.jsonl" \

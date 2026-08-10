@@ -46,8 +46,7 @@ Generate one fragment:
 `cd src/ingestion/scripts/bootstrap-db && ./generate-connectors-config.sh '<category>/<name>'`.
 
 NEVER "fix" a legacy non-semver version on a connector that declares no
-`images:` block (`ai/openai`, `collaboration/slack`, `hr-directory/bamboohr` —
-all `2026.05.04`). ADR-0015 §"Legacy non-semver values" tolerates them by
+`images:` block (`ai/openai`, `collaboration/slack` — both `2026.05.04`). ADR-0015 §"Legacy non-semver values" tolerates them by
 design; they never reach `bump-descriptors`.
 
 ## Command Routing

@@ -32,12 +32,19 @@ from insight_stand import analytics_path, identity_path
 # resolved — they only have to be well-formed enough to route.
 SOME_ID: Final[str] = "01900000-0000-7000-8000-000000000000"
 
+#: Stand-in for `{metric_key}`, which is a dotted `family.name` string rather
+#: than a UUID. Kept a DOTTED key on purpose: the literal `export`/`import`
+#: segments of the sibling routes must not collide with it, so the template
+#: derives correctly and a literal path wins over this one.
+SOME_METRIC_KEY: Final[str] = "scratch.probe"
+
 #: Stand-in -> the parameter it stands in for. These values are synthetic and
 #: chosen for this purpose, so a path segment equal to one of them IS the
 #: parameter — which is what lets the template be derived rather than declared
 #: twice per row.
 _PARAMETERS: Final[dict[str, str]] = {
     SOME_ID: "{id}",
+    SOME_METRIC_KEY: "{metric_key}",
 }
 
 
@@ -81,7 +88,7 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 10 operations.
+#: analytics — 17 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/queries"),
     _a("POST", "/v1/queries"),
@@ -97,6 +104,16 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     # before content negotiation happens, which is exactly what the sweep
     # asserts about every other one.
     _a("POST", "/v1/metric-drilldown/export"),
+    # Custom-metric CRUD + export/import. `export`/`import` stay literal paths;
+    # `{metric_key}` is a dotted string, so its stand-in is a dotted key and a
+    # literal sibling always wins the template match.
+    _a("GET", "/v1/metrics"),
+    _a("POST", "/v1/metrics"),
+    _a("GET", "/v1/metrics/export"),
+    _a("POST", "/v1/metrics/import"),
+    _a("GET", f"/v1/metrics/{SOME_METRIC_KEY}"),
+    _a("PUT", f"/v1/metrics/{SOME_METRIC_KEY}"),
+    _a("DELETE", f"/v1/metrics/{SOME_METRIC_KEY}"),
 )
 
 #: identity-resolution — 17 operations. `/health` and `/healthz` are the host

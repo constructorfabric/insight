@@ -23,6 +23,26 @@ pub enum NoRefreshTokenPolicy {
     LoginOnly,
 }
 
+/// One host-keyed issuer entry: the issuer and its client registration —
+/// the only per-realm settings; everything else in [`IdpConfig`] is global.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct HostIdpConfig {
+    /// OIDC issuer URL of this host's realm (discovery root; byte-exact match
+    /// against the realm's own discovery document, like the flat `issuer_url`).
+    pub issuer_url: String,
+    /// Confidential-client id registered with this realm.
+    pub client_id: String,
+    /// Confidential-client secret; empty = public client + PKCE.
+    pub client_secret: String,
+    /// The redirect URI registered with this realm's client; empty = the
+    /// global `redirect_uri`.
+    pub redirect_uri: String,
+    /// Fallback tenant for this realm when the id_token carries no tenant
+    /// claim; empty = the global `idp.default_tenant_id`.
+    pub default_tenant_id: String,
+}
+
 /// OIDC provider settings and the background-refresh knobs (§4.1 `idp.*`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -34,8 +54,8 @@ pub struct IdpConfig {
     /// Confidential-client secret (injected per-deployment; never committed).
     pub client_secret: String,
     /// id_token claim naming the user's single tenant. A plain string (an
-    /// array is tolerated: first entry wins). fakeidp/Keycloak emit
-    /// `tenant_id`; Entra emits `tid`.
+    /// array is tolerated: first entry wins). Keycloak emits `tenant_id`;
+    /// Entra emits `tid`.
     pub tenant_claim: String,
     /// The `insight_source_type` this IdP is known to identity-resolution as
     /// (e.g. `ms-entra`) — the connector whose `identity_inputs` seed the
@@ -48,8 +68,8 @@ pub struct IdpConfig {
     /// `source_type` — the join key `identity_inputs` seeded it under (e.g.
     /// Entra's `oid`; the generic OIDC `sub` is NOT the same thing for
     /// directory-backed IdPs, see the `ms-entra` connector schema). Defaults
-    /// to `sub` (fine for IdPs, like fakeidp, where `sub` IS the stable
-    /// directory id).
+    /// to `sub` (fine for IdPs where `sub` IS the stable directory id, e.g.
+    /// Keycloak).
     pub external_id_claim: String,
     /// Fallback tenant when the id_token carries no tenant claim at all (e.g.
     /// Okta). Empty = no fallback: the gateway JWT gets an empty `tenant_id`
@@ -63,6 +83,14 @@ pub struct IdpConfig {
     /// only the default store. Mount the PEM file into the pod and point
     /// this at its path.
     pub extra_ca_cert_path: String,
+    /// Host-keyed issuer map (ADR-0003). Empty (default) = single-issuer
+    /// mode: the flat fields above match EVERY host. Non-empty = exact match
+    /// on the normalized `Host` only, unlisted hosts fail closed, and the
+    /// flat client fields take no part in selection. Keys are bare
+    /// hostnames. Also accepts a JSON string, so one `APP__…__idp__hosts`
+    /// env var carries the whole map (env layers can't nest maps).
+    #[serde(deserialize_with = "de_hosts")]
+    pub hosts: HashMap<String, HostIdpConfig>,
     /// Background refresh of IdP tokens per session (workers land in step 10).
     pub refresh_enabled: bool,
     /// Refresh IdP tokens this long before their expiry.
@@ -89,6 +117,7 @@ impl Default for IdpConfig {
             external_id_claim: "sub".to_owned(),
             default_tenant_id: String::new(),
             extra_ca_cert_path: String::new(),
+            hosts: HashMap::new(),
             refresh_enabled: true,
             refresh_safety_margin_seconds: 60,
             refresh_concurrency: 128,
@@ -358,6 +387,25 @@ fn de_scopes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::E
     })
 }
 
+/// `idp.hosts` deserializes from a native map or a JSON string (the env-var
+/// form — env layers can't express nested maps).
+fn de_hosts<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<HashMap<String, HostIdpConfig>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum MapOrStr {
+        Map(HashMap<String, HostIdpConfig>),
+        Str(String),
+    }
+    match MapOrStr::deserialize(d)? {
+        MapOrStr::Map(m) => Ok(m),
+        MapOrStr::Str(s) if s.trim().is_empty() => Ok(HashMap::new()),
+        MapOrStr::Str(s) => serde_json::from_str(&s)
+            .map_err(|e| serde::de::Error::custom(format!("idp.hosts JSON string: {e}"))),
+    }
+}
+
 impl Default for AuthenticatorConfig {
     fn default() -> Self {
         Self {
@@ -422,20 +470,44 @@ impl AuthenticatorConfig {
         );
 
         // Required fields (all injected per-deployment). `idp.client_secret` is
-        // intentionally optional — public OIDC clients (e.g. the dev fakeidp)
-        // authenticate with PKCE and no secret. `redis_url` is checked in
-        // SessionManager::connect.
+        // intentionally optional — public OIDC clients authenticate with PKCE
+        // and no secret. `redis_url` is checked in SessionManager::connect.
         for (name, value) in [
             ("gateway_issuer", &self.gateway_issuer),
             ("redirect_uri", &self.redirect_uri),
             ("signing_keys_path", &self.signing_keys_path),
             ("identity_url", &self.identity_url),
-            ("idp.issuer_url", &self.idp.issuer_url),
-            ("idp.client_id", &self.idp.client_id),
             ("idp.source_type", &self.idp.source_type),
             ("idp.external_id_claim", &self.idp.external_id_claim),
         ] {
             anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
+        }
+
+        if self.idp.hosts.is_empty() {
+            for (name, value) in [
+                ("idp.issuer_url", &self.idp.issuer_url),
+                ("idp.client_id", &self.idp.client_id),
+            ] {
+                anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
+            }
+        }
+        for (host, entry) in &self.idp.hosts {
+            anyhow::ensure!(
+                !host.trim().is_empty()
+                    && !host.contains('/')
+                    && !host.contains(':')
+                    && !host.chars().any(char::is_whitespace),
+                "idp.hosts key {host:?} must be a bare hostname (no scheme, port, or path)"
+            );
+            for (name, value) in [
+                ("issuer_url", &entry.issuer_url),
+                ("client_id", &entry.client_id),
+            ] {
+                anyhow::ensure!(
+                    !value.trim().is_empty(),
+                    "idp.hosts.{host}.{name} is required (empty)"
+                );
+            }
         }
 
         // `default_return_to` lands verbatim in Location headers (login
@@ -549,6 +621,78 @@ mod tests {
                 ..valid_config()
             };
             assert!(cfg.validate().is_err(), "should reject prefix {bad:?}");
+        }
+    }
+
+    #[test]
+    fn idp_hosts_parses_native_map_and_json_string_shapes() {
+        let yaml = r#"
+issuer_url: ""
+client_id: ""
+source_type: faketest
+hosts:
+  a.example:
+    issuer_url: https://kc.example/realms/a
+    client_id: client-a
+    client_secret: s3cret
+"#;
+        let idp: IdpConfig = serde_yaml::from_str(yaml).expect("map shape parses");
+        assert_eq!(idp.hosts.len(), 1);
+        assert_eq!(
+            idp.hosts["a.example"].issuer_url,
+            "https://kc.example/realms/a"
+        );
+
+        let yaml = r#"
+source_type: faketest
+hosts: '{"b.example": {"issuer_url": "https://kc.example/realms/b", "client_id": "client-b"}}'
+"#;
+        let idp: IdpConfig = serde_yaml::from_str(yaml).expect("JSON-string shape parses");
+        assert_eq!(idp.hosts["b.example"].client_id, "client-b");
+
+        // Empty string = no map (an unset env override must stay degenerate).
+        let idp: IdpConfig = serde_yaml::from_str("hosts: \"\"").expect("empty string parses");
+        assert!(idp.hosts.is_empty());
+
+        // A malformed JSON string fails loudly, never silently degenerate.
+        assert!(serde_yaml::from_str::<IdpConfig>("hosts: '{broken'").is_err());
+    }
+
+    #[test]
+    fn flat_issuer_fields_required_only_without_a_hosts_map() {
+        let mut cfg = valid_config();
+        cfg.idp.issuer_url = String::new();
+        assert!(cfg.validate().is_err(), "flat issuer_url required");
+
+        let entry = HostIdpConfig {
+            issuer_url: "https://kc.example/realms/a".to_owned(),
+            client_id: "client-a".to_owned(),
+            ..HostIdpConfig::default()
+        };
+        let mut cfg = valid_config();
+        cfg.idp.issuer_url = String::new();
+        cfg.idp.client_id = String::new();
+        cfg.idp.hosts = HashMap::from([("a.example".to_owned(), entry.clone())]);
+        assert!(
+            cfg.validate().is_ok(),
+            "map replaces the flat client fields"
+        );
+
+        let mut cfg = valid_config();
+        cfg.idp.hosts = HashMap::from([(
+            "a.example".to_owned(),
+            HostIdpConfig {
+                issuer_url: String::new(),
+                ..entry.clone()
+            },
+        )]);
+        assert!(cfg.validate().is_err(), "entry issuer_url required");
+
+        // Keys must be bare hostnames: no scheme, port, path, or whitespace.
+        for bad in ["https://a.example", "a.example:8443", "a.example/x", "a b"] {
+            let mut cfg = valid_config();
+            cfg.idp.hosts = HashMap::from([(bad.to_owned(), entry.clone())]);
+            assert!(cfg.validate().is_err(), "should reject key {bad:?}");
         }
     }
 

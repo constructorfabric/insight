@@ -26,18 +26,26 @@ name: connectors-ddl
 # secrets and fork PRs validate like any other. The trigger is `pull_request`,
 # never `pull_request_target`.
 #
-# The gate job validates; it never commits. On PR drift the separate regen-pr
-# job delivers the regenerated snapshot as a reviewable stacked PR against the
-# PR's own branch — see its header for the trust boundary. Drift on a main push
-# stays a red run: there is no PR branch to stack onto.
+# The job validates; it never commits and never opens PRs. Drift and parity
+# findings fail the run loudly with the reason and the (credential-less)
+# regeneration recipe; the committed snapshot stays the author's to update.
 
-# TEMPORARILY DISABLED — manual dispatch only. Dependabot-triggered
-# pull_request events receive Dependabot secrets instead of the repository
-# secrets, so every dependabot PR fails the credentials preflight and the lane
-# goes red across the board. Re-enable by restoring the pull_request + push
-# triggers below, together with an actor guard on the gate job:
-#   if: github.actor != 'dependabot[bot]' && (github.event_name == 'push' || ...)
+# Path-filtered: the contracts this lane guards can only move when something
+# under src/ingestion changes (connectors, dbt, migrations, the snapshot, the
+# bootstrap scripts) — or when the lane itself does.
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - src/ingestion/**
+      - .github/workflows/connectors-ddl.yml
+      - .github/workflows/scripts/start-clickhouse.sh
+  push:
+    branches: [main]
+    paths:
+      - src/ingestion/**
+      - .github/workflows/connectors-ddl.yml
+      - .github/workflows/scripts/start-clickhouse.sh
   workflow_dispatch:
 
 concurrency:
@@ -54,10 +62,6 @@ jobs:
     name: connectors-ddl snapshot + field parity
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    outputs:
-      # Written by the drift step before its exit 1 — step outputs survive the
-      # step's own failure, which is how regen-pr below learns it has work.
-      drift: ${{ steps.drift.outputs.drift }}
     env:
       BOOTSTRAP_DIR: src/ingestion/scripts/bootstrap-db
       CLICKHOUSE_CONTAINER: connectors-ddl-clickhouse
@@ -67,11 +71,11 @@ jobs:
       CLICKHOUSE_PASSWORD: insight
       CLICKHOUSE_DATABASE: insight
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           # run-dbt.sh builds its venv from python3.12/3.11 — same major as the
           # toolbox image.
@@ -117,8 +121,7 @@ jobs:
           git add --intent-to-add --all -- src/ingestion/scripts/connectors-ddl
           git diff -- src/ingestion/scripts/connectors-ddl > "$RUNNER_TEMP/connectors-ddl.diff"
           if [[ -s "$RUNNER_TEMP/connectors-ddl.diff" ]]; then
-            echo "drift=true" >> "$GITHUB_OUTPUT"
-            echo "::error title=connectors-ddl snapshot is stale::The regen-pr job opens a pull request against this branch with the regenerated snapshot — review its DDL diff and merge it. Full diff also in the connectors-ddl-drift artifact."
+            echo "::error title=connectors-ddl snapshot is stale::This branch's connectors/dbt/migrations produce different DDL than the committed snapshot. Regenerate and commit it — no credentials needed: the one-block recipe in src/ingestion/scripts/bootstrap-db/README.md (bootstrap-db.sh, then dump-ddl.sh). Full diff below and in the connectors-ddl-drift artifact."
             git diff --stat -- src/ingestion/scripts/connectors-ddl
             head -n 200 "$RUNNER_TEMP/connectors-ddl.diff"
             exit 1
@@ -132,15 +135,6 @@ jobs:
           name: connectors-ddl-drift
           path: ${{ runner.temp }}/connectors-ddl.diff
           if-no-files-found: ignore
-
-      - name: Upload the regenerated snapshot
-        # Input for the regen-pr job below: the freshly dumped *.sql files, not
-        # the diff — the diff may not apply if the author pushes meanwhile.
-        if: failure() && steps.drift.outputs.drift == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: connectors-ddl-regenerated
-          path: src/ingestion/scripts/connectors-ddl/
 
       - name: Field parity
         # Runs even when the snapshot drifted: the two gates are independent, and a
@@ -164,93 +158,3 @@ jobs:
         if: failure()
         run: docker logs --tail 200 "${CLICKHOUSE_CONTAINER}" 2>&1 || true
 
-  # On snapshot drift in a PR, deliver the regenerated snapshot as a REVIEWABLE
-  # stacked pull request against the PR's own branch, saving the author a local
-  # bootstrap run. The author reviews the DDL diff and merges it; that merge is
-  # a human push, so the required checks re-run normally (a bot push with
-  # GITHUB_TOKEN would not trigger them).
-  #
-  # This job never executes code from the PR: it checks out the head branch only
-  # as a git base and replaces the snapshot directory with the artifact the gate
-  # job produced. That separation is why THIS job may hold write tokens while
-  # the gate job runs PR code with contents: read.
-  #
-  # Convergence terminates: the re-dump on an unchanged tree is byte-identical,
-  # so once the regen commit is merged the next run finds no drift.
-  regen-pr:
-    name: Open a regen PR on snapshot drift
-    needs: connectors-ddl
-    # Same-repo only: this job pushes a branch and opens a PR, neither of which
-    # it can do against a fork's head. A fork PR still gets the gate result and
-    # the regenerated snapshot as a downloadable artifact.
-    if: >-
-      always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.connectors-ddl.result == 'failure' && needs.connectors-ddl.outputs.drift == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-      pull-requests: write
-    env:
-      HEAD_REF: ${{ github.event.pull_request.head.ref }}
-      REGEN_BRANCH: regen-ddl/${{ github.event.pull_request.head.ref }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-      DDL_DIR: src/ingestion/scripts/connectors-ddl
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          # This checkout keeps credentials on purpose: the push below uses them.
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: connectors-ddl-regenerated
-          path: ${{ runner.temp }}/regenerated
-
-      - name: Commit the snapshot and push the regen branch
-        id: commit
-        run: |
-          set -euo pipefail
-          # Full replace, not overlay: a relation the code no longer produces
-          # must disappear from the snapshot, and cp alone cannot delete.
-          rm -f "${DDL_DIR}"/*.sql
-          cp "${RUNNER_TEMP}/regenerated"/*.sql "${DDL_DIR}/"
-          git add --all -- "${DDL_DIR}"
-          if git diff --cached --quiet; then
-            # The author pushed a regeneration while the gate was running.
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit --signoff -m "chore(connectors-ddl): regenerate the snapshot for ${HEAD_REF}" \
-            -m "Produced by the connectors-ddl gate from a full bootstrap of this branch: real connector discover, destination-clickhouse, dbt, migrations, then dump-ddl.sh."
-          # Force: this branch is bot-owned and rebuilt from scratch on every
-          # drifting run, so its only history is the latest regeneration.
-          git push --force origin "HEAD:refs/heads/${REGEN_BRANCH}"
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-
-      - name: Open or reuse the stacked PR + sticky comment
-        if: steps.commit.outputs.changed == 'true'
-        run: |
-          set -euo pipefail
-          url="$(gh pr list --head "${REGEN_BRANCH}" --base "${HEAD_REF}" --state open --json url -q '.[0].url // empty')"
-          if [[ -z "${url}" ]]; then
-            url="$(gh pr create --base "${HEAD_REF}" --head "${REGEN_BRANCH}" \
-              --title "chore(connectors-ddl): regenerate the snapshot for ${HEAD_REF}" \
-              --body "The connectors-ddl gate on #${PR_NUMBER} found the committed snapshot stale against what this branch's connectors + dbt + migrations actually produce. This PR carries the regenerated snapshot — review the DDL diff and merge it into \`${HEAD_REF}\`; the gate then re-runs and goes green. Closes automatically if #${PR_NUMBER} is merged without it (the base branch disappears).")"
-          fi
-          echo "regen PR: ${url}"
-
-          marker='<!-- connectors-ddl-regen-pr -->'
-          body="$(printf '%s\n### :robot: connectors-ddl snapshot drift\n\n%s\n\n%s' \
-            "${marker}" \
-            "The committed snapshot does not match what this branch actually produces. The regenerated snapshot is waiting in ${url} — review the DDL diff there and merge it into this branch; the gate re-runs on your merge." \
-            "_Refreshed on every drifting gate run (the regen branch is force-pushed), so it reflects this branch as of the last completed run._")"
-          existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
-            -q "[.[] | select(.body | startswith(\"${marker}\"))][0].id // empty")"
-          if [[ -z "${existing}" ]]; then
-            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="${body}" > /dev/null
-          else
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="${body}" > /dev/null
-          fi

@@ -25,7 +25,7 @@ tests_stand:
   dependency_manager: "uv"
   lockfile: "tests/uv.lock"
   notes: >-
-    The Python floor matches deploy/seed/pyproject.toml, whose manifest and PROFILE renderer this suite reads. uv provisions that interpreter in every runner, including inside the ui-tests image whose own system Python is older, so the floor holds everywhere rather than being a host-only aspiration. Still outstanding: every GitHub Actions workflow pins python-version "3.12", below this floor — reconciling that is CI enablement's job, not a reason to lower the suite. #magic___^_^___line
+    This suite owns its Python floor: it reads the seeder's manifest as data and imports none of its modules, so the seeder's lower 3.12 floor (it ships inside the 3.12 toolbox image) does not bind here. uv provisions that interpreter in every runner, including inside the ui-tests image whose own system Python is older, so the floor holds everywhere rather than being a host-only aspiration. Still outstanding: every GitHub Actions workflow pins python-version "3.12", below this floor — reconciling that is CI enablement's job, not a reason to lower the suite. #magic___^_^___line
 # Browser runner image for tests/stand — deploy/compose/ui-tests.Dockerfile.
 # Both images pinned by tag AND digest so a rebuild cannot drift. Resolved
 # 2026-07-31 from the registry tag lists, cross-checked against the

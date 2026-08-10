@@ -1,7 +1,7 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { Navigate, createFileRoute, redirect } from "@tanstack/react-router";
 
 import { useViewer } from "@/auth";
-import { readPortalEnabled } from "@/lib/portal/portal-store";
+import { readPortalEnabled, usePortalEnabled } from "@/lib/portal/portal-store";
 import { FullScreenLoading } from "@/components/full-screen-loading";
 import { DashboardScreen } from "@/screens/dashboard";
 
@@ -17,6 +17,10 @@ export const Route = createFileRoute("/")({
 
 function IndexRoute() {
   const { personId } = useViewer();
+  const portal = usePortalEnabled();
+  // `beforeLoad` only runs on navigation, so a reader who turns the preview on
+  // while standing here would sit on the dashboard until a reload.
+  if (portal) return <Navigate to="/portal" replace />;
   // An authenticated session always carries the person id (the gateway JWT
   // `sub`); the loading fallback only shows in the brief window before the
   // store resolves.

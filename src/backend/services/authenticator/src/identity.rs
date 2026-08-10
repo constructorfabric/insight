@@ -13,8 +13,7 @@
 //!   an empty/absent value, so a login that lacks its external id fails closed
 //!   instead of silently falling through to email resolution;
 //! - the single `tenant_id` is sourced from the validated id_token claim
-//!   (fakeidp supplies
-//!   it; real-IdP tenant-membership resolution is a follow-up —
+//!   (real-IdP tenant-membership resolution is a follow-up —
 //!   constructorfabric/insight#1687);
 //! - an unknown person is denied (the callback returns 403). First-admin
 //!   bootstrap / RBAC are out of step-04 scope (a separate universe-admin

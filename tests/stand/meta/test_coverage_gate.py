@@ -267,15 +267,20 @@ def test_an_exclusion_the_document_outgrew_is_reported() -> None:
     ), "hygiene is reported, never blocking — a corrected document must not fail the gate"
 
 
-def test_409_is_subtracted_everywhere_because_nothing_can_conflict() -> None:
-    """The second sourced exclusion.
+def test_409_is_subtracted_everywhere_a_route_cannot_conflict() -> None:
+    """The second sourced exclusion, with one route that really can conflict.
 
-    `already_exists`, `aborted` and `conflict` appear nowhere in analytics, so
-    no route can answer 409 — the spec declares it on all of them anyway.
+    `already_exists`, `aborted` and `conflict` appear on no read-only, saved-query
+    or drilldown-export route, so 409 there is boilerplate the spec declares and
+    no handler can send. `POST /v1/metrics` is the exception — a duplicate
+    `metric_key` is a real conflict — so it is covered by a test rather than
+    blocked, and it is the sole excluded route that does NOT subtract 409.
     """
-    conflicts = {op for op, codes in coverage.BLOCKED.items() if 409 in codes}
-    assert conflicts == set(coverage.BLOCKED), "409 is boilerplate on every excluded route"
-    assert "POST /v1/metric-results" not in conflicts, (
+    non_conflicting = {op for op, codes in coverage.BLOCKED.items() if 409 not in codes}
+    assert non_conflicting == {"POST /v1/metrics"}, (
+        "only the conflict-capable create route omits the 409 subtraction"
+    )
+    assert "POST /v1/metric-results" not in coverage.BLOCKED, (
         "#2134 already removed 409 from its declaration; an entry here would be stale"
     )
 

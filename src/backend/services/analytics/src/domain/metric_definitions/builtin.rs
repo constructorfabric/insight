@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn registry_declares_the_expected_counts() {
         assert_eq!(builtin_sources().len(), 5, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 59, "builtin metric count");
+        assert_eq!(builtin_metrics().len(), 60, "builtin metric count");
     }
 
     #[test]
@@ -199,6 +199,19 @@ mod tests {
                 "builtin source {} declares an invalid observation relation {:?}",
                 builtin_source.source.key,
                 builtin_source.source.source_ref,
+            );
+        }
+    }
+
+    #[test]
+    fn evidence_refs_parse_as_evidence_relations() {
+        use crate::domain::metric_definitions::definition::EvidenceRelation;
+        for builtin_source in builtin_sources() {
+            assert!(
+                EvidenceRelation::parse(&builtin_source.source.evidence_ref).is_some(),
+                "builtin source {} declares an invalid evidence relation {:?}",
+                builtin_source.source.key,
+                builtin_source.source.evidence_ref,
             );
         }
     }

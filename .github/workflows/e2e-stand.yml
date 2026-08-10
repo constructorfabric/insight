@@ -21,8 +21,11 @@ name: E2E — Compose stand
 #                published ui-tests image.
 #
 # Neither is required on its own. The `Stand E2E` umbrella below is the check
-# meant to be required once it has a track record — see the wall-clock and
-# flake rate in .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
+# meant to be required in branch protection, and the whole workflow is a
+# merge-queue gate rather than a per-push one: on pull_request every job here
+# skips (branch protection counts a skipped job as a pass), and the lanes run
+# once per queue batch on merge_group. Wall-clock and flake history are in
+# .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
 #
 # Every stand operation goes through ./dev-compose.sh test-stand — never the
 # bare up/down/seed a human developer uses. The pinned frontend, Keycloak auth
@@ -33,11 +36,11 @@ name: E2E — Compose stand
 on:
   pull_request:
     branches: [main]
-    # Deliberately NO `paths:` filter. This workflow emits a REQUIRED check,
-    # and GitHub reports a required check whose workflow never ran as pending
-    # rather than passed — a path filter here would block every PR that did not
-    # happen to touch one of the listed directories. Relevance is decided by
-    # the `changes` job below instead, which is cheap and always reports.
+    # Deliberately NO `paths:` filter, even though every job below skips on
+    # pull_request: a required check whose workflow never triggers at all
+    # reports as pending forever and would block queue entry, while a
+    # triggered run whose jobs all skip counts as a pass. The trigger must
+    # therefore keep firing on every PR — it just costs no runner time.
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit
   # merge_group, and a required check must report there or every queued PR
   # times out and is evicted.
@@ -56,14 +59,16 @@ on:
         options: [compose]
         default: compose
 
-# One run per PR. A rebase or a force-push obsoletes whatever is in flight.
+# One run per PR; a rebase or a force-push obsoletes whatever is in flight.
+# Merge-queue builds get a unique group instead — cancelling a batch mid-run
+# is the queue's own call, never this workflow's.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 permissions:
   contents: read
-  packages: read # pulls insight-front (via compose) and insight-ui-tests
+  packages: read # pulls insight-frontend (via compose) and insight-ui-tests
 
 env:
   # Built and published by build-images.yml's ui-tests job. Pulled here, never
@@ -84,12 +89,16 @@ jobs:
   # has to run the stand or the gate is decorative.
   changes:
     name: changes
+    # Not on pull_request: the stand gates the merge queue, not every push.
+    # Skipping here cascades — every downstream job skips with it, and a
+    # skipped job satisfies the required check on the PR.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -108,7 +117,7 @@ jobs:
           fi
           changed="$(git diff --name-only "$BASE" "$HEAD")"
           echo "$changed" | sed 's/^/  /'
-          if echo "$changed" | grep -qE '^(tests/(stand|lib)/|tests/pyproject\.toml|tests/uv\.lock|deploy/(seed|compose)/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/helm/|docs/components/backend/.*/openapi\.json|\.github/workflows/e2e-stand\.yml|\.github/workflows/scripts/redact-playwright-trace\.py)'; then
+          if echo "$changed" | grep -qE '^(tests/(stand|lib)/|tests/pyproject\.toml|tests/uv\.lock|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/helm/|docs/components/backend/.*/openapi\.json|\.github/workflows/e2e-stand\.yml|\.github/workflows/scripts/redact-playwright-trace\.py)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
@@ -157,15 +166,15 @@ jobs:
     # letting a hung stand burn an hour and a half.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
 
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           cache-suffix: stand-api
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -221,7 +230,7 @@ jobs:
       # needs the inputs and not the summary.
       - name: Upload the coverage ledger
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: api-smoke-coverage
           include-hidden-files: true
@@ -256,7 +265,7 @@ jobs:
 
       - name: Upload compose logs
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: api-smoke-compose-logs
           path: compose-logs/
@@ -284,15 +293,23 @@ jobs:
     # themselves took 28s.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12" # runs the redaction script only — stdlib alone
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      # `test-stand up` forces Keycloak, and the realm is generated by the seed
+      # package's own entry point (`insight-seed-realm`), which dev-compose.sh
+      # runs through uv. The API job above installs uv for the suite; this job
+      # needs it for the bring-up itself.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          cache-suffix: stand-ui
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -376,7 +393,7 @@ jobs:
         # Gated on redaction having SUCCEEDED, not merely run: a non-zero exit
         # means at least one artifact was not proven clean.
         if: always() && steps.redact.outcome == 'success'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ui-journeys-traces
           path: |
@@ -388,7 +405,7 @@ jobs:
 
       - name: Upload video
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ui-journeys-video
           path: test-results/**/*.webm
@@ -417,7 +434,7 @@ jobs:
 
       - name: Upload compose logs
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ui-journeys-compose-logs
           path: compose-logs/
@@ -431,10 +448,10 @@ jobs:
           ./dev-compose.sh test-stand down
 
   # ─── the required check ───────────────────────────────────────────────────
-  # One stable context name for branch protection, and the only job here that
-  # runs unconditionally. That is the whole point: a required check must report
-  # on EVERY pull request, including ones that touch nothing this suite covers
-  # and ones where `changes` skipped the lanes.
+  # One stable context name for branch protection. On pull_request it skips
+  # with everything else — the skip IS the passing report. On merge-queue
+  # builds it runs whenever the run wasn't cancelled, so it still reports when
+  # `changes` deemed the batch irrelevant and the lanes were skipped.
   #
   # `skipped` is therefore a PASS here, unlike in e2e-bronze-to-api.yml's
   # umbrella where it is a failure. The difference is what the skip means: there
@@ -444,7 +461,7 @@ jobs:
   stand-suite:
     name: Stand E2E
     needs: [changes, api-smoke, ui-journeys]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

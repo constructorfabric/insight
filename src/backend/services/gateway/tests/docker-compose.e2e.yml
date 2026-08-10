@@ -1,11 +1,11 @@
 # Gateway e2e stack (dev/CI ONLY) -- NGINX_BFF.md §D.
 #
-# The full edge: the real authenticator + fakeidp from steps 03-04 behind the
+# The full edge: the real authenticator + a realm-importing Keycloak behind the
 # OpenResty gateway, with stub identity + echo upstream. Everything runs on one
 # compose network so DNS names resolve for both nginx upstreams and the Lua
 # cosocket (resolver 127.0.0.11), and the OIDC redirect flow works without URL
-# rewriting. Driven by run-e2e.sh; assertions run from the `driver` service
-# (on-network, so `gateway`/`fakeidp` resolve).
+# rewriting inside the network. Driven by run-e2e.sh; the host-side pytest
+# rewrites the in-network hostnames to the published ports (conftest.py).
 name: insight-gw-e2e
 
 services:
@@ -24,19 +24,27 @@ services:
       - ../../authenticator/tests/identity-stub.py:/identity-stub.py:ro
     command: ["python", "/identity-stub.py", "0.0.0.0:8092"]
 
-  fakeidp:
-    build:
-      context: ../../..
-      dockerfile: services/fakeidp/Dockerfile
+  # Real IdP: same image the compose stack pins (docker-compose.yml), importing
+  # the generated roster realm (conftest.py runs insight-seed-realm into
+  # ./keycloak-import before `up`).
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: ["start-dev", "--import-realm"]
     environment:
-      FAKEIDP_ISSUER: "http://fakeidp:8084"
-      FAKEIDP_BIND: "0.0.0.0:8084"
-      FAKEIDP_DEFAULT_AUD: "insight-authenticator"
-      FAKEIDP_DEV_USER_EMAIL: "dev@company.nonpresent"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # In-network origin, so discovery, token exchange, and the id_token `iss`
+      # agree; the host-side pytest rewrites it to the published port.
+      KC_HOSTNAME: "http://keycloak:8085"
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_PORT: "8085"
+      JAVA_OPTS_APPEND: "-Xms256m -Xmx512m"
+    volumes:
+      - ./keycloak-import:/opt/keycloak/data/import:ro
     ports:
-      # Published so the host-side pytest can follow the OIDC redirect chain
-      # (rewriting the in-network hostnames to localhost).
-      - "${FAKEIDP_E2E_PORT:-18084}:8084"
+      # Published so the host-side pytest can drive the OIDC redirect chain and
+      # the Keycloak login form.
+      - "${KEYCLOAK_E2E_PORT:-18084}:8085"
 
   authenticator:
     build:
@@ -44,7 +52,7 @@ services:
       dockerfile: services/authenticator/Dockerfile
     depends_on:
       redis: {condition: service_healthy}
-      fakeidp: {condition: service_started}
+      keycloak: {condition: service_started}
       identity-stub: {condition: service_started}
     ports:
       # Published so pytest can assert JWKS is served directly by the authenticator.
@@ -55,8 +63,15 @@ services:
       APP__gears__authenticator__config__identity_url: "http://identity-stub:8092"
       APP__gears__authenticator__config__gateway_issuer: "http://gateway:8080"
       APP__gears__authenticator__config__redirect_uri: "http://gateway:8080/auth/callback"
-      APP__gears__authenticator__config__idp__issuer_url: "http://fakeidp:8084"
+      APP__gears__authenticator__config__idp__issuer_url: "http://keycloak:8085/realms/insight"
       APP__gears__authenticator__config__idp__client_id: "insight-authenticator"
+      # The generated realm's confidential-client secret (insight-seed-realm
+      # default; kc-realm docs call it the dev secret).
+      APP__gears__authenticator__config__idp__client_secret: "insight-authenticator-dev-secret"
+      # Required since the login-bootstrap person resolve: the identity-stub
+      # answers any source_type, so the value only has to be non-empty. The
+      # external id is the default `sub` claim (the realm user's roster uuid).
+      APP__gears__authenticator__config__idp__source_type: "keycloak"
       # Short exchange-cache window so the logout-revocation phase is fast.
       APP__gears__authenticator__config__authz_cache_max_age_seconds: "3"
       # Resolve the baked dev `testclient` registry entry's public_key_paths

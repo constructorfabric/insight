@@ -20,7 +20,7 @@ use axum::response::{IntoResponse as _, Response};
 use axum_extra::extract::cookie::CookieJar;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use rand::RngCore as _;
+use rand::Rng as _;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -48,10 +48,19 @@ pub struct LoginParams {
 }
 
 /// Start the OIDC code+PKCE flow: stash state/nonce/verifier, 302 to the IdP.
+/// The request `Host` selects the issuer (ADR-0003) — the gateway forwards
+/// the browser's hostname (`proxy_set_header Host $host`); an unmatched host
+/// is rejected fail closed before any state is written.
 pub async fn login(
     Extension(state): Extension<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Query(params): Query<LoginParams>,
 ) -> Response {
+    let host = request_host(&headers);
+    let Some(oidc) = state.oidc.for_host(&host) else {
+        return login_denied_unknown_host(&state, &headers, &host);
+    };
+
     let return_to = sanitize_return_to(
         params.return_to.as_deref(),
         &state.cfg.default_return_to,
@@ -117,11 +126,7 @@ pub async fn login(
 
     // openidconnect generates the state, nonce, and PKCE pair; we stash the
     // verifier + nonce under the state key for the callback to replay.
-    let start = match state
-        .oidc
-        .authorize(&state.cfg.redirect_uri, &state.cfg.oidc_scopes)
-        .await
-    {
+    let start = match oidc.authorize(&state.cfg.oidc_scopes).await {
         Ok(s) => s,
         Err(e) => return internal_problem("oidc_authorize", &e),
     };
@@ -134,6 +139,7 @@ pub async fn login(
                 pkce_verifier: start.pkce_verifier,
                 nonce: start.nonce,
                 return_to,
+                issuer: oidc.issuer().to_owned(),
                 override_email,
             },
             300,
@@ -246,14 +252,21 @@ pub async fn callback(
         Err(e) => return internal_problem("login_state_take", &e),
     };
 
-    let idp = match state
-        .oidc
-        .exchange_code_pkce(
-            &state.cfg.redirect_uri,
-            &code,
-            &login_state.pkce_verifier,
-            &login_state.nonce,
-        )
+    // The issuer was pinned at login time; the callback's own Host plays no
+    // part (its ambiguity must not re-route a flow mid-exchange). Unresolvable
+    // only when the map changed while the login was in flight.
+    let Some(oidc) = state.oidc.for_stored_issuer(&login_state.issuer) else {
+        tracing::warn!(
+            target: "audit",
+            event = "callback_denied_unknown_issuer",
+            issuer = %login_state.issuer,
+            "callback denied: login state names an issuer that is no longer configured"
+        );
+        return login_error_redirect(&state.cfg.default_return_to, "access_denied");
+    };
+
+    let idp = match oidc
+        .exchange_code_pkce(&code, &login_state.pkce_verifier, &login_state.nonce)
         .await
     {
         Ok(idp) => idp,
@@ -375,6 +388,55 @@ pub async fn callback(
         }
         Err(e) => internal_problem("create_session", &e),
     }
+}
+
+/// The request's `Host` header — nginx forwards the browser's hostname
+/// (`proxy_set_header Host $host`). Read directly rather than through an
+/// extractor honoring `X-Forwarded-Host`, which the gateway does not set and
+/// a client could therefore inject.
+fn request_host(headers: &axum::http::HeaderMap) -> String {
+    headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Fail-closed 403 for a `/auth/login` whose `Host` matches no configured
+/// issuer (ADR-0003), audited like the other login denials. No redirect: the
+/// hostname is not one this deployment serves, so there is no SPA to bounce
+/// back into.
+fn login_denied_unknown_host(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    host: &str,
+) -> Response {
+    // Client-reachable log path: strip control characters so a hostile Host
+    // value cannot forge log lines, and cap the length.
+    let host: String = host.chars().filter(|c| !c.is_control()).take(255).collect();
+    tracing::warn!(
+        target: "audit",
+        event = "login_denied_unknown_host",
+        host,
+        "login denied: request Host matches no configured issuer"
+    );
+    let client = ClientInfo::from_headers(headers);
+    state.audit.emit(AuditEvent {
+        action: "login",
+        outcome: "failure",
+        tenant_id: String::new(),
+        actor_person_id: String::new(),
+        actor_ip: client.ip,
+        actor_user_agent: client.user_agent,
+        correlation_id: correlation_id(headers),
+        resource_type: "session",
+        resource_id: String::new(),
+        details: serde_json::json!({ "reason": "unknown_host", "host": host }),
+    });
+    OidcError::permission_denied()
+        .with_reason("unknown_host")
+        .create()
+        .into_response()
 }
 
 /// Client attribution captured at login for the session list (PRD 5.9):
@@ -966,10 +1028,10 @@ pub async fn logout(
             correlation_id(&headers),
             serde_json::json!({}),
         ));
-        if let Some(url) = state
-            .oidc
-            .rp_logout_url(&record.id_token, &state.cfg.default_return_to)
-            .await
+        if let Some(oidc) = state.oidc.for_stored_issuer(&record.idp_iss)
+            && let Some(url) = oidc
+                .rp_logout_url(&record.id_token, &state.cfg.default_return_to)
+                .await
         {
             rp_logout_url = serde_json::Value::String(url);
         }
@@ -1221,8 +1283,25 @@ pub async fn back_channel_logout(
             .into_response();
     };
 
+    // The token's `iss` (peeked unverified) selects the issuer whose JWKS and
+    // claim checks then validate it in full — a forged `iss` either names no
+    // configured issuer (rejected here) or fails signature verification below.
+    let Some(oidc) =
+        crate::issuers::unverified_issuer(raw).and_then(|iss| state.oidc.for_issuer(&iss))
+    else {
+        tracing::warn!(
+            target: "audit",
+            event = "back_channel_denied_unknown_issuer",
+            "back-channel: logout_token names no configured issuer"
+        );
+        return OidcError::invalid_argument()
+            .with_field_violation("logout_token", "unknown issuer", "INVALID_LOGOUT_TOKEN")
+            .create()
+            .into_response();
+    };
+
     // The IdP's keys — fetched per call (cold path, picks up rotation).
-    let jwks = match state.oidc.idp_jwks().await {
+    let jwks = match oidc.idp_jwks().await {
         Ok(jwks) => jwks,
         Err(e) => {
             tracing::warn!(
@@ -1241,8 +1320,8 @@ pub async fn back_channel_logout(
     let claims = match crate::backchannel::validate_logout_token(
         &jwks,
         raw,
-        state.oidc.issuer(),
-        state.oidc.client_id(),
+        oidc.issuer(),
+        oidc.client_id(),
         now,
         cfg.backchannel_clock_skew_seconds,
         cfg.backchannel_token_max_age_seconds,
@@ -1266,7 +1345,7 @@ pub async fn back_channel_logout(
     );
     match state
         .sessions
-        .guard_logout_jti(state.oidc.issuer(), &claims.jti, ttl)
+        .guard_logout_jti(oidc.issuer(), &claims.jti, ttl)
         .await
     {
         Ok(true) => {}
@@ -1278,9 +1357,9 @@ pub async fn back_channel_logout(
     }
 
     let result = match &claims.sid {
-        Some(idp_sid) => revoke_by_sid_index(&state, idp_sid).await,
+        Some(idp_sid) => revoke_by_sid_index(&state, oidc.issuer(), idp_sid).await,
         None => match &claims.sub {
-            Some(sub) => revoke_by_sub_fallback(&state, sub).await,
+            Some(sub) => revoke_by_sub_fallback(&state, oidc.issuer(), sub).await,
             None => unreachable!("validator requires sub or sid"),
         },
     };
@@ -1321,7 +1400,7 @@ pub async fn back_channel_logout(
             // not happen. Revoke is idempotent, so re-processing is safe.
             if let Err(re) = state
                 .sessions
-                .release_logout_jti(state.oidc.issuer(), &claims.jti)
+                .release_logout_jti(oidc.issuer(), &claims.jti)
                 .await
             {
                 tracing::warn!(error = %re, "back-channel: failed to release jti guard after revoke error");
@@ -1332,11 +1411,8 @@ pub async fn back_channel_logout(
 }
 
 /// Revoke every session indexed under the token's `(iss, sid)`.
-async fn revoke_by_sid_index(state: &AppState, idp_sid: &str) -> anyhow::Result<u64> {
-    let session_ids = state
-        .sessions
-        .sessions_by_idp_sid(state.oidc.issuer(), idp_sid)
-        .await?;
+async fn revoke_by_sid_index(state: &AppState, issuer: &str, idp_sid: &str) -> anyhow::Result<u64> {
+    let session_ids = state.sessions.sessions_by_idp_sid(issuer, idp_sid).await?;
     let mut revoked = 0u64;
     for sid in &session_ids {
         if state.sessions.revoke_session(sid).await? {
@@ -1350,11 +1426,12 @@ async fn revoke_by_sid_index(state: &AppState, idp_sid: &str) -> anyhow::Result<
 /// EVERYTHING for the users behind `(iss, sub)` — with the operator-facing
 /// log line the runbook calls out, so a misconfigured IdP that omits `sid`
 /// is visible, not silent.
-async fn revoke_by_sub_fallback(state: &AppState, idp_sub: &str) -> anyhow::Result<u64> {
-    let session_ids = state
-        .sessions
-        .sessions_by_idp_sub(state.oidc.issuer(), idp_sub)
-        .await?;
+async fn revoke_by_sub_fallback(
+    state: &AppState,
+    issuer: &str,
+    idp_sub: &str,
+) -> anyhow::Result<u64> {
+    let session_ids = state.sessions.sessions_by_idp_sub(issuer, idp_sub).await?;
     // Resolve the distinct person(s) behind those sessions, then run the
     // standard revoke-everything pipeline per person.
     let mut persons: Vec<String> = Vec::new();
@@ -1485,7 +1562,7 @@ fn now_secs() -> u64 {
 /// A CSPRNG token (256 bits, base64url) — session token, CSRF token, state, nonce.
 fn csprng_token() -> String {
     let mut raw = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut raw);
+    rand::rng().fill_bytes(&mut raw);
     B64.encode(raw)
 }
 
@@ -1495,7 +1572,7 @@ fn jitter_seconds(window: u64) -> i64 {
         return 0;
     }
     let w = i64::try_from(window).unwrap_or(0);
-    rand::Rng::gen_range(&mut rand::thread_rng(), -w..=w)
+    rand::RngExt::random_range(&mut rand::rng(), -w..=w)
 }
 
 /// Read `exp` from a JWT without verifying (it is our own token).

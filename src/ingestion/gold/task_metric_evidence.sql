@@ -92,11 +92,18 @@ issue_item_evidence AS (
         issue_type,
         item_measure.1 AS measure_key,
         toFloat64(item_measure.2) AS contribution,
-        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
+        CAST(
+            [tuple(
+                'type',
+                ifNull(issue_type_key, '__unknown__'),
+                ifNull(issue_type_name, 'Type unknown')
+            )] AS Array(Tuple(key String, value String, label Nullable(String)))
+        ) AS type_dimensions
     FROM issue_state
     ARRAY JOIN arrayConcat(
         [tuple('tasks_closed', toFloat64(1))],
-        if(issue_type = 'Bug', [tuple('bugs_fixed', toFloat64(1))], []),
+        if(issue_kind = 'bug', [tuple('bugs_fixed', toFloat64(1))], []),
+        if(issue_kind = 'other', [tuple('closed_non_bug', toFloat64(1))], []),
         if(
             due_date IS NOT NULL AND toDate(final_close_at) <= due_date,
             [tuple('due_date_on_time', toFloat64(1))],
@@ -269,7 +276,7 @@ SELECT
     toString(issue_id) AS record_label,
     toNullable(contribution) AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
-    no_dimensions AS dimensions,
+    type_dimensions AS dimensions,
     map(
         'ref', toString(issue_id),
         'issue_type', ifNull(issue_type, '')

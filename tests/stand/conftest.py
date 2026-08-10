@@ -12,7 +12,7 @@ this suite exists to catch.
 Two rules follow from that split:
 
 * The stand must describe itself. Every fixture name, capability and seeded
-  fact comes from `deploy/seed/manifest.json`. If it is missing or unparseable
+  fact comes from `src/ingestion/tools/seed/manifest.json`. If it is missing or unparseable
   the session aborts; nothing here has a default to fall back to.
 * Unsatisfiable data requirements are a COLLECTION-time abort, not a run-time
   failure. Finding out on test #47 that the stand was never seeded wastes the
@@ -214,7 +214,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     * capability markers — a missing capability is a legitimate property of
       this stand, not a defect, so it skips that item alone.
     * `requires_catalogue` — same resolution as a capability, for the rows
-      `deploy/seed/analytics.py` writes. A stand seeded without that step is a
+      `src/ingestion/tools/seed/analytics.py` writes. A stand seeded without that step is a
       real state, and a test that needs those rows must say so rather than
       assert against an empty universe and pass for the wrong reason.
     """

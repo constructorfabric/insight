@@ -325,6 +325,10 @@ src/ingestion/
     ├── toolbox/                     # insight-toolbox Docker image
     │   ├── Dockerfile               #   python + dbt + kubectl + yq
     │   └── build.sh                 #   Build + push to GHCR (or load into Kind)
+    ├── seed/                        # insight-seed Docker image (TEST stands)
+    │   ├── insight_seed/            #   the package: `insight-seed <step>`
+    │   ├── seed-stand.sh            #   seeds a chart-deployed stand as a Job
+    │   └── README.md                #   what it writes, and the env contract
     └── declarative-connector/       # Local connector debugging
         ├── source.sh                #   check / discover / read
         ├── generate-catalog.sh      #   Render Airbyte catalog from connector.yaml

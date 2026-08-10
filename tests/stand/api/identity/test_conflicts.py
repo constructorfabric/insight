@@ -25,6 +25,7 @@ import pytest
 from insight_stand import ApiClient, Manifest, PersonaSession, identity_path
 
 from ..schemas import PersonRole, PersonRoleList, ProblemDocument, Role, RoleList
+from .views import in_force
 
 #: identity's own role, in `person_roles` — NOT `insight_stand.ADMIN_ROLE`,
 #: which is the KEYCLOAK REALM role (`insight-admin`). They are different
@@ -64,7 +65,7 @@ def _active_admin_assignments(client: ApiClient) -> list[PersonRole]:
     return [
         item
         for item in response.parse(PersonRoleList).items
-        if str(item.role_id) == role_id and item.in_force
+        if str(item.role_id) == role_id and in_force(item)
     ]
 
 

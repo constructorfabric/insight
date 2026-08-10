@@ -5,7 +5,7 @@
 ## Emits almost nothing on its own — it orchestrates subcharts.
 ##
 ## What is INCLUDED here:
-##   - Edge / auth: gateway (nginx+auth), authenticator, fakeidp (dev only)
+##   - Edge / auth: gateway (nginx+auth), authenticator, keycloak
 ##   - Application: analytics, identity-resolution, frontend
 ##
 ## What is NOT included (deployed separately):
@@ -25,8 +25,8 @@ type: application
 # version    — packaging version of the chart. Bump on EVERY chart change.
 # appVersion — product version. Matches the image tag of all insight-* images.
 # Release pipeline: git tag v0.1.0 → version=0.1.0, appVersion="0.1.0".
-version: 0.5.82
-appVersion: "2026.08.05.10.35-9ddd651"
+version: 0.5.107
+appVersion: "2026.08.10.02.54-bccd4ce"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/constructorfabric/insight
 sources:
@@ -65,8 +65,7 @@ dependencies:
   # single entrance: auth_request -> authenticator, gateway-JWT injection, and
   # fan-out to the app services + SPA. The `authenticator` runs OIDC login +
   # Redis sessions + the cookie->ES256 gateway-JWT exchange (with an authn-tls
-  # sidecar so downstream verifiers resolve the JWKS over https). `fakeidp` is
-  # the dev/e2e OIDC provider (local only; never a real environment).
+  # sidecar so downstream verifiers resolve the JWKS over https).
   - name: insight-gateway
     alias: gateway
     version: "0.1.0"
@@ -75,11 +74,6 @@ dependencies:
     alias: authenticator
     version: "0.1.0"
     repository: "file://../../src/backend/services/authenticator/helm"
-  - name: insight-fakeidp
-    alias: fakeidp
-    version: "0.1.0"
-    repository: "file://../../src/backend/services/fakeidp/helm"
-    condition: fakeidp.deploy
   # keycloak — the stack's identity broker (ADR-0003), MariaDB-backed.
   - name: insight-keycloak
     alias: keycloak

@@ -26,16 +26,18 @@ from pydantic import BaseModel
 
 from .. import scratch
 from ..schemas import (
-    OperationList,
     PersonRole,
     PersonRoleList,
     ProblemDocument,
     Role,
     RoleList,
+    SeedOperationList,
     SubchartForest,
+    SyncOperationList,
     Visibility,
     VisibilityList,
 )
+from .views import forest_emails, in_force
 
 #: Each admin listing with the model that describes it. Parametrising over the
 #: pair rather than over the path alone is what makes the 200 cases assert a
@@ -45,8 +47,8 @@ ADMIN_LISTINGS_WITH_MODELS = (
     ("/v1/roles", RoleList),
     ("/v1/person-roles", PersonRoleList),
     ("/v1/visibility", VisibilityList),
-    ("/v1/persons-seed", OperationList),
-    ("/v1/persons-sync", OperationList),
+    ("/v1/persons-seed", SeedOperationList),
+    ("/v1/persons-sync", SyncOperationList),
 )
 
 
@@ -267,7 +269,7 @@ def test_person_role_grant_and_revoke_round_trip(
     assert created.status_code == 201, f"grant role: {created.status_code} {created.text[:300]}"
     assignment = created.parse(PersonRole)
     assert str(assignment.person_id) == subject.uuid
-    assert assignment.in_force, f"a fresh assignment is already revoked: {assignment}"
+    assert in_force(assignment), f"a fresh assignment is already revoked: {assignment}"
     assignment_id = scratch.track(
         identity_path("/v1/person-roles"), "person_role_id", str(assignment.person_role_id)
     )
@@ -283,7 +285,7 @@ def test_person_role_grant_and_revoke_round_trip(
     journal = client.get(identity_path("/v1/person-roles")).parse(PersonRoleList)
     after = [item for item in journal.items if str(item.person_role_id) == assignment_id]
     assert len(after) == 1, f"the revoked assignment vanished from the journal: {after}"
-    assert not after[0].in_force, f"the assignment is still in force after a 204 revoke: {after[0]}"
+    assert not in_force(after[0]), f"the assignment is still in force after a 204 revoke: {after[0]}"
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead")
@@ -309,7 +311,7 @@ def test_a_visibility_grant_changes_what_the_grantee_can_see(
     client = admin_operator_session.client
     viewed = stand_manifest.fixture("dev_lead")
 
-    before = _forest(admin_operator_session).emails()
+    before = forest_emails(_forest(admin_operator_session))
     assert before == set(), (
         f"the operator already sees {sorted(before)} — this test needs it to start with "
         "an empty forest, so an earlier grant leaked"
@@ -326,13 +328,13 @@ def test_a_visibility_grant_changes_what_the_grantee_can_see(
     assert created.status_code == 201, f"create grant: {created.status_code} {created.text[:300]}"
     grant = created.parse(Visibility)
     assert str(grant.viewer_person_id) == admin_operator_session.person.uuid
-    assert grant.in_force, f"a fresh grant is already revoked: {grant}"
+    assert in_force(grant), f"a fresh grant is already revoked: {grant}"
     grant_id = scratch.track(
         identity_path("/v1/visibility"), "visibility_id", str(grant.visibility_id)
     )
 
     try:
-        visible = _forest(admin_operator_session).emails()
+        visible = forest_emails(_forest(admin_operator_session))
         assert viewed.email in visible, (
             f"after being granted sight of {viewed.email} the operator sees "
             f"{sorted(visible)} — the grant was stored but is not applied"
@@ -341,7 +343,7 @@ def test_a_visibility_grant_changes_what_the_grantee_can_see(
         revoked = client.delete(identity_path(f"/v1/visibility/{grant_id}"))
         assert revoked.status_code == 204, f"revoke: {revoked.status_code} {revoked.text[:300]}"
 
-    after = _forest(admin_operator_session).emails()
+    after = forest_emails(_forest(admin_operator_session))
     assert after == set(), (
         f"the operator still sees {sorted(after)} after the grant was revoked — "
         "revocation is not applied"

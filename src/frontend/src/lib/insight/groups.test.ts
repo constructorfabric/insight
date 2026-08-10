@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   GROUPS,
   groupIdForMetricKey,
+  type DrilldownBlock,
   type GroupId,
   type MetricGroup,
 } from "@/lib/insight/groups";
@@ -28,12 +29,20 @@ describe("groups registry", () => {
     expect(git.drilldown.some((b) => b.view === "histogram")).toBe(true);
   });
 
-  it("combines compatible task throughput metrics in one chart", () => {
+  it("splits closed issues by type, capped with a remainder group", () => {
     const taskDelivery = groupById("task_delivery");
-    const throughput = taskDelivery.drilldown.find(
-      (block) => block.view === "timeseries" && block.id === "task-throughput"
+    const byType = taskDelivery.drilldown.find(
+      (block): block is Extract<DrilldownBlock, { view: "timeseries" }> =>
+        block.view === "timeseries" && block.id === "closed-by-type"
     );
-    expect(throughput?.chart).toEqual({ multiMetric: "combined" });
+    expect(byType?.metrics).toEqual(["tasks.closed"]);
+    expect(byType?.groupBy).toEqual({
+      default: "type",
+      limits: {
+        type: { count: 10, rankBy: "tasks.closed", includeRemainder: true },
+      },
+    });
+    expect(byType?.table?.columns).toEqual([{ metric: "tasks.closed" }]);
   });
 
   it("caps repository activity and keeps line composition grouped by category", () => {

@@ -238,7 +238,26 @@ async fn do_refresh(
         return Ok(());
     };
 
-    match state.oidc.refresh_grant(refresh_token).await {
+    // Sessions pin their issuer; a session whose issuer left the map (config
+    // edit mid-lifetime) is treated as transient — backed off, never revoked
+    // — so a config mistake fixed by the next deploy cannot mass-logout.
+    let Some(oidc) = state.oidc.for_stored_issuer(&record.idp_iss) else {
+        metrics.record("transient");
+        if let Some(failures) = sessions.bump_refresh_failures(session_id).await? {
+            let retry_at = now + backoff_seconds(failures);
+            sessions.reschedule_refresh(session_id, retry_at).await?;
+            tracing::warn!(
+                session_id,
+                issuer = %record.idp_iss,
+                failures,
+                retry_at,
+                "idp refresh: session issuer not in the configured map; backing off (never revoking)"
+            );
+        }
+        return Ok(());
+    };
+
+    match oidc.refresh_grant(refresh_token).await {
         RefreshOutcome::Refreshed {
             new_refresh_token,
             expires_in,
@@ -370,7 +389,7 @@ fn jitter(window: u64) -> i64 {
         return 0;
     }
     let w = i64::try_from(window).unwrap_or(0);
-    rand::Rng::gen_range(&mut rand::thread_rng(), -w..=w)
+    rand::RngExt::random_range(&mut rand::rng(), -w..=w)
 }
 
 fn now_secs() -> u64 {

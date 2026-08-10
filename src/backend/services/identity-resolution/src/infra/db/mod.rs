@@ -25,12 +25,15 @@ pub mod ops_repo;
 pub mod person_roles_repo;
 pub mod persons_log_repo;
 pub mod persons_repo;
+pub mod resolution_repo;
 pub mod roles_repo;
 pub mod seed_repo;
 pub mod sql_named;
 pub mod subchart_repo;
 pub mod visibility_repo;
 
+#[cfg(test)]
+pub(crate) mod test_fixture;
 #[cfg(test)]
 mod visible_set_live_tests;
 

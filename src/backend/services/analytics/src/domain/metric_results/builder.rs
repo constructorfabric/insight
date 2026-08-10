@@ -364,7 +364,7 @@ mod tests {
 
     use crate::domain::metric_definitions::definition::{
         MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
-        ObservationRelation,
+        ObservationRelation, ObservationSource,
     };
     use crate::domain::metric_results::view::Bucket;
 
@@ -387,8 +387,10 @@ mod tests {
     fn input(role: MetricInputRole, measure_key: &str) -> MetricInput {
         MetricInput {
             role,
-            observation_relation: ObservationRelation::parse("ai_metric_observations")
-                .unwrap_or_else(|| panic!("fixture relation must parse")),
+            observation: ObservationSource::Managed(
+                ObservationRelation::parse("ai_metric_observations")
+                    .unwrap_or_else(|| panic!("fixture relation must parse")),
+            ),
             source_key: "ai_usage".to_owned(),
             measure_key: measure_key.to_owned(),
         }

@@ -8,13 +8,20 @@ name: Functional K3s Smoke
 
 on:
   workflow_dispatch:
+  # Merge-queue builds are where the cluster actually comes up. The
+  # pull_request trigger stays so the check reports on every PR — the job
+  # below skips there, and branch protection counts a skipped job as a pass —
+  # but the deploy smoke itself runs once per queue batch, not on every push.
+  merge_group:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
 
+# One run per PR; merge-queue builds get a unique group so a queue rebuild
+# can never cancel a batch mid-run.
 concurrency:
-  group: functional-k3s-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: functional-k3s-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 permissions:
   contents: read
@@ -38,19 +45,26 @@ env:
 jobs:
   cluster-smoke:
     name: K3s GitOps Deploy
+    # Skipped on pull_request by design — see the trigger comment above.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install kubectl
-        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
 
       - name: Install Helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      # The keycloak-realm Makefile target generates the roster realm with the
+      # seed package's insight-seed-realm entry point, which runs under uv.
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
       - name: Install gitops CLI tools
         run: |
@@ -173,17 +187,29 @@ jobs:
           make -C deploy/gitops system ENV="${GITOPS_ENV}" KUBE_CTX="${KUBE_CONTEXT}"
           make -C deploy/gitops system-status ENV="${GITOPS_ENV}" KUBE_CTX="${KUBE_CONTEXT}"
 
+      # deploy-app's chained keycloak-broker-realms target packs the generated
+      # realm into the ConfigMap the keycloak-config-cli hook Job applies.
+      - name: Generate Keycloak realm
+        run: |
+          set -euo pipefail
+          # keycloak-realm no-ops (exit 0) when keycloak.deploy != true; this
+          # smoke requires the realm, so fail closed on a misconfigured env.
+          test "$(yq -r '.keycloak.deploy // false' "deploy/gitops/environments/${GITOPS_ENV}/values.yaml")" = "true"
+          make -C deploy/gitops keycloak-realm ENV="${GITOPS_ENV}" KUBE_CTX="${KUBE_CONTEXT}"
+
       - name: Deploy Insight via gitops Makefile
         run: |
           set -euo pipefail
           helm dependency update charts/insight
           INSIGHT_VERSION="$(yq -r '.version' charts/insight/Chart.yaml)"
+          # 10m: the atomic wait now also covers Keycloak's first boot (DB
+          # schema init) and the post-install keycloak-config-cli hook Job.
           make -C deploy/gitops deploy-app \
             ENV="${GITOPS_ENV}" \
             KUBE_CTX="${KUBE_CONTEXT}" \
             CHART=../../charts/insight \
             INSIGHT_VERSION="${INSIGHT_VERSION}" \
-            TIMEOUT=5m
+            TIMEOUT=10m
 
       - name: Verify Insight workloads
         run: |

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/react";
 import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { type ReactNode } from "react";
 import { ErrorBoundary } from "react-error-boundary";
@@ -12,7 +13,11 @@ export function AppErrorBoundary({
   return (
     <QueryErrorResetBoundary>
       {({ reset }) => (
-        <ErrorBoundary FallbackComponent={ErrorFallback} onReset={reset}>
+        <ErrorBoundary
+          FallbackComponent={ErrorFallback}
+          onReset={reset}
+          onError={Sentry.captureReactException}
+        >
           {children}
         </ErrorBoundary>
       )}

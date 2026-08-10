@@ -16,10 +16,11 @@
   - [4.1 In Scope](#41-in-scope)
   - [4.2 Out of Scope](#42-out-of-scope)
 - [5. Functional Requirements](#5-functional-requirements)
-  - [5.1 Phase 1 — MVP: dbt Seed (p1)](#51-phase-1--mvp-dbt-seed-p1)
-  - [5.2 Phase 2 — Bootstrap Pipeline (p1)](#52-phase-2--bootstrap-pipeline-p1)
-  - [5.3 Phase 3 — Matching & Workflows (p2)](#53-phase-3--matching--workflows-p2)
-  - [5.4 Late Phase — Merge/Split & GDPR (p3)](#54-late-phase--mergesplit--gdpr-p3)
+  - [5.1 Identity Store and Resolution (p1)](#51-identity-store-and-resolution-p1)
+  - [5.2 Evidence Intake and Seed Fold (p1)](#52-evidence-intake-and-seed-fold-p1)
+  - [5.3 Phase 3 — Matching & Workflows (p2, future)](#53-phase-3--matching--workflows-p2-future)
+  - [5.4 Manual Resolution — Operator Corrections (p1)](#54-manual-resolution--operator-corrections-p1)
+  - [5.5 Late Phase — GDPR (p3)](#55-late-phase--gdpr-p3)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
   - [6.1 NFR Inclusions](#61-nfr-inclusions)
   - [6.2 NFR Exclusions](#62-nfr-exclusions)
@@ -28,10 +29,10 @@
   - [7.2 External Integration Contracts](#72-external-integration-contracts)
 - [8. Use Cases](#8-use-cases)
   - [Bootstrap New Connector Data](#bootstrap-new-connector-data)
-  - [Resolve Alias (Hot Path)](#resolve-alias-hot-path)
-  - [Review Unmapped Aliases](#review-unmapped-aliases)
-  - [Merge Two Person Alias Sets](#merge-two-person-alias-sets)
-  - [GDPR Alias Purge](#gdpr-alias-purge)
+  - [Resolve Person for Analytics and Backend](#resolve-person-for-analytics-and-backend)
+  - [Review Pending Identity Decisions](#review-pending-identity-decisions)
+  - [Merge Two Persons](#merge-two-persons)
+  - [GDPR Identity Purge](#gdpr-identity-purge)
 - [9. Acceptance Criteria](#9-acceptance-criteria)
 - [10. Dependencies](#10-dependencies)
 - [11. Assumptions](#11-assumptions)
@@ -65,11 +66,11 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 
 | Goal | Success Criteria |
 |---|---|
-| Automated alias resolution | **Baseline**: 0% auto-resolved. **Target**: >= 80% of aliases auto-resolved within 30 min of connector sync. **Timeframe**: Within 2 sprints of Phase 2 deployment. |
-| Zero false-positive auto-links | **Baseline**: N/A (new system). **Target**: 0 false-positive auto-links in production over 90-day window. **Timeframe**: Ongoing from Phase 2 launch. |
-| Operator efficiency | **Baseline**: 100% manual mapping. **Target**: Operator reviews < 20% of aliases (unmapped queue only). **Timeframe**: Within 30 days of Phase 3 deployment. |
-| Cross-platform analytics enablement | **Baseline**: Per-platform siloed dashboards. **Target**: 100% of Gold analytics queries use resolved `person_id`. **Timeframe**: Within 1 sprint of Phase 1 deployment. |
-| Audit trail completeness | **Baseline**: No merge/split tracking. **Target**: 100% of merge/split operations have reversible audit records. **Timeframe**: From late-phase deployment. |
+| Automated account binding | **Baseline**: 0% auto-bound. **Target**: >= 80% of observed accounts bound automatically within 30 min of connector sync. **Timeframe**: Within 2 sprints of the evidence-intake phase. |
+| Zero silent false merges | **Baseline**: N/A (new system). **Target**: 0 automatic merges of two existing persons — structurally excluded; 0 false-positive automatic links over any 90-day window. **Timeframe**: Ongoing. |
+| Operator efficiency | **Baseline**: 100% manual mapping. **Target**: Operator reviews only the pending/contested queue — < 20% of observed accounts. **Timeframe**: Within 30 days of the manual-resolution capability shipping. |
+| Cross-platform analytics enablement | **Baseline**: Per-platform siloed dashboards. **Target**: 100% of Gold analytics queries use resolved `person_id`. **Timeframe**: Within 1 sprint of the identity-store phase. |
+| Audit trail completeness | **Baseline**: No correction tracking. **Target**: 100% of operator corrections are attributable (who/when/why) and reversible. **Timeframe**: From the manual-resolution capability. |
 
 ### 1.4 Glossary
 
@@ -79,15 +80,16 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 | Alias type | Category of identity signal: canonical `id`, `email`, `username`, `display_name`; known custom `employee_id`, `platform_id` (deprecated for Cursor/Claude Admin in favor of `id`, see ADR-0002) |
 | Bootstrap input | A row in `identity_inputs` representing one changed alias observation from one connector |
 | Confidence score | Numeric value (0.0–1.0) representing the MatchingEngine's certainty that an alias belongs to a person |
-| Auto-link | Automatic creation of an alias mapping when confidence >= 1.0 |
-| Unmapped alias | An alias that could not be resolved above the confidence threshold; queued for operator review |
+| Auto-link | (v1 plan vocabulary — superseded by ADR-0003) automatic creation of a link at full confidence. In the implemented model the only automatic link is the seed's unambiguous e-mail bind; the future matcher emits operator-reviewed proposals only |
+| Unmapped alias | (v1 plan vocabulary) an alias below the auto-link threshold, queued for review; in the implemented model the equivalent is an account or value pending an operator decision in the derived review queue |
 | Alias conflict | When the same `(value_type, value)` is claimed by two different persons |
-| Merge | Combining two person alias sets under a single `person_id` |
-| Split | Reversing a merge by restoring alias mappings from an audit snapshot |
-| Hot path | Direct alias lookup in `aliases` table (~90% of resolutions) |
-| Cold path | MatchingEngine rule evaluation when hot path misses |
+| Merge | Operator decision that two persons are one human: all account bindings of the absorbed person are reassigned to the surviving person (append-only; see ADR-0003) |
+| Split / Detach | Operator decision that an account belongs to a different human: the account is rebound to another (usually freshly minted) person — regardless of how the current grouping arose (see ADR-0003) |
+| Hot path | Direct binding lookup against the journal (service read API) or the mirror (analytics) |
+| Cold path | Future MatchingEngine rule evaluation when no binding exists |
 | Person domain | Separate domain owning the **golden record projection** of persons (and person-level attributes such as availability, conflicts). The MariaDB `persons` identity-attribute history table itself is owned by the identity-resolution domain (see DESIGN §3.7 and ADR-0006); the Person domain reads from it |
 | Org-chart domain | Separate domain owning `org_units` and `person_assignments` |
+| Reviewer namespace | Code-review identities as reported by platforms — a login/account id with no e-mail; resolved account-first through the id-binding map, with no e-mail bridge |
 
 ---
 
@@ -101,9 +103,9 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 
 **ID**: `cpt-ir-actor-operator`
 
-**Role**: Reviews unmapped aliases, resolves alias conflicts, manages match rule configuration, performs merge/split operations, and handles GDPR purge requests. Typically a platform administrator with knowledge of the organization's systems and personnel.
+**Role**: Reviews accounts pending a decision and contested-binding groups, performs corrections (bind, merge, detach, exclude), and — in later phases — manages match-rule configuration and GDPR purge requests. Typically a platform administrator with knowledge of the organization's systems and personnel.
 
-**Needs**: A clear queue of unresolved aliases with suggested matches; ability to link, ignore, or create new persons; visibility into merge/split history for audit; configurable match rules.
+**Needs**: A clear review queue with candidate persons per item; correction verbs covering both directions (same person / different people), individually and in bulk; per-account binding history to understand and audit past decisions; assurance that decisions survive automatic re-runs.
 
 ### 2.2 System Actors
 
@@ -113,23 +115,23 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 
 **Role**: External system connector (e.g., BambooHR, GitLab, Jira) that syncs data from source platforms. Writes alias observations to `identity_inputs` during its sync pipeline, providing raw identity signals for resolution.
 
-#### BootstrapJob
+#### Automatic Binding Job (persons-seed)
 
 **ID**: `cpt-ir-actor-bootstrap-job`
 
-**Role**: Scheduled job (Argo Workflow) that reads unprocessed rows from `identity_inputs`, normalizes alias values, evaluates matching rules, and creates or updates entries in the `aliases` table. Runs after each connector sync cycle.
+**Role**: Scheduled job (the `seed` subcommand of the identity-resolution service) that reads observations from `identity_inputs` and folds them into the `persons` journal: reuses existing bindings, links unbound accounts to the person their e-mail unambiguously maps to, mints persons for new e-mails, skips e-mail-less accounts. Never merges two existing persons. Contested-evidence handling (no auto-link when evidence is ambiguous; respect for per-account bindings in divergent groups) ships with the manual-resolution capability. Runs after connector sync cycles.
 
-#### MatchingEngine
+#### MatchingEngine (future)
 
 **ID**: `cpt-ir-actor-matching-engine`
 
-**Role**: Rule evaluation engine invoked by BootstrapJob and ResolutionService on the cold path. Loads enabled `match_rules`, computes composite confidence scores, and returns candidate `person_id` with confidence level. Does not write to tables directly.
+**Role**: Future rule-evaluation engine. Loads enabled `match_rules`, computes composite confidence scores, and produces merge **proposals** for operator review. Never writes bindings; operator decisions override its output. Not built.
 
 #### Analytics Pipeline
 
 **ID**: `cpt-ir-actor-analytics-pipeline`
 
-**Role**: Downstream consumer (dbt models, dashboards) that resolves `person_id` by joining Silver tables against the `aliases` table or ClickHouse Dictionary. Depends on alias data being accurate and up-to-date for cross-platform attribution.
+**Role**: Downstream consumer (dbt models, dashboards) that resolves `person_id` at build time via the `identity.identity_persons` mirror and the `resolve_person_id` macro. Depends on the journal being accurate; renders unresolved activity with NULL `person_id` rather than guessing.
 
 ---
 
@@ -137,8 +139,8 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 
 ### 3.1 Module-Specific Environment Constraints
 
-- **Storage**: Analytical identity-resolution tables reside in ClickHouse (`identity_inputs`, `aliases`, `match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`). The identity-attribute observation history `persons` and its derived SCD2 cache `account_person_map` reside in MariaDB and are owned by this domain (see DESIGN §3.7 and [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)). The Person and Org-Chart domains remain ClickHouse-only.
-- **Orchestration**: BootstrapJob runs as an Argo WorkflowTemplate on a Kind K8s cluster (per PR #45).
+- **Storage**: Evidence and the analytics mirror reside in ClickHouse (`identity_inputs`; `identity.identity_persons` published by persons-sync; legacy `aliases`). The identity observation journal `persons`, its derived SCD2 cache `account_person_map`, and the `operations` admin journal reside in MariaDB and are owned by this domain (see DESIGN §3.7, [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md), [ADR-0003](ADR/0003-operator-decisions-as-persons-observations.md), and [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)). Future matcher tables (`match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) are design proposals only — not built.
+- **Orchestration**: the persons-seed runs as a scheduled Kubernetes job (umbrella chart); Argo-orchestrated processing was the earlier plan and is not used by this domain today.
 - **Naming**: All tables and columns follow PR #55 glossary conventions (see Glossary and DESIGN §2.2).
 - **Temporal model**: Half-open intervals `[effective_from, effective_to)`. `BETWEEN` prohibited on temporal columns. Zero sentinel (`'1970-01-01'`) replaces NULL for ClickHouse compatibility.
 
@@ -148,16 +150,14 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 
 ### 4.1 In Scope
 
-- Bootstrap mechanism: `identity_inputs` ingestion, BootstrapJob processing pipeline
-- Alias store: `aliases` table, alias CRUD, temporal ownership tracking
-- Resolution API: hot-path and cold-path alias-to-person resolution
-- Matching engine: configurable `match_rules`, confidence scoring, normalization pipeline
-- Unmapped alias queue: operator review workflow (list, resolve, ignore)
-- Alias conflict detection: when same alias value maps to multiple persons
-- Merge/split operations with full audit trail via `merge_audits` (late phase)
-- GDPR alias deletion: move to `alias_gdpr_deleted`, remove from `aliases` (late phase)
-- ClickHouse Dictionary for hot-path analytical lookups (optional optimization)
-- **Persons identity-attribute history**: MariaDB `persons` table and its one-shot seed from `identity_inputs` (see DESIGN §3.7 and ADR-0002). Schema / CRUD / seed are owned by this domain; the Person domain reads the resulting rows to build its golden record.
+- Evidence ingestion: the `identity_inputs` write contract for connectors
+- **Persons observation journal**: the MariaDB `persons` table, its scheduled seed from `identity_inputs` (ADR-0002), the `account_person_map` cache, and the `operations` journal. Schema / seed / corrections are owned by this domain; the Person domain reads the resulting rows to build its golden record.
+- **Operator corrections** (ADR-0003): merge, split/detach, bind (single and bulk), exclude — appended to the journal, surviving re-runs; review queue of accounts pending a decision and contested-binding groups; per-account binding history; per-person account listing
+- Analytics resolution path: persons-sync mirror + build-time `person_id` resolution (the dbt resolve macro)
+- Person lookups for backend consumers (component spec: `docs/components/backend/identity-resolution/identity/`)
+- Matching engine (future): configurable `match_rules`, confidence-scored proposals, normalization pipeline
+- GDPR alias deletion (future): hard-erasure flow with archive
+- Legacy `aliases` table stewardship until retirement or reuse by the matcher
 
 ### 4.2 Out of Scope
 
@@ -174,43 +174,35 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 
 > **Testing strategy**: All requirements verified via automated tests (unit, integration, e2e) targeting 90%+ code coverage unless otherwise specified. Document verification method only for non-test approaches (analysis, inspection, demonstration).
 
-### 5.1 Phase 1 — MVP: dbt Seed (p1)
+### 5.1 Identity Store and Resolution (p1)
 
-#### Seed Aliases from HR Bronze Data
+> The v1 plan for this phase was alias-table resolution (dbt-seeded `aliases` + a resolve API). The implemented architecture resolves through the `persons` journal instead (DESIGN §1.1); the alias-specific requirements below are marked superseded and retained for traceability.
+
+#### Seed Aliases from HR Bronze Data (superseded)
 
 - [ ] `p1` - **ID**: `cpt-ir-fr-seed-aliases`
 
-The system **MUST** create initial alias records in the `aliases` table from HR Bronze data via dbt seed models, mapping `employee_id` and `email` alias types to person records created by the person domain.
+> **Superseded.** dbt seed models still populate the legacy `aliases` table, but the resolution path does not consume it (DESIGN §3.7 legacy note). The journal seed requirements (`cpt-ir-fr-persons-history`, `cpt-ir-fr-persons-initial-seed`) replace this capability. Retained for traceability until the table is retired.
 
-**Rationale**: Without initial aliases, no resolution can happen. HR data (BambooHR, Workday) provides the most reliable identity anchors — employee IDs and work emails.
-
-**Actors**: `cpt-ir-actor-analytics-pipeline`
-
-#### Resolve Alias to Person
+#### Resolve Alias to Person (superseded)
 
 - [ ] `p1` - **ID**: `cpt-ir-fr-resolve-alias`
 
-The system **MUST** resolve an `(insight_tenant_id, insight_source_type, insight_source_id, value_type, value)` tuple to a `person_id` by looking up active, non-deleted rows in the `aliases` table. The source identifier is required because identifiers like `value_type='id'` (and platform usernames) are unique only within a single source — the same `source_account_id` value can refer to different persons across BambooHR vs Cursor, and the same email can appear with different `source_account_id`s in different platforms. If found, the system **MUST** return the `person_id` and confidence. If not found, it **MUST** return a null `person_id` with status `unmapped`.
+> **Superseded.** Alias-table lookup was never built. Resolution is served by the journal read paths: the identity-resolution service read API for request-time lookups (component spec) and the analytics interface for build-time resolution (`cpt-ir-interface-analytics-resolution`). The insight that account-scoped identifiers are unique only within one source instance survives in the account-first resolver key (DESIGN §4.4).
 
-**Rationale**: This is the core capability — every downstream analytics query depends on resolving aliases to persons.
-
-**Actors**: `cpt-ir-actor-analytics-pipeline`
-
-#### Batch Alias Resolution
+#### Batch Alias Resolution (superseded)
 
 - [ ] `p1` - **ID**: `cpt-ir-fr-batch-resolve`
 
-The system **MUST** support batch resolution of multiple aliases in a single request, returning a `person_id` (or null) for each input alias.
-
-**Rationale**: Silver step 2 enrichment processes millions of rows; one-by-one resolution is prohibitively slow.
-
-**Actors**: `cpt-ir-actor-analytics-pipeline`
+> **Superseded.** Bulk resolution happens at build time through the analytics interface (`cpt-ir-interface-analytics-resolution`) — the mirror plus the resolve macro — not through a REST batch endpoint. A request-time batch endpoint may return with the future matcher if a consumer needs it.
 
 #### Tenant Isolation
 
 - [ ] `p1` - **ID**: `cpt-ir-fr-tenant-isolation`
 
-The system **MUST** isolate alias data by `insight_tenant_id`. A resolution request for tenant A **MUST NOT** return aliases belonging to tenant B.
+The system **MUST** isolate identity data by `insight_tenant_id`. A resolution request for tenant A **MUST NOT** return identity data belonging to tenant B.
+
+**Known gap**: the seed's evidence read path currently applies no tenant predicate and serves single-tenant deployments only; restoring the tenant filter on `identity_inputs` is a prerequisite for multi-tenant use (see DESIGN §3.2 PersonsSeed).
 
 **Rationale**: Multi-tenant deployments require strict data isolation to prevent cross-tenant data leaks.
 
@@ -222,7 +214,7 @@ The system **MUST** isolate alias data by `insight_tenant_id`. A resolution requ
 
 The system **MUST** maintain a `persons` table in MariaDB that stores the history of identity field changes per person in an append-only SCD-style log. Each row represents one observed field value (`value_type`, `value`) from one source (`insight_source_type`, `insight_source_id`) assigned to a person (`person_id`) at a specific time (`created_at`). Updating a field **MUST** insert a new row rather than mutate an existing one; the current value is the row with the latest `created_at` for the `(insight_tenant_id, person_id, value_type)` triple.
 
-Schema (the column split by `value_type` into `value_id` / `value_full_text` / `value`, the generated `value_effective` for display and `value_hash` for the natural-key UNIQUE, the SCD2 shape of `account_person_map`, and `TIMESTAMP(6)` precision) is specified in the identity-resolution DESIGN §3.7 and in [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md). The PRD intentionally states only the behavioural contract.
+Schema (the column split by `value_type` into `value_id` / `value_full_text` / `value`, the generated display/digest columns, the natural-key UNIQUE ending in `created_at`, the SCD2 shape of `account_person_map`, and microsecond timestamp precision) is specified in the identity-resolution DESIGN §3.7 and in [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md) with its post-acceptance note. The PRD intentionally states only the behavioural contract.
 
 **Rationale**: Downstream backend services (Analytics API, Identity Resolution service) need a CRUD-accessible, temporal view of person attributes from heterogeneous sources — ClickHouse is optimised for analytical reads, not operator-driven edits. MariaDB with row-level history supports conflict-resolution UX, audit trails, and operator-driven corrections.
 
@@ -245,7 +237,9 @@ Schema of `persons`, UNIQUE-key structure, `person_id` minting (random UUIDv7), 
 
 **Actors**: `cpt-ir-actor-analytics-pipeline`
 
-### 5.2 Phase 2 — Bootstrap Pipeline (p1)
+### 5.2 Evidence Intake and Seed Fold (p1)
+
+> The v1 plan for this phase was a BootstrapJob maintaining the `aliases` store with `unmapped`/`conflicts` queues. What shipped is the persons-seed fold into the journal (DESIGN §3.2); superseded alias-pipeline requirements are marked below and retained for traceability.
 
 #### Accept Alias Observations from Connectors
 
@@ -259,65 +253,53 @@ The system **MUST** accept alias observation records into the `identity_inputs` 
 
 #### Process Bootstrap Inputs Incrementally
 
-- [x] `p1` - **ID**: `cpt-ir-fr-bootstrap-incremental`
+- [ ] `p1` - **ID**: `cpt-ir-fr-bootstrap-incremental`
 
-The BootstrapJob **MUST** process `identity_inputs` rows incrementally, reading only rows with `_synced_at` greater than the last processing watermark. It **MUST** update the watermark after each successful run.
+The seed **MUST** process `identity_inputs` such that re-runs neither duplicate nor lose observations, and **SHOULD** process incrementally — reading only rows newer than a persisted watermark and advancing it after each successful run.
 
-**Rationale**: Connectors sync continuously; the bootstrap pipeline must process only new observations to avoid re-processing the entire history on each run.
+**Current state**: not implemented as incremental — each run folds the **full** evidence set (idempotent via the journal's natural key); the watermark mechanism is an open scalability requirement (DESIGN §5 REC-IR-02).
+
+**Rationale**: Connectors sync continuously; full-set folding is correct but its cost grows with history.
 
 **Actors**: `cpt-ir-actor-bootstrap-job`
 
-#### Normalize Alias Values
+#### Normalize Alias Values (superseded)
 
 - [ ] `p1` - **ID**: `cpt-ir-fr-normalize-aliases`
 
-The BootstrapJob **MUST** normalize alias values before matching: `email` and `username` types **MUST** be lowercased and trimmed; all other types **MUST** be trimmed. Raw values in `identity_inputs` **MUST** be preserved unchanged.
+> **Superseded.** Normalization now lives at the consumption points: the seed groups accounts by lowercased e-mail; the analytics macro applies `lower(trim(...))` to **both** join sides; `value_id` comparisons in the journal are case-insensitive by collation (service migration 004). Raw values in `identity_inputs` remain preserved unchanged — that part of the contract stands via `cpt-ir-contract-bootstrap-inputs`.
 
-**Rationale**: Case differences and whitespace in emails/usernames cause false negatives in matching. Normalization ensures consistent lookups.
-
-**Actors**: `cpt-ir-actor-bootstrap-job`
-
-#### Create Alias on Exact Match
+#### Create Alias on Exact Match (superseded)
 
 - [ ] `p1` - **ID**: `cpt-ir-fr-create-alias-exact`
 
-When the BootstrapJob finds no existing alias for a normalized `(value_type, value, insight_tenant_id)` and the MatchingEngine returns confidence >= 1.0, the system **MUST** auto-create an alias record in the `aliases` table linking to the matched `person_id`.
+> **Superseded.** Automatic exact-match linking is implemented by the seed's unambiguous e-mail link (an unbound account whose e-mail maps to exactly one person joins that person — DESIGN §3.2 PersonsSeed). Anything beyond that arrives with the future MatchingEngine strictly as **operator-reviewed proposals** — the matcher never writes bindings (ADR-0003).
 
-**Rationale**: High-confidence matches (exact email, exact employee ID) should be linked automatically without operator intervention to achieve the >= 80% auto-resolution goal.
+#### Route Low-Confidence Aliases to Unmapped Queue (future — with the matcher)
 
-**Actors**: `cpt-ir-actor-bootstrap-job`, `cpt-ir-actor-matching-engine`
+- [ ] `p3` - **ID**: `cpt-ir-fr-route-unmapped`
 
-#### Route Low-Confidence Aliases to Unmapped Queue
+When the future MatchingEngine produces a candidate at any confidence, the system **MUST** surface it for operator review as a proposal (with the candidate person and its confidence) rather than silently dropping or silently applying it; confidence bands only order proposals and gate bulk acceptance. Whether suggestions persist in a store or derive on read is a design decision for that iteration; in v1 the review need is covered by the derived queue (`cpt-ir-fr-review-queue`).
 
-- [ ] `p1` - **ID**: `cpt-ir-fr-route-unmapped`
-
-When the MatchingEngine returns confidence < 1.0 for an alias, the system **MUST** insert the alias into the `unmapped` table. If confidence is 0.50–0.99, the system **MUST** include the `suggested_person_id` and `suggestion_confidence`. If confidence < 0.50, the system **MUST** insert with status `pending` and no suggestion.
-
-**Rationale**: Aliases below the auto-link threshold must not be silently dropped; they need operator review to prevent identity gaps.
+**Rationale**: Matcher candidates must not be silently dropped — and per ADR-0003 must not be silently applied either.
 
 **Actors**: `cpt-ir-actor-bootstrap-job`, `cpt-ir-actor-matching-engine`
 
-#### Track Alias Observations Over Time
+#### Track Alias Observations Over Time (superseded)
 
 - [ ] `p1` - **ID**: `cpt-ir-fr-track-observations`
 
-When an alias already exists in the `aliases` table for the same `(value_type, value, insight_source_id, insight_tenant_id)`, the BootstrapJob **MUST** update `last_observed_at` to the current timestamp. It **SHOULD** update `source_account_id` if changed.
+> **Superseded.** The append-only journal records every observation with its own `created_at` (sourced from `_synced_at`), so observation history is first-class rather than a pair of `first/last_observed_at` columns on a mutable alias row.
 
-**Rationale**: Tracking when aliases were last confirmed helps identify stale mappings and provides audit context.
-
-**Actors**: `cpt-ir-actor-bootstrap-job`
-
-#### Idempotent Bootstrap Runs
+#### Idempotent Bootstrap Runs (superseded)
 
 - [ ] `p1` - **ID**: `cpt-ir-fr-bootstrap-idempotent`
 
-Re-running the BootstrapJob on the same `identity_inputs` data **MUST NOT** create duplicate alias records. The system **MUST** deduplicate on the natural key `(insight_tenant_id, value_type, value, insight_source_id)`.
+> **Superseded.** Idempotent re-runs are guaranteed at the journal level: `INSERT IGNORE` under the natural observation key ending in `created_at`, with `created_at` sourced deterministically from `_synced_at` (see `cpt-ir-fr-persons-initial-seed` and `cpt-ir-nfr-bootstrap-idempotency`).
 
-**Rationale**: Connector retries and Argo Workflow restarts must be safe. Duplicate aliases would corrupt resolution results and inflate metrics.
+### 5.3 Phase 3 — Matching & Workflows (p2, future)
 
-**Actors**: `cpt-ir-actor-bootstrap-job`
-
-### 5.3 Phase 3 — Matching & Workflows (p2)
+> Nothing in this phase is implemented; these requirements govern the future MatchingEngine (DESIGN §4.2). Operator-workflow requirements that ADR-0003 re-scoped are marked superseded in favour of §5.4.
 
 #### Configurable Match Rules
 
@@ -343,101 +325,141 @@ The MatchingEngine **MUST** evaluate rules in three ordered phases: B1 (determin
 
 - [ ] `p2` - **ID**: `cpt-ir-fr-no-fuzzy-autolink`
 
-Fuzzy matching rules (Phase B3) **MUST NEVER** trigger automatic alias creation regardless of confidence score. They **MUST** only generate suggestions routed to the unmapped queue for operator review.
+Fuzzy matching rules (Phase B3) **MUST NEVER** trigger automatic binding creation regardless of confidence score. Their output **MUST** be operator-reviewed proposals only and **MUST NOT** be eligible for bulk acceptance. (Under ADR-0003 no matcher rule of any phase writes bindings; this requirement additionally hardens the fuzzy tier.)
 
-**Rationale**: Production experience showed fuzzy name matching produced false-positive merges. This constraint is non-negotiable.
+**Rationale**: Fuzzy name matching is a known source of false-positive merges, which corrupt attribution and are costly to unwind. This constraint is non-negotiable.
 
 **Actors**: `cpt-ir-actor-matching-engine`
 
-#### Operator Unmapped Queue Management
+#### Operator Unmapped Queue Management (superseded)
 
 - [ ] `p2` - **ID**: `cpt-ir-fr-unmapped-management`
 
-The system **MUST** allow operators to: (a) list unmapped aliases filtered by status, (b) link an unmapped alias to an existing person, (c) create a new person from an unmapped alias (via person domain), (d) mark an unmapped alias as ignored. Each resolution action **MUST** update the `unmapped` record with `resolved_person_id`, `resolved_at`, `resolved_by_person_id`, and `resolution_type`.
+> **Superseded** by the §5.4 operator-correction requirements (`cpt-ir-fr-review-queue`, `cpt-ir-fr-operator-bind`, `cpt-ir-fr-operator-exclude`): the queue is derived rather than a stateful `unmapped` record workflow. Retained for traceability; a persistent proposal store may return with the matcher (see `cpt-ir-fr-route-unmapped`).
 
-**Rationale**: Not all aliases can be auto-resolved. Operators need an efficient workflow to clear the unmapped queue and maintain data quality.
-
-**Actors**: `cpt-ir-actor-operator`
-
-#### Alias Conflict Detection
+#### Alias Conflict Detection (superseded)
 
 - [ ] `p2` - **ID**: `cpt-ir-fr-alias-conflict-detection`
 
-When the BootstrapJob encounters a new alias observation that matches an alias already owned by a different person, the system **MUST** create a conflict record in the `conflicts` table with both `person_id_a`, `person_id_b`, the conflicting `value_type`/`value`, and source IDs.
+> **Superseded.** Conflict surfacing is covered by the derived review queue (`cpt-ir-fr-review-queue`): contested identity values and unexplained binding divergence are surfaced with candidates, without a persistent `conflicts` table. A persistent conflict record may return with the matcher.
 
-**Rationale**: The same email or username claimed by two different persons indicates a data quality issue that requires operator attention.
-
-**Actors**: `cpt-ir-actor-bootstrap-job`
-
-#### Manual Alias Management
+#### Manual Alias Management (superseded)
 
 - [ ] `p2` - **ID**: `cpt-ir-fr-manual-alias-crud`
 
-The system **MUST** allow operators to: (a) add an alias to a person manually, (b) deactivate an alias (set `is_active = 0`), (c) list all aliases for a given person. Each action **MUST** be logged in `merge_audits` with `action = 'alias_add'` or `'alias_remove'`.
+> **Superseded** by the §5.4 operator corrections: attaching identity to a person is `cpt-ir-fr-operator-bind`; taking an account away is `cpt-ir-fr-split-v2` / `cpt-ir-fr-operator-exclude`; listing a person's identity values is `cpt-ir-fr-binding-history`; auditability is `cpt-ir-fr-merge-audit-v2` (journal, not `merge_audits`).
 
-**Rationale**: Automated resolution covers most cases, but operators need escape hatches for edge cases — manually added email addresses, correcting mislinked aliases.
+#### Auto-Resolve Unmapped on New Alias (future — with the matcher)
 
-**Actors**: `cpt-ir-actor-operator`
+- [ ] `p3` - **ID**: `cpt-ir-fr-auto-resolve-unmapped`
 
-#### Auto-Resolve Unmapped on New Alias
-
-- [ ] `p2` - **ID**: `cpt-ir-fr-auto-resolve-unmapped`
-
-When the BootstrapJob creates a new alias, the system **SHOULD** check the `unmapped` table for pending entries matching the same `(value_type, value, insight_tenant_id)` and auto-resolve them to the newly linked person.
-
-**Rationale**: As more connectors sync, previously unmapped aliases may become resolvable. Auto-resolution reduces operator queue size.
+If the matcher iteration introduces a persistent suggestion store, newly established bindings **SHOULD** auto-resolve pending suggestions for the same identity value. In v1 this is inherent: the review queue is derived, so an item disappears as soon as new bindings dissolve its condition.
 
 **Actors**: `cpt-ir-actor-bootstrap-job`
 
-### 5.4 Late Phase — Merge/Split & GDPR (p3)
+### 5.4 Manual Resolution — Operator Corrections (p1)
 
-#### Merge Person Alias Sets
+> Requirements for the operator correction capability decided in [ADR-0003](ADR/0003-operator-decisions-as-persons-observations.md) (reviewed design: constructorfabric/insight#2180). The v1 late-phase merge/split/audit/idempotency requirements prescribed a snapshot-and-rollback mechanism that was never built; they are superseded by the implementation-neutral `-v2` requirements below (see this file's git history for the v1 texts).
 
-- [ ] `p3` - **ID**: `cpt-ir-fr-merge`
+#### Merge Persons
 
-The system **MUST** allow an operator to merge all aliases from `source_person_id` to `target_person_id`. The merge operation **MUST** snapshot the alias state before and after in `merge_audits`, reassign all source aliases, and run alias conflict detection on the target.
+- [ ] `p1` - **ID**: `cpt-ir-fr-merge-v2`
 
-**Rationale**: Operators occasionally discover that two person records represent the same individual. Merge combines their alias sets with full audit trail.
+The system **MUST** allow an operator to declare that two persons are the same human. All account bindings of the absorbed person **MUST** be reassigned to the surviving person, which the operator names explicitly. The operation **MUST** be recorded as new history (no existing records modified or deleted), attributed to the operator with a reason.
 
-**Actors**: `cpt-ir-actor-operator`
-
-#### Split (Rollback Merge)
-
-- [ ] `p3` - **ID**: `cpt-ir-fr-split`
-
-The system **MUST** allow an operator to reverse a previous merge by restoring alias mappings from `merge_audits.snapshot_before`. The system **MUST NOT** allow a split on an already-rolled-back audit record.
-
-**Rationale**: Merges can be wrong. Reversibility is essential for data integrity and operator confidence.
+**Rationale**: Automatic resolution under-merges (e.g., work vs personal e-mail). Operators need to combine persons without losing any history. (Supersedes the v1 merge requirement.)
 
 **Actors**: `cpt-ir-actor-operator`
 
-#### Merge/Split Audit Trail
+#### Split / Detach Accounts
 
-- [ ] `p3` - **ID**: `cpt-ir-fr-merge-audit`
+- [ ] `p1` - **ID**: `cpt-ir-fr-split-v2`
 
-Every merge, split, alias_add, and alias_remove operation **MUST** be recorded in `merge_audits` with: `action`, `target_person_id`, `source_person_id`, `snapshot_before` (JSON), `snapshot_after` (JSON), `reason`, `actor_person_id`, `performed_at`.
+The system **MUST** allow an operator to declare that an account belongs to a different human: rebind the account to another person — usually a newly created one — **regardless of how the current grouping arose**. No prior merge record may be required. The operation **MUST** be recorded as new history, attributed to the operator with a reason.
 
-**Rationale**: Auditability is required for compliance, debugging, and building operator trust. Full snapshots enable rollback.
+**Rationale**: Automatic resolution can over-merge (e.g., through a shared mailbox such as `team@example.com`). Splitting must therefore work on accounts the automation grouped, where no earlier "merge" exists to roll back. (Supersedes the v1 split requirement.)
 
 **Actors**: `cpt-ir-actor-operator`
+
+#### Bind Account to Person (single, bulk, pre-registration)
+
+- [ ] `p1` - **ID**: `cpt-ir-fr-operator-bind`
+
+The system **MUST** allow an operator to attach an account to a chosen person: individually, or in bulk from a prepared matching table. Bulk rows **MAY** address an account directly or via an observed value (e-mail, username); a value that does not resolve to exactly one account **MUST** be reported per-row and left undecided, never guessed. Binding an account that has not been observed yet **MUST** be accepted and take effect when the account first appears. Binding an account pending review to its own current person **MUST** count as an operator confirmation and clear it from review.
+
+**Rationale**: Covers linking accounts pending review, importing a prepared e-mail/username matching table (for example, one exported from an HR system or maintained as a spreadsheet), and pre-registering known accounts of new hires.
+
+**Actors**: `cpt-ir-actor-operator`
+
+#### Exclude Non-Person Accounts
+
+- [ ] `p1` - **ID**: `cpt-ir-fr-operator-exclude`
+
+The system **MUST** allow an operator to mark an account as not belonging to any human (bot, CI, service account). Activity of excluded accounts **MUST NOT** be attributed to any person, and excluded accounts **MUST NOT** appear in the review queue.
+
+**Rationale**: Bot and service accounts (e.g., `ci-bot@example.com`) are not humans; they must be excludable, not merged into persons or endlessly re-reviewed.
+
+**Actors**: `cpt-ir-actor-operator`
+
+#### Review Queue of Pending Decisions
+
+- [ ] `p1` - **ID**: `cpt-ir-fr-review-queue`
+
+The system **MUST** surface the accounts that require an operator decision: (a) accounts whose identity evidence is contested (e.g. an e-mail claimed by more than one person), each with candidate persons and the observed values that make it contested; (b) binding divergence within an identity-value group that is **not** explained by any operator-authored decision; (c) observed accounts with no usable identity evidence (e.g. e-mail-less) — visible and countable, never hidden. Divergence explained by an operator decision **MUST NOT** be surfaced. A surfaced item **MUST** disappear once a decision removes its condition, without any separate item lifecycle to maintain. Alongside the queue, the system **MUST** report resolution-rate shares — how many observed accounts are bound, pending, without evidence, and excluded — so the match rate is operator-visible. Deliberate MVP narrowing: there is no ignore/defer (snooze) action — an item leaves the queue only through a decision (bind, detach, exclude, or confirm); deferral state returns with the proposal store of the matcher iteration.
+
+**Rationale**: Operators need one place showing what needs attention, and it must not show what a human already settled; unresolved is a first-class surface, and reported match rate is a success measure of the umbrella epic (#1873). Surfacing e-mail-less accounts closes #1776. (Together with `cpt-ir-fr-operator-bind` and `cpt-ir-fr-operator-exclude`, supersedes the queue workflow of `cpt-ir-fr-unmapped-management`.)
+
+**Actors**: `cpt-ir-actor-operator`
+
+#### Corrections Survive Automatic Re-Resolution
+
+- [ ] `p1` - **ID**: `cpt-ir-fr-correction-durability`
+
+An operator decision **MUST** survive every subsequent run of automatic resolution and the connection of any new source: automation **MUST NOT** override, re-derive, or silently supersede an operator-authored binding under any circumstances. (Unconditional once the manual-resolution seed hardening is deployed; until then the divergent-group gap documented in DESIGN §3.2 remains the one known violation path.)
+
+**Rationale**: The single most repeated stakeholder requirement (#1873): the override store is the source of truth; automation only proposes.
+
+**Actors**: `cpt-ir-actor-operator`
+
+#### Correction Audit and Reconstructibility
+
+- [ ] `p1` - **ID**: `cpt-ir-fr-merge-audit-v2`
+
+Every correction **MUST** be recorded with the operator identity, a machine-readable reason, an optional free-text comment, and a timestamp — and **MUST NOT** modify or delete any prior record. The retained records **MUST** be sufficient to reconstruct the state before any correction and to answer "who decided this, when, and why" for any current binding.
+
+**Rationale**: Auditability and reversibility without snapshot machinery: history that is never destroyed is its own audit trail. (Supersedes the v1 audit-trail requirement.)
+
+**Actors**: `cpt-ir-actor-operator`
+
+#### Idempotent Corrections
+
+- [ ] `p1` - **ID**: `cpt-ir-fr-idempotent-mutations-v2`
+
+Re-applying a correction identical to an **already-recorded operator decision** (operator retry, duplicate bulk row, re-uploaded matching table) **MUST NOT** change resolution state or duplicate records. Confirming an automation-made binding is not a repeat: it **MUST** record the operator's decision (see the bind requirement).
+
+**Rationale**: Retries and re-uploads must be safe by construction, without client-side idempotency plumbing. (Supersedes the v1 idempotency requirement.)
+
+**Actors**: `cpt-ir-actor-operator`
+
+#### Binding History per Account and per Person
+
+- [ ] `p2` - **ID**: `cpt-ir-fr-binding-history`
+
+The system **MUST** let an operator view, for any account, its current binding and the full decision history (author, reason, time of each change); and, for any person, every account and identity value ever bound to them with the author of each link.
+
+**Rationale**: Operators cannot make safe merge/split decisions without seeing why the current state is what it is; the same view supports troubleshooting attribution questions.
+
+**Actors**: `cpt-ir-actor-operator`
+
+### 5.5 Late Phase — GDPR (p3)
 
 #### GDPR Alias Purge
 
 - [ ] `p3` - **ID**: `cpt-ir-fr-gdpr-purge`
 
-The system **MUST** support GDPR hard erasure for a person's aliases: move all alias records to `alias_gdpr_deleted`, remove from `aliases` (set `is_deleted = 1`), and ensure the alias is no longer resolvable via any path (hot or cold).
+The system **MUST** support GDPR hard erasure of a person's identity data, after which the erased values **MUST NOT** be resolvable via any path and no plaintext copy of them may be retained anywhere, including archives. Erasure **MUST** be an explicit administrative operation, recorded in the operations journal; the append-only rule of the decision journal governs identity decisions and does not preclude lawful erasure of stored values.
 
-**Rationale**: Legal compliance with right-to-erasure requests. Alias data contains PII (emails, names, employee IDs).
-
-**Actors**: `cpt-ir-actor-operator`
-
-#### Idempotent Merge/Split Operations
-
-- [ ] `p3` - **ID**: `cpt-ir-fr-idempotent-mutations`
-
-All mutating API endpoints (merge, split, purge, alias add/remove) **MUST** support idempotency keys (`Idempotency-Key` header, 24h TTL). Replaying a request with the same key **MUST** return the original result without re-executing the operation.
-
-**Rationale**: Network retries and operator double-clicks must be safe. ClickHouse lacks ACID transactions, so idempotency is the primary safety mechanism.
+**Rationale**: Legal compliance with right-to-erasure requests. Identity data contains PII (emails, names, employee IDs).
 
 **Actors**: `cpt-ir-actor-operator`
 
@@ -451,9 +473,9 @@ All mutating API endpoints (merge, split, purge, alias add/remove) **MUST** supp
 
 - [ ] `p1` - **ID**: `cpt-ir-nfr-alias-lookup-latency`
 
-The system **MUST** resolve a single alias to `person_id` via the hot path in < 50 ms at p99 under normal load.
+The system **MUST** resolve a single person lookup via the service read API in < 50 ms at p99 under normal load.
 
-**Threshold**: p99 latency < 50 ms for `POST /resolve` when alias exists in `aliases` table, measured at 1000 req/s sustained.
+**Threshold**: p99 latency < 50 ms for a profile lookup that hits an existing binding, measured at 1000 req/s sustained.
 
 **Rationale**: Resolution is on the critical path for Silver step 2 enrichment. High latency blocks analytical pipeline throughput.
 
@@ -461,7 +483,7 @@ The system **MUST** resolve a single alias to `person_id` via the hot path in < 
 
 - [ ] `p1` - **ID**: `cpt-ir-nfr-bootstrap-throughput`
 
-The BootstrapJob **MUST** process at least 100,000 `identity_inputs` rows per run within 30 minutes.
+The seed **MUST** process at least 100,000 `identity_inputs` rows per run within 30 minutes.
 
 **Threshold**: >= 100K rows processed in <= 30 min on standard cluster resources (0.5 CPU, 512 MB RAM).
 
@@ -471,9 +493,9 @@ The BootstrapJob **MUST** process at least 100,000 `identity_inputs` rows per ru
 
 - [ ] `p1` - **ID**: `cpt-ir-nfr-bootstrap-idempotency`
 
-Re-running the BootstrapJob on identical input **MUST** produce identical output — zero net new alias rows, zero net deleted rows.
+Re-running the seed on identical input **MUST** produce identical output — zero net new journal rows, zero net deleted rows.
 
-**Threshold**: After 3 consecutive runs on unchanged data, `SELECT count() FROM aliases` returns the same value.
+**Threshold**: After 3 consecutive runs on unchanged data, `SELECT count() FROM persons` returns the same value and `account_person_map` rebuilds bit-identically.
 
 **Rationale**: System restarts, Argo retries, and operational re-runs must be safe.
 
@@ -491,7 +513,7 @@ The system **MUST** produce zero false-positive auto-links from fuzzy matching r
 
 - [ ] `p1` - **ID**: `cpt-ir-nfr-tenant-isolation`
 
-A resolution request for tenant A **MUST NOT** return data from tenant B under any circumstances, including cache hits, Dictionary lookups, and error responses.
+A resolution request for tenant A **MUST NOT** return data from tenant B under any circumstances, including cache hits, mirror reads, and error responses.
 
 **Threshold**: 0 cross-tenant data leaks in penetration testing.
 
@@ -501,26 +523,26 @@ A resolution request for tenant A **MUST NOT** return data from tenant B under a
 
 - [ ] `p3` - **ID**: `cpt-ir-nfr-gdpr-erasure`
 
-After a GDPR purge, the purged aliases **MUST NOT** be resolvable via any path (API, Dictionary, direct table query on `aliases`) within 60 minutes.
+After a GDPR purge, the purged identity values **MUST NOT** be resolvable via any path (service API, analytics mirror, direct table query) within 60 minutes.
 
-**Threshold**: Purged alias returns null from `POST /resolve` within 60 min of purge. Dictionary reload completes within TTL.
+**Threshold**: A purged value resolves to no person via every read path within 60 min of purge, including the next mirror publish.
 
 **Rationale**: Legal compliance with right-to-erasure. Delayed purge visibility is a regulatory risk.
 
-#### Merge/Split Reversibility
+#### Correction Reversibility
 
-- [ ] `p3` - **ID**: `cpt-ir-nfr-merge-reversibility`
+- [ ] `p1` - **ID**: `cpt-ir-nfr-merge-reversibility`
 
-Every merge operation **MUST** be fully reversible via split. After a merge-then-split round-trip, the alias state **MUST** be identical to the pre-merge state.
+Every operator correction **MUST** be reversible: applying a correction and then the counter-correction **MUST** restore the effective account-to-person state, and the state before any correction **MUST** remain reconstructible from retained history at all times.
 
-**Threshold**: 100% round-trip fidelity verified by comparing `snapshot_before` with post-split alias state.
+**Threshold**: 100% round-trip fidelity — effective bindings after correction + counter-correction are identical to the pre-correction bindings; reconstruction of the pre-correction state succeeds for every corrected account.
 
-**Rationale**: Operator confidence and data integrity. Irreversible merges would make operators reluctant to act.
+**Rationale**: Operator confidence and data integrity. Irreversible merges are the single most documented failure mode of comparable systems; reversibility must never depend on remembering to snapshot.
 
 ### 6.2 NFR Exclusions
 
 - **High availability / clustering**: Identity resolution is not on the real-time serving path for end users. ClickHouse cluster availability is managed at infrastructure level, not by this domain.
-- **Sub-second consistency**: The analytical pipeline tolerates 30-60s staleness (Dictionary TTL). Real-time consistency is not required.
+- **Sub-second consistency**: The analytical pipeline resolves at build cadence (a correction becomes visible in dashboards on the next gold build). Real-time consistency is not required.
 - **Encryption at rest**: Handled by ClickHouse infrastructure configuration, not by application-level encryption in this domain.
 
 ---
@@ -533,25 +555,25 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 
 - [ ] `p1` - **ID**: `cpt-ir-interface-resolution-api`
 
-**Type**: REST API (HTTP/JSON)
+**Type**: REST API (HTTP/JSON), served by the `identity-resolution` service
+
+**Stability**: read surface stable; operator correction surface planned (contracts fixed at FEATURE level; design reviewed in constructorfabric/insight#2180)
+
+**Description**: Person lookups for backend consumers (see the component spec) plus the operator correction surface: bind (single/bulk), merge, detach, exclude, review queue, binding history. Match-rule configuration and GDPR purge join this interface with their future phases.
+
+**Breaking Change Policy**: Endpoint paths and response shapes are versioned; breaking changes require a major version bump.
+
+#### Analytics Resolution Interface (mirror + macro)
+
+- [ ] `p1` - **ID**: `cpt-ir-interface-analytics-resolution`
+
+**Type**: ClickHouse mirror table (`identity.identity_persons`) + dbt macro (`resolve_person_id`)
 
 **Stability**: stable
 
-**Description**: Primary interface for alias resolution, merge/split operations, unmapped queue management, match rule configuration, and GDPR purge. Base path: `/api/identity/`.
+**Description**: The analytical read path. persons-sync republishes the journal into ClickHouse atomically; every gold model resolves `person_id` at build time through the macro — the single place resolution semantics live for analytics. Unresolved activity carries NULL `person_id` (absent, never guessed).
 
-**Breaking Change Policy**: Endpoint paths and response shapes are versioned; breaking changes require major version bump (`/api/v2/identity/`).
-
-#### ClickHouse Dictionary (Analytical Lookup)
-
-- [ ] `p2` - **ID**: `cpt-ir-interface-ch-dictionary`
-
-**Type**: ClickHouse Dictionary
-
-**Stability**: stable
-
-**Description**: Optional read-only interface for analytical queries. Keyed by `(insight_tenant_id, value_type, value)`, returns `person_id`. Reload TTL 30-60s. Used by dbt models and dashboards for Silver step 2 enrichment.
-
-**Breaking Change Policy**: Dictionary key structure changes require downstream dbt model updates.
+**Breaking Change Policy**: Macro semantics changes propagate to all consuming models on the next build; they require a coordinated dbt release note. (Replaces the v1 Dictionary-over-`aliases` interface, retired with the legacy table.)
 
 ### 7.2 External Integration Contracts
 
@@ -571,13 +593,13 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 
 - [ ] `p1` - **ID**: `cpt-ir-contract-person-domain`
 
-**Direction**: provided by library (identity resolution provides `aliases.person_id`)
+**Direction**: provided by this domain (identity resolution provides `persons` observations and mints `person_id`)
 
-**Protocol/Format**: Logical FK — `aliases.person_id` references `persons.person_id` (the stable UUIDv7, not the auto-increment observation row PK)
+**Protocol/Format**: read access to the `persons` observation journal; `person_id` is the stable random UUIDv7 minted at first binding (ADR-0002), never the auto-increment observation row PK
 
-**Description**: The `aliases` table provides the authoritative mapping from identity signals to person records. The person domain owns person creation; identity resolution links aliases to existing persons. The `person_id` column in `aliases` is the primary integration point.
+**Description**: The `persons` journal is the authoritative source for the account-to-person binding and for identity-attribute observations. This domain mints `person_id`; the person domain reads the observations to derive its golden record and never writes here. (The v1 wording of this contract — `aliases.person_id` as the authoritative mapping, persons created by the person domain — is superseded; the legacy `aliases` table is not consumed by resolution.)
 
-**Compatibility**: The `person_id` UUID format is stable. Column name changes are breaking.
+**Compatibility**: The `person_id` UUID format is stable. Journal column semantics changes are breaking for the person domain.
 
 ---
 
@@ -590,148 +612,146 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 **Actor**: `cpt-ir-actor-bootstrap-job`, `cpt-ir-actor-connector`
 
 **Preconditions**:
-- Connector has completed a sync and written rows to `identity_inputs`
-- BootstrapJob is triggered (Argo Workflow post-sync)
-- Person records exist in person domain (seeded by dbt or previous bootstrap)
+- Connector has completed a sync; dbt models have written its observations to `identity_inputs`
+- The seed run is triggered (scheduled) or invoked manually
 
 **Main Flow**:
-1. BootstrapJob reads `identity_inputs` rows where `_synced_at > last_watermark`
-2. For each row, normalize `value` (lowercase/trim for email/username)
-3. Look up existing alias in `aliases` for `(tenant, value_type, normalized_value)`
-4. If alias exists for same person: update `last_observed_at`
-5. If alias does not exist: invoke MatchingEngine with the alias
-6. If confidence >= 1.0: create alias in `aliases` table, auto-resolve matching unmapped entries
-7. If confidence < 1.0: insert into `unmapped` (with suggestion if confidence >= 0.50)
-8. Update processing watermark
+1. The seed reads `identity_inputs` observations and groups them per source account
+2. Accounts with an existing binding are left bound; their new observations are appended under the bound person
+3. Unknown accounts with a new e-mail get a freshly minted person (accounts sharing the same new e-mail are grouped)
+4. Unbound accounts whose e-mail unambiguously maps to one person are linked to it; contested evidence (an e-mail claimed by more than one person) **MUST NOT** be auto-linked — it is surfaced for review (target behaviour of the manual-resolution capability)
+5. Binding divergence within an e-mail group is classified by author; only seed-authored divergence is surfaced
+6. The derived cache is rebuilt; the run and its counters are journaled
 
 **Postconditions**:
-- New aliases created in `aliases` table for high-confidence matches
-- Low-confidence aliases queued in `unmapped` for operator review
-- Processing watermark advanced
+- Every processed account is bound, surfaced for review, or (e-mail-less) skipped
+- Operator decisions from before the run are untouched
+- Run summary (including conflict counters) is available in the operations journal
 
 **Alternative Flows**:
-- **Alias exists for different person**: ConflictDetector creates a `conflicts` record; alias is NOT auto-created
-- **BootstrapJob fails mid-run**: Watermark not updated; safe to retry (idempotent)
-- **No matching person in person domain**: Alias routed to `unmapped` as pending
+- **Seed fails or is refused by an input guard**: no partial bindings are visible; safe to retry (idempotent); guard overrides require an explicit operator flag
+- **Concurrent run**: the run-lock makes the second invocation exit without effect
 
 ---
 
-### Resolve Alias (Hot Path)
+### Resolve Person for Analytics and Backend
 
 - [ ] `p1` - **ID**: `cpt-ir-usecase-resolve-hot`
 
 **Actor**: `cpt-ir-actor-analytics-pipeline`
 
 **Preconditions**:
-- Alias exists in `aliases` table with `is_active = 1` and `is_deleted = 0`
+- The journal mirror (`identity.identity_persons`) has been published
 
-**Main Flow**:
-1. Caller sends `POST /resolve` with `value_type`, `value`, `insight_source_id`, `insight_tenant_id`
-2. System queries `aliases` table for active, non-deleted match
-3. System returns `{person_id, confidence: 1.0, status: "resolved"}`
+**Main Flow** (analytics, bulk):
+1. A gold build calls the `resolve_person_id` macro over the mirror
+2. Each fact keyed by a source account receives the `person_id` of the account's latest binding
+3. Unresolved accounts yield NULL; excluded accounts resolve to NULL
 
 **Postconditions**:
-- Caller has `person_id` for downstream processing
+- All gold tables of the build agree on person attribution (build-scoped snapshot)
 
 **Alternative Flows**:
-- **Alias not found (cold path)**: System invokes MatchingEngine; if confidence >= 1.0, auto-creates alias and returns resolved; otherwise returns `{person_id: null, status: "unmapped"}`
-- **Multiple matches for same alias**: Should not happen (application-level uniqueness); if it does, return the most recently created active alias
+- **Backend request-time lookup**: a service calls the identity read API (`/v1/profiles`); an ambiguous lookup (single-result invariant violated) returns an explicit ambiguity error rather than picking a winner
 
 ---
 
-### Review Unmapped Aliases
+### Review Pending Identity Decisions
 
-- [ ] `p2` - **ID**: `cpt-ir-usecase-review-unmapped`
+- [ ] `p1` - **ID**: `cpt-ir-usecase-review-unmapped`
 
 **Actor**: `cpt-ir-actor-operator`
 
 **Preconditions**:
-- Unmapped aliases exist with status `pending` or `in_review`
-- Operator has access to the identity resolution API
+- Accounts pending a decision and/or unexplained binding conflicts exist
+- Operator has the identity correction role
 
 **Main Flow**:
-1. Operator calls `GET /unmapped?status=pending` to list unresolved aliases
-2. For each unmapped alias, operator reviews the `suggested_person_id` (if any)
-3. Operator calls `POST /unmapped/:id/resolve` with `person_id` to link alias to a person
-4. System creates alias in `aliases` table and updates `unmapped` record with resolution details
+1. Operator requests the review queue and sees each pending account with its observed values and candidate persons
+2. Operator investigates using per-account binding history when needed
+3. Operator decides: bind to a candidate, detach as a separate person, confirm the current person (bind-to-self), or exclude as a non-person
+4. The decision is appended to the journal under the operator's identity; the queue item disappears because its condition no longer holds
 
 **Postconditions**:
-- Alias created in `aliases` table
-- `unmapped` record updated: `status = 'resolved'`, `resolved_person_id`, `resolved_at`, `resolution_type = 'linked'`
+- The account's effective binding reflects the operator decision
+- The decision survives all future automatic runs
 
 **Alternative Flows**:
-- **Operator creates new person**: Operator calls person domain API to create person, then links unmapped alias to new `person_id`; `resolution_type = 'new_person'`
-- **Operator ignores alias**: Operator calls `POST /unmapped/:id/ignore`; `status = 'ignored'`, `resolution_type = 'ignored'`
+- **Bulk import**: the operator uploads a prepared matching table via bulk bind; unambiguous rows apply, ambiguous rows are reported per-row and stay in the queue
+- **Legacy conflict**: for a seed-authored binding conflict, the operator either merges the persons or re-asserts the divergence under their own authorship, which silences it
 
 ---
 
-### Merge Two Person Alias Sets
+### Merge Two Persons
 
-- [ ] `p3` - **ID**: `cpt-ir-usecase-merge`
+- [ ] `p1` - **ID**: `cpt-ir-usecase-merge`
 
 **Actor**: `cpt-ir-actor-operator`
 
 **Preconditions**:
-- Two person records exist that the operator has determined represent the same individual
-- Both persons have aliases in the `aliases` table
+- Two persons exist that the operator has determined represent the same human
 
 **Main Flow**:
-1. Operator calls `POST /merge` with `source_person_id`, `target_person_id`, `reason`, `actor_person_id`
-2. System snapshots current aliases for both persons → `snapshot_before`
-3. System reassigns all aliases from `source_person_id` to `target_person_id`
-4. System snapshots merged state → `snapshot_after`
-5. System records `merge_audits` row with action `merge`
-6. System runs ConflictDetector on `target_person_id`
-7. System returns `{status: "merged", audit_id}`
+1. Operator requests a merge, naming the surviving person explicitly, with a reason
+2. The system appends a binding to the survivor for every account of the absorbed person, authored by the operator
+3. The operation (actor, request, comment) is journaled
+4. On the next build, all historical activity of the absorbed person's accounts re-attributes to the survivor
 
 **Postconditions**:
-- All aliases previously owned by `source_person_id` now point to `target_person_id`
-- Full audit record in `merge_audits` with before/after snapshots
+- The absorbed person has no current accounts (its history remains intact)
+- The merge is attributable (who, when, why) and reversible via detach
 
 **Alternative Flows**:
-- **Circular merge detected**: System returns HTTP 409 `merge_conflict`
-- **Conflict detected post-merge**: ConflictDetector creates `conflicts` record; merge proceeds but operator is alerted
+- **Merge was wrong**: the operator detaches the affected accounts to a new person (counter-action); no rollback machinery is involved
+- **Same-person merge**: merging a person into itself is rejected as a no-op validation error
 
 ---
 
-### GDPR Alias Purge
+### GDPR Identity Purge
 
 - [ ] `p3` - **ID**: `cpt-ir-usecase-gdpr-purge`
 
 **Actor**: `cpt-ir-actor-operator`
 
 **Preconditions**:
-- GDPR erasure request received for a specific `person_id`
-- Person's aliases exist in the `aliases` table
+- A right-to-erasure request has been received for a specific person
+- The purge flow (late phase) is implemented
 
 **Main Flow**:
-1. Operator calls `POST /purge` with `person_id` and `actor_person_id`
-2. System copies all aliases for that person to `alias_gdpr_deleted` with `purged_at` and `purged_by_person_id`
-3. System sets `is_deleted = 1` on all aliases for that person in `aliases` table
-4. System returns confirmation with count of purged aliases
+1. Operator invokes the purge for the person; the operation (actor, subject, time, reason) is recorded in the operations journal
+2. The system erases the person's stored identity values everywhere they physically rest: the value payloads of the person's `persons` observations, the rows of the per-connector staging tables behind the `identity_inputs` union view (the view itself stores nothing), and the legacy `aliases` rows — structural rows may survive only value-free
+3. Upstream copies the evidence derives from (connector history/raw layers) are erased through the owning ingestion domain's purge hook — a stated prerequisite of this flow: without it, a pipeline rebuild could re-materialize the values
+4. The next journal mirror publish and gold build no longer contain the erased values; derived caches rebuild without them; transformations consult the deny-list (step 5) so an erased value cannot re-materialize even on rebuild
+5. The purge records value-free tombstones in a deny-list consulted by automation and transformations: a keyed digest (HMAC-SHA256 of the normalized value) under a **versioned per-tenant key** held in the platform secret store. Keys are versioned, not rotated-in-place: each tombstone records the key version it was written under; new tombstones use the current version; a candidate value is checked by computing its digest under every retained key version — erased plaintext cannot be re-digested, so key versions with live tombstones **MUST** be retained for the deny-list to function (they are secrets: key plus digest permits verifying guessed values, so versions live in the secret store under the same access control as the current key). Destroying a key version is a separate, explicitly-confirmed administrative act that crypto-shreds the tombstones written under it and **forfeits their re-link protection entirely**: the system can no longer recognise a re-delivered copy of those values, and it will flow through ordinary automatic processing (it may auto-link or mint a person like any new evidence). The destruction record in the operations journal **MUST** state this consequence
 
 **Postconditions**:
-- Aliases archived in `alias_gdpr_deleted`
-- Aliases no longer resolvable via `POST /resolve`, Dictionary lookup, or direct query
-- ClickHouse Dictionary refreshes within TTL (30-60s) to exclude purged aliases
+- Erased values are unresolvable via any path (service API, analytics mirror, direct query)
+- No plaintext copy of an erased value is retained anywhere, including archives
 
 **Alternative Flows**:
-- **No aliases found for person**: System returns success with `count: 0`
-- **Person has active merge audit**: System warns operator but proceeds (merges are alias-level, not person-level)
+- **No values found for the person**: purge succeeds with a zero count
+- **A connector re-delivers an erased value**: the deny-list digest matches; automatic linking is blocked and the account surfaces for operator review
+- **The ingestion-domain purge hook is unavailable**: the purge reports partial completion and the erasure request stays open — domain-local erasure alone does not satisfy the requirement
+
+> The v2.0 mechanism — copying purged aliases into a plaintext `alias_gdpr_deleted` archive with a soft-delete in `aliases` — is rejected: retaining the values contradicts hard erasure, and it never touched `persons`, where the values actually rest (see DESIGN §3.7).
 
 ---
 
 ## 9. Acceptance Criteria
 
-- [ ] Aliases seeded from HR Bronze data are resolvable via `POST /resolve` within Phase 1 deployment
-- [ ] BootstrapJob processes 100K `identity_inputs` rows and creates correct aliases without duplicates
-- [ ] >= 80% of aliases are auto-resolved (confidence >= 1.0) after BootstrapJob runs on typical connector data
-- [ ] Unmapped aliases appear in operator queue with correct suggestions
-- [ ] No fuzzy rule (Phase B3) produces an auto-linked alias under any input
-- [ ] Merge + split round-trip preserves exact alias state (snapshot comparison passes)
-- [ ] GDPR purge renders aliases unresolvable within 60 minutes
+- [ ] Accounts observed by connectors are bound by the seed or surfaced for review by the evidence-derived queue (e-mail-less accounts included); bound accounts resolve to a `person_id` in gold builds and via the read API
+- [ ] The seed processes 100K `identity_inputs` rows without duplicates; three consecutive runs on unchanged data change nothing
+- [ ] An operator-authored binding survives a subsequent seed run and the connection of a new source, byte-for-byte
+- [ ] Accounts pending a decision appear in the review queue with their candidate persons; a decision removes the item without any explicit "close" step
+- [ ] Observed accounts with no identity evidence appear in the review queue (countable), never hidden; the queue reports resolution-rate shares
+- [ ] Binding divergence explained by an operator decision is not surfaced as a conflict; unexplained seed-authored divergence is
+- [ ] Merge, detach, bind (single and bulk), and exclude each append history only — no row of `persons` is ever updated or deleted
+- [ ] A correction followed by its counter-correction restores the effective bindings (reversibility)
+- [ ] Re-submitting an identical correction or bulk file is a no-op
+- [ ] After a correction, the next gold build re-attributes the affected accounts' complete history, including past periods
 - [ ] Cross-tenant resolution returns empty for mismatched `insight_tenant_id`
-- [ ] All mutating operations are idempotent (replay with same `Idempotency-Key` returns original result)
+- [ ] (Future, with the matcher) No fuzzy rule produces an auto-applied merge under any input
+- [ ] (Future, with the purge flow) GDPR purge renders identity values unresolvable within 60 minutes
 
 ---
 
@@ -739,23 +759,24 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 
 | Dependency | Description | Criticality |
 |---|---|---|
-| ClickHouse 24.x+ | Storage engine for all identity resolution tables; `generateUUIDv7()` support required | `p1` |
-| Person domain (`persons` table) | Provides `person_id` targets for alias mapping; identity resolution does not create persons | `p1` |
-| dbt models (Bronze → Silver) | Populate `identity_inputs` during connector sync transformations | `p1` |
-| Argo Workflows | Orchestrates BootstrapJob scheduling and execution on Kind K8s | `p1` |
-| Connector sync pipeline | Writes alias observations to `identity_inputs`; must conform to write contract | `p1` |
-| Person domain (person creation API) | Operator needs to create new persons when linking unmapped aliases to new identities | `p2` |
+| ClickHouse 24.x+ | Evidence store (`identity_inputs`) and journal mirror; `generateUUIDv7()` support required | `p1` |
+| MariaDB | Journal store (`persons`, `account_person_map`, `operations`); schema applied by the identity-resolution service (ADR-0006) | `p1` |
+| dbt models (Bronze → Silver) | Populate `identity_inputs` during connector sync transformations; resolve `person_id` at build time via the macro | `p1` |
+| Kubernetes scheduling (umbrella chart) | Runs the persons-seed on schedule and hosts the identity-resolution service | `p1` |
+| Connector sync pipeline | Writes identity observations to `identity_inputs`; must conform to the write contract | `p1` |
+| Person domain | Reads `persons` observations to build the golden record; consumer, not a prerequisite — this domain mints `person_id` (ADR-0002) | `p2` |
 
 ---
 
 ## 11. Assumptions
 
-- Person records are created by the person domain (dbt seed in Phase 1, API in later phases) before identity resolution links aliases to them. Identity resolution does not create persons.
+- `person_id` is minted by this domain (random UUIDv7 at first binding, ADR-0002); the person domain derives its golden record from this domain's observations, not the other way around.
 - Connectors conform to the `identity_inputs` write contract and provide accurate `value_field_name` values.
 - ClickHouse 24.x+ is available in all deployment environments with `generateUUIDv7()` support.
-- The five alias types (`email`, `username`, `employee_id`, `display_name`, `platform_id`) cover all current connector identity signals. New types can be added as configuration without schema changes.
-- HR source data (BambooHR, Workday) provides the most reliable identity anchors for initial seeding.
-- Operator reviews the unmapped queue on a regular basis. Backlog alerts trigger if queue exceeds configured threshold (see NFR `unmapped_rate < 20%`).
+- The canonical value types (`id`, `email`, `username`, `display_name`) plus known custom types cover current connector identity signals. New types can be added without schema changes.
+- E-mail is the sole automatic identity anchor in the current phase; richer signals arrive with the future matcher.
+- A single operator per tenant performs corrections in the current phase; concurrent multi-operator workflows are a revisit trigger of ADR-0003.
+- The operator reviews the queue regularly; backlog growth is monitored via queue counts and the coverage view.
 
 ---
 
@@ -763,10 +784,10 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| ClickHouse lacks ACID transactions for merge/split (late phase — not yet implemented) | Partial state possible if operation fails mid-execution | See DESIGN §5 REC-IR-01: advisory locking + idempotent operations; retry-safe design |
-| Connector writes malformed `identity_inputs` rows | BootstrapJob fails or creates incorrect aliases | Write contract validation at ingestion; malformed rows logged and skipped |
-| Person domain unavailable during bootstrap | BootstrapJob cannot resolve new identities to person records | Route to `unmapped` queue; retry on next run when person domain is available |
-| False-negative matching (too conservative) | Legitimate aliases stuck in unmapped queue; operator burden increases | Monitor unmapped rate; tune B2 rules for cross-system matching |
-| ClickHouse ReplacingMergeTree dedup delay | Duplicate alias rows visible briefly before background merge | Application-level dedup check on read; FINAL keyword for critical queries |
-| Scale: large organization with > 100K persons | Bootstrap throughput or alias lookup latency degrades | Benchmark at 100K+ scale; optimize ORDER BY keys and Dictionary layout |
+| Connector writes malformed `identity_inputs` rows | Seed fails or creates incorrect bindings | Write contract validation at ingestion; malformed rows logged and skipped |
+| Conservative automation (review-first for contested evidence) | Queue grows after each new connector; operator burden increases | Bulk bind for prepared matching tables; queue counts monitored; future matcher proposals reduce per-item work |
+| Operator error in corrections | Wrong merge/detach mis-attributes metrics until noticed | History is never destroyed: counter-action restores state; per-account history supports investigation; single-operator assumption limits contention |
+| E-mail-less accounts cannot be auto-bound | Their activity stays unattributed until an operator binds them | Never hidden: surfaced in the review queue from evidence; operator `bind` covers them (#1776) |
+| Scale: large organization with > 100K persons | Seed throughput or lookup latency degrades | Benchmark at 100K+ scale; indexes sized in DESIGN §3.7 |
+| Future matcher reintroduces silent merges | Corrupted attribution, loss of operator trust | ADR-0003 invariants: proposals only, journal decisions override rules; no-fuzzy-autolink NFR |
 | Domain boundary misunderstanding | Teams accidentally put person-domain logic in identity-resolution | Clear scope documentation (§4); code review enforcement of domain boundaries |

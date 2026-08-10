@@ -85,8 +85,9 @@ ingestion:
 
 # Full auth (NGINX_BFF EPIC #1583) — no auth_disabled anywhere. The nginx
 # `gateway` is the single edge: auth_request -> authenticator, ES256 gateway-JWT
-# injection, fan-out to the app services + SPA. `fakeidp` is the local OIDC
-# provider the authenticator logs in against; every downstream verifies the JWT.
+# injection, fan-out to the app services + SPA. The in-stack Keycloak is the
+# local OIDC provider the authenticator logs in against; every downstream
+# verifies the JWT.
 gateway:
   image: { repository: insight-gateway, tag: dev, pullPolicy: IfNotPresent }
   replicaCount: 1
@@ -116,7 +117,7 @@ authenticator:
   # matches for discovery AND the browser redirect. `redirectUri` stays on
   # `http://localhost` because the `__Host-sid` session cookie requires a
   # secure-context origin, and `http://localhost` qualifies (the LB IP does not).
-  # clientSecret matches the dev secret gen-realm.py bakes into the realm.
+  # clientSecret matches the dev secret the realm generator bakes in.
   oidc:
     issuerUrl: 'http://__INGRESS_LB_IP__/kc/realms/insight'
     clientId: "insight-authenticator"
@@ -128,12 +129,12 @@ authenticator:
     # exists on identity-resolution (Rust), never the .NET identity twin.
     sourceType: "keycloak"
     # id_token claim carrying the stable external user id for sourceType.
-    # gen-realm.py pins each realm user's `id` to their OWN roster uuid (see
-    # deploy/compose/keycloak/gen-realm.py), so Keycloak's `sub` (the default)
+    # The realm generator pins each realm user's `id` to their OWN roster uuid
+    # (src/ingestion/tools/seed/insight_seed/keycloak_realm.py), so `sub`
     # already IS that stable id — no Entra-style non-default claim needed here.
     externalIdClaim: "sub"
     # Optional tenant sourcing: `tenantClaim` names the id_token claim carrying
-    # the single tenant (default `tenant_id` — fakeidp/Keycloak; Entra: `tid`);
+    # the single tenant (default `tenant_id` — Keycloak; Entra: `tid`);
     # `defaultTenantId` is the fallback for a claim-less IdP (e.g. Okta),
     # empty = fail closed.
 
@@ -153,6 +154,8 @@ authenticator:
 keycloak:
   deploy: true
   hostname: 'http://__INGRESS_LB_IP__/kc'
+  # Dev-lead login for the generated roster realm (keycloak-realm target).
+  devUserEmail: "dev@company.nonpresent"
   admin:
     existingSecret: insight-keycloak-config # sandbox admin/admin (keycloak-realm target)
   database:
@@ -177,17 +180,6 @@ keycloakConfig:
     - name: KEYCLOAK_PASSWORD
       valueFrom:
         secretKeyRef: {name: insight-keycloak-config, key: password}
-
-# fakeidp — the lighter alt IdP; off for local (keycloak is the local IdP). Flip
-# fakeidp.deploy=true + keycloak.deploy=false (and point authenticator.oidc.issuerUrl
-# back at http://__INGRESS_LB_IP__/idp) to use it instead.
-fakeidp:
-  image: { repository: insight-fakeidp, tag: dev, pullPolicy: IfNotPresent }
-  deploy: false
-  ingress:
-    enabled: false
-  issuer: 'http://__INGRESS_LB_IP__/idp'
-  devUserEmail: "dev@company.nonpresent"
 
 analytics:
   image: { repository: insight-analytics, tag: dev, pullPolicy: IfNotPresent }
@@ -214,7 +206,7 @@ identityResolution:
     limits:   { cpu: 500m, memory: 512Mi }
 
 frontend:
-  # The SPA image is pulled from ghcr (ghcr.io/constructorfabric/insight-front,
+  # The SPA image is pulled from ghcr (ghcr.io/constructorfabric/insight-frontend,
   # chart appVersion tag) — no local build needed. It deploys but may not fully
   # work against the current backend yet.
   deploy: true

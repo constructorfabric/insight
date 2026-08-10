@@ -9,6 +9,17 @@ date: 2026-08-04
 
 **Status history**:
 
+- 2026-08-07: NOTE -- fakeidp retirement COMPLETED (issue #2198): the fakeidp crate, subchart
+  and compose service are deleted; the functional-CI environment and the gateway e2e rigs run
+  the in-stack Keycloak with the seed-generated roster realm (imported via keycloak-config-cli /
+  `--import-realm`). Compose and the authenticator e2e were already Keycloak-only.
+- 2026-08-06: AMENDED -- claim-value-to-tenant translation (the advanced claim-to-group mapper
+  sketched in the Decision Outcome) is REJECTED: the tenant is always the fixed per-registration
+  pin from environment values, an IdP's own tenancy assertions are never consulted, and a
+  customer with several IdPs pins the same tenant on each registration. Two customers sharing
+  an IdP vendor do not intersect: realm-per-customer gives each its own registration, client,
+  and pin. A CI guard asserts the contract against the canonical realm (fail-closed without the
+  pin, single-string claim, tenant-bearing groups inert and flagged).
 - 2026-08-05: AMENDED -- of the instance-deployment options this ADR left open, the umbrella
   subchart is chosen: the broker runs **in-stack** (production-mode `insight-keycloak`,
   MariaDB-backed) as part of each environment's auth services, amending ADR-0002's shared
@@ -104,19 +115,18 @@ for multi-customer (cloud) installations (see realm selection below).
   secrets; nothing lands in the repository or an image (the #2163 credentials criterion). The
   admin UI is read-only in practice: `KeycloakRealmImport` and hand edits are not configuration
   channels, and config-cli re-applies the versioned realm on every sync, reverting drift.
-- **Claims are shaped at the broker.** Per-provider **identity provider mappers** inject or
-  import the Insight `tenant_id` (`hardcoded-attribute-idp-mapper` for a fixed per-registration
-  tenant; claim-importer mappers where the upstream carries tenancy, e.g. Entra `tid`). The
-  client's **protocol mappers / client scopes** are the allow-list: the token contains only what
-  is explicitly emitted -- `sub`, `email`, one string `tenant_id` -- matching what the compose
-  realm generator already emits today. Upstream claims never pass through by default. Where a
-  single upstream registration itself distinguishes tenants by a claim value, the external value
-  is translated inside the realm: an advanced claim-to-group mapper (`syncMode: FORCE`) puts the
-  user in a per-tenant group whose `tenant_id` attribute carries the internal UUID, emitted by
-  the protocol mapper with group-attribute aggregation. The translation table is realm YAML, one
-  entry per external tenant, and an unmapped value fails closed -- no group, no `tenant_id`
-  claim, token rejected downstream. Exactly one group per user is an invariant the end-to-end
-  tests guard.
+- **Claims are shaped at the broker.** Every provider registration carries a
+  `hardcoded-attribute-idp-mapper` pinning the fixed per-registration Insight `tenant_id` from
+  environment values, plus an attribute-importer stamping `idp_sub` (the upstream's stable
+  directory id, e.g. Entra `oid` -- the login-bootstrap external id). An upstream's own tenancy
+  assertions are never consulted (amended 2026-08-06; the claim-to-group translation once
+  sketched here is rejected): a customer with several IdPs pins the same tenant on each
+  registration, and two customers sharing an IdP vendor never intersect -- realm-per-customer
+  gives each its own registration, client, and pin. The client's **protocol mappers / client
+  scopes** are the allow-list: the token contains only what is explicitly emitted -- `sub`,
+  `email`, one string `tenant_id`, `idp_sub` -- and deliberately does NOT aggregate attributes
+  over groups, so a group-sourced tenant is mechanically impossible; a CI guard asserts the
+  contract on every committed realm file and against a live import.
 - **Topology: one realm per customer**, holding that customer's brokered IdPs and one
   confidential client. The single-`tenant_id` rule holds because each provider registration (or
   upstream tenancy claim) maps to exactly one Insight tenant. Realm-per-tenant remains available
@@ -277,7 +287,8 @@ findings notes and the reproducible realm YAML live on the Phase 0 issue, #2194)
 - Migration order: provision broker realms as code first; move social providers and new customer
   IdPs behind the broker immediately; re-point each environment's `issuerUrl` from its directly
   wired IdP to the broker realm as it is onboarded -- per environment, no flag day; retire
-  fakeidp last, once compose and CI default to the Keycloak realm.
+  fakeidp last, once compose and CI default to the Keycloak realm. **Done 2026-08-07 (#2198)**:
+  fakeidp is deleted; compose, CI and the e2e rigs all run the Keycloak roster realm.
 
 ## Traceability
 

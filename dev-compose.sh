@@ -145,9 +145,6 @@ Options:
                             Register an extra OIDC redirect_uri in the
                             generated Keycloak realm. Repeatable. The two
                             default localhost callbacks are always kept.
-  --auth=MODE               Override AUTH_MODE (fakeidp|keycloak) from
-                            .env.compose for this run only.
-                            (fakeidp | keycloak, default: fakeidp)
   --no-frontend             Don't start any frontend variant.
   --skip-build              Don't rebuild artefacts — reuse what's
                             already in deploy/compose/build/.
@@ -282,28 +279,6 @@ detect_host_ip() {
     | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
 }
 
-# Point fakeidp's issuer at the host IP so the BROWSER login flow works out of
-# the box. The authenticator 302s the browser to `{issuer}/authorize`; a
-# hostname (`fakeidp:8084`) gets HTTPS-upgraded by the browser and fails (fakeidp
-# is http-only), and `localhost` means the container itself. The host IP
-# satisfies both sides over plain http. fakeidp's advertised issuer and the
-# authenticator's expected issuer MUST match, so set both. Skipped when the
-# operator pinned an issuer (a real IdP) or when no host IP is detectable
-# (offline) — then it stays `fakeidp:8084`, which still serves the curl/e2e path.
-ensure_fakeidp_issuer() {
-  [[ -n "${AUTHENTICATOR_OIDC_ISSUER:-}" ]] && return 0
-  local ip
-  ip="$(detect_host_ip || true)"
-  if [[ -z "$ip" ]]; then
-    echo "WARN: no host IP detected — fakeidp issuer stays http://fakeidp:8084." >&2
-    echo "      curl/e2e still work; browser login needs the browser's HTTPS-upgrade off." >&2
-    return 0
-  fi
-  export FAKEIDP_ISSUER="http://$ip:8084"
-  export AUTHENTICATOR_OIDC_ISSUER="http://$ip:8084"
-  echo "fakeidp issuer → http://$ip:8084 (host IP; browser-reachable, no HTTPS upgrade)"
-}
-
 # The `volumes:` a ghcr'd service keeps, as a YAML block.
 #
 # The flip must drop exactly ONE mount — the host-built binary under
@@ -338,7 +313,7 @@ ghcr_volumes_block() {
 # binary, as `source:target[:mode]` relative to the repo root.
 ghcr_kept_mounts() {
   local svc="$1" out
-  out="$(docker compose -f docker-compose.yml --profile auth-keycloak --profile auth-fakeidp \
+  out="$(docker compose -f docker-compose.yml --profile auth-keycloak \
            config --format json 2>/dev/null |
     SERVICE="$svc" python3 -c '
 import json, os, sys
@@ -403,9 +378,8 @@ cmd_up() {
   local watch_option_set=false
   local build_only_csv=""
   local frontend_mode_override=""
-  local auth_mode_override=""
   local instance="$COMPOSE_INSTANCE"
-  # Repeatable. Empty => gen-realm.py keeps its own defaults untouched.
+  # Repeatable. Empty => the realm generator keeps its own defaults untouched.
   local authenticator_redirects=""
   local skip_build=false
   local no_frontend=false
@@ -424,8 +398,9 @@ cmd_up() {
       --build-only)      build_only_csv="$2"; shift 2 ;;
       --frontend-mode=*) frontend_mode_override="${1#*=}"; shift ;;
       --frontend-mode)   frontend_mode_override="$2"; shift 2 ;;
-      --auth=*)          auth_mode_override="${1#*=}"; shift ;;
-      --auth)            auth_mode_override="$2"; shift 2 ;;
+      --auth=*|--auth)
+        echo "ERROR: --auth was removed — auth always runs via Keycloak." >&2
+        return 2 ;;
       --authenticator-redirect=*)
         authenticator_redirects="$(add "$authenticator_redirects" "${1#*=}")"; shift ;;
       --authenticator-redirect)
@@ -482,22 +457,13 @@ cmd_up() {
   [[ -n "$frontend_mode_override" ]] && FRONTEND_MODE="$frontend_mode_override"
   FRONTEND_MODE="${FRONTEND_MODE:-dev}"
 
-  [[ -n "$auth_mode_override" ]] && AUTH_MODE="$auth_mode_override"
-  AUTH_MODE="${AUTH_MODE:-fakeidp}"  # RULE-DEFAULTS-OK: fakeidp is the documented default auth mode (bypass)
-  case "$AUTH_MODE" in
-    fakeidp|keycloak) ;;
-    *) echo "ERROR: AUTH_MODE must be fakeidp|keycloak (got: $AUTH_MODE)" >&2; return 1 ;;
-  esac
-  # The seed-sample container reads AUTH_MODE too (deploy/seed/profiles.py's
-  # get_login_id_pairs) to pick which roster personas get a login-id fixture —
-  # export so the child `docker compose` process's env-var interpolation sees it.
-  export AUTH_MODE
+  # A lingering AUTH_MODE in an old .env.compose is dead config; warn, loudly.
+  if [[ "${AUTH_MODE:-keycloak}" != "keycloak" ]]; then
+    echo "WARN: AUTH_MODE=${AUTH_MODE} is retired — auth always runs via Keycloak." >&2
+    echo "      Remove AUTH_MODE from $env_file to silence this." >&2
+  fi
 
-  # Browser OIDC: default the fakeidp issuer to the host IP (unless pinned).
-  # keycloak mode sets its own host-IP issuer in the AUTH_MODE=keycloak block.
-  [[ "$AUTH_MODE" == fakeidp ]] && ensure_fakeidp_issuer
-
-  # NGINX_BFF: keycloak mode needs NO special frontend. The SPA is cookie/BFF
+  # NGINX_BFF: Keycloak needs NO special frontend. The SPA is cookie/BFF
   # (same-origin): it calls /auth/login + /api through the gateway and never
   # does client-side OIDC, so any FRONTEND_MODE (incl. the default `dev` Vite)
   # works — the authenticator, not the frontend, drives the Keycloak login.
@@ -517,18 +483,17 @@ cmd_up() {
   [[ -n "${GATEWAY_IMAGE:-}" ]] && ghcr_list=$(add "$ghcr_list" gateway)
 
   if [[ -n "$from_ghcr_csv" ]]; then
-    local OLD_IFS=$IFS; IFS=','
-    local s
-    for s in $from_ghcr_csv; do ghcr_list=$(add "$ghcr_list" "$(trim "$s")"); done
-    IFS=$OLD_IFS
+    local s parts=()
+    IFS=',' read -r -a parts <<< "$from_ghcr_csv"
+    for s in "${parts[@]}"; do ghcr_list=$(add "$ghcr_list" "$(trim "$s")"); done
   fi
   if [[ "$watch_option_set" == "true" ]]; then
     case "$watch_csv" in
       ""|,*|*,|*,,*) echo "ERROR: --watch requires a comma-separated service list without empty entries." >&2; return 2 ;;
     esac
-    local OLD_IFS=$IFS; IFS=','
-    local s
-    for s in $watch_csv; do
+    local s parts=()
+    IFS=',' read -r -a parts <<< "$watch_csv"
+    for s in "${parts[@]}"; do
       s="$(trim "$s")"
       [[ -n "$s" ]] || { echo "ERROR: --watch contains an empty service name." >&2; return 2; }
       contains "$watchable_services" "$s" || {
@@ -537,13 +502,11 @@ cmd_up() {
       }
       watch_list=$(add "$watch_list" "$s")
     done
-    IFS=$OLD_IFS
   fi
   if [[ -n "$build_only_csv" ]]; then
-    local OLD_IFS=$IFS; IFS=','
-    local s
-    for s in $build_only_csv; do build_list=$(add "$build_list" "$(trim "$s")"); done
-    IFS=$OLD_IFS
+    local s parts=()
+    IFS=',' read -r -a parts <<< "$build_only_csv"
+    for s in "${parts[@]}"; do build_list=$(add "$build_list" "$(trim "$s")"); done
     for s in $all_backend; do
       contains "$build_list" "$s" || ghcr_list=$(add "$ghcr_list" "$s")
     done
@@ -625,76 +588,83 @@ YML
   ensure_authenticator_dev_key
   ensure_authn_tls_certs
 
-  # Keycloak mode: generate the realm import file and repoint the
-  # authenticator's BFF at Keycloak. This must run before `up -d` — the
-  # keycloak service read-only-mounts the generated file, and if it's
-  # missing at container-create time Docker creates an empty directory
-  # at the mount path instead, so --import-realm silently imports nothing.
-  if [[ "$AUTH_MODE" == keycloak ]]; then
-    # Roster anchor for the realm's dev-lead persona. The realm roster and the
-    # seed step both need it.
-    local dev_lead_email="${DEV_USER_EMAIL:?DEV_USER_EMAIL must be set (roster anchor for the Keycloak realm; e.g. dev@company.nonpresent — see .env.compose)}"
+  # Generate the Keycloak realm import file and point the authenticator's
+  # BFF at Keycloak. This must run before `up -d` — the keycloak service
+  # read-only-mounts the generated file, and if it's missing at
+  # container-create time Docker creates an empty directory at the mount
+  # path instead, so --import-realm silently imports nothing.
+  # Roster anchor for the realm's dev-lead persona. The realm roster and the
+  # seed step both need it.
+  local dev_lead_email="${DEV_USER_EMAIL:?DEV_USER_EMAIL must be set (roster anchor for the Keycloak realm; e.g. dev@company.nonpresent — see .env.compose)}"
 
-    # The authenticator (server-side) AND the browser must reach Keycloak at the
-    # SAME issuer, or the id_token `iss` won't validate. Use the host IP (an IP
-    # literal the browser won't HTTPS-upgrade, reachable from the container via
-    # the published :8085) — the same trick as ensure_fakeidp_issuer. A
-    # `localhost` issuer is unreachable from inside the authenticator; a
-    # `keycloak:8085` issuer wouldn't match the browser-facing `iss`.
-    local kc_ip; kc_ip="$(detect_host_ip || true)"
-    if [[ -z "$kc_ip" ]]; then
-      echo "WARN: no host IP detected — Keycloak issuer stays localhost (browser-only; the authenticator can't reach it)." >&2
-      kc_ip="localhost"
-    fi
-    local kc_base="http://${kc_ip}:8085/kc"
-
-    echo "=== Generating Keycloak realm import (deploy/compose/keycloak/realm-insight.generated.json) ==="
-    # gen-realm.py's own --authenticator-redirect REPLACES its defaults rather
-    # than appending, so whenever we pass any URI we must re-state the two
-    # defaults too — dropping them would deregister the human login origins
-    # and break `./dev-compose.sh up --auth keycloak`.
-    local redirect_args=""
-    if [[ -n "$authenticator_redirects" ]]; then
-      local _uri
-      for _uri in $authenticator_redirects \
-                  "http://localhost:3000/auth/callback" \
-                  "http://localhost:8080/auth/callback"; do
-        redirect_args="$redirect_args --authenticator-redirect $_uri"
-      done
-      echo "    registering redirect URIs:$redirect_args"
-    fi
-    # shellcheck disable=SC2086  # redirect_args is a deliberately word-split flag list
-    python3 deploy/compose/keycloak/gen-realm.py \
-      --dev-email "$dev_lead_email" \
-      $redirect_args \
-      --out deploy/compose/keycloak/realm-insight.generated.json
-
-    # NGINX_BFF: the AUTHENTICATOR (not the frontend) logs in against Keycloak,
-    # server-side, as the pre-seeded `insight-authenticator` confidential client.
-    # - KEYCLOAK_HOSTNAME  -> the keycloak service's advertised (browser-facing) issuer
-    # - AUTHENTICATOR_OIDC_ISSUER -> what the authenticator discovers + validates `iss` against
-    # redirect_uri keeps its default (the SPA origin http://localhost:3000/auth/callback,
-    # which the realm registers for this client).
-    export KEYCLOAK_HOSTNAME="$kc_base"
-    export AUTHENTICATOR_OIDC_ISSUER="${kc_base}/realms/insight"
-    export OIDC_CLIENT_ID="insight-authenticator"
-    export OIDC_CLIENT_SECRET="insight-authenticator-dev-secret"
-    # The login-bootstrap resolve is scoped to idp.source_type; keycloak's
-    # sub differs in KIND from fakeidp's (gen-realm.py sets each realm user's
-    # id to their OWN roster uuid, so sub IS that uuid — not the fixed
-    # "fakeidp|dev" string fakeidp issues), so it must be seeded/looked-up
-    # under its own source_type, not the fakeidp default (see
-    # deploy/seed/profiles.py::get_login_id_pairs).
-    export AUTHENTICATOR_IDP_SOURCE_TYPE="keycloak"
-    echo "keycloak issuer → ${kc_base}/realms/insight (host IP; browser + authenticator reachable)"
-
-    # AUTH_DISABLED is a separate, blunter bypass; if it's on, real login is
-    # still skipped regardless.
-    [[ "${AUTH_DISABLED:-false}" == "true" ]] && {  # RULE-DEFAULTS-OK: purely a cosmetic warn-or-not check, not a config value
-      echo "WARN: AUTH_DISABLED=true forces an auth bypass — unset it to" >&2
-      echo "      exercise the real Keycloak login flow." >&2
-    }
+  # The authenticator (server-side) AND the browser must reach Keycloak at the
+  # SAME issuer, or the id_token `iss` won't validate. Use the host IP (an IP
+  # literal the browser won't HTTPS-upgrade, reachable from the container via
+  # the published :8085). A `localhost` issuer is unreachable from inside the authenticator; a
+  # `keycloak:8085` issuer wouldn't match the browser-facing `iss`.
+  local kc_ip; kc_ip="$(detect_host_ip || true)"
+  if [[ -z "$kc_ip" && -z "${AUTHENTICATOR_OIDC_ISSUER:-}" ]]; then
+    echo "ERROR: no host IP detected — a localhost Keycloak issuer is unreachable" >&2
+    echo "       from the authenticator container, so login could never work." >&2
+    echo "       Get on a network, or pin AUTHENTICATOR_OIDC_ISSUER in $env_file." >&2
+    return 1
   fi
+  local kc_base="http://${kc_ip:-localhost}:8085/kc"
+
+  echo "=== Generating Keycloak realm import (deploy/compose/keycloak/realm-insight.generated.json) ==="
+  # The generator's own --authenticator-redirect REPLACES its defaults rather
+  # than appending, so whenever we pass any URI we must re-state the two
+  # defaults too — dropping them would deregister the human login origins
+  # and break `./dev-compose.sh up`.
+  local redirect_args=""
+  if [[ -n "$authenticator_redirects" ]]; then
+    local _uri
+    for _uri in $authenticator_redirects \
+                "http://localhost:3000/auth/callback" \
+                "http://localhost:8080/auth/callback"; do
+      redirect_args="$redirect_args --authenticator-redirect $_uri"
+    done
+    echo "    registering redirect URIs:$redirect_args"
+  fi
+  # The realm is built from the seeder's roster, so the generator ships in
+  # that package and runs as an installed program. uv provisions the package
+  # into its own .venv on first use — the same tool the stand suite already
+  # requires — instead of this script reaching into the source tree.
+  command -v uv >/dev/null 2>&1 || {
+    echo "ERROR: uv is required to generate the Keycloak realm." >&2
+    echo "       Install it (brew install uv) and re-run; see CONTRIBUTING.md." >&2
+    return 1; }
+  # shellcheck disable=SC2086  # redirect_args is a deliberately word-split flag list
+  uv run --project "$ROOT_DIR/src/ingestion/tools/seed" insight-seed-realm \
+    --dev-email "$dev_lead_email" \
+    $redirect_args \
+    --out "$ROOT_DIR/deploy/compose/keycloak/realm-insight.generated.json"
+
+  # NGINX_BFF: the AUTHENTICATOR (not the frontend) logs in against Keycloak,
+  # server-side, as the pre-seeded `insight-authenticator` confidential client.
+  # - KEYCLOAK_HOSTNAME  -> the keycloak service's advertised (browser-facing) issuer
+  # - AUTHENTICATOR_OIDC_ISSUER -> what the authenticator discovers + validates `iss` against
+  # redirect_uri keeps its default (the SPA origin http://localhost:3000/auth/callback,
+  # which the realm registers for this client).
+  # Issuer/client values pinned in .env.compose win (a custom/external IdP);
+  # otherwise the in-stack Keycloak defaults apply.
+  export KEYCLOAK_HOSTNAME="$kc_base"
+  export AUTHENTICATOR_OIDC_ISSUER="${AUTHENTICATOR_OIDC_ISSUER:-${kc_base}/realms/insight}"
+  export OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-insight-authenticator}"
+  export OIDC_CLIENT_SECRET="${OIDC_CLIENT_SECRET:-insight-authenticator-dev-secret}"
+  # The login-bootstrap resolve is scoped to idp.source_type: keycloak_realm
+  # sets each realm user's id to their OWN roster uuid, so sub IS that uuid and
+  # must be seeded/looked-up under the `keycloak` source_type (see
+  # src/ingestion/tools/seed/profiles.py::get_login_id_pairs).
+  export AUTHENTICATOR_IDP_SOURCE_TYPE="keycloak"
+  echo "authenticator issuer → ${AUTHENTICATOR_OIDC_ISSUER}"
+
+  # AUTH_DISABLED is a separate, blunter bypass; if it's on, real login is
+  # still skipped regardless.
+  [[ "${AUTH_DISABLED:-false}" == "true" ]] && {  # RULE-DEFAULTS-OK: purely a cosmetic warn-or-not check, not a config value
+    echo "WARN: AUTH_DISABLED=true forces an auth bypass — unset it to" >&2
+    echo "      exercise the real Keycloak login flow." >&2
+  }
 
   local compose_cmd=(docker compose --project-name "$COMPOSE_PROJECT_NAME" --env-file "$env_file" -f docker-compose.yml -f "$override")
   local profiles=()
@@ -721,15 +691,11 @@ YML
       export FRONTEND_INTERNAL_PORT
     fi
   fi
-  profiles+=(--profile "auth-$AUTH_MODE")
+  profiles+=(--profile auth-keycloak)
 
   # ── Build phase ──────────────────────────────────────────────────
   if [[ "$skip_build" != "true" ]]; then
     echo "=== Building artefacts (skip with --skip-build) ==="
-    if [[ "$AUTH_MODE" == fakeidp ]]; then
-      echo "--- Image: fakeidp"
-      "${compose_cmd[@]}" --profile auth-fakeidp build fakeidp
-    fi
     # A service's binary is bind-mounted as a FILE, so omitting it from the
     # build while it still has that mount makes compose auto-create the mount
     # source as an empty directory and container init fails. Every service left
@@ -790,14 +756,10 @@ YML
     contains "$ghcr_list" "$svc" && mkdir -p "deploy/compose/build/$svc"
   done
 
-  # Stop the OTHER auth mode's IdP if it lingers from a prior in-place `up`.
-  # Compose profiles decide what to START, not what to stop, so switching auth
-  # modes without a `down` in between would otherwise leave both IdPs running
-  # (e.g. fakeidp still up after switching to keycloak). Pass both auth
-  # profiles so the target service is in scope for `stop`.
-  local other_idp
-  [[ "$AUTH_MODE" == keycloak ]] && other_idp=fakeidp || other_idp=keycloak
-  "${compose_cmd[@]}" --profile auth-fakeidp --profile auth-keycloak stop "$other_idp" >/dev/null 2>&1 || true
+  # Remove a fakeidp container lingering from a stack started before its
+  # retirement: the service no longer exists in docker-compose.yml, so an
+  # in-place `up` would otherwise leave both IdPs running.
+  docker rm -f "${COMPOSE_PROJECT_NAME:-insight}-fakeidp" >/dev/null 2>&1 || true
 
   echo "=== docker compose up ==="
   if ! "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} up -d --remove-orphans; then
@@ -862,7 +824,7 @@ YML
 
   local frontend_up=true
   [[ "$no_frontend" == "true" ]] && frontend_up=false
-  report_service_urls "$frontend_up" "$AUTH_MODE"
+  report_service_urls "$frontend_up"
   echo
 
   local instance_option=""
@@ -885,7 +847,6 @@ YML
 # caller (arg 1 = "true" when a front-* profile is active).
 report_service_urls() {
   local frontend_up="${1:-true}"
-  local auth_mode="${2:-fakeidp}"
   local h="localhost"
   echo "=== Service URLs (exposed host ports) ==="
   if [[ "$frontend_up" == "true" ]]; then
@@ -895,12 +856,8 @@ report_service_urls() {
   printf '  %-18s %s\n' "Analytics API"   "http://$h:${ANALYTICS_PORT:-8081}"
   printf '  %-18s %s\n' "Identity API"    "http://$h:${IDENTITY_RESOLUTION_PORT:-8086}"
   printf '  %-18s %s\n' "Authenticator"   "http://$h:${AUTHENTICATOR_PORT:-8083}"
-  if [[ "$auth_mode" == keycloak ]]; then
-    printf '  %-18s %s\n' "Keycloak" \
-      "http://$h:${KEYCLOAK_PORT:-8085}/kc/admin/  (admin console: admin/admin)"  # RULE-DEFAULTS-OK: display-only port default, mirrors the pre-existing per-service *_PORT lines above
-  else
-    printf '  %-18s %s\n' "Fake IdP"        "http://$h:${FAKEIDP_PORT:-8084}"
-  fi
+  printf '  %-18s %s\n' "Keycloak" \
+    "http://$h:${KEYCLOAK_PORT:-8085}/kc/admin/  (admin console: admin/admin)"  # RULE-DEFAULTS-OK: display-only port default, mirrors the pre-existing per-service *_PORT lines above
   if [[ "${CLICKHOUSE_EXTERNAL:-false}" != "true" ]]; then
     printf '  %-18s %s\n' "ClickHouse HTTP" \
       "http://$h:${CLICKHOUSE_HTTP_PORT:-8123}  (native $h:${CLICKHOUSE_NATIVE_PORT:-9000}, user ${CLICKHOUSE_USER:-insight})"
@@ -915,20 +872,12 @@ report_service_urls() {
   echo
   echo "=== Sign in ==="
   if [[ "$frontend_up" != "true" ]]; then
-    if [[ "$auth_mode" == keycloak ]]; then
-      echo "  Frontend is not running (--no-frontend); browser sign-in is unavailable."
-    else
-      echo "  fakeidp is configured to log in as ${DEV_USER_EMAIL:-dev@company.nonpresent}; frontend is not running (--no-frontend)."
-    fi
+    echo "  Frontend is not running (--no-frontend); browser sign-in is unavailable."
     return
   fi
-  if [[ "$auth_mode" == keycloak ]]; then
-    echo "  Open http://$h:${FRONTEND_PORT:-3000}, click Sign in, then at the Keycloak form enter"
-    echo "  your dev persona (or any seeded user) + password insight-dev:"
-    echo "    ${DEV_USER_EMAIL:-dev@company.nonpresent}   /   insight-dev"
-  else
-    echo "  fakeidp auto-logs-in as ${DEV_USER_EMAIL:-dev@company.nonpresent} (no form) — just open http://$h:${FRONTEND_PORT:-3000}."
-  fi
+  echo "  Open http://$h:${FRONTEND_PORT:-3000}, click Sign in, then at the Keycloak form enter"
+  echo "  your dev persona (or any seeded user) + password insight-dev:"
+  echo "    ${DEV_USER_EMAIL:-dev@company.nonpresent}   /   insight-dev"
 }
 
 # ──────────────────────────────────────────────────────────────────────
@@ -947,10 +896,9 @@ cmd_urls() {
   done
   env_file="$(resolve_env_file "$env_file")" || return $?
   set -a; source "$env_file"; set +a
-  AUTH_MODE="${AUTH_MODE:-fakeidp}"  # RULE-DEFAULTS-OK: fakeidp is the documented default auth mode (bypass)
   # FRONTEND_MODE is always dev|built|ghcr (cmd_up enforces it), so the
   # frontend is assumed up; report_service_urls defaults to showing it.
-  report_service_urls true "$AUTH_MODE"
+  report_service_urls true
 }
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1004,7 +952,7 @@ cmd_down() {
   "${compose_cmd[@]}" \
     --profile local-mariadb --profile local-clickhouse \
     --profile front-dev --profile front-built --profile front-ghcr \
-    --profile auth-fakeidp --profile auth-keycloak \
+    --profile auth-keycloak \
     --profile build --profile seed \
     --profile local-mariadb --profile local-clickhouse \
     down $([[ "$wipe" == "true" ]] && echo "--volumes --remove-orphans")
@@ -1148,7 +1096,7 @@ Without that bounce, every metric stays cached at the boot-time
 and section badges read "no peer data" everywhere.
 Tracking upstream as constructorfabric/insight#1307.
 
-See deploy/seed/README.md for the ruff/mypy/venv setup.
+See src/ingestion/tools/seed/README.md for the ruff/mypy/venv setup.
 EOF
 }
 
@@ -1176,7 +1124,13 @@ cmd_seed() {
 
   # Run the seed step itself. NOT `exec` — we still want to bounce
   # analytics after silver/all completes (see cf/insight#1307).
-  "${compose_cmd[@]}" --profile seed run --rm seed-sample "${args[@]}"
+  #
+  # --build: `compose run` reuses whatever image the tag currently holds, and a
+  # seed image left over from an older checkout runs the wrong entrypoint from
+  # the wrong directory — it surfaces as an EACCES on /app/manifest.json after
+  # the whole seed has run. The source is bind-mounted anyway, so the rebuild
+  # is layer-cached and only refreshes entrypoint/WORKDIR/deps.
+  "${compose_cmd[@]}" --profile seed run --build --rm seed-sample "${args[@]}"
   local seed_status=$?
   if [[ $seed_status -ne 0 ]]; then
     return $seed_status
@@ -1214,6 +1168,7 @@ The main pass removes:
   • all stack containers (insight-*)
   • named volumes: mariadb-data, clickhouse-data, clickhouse-logs,
     redis-data, redpanda-data, rust-target, frontend-node-modules
+  • locally-built images (seed-sample, build containers, ...)
   • host-side build artefacts under deploy/compose/build/
   • the generated authenticator dev signing key
     (deploy/compose/authenticator-dev-keys/)
@@ -1243,6 +1198,7 @@ This will permanently remove Docker state for Compose instance
 $COMPOSE_PROJECT_NAME:
   • containers
   • named volumes
+  • the instance's locally-built images
   • the instance network
 
 Worktree-level build artefacts, generated config, keys, and .env.compose
@@ -1255,6 +1211,7 @@ This will permanently remove the local Insight stack state:
   • containers (insight-*)
   • named volumes (mariadb-data, clickhouse-data, redis-data,
     redpanda-data, rust-target, frontend-node-modules, ...)
+  • locally-built images (seed-sample, build containers, ...)
   • deploy/compose/build/ artefacts
   • deploy/compose/authenticator-dev-keys/ (dev signing key)
   • deploy/compose/override.generated.yml
@@ -1283,13 +1240,19 @@ EOF
   local compose_cmd=(docker compose --project-name "$COMPOSE_PROJECT_NAME" --env-file "$env_file" -f docker-compose.yml)
   [[ -f "$override" ]] && compose_cmd+=(-f "$override")
 
-  echo "=== docker compose down --volumes --remove-orphans ==="
+  # --rmi local: also drop the images compose built for this project (they
+  # carry no custom `image:` tag, which is what "local" matches — the pulled
+  # ghcr images keep their separate question below). A locally-built image
+  # that outlives a prune is worse than a stale volume: the next `run`
+  # silently reuses it even after the source tree it was built from has
+  # moved, and the layer cache makes the rebuild cheap anyway.
+  echo "=== docker compose down --volumes --rmi local --remove-orphans ==="
   "${compose_cmd[@]}" \
     --profile front-dev --profile front-built --profile front-ghcr \
-    --profile auth-fakeidp --profile auth-keycloak \
+    --profile auth-keycloak \
     --profile build --profile seed \
     --profile local-mariadb --profile local-clickhouse \
-    down --volumes --remove-orphans || true
+    down --volumes --rmi local --remove-orphans || true
 
   if [[ -z "$instance" && -d deploy/compose/build ]]; then
     echo "Removing deploy/compose/build/..."
@@ -1320,8 +1283,16 @@ EOF
   # Image removal is a separate question — re-pulling is slow.
   if ask_yes_no "Also remove pulled ghcr.io/constructorfabric/insight-* images?" "n"; then
     local imgs
-    imgs=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-           | grep -E '^ghcr\.io/constructorfabric/insight-' || true)
+    # A pull whose tag was since taken over by a newer image is listed as
+    # `repo:<none>` — not a valid reference for `docker rmi`. Address those as
+    # `repo@digest`, which removes only the ghcr association: unlike the image
+    # ID, it leaves any other tag on the same image (the e2e rig's
+    # `*:e2e-prebuilt` retags) in place. Tagged pulls keep the repo:tag form.
+    imgs=$(docker images --digests --format '{{.Repository}}:{{.Tag}} {{.Repository}}@{{.Digest}}' 2>/dev/null \
+           | awk '$1 ~ /^ghcr\.io\/constructorfabric\/insight-/ {
+               if ($1 !~ /:<none>$/)      print $1
+               else if ($2 !~ /@<none>$/) print $2
+             }' || true)
     if [[ -z "$imgs" ]]; then
       echo "  No matching images present."
     else
@@ -1437,7 +1408,7 @@ test_stand_pinned_image() {
 }
 
 test_stand_frontend_image() {
-  test_stand_pinned_image src/frontend/helm/Chart.yaml front
+  test_stand_pinned_image src/frontend/helm/Chart.yaml frontend
 }
 
 # The backend services the stand runs from published images rather than from
@@ -1501,27 +1472,22 @@ test_stand_backend_matches_charts() {
 # Derive the test env file from the committed example, overriding only the
 # knobs the test path forces. SEEDED_LOCAL_* are blanked so every `up` seeds.
 test_stand_write_env() {
-  local image="$1" auth_mode="$2"
+  local image="$1"
   [[ -f .env.compose.example ]] || { echo "ERROR: .env.compose.example not found." >&2; return 1; }
   cp .env.compose.example "$TEST_STAND_ENV_FILE"
   update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_MODE   "ghcr"
   update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_IMAGE  "$image"
-  update_env_var "$TEST_STAND_ENV_FILE" AUTH_MODE       "$auth_mode"
   update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_MARIA ""
   update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_CH    ""
-  if [[ "$auth_mode" == keycloak ]]; then
-    # Point the authenticator at the same origin the realm registers and the
-    # browser runner drives, so the callback lands where the session cookie
-    # can be set. Left at its .env.compose.example default
-    # (http://localhost:3000/auth/callback) the IdP would send an in-network
-    # browser to its OWN loopback, and a host client to an origin that serves
-    # the SPA rather than the authenticator.
-    update_env_var "$TEST_STAND_ENV_FILE" AUTHENTICATOR_REDIRECT_URI "$(test_stand_origin)/auth/callback"
-  fi
-  echo "=== test-stand env → $TEST_STAND_ENV_FILE (frontend: $image, auth: $auth_mode) ==="
-  if [[ "$auth_mode" == keycloak ]]; then
-    echo "    app origin: $(test_stand_origin)  callback: $(test_stand_origin)/auth/callback"
-  fi
+  # Point the authenticator at the same origin the realm registers and the
+  # browser runner drives, so the callback lands where the session cookie
+  # can be set. Left at its .env.compose.example default
+  # (http://localhost:3000/auth/callback) the IdP would send an in-network
+  # browser to its OWN loopback, and a host client to an origin that serves
+  # the SPA rather than the authenticator.
+  update_env_var "$TEST_STAND_ENV_FILE" AUTHENTICATOR_REDIRECT_URI "$(test_stand_origin)/auth/callback"
+  echo "=== test-stand env → $TEST_STAND_ENV_FILE (frontend: $image) ==="
+  echo "    app origin: $(test_stand_origin)  callback: $(test_stand_origin)/auth/callback"
 }
 
 # Every gold observation table this seed is expected to populate. The gate
@@ -1531,7 +1497,7 @@ test_stand_write_env() {
 #
 # The list is committed rather than derived. It was read off the evidence
 # models' own sources (src/ingestion/gold/<family>_metric_evidence.sql) against
-# what deploy/seed/generators/ writes:
+# what src/ingestion/tools/seed/generators/ writes:
 #
 #   task    <- task_issue_state / task_status_spans / task_worklog_flow  (task.py)
 #   git     <- class_git_{commits,file_changes,pull_requests,…}          (git.py)
@@ -1679,7 +1645,7 @@ test_stand_test_in_image() {
     return 1
   fi
 
-  local manifest="deploy/seed/manifest.json"
+  local manifest="src/ingestion/tools/seed/manifest.json"
   [[ -f "$manifest" ]] || {
     echo "ERROR: $manifest not found — seed the stand first: ./dev-compose.sh test-stand seed" >&2
     return 1; }
@@ -1704,7 +1670,11 @@ test_stand_test_in_image() {
     --user "$(id -u):$(id -g)"
     --network "container:${TEST_STAND_GATEWAY_CONTAINER}"
     -e "INSIGHT_STAND_BASE_URL=http://localhost:${TEST_STAND_GATEWAY_CONTAINER_PORT}"
-    -v "$PWD/${manifest}:/deploy/seed/manifest.json:ro"
+    # Mounted at a stable path and NAMED, rather than reproducing the suite's
+    # own repo-relative arithmetic inside an image where the tree lives at
+    # /tests and there is nothing above it.
+    -v "$PWD/${manifest}:/stand/manifest.json:ro"
+    -e "INSIGHT_STAND_MANIFEST=/stand/manifest.json"
     -v "$PWD/${TEST_STAND_ARTIFACT_DIR}:/tests/${TEST_STAND_ARTIFACT_DIR}"
     # Named, not inferred. The suite otherwise resolves this by walking up from
     # its own file to the directory holding `tests/` — which is the repo root in
@@ -1749,11 +1719,9 @@ cmd_test_stand() {
 
   case "$verb" in
     up)
-      local auth_mode="keycloak" image build_backend=false
+      local image build_backend=false
       while [[ $# -gt 0 ]]; do
         case "$1" in
-          --auth=*) auth_mode="${1#*=}"; shift ;;
-          --auth)   auth_mode="$2"; shift 2 ;;
           --build-backend) build_backend=true; shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
@@ -1761,7 +1729,7 @@ cmd_test_stand() {
       done
 
       image="$(test_stand_frontend_image)" || return 1
-      test_stand_write_env "$image" "$auth_mode" || return 1
+      test_stand_write_env "$image" || return 1
 
       # Pinning writes the four *_IMAGE vars into the env file, which is what
       # makes cmd_up put those services in its ghcr list — so this has to happen
@@ -1773,16 +1741,15 @@ cmd_test_stand() {
         echo "=== --build-backend: compiling the backend from this tree ==="
       fi
 
-      local up_args=(--env-file "$TEST_STAND_ENV_FILE")
-      [[ "$auth_mode" == keycloak ]] && up_args+=(--authenticator-redirect "$(test_stand_origin)/auth/callback")
+      local up_args=(--env-file "$TEST_STAND_ENV_FILE"
+                     --authenticator-redirect "$(test_stand_origin)/auth/callback")
       cmd_up "${up_args[@]}" || return 1
 
       # cmd_up resolved and exported the issuer for this run; persist what it
       # chose rather than re-deriving it, so the seed container and the test
       # suite read exactly the value the stack is running with.
-      update_env_var "$TEST_STAND_ENV_FILE" AUTH_MODE "${AUTH_MODE:-$auth_mode}"
       update_env_var "$TEST_STAND_ENV_FILE" AUTHENTICATOR_OIDC_ISSUER "${AUTHENTICATOR_OIDC_ISSUER:-}"
-      echo "=== persisted AUTH_MODE=${AUTH_MODE:-$auth_mode} AUTHENTICATOR_OIDC_ISSUER=${AUTHENTICATOR_OIDC_ISSUER:-<empty>} ==="
+      echo "=== persisted AUTHENTICATOR_OIDC_ISSUER=${AUTHENTICATOR_OIDC_ISSUER:-<empty>} ==="
 
       # Scope the gate to this run BEFORE seeding.
       local run_started_at

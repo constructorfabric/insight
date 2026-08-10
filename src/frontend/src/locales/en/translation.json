@@ -337,5 +337,64 @@
     "results": {
       "empty": "The query returned no rows."
     }
+  },
+  "metrics_console": {
+    "nav_label": "Custom metrics",
+    "title": "Custom metrics",
+    "new_metric": "New metric",
+    "empty_list": "No custom metrics yet. Create one to get started.",
+    "no_selection": "No metric selected",
+    "no_selection_description": "Pick a custom metric on the left, or create a new one.",
+    "list_error": "Failed to load custom metrics",
+    "list_error_description": "Try reloading the page. If the problem persists, contact your administrator.",
+    "delete_error": "Could not delete the metric. Try again.",
+    "editor": {
+      "create_title": "New custom metric",
+      "edit_title": "Edit custom metric",
+      "metric_key_label": "Metric key",
+      "label_label": "Label",
+      "short_label_label": "Short label",
+      "description_label": "Description",
+      "explanation_label": "Explanation",
+      "entity_type_label": "Entity type",
+      "unit_label": "Unit",
+      "format_label": "Format",
+      "direction_label": "Direction",
+      "computation_label": "Computation",
+      "scale_label": "Scale",
+      "peer_cohort_key_label": "Peer cohort key",
+      "source_key_label": "Source key",
+      "observation_sql_label": "Observation SQL",
+      "observation_sql_placeholder": "SELECT tenant_id, source_key, entity_type, entity_id, metric_date, measure_key, observed_at, value, subject_key, dimensions FROM ...",
+      "measures_label": "Measures",
+      "dimensions_label": "Dimensions",
+      "value_measure_label": "Value measure",
+      "numerator_label": "Numerator measure",
+      "denominator_label": "Denominator measure",
+      "multiplier_label": "Multiplier",
+      "offset_label": "Offset",
+      "clamp_min_label": "Clamp min",
+      "clamp_max_label": "Clamp max",
+      "cancel": "Cancel",
+      "save": "Save",
+      "save_failed": "Could not save the metric. Check the fields and try again."
+    },
+    "detail": {
+      "edit": "Edit",
+      "delete": "Delete",
+      "preview": "Preview",
+      "entity_ids_label": "Entity ids",
+      "entity_ids_placeholder": "comma-separated ids",
+      "from_label": "From",
+      "to_label": "To",
+      "load_error": "Failed to load this metric",
+      "preview_error": "Preview failed",
+      "preview_error_generic": "The metric could not be previewed. Check the entity ids and period."
+    },
+    "preview": {
+      "empty": "The metric returned no values.",
+      "entity_column": "entity_id",
+      "value_column": "value"
+    }
   }
 }

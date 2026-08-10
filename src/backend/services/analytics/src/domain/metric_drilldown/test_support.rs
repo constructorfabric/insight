@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::domain::metric_definitions::definition::{
     MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationRelation,
+    ObservationSource,
 };
 use crate::domain::metric_definitions::{ComputationSpec, EvidenceRelation, MetricDefinition};
 
@@ -15,8 +16,10 @@ use super::dto::{
 pub(super) fn input(role: MetricInputRole, measure_key: &str) -> MetricInput {
     MetricInput {
         role,
-        observation_relation: ObservationRelation::parse("git_metric_observations")
-            .unwrap_or_else(|| panic!("observation relation must parse")),
+        observation: ObservationSource::Managed(
+            ObservationRelation::parse("git_metric_observations")
+                .unwrap_or_else(|| panic!("observation relation must parse")),
+        ),
         source_key: "git".to_owned(),
         measure_key: measure_key.to_owned(),
     }
@@ -98,7 +101,6 @@ pub(super) fn validated(plan: EvidencePlan) -> ValidatedMetricDrilldown {
         display_dimensions: vec!["category".to_owned()],
     };
     ValidatedMetricDrilldown {
-        person_id: TEST_PERSON,
         tenant_id: TEST_TENANT,
         enforce_tenant_scope: true,
         fingerprint: selection_fingerprint(Uuid::nil(), &selection)

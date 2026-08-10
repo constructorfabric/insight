@@ -81,6 +81,7 @@ Model-for-model mirror of BambooHR:
 | `workday__workers_snapshot` | SCD2 append-only snapshot (`snapshot` macro); tracks contract columns + `workday_custom_fields` var from `raw_data`; `Last_Functionally_Updated` deliberately untracked |
 | `workday__workers_fields_history` | Per-field change log (`fields_history` macro) |
 | `workday__identity_inputs` | Identity observations (`identity_inputs_from_history` macro); DELETE on `Worker_Status` → `Terminated` |
+| `workday__person_attribute_claims` | `class_person_attribute_claims` staging (`attribute_claims` macro); curated job/org/location/employment fields |
 | `workday__to_class_people` | `class_people` staging; `Supervisory_Organization` → `department_name`; `Worker_Type` → `employment_type` |
 | `workday__hr_events` | `class_hr_events` staging (leave); flat columns, no JSON extraction |
 | `workday__working_hours` | `class_hr_working_hours` staging; `Scheduled_Weekly_Hours` with 40h fallback |

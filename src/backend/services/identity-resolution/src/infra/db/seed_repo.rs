@@ -15,10 +15,13 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait, Value};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement,
+    TransactionTrait, Value,
+};
 use uuid::Uuid;
 
-use crate::domain::seed::{SeedObservationRow, SourceAccountKey, normalize_email};
+use crate::domain::seed::{KnownBinding, SeedObservationRow, SourceAccountKey, normalize_email};
 use crate::domain::seed_service::{ApplyCounts, SeedStore};
 
 /// MariaDB-backed [`SeedStore`] — wraps a connection so the persons-seed service
@@ -39,7 +42,7 @@ impl SeedStore for MariaDbSeedStore<'_> {
     async fn known_account_bindings(
         &self,
         tenant_id: Uuid,
-    ) -> anyhow::Result<HashMap<SourceAccountKey, Uuid>> {
+    ) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
         known_account_bindings(self.db, tenant_id).await
     }
 
@@ -132,9 +135,9 @@ pub async fn tenant_presence(
     })
 }
 
-/// Current `source_account_id → person_id` bindings for the tenant — the latest
-/// `value_type='id'` observation per account. Feeds the known-account branch of
-/// the resolver. Ported from `SqlPersonsSeed.KnownAccountBindings`.
+/// Current bindings for the tenant — the latest `value_type='id'` observation
+/// per account, with the row's author (seed sentinel vs operator UUID) so the
+/// resolver can classify divergence. Feeds the known-account branch.
 ///
 /// # Errors
 ///
@@ -142,7 +145,7 @@ pub async fn tenant_presence(
 pub async fn known_account_bindings(
     db: &DatabaseConnection,
     tenant_id: Uuid,
-) -> anyhow::Result<HashMap<SourceAccountKey, Uuid>> {
+) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
     const SQL: &str = r"
         WITH ranked AS (
             SELECT
@@ -150,6 +153,7 @@ pub async fn known_account_bindings(
                 insight_source_id,
                 value_id AS source_account_id,
                 person_id,
+                author_person_id,
                 ROW_NUMBER() OVER (
                     PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, value_id
                     ORDER BY created_at DESC, id DESC
@@ -159,7 +163,7 @@ pub async fn known_account_bindings(
               AND value_id IS NOT NULL
               AND insight_tenant_id = ?
         )
-        SELECT insight_source_type, insight_source_id, source_account_id, person_id
+        SELECT insight_source_type, insight_source_id, source_account_id, person_id, author_person_id
         FROM ranked
         WHERE rn = 1
     ";
@@ -177,13 +181,17 @@ pub async fn known_account_bindings(
         let source_id: Vec<u8> = row.try_get("", "insight_source_id")?;
         let account_id: String = row.try_get("", "source_account_id")?;
         let person_id: Vec<u8> = row.try_get("", "person_id")?;
+        let author_person_id: Vec<u8> = row.try_get("", "author_person_id")?;
         map.insert(
             SourceAccountKey {
                 source_type,
                 source_id: Uuid::from_slice(&source_id)?,
                 account_id,
             },
-            Uuid::from_slice(&person_id)?,
+            KnownBinding {
+                person_id: Uuid::from_slice(&person_id)?,
+                author_person_id: Uuid::from_slice(&author_person_id)?,
+            },
         );
     }
     Ok(map)
@@ -237,37 +245,31 @@ pub async fn latest_email_to_person(
     Ok(map)
 }
 
-/// Apply a seed's resolved observations: `INSERT IGNORE` each into `persons`,
-/// then rebuild the tenant's `account_person_map` and `org_chart` — all in one
-/// transaction, so the log and the derived caches are never left
-/// cross-inconsistent. `author_person_id` stamps the computed `org_chart`
-/// no-parent rows (the seed operation's author). Returns the number of
-/// observation rows actually inserted (duplicates are ignored).
+/// Rebuild the tenant's derived caches inside an open transaction: the SCD2
+/// `account_person_map` and `org_chart`, both re-derived from `persons`. Shared
+/// by the persons-seed and the operator corrections so a journal write and its
+/// caches always commit together. Returns the `org_chart` rows written.
 ///
 /// # Errors
 ///
-/// Returns an error if any statement fails; the transaction is rolled back.
-// The length is dominated by the verbatim org_chart CTE string constant, not
-// control flow — keeping the SQL inline (co-located, greppable) over hoisting it.
-#[allow(clippy::too_many_lines)]
-pub async fn apply(
-    db: &DatabaseConnection,
+/// Returns an error if any statement fails; the transaction is the caller's to
+/// roll back.
+#[allow(clippy::too_many_lines)] // dominated by the verbatim org_chart CTE
+async fn rebuild_derived_caches(
+    txn: &DatabaseTransaction,
     tenant_id: Uuid,
     author_person_id: Uuid,
-    rows: &[SeedObservationRow],
-) -> anyhow::Result<ApplyCounts> {
-    // Idempotent insert — uq_person_observation dedups a re-emitted identical
-    // observation; INSERT IGNORE swallows the duplicate-key error. Batched
-    // (multi-row VALUES) so N observations cost ~N/INSERT_CHUNK round-trips
-    // instead of N — 25k+ single-row inserts over a remote pool take minutes;
-    // batches take seconds. Same semantics as per-row INSERT IGNORE.
-    const INSERT_PREFIX: &str = "INSERT IGNORE INTO persons \
-        (value_type, insight_source_type, insight_source_id, insight_tenant_id, \
-         value_id, value_full_text, value, person_id, author_person_id, reason, \
-         created_at) VALUES ";
-    const ROW_TUPLE: &str = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-    const INSERT_CHUNK: usize = 500; // 500 rows × 11 cols = 5500 binds (< 65535)
+) -> anyhow::Result<u64> {
     const DELETE_APM: &str = "DELETE FROM account_person_map WHERE insight_tenant_id = ?";
+    // The journal may hold TWO bindings for one account at the same instant:
+    // its unique key ends in `person_id`, so a re-run that resolves an account
+    // to a different person re-emits the account's `id` row under the source's
+    // own timestamp — which is exactly what an operator correction causes on
+    // the next seed. This cache is keyed by (account, valid_from) with no
+    // person, so those two rows are one row here, and the later decision (the
+    // higher `id`) is the one that stands — the same latest-wins rule the
+    // binding readers use. Without the rank the insert dies on a duplicate key
+    // and takes the whole seed run with it.
     const INSERT_APM: &str = r"
         INSERT INTO account_person_map
             (insight_tenant_id, insight_source_type, insight_source_id, source_account_id,
@@ -276,20 +278,37 @@ pub async fn apply(
             insight_tenant_id,
             insight_source_type,
             insight_source_id,
-            value_id AS source_account_id,
+            source_account_id,
             person_id,
             author_person_id,
             reason,
-            created_at AS valid_from,
-            LEAD(created_at) OVER (
+            valid_from,
+            LEAD(valid_from) OVER (
                 PARTITION BY insight_tenant_id, insight_source_type,
-                             insight_source_id, value_id
-                ORDER BY created_at
+                             insight_source_id, source_account_id
+                ORDER BY valid_from
             ) AS valid_to
-        FROM persons
-        WHERE value_type = 'id'
-          AND value_id IS NOT NULL
-          AND insight_tenant_id = ?
+        FROM (
+            SELECT
+                insight_tenant_id,
+                insight_source_type,
+                insight_source_id,
+                value_id     AS source_account_id,
+                person_id,
+                author_person_id,
+                reason,
+                created_at   AS valid_from,
+                ROW_NUMBER() OVER (
+                    PARTITION BY insight_tenant_id, insight_source_type,
+                                 insight_source_id, value_id, created_at
+                    ORDER BY id DESC
+                ) AS rn
+            FROM persons
+            WHERE value_type = 'id'
+              AND value_id IS NOT NULL
+              AND insight_tenant_id = ?
+        ) ranked
+        WHERE rn = 1
     ";
     const DELETE_ORG_CHART: &str = "DELETE FROM org_chart WHERE insight_tenant_id = ?";
     // Ported verbatim from Sql.PersonsSeed.cs::InsertOrgChartForTenant. The `?`
@@ -509,36 +528,6 @@ pub async fn apply(
 
     let tenant_bytes = tenant_id.as_bytes().to_vec();
     let author_bytes = author_person_id.as_bytes().to_vec();
-    let txn = db.begin().await?;
-
-    let mut inserted = 0u64;
-    for chunk in rows.chunks(INSERT_CHUNK) {
-        let values = vec![ROW_TUPLE; chunk.len()].join(", ");
-        let sql = format!("{INSERT_PREFIX}{values}");
-        let mut params: Vec<Value> = Vec::with_capacity(chunk.len() * 11);
-        for r in chunk {
-            params.push(r.value_type.clone().into());
-            params.push(r.source_type.clone().into());
-            params.push(r.source_id.as_bytes().to_vec().into());
-            params.push(tenant_bytes.clone().into());
-            params.push(r.value_id.clone().into());
-            params.push(r.value_full_text.clone().into());
-            params.push(r.value.clone().into());
-            params.push(r.person_id.as_bytes().to_vec().into());
-            params.push(r.author_person_id.as_bytes().to_vec().into());
-            params.push(r.reason.clone().into());
-            params.push(r.created_at.into());
-        }
-        let res = txn
-            .execute(Statement::from_sql_and_values(
-                DbBackend::MySql,
-                &sql,
-                params,
-            ))
-            .await?;
-        inserted += res.rows_affected();
-    }
-    tracing::info!(inserted, "persons-seed apply: observations inserted");
 
     // Rebuild account_person_map for the tenant (delete + reinsert).
     txn.execute(Statement::from_sql_and_values(
@@ -583,6 +572,73 @@ pub async fn apply(
         org_chart_rows_rebuilt,
         "persons-seed apply: org_chart rebuilt"
     );
+
+    Ok(org_chart_rows_rebuilt)
+}
+
+/// Apply a seed's resolved observations: `INSERT IGNORE` each into `persons`,
+/// then rebuild the tenant's `account_person_map` and `org_chart` — all in one
+/// transaction, so the log and the derived caches are never left
+/// cross-inconsistent. `author_person_id` stamps the computed `org_chart`
+/// no-parent rows (the seed operation's author). Returns the number of
+/// observation rows actually inserted (duplicates are ignored).
+///
+/// # Errors
+///
+/// Returns an error if any statement fails; the transaction is rolled back.
+// The length is dominated by the verbatim org_chart CTE string constant, not
+// control flow — keeping the SQL inline (co-located, greppable) over hoisting it.
+#[allow(clippy::too_many_lines)]
+pub async fn apply(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    author_person_id: Uuid,
+    rows: &[SeedObservationRow],
+) -> anyhow::Result<ApplyCounts> {
+    // Idempotent insert — uq_person_observation dedups a re-emitted identical
+    // observation; INSERT IGNORE swallows the duplicate-key error. Batched
+    // (multi-row VALUES) so N observations cost ~N/INSERT_CHUNK round-trips
+    // instead of N — 25k+ single-row inserts over a remote pool take minutes;
+    // batches take seconds. Same semantics as per-row INSERT IGNORE.
+    const INSERT_PREFIX: &str = "INSERT IGNORE INTO persons \
+        (value_type, insight_source_type, insight_source_id, insight_tenant_id, \
+         value_id, value_full_text, value, person_id, author_person_id, reason, \
+         created_at) VALUES ";
+    const ROW_TUPLE: &str = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    const INSERT_CHUNK: usize = 500; // 500 rows × 11 cols = 5500 binds (< 65535)
+    let tenant_bytes = tenant_id.as_bytes().to_vec();
+    let txn = db.begin().await?;
+
+    let mut inserted = 0u64;
+    for chunk in rows.chunks(INSERT_CHUNK) {
+        let values = vec![ROW_TUPLE; chunk.len()].join(", ");
+        let sql = format!("{INSERT_PREFIX}{values}");
+        let mut params: Vec<Value> = Vec::with_capacity(chunk.len() * 11);
+        for r in chunk {
+            params.push(r.value_type.clone().into());
+            params.push(r.source_type.clone().into());
+            params.push(r.source_id.as_bytes().to_vec().into());
+            params.push(tenant_bytes.clone().into());
+            params.push(r.value_id.clone().into());
+            params.push(r.value_full_text.clone().into());
+            params.push(r.value.clone().into());
+            params.push(r.person_id.as_bytes().to_vec().into());
+            params.push(r.author_person_id.as_bytes().to_vec().into());
+            params.push(r.reason.clone().into());
+            params.push(r.created_at.into());
+        }
+        let res = txn
+            .execute(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                &sql,
+                params,
+            ))
+            .await?;
+        inserted += res.rows_affected();
+    }
+    tracing::info!(inserted, "persons-seed apply: observations inserted");
+
+    let org_chart_rows_rebuilt = rebuild_derived_caches(&txn, tenant_id, author_person_id).await?;
 
     txn.commit().await?;
     Ok(ApplyCounts {

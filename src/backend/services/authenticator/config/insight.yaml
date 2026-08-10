@@ -134,8 +134,8 @@ gears:
         client_id: ""
         client_secret: ""
         # id_token claim naming the user's single tenant (string; an array is
-        # tolerated — first entry wins). fakeidp/Keycloak emit `tenant_id`;
-        # Entra emits `tid`.
+        # tolerated — first entry wins). Keycloak emits `tenant_id`; Entra
+        # emits `tid`.
         tenant_claim: "tenant_id"
         # The identity-resolution source_type this IdP is seeded under (e.g.
         # "ms-entra") — required, drives the login-bootstrap person lookup.

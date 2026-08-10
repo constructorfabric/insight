@@ -10,10 +10,10 @@ up-orb.sh
 /deploy/compose/build/
 /deploy/compose/override.generated.yml
 /deploy/compose/keycloak/realm-insight.generated.json
-/deploy/seed/.venv/
-/deploy/seed/__pycache__/
-/deploy/seed/.mypy_cache/
-/deploy/seed/.ruff_cache/
+/src/ingestion/tools/seed/.venv/
+/src/ingestion/tools/seed/__pycache__/
+/src/ingestion/tools/seed/.mypy_cache/
+/src/ingestion/tools/seed/.ruff_cache/
 __pycache__/
 *.pyc
 .venv/
@@ -582,7 +582,7 @@ trivy-image.sarif
 trufflehog-findings.jsonl
 
 # Seed manifest — per-stand runtime output (PROFILE.md is the committed view).
-deploy/seed/manifest.json
+src/ingestion/tools/seed/manifest.json
 
 # pytest-playwright's artefact directory: traces, screenshots and video from a
 # stand run. Written by `./dev-compose.sh test-stand test`, uploaded by CI.
@@ -593,3 +593,7 @@ deploy/seed/manifest.json
 # run, exactly like .env.compose.test-stand and the generated realm.
 .artifacts/
 coverage.md
+
+# playwright-cli session output: snapshots, console logs and screenshots from
+# driving the UI against a stand.
+.playwright-cli/

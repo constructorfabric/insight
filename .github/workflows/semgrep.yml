@@ -1,6 +1,6 @@
 name: Semgrep SAST
 
-# SAST, report-only (#2020). `--config auto` plus p/rust and p/csharp, which auto covers thinly.
+# SAST, report-only (#2020). `--config auto` plus p/rust, which auto covers thinly.
 # Secrets are excluded here — trufflehog.yml owns them.
 
 on:
@@ -33,7 +33,7 @@ jobs:
       contents: read # checkout
       security-events: write # upload SARIF to Code Scanning
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # `--baseline-commit` builds a worktree at the base commit.
           fetch-depth: 0
@@ -50,7 +50,6 @@ jobs:
             semgrep scan \
               --config auto \
               --config p/rust \
-              --config p/csharp \
               --exclude-rule generic.secrets.security.detected-generic-secret \
               --sarif --output semgrep.sarif
 
@@ -69,7 +68,6 @@ jobs:
             semgrep scan \
               --config auto \
               --config p/rust \
-              --config p/csharp \
               --exclude-rule generic.secrets.security.detected-generic-secret \
               --error \
               --baseline-commit "$BASE_SHA"
@@ -97,7 +95,7 @@ jobs:
           rules = collections.Counter(x.get("ruleId", "?").split(".")[-1] for x in res)
           w = out.write
           w("## Semgrep SAST (report-only)\n\n")
-          w(f"**{total}** finding(s) from `auto` + `p/rust`/`p/csharp` (secrets excluded — TruffleHog owns those). "
+          w(f"**{total}** finding(s) from `auto` + `p/rust` (secrets excluded — TruffleHog owns those). "
             f"This check does **not** block; full details in [Security -> Code scanning]({cs_url}).\n\n")
           if total:
               w("| Severity | Count |\n|---|---:|\n")
@@ -114,7 +112,7 @@ jobs:
       - name: Upload SARIF to GitHub Code Scanning
         # Fork PRs get a read-only token and cannot upload.
         if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/upload-sarif@fb0994ef1c058010acf1efccff928b0a83b1ed54 # v4.32.6
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
           sarif_file: semgrep.sarif
           category: semgrep

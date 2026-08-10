@@ -24,7 +24,7 @@ CI by `.github/workflows/openapi-specs.yml`. There is no second source of truth
 
 The output is COMMITTED. A test run must never need the generator, which is a
 dev-only dependency and absent from the ui-tests image; `--check` is what keeps
-the committed copy honest, the same arrangement `deploy/seed/render_profile.py`
+the committed copy honest, the same arrangement `src/ingestion/tools/seed/render_profile.py`
 uses for PROFILE.md.
 
 Deliberately NOT a pytest case. `tests/stand/` exists to assert things about a
@@ -132,6 +132,32 @@ Two consequences worth knowing while it stays this small:
 '''
 
 
+IDENTITY_HEADER = '''"""Identity Resolution response shapes — GENERATED, do not edit.
+
+Regenerate with:
+
+    uv run --project tests --frozen python tests/generate_schemas.py
+
+Source: `docs/components/backend/identity-resolution/openapi.json`, generated
+offline by `cargo run -p identity-resolution -- openapi` and drift-gated in CI
+beside the analytics and authenticator documents. Until that subcommand existed
+this module was hand-written from the Rust DTOs, because the committed contract
+was still the retired .NET one; these models now describe the structs that
+serialize the wire, so a validation failure is a contract disagreement rather
+than a stale transcription.
+
+The names are the contract's, not the suite's: `SubchartResponse` where the
+hand-written module said `Subchart`. `stand/api/schemas/__init__.py` re-exports
+them under the names the tests already use, so the rename stops at this package.
+
+BODIES ONLY — no status code comes from this document. Its per-operation lists
+are stamped uniformly by `.standard_errors` and describe nothing (#1669), the
+same limitation the analytics and authenticator documents carry.
+"""
+
+'''
+
+
 @dataclass(frozen=True)
 class Generated:
     """A service whose document describes bodies: models are generated and committed."""
@@ -229,19 +255,11 @@ TARGETS: tuple[Generated | Bodyless | Untrusted, ...] = (
         spec=_SPECS / "gateway" / "openapi.json",
         reason="publishes no OpenAPI document (NGINX + Lua; `GET /healthz` is its only own route)",
     ),
-    # The committed document is still the retired .NET one — it declares routes
-    # the service does not serve, omits ones it does, and lists only `200`
-    # everywhere (enumerated in `stand/api/schemas/__init__.py`). `identity.py` is
-    # hand-written from the Rust DTOs until identity grows an `openapi`
-    # subcommand of its own, as analytics and authenticator have.
-    #
-    # NOT `Bodyless`: the document does describe one body (`POST
-    # /v1/visible-persons`), and body count says nothing about provenance.
-    Untrusted(
+    Generated(
         name="identity-resolution",
         spec=_SPECS / "identity-resolution" / "openapi.json",
-        reason="the committed document is the retired .NET contract",
-        still_the_wrong_document=declares_only_200,
+        output=_SCHEMAS / "identity.py",
+        header=IDENTITY_HEADER,
     ),
 )
 

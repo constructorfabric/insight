@@ -5,9 +5,6 @@ dependencies:
 - name: insight-authenticator
   repository: file://../../src/backend/services/authenticator/helm
   version: 0.1.0
-- name: insight-fakeidp
-  repository: file://../../src/backend/services/fakeidp/helm
-  version: 0.1.0
 - name: insight-keycloak
   repository: file://../../src/backend/services/keycloak/helm
   version: 0.1.0
@@ -23,5 +20,5 @@ dependencies:
 - name: insight-frontend
   repository: file://../../src/frontend/helm
   version: 0.1.0
-digest: sha256:c45c59567186fd18438fc169391fce05cb1027a7473bbd3ad0510e74278731bb
-generated: "2026-08-06T17:59:22.087747+08:00"
+digest: sha256:6b2fbd414c97c623bd4f8a267452734aa032c4732fafef2a2826c9b282cb3e15
+generated: "2026-08-10T12:33:23.572107+08:00"

@@ -157,7 +157,7 @@ models:
 
   - name: bamboohr__employees_snapshot
     description: >
-      SCD2 append-only snapshot of BambooHR employees. Tracks changes in standard fields and custom fields from raw_data. Custom fields list is passed via dbt var bamboohr_custom_fields.
+      SCD2 append-only snapshot of BambooHR employees. A new version is appended when any field of the raw_data payload changes, except lastChanged, which BambooHR moves on its own.
     columns:
       - name: unique_key
         tests:
@@ -169,7 +169,7 @@ models:
 
   - name: bamboohr__employees_fields_history
     description: >
-      Field-level change log for BambooHR employees. One row per changed field per version transition. Includes both standard and custom fields (from raw_data).
+      Field-level change log for BambooHR employees. One row per changed field per version transition, covering every field of the raw_data payload the snapshot versions on.
     columns:
       - name: entity_id
         description: "BambooHR employee ID"
@@ -191,5 +191,29 @@ models:
         description: "New value (as string)"
       - name: updated_at
         description: "Timestamp of the change"
+        tests:
+          - not_null
+
+  - name: bamboohr__person_attribute_claims
+    description: >
+      Typed person-attribute claims from the bamboohr__employees_snapshot SCD2 history via the
+      attribute_claims macro. Emits the class_person_attribute_claims contract;
+      unioned into silver by the silver:class_person_attribute_claims tag.
+      Curated job, organisation, location and employment fields only.
+      Customer-defined custom fields are not claimed: the snapshot versions on
+      a configured subset of them, so claiming the rest would stamp changes
+      with the wrong effective date.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+      - name: source_account_id
+        description: "BambooHR employee ID"
+        tests:
+          - not_null
+      - name: field_id
+        tests:
+          - not_null
+      - name: claim_action
         tests:
           - not_null

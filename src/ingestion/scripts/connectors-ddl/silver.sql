@@ -653,6 +653,26 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS silver.class_person_attribute_claims
+(
+    `unique_key` String,
+    `insight_tenant_id` String,
+    `insight_source_type` String,
+    `insight_source_id` String,
+    `source_account_id` String,
+    `field_id` String,
+    `value_id` Nullable(String),
+    `value_label` String,
+    `claim_action` Enum8('set' = 1, 'clear' = 2),
+    `observed_at` DateTime64(3),
+    `ingested_at` DateTime64(3),
+    `_version` Int64
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS silver.class_support_activity
 (
     `tenant_id` Nullable(String),
@@ -738,6 +758,23 @@ CREATE TABLE IF NOT EXISTS silver.class_task_field_metadata
     `field_type` Nullable(String),
     `has_id` Nullable(UInt8),
     `observed_at` DateTime64(3),
+    `_version` Int64
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.class_task_issuetypes
+(
+    `unique_key` Nullable(String),
+    `insight_source_id` Nullable(String),
+    `data_source` String,
+    `issue_type_id` Nullable(String),
+    `issue_type_name` Nullable(String),
+    `untranslated_name` Nullable(String),
+    `issue_kind` String,
+    `collected_at` DateTime64(3),
     `_version` Int64
 )
 ENGINE = ReplacingMergeTree(_version)

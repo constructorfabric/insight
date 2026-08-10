@@ -694,7 +694,7 @@ mod tests {
     use super::*;
     use crate::domain::metric_definitions::definition::{
         ComputationSpec, MetricBase, MetricDefinition, MetricDirection, MetricFormat, MetricInput,
-        MetricInputRole, ObservationRelation,
+        MetricInputRole, ObservationRelation, ObservationSource,
     };
 
     fn shape_request(
@@ -742,8 +742,10 @@ mod tests {
             spec: ComputationSpec::Sum {
                 value: MetricInput {
                     role: MetricInputRole::Value,
-                    observation_relation: ObservationRelation::parse("ai_metric_observations")
-                        .unwrap_or_else(|| panic!("fixture relation must parse")),
+                    observation: ObservationSource::Managed(
+                        ObservationRelation::parse("ai_metric_observations")
+                            .unwrap_or_else(|| panic!("fixture relation must parse")),
+                    ),
                     source_key: "ai_usage".to_owned(),
                     measure_key: "accepted_lines".to_owned(),
                 },
@@ -754,8 +756,10 @@ mod tests {
     fn fixture_input(measure_key: &str, role: MetricInputRole) -> MetricInput {
         MetricInput {
             role,
-            observation_relation: ObservationRelation::parse("ai_metric_observations")
-                .unwrap_or_else(|| panic!("fixture relation must parse")),
+            observation: ObservationSource::Managed(
+                ObservationRelation::parse("ai_metric_observations")
+                    .unwrap_or_else(|| panic!("fixture relation must parse")),
+            ),
             source_key: "ai_usage".to_owned(),
             measure_key: measure_key.to_owned(),
         }

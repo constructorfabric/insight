@@ -542,14 +542,14 @@ mod tests {
     fn filenames_are_human_readable_and_bounded() {
         assert_eq!(
             export_filename(
-                "Tasks closed",
+                "Issues closed",
                 "tasks.closed",
                 "2025-07-28",
                 "2026-07-27",
                 true,
                 "xlsx"
             ),
-            "tasks-closed_2025-07-28_2026-07-27_filtered.xlsx"
+            "issues-closed_2025-07-28_2026-07-27_filtered.xlsx"
         );
         assert_eq!(filename_slug("***"), "");
         assert!(filename_slug(&"a".repeat(100)).len() <= 80);

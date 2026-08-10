@@ -43,16 +43,16 @@ export function SliceSelect({ dims }: { dims: SliceDim[] }) {
       value={value}
       onValueChange={(v) => setSlice(v && v !== TEAM_KEY ? v : "")}
     >
-      <SelectTrigger size="sm" aria-label="Slice by" className="w-32 md:w-48">
-        <SelectValue>
-          <span className="hidden md:inline">Slice: </span>
-          {label}
-        </SelectValue>
+      {/* The trigger carries the VALUE only; the word "Cohort" labels the
+          control from outside, next to the tooltip that explains it. Inside,
+          it read as part of the value and repeated on every option list. */}
+      <SelectTrigger size="sm" aria-label="Cohort" className="w-32 md:w-44">
+        <SelectValue>{label}</SelectValue>
       </SelectTrigger>
       <SelectContent align="end">
         <SelectGroup>
           <SelectLabel className="text-xs text-muted-foreground">
-            Slice by
+            Compare against
           </SelectLabel>
           {all.map((d) => (
             <SelectItem key={d.key} value={d.key}>

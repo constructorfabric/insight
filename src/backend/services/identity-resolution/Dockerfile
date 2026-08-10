@@ -23,7 +23,6 @@ COPY libs/authenticator-sdk/Cargo.toml ./libs/authenticator-sdk/Cargo.toml
 COPY services/analytics/Cargo.toml ./services/analytics/Cargo.toml
 COPY services/authenticator/Cargo.toml ./services/authenticator/Cargo.toml
 COPY services/identity-resolution/Cargo.toml ./services/identity-resolution/Cargo.toml
-COPY services/fakeidp/Cargo.toml ./services/fakeidp/Cargo.toml
 COPY services/git-cli-proxy/Cargo.toml ./services/git-cli-proxy/Cargo.toml
 COPY tools/routegen/Cargo.toml ./tools/routegen/Cargo.toml
 
@@ -32,7 +31,6 @@ RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/sr
     mkdir -p services/analytics/src && echo "fn main() {}" > services/analytics/src/main.rs && \
     mkdir -p services/authenticator/src && echo "fn main() {}" > services/authenticator/src/main.rs && \
     mkdir -p services/identity-resolution/src && echo "fn main() {}" > services/identity-resolution/src/main.rs && \
-    mkdir -p services/fakeidp/src && echo "fn main() {}" > services/fakeidp/src/main.rs && \
     mkdir -p services/git-cli-proxy/src && echo "fn main() {}" > services/git-cli-proxy/src/main.rs && \
     mkdir -p tools/routegen/src && echo "fn main() {}" > tools/routegen/src/main.rs
 

@@ -1,23 +1,27 @@
 spec_version: 1
 description: >
-  Task Delivery - bugs_to_task_ratio - JIRA, IC Bullet Task Delivery (...0011),
-  department-of-5 distribution + 6 stats in a single custom window.
+  Task Delivery - bug / non-bug subsets of closed issues and the bug share -
+  JIRA, department-of-5 distribution in a single custom window.
 
   bronze -> silver -> gold: jira_issue + jira_issue_history (Status->Closed event
-  = metric_date) + jira_user. issuetype lives in custom_fields_json
-  (JSONExtract issuetype.name). jira_closed_tasks per (person, close-day):
-    tasks_closed = count()  (ALL closed issues, bugs included);
-    bugs_fixed   = countIf(issue_type='Bug').
-  The ...0011 query_ref: if(Σtasks>0, round(100*Σbugs_fixed/Σtasks_completed, 1)).
-  NOTE the denominator is count() of ALL closed issues — a Bug counts in BOTH
-  numerator and denominator.
+  = metric_date) + jira_user + jira_issuetypes. The issue's type id lives in
+  custom_fields_json (issuetype.id) and resolves through the issue-type dimension
+  to a kind: bug / other / unknown. Per (person, close-day):
+    tasks_closed   = every closed issue, bugs included;
+    bugs_fixed     = the bug-kind ones;
+    closed_non_bug = the known non-bug ones (an unknown kind joins neither subset).
+  bugs_ratio = 100 * sum(bugs_fixed) / sum(tasks_closed) — a share of closed
+  issues, so a bug counts in BOTH numerator and denominator and 100% is the
+  ceiling.
 
   Department: 5 Engineering members alice..erin of rank r in 1..5. Each closes
   EXACTLY 4 issues on the same close date (2026-06-25): (r-1) Bugs + (5-r) Tasks
-  -> per-person ratio = 100*(r-1)/4 = {0,25,50,75,100}. alice(r=1)=0% (0 bugs /
-  4 closed, denominator 4>0 so NOT dropped); erin(r=5)=100%. value = the requested
-  member's OWN ratio; median/p25/p75/range = the department distribution.
-  Empty window 2026-06 -> no items.
+  -> per-person bug share = 100*(r-1)/4 = {0,25,50,75,100}. alice(r=1)=0% (0 bugs /
+  4 closed, denominator 4>0 so NOT dropped); erin(r=5)=100%. The two subsets are
+  complements here (no unclassified types seeded): alice closes 4 non-bug and 0
+  bug, erin 4 bug and 0 non-bug. value = the requested member's OWN number;
+  median/p25/p75/range = the department distribution. Empty window 2026-06 -> no
+  items.
 
 bronze:
   bronze_bamboohr.employees:
@@ -38,6 +42,10 @@ bronze:
     - $ref: templates/jira_task.yaml#/templates/status_open
     - $ref: templates/jira_task.yaml#/templates/status_in_progress
     - $ref: templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_issuetypes:
+    - $ref: templates/jira_task.yaml#/templates/issuetype_task
+    - $ref: templates/jira_task.yaml#/templates/issuetype_bug
 
   bronze_jira.jira_fields:
     - $ref: templates/jira_task.yaml#/templates/field_status
@@ -82,7 +90,7 @@ bronze:
       unique_key: jira-test-BBW-1
       id_readable: BBW1
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Bug"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'
     - $ref: templates/jira_task.yaml#/templates/jira_issue
       id: BBW-2
       jira_id: BBW-2
@@ -111,14 +119,14 @@ bronze:
       unique_key: jira-test-BCW-1
       id_readable: BCW1
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Bug"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
     - $ref: templates/jira_task.yaml#/templates/jira_issue
       id: BCW-2
       jira_id: BCW-2
       unique_key: jira-test-BCW-2
       id_readable: BCW2
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Bug"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'
     - $ref: templates/jira_task.yaml#/templates/jira_issue
       id: BCW-3
       jira_id: BCW-3
@@ -140,21 +148,21 @@ bronze:
       unique_key: jira-test-BDW-1
       id_readable: BDW1
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Bug"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
     - $ref: templates/jira_task.yaml#/templates/jira_issue
       id: BDW-2
       jira_id: BDW-2
       unique_key: jira-test-BDW-2
       id_readable: BDW2
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Bug"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
     - $ref: templates/jira_task.yaml#/templates/jira_issue
       id: BDW-3
       jira_id: BDW-3
       unique_key: jira-test-BDW-3
       id_readable: BDW3
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Bug"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'
     - $ref: templates/jira_task.yaml#/templates/jira_issue
       id: BDW-4
       jira_id: BDW-4
@@ -169,28 +177,28 @@ bronze:
       unique_key: jira-test-BEW-1
       id_readable: BEW1
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Bug"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
     - $ref: templates/jira_task.yaml#/templates/jira_issue
       id: BEW-2
       jira_id: BEW-2
       unique_key: jira-test-BEW-2
       id_readable: BEW2
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Bug"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
     - $ref: templates/jira_task.yaml#/templates/jira_issue
       id: BEW-3
       jira_id: BEW-3
       unique_key: jira-test-BEW-3
       id_readable: BEW3
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Bug"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
     - $ref: templates/jira_task.yaml#/templates/jira_issue
       id: BEW-4
       jira_id: BEW-4
       unique_key: jira-test-BEW-4
       id_readable: BEW4
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Bug"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
 
   bronze_jira.jira_issue_history:
     # ── Alice Alpha (rank 1) ──
@@ -379,6 +387,30 @@ cases:
         view: timeseries
         assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-06-25' && double(p.value) == 100.0))"
 
+  - name: Non-bug closed issues are the complement subset
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-06-20", to: "2026-06-30" }
+        metrics:
+          - metric_key: tasks.closed_non_bug
+            views: *bug_views
+    expect:
+      - assert: "status == 200"
+      - metric: tasks.closed_non_bug
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 4 }
+      - metric: tasks.closed_non_bug
+        view: peer
+        find: { entity_id: alice@example.com }
+        equal: { target_value: 4, p25: null, median: null, p75: null, min: null, max: null, n: 4 }
+      - metric: tasks.closed_non_bug
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-06-25' && double(p.value) == 4.0))"
+
   - name: Unified task bug metrics empty window
     request:
       url: /v1/metric-results
@@ -388,8 +420,10 @@ cases:
         period: { from: "2025-01-01", to: "2025-01-31" }
         metrics:
           - { metric_key: tasks.bugs_fixed, views: [{ view: period }] }
+          - { metric_key: tasks.closed_non_bug, views: [{ view: period }] }
           - { metric_key: tasks.bugs_ratio, views: [{ view: period }] }
     expect:
       - assert: "status == 200"
       - { metric: tasks.bugs_fixed, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
+      - { metric: tasks.closed_non_bug, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }
       - { metric: tasks.bugs_ratio, view: period, find: { entity_id: erin@example.com }, equal: { value: null } }

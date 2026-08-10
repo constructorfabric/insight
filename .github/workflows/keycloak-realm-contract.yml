@@ -1,0 +1,42 @@
+name: Keycloak realm — tenant claim contract
+
+# Guards the pinned-tenant contract (ADR-0003 / DD-AUTH-04) against the
+# canonical broker realm: fail-closed with no pinned attribute, the pin
+# emitted verbatim as a single string, tenant-bearing groups inert AND
+# flagged as a policy violation. Boots a throwaway Keycloak in docker.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/gitops/environments/*/keycloak/realms/**"
+      - "deploy/compose/keycloak/tests/**"
+      - ".github/workflows/keycloak-realm-contract.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tenant-contract:
+    name: tenant contract guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Tenant translation guard
+        run: python3 deploy/compose/keycloak/tests/tenant_contract_guard.py

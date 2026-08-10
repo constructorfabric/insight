@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ArrowDownRight, Sparkles, TrendingDown } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ChevronRight, Sparkles, TrendingDown } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import type { AttentionFlag, FlagKind } from "@/lib/insight/attention-flags";
@@ -83,6 +83,12 @@ export function AttentionList({
                 </span>
                 <span className="shrink-0 font-medium tabular-nums">{f.valueText}</span>
                 <span className="truncate text-xs text-muted-foreground">{f.reason}</span>
+                {/* Standing affordance — the row opens that person's page, and
+                    a border alone does not say so. */}
+                <ChevronRight
+                  className="ml-auto size-3.5 shrink-0 text-muted-foreground/50"
+                  aria-hidden
+                />
               </Link>
             );
           })}

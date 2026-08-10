@@ -237,7 +237,7 @@ cd insight
 ./dev-compose.sh up        # first-run wizard, then builds + seeds the stack
 ```
 
-The wizard prompts for local-vs-external MariaDB / ClickHouse, a dev-user email, and the frontend mode (defaults pull the published `insight-front` image). First `up` auto-seeds a demo dataset; open <http://localhost:3000>.
+The wizard prompts for local-vs-external MariaDB / ClickHouse, a dev-user email, and the frontend mode (defaults pull the published `insight-frontend` image). First `up` auto-seeds a demo dataset; open <http://localhost:3000>.
 
 The compose stack does **not** ship Airbyte or Argo Workflows — for ingestion work use the Kubernetes path below. See [CONTRIBUTING.md](CONTRIBUTING.md) for the edit-build loop, frontend modes, seeding, and the `.env.compose` settings reference.
 
@@ -320,7 +320,8 @@ For cluster deployments image tags flow through automatically: the umbrella char
 | `insight-analytics` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-analytics |
 | `insight-identity-resolution` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-identity-resolution |
 | `insight-toolbox` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-toolbox |
-| `insight-front` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-front |
+| `insight-seed` (test stands only) | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-seed |
+| `insight-frontend` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-frontend |
 | `insight-jira-enrich` | **separate** `constructorfabric/insight-jira-enrich` | https://github.com/constructorfabric/insight/pkgs/container/insight-jira-enrich |
 
 > **Note**: jira-enrich lives in its own repo with an independent release cadence — a tag from this repo (e.g. `2026.04.28.10.34-b08b460`) does **not** exist for `insight-jira-enrich`. Pick the latest tag in that repo separately.

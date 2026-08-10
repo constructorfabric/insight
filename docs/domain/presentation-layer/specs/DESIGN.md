@@ -61,6 +61,7 @@ Requirements that significantly influence architecture decisions.
 | `cpt-presentation-fr-preview-auth` | Single fixed callback with a Redis-backed opaque `state` return path (already stashing `state -> { return_to, pkce_verifier, nonce }`, delete-on-read), extended so `return_to` is validated at store time against a configurable `/exp/` prefix. Shipped (#1972) |
 | `cpt-presentation-fr-metric-registry` | Single declarative `registry.yaml` (a `sources` list and a `metrics` list) embedded at build time and reconciled into the service DB at boot; replaces the code-literal seed with no change to reconcile semantics; invariants pinned by tests that parse the same registry. Shipped (#1974) |
 | `cpt-presentation-fr-metric-passports` | `passport.rs` renders a source/formula/notes passport per metric from the embedded registry; the offline `analytics passports` subcommand emits the document, committed as `passports.md` next to `registry.yaml`. A Rust drift test compares the render against the committed file and fails on divergence, so a metric change without a passport regeneration breaks the build. Shipped (#1975) |
+| `cpt-presentation-fr-custom-metrics-api` | `/v1/metrics*` REST surface: CRUD over `origin = 'custom'` metrics plus export/import, tenant-scoped from the session `SecurityContext`; builtins are read-only through it. Custom SQL (`source_kind = 'custom_observation_sql'`) passes the single-SELECT gate and must emit the observation contract; the compiler wraps it as `FROM (<sql>)` and it runs as `presentation_ro`. Export is keyed on `metric_key` with no tenant/timestamps; import re-homes the tenant and idempotently skips an existing `metric_key`. Custom rows survive builtin reconcile (`disable_missing` is scoped to `origin = 'builtin' AND tenant_id IS NULL`) |
 
 #### NFR Allocation
 
@@ -296,6 +297,35 @@ Plain CRUD over stored queries so a new analytics slice needs no engineering cha
 
 ---
 
+#### Custom-Metrics API
+
+- [x] `p2` - **ID**: `cpt-presentation-component-custom-metrics-api`
+
+##### Why this component exists
+
+Lets an analyst author, manage, and share a metric (`origin = 'custom'`) without an engineering change or re-ingest, over the `/v1/metrics*` surface. The detailed metric contract is governed by the metrics DESIGN ([../../metrics/specs/DESIGN.md](../../metrics/specs/DESIGN.md)).
+
+##### Responsibility scope
+
+- CRUD over custom metrics, tenant-scoped from the session `SecurityContext`; handlers mirror the saved-query and metric-definition CRUD in `api::handlers`. Create sets `origin = 'custom'`; delete is a hard delete.
+- Custom SQL source (`source_kind = 'custom_observation_sql'`) is validated by the query gate (`validate_single_select`) on write and before execution, and must emit the observation contract (`tenant_id, source_key, entity_type, entity_id, metric_date, measure_key, observed_at, value, subject_key, dimensions`). The compiler wraps it as the observation `FROM (<sql>)` and executes it as `presentation_ro`, so a custom metric reads the contract but never writes it.
+- Export (`GET /v1/metrics/export`): serialize the tenant's custom metric graphs (definition plus its source/measure/dimension/input rows) into a portable form keyed on `metric_key`, carrying no `tenant_id` or timestamps.
+- Import (`POST /v1/metrics/import`): re-home each graph's tenant to the session, idempotently skipping any `metric_key` that already exists; returns `{ imported, skipped }`.
+
+##### Responsibility boundaries
+
+- Does NOT mutate builtins — `origin = 'builtin'` metrics are read-only through this API; only the registry reconciler writes them.
+- Does NOT bypass the gate, and does NOT string-interpolate the custom SQL.
+- Does NOT change the reconciler: custom rows fall outside its `disable_missing` predicate (`origin = 'builtin' AND tenant_id IS NULL`), so a reconcile pass never disables or deletes them.
+
+##### Related components (by ID)
+
+- `cpt-presentation-component-query-gate` — validates custom SQL on write and run
+- `cpt-presentation-component-metric-compiler` — wraps the custom SQL as the observation relation and injects the tenant filter
+- `cpt-presentation-component-metric-registry` — owns the builtin seed this surface never mutates
+
+---
+
 #### Metric Compiler (Tenant Filter)
 
 - [x] `p2` - **ID**: `cpt-presentation-component-metric-compiler`
@@ -478,6 +508,31 @@ Entity `presentation.queries`: `{ id, insight_tenant_id, name, description, sql,
 | `POST` | `/v1/queries/{id}/run` | Execute read-only as `presentation_ro`, return rows; optional body `{ "period": "<value>" }` binds `{period}`; `{tenant}` always bound from context (tenant-row *filter* deferred to #1967 — the run path binds the tenant value but adds no `insight_tenant_id` predicate yet) | unstable |
 
 `run` executes as `presentation_ro` and returns untyped JSON rows, the same shape as the existing metric query path. The request body is optional; named parameters (`tenant`/`period`, #1966) are bound as ClickHouse server-side parameters. No metric metadata, thresholds, or passports in Phase A.
+
+---
+
+- [x] `p2` - **ID**: `cpt-presentation-interface-custom-metrics-endpoints`
+
+- **Implements**: `cpt-presentation-interface-custom-metrics-api` (PRD §7.1 Public API Surface)
+- **Contracts**: `cpt-presentation-contract-read-only-consumption`
+- **Technology**: REST / HTTP JSON
+- **Base path**: `/v1/metrics`
+
+A custom metric is a `metric_definitions` row with `origin = 'custom'`, tenant-scoped, whose observation source is custom SQL (`source_kind = 'custom_observation_sql'`) over the contract. The custom SQL is validated by the single-SELECT gate on write and before execution and must emit the observation contract (`tenant_id, source_key, entity_type, entity_id, metric_date, measure_key, observed_at, value, subject_key, dimensions`). Builtin metrics (`origin = 'builtin'`) are read-only through this surface.
+
+**Endpoints Overview**:
+
+| Method | Path | Description | Stability |
+|--------|------|-------------|-----------|
+| `POST` | `/v1/metrics` | Create a custom metric (`origin = 'custom'`, tenant-scoped); validates custom SQL via the gate | unstable |
+| `GET` | `/v1/metrics` | List the tenant's custom metrics | unstable |
+| `GET` | `/v1/metrics/{metric_key}` | Fetch one custom metric | unstable |
+| `PUT` | `/v1/metrics/{metric_key}` | Update a custom metric (re-validates custom SQL) | unstable |
+| `DELETE` | `/v1/metrics/{metric_key}` | Delete a custom metric (hard delete) | unstable |
+| `GET` | `/v1/metrics/export` | Export the tenant's custom metric graphs — portable, keyed on `metric_key`, no `tenant_id` or timestamps | unstable |
+| `POST` | `/v1/metrics/import` | Import custom metric graphs; re-homes the tenant to the session; idempotently skips an existing `metric_key`; returns `{ imported, skipped }` | unstable |
+
+Invariants: builtins are read-only through this API; custom SQL is single-SELECT gated (which also rejects external/remote table functions), must emit the observation contract, must be tenant-neutral and row-preserving (it exposes each source row's real `tenant_id` and never fabricates or cross-tenant-aggregates it — the outer predicate filters emitted rows, not the tables read, so authorship is trusted the same way the saved-query console is), and executes as `presentation_ro`; export/import identity is `metric_key` (not the tenant-scoped row id), so a graph re-homes cleanly on import. Import is bounded: at most 500 graphs per request; the batch is validated and gated up front and applied in one transaction, so a single invalid graph rejects the whole request with `400` and writes nothing, while a well-formed graph whose `metric_key` already exists for the tenant is skipped — the success body is `{ imported, skipped }`. The saved-query console (`/v1/queries*`) is a separate surface and is unchanged.
 
 ### 3.4 Internal Dependencies
 

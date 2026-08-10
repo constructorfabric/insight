@@ -1,6 +1,10 @@
 import { http, HttpResponse } from "msw";
 
 import type { MetricResultsRequest } from "@/api/metric-results-client";
+import type {
+  CustomMetric,
+  CustomMetricGraph,
+} from "@/api/metrics-client";
 import { isPersonId } from "@/lib/metrics/entity";
 
 import { buildMetricResultsResponse } from "./metric-results-factory";
@@ -102,6 +106,7 @@ export const handlers = [
     },
   ),
   ...savedQueryHandlers(),
+  ...customMetricHandlers(),
 ];
 
 // ── Saved queries (`/v1/queries`) ────────────────────────────
@@ -213,6 +218,188 @@ function savedQueryHandlers() {
           { tool: "bitbucket_cloud", commits: 39 },
         ],
       });
+    }),
+  ];
+}
+
+// ── Custom metrics (`/v1/metrics`) ────────────────────────────
+// A tiny in-memory store so the metrics console's CRUD + export/import
+// round-trip in mock, Storybook, and `VITE_ENABLE_MOCKS=true` dev runs.
+// Synthetic data only.
+
+const METRICS_BASE = "/api/analytics/v1/metrics";
+
+const customMetricStore = new Map<string, CustomMetric>();
+
+const SAMPLE_OBSERVATION_SQL =
+  "SELECT tenant_id, source_key, entity_type, entity_id, metric_date, " +
+  "measure_key, observed_at, value, subject_key, dimensions FROM example_source";
+
+function seedCustomMetric(graph: CustomMetricGraph): void {
+  customMetricStore.set(graph.metric_key, { ...graph, origin: "custom" });
+}
+
+(function seedCustomMetrics() {
+  seedCustomMetric({
+    metric_key: "example.accepted_lines",
+    label: "Accepted lines",
+    short_label: "Lines",
+    description: "Synthetic sample custom metric over the contract.",
+    explanation: null,
+    entity_type: "person",
+    unit: "lines",
+    format: "integer",
+    direction: "higher_is_better",
+    computation: "sum",
+    scale: null,
+    peer_cohort_key: null,
+    transform: null,
+    source_key: "example_source",
+    observation_sql: SAMPLE_OBSERVATION_SQL,
+    measures: ["accepted_lines"],
+    dimensions: ["repo", "language"],
+    inputs: [{ role: "value", measure_key: "accepted_lines" }],
+  });
+})();
+
+function toSummary(metric: CustomMetric) {
+  return {
+    metric_key: metric.metric_key,
+    label: metric.label,
+    computation: metric.computation,
+    entity_type: metric.entity_type,
+  };
+}
+
+function stripOrigin(metric: CustomMetric): CustomMetricGraph {
+  const { origin: _origin, ...graph } = metric;
+  return graph;
+}
+
+/** A graph is well-formed enough to persist: identity, source, SQL, at least
+ *  one measure, and the input wiring its computation requires. Mirrors the
+ *  backend's create/update validation so FE tests exercise real behavior. */
+function isValidGraph(graph: CustomMetricGraph | null): graph is CustomMetricGraph {
+  if (
+    !graph?.metric_key ||
+    !graph.label ||
+    !graph.source_key ||
+    !graph.observation_sql ||
+    !Array.isArray(graph.measures) ||
+    graph.measures.length === 0 ||
+    !Array.isArray(graph.inputs) ||
+    graph.inputs.length === 0
+  ) {
+    return false;
+  }
+  if (graph.computation === "ratio") {
+    const roles = new Set(graph.inputs.map((input) => input.role));
+    return (
+      roles.has("numerator") &&
+      roles.has("denominator") &&
+      typeof graph.scale === "number"
+    );
+  }
+  return graph.inputs.some((input) => input.role === "value");
+}
+
+/** True when `source_key` already belongs to a DIFFERENT stored metric. The
+ *  backend rejects such an update/create with 409. */
+function sourceKeyTakenByOther(sourceKey: string, metricKey: string): boolean {
+  for (const metric of customMetricStore.values()) {
+    if (metric.metric_key !== metricKey && metric.source_key === sourceKey) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function customMetricHandlers() {
+  return [
+    http.get(METRICS_BASE, () =>
+      HttpResponse.json({
+        items: [...customMetricStore.values()].map(toSummary),
+      }),
+    ),
+    http.post(METRICS_BASE, async ({ request }) => {
+      const body = (await request
+        .json()
+        .catch(() => null)) as CustomMetricGraph | null;
+      if (!isValidGraph(body)) {
+        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+      }
+      // A duplicate key is a conflict, not an overwrite — leave the store
+      // untouched and mirror the backend's 409.
+      if (customMetricStore.has(body.metric_key)) {
+        return HttpResponse.json({ error: "already_exists" }, { status: 409 });
+      }
+      if (sourceKeyTakenByOther(body.source_key, body.metric_key)) {
+        return HttpResponse.json({ error: "source_key_conflict" }, { status: 409 });
+      }
+      const created: CustomMetric = { ...body, origin: "custom" };
+      customMetricStore.set(created.metric_key, created);
+      return HttpResponse.json(created, { status: 201 });
+    }),
+    // Static sub-paths must precede the `:metricKey` param route so they are
+    // not captured as a metric key.
+    http.get(`${METRICS_BASE}/export`, () =>
+      HttpResponse.json({
+        metrics: [...customMetricStore.values()].map(stripOrigin),
+      }),
+    ),
+    http.post(`${METRICS_BASE}/import`, async ({ request }) => {
+      const body = (await request.json().catch(() => null)) as {
+        metrics?: CustomMetricGraph[];
+      } | null;
+      // Import is all-or-nothing: validate the whole batch first and mutate
+      // nothing if any member is malformed. Only after the batch is known good
+      // do we apply it, skipping keys that already exist.
+      if (!Array.isArray(body?.metrics) || !body.metrics.every(isValidGraph)) {
+        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+      }
+      const skipped: string[] = [];
+      let imported = 0;
+      for (const graph of body.metrics) {
+        if (customMetricStore.has(graph.metric_key)) {
+          skipped.push(graph.metric_key);
+          continue;
+        }
+        customMetricStore.set(graph.metric_key, { ...graph, origin: "custom" });
+        imported += 1;
+      }
+      return HttpResponse.json({ imported, skipped });
+    }),
+    http.get(`${METRICS_BASE}/:metricKey`, ({ params }) => {
+      const found = customMetricStore.get(String(params.metricKey));
+      return found
+        ? HttpResponse.json(found)
+        : HttpResponse.json({ error: "not_found" }, { status: 404 });
+    }),
+    http.put(`${METRICS_BASE}/:metricKey`, async ({ params, request }) => {
+      const key = String(params.metricKey);
+      if (!customMetricStore.has(key)) {
+        return HttpResponse.json({ error: "not_found" }, { status: 404 });
+      }
+      const body = (await request
+        .json()
+        .catch(() => null)) as CustomMetricGraph | null;
+      const candidate = body ? { ...body, metric_key: key } : null;
+      // Reject an incomplete/invalid graph instead of persisting it.
+      if (!isValidGraph(candidate)) {
+        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+      }
+      // A source_key already claimed by a different metric is a 409, matching
+      // the backend's new collision check.
+      if (sourceKeyTakenByOther(candidate.source_key, key)) {
+        return HttpResponse.json({ error: "source_key_conflict" }, { status: 409 });
+      }
+      const updated: CustomMetric = { ...candidate, origin: "custom" };
+      customMetricStore.set(key, updated);
+      return HttpResponse.json(updated);
+    }),
+    http.delete(`${METRICS_BASE}/:metricKey`, ({ params }) => {
+      customMetricStore.delete(String(params.metricKey));
+      return new HttpResponse(null, { status: 204 });
     }),
   ];
 }

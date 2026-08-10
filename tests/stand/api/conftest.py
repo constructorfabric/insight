@@ -27,7 +27,7 @@ from insight_stand import (
 
 from . import scratch
 from .operations import ALL_OPERATIONS
-from .schemas import SavedQuery
+from .schemas import CustomMetric, SavedQuery
 
 #: Written beside the coverage ledger at session end (see the root conftest for
 #: the ledger itself). The gate compares the two, so it needs no import from
@@ -79,6 +79,14 @@ def scratch_saved_query(api: ApiClient) -> Iterator[SavedQuery]:
     query = scratch.create_saved_query(api, "query")
     yield query
     api.delete(analytics_path(f"/v1/queries/{query.id}"))
+
+
+@pytest.fixture
+def scratch_custom_metric(api: ApiClient) -> Iterator[CustomMetric]:
+    """A scratch custom metric, hard-deleted afterwards."""
+    metric = scratch.create_custom_metric(api, "metric")
+    yield metric
+    api.delete(analytics_path(f"/v1/metrics/{metric.metric_key}"))
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -12,31 +12,23 @@ so roles and accessible names are the only stable handles.
 
 from __future__ import annotations
 
-import re
 from urllib.parse import quote
 
 from playwright.sync_api import Locator, Page
 
-
-class MetricEvidenceDialog:
-    def __init__(self, page: Page, metric: str) -> None:
-        self.page = page
-        self.dialog = page.get_by_role("dialog", name=metric)
-
-    def table(self) -> Locator:
-        return self.dialog.get_by_role("table")
-
-    def export(self) -> Locator:
-        return self.dialog.get_by_role("button", name="Export")
-
-    def copy_ref(self) -> Locator:
-        return self.dialog.get_by_role("button", name=re.compile(r"^Copy "))
+from .group_dialog import GroupDialog, MetricEvidenceDialog
 
 
-class GitOutputDetails:
+class GitOutputDetails(GroupDialog):
+    """The Git group's dialog, plus the repository timeseries it leads with.
+
+    Everything general lives in `GroupDialog`; what is here is specific to the
+    one block this group opens on — a table by repository, and the commit column
+    inside it.
+    """
+
     def __init__(self, page: Page) -> None:
-        self.page = page
-        self.dialog = page.get_by_role("dialog", name="Git output")
+        super().__init__(page, "Git output")
 
     def repository_table(self) -> Locator:
         return self.dialog.get_by_role("table").filter(has_text="PRs merged")
@@ -60,9 +52,6 @@ class GitOutputDetails:
 
     def metric_selector(self) -> Locator:
         return self.dialog.get_by_role("combobox", name="Metric").filter(has_text="Commits")
-
-    def close(self) -> Locator:
-        return self.dialog.get_by_role("button", name="Close")
 
     def open_first_commit_bucket(self) -> MetricEvidenceDialog:
         table = self.repository_table()
@@ -101,6 +90,10 @@ class PersonView:
         return self.page.locator("[data-slot='card']").filter(
             has=self.page.get_by_text(label, exact=True)
         )
+
+    def open_domain(self, label: str) -> GroupDialog:
+        self.populated_domain_card(label).click()
+        return GroupDialog(self.page, label)
 
     def open_git_output(self) -> GitOutputDetails:
         self.populated_domain_card("Git output").click()

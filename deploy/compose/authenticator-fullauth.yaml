@@ -118,7 +118,7 @@ gears:
         client_id: ""
         client_secret: ""
         # id_token claim naming the user's single tenant (string; an array is
-        # tolerated — first entry wins). fakeidp/Keycloak emit `tenant_id`;
+        # tolerated — first entry wins). Keycloak emits `tenant_id`;
         # Entra emits `tid`.
         tenant_claim: "tenant_id"
         # Fallback tenant for a claim-less IdP (e.g. Okta); empty = fail closed.

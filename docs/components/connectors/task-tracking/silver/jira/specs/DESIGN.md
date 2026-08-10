@@ -449,6 +449,20 @@ The status dimension is **out of the enrich binary's scope** — it is a pure db
 
 **Where the join happens (shipped in #1541).** The Jira→unified mapping (`statusCategory.key` → `status_category`, e.g. `indeterminate` → `in_progress`) is applied inside the `jira__task_statuses` projection. Gold then joins `silver.class_task_statuses` on `value_ids[1]` (in `task_issue_current_state` / `task_status_intervals`) to attach `status_category`, so no Jira-specific status logic remains in Gold — it reads `status_category = 'done'`. (A future Silver `class_task_status_history` model, `cpt-insightspec-dbtable-tt-silver-status-history`, would move that join out of Gold entirely.)
 
+#### 3.7.x Issue-type dimension (`class_task_issuetypes`)
+
+**ID**: `cpt-insightspec-dbtable-jira-enrich-issuetypes`
+
+The type counterpart of the status dimension, and out of the enrich binary's scope for the same reason: a pure dbt Step 1 model.
+
+- **Producer**: a per-source staging model `jira__task_issuetypes` tagged `silver:class_task_issuetypes`, unioned into `silver.class_task_issuetypes`.
+- **Bronze input**: `bronze_jira.jira_issuetypes` (from `GET /rest/api/3/issuetype`).
+- **Join key**: `class_task_issuetypes.issue_type_id = task_tracker_field_history.value_ids[1]` for `field_id='issuetype'`. Enrich already writes the source issue-type id into `value_ids[1]` (label into `value_displays[1]`), so no enrich change is required.
+- **Mapping**: `untranslatedName` → unified `issue_kind` (`bug` / `other` / `unknown`). The untranslated name, not the display `name`, is the classification input: it is the type's original name whatever the instance's language, so a translated instance classifies identically. A name covered by neither configured list is `unknown` — an unrecognized type is not evidence that the work was not a bug, so it is reported as its own group and never counted as non-bug work.
+- **Structural fields**: `hierarchy_level` and `subtask` are carried through unclassified. They describe container-vs-work structure, which no measure reads today.
+
+**Where the join happens.** The mapping is applied inside the `jira__task_issuetypes` projection; Gold joins `silver.class_task_issuetypes` in `task_issue_state` to attach `issue_kind`, so no Jira-specific type logic — and no type display name — remains in Gold.
+
 ### 3.8 Deployment Topology
 
 - [ ] `p2` - **ID**: `cpt-insightspec-topology-jira-enrich`

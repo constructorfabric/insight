@@ -102,3 +102,24 @@ models:
           - not_null
           - accepted_values:
               values: ['new', 'in_progress', 'done', 'undefined']
+
+  - name: class_task_issuetypes
+    description: "Unified, source-neutral issue-type dimension. Maps each source issue type id to the reconciled `issue_kind` (bug/other/unknown) and the type display name. Jira classifies from `untranslatedName` so a translated instance reads like an untranslated one; YouTrack from the Type enum bundle value names. Gold identifies bug work via `issue_kind='bug'` — never a localized type name."
+    columns:
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: issue_type_id
+        tests:
+          - not_null
+      - name: issue_type_name
+        description: "Type display name as the source reports it; the label Gold shows for the type dimension."
+      - name: untranslated_name
+        description: "Locale-independent type name where the source has one (Jira); NULL otherwise."
+      - name: issue_kind
+        description: "Reconciled type kind: bug | other | unknown. `unknown` means the type name matched neither configured list and is reported as its own bucket, never as non-bug work."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['bug', 'other', 'unknown']

@@ -36,7 +36,7 @@ updates:
         patterns: ["*"]
     ignore:
       # dbt's dependency chain (dbt-common -> mashumaro) does not import on
-      # Python 3.14 yet; deploy/seed stays on 3.13 until it does.
+      # Python 3.14 yet, and the toolbox image the seeder ships in is 3.12.
       - dependency-name: python
         versions: [">=3.14"]
 
@@ -60,7 +60,7 @@ updates:
         versions: [">=0.13"]
 
   - package-ecosystem: pip
-    directory: /deploy/seed
+    directory: /src/ingestion/tools/seed
     schedule:
       interval: daily
       time: "21:30"

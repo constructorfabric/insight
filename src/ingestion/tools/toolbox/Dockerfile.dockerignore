@@ -1,0 +1,27 @@
+# Ignore file for tools/toolbox/Dockerfile ONLY — BuildKit prefers
+# `<dockerfile>.dockerignore` over the context's `.dockerignore`, which is how
+# two images built from the same context can carry different things.
+#
+# Everything the context-level file excludes, repeated because this file
+# replaces it rather than adding to it:
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/*.egg-info/
+secrets/
+.env.local
+*.env.local
+tools/declarative-connector/
+workflows/example-tenant/
+workflows/*/
+!workflows/templates/
+!workflows/schedules/
+dbt/target/
+dbt/logs/
+
+# And the point of this file: the sample-data seeder ships in its own image
+# (tools/seed/Dockerfile), never in the operator toolbox.
+tools/seed/

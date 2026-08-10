@@ -191,9 +191,19 @@
         "responses": {
           "302": {
             "description": "Redirect to the IdP authorize endpoint"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
           }
         },
-        "summary": "Start the OIDC code+PKCE login flow",
+        "summary": "Start the OIDC code+PKCE login flow (the request Host selects the issuer)",
         "tags": [
           "auth"
         ]

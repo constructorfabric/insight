@@ -133,7 +133,6 @@ App services are mandatory umbrella components — no deploy flag.
 {{- define "insight.analytics.host"           -}}{{- printf "%s-analytics"            .Release.Name -}}{{- end -}}
 {{- define "insight.identityResolution.host"  -}}{{- printf "%s-identity-resolution"  .Release.Name -}}{{- end -}}
 {{- define "insight.frontend.host"            -}}{{- printf "%s-frontend"             .Release.Name -}}{{- end -}}
-{{- define "insight.fakeidp.host"             -}}{{- printf "%s-fakeidp"              .Release.Name -}}{{- end -}}
 
 {{/*
 ==============================================================================
@@ -173,17 +172,7 @@ Invoked from NOTES.txt so they fire on every install.
   {{- $auth := default dict .Values.authenticator -}}
   {{- $aoidc := default dict $auth.oidc -}}
   {{- if or (not $aoidc.issuerUrl) (not $aoidc.redirectUri) -}}
-    {{- fail "authenticator.oidc: issuerUrl (the IdP) and redirectUri (the browser callback) are REQUIRED — auth is always on (no auth_disabled). For local, point issuerUrl at the fakeidp Service FQDN and set fakeidp.deploy=true." -}}
-  {{- end -}}
-
-  {{- /* fakeidp is dev/e2e only. Refuse to arm it as a real IdP: if
-         fakeidp.deploy=true, the authenticator MUST point at it (issuerUrl ==
-         fakeidp.issuer), and a real environment must never set deploy=true. */ -}}
-  {{- $fake := default dict .Values.fakeidp -}}
-  {{- if $fake.deploy -}}
-    {{- if ne (toString $aoidc.issuerUrl) (toString $fake.issuer) -}}
-      {{- fail (printf "fakeidp.deploy=true but authenticator.oidc.issuerUrl (%q) != fakeidp.issuer (%q) — they must be identical (the authenticator validates the id_token `iss` against its configured IdP)." $aoidc.issuerUrl $fake.issuer) -}}
-    {{- end -}}
+    {{- fail "authenticator.oidc: issuerUrl (the IdP) and redirectUri (the browser callback) are REQUIRED — auth is always on (no auth_disabled). For local, point issuerUrl at the in-stack Keycloak realm URL and set keycloak.deploy=true." -}}
   {{- end -}}
 
   {{- /* The authenticator's login-bootstrap resolve

@@ -22,6 +22,11 @@ pub struct LoginState {
     pub pkce_verifier: String,
     pub nonce: String,
     pub return_to: String,
+    /// The issuer the login started against (host-keyed selection, ADR-0003):
+    /// the callback exchanges the code with THIS issuer, never re-consulting
+    /// the callback's own `Host`. Empty only in state written by a pre-map
+    /// replica (resolved as the single-issuer degenerate case).
+    pub issuer: String,
     /// View-as target from `__override=<email>` (#1941). Stored only when
     /// `override_enabled`; empty on normal logins.
     pub override_email: String,
@@ -34,6 +39,7 @@ impl LoginState {
             ("pkce_verifier", self.pkce_verifier.clone()),
             ("nonce", self.nonce.clone()),
             ("return_to", self.return_to.clone()),
+            ("issuer", self.issuer.clone()),
             ("override_email", self.override_email.clone()),
         ]
     }
@@ -45,6 +51,7 @@ impl LoginState {
             pkce_verifier: get("pkce_verifier"),
             nonce: get("nonce"),
             return_to: get("return_to"),
+            issuer: get("issuer"),
             override_email: get("override_email"),
         }
     }

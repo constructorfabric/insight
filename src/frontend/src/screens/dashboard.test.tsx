@@ -46,7 +46,10 @@ vi.mock("@/lib/insight/kpi-row", () => ({
   metricKpiTiles: () => tilesReturn,
 }));
 
-vi.mock("@/lib/insight/attention", () => ({
+vi.mock("@/lib/insight/attention", async (importOriginal) => ({
+  // Only the selection is faked; the ordering and thinning the screen applies
+  // on top of it is real, so this test keeps exercising it.
+  ...(await importOriginal<typeof import("@/lib/insight/attention")>()),
   metricAttentionItems: () => attentionPerGroup,
 }));
 
@@ -95,7 +98,13 @@ vi.mock("@/components/widgets/dashboard/kpi-tile", () => ({
 }));
 
 vi.mock("@/components/widgets/coming-soon", () => ({
-  ComingSoon: ({ onRetry, label }: { onRetry?: () => void; label?: string }) => (
+  ComingSoon: ({
+    onRetry,
+    label,
+  }: {
+    onRetry?: () => void;
+    label?: string;
+  }) => (
     <button data-testid="kpi-error" onClick={onRetry} disabled={!onRetry}>
       {label ?? "retry"}
     </button>
@@ -202,13 +211,16 @@ describe("DashboardScreen", () => {
     ).toBe(true);
   });
 
-  it("shows a retryable error tile per KPI when the collection errored", async () => {
+  it("shows ONE retryable error for the row when the collection errored", async () => {
+    // The request fails as a whole, so one card says so once. Repeating it per
+    // candidate key painted a wall of identical errors — and the candidate list
+    // is longer than the row, so the wall grew as fallbacks were added.
     kpiState.isError = true;
 
     render(<DashboardScreen personId="me@x.io" />);
 
     const errors = screen.getAllByTestId("kpi-error");
-    expect(errors).toHaveLength(METRIC_KEYS.length);
+    expect(errors).toHaveLength(1);
     await userEvent.click(errors[0]!);
     expect(kpiState.refetch).toHaveBeenCalled();
   });
@@ -225,12 +237,12 @@ describe("DashboardScreen", () => {
     expect(screen.queryByTestId("attention")).not.toBeInTheDocument();
   });
 
-  it("shows a placeholder per KPI when settled with no data", () => {
+  it("shows one placeholder when settled with nothing to show", () => {
+    // A row of empty slots is the thing this screen stopped doing: the tiles
+    // are the row now, so "no tiles" is one placeholder, not one per key.
     render(<DashboardScreen personId="me@x.io" />);
 
-    expect(screen.getAllByTestId("kpi-placeholder")).toHaveLength(
-      METRIC_KEYS.length
-    );
+    expect(screen.getAllByTestId("kpi-placeholder")).toHaveLength(1);
   });
 
   it("renders no card for a group with no query result", () => {

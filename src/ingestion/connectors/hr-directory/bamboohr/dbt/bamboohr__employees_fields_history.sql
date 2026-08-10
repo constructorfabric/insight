@@ -5,16 +5,8 @@
     tags=['bamboohr', 'silver']
 ) }}
 
-{{ fields_history(
+{{ fields_history_raw(
     snapshot_ref=ref('bamboohr__employees_snapshot'),
     entity_id_col='id',
-    fields=[
-        'displayName', 'firstName', 'lastName', 'workEmail',
-        'employeeNumber', 'jobTitle', 'department', 'division',
-        'status', 'employmentHistoryStatus',
-        'supervisorEId', 'supervisorEmail',
-        'location', 'country', 'city',
-        'hireDate', 'terminationDate'
-    ],
-    fields_raw_data=var('bamboohr_custom_fields', [])
+    exclude_keys=['lastChanged']
 ) }}

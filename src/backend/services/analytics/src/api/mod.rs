@@ -4,6 +4,7 @@ pub(crate) mod error;
 mod metric_definitions;
 mod metric_drilldown;
 mod metric_results;
+mod metrics;
 mod saved_queries;
 
 #[cfg(test)]
@@ -27,6 +28,7 @@ use utoipa::openapi::schema::{
 };
 
 use crate::config::GearConfig;
+use crate::domain::metric_crud;
 use crate::domain::metric_definitions::listing as metric_definitions_listing;
 use crate::domain::saved_query;
 use crate::infra::identity::IdentityClient;
@@ -239,6 +241,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .error_400(openapi)
         .error_401(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_415(openapi)
         .error_429(openapi)
@@ -281,6 +284,109 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .error_401(openapi)
         .error_500(openapi)
         .handler(metric_definitions::list_metric_definitions)
+        .register(router, openapi);
+
+    // Custom-metric CRUD + export/import — the `origin='custom'` authoring
+    // surface. Every route is tenant-scoped and touches custom rows only, so a
+    // builtin key is read-only through this API.
+    router = OperationBuilder::get("/v1/metrics")
+        .operation_id("analytics_api.metrics.list")
+        .summary("List custom metrics")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<metric_crud::CustomMetricListResponse>(
+            openapi,
+            StatusCode::OK,
+            "List of custom metrics",
+        )
+        .standard_errors(openapi)
+        .handler(metrics::list_custom_metrics)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/v1/metrics")
+        .operation_id("analytics_api.metrics.create")
+        .summary("Create a custom metric")
+        .authenticated()
+        .no_license_required()
+        .json_request::<metric_crud::CustomMetric>(openapi, "Custom metric to create")
+        .json_response_with_schema::<metric_crud::CustomMetric>(
+            openapi,
+            StatusCode::CREATED,
+            "Created custom metric",
+        )
+        .standard_errors(openapi)
+        .handler(metrics::create_custom_metric_handler)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/metrics/export")
+        .operation_id("analytics_api.metrics.export")
+        .summary("Export custom metrics")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<metric_crud::ExportCustomMetricsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Portable custom metric graphs",
+        )
+        .standard_errors(openapi)
+        .handler(metrics::export_custom_metrics_handler)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/v1/metrics/import")
+        .operation_id("analytics_api.metrics.import")
+        .summary("Import custom metrics")
+        .authenticated()
+        .no_license_required()
+        .json_request::<metric_crud::ImportCustomMetricsRequest>(
+            openapi,
+            "Custom metric graphs to import",
+        )
+        .json_response_with_schema::<metric_crud::ImportCustomMetricsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Import result",
+        )
+        .standard_errors(openapi)
+        .handler(metrics::import_custom_metrics_handler)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/metrics/{metric_key}")
+        .operation_id("analytics_api.metrics.get")
+        .summary("Get a custom metric by key")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<metric_crud::CustomMetric>(
+            openapi,
+            StatusCode::OK,
+            "Custom metric",
+        )
+        .standard_errors(openapi)
+        .handler(metrics::get_custom_metric)
+        .register(router, openapi);
+
+    router = OperationBuilder::put("/v1/metrics/{metric_key}")
+        .operation_id("analytics_api.metrics.update")
+        .summary("Update a custom metric")
+        .authenticated()
+        .no_license_required()
+        .json_request::<metric_crud::CustomMetric>(openapi, "Custom metric fields to replace")
+        .json_response_with_schema::<metric_crud::CustomMetric>(
+            openapi,
+            StatusCode::OK,
+            "Updated custom metric",
+        )
+        .standard_errors(openapi)
+        .handler(metrics::update_custom_metric_handler)
+        .register(router, openapi);
+
+    router = OperationBuilder::delete("/v1/metrics/{metric_key}")
+        .operation_id("analytics_api.metrics.delete")
+        .summary("Delete a custom metric")
+        .authenticated()
+        .no_license_required()
+        .no_content_response(StatusCode::NO_CONTENT, "Custom metric deleted")
+        .standard_errors(openapi)
+        .handler(metrics::delete_custom_metric_handler)
         .register(router, openapi);
 
     // `/health` + `/healthz` are provided by the api-gateway host gear (its

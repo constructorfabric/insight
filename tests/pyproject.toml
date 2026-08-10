@@ -21,10 +21,12 @@ build-backend = "setuptools.build_meta"
 name = "insight-stand-tests"
 version = "0.1.0"
 description = "Deployed-stand test suite for Insight: shared library plus API and browser journeys."
-# Matches deploy/seed/pyproject.toml, whose manifest and PROFILE renderer this
-# suite reads. uv provisions this interpreter everywhere — including inside the
-# ui-tests image, whose own system Python is older — so the floor holds in every
-# runner rather than being a host-only aspiration.
+# This suite's own floor, not inherited from anywhere: it reads the seeder's
+# manifest as DATA and imports none of its modules, so the seeder's lower 3.12
+# floor (it ships inside the 3.12 toolbox image) does not apply here. uv
+# provisions this interpreter everywhere — including inside the ui-tests image,
+# whose own system Python is older — so the floor holds in every runner rather
+# than being a host-only aspiration.
 requires-python = ">=3.13"
 dependencies = [
     "pytest>=8",
@@ -88,10 +90,14 @@ target-version = "py313"
 # from this one because `ruff check --fix` would edit the files and then
 # `generate_schemas.py --check` reports them stale — the two checks would fight
 # every time, and the drift check is the one that matters.
-extend-exclude = ["stand/api/schemas/analytics.py", "stand/api/schemas/authenticator.py"]
+extend-exclude = [
+    "stand/api/schemas/analytics.py",
+    "stand/api/schemas/authenticator.py",
+    "stand/api/schemas/identity.py",
+]
 
 [tool.ruff.lint]
-# Same pragmatic strict set as deploy/seed/pyproject.toml.
+# Same pragmatic strict set as src/ingestion/tools/seed/pyproject.toml.
 select = [
     "E", "W",   # pycodestyle
     "F",        # pyflakes

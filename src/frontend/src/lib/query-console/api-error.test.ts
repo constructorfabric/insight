@@ -19,7 +19,9 @@ describe("apiErrorReason", () => {
   });
 
   it("falls back when the error is not an AnalyticsApiError", () => {
-    expect(apiErrorReason(new Error("boom"), FALLBACK)).toBe(FALLBACK);
+    expect(apiErrorReason(new Error("unexpected failure"), FALLBACK)).toBe(
+      FALLBACK
+    );
     expect(apiErrorReason("nope", FALLBACK)).toBe(FALLBACK);
   });
 

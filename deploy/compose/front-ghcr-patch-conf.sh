@@ -1,5 +1,5 @@
 #!/bin/sh
-# Compose-only patch for the insight-front ghcr image.
+# Compose-only patch for the published frontend ghcr image.
 #
 # The published image's nginx config deliberately has no /api proxy — in k8s
 # the cluster ingress routes /api/* straight to the gateway pod, so the FE pod

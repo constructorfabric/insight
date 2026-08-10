@@ -1,4 +1,5 @@
 pub mod contract_version;
+pub mod metric_crud;
 pub mod metric_definitions;
 pub mod metric_drilldown;
 pub mod metric_key;

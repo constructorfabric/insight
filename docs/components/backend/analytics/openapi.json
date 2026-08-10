@@ -121,6 +121,175 @@
         ],
         "type": "object"
       },
+      "CustomMetric": {
+        "description": "A portable custom-metric graph — the create/update body, the export item,\nand the get/list detail shape. `origin` is response-only: always `\"custom\"`\non output, omitted from exports, and ignored on input (writes force\n`custom`).",
+        "properties": {
+          "computation": {
+            "$ref": "#/components/schemas/MetricComputation"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dimensions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/MetricDirection"
+          },
+          "entity_type": {
+            "type": "string"
+          },
+          "explanation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "format": {
+            "$ref": "#/components/schemas/MetricFormat"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/CustomMetricInput"
+            },
+            "type": "array"
+          },
+          "label": {
+            "type": "string"
+          },
+          "measures": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "metric_key": {
+            "type": "string"
+          },
+          "observation_sql": {
+            "type": "string"
+          },
+          "origin": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "peer_cohort_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scale": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "short_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_key": {
+            "type": "string"
+          },
+          "transform": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ValueTransform"
+              }
+            ]
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "metric_key",
+          "label",
+          "entity_type",
+          "format",
+          "direction",
+          "computation",
+          "source_key",
+          "observation_sql",
+          "measures",
+          "dimensions",
+          "inputs"
+        ],
+        "type": "object"
+      },
+      "CustomMetricInput": {
+        "description": "One role→measure binding of a custom metric.",
+        "properties": {
+          "measure_key": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MetricInputRole"
+          }
+        },
+        "required": [
+          "role",
+          "measure_key"
+        ],
+        "type": "object"
+      },
+      "CustomMetricListResponse": {
+        "description": "`GET /v1/metrics` envelope.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CustomMetricSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "CustomMetricSummary": {
+        "description": "List item — display fields only, no SQL body.",
+        "properties": {
+          "computation": {
+            "$ref": "#/components/schemas/MetricComputation"
+          },
+          "entity_type": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "metric_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "metric_key",
+          "label",
+          "computation",
+          "entity_type"
+        ],
+        "type": "object"
+      },
       "EvidenceGranularity": {
         "enum": [
           "event",
@@ -128,6 +297,21 @@
           "derived_population"
         ],
         "type": "string"
+      },
+      "ExportCustomMetricsResponse": {
+        "description": "`GET /v1/metrics/export` envelope — the tenant's custom metric graphs.",
+        "properties": {
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/CustomMetric"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "metrics"
+        ],
+        "type": "object"
       },
       "HistogramBinDto": {
         "properties": {
@@ -170,6 +354,50 @@
           "bins"
         ],
         "type": "object"
+      },
+      "ImportCustomMetricsRequest": {
+        "description": "`POST /v1/metrics/import` body.",
+        "properties": {
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/CustomMetric"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "metrics"
+        ],
+        "type": "object"
+      },
+      "ImportCustomMetricsResponse": {
+        "description": "`POST /v1/metrics/import` result — counts landed and the `metric_key`s\nskipped because they already existed for the tenant.",
+        "properties": {
+          "imported": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "imported",
+          "skipped"
+        ],
+        "type": "object"
+      },
+      "MetricComputation": {
+        "enum": [
+          "sum",
+          "ratio",
+          "median",
+          "distinct_count"
+        ],
+        "type": "string"
       },
       "MetricDefinitionListResponse": {
         "description": "Response body for `GET /v1/metric-definitions`. Metrics are sorted by\n`metric_key` ascending so the payload is byte-stable for caching and\ndiff tooling.",
@@ -628,6 +856,14 @@
           "include_remainder"
         ],
         "type": "object"
+      },
+      "MetricInputRole": {
+        "enum": [
+          "value",
+          "numerator",
+          "denominator"
+        ],
+        "type": "string"
       },
       "MetricRequest": {
         "properties": {
@@ -1419,6 +1655,45 @@
           }
         },
         "type": "object"
+      },
+      "ValueTransform": {
+        "additionalProperties": false,
+        "description": "Affine + clamp shaping for a computed metric value:\n`y = clamp(clamp_min, clamp_max, multiplier * x + offset)`.\nAbsent fields are identity (multiplier 1, offset 0, no bound).",
+        "properties": {
+          "clamp_max": {
+            "default": null,
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "clamp_min": {
+            "default": null,
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "multiplier": {
+            "default": null,
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "offset": {
+            "default": null,
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -1523,6 +1798,16 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -1774,6 +2059,677 @@
           }
         ],
         "summary": "Compute metric results"
+      }
+    },
+    "/v1/metrics": {
+      "get": {
+        "operationId": "analytics_api.metrics.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomMetricListResponse"
+                }
+              }
+            },
+            "description": "List of custom metrics"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List custom metrics"
+      },
+      "post": {
+        "operationId": "analytics_api.metrics.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomMetric"
+              }
+            }
+          },
+          "description": "Custom metric to create",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomMetric"
+                }
+              }
+            },
+            "description": "Created custom metric"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a custom metric"
+      }
+    },
+    "/v1/metrics/export": {
+      "get": {
+        "operationId": "analytics_api.metrics.export",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportCustomMetricsResponse"
+                }
+              }
+            },
+            "description": "Portable custom metric graphs"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Export custom metrics"
+      }
+    },
+    "/v1/metrics/import": {
+      "post": {
+        "operationId": "analytics_api.metrics.import",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportCustomMetricsRequest"
+              }
+            }
+          },
+          "description": "Custom metric graphs to import",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportCustomMetricsResponse"
+                }
+              }
+            },
+            "description": "Import result"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Import custom metrics"
+      }
+    },
+    "/v1/metrics/{metric_key}": {
+      "delete": {
+        "operationId": "analytics_api.metrics.delete",
+        "responses": {
+          "204": {
+            "description": "Custom metric deleted"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Delete a custom metric"
+      },
+      "get": {
+        "operationId": "analytics_api.metrics.get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomMetric"
+                }
+              }
+            },
+            "description": "Custom metric"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get a custom metric by key"
+      },
+      "put": {
+        "operationId": "analytics_api.metrics.update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomMetric"
+              }
+            }
+          },
+          "description": "Custom metric fields to replace",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomMetric"
+                }
+              }
+            },
+            "description": "Updated custom metric"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update a custom metric"
       }
     },
     "/v1/queries": {

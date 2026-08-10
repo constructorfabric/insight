@@ -197,6 +197,16 @@ YouTrack has **no global status table and no Jira-style `statusCategory`**. "Don
 
 **Rationale**: Detecting closedness by status display name (`Fixed`, `Done`, `Готово`, custom) is locale- and workflow-fragile and is exactly the defect tracked in issue #1541 for Jira. YouTrack already provides a clean boolean signal; surfacing it at Bronze keeps close-detection uniform across sources and out of localized labels.
 
+#### Unified Issue Kind from the Type Bundle
+
+- [ ] `p1` - **ID**: `cpt-insightspec-principle-youtrack-issue-kind`
+
+YouTrack has **no global issue-type table**, and no per-type flag that says "this is a defect". The instance's types are the values of the `Type` enum custom field's bundle, identified by `field_name` — YouTrack's canonical field name, never `field_localized_name`, which would tie the lookup to the UI language. The `youtrack__task_issuetypes` projection explodes that bundle and maps each value name to the source-neutral `issue_kind` (`bug` / `other` / `unknown`) unioned into `silver.class_task_issuetypes`, the same axis Jira derives from `untranslatedName`.
+
+**Weaker signal than status.** `isResolved` gives closedness exactly; type has no equivalent boolean, so classification is by name against the configured type-name lists. YouTrack exposes no untranslated name, so a translated or renamed type set classifies as `unknown` until its names are configured — and `unknown` keeps its own reported group rather than being counted as non-bug work, so the gap is visible instead of silently understating bugs.
+
+**Prerequisite**: an issue-level type signal in the field history. Until a YouTrack field-history projection exists, the dimension is populated but no YouTrack issue resolves a type through it.
+
 ### 2.2 Constraints
 
 #### No-Whitelist Full-Ingestion Scope

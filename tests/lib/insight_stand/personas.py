@@ -40,7 +40,7 @@ REALM_EXPORT_PATH: Final[Path] = (
 # takes precedence over the realm export.
 PASSWORD_ENV: Final[str] = "INSIGHT_STAND_PERSONA_PASSWORD"
 
-# Mirrors `_ROLE_TO_REALM_ROLES` in deploy/compose/keycloak/gen-realm.py, which
+# Mirrors `_ROLE_TO_REALM_ROLES` in insight_seed/keycloak_realm.py, which
 # is what actually builds the realm. Duplicated rather than imported because
 # that module belongs to the seed/compose tree; `verify_realm_roles` below is
 # what keeps the copy honest, by checking it against the realm the stand ran.
@@ -70,7 +70,7 @@ ADMIN_OPERATOR_FIXTURE: Final[str] = "admin_operator"
 
 #: The manifest fixture name for the second tenant's only person. Their whole
 #: purpose is to be a caller the product refuses, so they hold no role, no team
-#: and no org-chart edge — see `deploy/seed/profiles.py::build_other_tenant_roster`.
+#: and no org-chart edge — see `src/ingestion/tools/seed/profiles.py::build_other_tenant_roster`.
 OTHER_TENANT_FIXTURE: Final[str] = "other_tenant_lead"
 
 

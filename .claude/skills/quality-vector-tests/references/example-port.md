@@ -75,5 +75,5 @@ Port of the C# identity service to Rust. The person is **email-keyed** by the se
 - "code coverage with e2e tests", which the author had under *Efficiency*, moved to **Reliability**
   — test rigor is a reliability signal, not a run-cost one.
 - Before filing check 8, confirm the scanners exist: `grep -rniE "semgrep|trivy" .github/`. In this
-  repo they do (semgrep, trivy and codeql workflows), so the target is real; `insight-front` has
-  none, so a frontend-scoped security target there is still "not measurable until one is wired".
+  repo they do (semgrep, trivy and codeql workflows), so the target is real — and it covers
+  `src/frontend` as well, since the SPA lives in this repo.

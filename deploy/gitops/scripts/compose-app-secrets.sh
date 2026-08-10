@@ -137,7 +137,7 @@ AUTH_REDIRECT_URI=$(render_tpl "$(yq -r '.authenticator.oidc.redirectUri // ""' 
 # only issues a refresh token WITH offline_access (e.g. Entra) adds it here.
 AUTH_SCOPES=$(yq -r '(.authenticator.oidc.scopes // ["openid","email","profile"]) | join(" ")' "$VALUES")
 # Tenant sourcing: the id_token claim naming the single tenant (`tenant_id` on
-# fakeidp/Keycloak, `tid` on Entra) and the fallback for a claim-less IdP
+# Keycloak, `tid` on Entra) and the fallback for a claim-less IdP
 # (e.g. Okta). Empty fallback = fail closed downstream.
 AUTH_TENANT_CLAIM=$(     yq -r '.authenticator.oidc.tenantClaim     // "tenant_id"' "$VALUES")
 AUTH_DEFAULT_TENANT_ID=$(yq -r '.authenticator.oidc.defaultTenantId // ""' "$VALUES")

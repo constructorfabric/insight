@@ -60,8 +60,8 @@ reading, and it earns that only when you are changing *what gets tested*.
 Otherwise, don't invent a generic checklist. Read the issue and the actual implementation the same way
 `scope-feature-tests` does — pull the issue (`gh issue view n --repo constructorfabric/insight
 --json title,body,labels,parent`), check for a branch or merged PR (`gh pr list --repo constructorfabric/insight --search "n"
---state all`), then read the code — this repo for backend, ingestion and dbt, and the sibling
-`../insight-front` for UI.
+--state all`), then read the code — all in this repo: backend, ingestion and dbt, and
+`src/frontend` for UI.
 
 Two things this grounding is *for*, beyond correctness:
 
@@ -91,8 +91,8 @@ the line matching a tool the draft actually names — these are lookups, not a s
 ```sh
 grep -rniE "semgrep|trivy|codeql|snyk|grype" .github/          # scanners
 grep -rniE "k6|locust|gatling|jmeter|vegeta" . --include='*.yml' --include='*.md'   # load harness
-grep -rn "lighthouse" ../insight-front/package.json .github/   # page-load tooling
-ls ../insight-front/e2e 2>/dev/null || grep -n '"test' ../insight-front/package.json  # e2e vs unit
+grep -rn "lighthouse" src/frontend/package.json .github/   # page-load tooling
+ls src/frontend/e2e 2>/dev/null || grep -n '"test' src/frontend/package.json  # e2e vs unit
 ```
 
 If the tool is not there, you have found something worth reporting, and the honest line names the

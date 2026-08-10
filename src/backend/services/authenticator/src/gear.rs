@@ -18,9 +18,9 @@ use toolkit::{Gear, GearCtx, RestApiCapability, RunnableCapability};
 use crate::api::{self, AppState};
 use crate::config::AuthenticatorConfig;
 use crate::identity::{IdentityPersonResolver, PersonResolver};
+use crate::issuers::IssuerSelector;
 use crate::jwt::KeyStore;
 use crate::local_client::LocalClient;
-use crate::oidc::OidcClient;
 use crate::service_token::{self, ServiceRegistry};
 use crate::session::SessionManager;
 
@@ -51,6 +51,7 @@ impl Gear for AuthenticatorGear {
         tracing::info!(
             gateway_issuer = %cfg.gateway_issuer,
             idp_issuer = %cfg.idp.issuer_url,
+            idp_hosts = cfg.idp.hosts.len(),
             "starting authenticator gear"
         );
 
@@ -64,7 +65,7 @@ impl Gear for AuthenticatorGear {
         let sessions = SessionManager::connect(&cfg.redis_url).await?;
         sessions.ping().await?;
 
-        let oidc = OidcClient::new(&cfg.idp)?;
+        let oidc = IssuerSelector::build(&cfg)?;
         // The resolver authenticates its internal Identity lookup with a service
         // JWT it mints via the same keystore (fail-closed Identity, R1).
         let resolver: Arc<dyn PersonResolver> = Arc::new(IdentityPersonResolver::new(

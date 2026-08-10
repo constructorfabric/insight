@@ -8,6 +8,7 @@ import {
 import {
   buildMetricCollectionRequest,
   entityObserved,
+  filterCollectionToAvailable,
   type NormalizedMetricResult,
   chunkEntityIds,
   entityChunkSize,
@@ -385,5 +386,44 @@ describe("entityObserved", () => {
       period: { view: "period", values: [{ entity_id: "a@x", value: 0 }] },
     } as unknown as NormalizedMetricResult;
     expect(entityObserved(noPeer, "a@x")).toBe(false);
+  });
+});
+
+describe("filterCollectionToAvailable", () => {
+  const collection: MetricCollectionConfig = {
+    metrics: [
+      { key: "git.commits", views: [{ view: "period" }] },
+      { key: "tasks.closed_non_bug", views: [{ view: "period" }] },
+      { key: "ai.cost", views: [{ view: "period" }] },
+    ],
+  };
+
+  it("drops a key the catalog does not offer, keeping the rest", () => {
+    // The backend rejects the WHOLE request over one unknown key, so this is
+    // the difference between a blank screen and one metric with no data.
+    const out = filterCollectionToAvailable(
+      collection,
+      new Set(["git.commits", "ai.cost"]),
+    );
+    expect(out.metrics.map((m) => m.key)).toEqual(["git.commits", "ai.cost"]);
+  });
+
+  it("returns the SAME object when every key is available", () => {
+    // Identity matters: the config rides in the react-query key, and a fresh
+    // object per render would re-key every metric query.
+    const all = new Set(["git.commits", "tasks.closed_non_bug", "ai.cost"]);
+    expect(filterCollectionToAvailable(collection, all)).toBe(collection);
+  });
+
+  it("drops nothing while the catalog is unknown", () => {
+    // Null is "not answered yet", not "offers nothing" — shrinking the request
+    // on a pending catalog would hide metrics that do exist.
+    expect(filterCollectionToAvailable(collection, null)).toBe(collection);
+  });
+
+  it("can empty the collection when the catalog offers none of it", () => {
+    // The caller disables the query on an empty metric list; an empty
+    // `metrics: []` is itself a 400.
+    expect(filterCollectionToAvailable(collection, new Set()).metrics).toEqual([]);
   });
 });

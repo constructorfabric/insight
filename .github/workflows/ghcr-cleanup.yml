@@ -4,9 +4,7 @@ name: GHCR cleanup
 #
 #   • trunk tags (`YYYY.MM.DD.HH.MM-sha7`, suffix-less) — deleted after 4
 #     weeks on a daily schedule, keeping the 15 newest per package as a
-#     backstop. `latest` and the branch-suffixed tags never match the glob,
-#     and `image-names: insight-*` never matches the `charts/insight`
-#     package, so charts are untouched.
+#     backstop. `latest` and the branch-suffixed tags never match the glob.
 #   • branch tags (`…-sha7.<sanitized-branch>`, #1994) — deleted when their
 #     branch is deleted. `release-*` branches are excluded: their images are
 #     kept forever (customer-release pins).
@@ -33,6 +31,10 @@ permissions:
   packages: write
   contents: read
 
+env:
+  SERVICE_IMAGES: "insight-analytics insight-authenticator insight-frontend insight-gateway insight-identity-resolution insight-toolbox insight-ui-tests"
+  CONNECTOR_IMAGES: "insight-jira-enrich source-active-directory-insight source-bitbucket-cloud-insight source-github-copilot-insight source-github-v2-insight source-gitlab-insight source-hubspot-insight source-salesforce-insight"  # trufflehog:ignore
+
 jobs:
   trunk:
     if: github.event_name != 'delete'
@@ -43,7 +45,7 @@ jobs:
         with:
           account: constructorfabric
           token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: "insight-*"
+          image-names: ${{ env.SERVICE_IMAGES }} ${{ env.CONNECTOR_IMAGES }}
           # Fixed-length trunk format only: branch tags carry a `.suffix`
           # (longer), `latest` doesn't match either.
           image-tags: "2???.??.??.??.??-???????"
@@ -73,7 +75,7 @@ jobs:
         with:
           account: constructorfabric
           token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: "insight-*"
+          image-names: ${{ env.SERVICE_IMAGES }} ${{ env.CONNECTOR_IMAGES }}
           image-tags: "*.${{ steps.suffix.outputs.safe }}"
           cut-off: 0s
           dry-run: true

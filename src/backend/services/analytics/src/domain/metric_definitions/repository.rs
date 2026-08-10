@@ -8,8 +8,9 @@ use crate::api::error::MetricError;
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 
 use crate::domain::metric_definitions::definition::{
-    ComputationSpec, MetricBase, MetricComputation, MetricDefinition, MetricDirection,
-    MetricFormat, MetricInput, MetricInputRole, ObservationRelation, SourceKind, ValueTransform,
+    ComputationSpec, CustomObservationSql, MetricBase, MetricComputation, MetricDefinition,
+    MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationRelation,
+    ObservationSource, SourceKind, ValueTransform,
 };
 
 #[derive(Debug, FromQueryResult)]
@@ -46,6 +47,7 @@ struct InputRow {
     source_key: String,
     source_kind: String,
     source_ref: String,
+    observation_sql: Option<String>,
     source_enabled: bool,
     source_schema_status: String,
 }
@@ -258,6 +260,7 @@ async fn fetch_input_rows(
             s.source_key AS source_key, \
             s.source_kind AS source_kind, \
             s.source_ref AS source_ref, \
+            s.observation_sql AS observation_sql, \
             s.is_enabled AS source_enabled, \
             s.schema_status AS source_schema_status \
          FROM metric_definition_inputs i \
@@ -291,20 +294,25 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
         // over Unavailable, which wins over Available.
         let role = MetricInputRole::from_db(&row.input_role);
         let kind = SourceKind::from_db(&row.source_kind);
-        let observation_relation = ObservationRelation::parse(&row.source_ref);
-        let parsed = match (role, kind, observation_relation) {
-            (Some(role), Some(SourceKind::ManagedObservation), Some(observation_relation)) => {
-                Some((role, observation_relation))
+        let observation = match (role, kind) {
+            (Some(role), Some(SourceKind::ManagedObservation)) => {
+                ObservationRelation::parse(&row.source_ref)
+                    .map(|relation| (role, ObservationSource::Managed(relation)))
             }
-            (Some(_), Some(SourceKind::CustomObservationSql), _) => {
-                if !matches!(entry, ClassifiedInputs::Corrupt) {
-                    *entry = ClassifiedInputs::Unavailable;
-                }
-                continue;
+            // The biconditional CHECK ties custom_observation_sql to a non-NULL
+            // observation_sql, so an absent one here is a corrupt row, not a
+            // custom source we cannot execute.
+            (Some(role), Some(SourceKind::CustomObservationSql)) => {
+                row.observation_sql.clone().map(|sql| {
+                    (
+                        role,
+                        ObservationSource::Custom(CustomObservationSql::new(sql)),
+                    )
+                })
             }
             _ => None,
         };
-        let Some((role, observation_relation)) = parsed else {
+        let Some((role, observation)) = observation else {
             tracing::error!(
                 input_role = %row.input_role,
                 source_ref = %row.source_ref,
@@ -330,7 +338,7 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
         if let ClassifiedInputs::Available(inputs) = entry {
             inputs.push(MetricInput {
                 role,
-                observation_relation,
+                observation,
                 source_key: row.source_key,
                 measure_key: row.measure_key,
             });
@@ -459,7 +467,7 @@ fn build_definition(
         MetricComputation::Ratio => {
             let numerator = one_input(&row.metric_key, inputs, MetricInputRole::Numerator)?;
             let denominator = one_input(&row.metric_key, inputs, MetricInputRole::Denominator)?;
-            if numerator.observation_relation != denominator.observation_relation
+            if numerator.observation != denominator.observation
                 || numerator.source_key != denominator.source_key
             {
                 return Err(config_error(&format!(
@@ -815,6 +823,7 @@ mod tests {
             source_key: "ai_usage".to_owned(),
             source_kind: "managed_observation".to_owned(),
             source_ref: "ai_metric_observations".to_owned(),
+            observation_sql: None,
             source_enabled: true,
             source_schema_status: "ok".to_owned(),
         }
@@ -988,6 +997,7 @@ mod tests {
         };
         let mut custom = input_row(id, "value", true, "ok");
         custom.source_kind = "custom_observation_sql".to_owned();
+        custom.observation_sql = Some("SELECT 1".to_owned());
         let classified = classify_inputs(vec![corrupt, custom]);
         assert!(matches!(
             classified.get(&id),
@@ -996,14 +1006,34 @@ mod tests {
     }
 
     #[test]
-    fn classify_marks_custom_sql_source_unavailable_not_corrupt() {
+    fn classify_builds_custom_sql_source_from_observation_sql() {
         let id = Uuid::now_v7();
         let mut row = input_row(id, "value", true, "ok");
         row.source_kind = "custom_observation_sql".to_owned();
+        row.source_ref = "custom_ai_usage".to_owned();
+        row.observation_sql = Some("SELECT * FROM x".to_owned());
+        let classified = classify_inputs(vec![row]);
+        match classified.get(&id) {
+            Some(ClassifiedInputs::Available(inputs)) => match &inputs[0].observation {
+                ObservationSource::Custom(sql) => assert_eq!(sql.as_str(), "SELECT * FROM x"),
+                ObservationSource::Managed(_) => panic!("expected a custom observation source"),
+            },
+            other => panic!("expected available custom input, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_marks_custom_sql_without_observation_sql_corrupt() {
+        // The biconditional CHECK forbids this at write, so a NULL here is a
+        // corrupt row that must stay loud, not a silently-dropped source.
+        let id = Uuid::now_v7();
+        let mut row = input_row(id, "value", true, "ok");
+        row.source_kind = "custom_observation_sql".to_owned();
+        row.observation_sql = None;
         let classified = classify_inputs(vec![row]);
         assert!(matches!(
             classified.get(&id),
-            Some(ClassifiedInputs::Unavailable)
+            Some(ClassifiedInputs::Corrupt)
         ));
     }
 
@@ -1036,8 +1066,10 @@ mod tests {
     fn one_input_rejects_missing_and_duplicate_roles() {
         let input = MetricInput {
             role: MetricInputRole::Value,
-            observation_relation: ObservationRelation::parse("ai_metric_observations")
-                .unwrap_or_else(|| panic!("fixture relation must parse")),
+            observation: ObservationSource::Managed(
+                ObservationRelation::parse("ai_metric_observations")
+                    .unwrap_or_else(|| panic!("fixture relation must parse")),
+            ),
             source_key: "ai_usage".to_owned(),
             measure_key: "accepted_lines".to_owned(),
         };

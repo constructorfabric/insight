@@ -41,6 +41,9 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          env:
+            - name: SENTRY_CONNECT_SRC
+              value: {{ .Values.sentry.connectSrc | quote }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

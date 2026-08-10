@@ -40,6 +40,7 @@ from insight_stand import (
 
 from ..schemas import ProblemDocument, Subchart, SubchartForest
 from ..scratch import UNKNOWN_ID
+from .views import forest_emails, walk
 
 #: Caller-derived org subchart — takes no person argument, so what comes back
 #: identifies whoever the session belongs to. 401 anonymous (swept in
@@ -76,7 +77,7 @@ def test_the_session_belongs_to_the_persona_who_logged_in(lead_session: PersonaS
     human: Keycloak authenticated them, the authenticator mapped the token to a
     person, and identity found that person in the seeded roster.
     """
-    nodes = [node for root in _forest(lead_session).roots for node in root.walk()]
+    nodes = [node for root in _forest(lead_session).roots for node in walk(root)]
     mine = [node for node in nodes if node.email == lead_session.email]
     assert len(mine) == 1, (
         f"the caller-derived org chart for {lead_session.name} contains "
@@ -116,9 +117,9 @@ def test_org_visibility_scope_differs_by_persona(
         "the realm admin and the lead resolved to the same persona"
     )
 
-    admin_view = _forest(realm_admin_session).emails()
-    lead_view = _forest(lead_session).emails()
-    member_view = _forest(member_session).emails()
+    admin_view = forest_emails(_forest(realm_admin_session))
+    lead_view = forest_emails(_forest(lead_session))
+    member_view = forest_emails(_forest(member_session))
 
     assert member_view == set(), (
         f"a plain member sees {sorted(member_view)} in the org chart; expected nothing"
@@ -146,7 +147,7 @@ def test_two_leads_of_different_teams_see_different_people(
     dev, sales = session_for("dev_lead"), session_for("sales_lead")
     assert dev.person.team != sales.person.team
 
-    dev_view, sales_view = _forest(dev).emails(), _forest(sales).emails()
+    dev_view, sales_view = forest_emails(_forest(dev)), forest_emails(_forest(sales))
 
     assert dev_view and sales_view, "expected both leads to see somebody"
     assert dev_view != sales_view, (

@@ -1,9 +1,9 @@
 """Typed model of the seed manifest.
 
 The manifest is the stand's self-description: what was seeded, who exists, what
-the stand can do. `deploy/seed/seed.py` writes it to one place:
+the stand can do. `src/ingestion/tools/seed/seed.py` writes it to one place:
 
-    deploy/seed/manifest.json
+    src/ingestion/tools/seed/manifest.json
 
 A reader may be told to look elsewhere — `$INSIGHT_STAND_MANIFEST`, or pytest's
 `--stand-manifest` — because a runner that does not share the repo's filesystem
@@ -38,7 +38,7 @@ from .errors import ManifestError
 # The location the seed writes to, resolved from this file:
 #   tests/lib/insight_stand/manifest.py -> ../../../
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
-MANIFEST_PATH: Final[Path] = _REPO_ROOT / "deploy" / "seed" / "manifest.json"
+MANIFEST_PATH: Final[Path] = _REPO_ROOT / "src" / "ingestion" / "tools" / "seed" / "manifest.json"
 
 # Point a runner at a manifest it can actually reach. Named the same way as
 # $INSIGHT_STAND_BASE_URL and $INSIGHT_STAND_ENV_FILE in stand.py.
@@ -52,10 +52,11 @@ def default_manifest_path(environ: Mapping[str, str] | None = None) -> Path:
 
     The override earns its place in containers. `MANIFEST_PATH` is derived from
     THIS FILE's location, so in an image that holds the tree at `/tests` it
-    resolves to `/deploy/seed/manifest.json` — and a bind mount then has to
-    reproduce that arithmetic exactly, or the suite reports an unseeded stand.
-    Naming the file is the honest alternative to guessing where `parents[3]`
-    landed.
+    resolves to a path with nothing above it — reproducing that arithmetic in a
+    bind mount is how a seeded stand gets reported as unseeded. A containerised
+    runner therefore mounts the file at a stable path and names it through this
+    variable (`dev-compose.sh` uses `/stand/manifest.json`) instead of guessing
+    where `parents[3]` landed.
     """
     env = os.environ if environ is None else environ
     override = (env.get(MANIFEST_PATH_ENV) or "").strip()
@@ -93,7 +94,7 @@ def _optional_str(doc: Mapping[str, Any], key: str, where: str) -> str | None:
 
 @dataclass(frozen=True)
 class Realm:
-    """`realm` — mirrors deploy/compose/keycloak/gen-realm.py's realm."""
+    """`realm` — mirrors the seeder's `keycloak_realm` output."""
 
     name: str
     issuer: str
@@ -172,9 +173,9 @@ class Capabilities:
         capability marker's table would otherwise skip every test carrying it,
         with a reason that reads perfectly plausibly.
 
-        `idp` is deliberately not answerable here — it is a VALUE
-        (`keycloak` | `fakeidp`), not a yes/no, so comparing it is the caller's
-        job.
+        `idp` is deliberately not answerable here — it is a VALUE (the
+        identity source_type the login rows were seeded under, e.g.
+        `keycloak`), not a yes/no, so comparing it is the caller's job.
         """
         if name not in BOOLEAN_CAPABILITIES:
             known = ", ".join(sorted(BOOLEAN_CAPABILITIES))
@@ -187,7 +188,7 @@ class GoldenMetric:
     """One `golden_metrics[]` entry: an exact, hand-sourced expectation.
 
     Currently always absent — `golden_metrics` is `[]` on every stand, by
-    design. See `deploy/seed/golden_metrics.py` for why, and read
+    design. See `src/ingestion/tools/seed/golden_metrics.py` for why, and read
     `Manifest.golden_metrics_note` to tell "none measured yet" apart from
     "measured and genuinely zero".
 
@@ -259,7 +260,7 @@ class DefinitionOverride:
 
 @dataclass(frozen=True)
 class Catalogue:
-    """Rows no endpoint creates, seeded by `deploy/seed/analytics.py`.
+    """Rows no endpoint creates, seeded by `src/ingestion/tools/seed/analytics.py`.
 
     It is optional and a test must treat absence as "cannot assert" rather than
     as failure: a stand seeded without the `analytics` step is a real state.

@@ -13,7 +13,7 @@ Microsoft Entra ID (formerly Azure AD) cloud directory connector. Pulls the cano
 - Package: `src/ingestion/connectors/hr-directory/ms-entra/`
 - Bronze namespace: `bronze_ms_entra`
 - Streams: `users`
-- dbt models: `ms_entra__bronze_promoted`, `ms_entra__users_snapshot`, `ms_entra__users_fields_history`, `ms_entra__identity_inputs`, `to_class_people`
+- dbt models: `ms_entra__bronze_promoted`, `ms_entra__users_snapshot`, `ms_entra__users_fields_history`, `ms_entra__identity_inputs`, `ms_entra__person_attribute_claims`, `to_class_people`
 
 ## Distinct from m365 connector
 

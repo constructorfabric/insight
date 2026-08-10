@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Downstream-verification e2e (NGINX_BFF §6 R1 / §D).
 #
-# Brings up the full chain — fakeidp + authenticator + gateway + the REAL
+# Brings up the full chain — Keycloak + authenticator + gateway + the REAL
 # analytics and identity-resolution services + MariaDB/Redis — and asserts
 # the five downstream-verification scenarios. Stack lifecycle + assertions live
 # in conftest.py + test_downstream.py.
 #
-# Requires: docker, openssl, pytest, and (for the service-token scenario) PyJWT
-# (`pip install pytest pyjwt cryptography`).
+# Requires: docker, openssl, pytest, uv (conftest generates the Keycloak import
+# realm with `uv run ... insight-seed-realm`), and (for the service-token
+# scenario) PyJWT (`pip install pytest pyjwt cryptography`).
 set -euo pipefail
 
 cd "$(dirname "$0")"

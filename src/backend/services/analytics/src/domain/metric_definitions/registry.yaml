@@ -125,6 +125,8 @@ sources:
         evidence_granularity: event
       - key: bugs_fixed
         evidence_granularity: event
+      - key: closed_non_bug
+        evidence_granularity: event
       - key: due_date_on_time
         evidence_granularity: event
       - key: due_date_with_due
@@ -157,7 +159,8 @@ sources:
         evidence_granularity: event
       - key: pickup_days
         evidence_granularity: event
-    dimensions: []
+    dimensions:
+      - type
   - source:
       key: wiki
       kind: managed_observation
@@ -910,11 +913,13 @@ metrics:
       - tool
   - metric_key: tasks.closed
     source_key: task
-    label: Tasks closed
-    short_label: Tasks
-    description: Tasks moved to a closed status
-    explanation: Tasks a person moved into a closed status during the period.
-    unit: tasks
+    label: Issues closed
+    short_label: Issues
+    description: Every issue closed in the tracker
+    explanation: >-
+      All issues a person moved into a closed status during the period. Bugs are
+      part of this number and are listed separately by type.
+    unit: issues
     format: integer
     direction: higher_is_better
     entity_type: person
@@ -923,14 +928,17 @@ metrics:
     inputs:
       - input_role: value
         measure_key: tasks_closed
-    dimensions: []
+    dimensions:
+      - type
   - metric_key: tasks.bugs_fixed
     source_key: task
-    label: Bugs fixed
+    label: Bugs closed
     short_label: Bugs
-    description: Bug-type tasks closed
-    explanation: Bug-type tasks a person closed during the period.
-    unit: tasks
+    description: Bug-type issues closed
+    explanation: >-
+      Issues of a bug type a person closed during the period. Part of issues
+      closed, not a separate total.
+    unit: issues
     format: integer
     direction: higher_is_better
     entity_type: person
@@ -940,12 +948,30 @@ metrics:
       - input_role: value
         measure_key: bugs_fixed
     dimensions: []
+  - metric_key: tasks.closed_non_bug
+    source_key: task
+    label: Non-bug issues closed
+    short_label: Non-bug
+    description: Closed issues of a known non-bug type
+    explanation: >-
+      Issues of a known non-bug type a person closed during the period. Issues
+      whose type cannot be determined are excluded rather than counted here.
+    unit: issues
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: closed_non_bug
+    dimensions: []
   - metric_key: tasks.dev_time
     source_key: task
     label: Development time
     short_label: Dev time
-    description: Time a task spends in active development
-    explanation: Median time closed tasks spent in in-progress statuses, from first pickup to close.
+    description: Time an issue spends in active development
+    explanation: Median time closed issues spent in in-progress statuses, from first pickup to close.
     unit: h
     format: decimal
     direction: lower_is_better
@@ -960,8 +986,8 @@ metrics:
     source_key: task
     label: Time to resolution
     short_label: Resolution
-    description: Task lifetime from creation to close
-    explanation: Median time from task creation to close.
+    description: Issue lifetime from creation to close
+    explanation: Median time from issue creation to close.
     unit: d
     format: decimal
     direction: lower_is_better
@@ -976,8 +1002,8 @@ metrics:
     source_key: task
     label: Pickup time
     short_label: Pickup
-    description: Wait before work starts on a task
-    explanation: Median time from task creation to first entering an in-progress status.
+    description: Wait before work starts on an issue
+    explanation: Median time from issue creation to first entering an in-progress status.
     unit: d
     format: decimal
     direction: lower_is_better
@@ -992,8 +1018,8 @@ metrics:
     source_key: task
     label: Flow efficiency
     short_label: Flow %
-    description: Active development share of task lifetime
-    explanation: Time in active development as a share of total task lifetime, across closed tasks.
+    description: Active development share of issue lifetime
+    explanation: Time in active development as a share of total issue lifetime, across closed issues.
     format: percent
     direction: higher_is_better
     entity_type: person
@@ -1012,8 +1038,8 @@ metrics:
     source_key: task
     label: Reopen rate
     short_label: Reopen %
-    description: Closed tasks reopened shortly after
-    explanation: Share of task closes followed by a reopen within 14 days.
+    description: Closed issues reopened shortly after
+    explanation: Share of issue closes followed by a reopen within 14 days.
     format: percent
     direction: lower_is_better
     entity_type: person
@@ -1030,8 +1056,8 @@ metrics:
     source_key: task
     label: Due date compliance
     short_label: Due date %
-    description: On-time share of tasks with a due date
-    explanation: Share of tasks that had a due date and were closed on or before it.
+    description: On-time share of issues with a due date
+    explanation: Share of issues that had a due date and were closed on or before it.
     format: percent
     direction: higher_is_better
     entity_type: person
@@ -1048,8 +1074,8 @@ metrics:
     source_key: task
     label: On-time delivery
     short_label: On-time %
-    description: On-time share of all closed tasks
-    explanation: Share of all closed tasks that were closed on or before their due date.
+    description: On-time share of all closed issues
+    explanation: Share of all closed issues that were closed on or before their due date.
     format: percent
     direction: higher_is_better
     entity_type: person
@@ -1066,8 +1092,8 @@ metrics:
     source_key: task
     label: Average slip
     short_label: Avg slip
-    description: How late overdue tasks close
-    explanation: Average days past the due date for tasks closed late.
+    description: How late overdue issues close
+    explanation: Average days past the due date for issues closed late.
     unit: d
     format: decimal
     direction: lower_is_better
@@ -1109,7 +1135,7 @@ metrics:
     label: Worklog accuracy
     short_label: Worklog %
     description: Logged time versus tracked development
-    explanation: Logged work time as a share of time tasks spent in in-progress statuses.
+    explanation: Logged work time as a share of time issues spent in in-progress statuses.
     format: percent
     direction: higher_is_better
     entity_type: person
@@ -1126,10 +1152,13 @@ metrics:
     dimensions: []
   - metric_key: tasks.bugs_ratio
     source_key: task
-    label: Bug ratio
-    short_label: Bug %
-    description: Bugs as a share of closed tasks
-    explanation: Bug-type tasks as a share of all closed tasks.
+    label: Bugs share of closed issues
+    short_label: Bug share
+    description: Bugs as a share of all closed issues
+    explanation: >-
+      Bug-type issues as a share of all closed issues, issues of an
+      undetermined type included in the denominator. A share, so it cannot
+      exceed 100%.
     format: percent
     direction: lower_is_better
     entity_type: person
@@ -1146,9 +1175,9 @@ metrics:
     source_key: task
     label: Stale in progress
     short_label: Stale WIP
-    description: Open tasks idle for over two weeks
-    explanation: Open tasks with no status change in more than 14 days.
-    unit: tasks
+    description: Open issues idle for over two weeks
+    explanation: Open issues with no status change in more than 14 days.
+    unit: issues
     format: integer
     direction: lower_is_better
     entity_type: person

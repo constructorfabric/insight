@@ -61,7 +61,7 @@ secrets:
     # ES256 gateway-JWT signing key (current.pem) mounted by the authenticator.
     - { name: insight-authenticator-signing-keys, enabled: true }
     # Real-IdP OIDC secret. Off for local — the authenticator logs in against the
-    # in-cluster fakeidp; its leaf config is composed at deploy time by
+    # in-cluster Keycloak; its leaf config is composed at deploy time by
     # compose-app-secrets.sh, not sealed here.
     - { name: insight-oidc,                      enabled: false }
     # config-cli login + realm placeholder values (ADR-0003 broker realms).

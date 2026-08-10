@@ -10,7 +10,7 @@ use super::validation::{
 };
 use super::view::Bucket;
 use crate::domain::metric_definitions::{
-    CohortSource, ComputationSpec, MetricDefinition, ObservationRelation,
+    CohortSource, ComputationSpec, MetricDefinition, ObservationSource,
 };
 
 pub(crate) const UNKNOWN_DIMENSION_VALUE: &str = "__unknown__";
@@ -143,7 +143,7 @@ pub(crate) fn compile_timeseries_query(
     } else {
         format!("entity_id, {dim_group}")
     };
-    let observation_table = observation_table(def.observation_relation());
+    let observation_table = observation_table(def.observation_source());
     let limit = query_row_limit();
     let value_expr = grouped_value_expr(def);
     let inner = format!(
@@ -183,7 +183,7 @@ pub(crate) fn compile_group_ranking_query(
     params.extend(req.entity.entity_ids());
     let entity_id_params = placeholders(req.entity.len());
     let (dim_select, dim_group, dim_order) = ranking_dimension_select_group(dimensions);
-    let observation_table = observation_table(def.observation_relation());
+    let observation_table = observation_table(def.observation_source());
     let value_expr = grouped_value_expr(def);
     let inner = format!(
         r"
@@ -238,7 +238,7 @@ fn compile_capped_timeseries_query(
     let rank_expr = capped_rank_expr(group_limit, dimensions.len(), &mut params);
     params.extend(grouped_value_params(def));
     let dimension_select = capped_dimension_select(group_limit, dimensions, &mut params);
-    let observation_table = observation_table(def.observation_relation());
+    let observation_table = observation_table(def.observation_source());
     let value_expr = grouped_value_expr(def);
     let value = transformed(def, "value".to_owned());
     let remainder_filter = if group_limit.include_remainder {
@@ -391,7 +391,7 @@ pub(crate) fn compile_breakdown_query(
     } else {
         format!("entity_id, {dim_group}")
     };
-    let observation_table = observation_table(def.observation_relation());
+    let observation_table = observation_table(def.observation_source());
     let limit = query_row_limit();
     let value_expr = grouped_value_expr(def);
     let inner = format!(
@@ -448,7 +448,7 @@ pub(crate) fn compile_histogram_query(
     let filter_where = dimension_filter_where(filters, &mut params);
     params.extend(req.entity.entity_ids());
     let entity_id_params = placeholders(req.entity.len());
-    let observation_table = observation_table(def.observation_relation());
+    let observation_table = observation_table(def.observation_source());
     let bins = HISTOGRAM_BINS;
     let max_bin = HISTOGRAM_BINS - 1;
     let limit = query_row_limit();
@@ -836,7 +836,7 @@ fn batch_observation_table(defs: &[&MetricDefinition]) -> String {
     let def = defs
         .first()
         .unwrap_or_else(|| unreachable!("batches are planned from at least one metric view"));
-    observation_table(def.observation_relation())
+    observation_table(def.observation_source())
 }
 
 // INVARIANT: every observation read leads with the tenant predicate, bound from
@@ -939,9 +939,8 @@ fn bucket_expr(bucket: Bucket) -> &'static str {
     }
 }
 
-fn observation_table(relation: &ObservationRelation) -> String {
-    let (database, table) = relation.table_ref();
-    format!("{database}.{table}")
+fn observation_table(source: &ObservationSource) -> String {
+    source.render_from_clause()
 }
 
 fn cohort_table(source: CohortSource) -> &'static str {
@@ -1047,7 +1046,8 @@ mod tests {
     use chrono::NaiveDate;
 
     use crate::domain::metric_definitions::definition::{
-        MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
+        CustomObservationSql, MetricBase, MetricDirection, MetricFormat, MetricInput,
+        MetricInputRole, ObservationRelation, ObservationSource,
     };
 
     fn base(dimensions: Vec<&str>) -> MetricBase {
@@ -1069,8 +1069,10 @@ mod tests {
     fn input(role: MetricInputRole, measure_key: &str) -> MetricInput {
         MetricInput {
             role,
-            observation_relation: ObservationRelation::parse("ai_metric_observations")
-                .unwrap_or_else(|| panic!("fixture relation must parse")),
+            observation: ObservationSource::Managed(
+                ObservationRelation::parse("ai_metric_observations")
+                    .unwrap_or_else(|| panic!("fixture relation must parse")),
+            ),
             source_key: "ai_usage".to_owned(),
             measure_key: measure_key.to_owned(),
         }
@@ -1186,6 +1188,45 @@ mod tests {
                 "00000000-0000-0000-0000-00000000000b",
             ]
         );
+    }
+
+    const CUSTOM_SQL: &str = "SELECT tenant_id, source_key, entity_type, entity_id, \
+        metric_date, measure_key, observed_at, value, subject_key, dimensions FROM joined";
+
+    fn custom_sum_metric() -> MetricDefinition {
+        MetricDefinition {
+            transform: None,
+            base: base(vec!["tool"]),
+            spec: ComputationSpec::Sum {
+                value: MetricInput {
+                    role: MetricInputRole::Value,
+                    observation: ObservationSource::Custom(CustomObservationSql::new(
+                        CUSTOM_SQL.to_owned(),
+                    )),
+                    source_key: "custom_ai_usage".to_owned(),
+                    measure_key: "accepted_lines".to_owned(),
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn custom_source_reads_from_the_inline_sql_with_the_tenant_filter_outside() {
+        // A custom source's observation SQL becomes the `FROM` target as a
+        // parenthesized subquery; the tenant predicate (and every other scope
+        // term) is applied by the wrap OUTSIDE it, exactly as for a managed
+        // relation, so a custom metric inherits identical tenant scoping.
+        let def = custom_sum_metric();
+        let ts = compile_timeseries_query(&def, &request(), Bucket::Day, &[], &[], None);
+        assert!(ts.sql.contains(&format!("FROM ({CUSTOM_SQL})")));
+        assert!(!ts.sql.contains("insight.ai_metric_observations"));
+        assert!(ts.sql.contains("WHERE tenant_id = ?"));
+        assert_eq!(ts.params.first().map(String::as_str), Some(TEST_TENANT_STR));
+        assert_eq!(ts.sql.matches('?').count(), ts.params.len());
+
+        // The batch path routes through the same from_clause.
+        let batch = compile_period_batch_query(&[&def], &request(), &[]);
+        assert!(batch.sql.contains(&format!("FROM ({CUSTOM_SQL})")));
     }
 
     #[test]

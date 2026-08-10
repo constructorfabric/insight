@@ -10,10 +10,13 @@ realm: insight-broker
 enabled: true
 
 clientScopes:
-  # The claim allow-list: tokens carry exactly email + single-string tenant_id
-  # (plus protocol-level sub). tenant_id is a user attribute stamped per IdP by
-  # a hardcoded-attribute-idp-mapper from the INSIGHT_TENANT_ID placeholder
-  # (global.tenantDefaultId) — pinned per env, never from an upstream claim.
+  # The claim allow-list: tokens carry exactly email, single-string tenant_id,
+  # and idp_sub (plus protocol-level sub). tenant_id is ALWAYS the pinned
+  # per-registration tenant: every IdP's hardcoded-attribute-idp-mapper stamps
+  # INSIGHT_TENANT_ID (global.tenantDefaultId); a customer with several IdPs
+  # pins the same tenant on each. What an IdP asserts about tenancy is never
+  # consulted. idp_sub carries the upstream directory id (e.g. Entra oid) for
+  # the login-bootstrap person lookup, stamped per IdP by an importer mapper.
   - name: insight
     description: Canonical Insight claim allow-list (email + single-string tenant_id)
     protocol: openid-connect
@@ -40,6 +43,18 @@ clientScopes:
         config:
           user.attribute: tenant_id
           claim.name: tenant_id
+          jsonType.label: String
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+      # Upstream directory id passthrough (login-bootstrap external id).
+      - name: idp_sub
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-attribute-mapper
+        consentRequired: false
+        config:
+          user.attribute: idp_sub
+          claim.name: idp_sub
           jsonType.label: String
           id.token.claim: "true"
           access.token.claim: "true"

@@ -11,6 +11,9 @@ superseded_by: cpt-insightspec-adr-auth-0002-real-idp-on-deployed-stands
 **Status history**:
 
 - 2026-07-30: ACCEPTED -> SUPERSEDED (real IdP required on deployed stands; see ADR-0002)
+- 2026-08-07: NOTE -- fakeidp itself is retired and deleted from the repository per ADR-0003
+  (Keycloak identity broker; issue #2198); every dev/test environment now logs in against the
+  in-stack Keycloak with the seed-generated roster realm.
 
 <!-- toc -->
 

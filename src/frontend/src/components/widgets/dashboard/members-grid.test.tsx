@@ -236,9 +236,9 @@ describe("MembersGrid", () => {
     // surfaces her strengths instead of a flat "on par".
     const rowHeaders = screen.getAllByRole("rowheader");
     expect(rowHeaders[0]).toHaveTextContent("Bo");
-    expect(rowHeaders[0]).toHaveTextContent("3 behind peers");
+    expect(rowHeaders[0]).toHaveTextContent("3 of 3 behind peers");
     expect(rowHeaders[0]).toHaveTextContent("worst: Time to resolution");
-    expect(rowHeaders[1]).toHaveTextContent("2 ahead of peers");
+    expect(rowHeaders[1]).toHaveTextContent("2 of 3 ahead of peers");
     // With the facet, the Member header is a menu (the roster-ordering control).
     expect(
       screen.getByRole("button", { name: /Member/ }),
@@ -265,10 +265,10 @@ describe("MembersGrid", () => {
     // Ann trails this group's metric → behind; Bo leads it → ahead; Cy is
     // genuinely mid-pack → on par.
     expect(rowHeaders[0]).toHaveTextContent("Ann");
-    expect(rowHeaders[0]).toHaveTextContent("1 behind peers");
+    expect(rowHeaders[0]).toHaveTextContent("1 of 1 behind peers");
     expect(rowHeaders[0]).toHaveTextContent("worst: Active AI days");
     expect(rowHeaders[1]).toHaveTextContent("Bo");
-    expect(rowHeaders[1]).toHaveTextContent("1 ahead of peers");
+    expect(rowHeaders[1]).toHaveTextContent("1 of 1 ahead of peers");
     expect(rowHeaders[2]).toHaveTextContent("Cy");
     expect(rowHeaders[2]).toHaveTextContent("on par with peers");
   });

@@ -57,6 +57,7 @@ mod m20260722_000001_metric_definition_last_observed;
 mod m20260727_000001_metric_evidence;
 mod m20260730_000001_saved_queries;
 mod m20260805_000001_semantic_definition_core;
+mod m20260806_000001_metric_custom_observation_sql;
 
 use sea_orm_migration::prelude::*;
 
@@ -123,6 +124,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260727_000001_metric_evidence::Migration),
             Box::new(m20260730_000001_saved_queries::Migration),
             Box::new(m20260805_000001_semantic_definition_core::Migration),
+            Box::new(m20260806_000001_metric_custom_observation_sql::Migration),
         ]
     }
 }

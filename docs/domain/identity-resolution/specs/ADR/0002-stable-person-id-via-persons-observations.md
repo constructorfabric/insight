@@ -6,6 +6,22 @@ date: 2026-04-24
 
 # ADR-0002 — Stable `person_id` via append-only `persons` observations, with `account_person_map` as SCD2 cache
 
+
+<!-- toc -->
+
+- [Context](#context)
+- [Decision](#decision)
+- [Rationale](#rationale)
+- [Consequences](#consequences)
+- [Alternatives considered](#alternatives-considered)
+- [Related](#related)
+
+<!-- /toc -->
+
+**ID**: `cpt-ir-adr-stable-person-id`
+
+> **Post-acceptance note (2026-08-05)**: later service migrations and the implemented seed refined the mechanics this ADR describes — migration 004 moved the natural-key UNIQUE from `value_hash` to `created_at` and made `value_id` case-insensitive; migrations 009/014 moved timestamps to `DATETIME(6)` and relaxed `reason` to NULL-able; the `account_person_map` rebuild is a transactional tenant-scoped DELETE+INSERT rather than the RENAME swap sketched below; and the implemented Rust seed kept .NET-parity auto-linking instead of the `pending-iresolution` quarantine of section 6 (contested-evidence handling ships with the manual-resolution feature, ADR-0003). Where this text conflicts with DESIGN par. 3.7, the DESIGN is current. The decision itself (stable random `person_id`; append-only observations; derived `account_person_map`) is unaffected.
+
 ## Context
 
 The `persons` table (MariaDB, see

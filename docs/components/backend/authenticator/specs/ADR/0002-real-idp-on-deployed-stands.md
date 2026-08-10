@@ -22,6 +22,10 @@ date: 2026-07-30
   remains a non-channel. Option B's per-stand footprint objection is answered by reusing the
   stack's MariaDB and by the broker being production auth infrastructure, not test scaffolding.
   The one-realm-per-environment and realm-generation decisions stand.
+- 2026-08-07: NOTE -- the fakeidp retirement that the 2026-08-04 amendment recorded is now
+  executed (issue #2198): the fakeidp crate, subchart and compose service are deleted; the
+  functional-CI environment and the gateway e2e rigs run the in-stack Keycloak with the
+  seed-generated roster realm.
 
 <!-- toc -->
 

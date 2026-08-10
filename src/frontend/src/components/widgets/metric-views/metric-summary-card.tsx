@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -93,9 +94,10 @@ export function MetricSummaryCard({
             against the number, and all cards in a row share geometry (the
             sublabel reserves two lines whenever explanations are on). */}
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="truncate pr-8 text-sm font-semibold">
-            {metric.label}
-          </span>
+          <MetricName
+            metric={metric}
+            className="truncate pr-8 text-sm font-semibold"
+          />
           <MetricSublabel
             description={metric.description}
             className="min-h-[2lh]"

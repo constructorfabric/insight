@@ -117,6 +117,12 @@ IDENTITY_RUST_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
     # demands codes no test can ever observe.
     **{k: v for k, v in _IDENTITY_COMMON_REQUIRED_EXTRA.items() if k != "POST /v1/persons-seed"},
     "POST /v1/profiles": _IDENTITY_COMMON_REQUIRED_EXTRA["POST /v1/profiles"] | {409},
+    # Analytics reads this endpoint's answer as authorization for every
+    # person-keyed metric read, so its refusals are contract, not boilerplate:
+    # 400 for a request naming nobody (empty / nil / non-UUID / over the cap),
+    # 401 for a caller the gateway did not identify. The spec declares only
+    # 200, so without this entry the gate asks nothing beyond "it was called".
+    "POST /v1/visible-persons": frozenset({400, 401}),
     "DELETE /v1/roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/roles/{id}"] | {409},
     "DELETE /v1/person-roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/person-roles/{id}"] | {409},
 }
@@ -152,9 +158,8 @@ AUTHENTICATOR_SKIP_LIST: list[tuple[str, str]] = [
 # stamping), so there is no universal boilerplate to subtract. Its rate
 # limiter's 429s are real but undeclared — extra observed codes are ignored.
 AUTHENTICATOR_UNIVERSAL_BOILERPLATE = frozenset()
-# back-channel-logout's 200 is answered to the IdP's server-side POST (proven
-# via fakeidp's rp_status assertion in e2e_backchannel), never to the test
-# client — the client can only observe the 400 rejection.
+# back-channel-logout's 200 is answered to the IdP's server-side POST
+# (covered in e2e_backchannel), never to the test client.
 AUTHENTICATOR_BLOCKED: dict[str, frozenset[int]] = {"POST /auth/oidc/back-channel-logout": frozenset({200})}
 AUTHENTICATOR_REQUIRED_EXTRA: dict[str, frozenset[int]] = {}
 

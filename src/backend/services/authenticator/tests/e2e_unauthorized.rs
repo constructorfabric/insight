@@ -37,7 +37,7 @@ const SESSION_ROUTES: &[(Method, &str)] = &[
 ];
 
 #[tokio::test]
-#[ignore = "requires a running authenticator + fakeidp + Redis stack"]
+#[ignore = "requires a running authenticator + Keycloak + Redis stack"]
 async fn session_routes_reject_missing_cookie_with_401() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
     let http = common::client();
@@ -62,7 +62,7 @@ async fn session_routes_reject_missing_cookie_with_401() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running authenticator + fakeidp + Redis stack"]
+#[ignore = "requires a running authenticator + Keycloak + Redis stack"]
 async fn session_routes_reject_unknown_session_token_with_401() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
     let http = common::client();

@@ -65,6 +65,11 @@ spec:
             # in-cluster caller works alongside the advertised issuer.
             - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
               value: "true"
+            # Admin console base. The ingress does not expose /kc/admin, so
+            # the console is advertised on the port-forward URL (default
+            # localhost:<service.port>) instead of KC_HOSTNAME.
+            - name: KC_HOSTNAME_ADMIN
+              value: {{ default (printf "http://localhost:%v/kc" .Values.service.port) .Values.adminHostname | quote }}
             - name: KC_HTTP_ENABLED
               value: "true"
             - name: KC_HTTP_PORT

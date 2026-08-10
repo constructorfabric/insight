@@ -112,18 +112,18 @@ cd src/ingestion/tests/e2e
   **shallow acceptance validation** runs in **Beta**.
 - Every user-facing surface **should** have at least one smoke assertion.
 - A separate **compose-stand suite** (`tests/stand`, documented in `tests/stand/README.md`) drives a real Keycloak
-  login and four browser journeys against the SPA, plus an API-contract suite — all against a local
-  `docker-compose` stand seeded deterministically for tests (`deploy/seed`). Run it with
-  `./dev-compose.sh test-stand up|test|down`. It asserts no metric VALUE: the seed's `golden_metrics` is empty by
-  design, and a harness for it is being migrated separately.
+  login and a set of browser journeys against the SPA, plus an API-contract suite — all against a local
+  `docker-compose` stand seeded deterministically for tests (`src/ingestion/tools/seed`). Run it with
+  `./dev-compose.sh test-stand up|test|down`. It asserts no metric VALUE against a declared expectation: the seed's
+  `golden_metrics` is empty by design, and a harness for it is being migrated separately. It does reconcile every
+  metric's drilldown evidence against that metric's own served value, which needs no declared expectation.
 
 **CI:** `functional-k3s.yml` — ephemeral k3d install. Today it only *installs*; a real smoke must build + import the
 PR's images and assert `/health` + a few golden metrics.
 
-**CI:** `e2e-stand.yml` — two **non-required** checks against the compose-stand suite: `api-smoke` (117 HTTP
-contract tests, no browser) and `ui-journeys` (10 tests: the four browser journeys, run inside the published
-`ui-tests` image). Neither blocks merge — both stand up a full stack against a live IdP and their flake rate is
-still unmeasured.
+**CI:** `e2e-stand.yml` — two **non-required** checks against the compose-stand suite: `api-smoke` (the HTTP
+contract tests, no browser) and `ui-journeys` (the browser journeys, run inside the published `ui-tests` image).
+Neither blocks merge — both stand up a full stack against a live IdP and their flake rate is still unmeasured.
 
 ---
 

@@ -1,17 +1,27 @@
-FROM node:25-bookworm-slim AS builder
+FROM node:24-bookworm-slim AS builder
 
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-# Not corepack: node:25 dropped it, and its package collides with the yarn bins
-# this image already holds.
+# Not corepack: node images past 24 no longer ship it, and its package collides
+# with the yarn bins this image already holds.
 RUN npm install -g "pnpm@$(node -p 'require("/app/package.json").packageManager.split("@")[1]')"
 
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
 COPY . .
-RUN pnpm run build
+
+ARG VITE_SENTRY_DSN
+ARG VITE_APP_RELEASE
+# Secret contents are not part of the layer cache key; this is.
+ARG SENTRY_UPLOAD
+
+RUN --mount=type=secret,id=sentry_env \
+    if [ -f /run/secrets/sentry_env ]; then \
+      set -a; . /run/secrets/sentry_env; set +a; \
+    fi; \
+    pnpm run build
 
 # Runtime base: keep this on a currently-maintained nginx line. The 1.27 tag
 # stopped getting Alpine package refreshes, so the published image accumulated
@@ -31,9 +41,8 @@ RUN chmod +x /docker-entrypoint.sh
 
 # nginx config: security-headers snippet (included at server level AND inside
 # any location block that declares its own add_header — nginx replaces rather
-# than merges across levels) + default.conf that the entrypoint copies into
-# conf.d at container start. No runtime templating anymore (the SPA is
-# same-origin only), but the file keeps its .template name and location.
+# than merges across levels) + default.conf that the entrypoint renders into
+# conf.d at container start.
 RUN mkdir -p /etc/nginx/snippets
 COPY nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template

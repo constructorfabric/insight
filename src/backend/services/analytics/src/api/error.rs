@@ -18,6 +18,10 @@ pub struct MetricError;
 #[resource_error("gts.cf.insight.analytics_api.saved_query.v1~")]
 pub struct SavedQueryError;
 
+/// Resource namespace for `/v1/metrics*` (custom-metric CRUD + export/import).
+#[resource_error("gts.cf.insight.analytics_api.custom_metric.v1~")]
+pub struct CustomMetricError;
+
 /// Resource namespace for tenant-resolution failures
 /// (`cpt-metric-cat-constraint-tenant-default`). The middleware surfaces an
 /// `invalid_argument` envelope with `field_violations[{field: "tenant_id",

@@ -1,8 +1,9 @@
 # The compose-stand suite
 
-Deployed-stand tests for Insight: a real Keycloak login, four browser
-journeys against the SPA, and an API-contract suite — all run against a local
-`docker-compose` stand seeded deterministically for tests (`deploy/seed`).
+Deployed-stand tests for Insight: a real Keycloak login, browser journeys
+against the SPA, and an API-contract suite — all run against a local
+`docker-compose` stand seeded deterministically for tests
+(`src/ingestion/tools/seed`).
 
 This suite assumes an **already-running, already-seeded** stand. It never
 starts compose, applies migrations, or spawns service processes itself —
@@ -20,7 +21,7 @@ persona resolution) lives in `../lib`; both are one uv project
 | `api/analytics/` | The `/api/analytics` prefix, one module per path group. |
 | `api/identity/` | The `/api/identity` prefix, one module per concern. |
 | `api/test_gateway.py` | Neither service — the edge, sweeping 401 over every catalogued operation at once. |
-| `ui/` | The four browser journeys, plus `ui/pages/` (page objects). |
+| `ui/` | The browser journeys, plus `ui/pages/` (page objects). |
 
 Split by service because that is the axis along which a test's setup
 differs: identity's answers depend on **who is asking** (the org chart, the
@@ -63,7 +64,7 @@ a stand other than the one it just brought up.
 
 ## Reading PROFILE.md before writing a test
 
-[`deploy/seed/PROFILE.md`](../../deploy/seed/PROFILE.md) is generated from
+[`src/ingestion/tools/seed/PROFILE.md`](../../src/ingestion/tools/seed/PROFILE.md) is generated from
 the same builder that writes the stand's `manifest.json`, so the two cannot
 disagree. Before adding a test, read it for:
 
@@ -71,16 +72,24 @@ disagree. Before adding a test, read it for:
   role-shaped names (`dev_lead`, `admin_operator`, …) a test may declare
   against; a raw email or UUID is never a stable target.
 - **populated / golden metrics** — that table is empty by design (see
-  `deploy/seed/golden_metrics.py`'s admission criteria: an expectation must be
+  `src/ingestion/tools/seed/golden_metrics.py`'s admission criteria: an expectation must be
   computable from the seed inputs, not read back out of the gold layer). No
   test here asserts a metric's exact value, and none should until the table
   has entries — reading a number off a running stand and asserting it back
   only proves that the code which produced it produced it.
+
+  What `api/analytics/test_drilldown.py` does is a different thing and is
+  allowed: it asks two independent serving relations the same question — the
+  evidence rows behind a metric, and the metric's own value — and requires them
+  to agree. Neither side is a number typed into the test, so the seed can change
+  underneath it, and a disagreement is a real defect rather than a stale
+  expectation. `drilldown_matrix.py` states what "agree" means per metric.
 - **capabilities** — e.g. `ingestion`, which this stand does not have
   (compose seeds silver/gold directly). A test that needs a capability the
   stand may lack should carry the matching marker (below), not assume it.
 
-Regenerate it with `python3 deploy/seed/render_profile.py` after changing
+Regenerate it with `python3 -m insight_seed.render_profile` (from
+`src/ingestion/tools/seed`) after changing
 the roster or the manifest builder; `--check` verifies it without a
 database.
 
@@ -118,7 +127,7 @@ more API test than one more browser test whenever the two would prove the
 same thing.
 
 State the reason as a paragraph in the test module's docstring, in the
-shape the four shipped journeys already use — for example
+shape the shipped journeys already use — for example
 `ui/test_logged_out_access_refused.py`:
 
 > Why this is a browser test and not an API test, measured rather than
@@ -154,9 +163,12 @@ it":
   gate over the committed OpenAPI document); migrating it is a known
   follow-up. Until it lands, `api/operations.py` is the only catalogue of the
   surface and it is kept honest by hand.
-- **Cross-tenant refusal.** `deploy/seed` provisions a single tenant
-  (`TENANT_DEFAULT_ID`), so there is no second tenant's caller to be refused
-  with.
+- **Cross-tenant refusal.** Covered on compose, and only there: the second
+  tenant's caller is a fixture the seed writes when
+  `SEED_CROSS_TENANT_FIXTURE` is on, which `docker-compose.yml` sets. A cluster
+  stand turns it off (a second tenant aborts identity-resolution's scheduled
+  projection), and the seed's manifest then omits `other_tenant_lead`, so tests
+  declaring `requires_seed("other_tenant_lead")` skip rather than fail.
 - **JWT verification** — an expired token, a wrong audience, an untrusted
   issuer, a signature from a key the JWKS never published. Minting tokens is
   ruled out here by design (see `../lib/insight_stand/session.py`): this suite

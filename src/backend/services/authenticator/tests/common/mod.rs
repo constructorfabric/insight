@@ -10,7 +10,7 @@
 //!
 //! Only requests whose origin matches `$AUTH_BASE` / `$AUTH_BASE_DISABLED`
 //! (the two authenticator instances) are recorded: the same client also talks
-//! to fakeidp and the service-token listener, and those must not pollute the
+//! to Keycloak and the service-token listener, and those must not pollute the
 //! ledger the authenticator spec is matched against. Each `cargo test --test
 //! e2e_*` invocation is its own process, and run-e2e.sh runs them serially, so
 //! the read-merge-write below needs no cross-process locking; the in-process
@@ -19,6 +19,8 @@
 // Each integration-test crate compiles its own copy of this module and none
 // uses the full surface.
 #![allow(dead_code)]
+
+pub mod kc;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;

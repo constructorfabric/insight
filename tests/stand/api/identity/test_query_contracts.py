@@ -37,6 +37,7 @@ from ..schemas import (
     Visibility,
     VisibilityList,
 )
+from .views import in_force
 
 PERSON_ROLES = identity_path("/v1/person-roles")
 VISIBILITY = identity_path("/v1/visibility")
@@ -90,7 +91,7 @@ def test_person_roles_filtered_by_person_shows_only_that_person(
     )
 
     theirs = _person_roles(client, f"?person={lead.uuid}&active=true")
-    assert [row for row in theirs.items if row.in_force] == [], (
+    assert [row for row in theirs.items if in_force(row)] == [], (
         f"?person={lead.uuid}&active=true returned {len(theirs.items)} grants in force "
         "for somebody who holds none"
     )
@@ -113,7 +114,7 @@ def test_person_roles_filtered_by_role_and_active_narrows_on_both(
 
     rows = _person_roles(client, f"?role={role_id}&active=true").items
     assert all(str(row.role_id) == role_id for row in rows), "the role filter was not applied"
-    assert all(row.in_force for row in rows), (
+    assert all(in_force(row) for row in rows), (
         "active=true returned a revoked grant — valid_to is set on at least one row"
     )
 
@@ -171,7 +172,7 @@ def test_visibility_filters_narrow_by_viewer_and_by_viewed(
         assert any(str(row.visibility_id) == grant_id for row in by_viewed), (
             "the grant is absent from a filter naming its target"
         )
-        assert all(row.in_force for row in by_viewed), "active=true returned a revoked grant"
+        assert all(in_force(row) for row in by_viewed), "active=true returned a revoked grant"
     finally:
         client.delete(f"{VISIBILITY}/{grant_id}")
 

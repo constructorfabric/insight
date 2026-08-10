@@ -1,6 +1,19 @@
 secrets/
 .env.local
 *.env.local
+# Host-only Python artefacts, kept out of the toolbox image the same way the
+# repo-root .dockerignore keeps them out of its contexts (Docker reads only the
+# one at the context root, so this tree needs its own copy). Load-bearing rather
+# than tidy: a host `.venv` under tools/seed carries macOS binaries that are
+# useless — and hundreds of megabytes — inside a Linux image, and a stale
+# `__pycache__` makes the container report HOST file paths.
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/*.egg-info/
 tools/declarative-connector/
 workflows/example-tenant/
 workflows/*/

@@ -22,6 +22,7 @@
   - [5.4 Contract Stability (p2)](#54-contract-stability-p2)
   - [5.5 FE Loop (p2)](#55-fe-loop-p2)
   - [5.6 Metric Registry (p3)](#56-metric-registry-p3)
+  - [5.7 Custom Metrics (p2)](#57-custom-metrics-p2)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
   - [6.1 NFR Inclusions](#61-nfr-inclusions)
   - [6.2 NFR Exclusions](#62-nfr-exclusions)
@@ -304,6 +305,18 @@ Each sanctioned metric **MUST** carry a human-readable passport — its source, 
 
 **Actors**: `cpt-presentation-actor-analytics-svc`, `cpt-presentation-actor-engineering`
 
+### 5.7 Custom Metrics (p2)
+
+#### Custom Metric CRUD and Export/Import
+
+- [x] `p2` - **ID**: `cpt-presentation-fr-custom-metrics-api`
+
+The system **MUST** allow an analyst to create, list, fetch, update, and delete custom metrics (`origin = 'custom'`) scoped to their tenant through a `/v1/metrics*` REST surface, and to export and import custom metric graphs between tenants. Builtin metrics (`origin = 'builtin'`) **MUST** be read-only through this API. A custom metric's observation source is custom SQL that **MUST** pass the single-SELECT gate (which also rejects external/remote table functions), **MUST** emit the observation contract (`tenant_id, source_key, entity_type, entity_id, metric_date, measure_key, observed_at, value, subject_key, dimensions`), and **MUST** be tenant-neutral and row-preserving — it exposes each source row's real `tenant_id` and does not fabricate it or aggregate across tenants (the outer tenant predicate filters emitted rows, not the tables read, so, as with the saved-query console, authorship is trusted and the surface is experiment-gated off on production); it executes as `presentation_ro`. Export **MUST** be portable — keyed on `metric_key`, carrying no `tenant_id` or timestamps — and import **MUST** re-home the tenant to the session and idempotently skip any `metric_key` that already exists, returning `{ imported, skipped }`. Import **MUST** be bounded to at most 500 graphs per request and **MUST** be all-or-nothing on validity: an invalid graph rejects the whole request with `400` and writes nothing.
+
+**Rationale**: An analyst can author and share a new metric without an engineering change or re-ingest, while builtins and the source stay safe by construction.
+
+**Actors**: `cpt-presentation-actor-analyst`, `cpt-presentation-actor-analytics-svc`
+
 ## 6. Non-Functional Requirements
 
 ### 6.1 NFR Inclusions
@@ -349,6 +362,18 @@ Contract reads for tenant A **MUST NOT** return rows from tenant B, regardless o
 **Stability**: unstable
 
 **Description**: CRUD and read-only run over saved queries, tenant-scoped. The one new surface Phase A adds. Detailed endpoint contracts live in DESIGN. (CRUD + run shipped in #1965; named parameters shipped in #1966.)
+
+**Breaking Change Policy**: Unstable in Phase A; contract hardens in a later phase.
+
+#### Custom-Metrics API
+
+- [x] `p2` - **ID**: `cpt-presentation-interface-custom-metrics-api`
+
+**Type**: REST API (HTTP/JSON)
+
+**Stability**: unstable
+
+**Description**: CRUD over custom metrics (`origin = 'custom'`) plus export/import of custom metric graphs, tenant-scoped. Builtins are read-only through this surface. Detailed endpoint contracts live in DESIGN.
 
 **Breaking Change Policy**: Unstable in Phase A; contract hardens in a later phase.
 

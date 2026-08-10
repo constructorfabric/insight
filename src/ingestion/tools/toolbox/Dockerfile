@@ -25,7 +25,11 @@ RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release
 # dbt-clickhouse
 RUN pip install --no-cache-dir dbt-clickhouse
 
-# Copy entire ingestion project
+# Copy the ingestion project, minus the sample-data seeder: this image runs
+# migrations against real stands, and a demo-data generator does not belong on
+# one. The exclusion lives in Dockerfile.dockerignore beside this file, so it
+# applies to THIS image only — the seeder's own image (tools/seed/Dockerfile)
+# builds from the same context and does carry it.
 COPY . /ingestion
 WORKDIR /ingestion
 

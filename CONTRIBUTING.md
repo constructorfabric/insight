@@ -20,7 +20,7 @@ files under `docs/components/<area>/specs/`.
    - [First-run wizard + re-runs](#first-run-wizard--re-runs)
    - [External MariaDB / ClickHouse](#external-mariadb--clickhouse)
    - [Frontend modes](#frontend-modes)
-   - [Local dev auth backend (fakeidp / Keycloak)](#local-dev-auth-backend-fakeidp--keycloak)
+   - [Local dev auth (Keycloak)](#local-dev-auth-keycloak)
    - [Backend image fallback (ghcr)](#backend-image-fallback-ghcr)
    - [Settings reference (`.env.compose`)](#settings-reference-envcompose)
 6. [Daily workflow](#daily-workflow)
@@ -30,7 +30,7 @@ files under `docs/components/<area>/specs/`.
 7. [Seeding](#seeding)
    - [Compose](#compose)
    - [Kubernetes](#kubernetes)
-8. [Dev auth chain (fakeidp)](#dev-auth-chain-fakeidp)
+8. [Dev auth chain (Keycloak)](#dev-auth-chain-keycloak)
 9. [Troubleshooting](#troubleshooting)
 10. [Code style and reviews](#code-style-and-reviews)
 
@@ -53,8 +53,8 @@ First-run wizard prompts (Enter accepts defaults):
 | --- | --- | --- |
 | Use local MariaDB? | Y | Compose starts mariadb on :3306 |
 | Use local ClickHouse? | Y | Compose starts clickhouse on :8123 |
-| `DEV_USER_EMAIL` | `dev@company.nonpresent` | FakeIdP login and dev-team lead in the seed roster |
-| Frontend mode | `1` (ghcr) | Pulls the published `insight-front:latest` image |
+| `DEV_USER_EMAIL` | `dev@company.nonpresent` | Keycloak login (realm roster anchor) and dev-team lead in the seed roster |
+| Frontend mode | `1` (ghcr) | Pulls the published `insight-frontend:latest` image |
 
 Then the script builds host artefacts, brings up the stack, auto-seeds
 the demo dataset (25 persons + ~24k ClickHouse rows across 16 silver
@@ -65,7 +65,7 @@ Open <http://localhost:3000>. `dev@company.nonpresent` leads the dev
 team; CEO sees the whole org tree. To use CEO more set email to `email_ceo@company.nonpresent`.
 
 > **Stuck after pulling an update?** The compose stack runs full auth
-> (fakeidp → authenticator → nginx gateway → downstream JWT verification;
+> (Keycloak → authenticator → nginx gateway → downstream JWT verification;
 > no `auth_disabled`). If a stale local config trips it up, wipe and
 > regenerate: `rm -f .env.compose && ./dev-compose.sh up` re-runs the
 > first-run wizard, and `./dev-compose.sh prune` additionally clears the
@@ -89,7 +89,7 @@ builder container.
 **K8s path** — also `kubectl`, `helm`, `kubeseal`, `yq`, `jq`, plus a
 local cluster (OrbStack with Kubernetes / k3d / kind / minikube). No
 frontend checkout needed — the umbrella chart pulls
-`ghcr.io/constructorfabric/insight-front:<tag>` from GHCR.
+`ghcr.io/constructorfabric/insight-frontend:<tag>` from GHCR.
 
 **Frontend checkout** — only needed for compose with
 `FRONTEND_MODE=dev` (Vite HMR) or `built` (host-built dist). The
@@ -157,8 +157,8 @@ Then the chain runs: `bootstrap → fetch-cert → seal → system →
 deploy-app`. Subsequent runs skip the wizard and reconcile the stack.
 
 K8s and compose can coexist — disjoint host ports by default. Demo-data
-seeding on k8s is manual (wizard output prints the port-forward +
-`deploy/seed/` recipe).
+seeding on k8s is one command
+(`src/ingestion/tools/seed/seed-stand.sh`, printed by the wizard).
 
 ### Kubernetes — non-interactive (CI)
 
@@ -180,11 +180,11 @@ cp environments/local/inventory.yaml.template environments/local/inventory.yaml
 cp environments/local/values.yaml.template environments/local/values.yaml
 # Edit:
 #   global.tenantDefaultId: <UUID>           # required for external DBs with seeded persons
-#   fakeidp.deploy: true                     # local sandbox IdP; set false + point
+#   keycloak.deploy: true                    # in-stack local IdP; set false + point
 #   authenticator.oidc.issuerUrl: <idp>      #   authenticator.oidc.* at a real IdP
 #   <l2>.host / <l2>.port                    # only when <l2>.deploy=false
 # The `__INGRESS_LB_IP__` placeholders (authenticator.oidc.issuerUrl,
-# fakeidp.issuer) must be replaced with your ingress-nginx LoadBalancer IP
+# keycloak.hostname) must be replaced with your ingress-nginx LoadBalancer IP
 # (`kubectl -n ingress-nginx get svc ingress-nginx-controller`).
 
 # 3. Cleartext secret store (read by `make seal`, never committed).
@@ -217,7 +217,7 @@ every Deployment is Ready before the chain returns.
 │  Backend                                                              │
 │  gateway (nginx :8080)  analytics (Rust :8081)                       │
 │  identity-resolution (Rust :8086)                                    │
-│  authenticator (Rust :8083/:8093)  fakeidp (Rust :8084, dev-only)    │
+│  authenticator (Rust :8083/:8093)  keycloak (:8085, dev IdP)         │
 ├──────────────────────────────────────────────────────────────────────┤
 │  Infra                                                                │
 │  MariaDB :3306  ClickHouse :8123/:9000  Redis :6379  Redpanda :19092…│
@@ -282,27 +282,12 @@ wizard. To use it, hand-edit `FRONTEND_MODE=built` in `.env.compose`,
 ./dev-compose.sh up --no-frontend                  # backend-only
 ```
 
-### Local dev auth backend (fakeidp / Keycloak)
+### Local dev auth (Keycloak)
 
-The `authenticator` service's login always runs the same BFF code path — only
-the IdP behind it changes. Select it with **`AUTH_MODE` in `.env.compose`**
-(a persisted setting like `FRONTEND_MODE`):
+Auth always runs via Keycloak: a real Keycloak container with an actual login
+form, exercising the genuine OIDC code path.
 
-- `fakeidp` (default) — a tiny in-repo test double, no login screen, no setup.
-- `keycloak` — a real Keycloak container with an actual login form, for
-  exercising the genuine OIDC code path.
-
-```dotenv
-# .env.compose
-AUTH_MODE=keycloak
-```
-
-```bash
-./dev-compose.sh up            # reads AUTH_MODE from .env.compose
-./dev-compose.sh up --auth=keycloak   # optional per-run override
-```
-
-In keycloak mode the authenticator logs in server-side against the pre-seeded
+The authenticator logs in server-side against the generated
 realm's `insight-authenticator` confidential client; the SPA stays cookie/BFF (no
 special frontend build), and dev-compose points both the browser and the
 authenticator at a host-IP Keycloak issuer so the id_token `iss` validates. See
@@ -413,7 +398,7 @@ watchexec wants, and `useradd -m` ensures `appuser` has a usable
 
 ```bash
 # Tail logs
-docker compose logs -f gateway authenticator analytics identity-resolution fakeidp
+docker compose logs -f gateway authenticator analytics identity-resolution keycloak
 
 # Inspect databases
 docker compose exec mariadb mariadb -uinsight -pinsight-local identity
@@ -436,16 +421,16 @@ they're slow to re-pull). After prune, next `up` re-runs the wizard.
 ### Point the authenticator at a real IdP
 
 Auth is **always on** — there is no bypass. Local dev logs in against the
-in-repo `fakeidp` OIDC provider by default. The authenticator is
-IdP-agnostic, so switching to a real IdP (Entra, Keycloak, …) is a
-config change, not a mode flip:
+bundled Keycloak (realm generated from the seed roster) by default. The
+authenticator is IdP-agnostic, so switching to a real IdP (Entra, an
+external Keycloak, …) is a config change, not a mode flip:
 
 - **Compose** — set `AUTHENTICATOR_OIDC_ISSUER` (plus `OIDC_CLIENT_ID` /
   `OIDC_CLIENT_SECRET` and `AUTHENTICATOR_REDIRECT_URI`) in `.env.compose`
-  and bounce the `authenticator`. Leaving them unset falls back to
-  `http://fakeidp:8084`.
+  and bounce the `authenticator`. Leaving them unset keeps the default:
+  the bundled Keycloak realm at `http://<host-ip>:8085/kc/realms/insight`.
 - **K8s** — set `authenticator.oidc.issuerUrl` (+ `clientId` /
-  `redirectUri`) in the values overlay and set `fakeidp.deploy: false`.
+  `redirectUri`) in the values overlay and set `keycloak.deploy: false`.
 
 > **redirect/issuer: local uses `localhost`, remote needs a real host.** On local
 > k8s `issuerUrl` is the ingress LB IP (e.g. `http://192.168.139.2/kc/realms/insight`)
@@ -463,16 +448,20 @@ config change, not a mode flip:
 > svc/insight-gateway 8080:80` and use `http://localhost:8080`.
 
 See ADR
-[`docs/components/backend/authenticator/specs/ADR/0001-per-environment-idp-selection.md`](docs/components/backend/authenticator/specs/ADR/0001-per-environment-idp-selection.md)
-for the per-environment IdP selection rationale.
+[`docs/components/backend/authenticator/specs/ADR/0003-keycloak-identity-broker.md`](docs/components/backend/authenticator/specs/ADR/0003-keycloak-identity-broker.md)
+for the per-environment IdP rationale (Keycloak as the issuer everywhere).
 
 ---
 
 ## Seeding
 
-The seed package lives in [`deploy/seed/`](deploy/seed/) — its
-README documents the ruff / mypy / venv setup. Both deploy paths use
-the same package; only how it's invoked differs.
+The seeder lives in [`src/ingestion/tools/seed/`](src/ingestion/tools/seed/):
+the `insight_seed` package, its `tests/`, and the artifacts it writes. Its
+README documents the layout and the uv / ruff / mypy setup. Both deploy paths
+install the package and run the same program (`insight-seed <step>`); only how
+it is invoked differs. Generating the compose Keycloak realm also runs from that
+package (`insight-seed-realm`, via `uv run`), so `uv` is a prerequisite for
+`./dev-compose.sh up`.
 
 **Identity content (after `seed identity`):** CEO, your
 `DEV_USER_EMAIL` person (leads the dev team), 4 team leads (dev /
@@ -483,10 +472,10 @@ the whole tree.
 
 **Silver content (after `seed silver`):** bronze + silver placeholder
 tables, every `src/ingestion/scripts/migrations/*.sql` applied
-(produces the `insight.*` gold views), ~24k rows across 16 silver
+(produces the `insight.*` gold views), ~29k rows across 19 silver
 tables profile-typed per team (`class_git_*` for devs, `class_crm_*`
 for sales, …). The full per-team activity table is in
-[`deploy/seed/profiles.py`](deploy/seed/profiles.py). analytics's
+[`insight_seed/profiles.py`](src/ingestion/tools/seed/insight_seed/profiles.py). analytics's
 schema validator flips from "80 metrics error" to "80 ok".
 
 ### Compose
@@ -506,68 +495,55 @@ To force auto-seed on next `up`, clear the `SEEDED_LOCAL_*` markers in
 
 ### Kubernetes
 
-No auto-seed. The chart doesn't ship a `seed` Job, so you point the
-same Python package at port-forwarded L2 services from the host. One
-recipe per re-seed:
+No auto-seed, but one command. The seeder runs from the `insight-seed`
+image the release already pins, so nothing is built or port-forwarded:
 
 ```bash
-# 1. Port-forward MariaDB + ClickHouse in the background.
-KUBECONFIG=/path/to/config.yaml kubectl -n insight-infra \
-  port-forward svc/mariadb 3306:3306 &
-KUBECONFIG=/path/to/config.yaml kubectl -n insight-infra \
-  port-forward svc/clickhouse 8123:8123 &
+export KUBECONFIG=/path/to/config.yaml
+./src/ingestion/tools/seed/seed-stand.sh -n insight --email you@example.com
 
-# 2. Run the seed package against them. First time only: bootstrap a venv.
-cd deploy/seed
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-
-# Identity + silver. Drop `all` and pass `identity` / `silver` for partial.
-# Schema inputs (placeholders script + gold-view migrations) are
-# auto-located: the container bind-mount when present, otherwise
-# repo-relative to deploy/seed. No path env vars needed.
-MARIADB_HOST=127.0.0.1     MARIADB_PORT=3306 \
-MARIADB_USER=insight       MARIADB_PASSWORD=insight-local \
-CLICKHOUSE_HOST=127.0.0.1  CLICKHOUSE_HTTP_PORT=8123 \
-CLICKHOUSE_USER=insight    CLICKHOUSE_PASSWORD=insight-local \
-DEV_USER_EMAIL=dev@company.nonpresent \
-  .venv/bin/python seed.py all
-
-# 3. Kick analytics so its schema validator re-runs against the
-#    now-populated silver tables. Without this, schema_status stays
-#    cached at boot-time 'table_not_found' and the FE shows "no peer
-#    data" everywhere (cf/insight#1307).
-KUBECONFIG=/path/to/config.yaml kubectl -n insight \
-  rollout restart deploy/insight-analytics
-
-# 4. Stop the port-forwards.
-kill %1 %2
+# Kick analytics so its schema validator re-runs against the
+# now-populated silver tables. Without this, schema_status stays
+# cached at boot-time 'table_not_found' and the FE shows "no peer
+# data" everywhere (cf/insight#1307).
+kubectl -n insight rollout restart deploy/insight-analytics
 ```
 
-Use the real cluster credentials in place of `insight-local` if you
-switched to external DBs at wizard time — the values are whatever the
-operator stored in `secrets-store.yaml` and `make seal` baked into the
-cluster's `mariadb-creds` / `clickhouse-creds` Secrets.
+The script reads the stand's coordinates from its own ConfigMap and
+Secrets — hosts, databases, tenant, image — renders
+[`seed-job.yaml.tpl`](src/ingestion/tools/seed/seed-job.yaml.tpl) into a
+one-shot Job and follows it. `--dry-run` prints that Job instead of
+applying it; `--step identity|silver|analytics` runs one step. No
+credential passes through the shell: the Job reads the release's own
+`insight-db-creds` by key, as the application MariaDB user.
 
-The seeded `DEV_USER_EMAIL` must match FakeIdP's login identity so the
-authenticator can resolve it to a person row.
+`--email` must name a user that already exists in the stand's IdP — the
+authenticator resolves people by the email claim, so a seeded persona
+nobody can authenticate as is not reachable.
+
+Seeding refuses rather than mixing: a tenant already holding `persons`
+rows the seeder did not write, or silver tables holding another tenant's
+rows (the silver step TRUNCATEs before writing), both stop the run.
+`--force` overrides, deliberately.
 
 ---
 
-## Dev auth chain (fakeidp)
+## Dev auth chain (Keycloak)
 
 Auth is **always on** (NGINX_BFF EPIC #1583) — there is no no-auth mode.
 Every request that reaches a backend carries an ES256 gateway JWT that
 the `gateway` (nginx / OpenResty) injects after the `authenticator`
-confirms a valid session. Local dev logs in against `fakeidp`, an
-in-repo dev-only OIDC provider, so the real login code path runs with no
-external IdP.
+confirms a valid session. Local dev logs in against the bundled Keycloak
+container (realm generated from the seed roster on every `up`), so the
+real login code path runs with no external IdP.
 
 ```text
 1. Browser   → GET /auth/login on the gateway (:8080). The authenticator
                starts an OIDC authorization-code + PKCE flow and 302s to
-               fakeidp's /authorize.
-2. fakeidp   → no login screen: mints a one-time code for the default
-               user (DEV_USER_EMAIL) and 302s back to /auth/callback.
+               Keycloak's /authorize (a real login form).
+2. Keycloak  → the user signs in as any seeded persona (password
+               `insight-dev`); Keycloak mints a one-time code and 302s
+               back to /auth/callback.
 3. Gateway   → /auth/callback → authenticator exchanges the code for
                tokens, resolves the person in identity, opens an opaque
                session in Redis, and sets the `__Host-sid` cookie.
@@ -591,29 +567,33 @@ things a browser needs that curl doesn't are handled automatically:
   `http://localhost:3000/auth/callback` (the Vite origin, which proxies `/auth` +
   `/api` to the gateway) — never the authenticator's own `:8083`, where the
   cookie would strand.
-- **The fakeidp issuer is a host IP, not a hostname.** `./dev-compose.sh up`
-  auto-detects your host IP and sets `FAKEIDP_ISSUER` + `AUTHENTICATOR_OIDC_ISSUER`
-  to `http://<host-ip>:8084`. A hostname (`fakeidp:8084`) gets HTTPS-upgraded by
-  the browser and fails (fakeidp is http-only); `localhost` means the container
-  itself. An IP literal is reached un-upgraded by the browser and by the
-  containers alike. (curl/e2e flows run inside the compose network, so when no
-  issuer is set they fall back to `fakeidp:8084` and don't need this.)
+- **The Keycloak issuer is a host IP, not a hostname.** `./dev-compose.sh up`
+  auto-detects your host IP and sets `KEYCLOAK_HOSTNAME` +
+  `AUTHENTICATOR_OIDC_ISSUER` to `http://<host-ip>:8085/kc/realms/insight`.
+  A hostname (`keycloak:8085`) only resolves inside the compose network, and
+  `localhost` means the container itself — an IP literal is reachable by the
+  browser and by the containers alike, so the id_token `iss` validates on
+  both sides of the flow.
 
 So a dev call succeeds when:
 
-- The stack is up with `fakeidp` (default profile) and the authenticator
+- The stack is up with the `keycloak` container (profile `auth-keycloak`,
+  started by `up`) and the authenticator
   dev signing key + authn-tls cert exist (generated by `dev-compose.sh up`).
 - A row in `persons` has `value_type='email'` and `value_id` matching
-  `DEV_USER_EMAIL` (run `./dev-compose.sh seed identity` — fakeidp's
-  default login resolves to that seeded person).
+  the login email (run `./dev-compose.sh seed identity` — the Keycloak
+  realm and the identity seed are generated from the same roster, so
+  every realm user resolves to a seeded person).
 - The gateway's `routes.yaml` proxies `/api/{prefix}` to the right
   upstream (`deploy/compose/gateway/routes.yaml`).
 
 To drive it from the host with `curl` (or a browser), start at
 `http://localhost:8080/auth/login` and follow the redirects with a cookie
-jar so the `__Host-sid` cookie is captured; subsequent `/api/*` calls
-reuse that session. `fakeidp` itself exposes a copy-paste code+PKCE flow
-in `src/backend/services/fakeidp/README.md` for exercising it directly.
+jar so the `__Host-sid` cookie is captured (the Keycloak form takes a
+seeded email + the `insight-dev` password); subsequent `/api/*` calls
+reuse that session. See
+[`deploy/compose/keycloak/README.md`](deploy/compose/keycloak/README.md)
+for login creds, the admin console, and the custom-claims contract.
 
 ---
 
@@ -642,7 +622,7 @@ plugin needs the authn-tls discovery cert
 re-run `up` (or `prune` then `up`) so the key/cert are regenerated.
 
 **Login returns 403 / "person not found".**
-`fakeidp`'s default login identity (`DEV_USER_EMAIL`) must resolve
+The email you log in with (e.g. `DEV_USER_EMAIL`) must resolve
 to a seeded person in identity. Run `./dev-compose.sh seed identity`
 first — an unknown person is denied.
 

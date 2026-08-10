@@ -4,20 +4,20 @@ Two halves, and a reader should be able to tell which one they are in:
 
 * `common.py` — the error envelope and the listing wrapper, hand-written from
   the bodies the stand returns.
-* `identity.py` — hand-written from the Rust DTOs in
-  `src/backend/services/identity-resolution/src/api/`. **Not** generated,
-  because the committed contract for that service is still the .NET document:
-  it declares `/v1/persons/{email}` (which identity answers 404 for), declares
-  `POST /v1/persons-seed` (405), spells the
-  subchart parameter `{personId}` where the service serves `{person_id}`, omits
-  both persons-sync operations, and lists only `200` for all 18 operations.
-  Generating from it would record every one of those errors as fact.
-* `analytics.py`, `authenticator.py` — GENERATED from documents the services
-  emit themselves (`cargo run -p <service> -- openapi`) and CI drift-gates in
-  `.github/workflows/openapi-specs.yml`, so the models describe the very structs
-  that serialize the wire. `authenticator.py` is currently just the error
-  envelope, because that document declares every `/auth/*` success body as a bare
-  `type: object`.
+* `identity_internal.py` — hand-written from the Rust DTO, because the two
+  `/internal/persons/*` S2S routes are registered raw and stay out of the
+  generated document by design.
+* `analytics.py`, `authenticator.py`, `identity.py` — GENERATED from documents
+  the services emit themselves (`cargo run -p <service> -- openapi`) and CI
+  drift-gates in `.github/workflows/openapi-specs.yml`, so the models describe
+  the very structs that serialize the wire. `authenticator.py` is currently just
+  the error envelope, because that document declares every `/auth/*` success
+  body as a bare `type: object`.
+
+  The generated identity models carry the contract's names — `SubchartResponse`,
+  `ProfileResponse` — where the hand-written module said `Subchart`, `Profile`.
+  This package re-exports them under the names the suite already uses, so the
+  rename stops here.
 
   **Bodies from the spec; status codes never.** The per-operation status-code
   lists are stamped uniformly by `.standard_errors` and describe nothing (#1669)
@@ -26,9 +26,8 @@ Two halves, and a reader should be able to tell which one they are in:
 
 That asymmetry is a real difference in what the models mean. The generated ones
 are a **contract test** — a mismatch says the service and its published contract
-disagree. The hand-written ones are a **description of observed behaviour**, and
-they should be deleted in favour of generated ones once the identity contract is
-regenerated from the service.
+disagree. The hand-written ones are a **description of observed behaviour**, kept
+only where no document describes the route at all.
 
 The strictness follows from that. Generated models set `extra="forbid"`: they are
 regenerated in the same change that adds a field, so strictness costs nothing and
@@ -42,6 +41,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from .analytics import (
+    CustomMetric,
+    CustomMetricInput,
+    CustomMetricListResponse,
+    CustomMetricSummary,
+    ExportCustomMetricsResponse,
+    ImportCustomMetricsRequest,
+    ImportCustomMetricsResponse,
     MetricDefinitionListResponse,
     MetricResultsResponse,
     RunResponse,
@@ -58,32 +64,73 @@ from .common import (
     ProblemDocument,
 )
 from .identity import (
-    IdentityValue,
-    Operation,
-    OperationList,
-    PersonRole,
-    PersonRoleList,
-    Profile,
-    Role,
-    RoleList,
-    Subchart,
-    SubchartForest,
+    AccountBindingResponse,
+    AttentionResponse,
+    CorrectionResponse,
+    PersonAccountsResponse,
     SubchartNode,
-    Visibility,
-    VisibilityList,
-    VisiblePersons,
 )
+from .identity import (
+    PersonRoleListResponse as PersonRoleList,
+)
+from .identity import (
+    PersonRoleResponse as PersonRole,
+)
+from .identity import (
+    PersonsSeedListResponse as SeedOperationList,
+)
+from .identity import (
+    PersonsSeedOperationResponse as Operation,
+)
+from .identity import (
+    PersonsSyncListResponse as SyncOperationList,
+)
+from .identity import (
+    ProfileResponse as Profile,
+)
+from .identity import (
+    RoleListResponse as RoleList,
+)
+from .identity import (
+    RoleResponse as Role,
+)
+from .identity import (
+    SubchartForestResponse as SubchartForest,
+)
+from .identity import (
+    SubchartResponse as Subchart,
+)
+from .identity import (
+    VisibilityListResponse as VisibilityList,
+)
+from .identity import (
+    VisibilityResponse as Visibility,
+)
+from .identity import (
+    VisiblePersonsResponse as VisiblePersons,
+)
+from .identity_internal import IdentityValue
 
 __all__: Sequence[str] = (
     "EXTRACTOR_REJECTION_CONTENT_TYPE",
     "PROBLEM_CONTENT_TYPE",
+    "AccountBindingResponse",
+    "AttentionResponse",
+    "CorrectionResponse",
+    "CustomMetric",
+    "CustomMetricInput",
+    "CustomMetricListResponse",
+    "CustomMetricSummary",
+    "ExportCustomMetricsResponse",
     "IdentityValue",
+    "ImportCustomMetricsRequest",
+    "ImportCustomMetricsResponse",
     "ListResponse",
     "MetricDefinitionListResponse",
     "MetricResultsResponse",
     "Operation",
-    "OperationList",
     "PeriodView",
+    "PersonAccountsResponse",
     "PersonRole",
     "PersonRoleList",
     "ProblemDocument",
@@ -93,9 +140,11 @@ __all__: Sequence[str] = (
     "RunResponse",
     "SavedQuery",
     "SavedQueryListResponse",
+    "SeedOperationList",
     "Subchart",
     "SubchartForest",
     "SubchartNode",
+    "SyncOperationList",
     "Visibility",
     "VisibilityList",
     "VisiblePersons",

@@ -1,18 +1,23 @@
 spec_version: 1
 description: >
-  Task Delivery - tasks_completed - JIRA, IC Bullet Task Delivery (...0011),
-  department-of-5 distribution + 6 stats in a single custom window.
+  Task Delivery - issues closed and their split by issue type - JIRA,
+  department-of-5 distribution in a single custom window.
 
   bronze -> silver -> gold: jira_issue (Closed) + jira_issue_history
-  (Status->Closed event = the close date / metric_date) + jira_user. jira-enrich
-  -> one closed task per issue; jira_closed_tasks: tasks_closed = count();
-  the ...0011 query_ref sums it per person over the window (value = the requested
-  member's OWN sum; median/p25/p75/range = the department (org_unit_id)
-  distribution).
+  (Status->Closed event = the close date / metric_date) + jira_user +
+  jira_issuetypes. One closed issue per issue; tasks_closed counts every one of
+  them regardless of type, and each carries its type as a breakdown dimension
+  resolved through the issue-type dimension. Summed per person over the window
+  (value = the requested member's OWN sum; median/p25/p75/range = the department
+  (org_unit_id) distribution).
 
   Department: 5 Engineering members alice..erin of rank r in 1..5, each closing r
-  Tasks on the same close date (2026-12-25). The custom window 2026-12-20..12-31
+  issues on the same close date (2026-12-25). The custom window 2026-12-20..12-31
   captures them all -> per-person sums {1,2,3,4,5}; the IC case requests erin (5).
+  Erin's five are 3 Task + 1 Bug + 1 Incident, so her total splits into three
+  type groups that add back up to 5 — and Incident, a name neither configured
+  list covers, stays its own group instead of joining the non-bug work: 1 bug +
+  3 non-bug is one short of the 5 closed, and the missing one is the Incident.
   Empty window 2026-06 -> no items.
 
 bronze:
@@ -34,6 +39,11 @@ bronze:
     - $ref: templates/jira_task.yaml#/templates/status_open
     - $ref: templates/jira_task.yaml#/templates/status_in_progress
     - $ref: templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_issuetypes:
+    - $ref: templates/jira_task.yaml#/templates/issuetype_task
+    - $ref: templates/jira_task.yaml#/templates/issuetype_bug
+    - $ref: templates/jira_task.yaml#/templates/issuetype_unclassified
 
   bronze_jira.jira_fields:
     - $ref: templates/jira_task.yaml#/templates/field_status
@@ -144,14 +154,14 @@ bronze:
       unique_key: jira-test-TEW-4
       id_readable: TEW4
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10000","name":"Bug"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
     - $ref: templates/jira_task.yaml#/templates/jira_issue
       id: TEW-5
       jira_id: TEW-5
       unique_key: jira-test-TEW-5
       id_readable: TEW5
       created: "2026-01-05T09:00:00"
-      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
+      custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10099","name":"Incident"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'
 
   bronze_jira.jira_issue_history:
     # ── Alice Alpha (rank 1) ──
@@ -279,6 +289,9 @@ cases:
               - { view: period }
               - { view: peer }
               - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [type] }
+          - { metric_key: tasks.bugs_fixed, views: [{ view: period }] }
+          - { metric_key: tasks.closed_non_bug, views: [{ view: period }] }
     expect:
       - assert: "status == 200"
       - metric: tasks.closed
@@ -292,6 +305,26 @@ cases:
       - metric: tasks.closed
         view: timeseries
         assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-25' && double(p.value) == 5.0))"
+      - metric: tasks.closed
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'type' && d.value == 'Task') && double(v.value) == 3.0)"
+      - metric: tasks.closed
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'type' && d.value == 'Bug') && double(v.value) == 1.0)"
+      - metric: tasks.closed
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'type' && d.value == 'Incident') && double(v.value) == 1.0)"
+      - metric: tasks.closed
+        view: breakdown
+        assert: "size(items.filter(v, v.entity_id == 'erin@example.com')) == 3"
+      - metric: tasks.bugs_fixed
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 1 }
+      - metric: tasks.closed_non_bug
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 3 }
 
   - name: tasks.closed empty window
     request:

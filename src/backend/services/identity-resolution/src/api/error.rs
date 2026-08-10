@@ -31,3 +31,7 @@ pub struct VisibilityError;
 
 #[resource_error("gts.cf.insight.identity_resolution.subchart.v1~")]
 pub struct SubchartError;
+
+/// Operator identity corrections (bind / merge / detach / exclude).
+#[resource_error("gts.cf.insight.identity_resolution.correction.v1~")]
+pub struct CorrectionError;

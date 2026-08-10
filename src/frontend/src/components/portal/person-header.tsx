@@ -36,14 +36,25 @@ export function PersonHeader({ person }: { person: string }) {
   // Ids, not emails, since the identity cutover: the same key the route
   // segment, `?scope=` and the metric entity ids carry.
   const supervisorPersonId = data?.parent_person_id ?? null;
-  // Fetch the manager to enumerate siblings; the query self-disables on "".
-  const { data: manager } = useIcPerson(supervisorPersonId ?? "");
   // Every node the org scope can actually resolve to — identity serves the
   // viewer only their own subtree, so anything outside it is unreachable.
   const { managerNodes } = useOrgScope();
   const scopeRoots = useMemo(
     () => new Set(managerNodes.map((n) => n.person_id.toLowerCase())),
     [managerNodes],
+  );
+  // A person ABOVE the viewer is not theirs to open. Identity's visibility rule
+  // serves a viewer their own subtree, and offering a link out of it invites a
+  // request the viewer must not have answered — the analytics read path does
+  // not enforce this on its own (constructorfabric/insight#1995), so the UI
+  // must not hand out the invitation.
+  const canSeeSupervisor = supervisorPersonId
+    ? scopeRoots.has(supervisorPersonId.toLowerCase())
+    : false;
+  // Siblings come from the manager's own record, so the same rule gates the
+  // fetch: no manager, no query. It self-disables on "".
+  const { data: manager } = useIcPerson(
+    canSeeSupervisor && supervisorPersonId ? supervisorPersonId : "",
   );
 
   if (!data) return null;
@@ -146,7 +157,7 @@ export function PersonHeader({ person }: { person: string }) {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        {supervisorPersonId && supervisorName ? (
+        {canSeeSupervisor && supervisorPersonId && supervisorName ? (
           <Button
             variant="ghost"
             size="sm"

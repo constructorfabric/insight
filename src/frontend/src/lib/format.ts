@@ -50,6 +50,26 @@ export function formatMetricValue(
   return unit ? `${s} ${unit}` : s;
 }
 
+/**
+ * The value split into what a column of digits shows and what sits beside it.
+ *
+ * `formatMetricNumber` + `metricDisplayUnit` do NOT compose back into
+ * `formatMetricValue`: a percent loses its sign, because the suffix lives in
+ * the value formatter and the unit helper reports none. A split that drops a
+ * "%" turns 50% into 50 — a different number, not a shorter one.
+ */
+export function splitMetricValue(
+  v: number,
+  fmt: MetricFormat,
+  unit?: string | null,
+): { number: string; unit: string } {
+  const number = formatMetricNumber(v, fmt);
+  if (fmt === "percent") return { number, unit: "%" };
+  // Currency carries its symbol inside the number.
+  if (fmt === "currency") return { number, unit: "" };
+  return { number, unit: unit ?? "" };
+}
+
 /** Unit rendered beside the number; none when the number carries it. */
 export function metricDisplayUnit(
   fmt: MetricFormat,

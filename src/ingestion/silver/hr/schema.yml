@@ -33,6 +33,67 @@ models:
         tests:
           - not_null
 
+  - name: class_person_attribute_claims
+    description: >
+      Unified person-attribute claim history from all HR and directory
+      sources. One row per (source account, field, transition): claim_action
+      'set' records a non-empty value taking effect at observed_at, 'clear'
+      records the source delivering an empty value. Claims are keyed by stable
+      source account and deliberately carry no canonical person_id — account
+      facts stay independent of person assignment, which is joined at query
+      time. History starts at the first retained snapshot observation. A clear
+      is emitted only from a delivered record; record absence from a sync
+      never closes values (no sync-completeness signal exists).
+    columns:
+      - name: unique_key
+        description: "{tenant}-{source_instance}-{source_type}-{account}-{field}-{observed_at_ms} per the project unique_key formula; the observation instant is the version axis"
+        tests:
+          - not_null
+      - name: insight_tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: insight_source_type
+        description: "Source system discriminator (bamboohr, workday, ms-entra, active-directory)"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Source instance identifier"
+        tests:
+          - not_null
+      - name: source_account_id
+        description: "Stable native source-account identifier"
+        tests:
+          - not_null
+      - name: field_id
+        description: >
+          Source field key exactly as delivered (e.g. jobTitle,
+          Supervisory_Organization, customFunctionalTeam). Fields from
+          different source instances remain separate definitions downstream.
+        tests:
+          - not_null
+      - name: value_id
+        description: "Immutable source value identifier when the source exposes one; NULL for all current HR sources"
+      - name: value_label
+        description: "Exact source value; empty string on clear claims"
+      - name: claim_action
+        description: "set = value takes effect; clear = source emptied the field"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['set', 'clear']
+      - name: observed_at
+        description: "When this version was captured (snapshot _tracked_at)"
+        tests:
+          - not_null
+      - name: ingested_at
+        description: "Airbyte extraction time of the snapshot row that produced the claim"
+        tests:
+          - not_null
+      - name: _version
+        description: "toUnixTimestamp64Milli(observed_at) — deterministic per claim, drives RMT dedup and the per-instance incremental watermark"
+
   - name: class_hr_events
     description: "Unified HR events (leave, on-leave, etc.) from all HR sources"
     columns:

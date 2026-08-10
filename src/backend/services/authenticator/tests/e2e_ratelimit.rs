@@ -1,5 +1,5 @@
 //! End-to-end layer-2 rate limiting (nginx+auth step 10, item 6) against a
-//! running authenticator + fakeidp + Redis.
+//! running authenticator + Keycloak + Redis.
 //!
 //! ```text
 //! AUTH_BASE=http://localhost:8083 \
@@ -26,53 +26,12 @@ fn client() -> common::Client {
     common::client()
 }
 
-fn rewrite_host(url: &str) -> String {
-    match (
-        std::env::var("FAKEIDP_REWRITE_FROM"),
-        std::env::var("FAKEIDP_REWRITE_TO"),
-    ) {
-        (Ok(from), Ok(to)) if !from.is_empty() => url.replace(&from, &to),
-        _ => url.to_owned(),
-    }
-}
-
 fn cookie_from(resp: &reqwest::Response) -> Option<String> {
-    for hv in resp.headers().get_all(reqwest::header::SET_COOKIE) {
-        let raw = hv.to_str().ok()?;
-        for part in raw.split(';') {
-            if let Some(v) = part.trim().strip_prefix(&format!("{COOKIE}="))
-                && !v.is_empty()
-            {
-                return Some(v.to_owned());
-            }
-        }
-    }
-    None
+    common::kc::session_cookie(resp)
 }
 
 async fn login(http: &common::Client, auth_base: &str, user: &str) -> String {
-    let login = http
-        .get(format!("{auth_base}/auth/login"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(login.status(), 302);
-    let authorize = rewrite_host(login.headers()[reqwest::header::LOCATION].to_str().unwrap());
-    let sep = if authorize.contains('?') { '&' } else { '?' };
-    let authorized = http
-        .get(format!("{authorize}{sep}user={user}"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(authorized.status(), 302);
-    let callback = rewrite_host(
-        authorized.headers()[reqwest::header::LOCATION]
-            .to_str()
-            .unwrap(),
-    );
-    let cb = http.get(&callback).send().await.unwrap();
-    assert_eq!(cb.status(), 302);
-    cookie_from(&cb).expect("callback must set __Host-sid")
+    common::kc::login(http, auth_base, user).await
 }
 
 async fn get_csrf(http: &common::Client, auth_base: &str, token: &str) -> String {
@@ -110,7 +69,7 @@ async fn refresh(
 }
 
 #[tokio::test]
-#[ignore = "requires a running authenticator + fakeidp + Redis stack"]
+#[ignore = "requires a running authenticator + Keycloak + Redis stack"]
 async fn refresh_and_callback_buckets_trip_past_burst() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
     let test_user = env("E2E_USER", "dev@company.nonpresent");

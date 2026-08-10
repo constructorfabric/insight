@@ -5,25 +5,27 @@ date: 2026-05-12
 
 # Technical Design — Deployment
 
-## Table of Contents
+<!-- toc -->
 
-1. [1. Architecture Overview](#1-architecture-overview)
-   - [1.1 Architectural Vision](#11-architectural-vision)
-   - [1.2 Architecture Drivers](#12-architecture-drivers)
-   - [1.3 Architecture Layers](#13-architecture-layers)
-2. [2. Principles & Constraints](#2-principles--constraints)
-   - [2.1 Design Principles](#21-design-principles)
-   - [2.2 Constraints](#22-constraints)
-3. [3. Technical Architecture](#3-technical-architecture)
-   - [3.1 Domain Model](#31-domain-model)
-   - [3.2 Component Model](#32-component-model)
-   - [3.3 API Contracts](#33-api-contracts)
-   - [3.4 Internal Dependencies](#34-internal-dependencies)
-   - [3.5 External Dependencies](#35-external-dependencies)
-   - [3.6 Interactions & Sequences](#36-interactions--sequences)
-   - [3.7 Database schemas & tables](#37-database-schemas--tables)
-4. [4. Additional context](#4-additional-context)
-5. [5. Traceability](#5-traceability)
+- [1. Architecture Overview](#1-architecture-overview)
+  - [1.1 Architectural Vision](#11-architectural-vision)
+  - [1.2 Architecture Drivers](#12-architecture-drivers)
+  - [1.3 Architecture Layers](#13-architecture-layers)
+- [2. Principles & Constraints](#2-principles--constraints)
+  - [2.1 Design Principles](#21-design-principles)
+  - [2.2 Constraints](#22-constraints)
+- [3. Technical Architecture](#3-technical-architecture)
+  - [3.1 Domain Model](#31-domain-model)
+  - [3.2 Component Model](#32-component-model)
+  - [3.3 API Contracts](#33-api-contracts)
+  - [3.4 Internal Dependencies](#34-internal-dependencies)
+  - [3.5 External Dependencies](#35-external-dependencies)
+  - [3.6 Interactions & Sequences](#36-interactions--sequences)
+  - [3.7 Database schemas & tables](#37-database-schemas--tables)
+- [4. Additional context](#4-additional-context)
+- [5. Traceability](#5-traceability)
+
+<!-- /toc -->
 
 ## 1. Architecture Overview
 
@@ -522,14 +524,13 @@ Per-tag artifacts are immutable; the Chart Publishing CI does not overwrite. GHC
 |----------|-------------|-----------|
 | `ENABLE_AUTO_RELOAD` | Wraps each backend entrypoint in `watchexec --restart` for ~1s reload. Compose-only — never set in a Kubernetes manifest. | stable |
 | `FRONTEND_MODE` | `ghcr` (published image, default), `dev` (Vite HMR from `src/frontend`), or `built` (host-built dist). | stable |
-| `AUTH_MODE` | `fakeidp` (default, in-repo test IdP) or `keycloak` (real login via a bundled Keycloak container — see [`deploy/compose/keycloak/README.md`](../../../../deploy/compose/keycloak/README.md)). Persisted here; a per-run `--auth` flag overrides it. | stable |
 | `<SVC>_IMAGE` | Pull a published image for a backend service instead of building it (e.g. `API_GATEWAY_IMAGE`). | stable |
 | `*_PORT` | Host port for each published service (Frontend :3000, gateway :8080, …); override on conflict. | stable |
 | `MARIADB_EXTERNAL` / `_HOST` / `_INTERNAL_PORT`, ClickHouse equivalents | Point the stack at an external DB instead of the bundled container. | stable |
 | `TENANT_DEFAULT_ID` | Tenant UUID used by the seed and the dev caller context. | stable |
 | `SEEDED_LOCAL_MARIA` / `SEEDED_LOCAL_CH` | First-run seed bookkeeping; clear to force a re-seed on next `up`. | stable |
 
-`.env.compose.example` documents the full settings contract. The stack is local-only; none of these settings reach the canonical chart values or any published artifact.
+`.env.compose.example` documents the full settings contract. Auth always runs via the bundled Keycloak container (realm generated from the seed roster — see [`deploy/compose/keycloak/README.md`](../../../../deploy/compose/keycloak/README.md)). The stack is local-only; none of these settings reach the canonical chart values or any published artifact.
 
 ### 3.4 Internal Dependencies
 

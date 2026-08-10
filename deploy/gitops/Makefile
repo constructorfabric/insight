@@ -337,24 +337,32 @@ local-wizard:
 	bash "$$WIZARD" --target=k8s-local
 
 .PHONY: keycloak-realm
-# ENV=local sandbox inputs for the in-stack Keycloak: generate the roster
-# realm (gen-realm.py) into the env realms dir — keycloak-broker-realms packs
-# it with the rest — and ensure the sandbox admin/placeholder Secret.
-# No-op unless keycloak.deploy=true.
+# ENV=local sandbox inputs for the in-stack Keycloak: generate the roster realm
+# into the env realms dir — keycloak-broker-realms packs it with the rest — and
+# ensure the sandbox admin/placeholder Secret. No-op unless keycloak.deploy=true.
+#
+# The generator lives in the seed package (it builds the realm from the same
+# roster the database seed writes) and runs as its installed entry point, so
+# this recipe needs uv. It also needs the tenant: the generator requires it
+# rather than defaulting, because a realm whose tenant claim differs from the
+# seeded rows authenticates users that then resolve to nobody.
 keycloak-realm: kube-ctx values-present
 	@set -e; \
 	if [ "$$(yq -r '.keycloak.deploy // false' $(VALUES))" != "true" ]; then \
 	  echo "$(C_YEL)skip$(C_RST) keycloak-realm (keycloak.deploy != true)"; exit 0; fi; \
-	GEN="$$(cd ../.. && pwd)/deploy/compose/keycloak/gen-realm.py"; \
+	SEED_DIR="$$(cd ../.. && pwd)/src/ingestion/tools/seed"; \
+	command -v uv >/dev/null 2>&1 || { echo "$(C_RED)uv is required to generate the Keycloak realm$(C_RST)"; exit 1; }; \
 	DIR=environments/$(ENV)/keycloak/realms; mkdir -p "$$DIR"; \
 	OUT="$$DIR/realm-insight.generated.json"; \
-	DEV_EMAIL="$$(yq -r '.fakeidp.devUserEmail // "dev@company.nonpresent"' $(VALUES))"; \
+	DEV_EMAIL="$$(yq -r '.keycloak.devUserEmail // "dev@company.nonpresent"' $(VALUES))"; \
 	REDIRECT="$$(yq -r '.authenticator.oidc.redirectUri // "http://localhost/auth/callback"' $(VALUES))"; \
 	AUTH_SECRET="$$(yq -r '.authenticator.oidc.clientSecret // "insight-authenticator-dev-secret"' $(VALUES))"; \
 	KC_BASE="$$(yq -r '.keycloak.hostname // ""' $(VALUES))"; \
 	LB_REDIRECT="$${KC_BASE%/kc}/auth/callback"; \
 	echo "$(C_GRN)→$(C_RST) generating Keycloak realm (dev-lead $$DEV_EMAIL; redirects $$REDIRECT, $$LB_REDIRECT)"; \
-	python3 "$$GEN" --dev-email "$$DEV_EMAIL" \
+	TENANT_ID="$$(yq -r '.global.tenantDefaultId // ""' $(VALUES))"; \
+	[ -n "$$TENANT_ID" ] || { echo "$(C_RED)global.tenantDefaultId is required to generate the realm$(C_RST)"; exit 1; }; \
+	TENANT_DEFAULT_ID="$$TENANT_ID" uv run --project "$$SEED_DIR" insight-seed-realm --dev-email "$$DEV_EMAIL" \
 	  --authenticator-redirect "$$REDIRECT" \
 	  --authenticator-redirect "$$LB_REDIRECT" \
 	  --authenticator-secret "$$AUTH_SECRET" \

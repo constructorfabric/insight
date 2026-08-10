@@ -1,4 +1,4 @@
-{% macro snapshot(source_ref, unique_key_col, check_cols, check_raw_data_cols=[]) %}
+{% macro snapshot(source_ref, unique_key_col, check_cols, check_raw_data_cols=[], check_raw_data_all=false, raw_data_exclude_keys=[]) %}
 {#
   Incremental append-only SCD2 snapshot.
   Appends a new row only when tracked columns change.
@@ -9,6 +9,8 @@
     check_cols:           list of top-level columns to monitor for changes
     check_raw_data_cols:  list of field names inside `raw_data` JSON column to monitor
                           (extracted via JSONExtractString; missing keys yield '')
+    check_raw_data_all:   monitor every key of `raw_data`, whatever the source emits
+    raw_data_exclude_keys: keys check_raw_data_all leaves out
 
   Adds columns:
     _row_hash    — cityHash64 of tracked columns (for comparison)
@@ -27,6 +29,11 @@ WITH source_data AS (
             {% endfor %}
             {% if not check_raw_data_cols %}
             ''
+            {% endif %}
+            {% if check_raw_data_all %}
+            -- mapSort makes the hash independent of the key order the source
+            -- happened to serialise raw_data in.
+            , toString(mapSort({{ raw_data_fields(raw_data_exclude_keys) }}))
             {% endif %}
         ) AS _row_hash
     -- FINAL dedups the ReplacingMergeTree source to one row per key (latest

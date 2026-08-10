@@ -146,7 +146,7 @@ pub fn plan_queries(
                 ValidatedMetricView::Period => {
                     period_groups
                         .entry((
-                            metric.def.observation_relation().source_ref().to_owned(),
+                            metric.def.observation_source().source_ref().to_owned(),
                             metric.filters.clone(),
                         ))
                         .or_default()
@@ -155,7 +155,7 @@ pub fn plan_queries(
                 ValidatedMetricView::Peer { cohort_key } => {
                     peer_groups
                         .entry((
-                            metric.def.observation_relation().source_ref().to_owned(),
+                            metric.def.observation_source().source_ref().to_owned(),
                             cohort_key.clone(),
                             metric.filters.clone(),
                         ))
@@ -397,7 +397,7 @@ mod tests {
 
     use crate::domain::metric_definitions::definition::{
         ComputationSpec, MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
-        ObservationRelation,
+        ObservationRelation, ObservationSource,
     };
     use crate::domain::metric_results::validation::ValidatedMetricRequest;
 
@@ -420,8 +420,10 @@ mod tests {
             spec: ComputationSpec::Sum {
                 value: MetricInput {
                     role: MetricInputRole::Value,
-                    observation_relation: ObservationRelation::parse("ai_metric_observations")
-                        .unwrap_or_else(|| panic!("fixture relation must parse")),
+                    observation: ObservationSource::Managed(
+                        ObservationRelation::parse("ai_metric_observations")
+                            .unwrap_or_else(|| panic!("fixture relation must parse")),
+                    ),
                     source_key: "ai_usage".to_owned(),
                     measure_key: format!("{key}_measure"),
                 },

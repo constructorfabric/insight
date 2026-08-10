@@ -1,7 +1,7 @@
 # Downstream-verification e2e (dev/CI ONLY) -- NGINX_BFF §6 R1, step-07 §D.
 #
 # The full chain with the REAL downstream services behind the OpenResty gateway:
-#   fakeidp -> authenticator -> gateway -> {analytics, identity-resolution}
+#   keycloak -> authenticator -> gateway -> {analytics, identity-resolution}
 # Both analytics and identity-resolution (Rust) verify the gateway JWT themselves
 # (fail-closed, no disable knob). The authenticator resolves the login user via
 # the identity-stub (a test seam so login works without seeding real identity);
@@ -38,17 +38,27 @@ services:
       timeout: 5s
       retries: 40
 
-  fakeidp:
-    build:
-      context: ../../../..
-      dockerfile: services/fakeidp/Dockerfile
+  # Real IdP: same image the compose stack pins (docker-compose.yml), importing
+  # the generated roster realm (conftest.py runs insight-seed-realm into
+  # ./keycloak-import before `up`).
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: ["start-dev", "--import-realm"]
     environment:
-      FAKEIDP_ISSUER: "http://fakeidp:8084"
-      FAKEIDP_BIND: "0.0.0.0:8084"
-      FAKEIDP_DEFAULT_AUD: "insight-authenticator"
-      FAKEIDP_DEV_USER_EMAIL: "dev@company.nonpresent"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # In-network origin, so discovery, token exchange, and the id_token `iss`
+      # agree; the host-side pytest rewrites it to the published port.
+      KC_HOSTNAME: "http://keycloak:8085"
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_PORT: "8085"
+      JAVA_OPTS_APPEND: "-Xms256m -Xmx512m"
+    volumes:
+      - ./keycloak-import:/opt/keycloak/data/import:ro
     ports:
-      - "${FAKEIDP_E2E_PORT:-18084}:8084"
+      # Published so the host-side pytest can drive the OIDC redirect chain and
+      # the Keycloak login form.
+      - "${KEYCLOAK_E2E_PORT:-18084}:8085"
 
   # Canned person resolver for the authenticator's login step (email -> person).
   # Keeps login working without seeding real identity; the real
@@ -65,7 +75,7 @@ services:
       dockerfile: services/authenticator/Dockerfile
     depends_on:
       redis: {condition: service_healthy}
-      fakeidp: {condition: service_started}
+      keycloak: {condition: service_started}
       identity-stub: {condition: service_started}
     ports:
       - "${AUTHENTICATOR_E2E_PORT:-18083}:8083"
@@ -79,8 +89,13 @@ services:
       # https-only). The browser still reaches the gateway plainly at :8080.
       APP__gears__authenticator__config__gateway_issuer: "https://authn-tls:8443"
       APP__gears__authenticator__config__redirect_uri: "http://gateway:8080/auth/callback"
-      APP__gears__authenticator__config__idp__issuer_url: "http://fakeidp:8084"
+      APP__gears__authenticator__config__idp__issuer_url: "http://keycloak:8085/realms/insight"
       APP__gears__authenticator__config__idp__client_id: "insight-authenticator"
+      # The generated realm's confidential-client secret (insight-seed-realm
+      # default). The external id is the default `sub` claim (the realm user's
+      # roster uuid); the identity-stub answers any source_type.
+      APP__gears__authenticator__config__idp__client_secret: "insight-authenticator-dev-secret"
+      APP__gears__authenticator__config__idp__source_type: "keycloak"
       # Short exchange-cache window so revocation-adjacent assertions are fast.
       # Sourced from conftest.py's AUTHZ_CACHE_MAX_AGE (exported into the env).
       APP__gears__authenticator__config__authz_cache_max_age_seconds: "${AUTHZ_CACHE_MAX_AGE:-3}"
@@ -138,11 +153,18 @@ services:
     depends_on:
       mariadb: {condition: service_healthy}
     environment:
-      APP__gears__identity-resolution__config__database_url: "mysql://insight:insight-local@mariadb:3306/identity"
+      # UNDERSCORE, not hyphen, in the gear name: the shared entrypoint runs
+      # under dash, which drops env vars whose names are not valid shell
+      # identifiers; gears-rust normalises `_` to `-` in the key path.
+      APP__gears__identity_resolution__config__database_url: "mysql://insight:insight-local@mariadb:3306/identity"
     volumes:
       - ./identity-resolution.e2e.yaml:/app/config/insight.yaml:ro
       - ./certs:/certs:ro
-    command: ["/app/identity-resolution", "-c", "/app/config/insight.yaml", "migrate"]
+    # The image entrypoint is the shared auto-reload wrapper
+    # (docker-entrypoint.sh <watched-path> -- <command>); with
+    # ENABLE_AUTO_RELOAD unset it just execs the command, so the one-shot
+    # migrate still exits when done.
+    command: ["/app/identity-resolution", "--", "/app/identity-resolution", "-c", "/app/config/insight.yaml", "migrate"]
     restart: "no"
 
   identity-resolution:
@@ -155,7 +177,8 @@ services:
       authn-tls: {condition: service_started}
       identity-resolution-migrate: {condition: service_completed_successfully}
     environment:
-      APP__gears__identity-resolution__config__database_url: "mysql://insight:insight-local@mariadb:3306/identity"
+      # Shell-safe underscore spelling (see identity-resolution-migrate above).
+      APP__gears__identity_resolution__config__database_url: "mysql://insight:insight-local@mariadb:3306/identity"
     # The oidc-authn-plugin verification config is nested/list-shaped, so it
     # comes from a bind-mounted host config (concrete issuer + CA), not env.
     volumes:

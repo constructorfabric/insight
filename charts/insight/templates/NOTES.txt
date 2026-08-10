@@ -19,9 +19,6 @@ Application services (always-on):
   ✓ Authenticator      http://{{ include "insight.authenticator.host" . }}:8083
   ✓ Analytics          http://{{ include "insight.analytics.host" . }}:8081
   ✓ Frontend           http://{{ include "insight.frontend.host" . }}:80
-{{- if .Values.fakeidp.deploy }}
-  ⚠ fakeidp (dev IdP)  http://{{ include "insight.fakeidp.host" . }}:8084  (DEV/E2E ONLY — never production)
-{{- end }}
 {{- if .Values.identityResolution.deploy }}
   ✓ Identity           http://{{ include "insight.identityResolution.host" . }}:8082  (deployed)
 {{- else }}
@@ -45,11 +42,6 @@ Next steps:
 
   3. Docs: https://github.com/constructorfabric/insight
 
-{{- if .Values.fakeidp.deploy }}
-⚠  WARNING: fakeidp is DEPLOYED — this is a DEV/E2E-only OIDC provider and must
-            NEVER run in a real environment. Set fakeidp.deploy=false and point
-            authenticator.oidc.issuerUrl at your real IdP for anything else.
-{{- end }}
 
 {{- if and .Values.ingestion.templates.enabled (not .Values.ingestion.reconcile.argoInstanceId) }}
 ⚠  WARNING: ingestion.templates.enabled=true but ingestion.reconcile.argoInstanceId

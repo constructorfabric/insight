@@ -30,19 +30,6 @@ def person_id_for(*parts: str) -> str:
     return str(uuid.UUID(bytes=digest[:16]))
 
 
-# fakeidp's users.yaml `sub` -> `email`, so an external-id lookup (the login
-# path) and an email lookup (the `__override` path) resolve to the SAME
-# person for the SAME fakeidp user — a real identity-resolution service would
-# converge the same way (one `persons` person_id, two value_type observations).
-# Keep in sync with services/fakeidp/users.yaml.
-FAKEIDP_USERS = {
-    "fakeidp|dev": "dev@company.nonpresent",
-    "fakeidp|alice": "alice@example.com",
-    "fakeidp|bob": "bob@example.com",
-    "fakeidp|carol": "carol@example.com",
-}
-
-
 class Handler(BaseHTTPRequestHandler):
     BY_EXTERNAL_ID_PATH = "/internal/persons/by-external-id"
     BY_EMAIL_OVERRIDE_PATH = "/internal/persons/by-email-override"
@@ -58,11 +45,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(400)
                 self.end_headers()
                 return
-            # A known fakeidp sub resolves to the same key as that user's
-            # email lookup (see FAKEIDP_USERS); an unrecognized one still gets
-            # a deterministic (but path-specific) id.
-            mapped_email = FAKEIDP_USERS.get(external_id)
-            key = ("email", mapped_email) if mapped_email else ("id", source_type, external_id)
+            # The rig configures `idp.external_id_claim: email`, so a login's
+            # external id IS the email — keyed identically to the `__override`
+            # email lookup, both paths resolve the same user to the SAME
+            # person (a real identity-resolution service converges the same
+            # way: one `persons` person_id, two value_type observations). A
+            # non-email external id still gets a deterministic path-specific id.
+            key = ("email", external_id) if "@" in external_id else ("id", source_type, external_id)
             value_type, value = "id", external_id
         elif split.path == self.BY_EMAIL_OVERRIDE_PATH:
             email = (query.get("email") or [""])[0]

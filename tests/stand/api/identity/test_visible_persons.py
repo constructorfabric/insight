@@ -26,10 +26,15 @@ about the seeded org rather than each inventing its own.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from insight_stand import ApiClient, Manifest, PersonaSession, identity_path
 
 from ..schemas import VisiblePersons
+
+#: `visible_persons.rs::MAX_PERSON_IDS` — one bound parameter per id.
+_MAX_PERSON_IDS = 1000
 
 VISIBLE_PERSONS = identity_path("/v1/visible-persons")
 
@@ -78,3 +83,30 @@ def test_visible_persons_415_wrong_content_type(api: ApiClient) -> None:
         VISIBLE_PERSONS, content='{"person_ids":[]}', headers={"Content-Type": "text/plain"}
     )
     assert response.status_code == 415, f"status={response.status_code} {response.text[:300]}"
+
+
+@pytest.mark.parametrize(
+    ("person_ids", "case"),
+    [
+        ([], "empty list"),
+        ([str(uuid.UUID(int=0))], "only the nil uuid"),
+    ],
+)
+def test_a_request_naming_nobody_is_a_400(api: ApiClient, person_ids: list[str], case: str) -> None:
+    """A request that resolves to no id at all is a client error: answering 200
+    with an empty `visible` would read to the caller as `nothing you asked for
+    is visible`, which is a different fact."""
+    response = api.post(VISIBLE_PERSONS, json_body={"person_ids": person_ids})
+    assert response.status_code == 400, (
+        f"should reject {case}: status={response.status_code} {response.text[:300]}"
+    )
+
+
+def test_more_ids_than_the_cap_is_a_400(api: ApiClient) -> None:
+    """The request bounds the query — one bound parameter per id. The cap
+    matches the analytics metric-results cap, which forwards a cleared request
+    here whole."""
+    over_cap = [str(uuid.uuid4()) for _ in range(_MAX_PERSON_IDS + 1)]
+
+    response = api.post(VISIBLE_PERSONS, json_body={"person_ids": over_cap})
+    assert response.status_code == 400, f"status={response.status_code} {response.text[:300]}"

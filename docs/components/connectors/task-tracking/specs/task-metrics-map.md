@@ -235,25 +235,25 @@ GROUP BY insight_source_id, person_key, metric_date
 
 ### 2. `bugs_fixed`
 
-Same as `tasks_closed` but filtered by issuetype.
+Same population as `tasks_closed`, narrowed to bug-kind issues — a subset of the
+closed total, not a parallel count of different work. Its complement,
+`closed_non_bug`, covers the known non-bug kinds; an issue whose type resolves to
+neither is in no subset and is reported as its own type group.
+
+The kind comes from the issue-type dimension, joined on the type id the issue
+carries — never from a type display name, which is per-instance and
+per-language:
 
 ```sql
--- prepend to `done_events` CTE:
-INNER JOIN silver.class_task_field_history FINAL fh_type
-        ON fh_type.insight_source_id = fh.insight_source_id
-       AND fh_type.issue_id          = fh.issue_id
-       AND fh_type.field_id          = 'issuetype'
-       -- take the issuetype active at close time:
-       AND fh_type.event_at         <= fh.event_at
--- plus:  JOIN issuetype lookup (if available) or match by display name
-WHERE ... AND fh_type.delta_value_display = 'Bug'
+-- issue-type id from the field history, kind from the class dimension:
+LEFT JOIN silver.class_task_issuetypes FINAL it
+       ON it.insight_source_id = s.insight_source_id
+      AND it.issue_type_id     = s.issue_type_id
+-- then: countIf(it.issue_kind = 'bug')      -> bugs_fixed
+--       countIf(it.issue_kind = 'other')    -> closed_non_bug
 ```
 
-**Gaps**:
-- The issuetype lookup `silver.class_task_issuetypes` doesn't currently
-  exist as a silver model (it's only in bronze). Either add a silver model, or
-  filter by `delta_value_display = 'Bug'` as a v1 hack and plan to swap in the
-  lookup table later.
+**Gaps**: none — computable today.
 
 ### 3. `task_dev_time` (hours in In-Progress-category statuses)
 
@@ -551,10 +551,16 @@ No additional data requirements.
 | `time_original_estimate_sec` | Jira `fields.timeoriginalestimate` | estimation_accuracy, overrun_ratio | Required | AddFields |
 | `time_spent_sec` | Jira `fields.timespent` | estimation_accuracy, overrun_ratio | Required | AddFields |
 | `sprint` (tracked field) | Jira `customfield_<sprint-id>` | scope_completion, scope_creep | Required | Rust enrich track + config |
-| `silver.class_task_issuetypes` | bronze `jira_issuetypes` | bugs_fixed (canonical type lookup) | Nice-to-have | dbt silver model (mirror of class_task_statuses) |
 
 After those three AddFields entries + sprint-field tracking, **every metric in
 the FE map is computable** using `silver.class_task_*`.
+
+`silver.class_task_issuetypes` is the type counterpart of
+`class_task_statuses`: each per-source projection reconciles its native type
+naming to `issue_kind` (bug / other / unknown), so Gold reads one neutral column
+and matches no type name. Jira classifies from `untranslatedName`, which is
+language-independent; a name the configured lists do not cover is `unknown` and
+keeps its own bucket rather than being counted as non-bug work.
 
 ## Proposed dbt models
 

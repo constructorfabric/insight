@@ -186,7 +186,7 @@ Turns current-state Bronze pulls into SCD2 history and identity observations —
 
 ##### Responsibility scope
 
-`workday__bronze_promoted` (RMT promotion), `workday__workers_snapshot` (SCD2 via `snapshot` macro, tracked columns + `workday_custom_fields` from `raw_data`), `workday__workers_fields_history` (per-field change log via `fields_history` macro), `workday__identity_inputs` (UPSERT/DELETE observations via `identity_inputs_from_history` macro), plus staging views `workday__to_class_people`, `workday__hr_events`, `workday__working_hours`.
+`workday__bronze_promoted` (RMT promotion), `workday__workers_snapshot` (SCD2 via `snapshot` macro, tracked columns + `workday_custom_fields` from `raw_data`), `workday__workers_fields_history` (per-field change log via `fields_history` macro), `workday__identity_inputs` (UPSERT/DELETE observations via `identity_inputs_from_history` macro), `workday__person_attribute_claims` (typed attribute claims via `attribute_claims` macro), plus staging views `workday__to_class_people`, `workday__hr_events`, `workday__working_hours`.
 
 ##### Responsibility boundaries
 

@@ -82,7 +82,7 @@ def test_the_personal_dashboard_renders_every_metric_domain(
     expect(view.person_heading(persona.person.display_name)).to_be_visible()
 
     for label in (
-        "Tasks closed",
+        "Issues closed",
         "Focus Time",
         "Pull requests merged",
         "AI active days",
@@ -152,16 +152,16 @@ def test_the_team_view_lists_every_report_the_roster_declares(
     # Every member renders a cell for every column (recorded or an honest
     # "not recorded") and at least one real recorded value — this catches a
     # dropped member, a blank row, or a truncated column, without demanding
-    # every metric for every person. A member can legitimately close tasks
-    # yet fix no bugs, so "Bugs fixed: not recorded" for one member is data,
+    # every metric for every person. A member can legitimately close issues
+    # yet close no bugs, so "Bugs closed: not recorded" for one member is data,
     # not a defect.
     for name in reports:
         row = team.member_row(name)
         expect(row).to_be_visible()
         for metric_label in (
-            "Tasks closed",
+            "Bugs closed",
+            "Non-bug issues closed",
             "Time to resolution",
-            "Bugs fixed",
             "Pull requests merged",
             "PR cycle time",
             "Focus Time",

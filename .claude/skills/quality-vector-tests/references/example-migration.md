@@ -63,7 +63,7 @@ dataset so numbers stay comparable over time.
 7. **Dashboard load**
    - Metric: page-load and time-to-interactive for a team.
    - How measured: Lighthouse (load) + Playwright (interactive), same dataset — *neither is wired
-     today: no lighthouse in `insight-front`, and its Playwright is browser-mode unit testing, not
+     today: no lighthouse in `src/frontend`, and its Playwright is browser-mode unit testing, not
      an e2e suite. Wiring one is a prerequisite.*
    - Target: **< 10s**.
 

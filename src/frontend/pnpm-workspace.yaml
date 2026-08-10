@@ -4,3 +4,5 @@ minimumReleaseAge: 10080
 
 # Save exact versions when installing dependencies.
 saveExact: true
+
+engineStrict: true

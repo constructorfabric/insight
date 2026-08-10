@@ -18,6 +18,12 @@ service:
 # advertised issuer.
 hostname: ""
 
+# Admin console base URL. The ingress never exposes /kc/admin — admin access
+# is `kubectl port-forward svc/<release>-keycloak <service.port>`, and this
+# is the URL the console advertises for that. Empty = derived as
+# http://localhost:<service.port>/kc.
+adminHostname: ""
+
 # Secret with keys `username`/`password` (bootstrap admin).
 admin:
   existingSecret: ""
@@ -30,8 +36,9 @@ database:
   username: ""
   passwordSecret: {name: "", key: ""}
 
-# Optional ingress at the /kc prefix (Keycloak serves under /kc natively —
-# no rewrite).
+# Optional ingress exposing only /kc/realms and /kc/resources (Keycloak
+# serves under /kc natively — no rewrite). /kc/admin stays cluster-internal;
+# see adminHostname.
 ingress:
   enabled: false
   className: nginx

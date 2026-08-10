@@ -14,6 +14,8 @@ from urllib.parse import quote
 
 from playwright.sync_api import Locator, Page
 
+from .group_dialog import GroupDialog, MetricEvidenceDialog
+
 
 class TeamView:
     def __init__(self, page: Page) -> None:
@@ -80,3 +82,22 @@ class TeamView:
 
     def domain_card(self, label: str) -> Locator:
         return self.page.get_by_role("button", name=f"Open {label} details")
+
+    def open_domain(self, label: str) -> GroupDialog:
+        self.domain_card(label).click()
+        return GroupDialog(self.page, label)
+
+    def cell_metric_label(self, cell: Locator, display_name: str) -> str:
+        """Which metric a heatmap cell is about, read from the cell itself.
+
+        The accessible name composes the member, the metric label and the value,
+        and the label is the server's wording — the same reason `team_heading`
+        matches a substring instead of rebuilding the copy.
+        """
+        name = cell.get_attribute("aria-label") or ""
+        return name.removeprefix(f"{display_name} — ").split(":", 1)[0]
+
+    def open_cell_evidence(self, cell: Locator, display_name: str) -> MetricEvidenceDialog:
+        label = self.cell_metric_label(cell, display_name)
+        cell.click()
+        return MetricEvidenceDialog(self.page, label)

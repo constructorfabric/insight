@@ -29,6 +29,7 @@ mod cookie;
 mod csrf;
 mod gear;
 mod identity;
+mod issuers;
 mod janitor;
 mod jwt;
 mod local_client;

@@ -22,12 +22,12 @@ describe("ErrorFallback", () => {
   it("renders an Error's message", () => {
     render(
       <ErrorFallback
-        error={new Error("boom")}
+        error={new Error("render failed")}
         resetErrorBoundary={() => {}}
       />,
     );
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
-    expect(screen.getByText("boom")).toBeInTheDocument();
+    expect(screen.getByText("render failed")).toBeInTheDocument();
   });
 
   it("renders string errors and falls back for unknown shapes", () => {

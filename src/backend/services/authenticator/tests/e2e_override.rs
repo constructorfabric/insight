@@ -1,5 +1,5 @@
 //! End-to-end `__override` (view-as, #1941) against a running authenticator +
-//! fakeidp + Redis + identity stub.
+//! Keycloak + Redis + identity stub.
 //!
 //! `#[ignore]` by default (needs the stack up; `run-e2e.sh` drives it):
 //!
@@ -12,6 +12,13 @@
 //! person (JWT `sub`, `/auth/me` user/email) with the real principal recorded
 //! (`impersonator_email`); an unknown target is 403; and against an instance
 //! with `override_enabled` at its default (`false`) the parameter is inert.
+//!
+//! Each test owns a disjoint {impersonator + targets} set of users
+//! (kc-realm-overlay.py provisions the ones that log in): view-as sessions
+//! are indexed under BOTH persons, so sharing either side would let one
+//! test's revoke-all kill a sibling's session under cargo's default parallel
+//! execution. Targets that never log in need no realm user — the identity
+//! stub resolves them from the email alone.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -44,7 +51,7 @@ fn cookie_from(resp: &reqwest::Response) -> Option<String> {
     None
 }
 
-/// Run the fakeidp login loop as `user`, optionally with `__override=<email>`
+/// Run the login loop as `user`, optionally with `__override=<email>`
 /// on `/auth/login`. Returns the callback response (302 + cookie on success,
 /// the error status otherwise).
 async fn login_flow(
@@ -63,17 +70,7 @@ async fn login_flow(
         .to_str()
         .unwrap()
         .to_owned();
-    let sep = if authorize.contains('?') { '&' } else { '?' };
-    let authorized = http
-        .get(format!("{authorize}{sep}user={user}"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(authorized.status(), 302, "fakeidp /authorize must redirect");
-    let callback = authorized.headers()[reqwest::header::LOCATION]
-        .to_str()
-        .unwrap()
-        .to_owned();
+    let callback = common::kc::authorize(&authorize, user).await;
     http.get(&callback).send().await.unwrap()
 }
 
@@ -112,8 +109,9 @@ async fn jwt_sub(http: &common::Client, auth_base: &str, token: &str) -> String 
 #[ignore = "needs the e2e stack (run-e2e.sh)"]
 async fn override_mints_the_session_for_the_target_person() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
-    let user = env("E2E_USER", "dev@company.nonpresent");
-    let target = "bob@example.com";
+    let user = "viewer-mints@example.com";
+    // The baseline below logs in AS the target, so it needs a realm user too.
+    let target = "target-mints@example.com";
     let http = client();
 
     // Baseline: a normal login AS the target — its person id is the reference
@@ -129,7 +127,7 @@ async fn override_mints_the_session_for_the_target_person() {
     );
 
     // The override login: authenticate as `user`, view as `target`.
-    let cb = login_flow(&http, &auth_base, &user, Some(target)).await;
+    let cb = login_flow(&http, &auth_base, user, Some(target)).await;
     assert_eq!(cb.status(), 302, "override callback must succeed");
     let token = cookie_from(&cb).expect("override callback must set the cookie");
 
@@ -148,7 +146,7 @@ async fn override_mints_the_session_for_the_target_person() {
     // The view-as session is reachable through the REAL principal: it is
     // indexed under both persons, so the impersonator's own "log out
     // everywhere" must kill it.
-    let cb = login_flow(&http, &auth_base, &user, None).await;
+    let cb = login_flow(&http, &auth_base, user, None).await;
     assert_eq!(cb.status(), 302);
     let own_token = cookie_from(&cb).expect("normal login must set the cookie");
     let csrf = csrf_token(&http, &auth_base, &own_token).await;
@@ -199,15 +197,24 @@ async fn csrf_token(http: &common::Client, auth_base: &str, token: &str) -> Stri
 #[ignore = "needs the e2e stack (run-e2e.sh)"]
 async fn override_relogin_swaps_the_target_and_kills_the_old_session() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
-    let user = env("E2E_USER", "dev@company.nonpresent");
+    let user = "viewer-relogin@example.com";
     let http = client();
 
-    // 1. Login viewing as alice.
-    let cb = login_flow(&http, &auth_base, &user, Some("alice@example.com")).await;
+    // 1. Login viewing as the first target.
+    let cb = login_flow(
+        &http,
+        &auth_base,
+        user,
+        Some("target-relogin-a@example.com"),
+    )
+    .await;
     assert_eq!(cb.status(), 302);
     let token_a = cookie_from(&cb).expect("first override callback must set the cookie");
     let me_a = me(&http, &auth_base, &token_a).await;
-    assert_eq!(me_a["email"].as_str().unwrap(), "alice@example.com");
+    assert_eq!(
+        me_a["email"].as_str().unwrap(),
+        "target-relogin-a@example.com"
+    );
     let sub_a = jwt_sub(&http, &auth_base, &token_a).await;
 
     // 2. Logout.
@@ -247,8 +254,14 @@ async fn override_relogin_swaps_the_target_and_kills_the_old_session() {
         "the exchange must refuse the revoked credential (nothing for nginx to re-cache)"
     );
 
-    // 3. Login viewing as bob — a fresh credential and a fresh identity.
-    let cb = login_flow(&http, &auth_base, &user, Some("bob@example.com")).await;
+    // 3. Login viewing as the second target — a fresh credential and identity.
+    let cb = login_flow(
+        &http,
+        &auth_base,
+        user,
+        Some("target-relogin-b@example.com"),
+    )
+    .await;
     assert_eq!(cb.status(), 302);
     let token_b = cookie_from(&cb).expect("second override callback must set the cookie");
     assert_ne!(
@@ -257,7 +270,10 @@ async fn override_relogin_swaps_the_target_and_kills_the_old_session() {
     );
 
     let me_b = me(&http, &auth_base, &token_b).await;
-    assert_eq!(me_b["email"].as_str().unwrap(), "bob@example.com");
+    assert_eq!(
+        me_b["email"].as_str().unwrap(),
+        "target-relogin-b@example.com"
+    );
     assert_eq!(me_b["impersonator_email"].as_str().unwrap(), user);
     let sub_b = jwt_sub(&http, &auth_base, &token_b).await;
     assert_ne!(
@@ -279,17 +295,18 @@ async fn override_relogin_swaps_the_target_and_kills_the_old_session() {
 #[ignore = "needs the e2e stack (run-e2e.sh)"]
 async fn override_switch_without_logout_revokes_the_presented_session() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
-    let user = env("E2E_USER", "dev@company.nonpresent");
+    let user = "viewer-switch@example.com";
     let http = client();
 
-    let cb = login_flow(&http, &auth_base, &user, Some("bob@example.com")).await;
+    let cb = login_flow(&http, &auth_base, user, Some("target-switch-a@example.com")).await;
     assert_eq!(cb.status(), 302);
     let token_b = cookie_from(&cb).expect("first override callback must set the cookie");
 
-    // Browser-style switch to alice: the bob cookie rides along.
+    // Browser-style switch to the second target: the first session's cookie
+    // rides along.
     let login = http
         .get(format!(
-            "{auth_base}/auth/login?__override=alice%40example.com"
+            "{auth_base}/auth/login?__override=target-switch-b%40example.com"
         ))
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token_b}"))
         .send()
@@ -300,17 +317,7 @@ async fn override_switch_without_logout_revokes_the_presented_session() {
         .to_str()
         .unwrap()
         .to_owned();
-    let sep = if authorize.contains('?') { '&' } else { '?' };
-    let authorized = http
-        .get(format!("{authorize}{sep}user={user}"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(authorized.status(), 302);
-    let callback = authorized.headers()[reqwest::header::LOCATION]
-        .to_str()
-        .unwrap()
-        .to_owned();
+    let callback = common::kc::authorize(&authorize, user).await;
     let cb = http
         .get(&callback)
         .header(reqwest::header::COOKIE, format!("{COOKIE}={token_b}"))
@@ -322,7 +329,10 @@ async fn override_switch_without_logout_revokes_the_presented_session() {
     assert_ne!(token_b, token_c);
 
     let me_c = me(&http, &auth_base, &token_c).await;
-    assert_eq!(me_c["email"].as_str().unwrap(), "alice@example.com");
+    assert_eq!(
+        me_c["email"].as_str().unwrap(),
+        "target-switch-b@example.com"
+    );
     assert_eq!(me_c["impersonator_email"].as_str().unwrap(), user);
     let stale = http
         .get(format!("{auth_base}/internal/authz"))
@@ -333,7 +343,7 @@ async fn override_switch_without_logout_revokes_the_presented_session() {
     assert_eq!(
         stale.status(),
         401,
-        "the fixation guard must have revoked the presented bob session"
+        "the fixation guard must have revoked the presented first session"
     );
 }
 
@@ -341,13 +351,13 @@ async fn override_switch_without_logout_revokes_the_presented_session() {
 #[ignore = "needs the e2e stack (run-e2e.sh)"]
 async fn override_with_unknown_target_is_denied() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
-    let user = env("E2E_USER", "dev@company.nonpresent");
+    let user = "viewer-unknown@example.com";
     let http = client();
 
     // The identity stub 404s emails prefixed `unknown-` (test seam). The
     // denial is an auth_error bounce back into the SPA (#2032), never a
     // fallback to the caller's own identity.
-    let cb = login_flow(&http, &auth_base, &user, Some("unknown-nobody@example.com")).await;
+    let cb = login_flow(&http, &auth_base, user, Some("unknown-nobody@example.com")).await;
     assert_eq!(
         cb.status(),
         302,
@@ -365,10 +375,10 @@ async fn override_with_unknown_target_is_denied() {
 async fn override_is_inert_when_disabled() {
     // The second instance runs with `override_enabled` at its default (false).
     let auth_base = env("AUTH_BASE_DISABLED", "http://localhost:8085");
-    let user = env("E2E_USER", "dev@company.nonpresent");
+    let user = "viewer-disabled@example.com";
     let http = client();
 
-    let cb = login_flow(&http, &auth_base, &user, Some("bob@example.com")).await;
+    let cb = login_flow(&http, &auth_base, user, Some("target-disabled@example.com")).await;
     assert_eq!(cb.status(), 302, "login itself must still succeed");
     let token = cookie_from(&cb).expect("callback must set the cookie");
 

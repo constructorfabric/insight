@@ -122,6 +122,25 @@ class HistogramValueDto(BaseModel):
     entity_id: str
 
 
+class ImportCustomMetricsResponse(BaseModel):
+    """
+    `POST /v1/metrics/import` result — counts landed and the `metric_key`s
+    skipped because they already existed for the tenant.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    imported: int = Field(..., ge=0)
+    skipped: list[str]
+
+
+class MetricComputation(StrEnum):
+    sum = 'sum'
+    ratio = 'ratio'
+    median = 'median'
+    distinct_count = 'distinct_count'
+
+
 class MetricDimensionDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -240,6 +259,12 @@ class MetricGroupLimitRequest(BaseModel):
     count: int = Field(..., ge=0)
     include_remainder: bool
     rank_by_metric: str | None = None
+
+
+class MetricInputRole(StrEnum):
+    value = 'value'
+    numerator = 'numerator'
+    denominator = 'denominator'
 
 
 class Computation4(StrEnum):
@@ -541,6 +566,21 @@ class UpdateSavedQueryRequest(BaseModel):
     sql: str | None = None
 
 
+class ValueTransform(BaseModel):
+    """
+    Affine + clamp shaping for a computed metric value:
+    `y = clamp(clamp_min, clamp_max, multiplier * x + offset)`.
+    Absent fields are identity (multiplier 1, offset 0, no bound).
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    clamp_max: float | None = None
+    clamp_min: float | None = None
+    multiplier: float | None = None
+    offset: float | None = None
+
+
 class BreakdownValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -548,6 +588,30 @@ class BreakdownValueDto(BaseModel):
     dimensions: list[MetricDimensionDto]
     entity_id: str
     value: float | None = None
+
+
+class CustomMetricInput(BaseModel):
+    """
+    One role→measure binding of a custom metric.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    measure_key: str
+    role: MetricInputRole
+
+
+class CustomMetricSummary(BaseModel):
+    """
+    List item — display fields only, no SQL body.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: MetricComputation
+    entity_type: str
+    label: str
+    metric_key: str
 
 
 class MetricDefinitionView(BaseModel):
@@ -678,6 +742,67 @@ class TimeseriesDto(BaseModel):
     rank: int | None = Field(None, ge=0)
     remainder: bool | None = None
     total: float | None
+
+
+class CustomMetric(BaseModel):
+    """
+    A portable custom-metric graph — the create/update body, the export item,
+    and the get/list detail shape. `origin` is response-only: always `"custom"`
+    on output, omitted from exports, and ignored on input (writes force
+    `custom`).
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: MetricComputation
+    description: str | None = None
+    dimensions: list[str]
+    direction: MetricDirection
+    entity_type: str
+    explanation: str | None = None
+    format: MetricFormat
+    inputs: list[CustomMetricInput]
+    label: str
+    measures: list[str]
+    metric_key: str
+    observation_sql: str
+    origin: str | None = None
+    peer_cohort_key: str | None = None
+    scale: float | None = None
+    short_label: str | None = None
+    source_key: str
+    transform: ValueTransform | None = None
+    unit: str | None = None
+
+
+class CustomMetricListResponse(BaseModel):
+    """
+    `GET /v1/metrics` envelope.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[CustomMetricSummary]
+
+
+class ExportCustomMetricsResponse(BaseModel):
+    """
+    `GET /v1/metrics/export` envelope — the tenant's custom metric graphs.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    metrics: list[CustomMetric]
+
+
+class ImportCustomMetricsRequest(BaseModel):
+    """
+    `POST /v1/metrics/import` body.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    metrics: list[CustomMetric]
 
 
 class MetricDefinitionListResponse(BaseModel):

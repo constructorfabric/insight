@@ -39,6 +39,11 @@ NON_UUID_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", f"/v1/queries/{scratch.NON_UUID}/run"),
 )
 
+#: `/v1/metrics/{metric_key}` is deliberately absent from the sweep above. Its
+#: key binds `Path<String>`, not `Path<Uuid>`, so a non-uuid segment is a valid
+#: free-form key rather than a parse failure — an unknown one is 404, asserted
+#: in `test_metrics.py`, not the 400 this table pins.
+
 #: Every route that reads a body. Ids are well-formed-but-unknown on purpose:
 #: the path must parse, so that what the response reports is the media type and
 #: not the segment.
@@ -49,6 +54,9 @@ BODY_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/v1/metric-results"),
     ("POST", "/v1/metric-drilldown"),
     ("POST", "/v1/metric-drilldown/export"),
+    ("POST", "/v1/metrics"),
+    ("PUT", f"/v1/metrics/{scratch.UNKNOWN_METRIC_KEY}"),
+    ("POST", "/v1/metrics/import"),
 )
 
 
@@ -106,6 +114,9 @@ OFF_SCHEMA_ROUTES: tuple[tuple[str, str, int], ...] = (
     ("POST", "/v1/metric-results", LEGACY_422),
     ("POST", "/v1/metric-drilldown", LEGACY_422),
     ("POST", "/v1/metric-drilldown/export", LEGACY_422),
+    ("POST", "/v1/metrics", LEGACY_422),
+    ("PUT", f"/v1/metrics/{scratch.UNKNOWN_METRIC_KEY}", LEGACY_422),
+    ("POST", "/v1/metrics/import", LEGACY_422),
 )
 
 #: A JSON STRING where every one of these routes declares an object. Two

@@ -33,8 +33,9 @@ environments/local/keycloak/realms/realm-insight.generated.json
 environments/local/pub-cert.pem
 environments/local/sealed-secrets/*/*-sealedsecret.yaml
 
-# CI smoke env keeps inventory/values committed, but fetch-cert/seal-from-file
-# still generate cluster-specific artifacts at runtime.
+# CI smoke env keeps inventory/values committed, but fetch-cert/seal-from-file/
+# keycloak-realm still generate cluster-specific artifacts at runtime.
+environments/functional-ci/keycloak/realms/realm-insight.generated.json
 environments/functional-ci/pub-cert.pem
 environments/functional-ci/sealed-secrets/*/*-sealedsecret.yaml
 

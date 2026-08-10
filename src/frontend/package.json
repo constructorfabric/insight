@@ -4,6 +4,9 @@
   "version": "0.0.1",
   "type": "module",
   "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -24,6 +27,7 @@
   "dependencies": {
     "@base-ui/react": "1.4.1",
     "@fontsource-variable/inter": "5.2.8",
+    "@sentry/react": "10.69.0",
     "@tanstack/react-query": "5.100.9",
     "@tanstack/react-router": "1.169.2",
     "@tanstack/react-virtual": "3.13.12",
@@ -49,6 +53,7 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@rolldown/plugin-babel": "0.2.3",
+    "@sentry/vite-plugin": "5.4.0",
     "@storybook/addon-a11y": "10.4.6",
     "@storybook/addon-docs": "10.4.6",
     "@storybook/addon-themes": "10.4.6",

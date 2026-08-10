@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::domain::metric_definitions::definition::{
     CohortSource, EvidenceGranularity, EvidenceRelation, MetricInput, ObservationRelation,
-    SourceKind,
+    ObservationSource, SourceKind,
 };
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 use crate::domain::metric_definitions::repository::{
@@ -717,7 +717,9 @@ fn resolve_probe_target<'a>(
 ) -> Option<ProbeTarget<'a>> {
     let filtered = inputs
         .iter()
-        .filter(|input| &input.observation_relation == relation)
+        .filter(|input| {
+            matches!(&input.observation, ObservationSource::Managed(managed) if managed == relation)
+        })
         .collect::<Vec<_>>();
     if filtered.is_empty() {
         return None;
@@ -931,7 +933,7 @@ mod tests {
     fn input(source_key: &str, measure_key: &str) -> MetricInput {
         MetricInput {
             role: MetricInputRole::Value,
-            observation_relation: relation(),
+            observation: ObservationSource::Managed(relation()),
             source_key: source_key.to_owned(),
             measure_key: measure_key.to_owned(),
         }

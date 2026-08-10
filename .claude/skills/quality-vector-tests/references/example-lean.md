@@ -34,9 +34,9 @@ drill-down must account for 42) has no check at all.
 - Countable denominators found in the repo: **26** connectors, **59** catalog metric keys across 5
   families, **17** acceptance criteria in the issue itself.
 - Semgrep, Trivy and CodeQL run in this repo's CI (`.github/workflows/`), so a Security target is
-  measurable here — but **`insight-front` has no scanner of its own**, and there is **no load
-  harness anywhere** (no k6, locust, gatling, jmeter). A Performance target naming one would have
-  to be built first — which is a finding, not a formatting detail.
+  measurable here — and since the SPA lives in `src/frontend`, the same scanners cover it. There is
+  **no load harness anywhere** (no k6, locust, gatling, jmeter). A Performance target naming one
+  would have to be built first — which is a finding, not a formatting detail.
 
 ## After (canonical format)
 ```markdown
@@ -90,7 +90,7 @@ are measured on the reference-org dataset.
    - Metric: critical findings in the new drill-down code.
    - How measured: Trivy `--severity CRITICAL` + Semgrep `--severity ERROR` counts, from the
      workflows already in this repo's CI.
-   - Target: **0** — *frontend-only findings stay uncovered until `insight-front` gets a scanner.*
+   - Target: **0** — *covers `src/frontend` too, since the SPA is in this repo.*
 ```
 
 ## What the format did

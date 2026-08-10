@@ -15,16 +15,19 @@ name: E2E — Bronze to API
 # here is what only this rig can do — bronze → dbt → ClickHouse → analytics
 # response, over fixtures it seeds itself.
 #
-# Topology: a shared upstream `build` job assembles the runner image ONCE —
+# Topology: a cheap `changes` job decides whether the diff can reach the data
+# path at all and everything expensive hangs off it; a shared upstream `build`
+# job assembles the runner image ONCE —
 # on PRs from the component images build-images.yml already built (or the
 # published :latest for path-skipped components), elsewhere by compiling
 # analytics + each connector's enrich binary via build-only services — and
 # hands it to `e2e-metrics` as a saved image
 # artifact, which also makes `build` the SOLE writer of the GHA BuildKit
 # cache scopes wired in compose/docker-compose.cache.yml (two concurrent
-# writers to the same scope key just thrash each other's cache). The lane
-# loads the pre-built image, boots its stack, runs the suite, and snapshots
-# that session's `.artifacts/` for `metric-coverage-gate`, which analyses it
+# writers to the same scope key just thrash each other's cache). The lane is
+# a shard matrix: each leg loads the pre-built image, boots its own isolated
+# stack, runs its slice of the suite, and snapshots that session's
+# `.artifacts/` for `metric-coverage-gate`, which analyses it
 # as a pure-Python check (no Docker, no app boot). See
 # src/ingestion/tests/e2e/lib/{metric_coverage,collect_metric_definitions}.py.
 #
@@ -32,11 +35,16 @@ name: E2E — Bronze to API
 # Code:  src/ingestion/tests/e2e/
 
 on:
-  # PR-only (+ manual dispatch). Runs on every PR against main, regardless of
-  # which paths changed — no path filtering. workflow_dispatch remains for
-  # manual reruns against main.
+  # PR-only (+ manual dispatch). workflow_dispatch remains for manual reruns
+  # against main.
   pull_request:
     branches: [main]
+    # Deliberately NO `paths:` filter. This workflow emits a REQUIRED check
+    # ("Run E2E suite"), and GitHub reports a required check whose workflow
+    # never ran as pending rather than passed — a path filter here would block
+    # every PR that did not happen to touch one of the listed directories.
+    # Relevance is decided by the `changes` job below instead, which is cheap
+    # and always reports. Same pattern as e2e-stand.yml.
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit merge_group,
   # and the required "Run E2E suite" check must report there or every queued PR
   # times out and is evicted.
@@ -62,13 +70,89 @@ permissions:
 jobs:
   # `e2e-suite` emits the "Run E2E suite" status check the `main` ruleset
   # requires, so branch protection needs no change when lanes come and go —
-  # only this file's `needs:` does. If `build` fails, `e2e-metrics` is skipped
-  # by default `needs` semantics (a red build must not run the lane), and
-  # GitHub reports a required check's skipped job as failed rather than green.
+  # only this file's `needs:` does. It is the one job here that runs
+  # unconditionally — a required check must report on EVERY pull request,
+  # including the ones `changes` decided are irrelevant.
+  #
+  # Skipping cascades by default `needs` semantics: `changes` says irrelevant →
+  # `build` skips → `e2e-metrics` skips → `metric-coverage-gate` skips. A red
+  # `build` produces the same cascade, so the umbrella distinguishes the two
+  # cases from `changes`'s own output rather than from the lane results.
+
+  # ─── changes ──────────────────────────────────────────────────────────────
+  # What an `on: paths:` filter would have done, moved into a job so the
+  # workflow ALWAYS runs and the umbrella below can always report.
+  #
+  # The list is deliberately over-inclusive: a false positive costs one
+  # unnecessary suite run — today's behaviour for every PR — while a false
+  # negative greens a required check over untested data-path changes. It covers
+  # everything the runner image bakes in or the suite reads at run time:
+  #
+  #   src/ingestion/  the rig itself (tests/e2e), dbt models, the migration and
+  #                   connectors-ddl scripts, and every connector's enrich
+  #                   source (jira-enrich is baked into the runner image)
+  #   src/backend/    analytics and identity-resolution — compiled from their
+  #                   own Dockerfiles into the runner image, and the analytics
+  #                   HTTP response is the last hop every metric fixture
+  #                   asserts on
+  #   build-images.yml  the PR path consumes its e2e-prebuilt-* artifacts by
+  #                   name, so a change there can break this workflow's build
+  #
+  # src/frontend/, deploy/, tests/ (the deployed-stand suite) and docs/ are
+  # absent on purpose: nothing in this rig loads them.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The diff needs both endpoints; the default shallow fetch has
+          # neither the base nor enough history to reach a merge base.
+          fetch-depth: 0
+          persist-credentials: false
+      - id: filter
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          # No base to diff against (a merge_group without one, or a manual
+          # dispatch): assume relevant rather than skipping a required gate on
+          # a guess.
+          if [ -z "${BASE:-}" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "no base sha — running"
+            exit 0
+          fi
+          # Diff from the MERGE BASE, not from the base branch's tip. A two-dot
+          # `git diff BASE HEAD` reports every file that differs between the
+          # two commits, which includes everything that landed on the base
+          # branch since this branch forked — attributed to this PR. Any branch
+          # not freshly rebased would then look like it touched the data path
+          # and the gate would never skip anything.
+          base_point="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || true)"
+          if [ -z "$base_point" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "no merge base between $BASE and $HEAD — running"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$base_point" "$HEAD")"
+          echo "$changed" | sed 's/^/  /'
+          if echo "$changed" | grep -qE '^(src/ingestion/|src/backend/|\.github/workflows/e2e-bronze-to-api\.yml|\.github/workflows/build-images\.yml)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "nothing on the bronze → dbt → ClickHouse → analytics path changed"
+          fi
 
   # ─── Build the runner image once, shared by both lanes ────────────────────
   build:
     name: Build runner image
+    needs: changes
+    if: ${{ needs.changes.outputs.relevant == 'true' }}
     runs-on: ubuntu-latest
     # This compile-only job keeps the old combined job's full ceiling: a cold
     # GHA cache (Cargo.lock bump, the 7-day cache eviction, or the 10 GB
@@ -82,7 +166,7 @@ jobs:
         working-directory: src/ingestion/tests/e2e
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -91,7 +175,7 @@ jobs:
       # From-source path only: the PR path below needs the DEFAULT driver, which
       # is the only one that resolves `docker-image://` contexts from the local
       # daemon store (compose/docker-compose.prebuilt.yml).
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
         if: github.event_name != 'pull_request'
 
       # Expose ACTIONS_RUNTIME_TOKEN / ACTIONS_CACHE_URL to run steps. The
@@ -99,7 +183,7 @@ jobs:
       # actions, so `docker compose build` in a plain run step never sees
       # them and buildx SILENTLY drops the cache_from/cache_to config —
       # every run was a full Rust recompile.
-      - uses: crazy-max/ghaction-github-runtime@3cb05d89e1f492524af3d41a1c98c83bc3025124 # v3
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
         if: github.event_name != 'pull_request'
 
       # ─── PR path: consume the images build-images.yml already built ─────
@@ -120,7 +204,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           run_json=""
-          for attempt in $(seq 1 40); do
+          # 70 x 30s = 35min: a dependency bump invalidates the whole cargo
+          # build cache and a cold image build can exceed the old 20min window.
+          for attempt in $(seq 1 70); do
             run_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${HEAD_SHA}&per_page=100" \
               --jq '[.workflow_runs[] | select(.name == "Build & Push Container Images")] | sort_by(.run_started_at) | last // empty')
             if [ -z "$run_json" ]; then
@@ -135,7 +221,7 @@ jobs:
               echo "::error::Image-build run concluded '${conclusion}' — its artifacts can't be trusted; see $(jq -r '.html_url' <<<"$run_json")"
               exit 1
             fi
-            echo "Image-build run still in progress (attempt ${attempt}/40); retrying in 30s…"
+            echo "Image-build run still in progress (attempt ${attempt}/70); retrying in 30s…"
             sleep 30
           done
           if [ -n "$run_json" ] && [ "$(jq -r '.conclusion // ""' <<<"$run_json")" != "success" ]; then
@@ -183,6 +269,17 @@ jobs:
         run: ./e2e.sh build
         env:
           E2E_COMPOSE_OVERLAYS: ${{ github.event_name == 'pull_request' && 'compose/docker-compose.prebuilt.yml' || (github.event_name == 'merge_group' && 'compose/docker-compose.cache-ro.yml' || 'compose/docker-compose.cache.yml') }}
+          # From-source path only: delegate the build to buildx bake so the
+          # three build-only component images (analytics, identity-resolution,
+          # jira-enrich) compile CONCURRENTLY in one BuildKit graph instead of
+          # one compose service at a time. Cache-scope safety is unchanged —
+          # each service keeps its own gha scope, still one writer per scope.
+          # The PR path stays on the classic builder: bake is not needed there
+          # (no Rust compiles at all) and the docker-image:// prebuilt contexts
+          # are only guaranteed to resolve from the daemon store with the
+          # default driver/builder. Explicit 'false', not '' — compose parses
+          # the variable with strict ParseBool and dies on an empty string.
+          COMPOSE_BAKE: ${{ github.event_name != 'pull_request' && 'true' || 'false' }}
 
       # ─── Hand the built image to both lanes ─────────────────────────────
       # Only insight-e2e-runner:latest travels: analytics and jira-enrich
@@ -202,7 +299,7 @@ jobs:
         run: docker save insight-e2e-runner:latest | zstd -T0 -o runner-image.tar.zst
 
       - name: Upload runner image
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-runner-image
           path: src/ingestion/tests/e2e/runner-image.tar.zst
@@ -214,17 +311,42 @@ jobs:
           overwrite: true
 
   e2e-metrics:
-    name: metrics
+    name: metrics (shard ${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      # Every leg reports: a red shard must not cancel its siblings, or their
+      # failures (and coverage artifacts) vanish with it.
+      fail-fast: false
+      matrix:
+        # Shards of the metrics suite, one isolated stack per leg, sliced BY
+        # FIXTURE FAMILY (filename prefix), not round-robin. Families must not
+        # split across shards: fixtures leak state to LATER tests in the same
+        # session through table existence — e.g. every ai_* silver build
+        # eagerly selects assert_cursor_event_cost_attributed (dbt's default
+        # indirect selection), whose ephemeral ref compiles to a read of the
+        # cursor staging tables, and those only exist once a cursor-seeding
+        # fixture (ai_active_days, alphabetically first) has run in the same
+        # session. Grouping a family keeps its alphabetical order — exactly
+        # the serial lane's semantics. (Round-robin sharding was tried and
+        # tripped precisely this: dbt indirect-selection modes don't help —
+        # `cautious`/`buildable` would silently deselect that test everywhere
+        # because its ephemeral parent is never in any build's selection.)
+        #
+        # `rest` is the complement of the named prefixes (see the run step),
+        # so every yaml lands in EXACTLY one shard by construction and a new
+        # test — even with a brand-new prefix — can never silently fall out
+        # of CI. Rebalancing = promoting a prefix out of `rest` into its own
+        # leg here AND excluding it in the run step's `rest` branch.
+        shard: [ai, collab, tasks, rest]
 
     defaults:
       run:
         working-directory: src/ingestion/tests/e2e
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -233,7 +355,7 @@ jobs:
       # insight-e2e-runner:latest, exactly what compose expects, so the
       # `./e2e.sh test` below never re-triggers a build.
       - name: Download runner image
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: e2e-runner-image
           path: src/ingestion/tests/e2e
@@ -254,35 +376,65 @@ jobs:
       - name: Reset coverage artifacts
         run: rm -rf .artifacts
 
-      # ─── Run the suite inside the runner ────────────────────────────────
-      # `./e2e.sh test <path>` (docker compose run runner) starts the clickhouse
-      # + mariadb `depends_on` services — compose pulls their images on demand
-      # and waits for `service_healthy` — so no explicit image pre-pull is needed.
+      # ─── Run this shard's slice inside the runner ───────────────────────
+      # `./e2e.sh test <node-ids>` (docker compose run runner) starts the
+      # clickhouse + mariadb `depends_on` services — compose pulls their images
+      # on demand and waits for `service_healthy` — so no explicit image
+      # pre-pull is needed.
       #
       # This lane runs only the metrics/ suite — the bronze→dbt→gold→API metric
-      # fixtures (the yaml rig). It's serial on purpose: the session rig is not
-      # xdist-safe yet (see conftest.py — per-worker analytics spawns race
-      # SeaORM migrations in the shared MariaDB, non-primary workers don't wait
-      # for ClickHouse migrations, and the shared dbt target/ dir is deleted by
-      # whichever worker finishes first). Wall-time cost is negligible: this
-      # lane only loads the pre-built runner image and runs the metrics/ suite
-      # — the expensive analytics+enrich compile happens once, upstream, in
-      # the `build` job.
+      # fixtures (the yaml rig) — split across the shard matrix: each leg gets
+      # its own runner VM, hence its own ClickHouse/MariaDB/dbt target/analytics
+      # — full isolation with zero changes to the session rig. The slice is
+      # this shard's fixture family (see the matrix comment for why families
+      # must stay whole), expanded into explicit pytest node ids: exhaustive by
+      # construction (no `-k` substring traps — an id that is a prefix of
+      # another cannot leak across shards, and a new test can never silently
+      # fall out of CI thanks to the complement `rest` shard).
+      #
+      # WITHIN a shard the tests still run serially: the session rig is not
+      # xdist-safe (see conftest.py — per-worker analytics spawns race SeaORM
+      # migrations in the shared MariaDB, non-primary workers don't wait for
+      # ClickHouse migrations, and the shared dbt target/ dir is deleted by
+      # whichever worker finishes first). The expensive analytics+enrich
+      # compile happens once, upstream, in the `build` job.
       #
       # meta/ (the rig's own framework smoke tests) is deliberately NOT run in
       # CI — it tests the harness, not the product; run it locally via
       # `./e2e.sh test meta/`.
       #
-      # This session ALSO emits BOTH .artifacts/ files while analytics is up:
+      # Each shard's session ALSO emits BOTH .artifacts/ files while analytics
+      # is up:
       #   • metric_definitions.json  (lib/collect_metric_definitions.py)
       #   • observed_endpoints.json  (conftest.pytest_sessionfinish — httpx hook
       #     ledger)
       # but only the lane-relevant one is consumed downstream: this metrics
-      # lane feeds metric-coverage-gate. (The api lane above feeds
-      # api-endpoint-coverage-gate instead, since that suite alone already
-      # exercises every spec operation.)
-      - name: E2E suite — metrics
-        run: ./e2e.sh test metrics/ --tb=short -q
+      # lane feeds metric-coverage-gate. metric_definitions.json is the FULL
+      # builtin registry queried from MariaDB — independent of which tests the
+      # shard ran, so every shard's copy is identical and the gate can use any
+      # one of them.
+      - name: E2E suite — metrics shard
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          # `rest` must exclude exactly the prefixes that have their own matrix
+          # leg — keep this list in lockstep with `matrix.shard` above.
+          case "$SHARD" in
+            rest) filter=(grep -v -e '^metrics/ai_' -e '^metrics/collab_' -e '^metrics/tasks_') ;;
+            *)    filter=(grep -e "^metrics/${SHARD}_") ;;
+          esac
+          nodes=()
+          while IFS= read -r stem; do
+            nodes+=("metrics/test_fixtures.py::test_metric_smoke[${stem}]")
+          done < <(printf '%s\n' metrics/*.test.yaml | "${filter[@]}" | sort \
+                     | xargs -n1 basename | sed 's/\.test\.yaml$//')
+          # Fail loudly on an empty slice — pytest exits 4 on unknown node ids
+          # but an empty arg list would silently run the FULL suite instead.
+          [ "${#nodes[@]}" -gt 0 ] || { echo "::error::shard ${SHARD} selected no tests"; exit 1; }
+          printf 'shard %s → %s tests\n' "$SHARD" "${#nodes[@]}"
+          printf '  %s\n' "${nodes[@]}"
+          ./e2e.sh test "${nodes[@]}" --tb=short -q
 
       # ─── Hand the collected catalog to the gate job ─────────────────────
       # Uploaded even if the suite failed (the collection script still runs), so the
@@ -290,9 +442,15 @@ jobs:
       # ignore defaults.run.working-directory).
       - name: Upload coverage inputs
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-inputs-metrics
+          # Per-shard name — matrix legs may not share one artifact. The gate
+          # downloads the whole coverage-inputs-metrics-* family and merges
+          # last-write-wins; safe because the only file it reads —
+          # metric_definitions.json — is a full-registry snapshot, identical
+          # in every shard. (observed_endpoints.json does differ per shard,
+          # but nothing downstream consumes it in this lane.)
+          name: coverage-inputs-metrics-${{ matrix.shard }}
           path: src/ingestion/tests/e2e/.artifacts/
           # Single-writer per-run artifact; lets "Re-run failed jobs" replace a
           # prior partial upload instead of erroring "artifact already exists".
@@ -326,11 +484,11 @@ jobs:
   # artifact, and reads plain files. No Docker, no analytics boot.
   # `!cancelled()` so they still report when the suite itself failed (the
   # artifacts are usually present). The `needs.<lane>.result != 'skipped'`
-  # clause guards the other case: a lane is SKIPPED (not failed) when the
-  # upstream `build` job fails, and in that case there's no artifact to
-  # download at all — without this clause the gate would still run and fail
-  # noisily on a missing artifact instead of just skipping cleanly alongside
-  # its lane.
+  # clause guards the other case: a lane is SKIPPED (not failed) when `changes`
+  # found nothing relevant or when the upstream `build` job fails, and in
+  # neither case is there an artifact to download — without this clause the
+  # gate would still run and fail noisily on a missing artifact instead of just
+  # skipping cleanly alongside its lane.
 
   metric-coverage-gate:
     name: Metric coverage gate
@@ -339,15 +497,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      # Merge every shard's artifact into one directory. The gate's "asserted"
+      # side is a STATIC scan of metrics/*.test.yaml from the checkout (see
+      # lib/metric_coverage.py:coverage_from_tests) — sharding cannot
+      # under-fill it — and its only runtime input, metric_definitions.json,
+      # is identical in every shard, so the merge just needs at least one
+      # shard to have uploaded.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: coverage-inputs-metrics
+          pattern: coverage-inputs-metrics-*
+          merge-multiple: true
           path: coverage-inputs
       - name: Analyse metric coverage
         run: |
@@ -373,6 +538,7 @@ jobs:
     # a broken service image can't be merged even though that workflow's own
     # checks aren't in the ruleset.
     needs:
+      - changes
       - build
       - e2e-metrics
     if: ${{ !cancelled() }}
@@ -381,16 +547,49 @@ jobs:
     # poll a straggling build-images run for up to 10 more.
     timeout-minutes: 15
     steps:
+      # A skipped lane now has two possible meanings, and they are opposites:
+      # `changes` decided the diff cannot reach the data path (a pass), or the
+      # upstream build went red and took the lane with it (a failure). So the
+      # lane results are read one at a time through the environment rather than
+      # collapsed with `contains(needs.*.result, 'skipped')` — that expression
+      # cannot tell the two apart, and it would also fold in `changes`'s own
+      # result now that it is a `needs` entry.
       - name: Require the build and the data-path lane to have succeeded
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          BUILD: ${{ needs.build.result }}
+          # Matrix aggregate: 'success' only when EVERY shard passed.
+          METRICS: ${{ needs.e2e-metrics.result }}
         run: |
-          echo "build=${{ needs.build.result }}"
-          echo "metrics=${{ needs.e2e-metrics.result }}"
-          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "true" ]; then
-            echo "::error::E2E suite did not fully pass — the build or the metrics lane failed, was cancelled, or was skipped."
+          set -euo pipefail
+          echo "changes=$CHANGES relevant=$RELEVANT build=$BUILD metrics=$METRICS"
+
+          # Fail closed. A `changes` job that did not succeed leaves `relevant`
+          # empty, which would otherwise read as "irrelevant" and green a
+          # required check that proved nothing.
+          if [ "$CHANGES" != "success" ]; then
+            echo "::error::the changes job did not succeed ($CHANGES) — relevance is unknown, so the data path is unproven."
             exit 1
           fi
-          echo "E2E suite passed: build + the metrics lane succeeded."
 
+          if [ "$RELEVANT" != "true" ]; then
+            echo "nothing on the bronze → dbt → ClickHouse → analytics path changed — nothing to prove."
+          else
+            for lane in "build=$BUILD" "metrics=$METRICS"; do
+              if [ "${lane#*=}" != "success" ]; then
+                echo "::error::${lane%%=*} did not pass (${lane#*=}) — the E2E suite did not fully run for this change."
+                exit 1
+              fi
+            done
+            echo "E2E suite passed: build + the metrics lane succeeded."
+          fi
+
+      # Unconditional, including on a PR `changes` found irrelevant: this gate
+      # guards the service images rather than the data path, and a PR touching
+      # only src/frontend/ can still break a build this required check is the
+      # sole ruleset-visible reporter for.
+      #
       # build-images.yml is a separate workflow, so `needs:` can't reach it;
       # ask the API for this SHA's run instead. Absent (path-skipped, or a
       # merge_group SHA — that workflow has no merge_group trigger) passes;

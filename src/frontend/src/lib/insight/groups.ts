@@ -70,10 +70,18 @@ const TASK_DELIVERY_COLLECTION: MetricCollectionConfig = {
   metrics: [
     {
       key: "tasks.closed",
-      views: [{ view: "period" }, { view: "peer" }],
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["type"] },
+      ],
     },
     {
       key: "tasks.bugs_fixed",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "tasks.closed_non_bug",
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
@@ -324,11 +332,24 @@ export const GROUPS: readonly MetricGroup[] = [
       preview: ["tasks.closed", "tasks.resolution_time", "tasks.pickup_time"],
     },
     drilldown: [
+      { chart: "summary-card", view: "breakdown", metrics: ["tasks.closed"] },
       {
-        id: "task-throughput",
+        id: "closed-by-type",
         view: "timeseries",
-        metrics: ["tasks.closed", "tasks.bugs_fixed"],
-        chart: { multiMetric: "combined" },
+        metrics: ["tasks.closed"],
+        table: {
+          columns: [{ metric: "tasks.closed" }],
+        },
+        groupBy: {
+          default: "type",
+          limits: {
+            type: {
+              count: 10,
+              rankBy: "tasks.closed",
+              includeRemainder: true,
+            },
+          },
+        },
       },
       {
         chart: "histogram",
@@ -469,8 +490,9 @@ export const GROUPS: readonly MetricGroup[] = [
  */
 export const HEATMAP_METRIC_KEYS: readonly string[] = [
   "tasks.closed",
-  "tasks.resolution_time",
   "tasks.bugs_fixed",
+  "tasks.closed_non_bug",
+  "tasks.resolution_time",
   "git.prs_merged",
   "git.pr_cycle_time_h",
   "collab.focus_time_pct",
@@ -492,9 +514,21 @@ export const HEATMAP_COLLECTION: MetricCollectionConfig = {
 };
 
 /**
- * The "At a glance" KPI row: array order is display order. Tiles are metric
- * keys resolved against the KPI collection below and render through the
- * display-ready tile intermediate — selectors own formatting and scoring.
+ * CANDIDATES for the "At a glance" row, in display order — not the row itself.
+ *
+ * The row renders the first `KPI_ROW_MAX` of these that this person was
+ * actually observed for. A fixed five-key row spends the most valuable space on
+ * the page on whatever the list happens to name: a person whose role produces
+ * no pull requests and no tasks gets dashes in those slots, while the metrics
+ * their work does register are nowhere on the screen.
+ *
+ * The tail exists for exactly that person. It is a fallback, not a demotion —
+ * a developer still leads with tasks and PRs, because those come first here and
+ * they have them.
+ *
+ * "Observed" is the honest test, not "non-zero": a developer who merged nothing
+ * this month KEEPS the empty PR tile, because a measured zero is a finding. A
+ * metric no connector feeds for this person is what drops out.
  */
 export const KPI_ROW: readonly string[] = [
   "tasks.closed",
@@ -502,7 +536,21 @@ export const KPI_ROW: readonly string[] = [
   "git.prs_merged",
   "ai.active_days",
   "ai.accepted_lines",
+  "collab.messages_sent",
+  "collab.meeting_hours",
+  "wiki.pages_created",
+  "git.commits",
 ];
+
+/** How many tiles the row shows; the rest of the candidates are fallbacks. */
+/**
+ * Four, not five, because the row is laid out in a column count that divides
+ * it. Five tiles in a four-column row leave the fifth alone on a line of its
+ * own beside a hole the width of three tiles, and the hole reads as something
+ * failing to load. The candidate list is longer than the row either way, so
+ * the row already adapts to the person; it now also fills.
+ */
+export const KPI_ROW_MAX = 4;
 
 export const KPI_ROW_COLLECTION: MetricCollectionConfig = {
   metrics: KPI_ROW.map((key) => ({

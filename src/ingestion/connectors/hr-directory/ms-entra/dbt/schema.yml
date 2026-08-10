@@ -116,3 +116,23 @@ models:
           - accepted_values:
               arguments:
                 values: ['active', 'on_leave', 'terminated', 'unknown']
+
+  - name: ms_entra__person_attribute_claims
+    description: >
+      Typed person-attribute claims from the ms_entra__users_snapshot SCD2 history via the
+      attribute_claims macro. Emits the class_person_attribute_claims contract;
+      unioned into silver by the silver:class_person_attribute_claims tag.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+      - name: source_account_id
+        description: "Entra Object ID (oid)"
+        tests:
+          - not_null
+      - name: field_id
+        tests:
+          - not_null
+      - name: claim_action
+        tests:
+          - not_null

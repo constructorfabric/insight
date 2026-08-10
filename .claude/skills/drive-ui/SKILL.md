@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill
 
 Two things about the Insight UI go wrong expensively, and neither is about clicking: **getting a browser that is already authenticated**, and **capturing evidence a reader can act on**. This skill covers both, for local and remote stands alike. The `playwright-cli` skill owns the command surface — snapshots, refs, clicks, screenshots, tracing — so read it for *how* to drive.
 
-The SPA itself is not in this repo (`src/frontend/` holds only the Helm chart); it lives in `insight-front`. So when you need to read the UI's code rather than run it, look there.
+The SPA lives in this repo at `src/frontend/` — source, Dockerfile and Helm chart together. So when you need to read the UI's code rather than run it, look there.
 
 ## Pick the stand, then get a browser
 
@@ -18,16 +18,16 @@ The right acquisition move depends entirely on the identity provider, so start t
 
 | Stand | Auth | Move |
 |---|---|---|
-| local compose (`http://localhost:3000`) | FakeIdP bypass, or Keycloak | `playwright-cli open` — no login step in fakeidp mode |
+| local compose (`http://localhost:3000`) | Keycloak, username + password | `playwright-cli open` |
 | local k8s / kind (`http://localhost:8080` after a port-forward) | Keycloak, username + password | `playwright-cli open --persistent` |
 | a shared remote stand behind Keycloak | username + password | `playwright-cli open --persistent` |
 | a remote stand behind Microsoft Entra | **passkey** | Attach to the user's own Chrome — never launch |
 
-### Local: the login is free, the person is not
+### Local: the login is cheap, the person is not
 
-`./dev-compose.sh up` defaults to `AUTH_MODE=fakeidp`, which is a bypass — no credentials to type. The UI is at `http://localhost:3000` and the gateway at `http://localhost:8080`. For a kind install there is no Vite origin; port-forward instead (`kubectl port-forward svc/insight-gateway 8080:80`) and use `http://localhost:8080`.
+`./dev-compose.sh up` runs auth via Keycloak — sign in as `DEV_USER_EMAIL` (`dev@company.nonpresent` by default) with password `insight-dev`. The UI is at `http://localhost:3000` and the gateway at `http://localhost:8080`. For a kind install there is no Vite origin; port-forward instead (`kubectl port-forward svc/insight-gateway 8080:80`) and use `http://localhost:8080`.
 
-What actually blocks you is identity, not auth. FakeIdP logs in as `DEV_USER_EMAIL` (`dev@company.nonpresent` by default), and that email has to resolve to a seeded person row or the app rejects the session — a `403` / "person not found" at login, or a `401 urn:insight:error:caller_unresolved` from identity on `/api` calls. The fix is a seed, not a browser move:
+What actually blocks you is identity, not auth. The login email has to resolve to a seeded person row or the app rejects the session — a `403` / "person not found" at login, or a `401 urn:insight:error:caller_unresolved` from identity on `/api` calls. The fix is a seed, not a browser move:
 
 ```sh
 ./dev-compose.sh seed identity     # makes DEV_USER_EMAIL resolve to a person
@@ -35,7 +35,7 @@ What actually blocks you is identity, not auth. FakeIdP logs in as `DEV_USER_EMA
 
 Read that symptom as "the stand isn't ready", not "the product is broken" — filing it would be a `layer: stand` finding, which `file-bug-insight` will bounce.
 
-With `AUTH_MODE=keycloak` you get a real username-and-password form, and `--persistent` is worth it so the session survives between runs.
+The Keycloak login is a real username-and-password form, so `--persistent` is worth it — the session survives between runs.
 
 ### Behind a passkey: attach, never launch
 

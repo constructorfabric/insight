@@ -254,6 +254,36 @@ so an IdP swap or upstream drift cannot change the tenant. Canonical
 realm shape to copy:
 [`environments/local/keycloak/realms/insight-broker.yaml`](environments/local/keycloak/realms/insight-broker.yaml).
 
+Every IdP registration carries the same two mappers — the tenant pin
+and the upstream-id stamp (a customer with several IdPs pins the same
+tenant on each; an IdP's own tenancy assertions are never consulted):
+
+```yaml
+identityProviderMappers:
+  - name: tenant-id
+    identityProviderAlias: <alias>
+    identityProviderMapper: hardcoded-attribute-idp-mapper
+    config:
+      syncMode: FORCE
+      attribute: tenant_id
+      attribute.value: <env placeholder INSIGHT_TENANT_ID>
+  - name: idp-sub
+    identityProviderAlias: <alias>
+    identityProviderMapper: oidc-user-attribute-idp-mapper
+    config:
+      syncMode: FORCE
+      claim: <upstream stable id claim, e.g. Entra oid>
+      user.attribute: idp_sub
+```
+
+CI runs `deploy/compose/keycloak/tests/tenant_contract_guard.py` — a
+contract test, not an audit of deployed realms: it statically checks
+every committed realm file (each registration has exactly one tenant
+pin and an `idp_sub` stamp; no group carries a `tenant_id` attribute)
+and imports the canonical realm into a throwaway Keycloak to assert
+token behavior (fail closed without the pin, pin emitted verbatim as a
+single string, tenant-bearing groups inert).
+
 ## Secret management
 
 Sealed secrets ([Bitnami sealed-secrets](https://github.com/bitnami-labs/sealed-secrets))

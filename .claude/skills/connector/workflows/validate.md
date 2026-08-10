@@ -149,7 +149,7 @@ Read connector package files and verify each item:
 
 - Because the CI `bump-descriptors` job bumps `descriptor.version` by one minor every time an image rebuilds (per ADR-0016 + ADR-0015), the field MUST be on strict-semver form `MAJOR.MINOR.PATCH` from day one. The matcher is `.github/workflows/scripts/bump-descriptor-version.sh --descriptor <path> --print-only` succeeding (exit 0) — it prints the version it *would* write and leaves the file untouched.
 - `bump-descriptors` fires **only on the push to `main`**, so this check failing does NOT fail the PR on its own. Run Check 8 (the wiring guard), which does.
-- Applies to descriptors that declare an `images:` block. Descriptors without one never reach `bump-descriptors`; legacy non-semver values there (`ai/openai`, `collaboration/slack`, `hr-directory/bamboohr`) are tolerated per ADR-0015 §"Legacy non-semver values" — report as a warning, not a failure.
+- Applies to descriptors that declare an `images:` block. Descriptors without one never reach `bump-descriptors`; legacy non-semver values there (`ai/openai`, `collaboration/slack`) are tolerated per ADR-0015 §"Legacy non-semver values" — report as a warning, not a failure.
 - Each of MAJOR, MINOR, PATCH MUST be `0` or a non-zero digit followed by more digits (no leading zeros — semver.org §2).
 - NO `v` prefix, NO pre-release suffix, NO build metadata.
 - Examples that PASS: `1.0.0`, `0.1.0`, `10.20.30`, `100.0.0`.

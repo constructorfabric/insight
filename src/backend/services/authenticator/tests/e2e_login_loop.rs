@@ -1,22 +1,15 @@
-//! End-to-end login loop against a running authenticator + fakeidp + Redis.
-//!
-//! `#[ignore]` by default (needs the stack up). Run it against docker-compose or
-//! a local process stack:
+//! End-to-end login loop against a running authenticator + Keycloak + Redis
+//! (`run-e2e.sh` boots the stack):
 //!
 //! ```text
-//! AUTH_BASE=http://localhost:8083 FAKEIDP_PUBLIC=http://localhost:8084 \
+//! AUTH_BASE=http://localhost:8083 \
 //!   cargo test -p authenticator --test e2e_login_loop -- --ignored --nocapture
 //! ```
 //!
-//! It drives the full loop: `/auth/login` -> fakeidp `/authorize` ->
+//! It drives the full loop: `/auth/login` -> the realm's login form ->
 //! `/auth/callback` (session + cookie) -> `/internal/authz` (JWT, verified
 //! against the published JWKS) -> `/auth/me` -> `/auth/logout` -> `/internal/authz`
 //! returns 401.
-//!
-//! Networking: in a docker-compose run the authenticator advertises fakeidp's
-//! authorize URL as `http://fakeidp:8084/...`, unreachable from the host — set
-//! `FAKEIDP_REWRITE_FROM=http://fakeidp:8084` and `FAKEIDP_REWRITE_TO=http://localhost:8084`
-//! to rewrite it. In an all-localhost process stack no rewrite is needed.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
@@ -33,16 +26,6 @@ fn env(key: &str, default: &str) -> String {
 
 fn client() -> common::Client {
     common::client()
-}
-
-fn rewrite_host(url: &str) -> String {
-    match (
-        std::env::var("FAKEIDP_REWRITE_FROM"),
-        std::env::var("FAKEIDP_REWRITE_TO"),
-    ) {
-        (Ok(from), Ok(to)) if !from.is_empty() => url.replace(&from, &to),
-        _ => url.to_owned(),
-    }
 }
 
 fn cookie_from(resp: &reqwest::Response) -> Option<String> {
@@ -83,7 +66,7 @@ struct Claims {
 }
 
 #[tokio::test]
-#[ignore = "requires a running authenticator + fakeidp + Redis stack"]
+#[ignore = "requires a running authenticator + Keycloak + Redis stack"]
 async fn full_login_exchange_logout_loop() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
     let test_user = env("E2E_USER", "dev@company.nonpresent");
@@ -96,25 +79,13 @@ async fn full_login_exchange_logout_loop() {
         .await
         .unwrap();
     assert_eq!(login.status(), 302, "login should redirect to the IdP");
-    let authorize = rewrite_host(login.headers()[reqwest::header::LOCATION].to_str().unwrap());
+    let authorize = login.headers()[reqwest::header::LOCATION]
+        .to_str()
+        .unwrap()
+        .to_owned();
 
-    // 2. Follow authorize with an explicit test user -> 302 back to the callback.
-    let sep = if authorize.contains('?') { '&' } else { '?' };
-    let authorized = http
-        .get(format!("{authorize}{sep}user={test_user}"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        authorized.status(),
-        302,
-        "authorize should redirect to callback"
-    );
-    let callback = rewrite_host(
-        authorized.headers()[reqwest::header::LOCATION]
-            .to_str()
-            .unwrap(),
-    );
+    // 2. Authenticate on the realm's login form -> redirect to the callback.
+    let callback = common::kc::authorize(&authorize, &test_user).await;
 
     // 3. Follow the callback -> session created, cookie set, 302 to return_to.
     let cb = http.get(&callback).send().await.unwrap();
@@ -253,7 +224,7 @@ async fn full_login_exchange_logout_loop() {
 /// `default_return_to` with a fixed `auth_error=<reason>` the SPA consumes to
 /// restart the flow.
 #[tokio::test]
-#[ignore = "requires a running authenticator + fakeidp + Redis stack"]
+#[ignore = "requires a running authenticator + Keycloak + Redis stack"]
 async fn failed_callback_redirects_into_the_spa_with_auth_error() {
     let auth_base = env("AUTH_BASE", "http://localhost:8083");
     let http = client();

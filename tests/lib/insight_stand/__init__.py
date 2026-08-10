@@ -3,7 +3,7 @@
 This package holds:
 
 * `manifest` — the typed model of the stand's self-description
-  (`deploy/seed/manifest.json`), the only source of fixture names, capabilities
+  (`src/ingestion/tools/seed/manifest.json`), the only source of fixture names, capabilities
   and seeded facts.
 * `stand` — where the stand is: base-URL resolution for a host-side or
   in-network runner.
