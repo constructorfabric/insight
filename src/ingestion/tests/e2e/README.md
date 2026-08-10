@@ -47,9 +47,14 @@ cd src/ingestion/tests/e2e
 ./e2e.sh down               # tear down compose stack + volumes
 ```
 
-The same image is used in CI, which builds it ONCE in a shared upstream `build` job and hands it to the `e2e-metrics` lane as a saved image artifact — the lane loads the image, boots its stack, runs the suite (meta/ is local-only: it tests the harness, not the product), and uploads `coverage-inputs-metrics` for the metric gate — see `.github/workflows/e2e-bronze-to-api.yml`.
+The same image is used in CI, which builds it ONCE in a shared upstream `build` job and hands it to the `e2e-metrics` and `e2e-identity` lanes as a saved image artifact — each lane loads the image, boots its own stack and runs its slice (meta/ is local-only: it tests the harness, not the product); the metrics lane also uploads `coverage-inputs-metrics` for the metric gate — see `.github/workflows/e2e-bronze-to-api.yml`.
 
-**The `api/` and `identity/` HTTP contract suites have retired from this rig.** Those contracts are asserted against a deployed stand in [`tests/stand/`](../../../../tests/stand/), which crosses a real gateway with a real Keycloak session and can therefore prove the 401/403 behaviour an in-process rig structurally cannot. Their endpoint gate moved with them, to `tests/lib/insight_stand/coverage.py`. What remains here is what only this rig does: bronze → dbt → ClickHouse → analytics response, over fixtures it seeds itself.
+**The HTTP CONTRACT suites have retired from this rig — the `api/` one entirely, and identity's along with it.** Those contracts are asserted against a deployed stand in [`tests/stand/`](../../../../tests/stand/), which crosses a real gateway with a real Keycloak session and can therefore prove the 401/403 behaviour an in-process rig structurally cannot. Their endpoint gate moved with them, to `tests/lib/insight_stand/coverage.py`.
+
+What remains is what only this rig does, and it is two things rather than one:
+
+- **`metrics/`** — bronze → dbt → ClickHouse → analytics response, over fixtures it seeds itself.
+- **`identity/`** — the identity behaviour a stand may not exercise, because it MUTATES: the operator-correction verbs append to a journal with no delete, and the persons-seed projection rewrites org_chart from connector evidence. Neither fits a suite bound to remove what it creates.
 
 First session bootstraps `cargo build --release -p analytics` (~3-5 min). Subsequent sessions reuse the named volume so cargo is incremental (~10s).
 
@@ -90,6 +95,7 @@ e2e/
 ├── seed/
 │   └── metrics.yaml            # optional test-specific metric overrides (default: empty)
 ├── metrics/                      # <name>.test.yaml + schemas/ + templates/
+├── identity/                   # the correction writes a deployed stand may not make
 └── meta/                       # the rig's own framework tests (dbt runner, expect engine, ref resolver)
 ```
 

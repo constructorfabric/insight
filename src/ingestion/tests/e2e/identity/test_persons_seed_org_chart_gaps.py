@@ -8,6 +8,7 @@ test at all. This module closes those gaps one at a time.
 
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 
@@ -58,15 +59,14 @@ def _ms_entra_user(*, run_tag: str, entity_id: str, email: str) -> dict:
     """A minimal `bronze_ms_entra.users` row — deliberately has no manager
     field of any kind, since the real DDL has none to give one.
 
-    Only `mail` is populated — of ALL eleven columns `ms_entra__users_snapshot`
-    tracks (not just the five `ms_entra__identity_inputs.sql` reads), since
-    the shared `identity_inputs_from_history` macro's ADR-0002 `id_upserts`
-    CTE emits one canonical `id` row per TRACKED-FIELD history row for the
-    entity (unfiltered by which fields identity_inputs actually reads), not
-    one per entity. Seeding a second non-null field in the same snapshot
-    batch collides on `unique_key` (every field's version-1 row shares the
-    same `updated_at`) — a separate latent issue in the shared macro, not
-    what this test is about.
+    Only `mail` is populated, which is now a simplification rather than a
+    workaround. It used to be forced: `identity_inputs_from_history`'s
+    `id_upserts` CTE emitted one canonical `id` row per TRACKED-FIELD history
+    row instead of one per activity, so a second non-null field in the same
+    snapshot batch collided on `unique_key` (every field's version-1 row shares
+    one `updated_at`). The macro now dedups, so populating more fields would be
+    safe — this row stays minimal only because the test is about the ABSENCE of
+    a manager field.
     """
     return {
         "_airbyte_raw_id": str(uuid.uuid4()),
@@ -85,19 +85,19 @@ def _bamboohr_employee(
     *, run_tag: str, entity_id: str, email: str, display_name: str, supervisor_email: str | None
 ) -> dict:
     """A minimal `bronze_bamboohr.employees` row — the real shape the bamboohr
-    connector would append, not a hand-crafted identity_inputs row."""
-    return {
-        # Non-nullable Airbyte CDK columns — real connector rows always carry
-        # these; some staging transformations (e.g. latest-row selection)
-        # rely on `_airbyte_extracted_at`.
-        "_airbyte_raw_id": str(uuid.uuid4()),
-        "_airbyte_extracted_at": "2026-01-05T00:00:00",
-        "_airbyte_meta": "{}",
-        "_airbyte_generation_id": 0,
+    connector would append, not a hand-crafted identity_inputs row.
+
+    `raw_data` is the part that makes this row reach the identity path at all,
+    and it is easy to leave out: bamboohr's history model is
+    `fields_history_raw`, which reads every tracked field out of THIS payload's
+    keys rather than off the typed columns. A row with the columns but no
+    `raw_data` yields an empty field map, so the history is empty, so
+    `bamboohr__identity_inputs` never emits — the seed then sees no evidence and
+    the failure surfaces far downstream as a 404 on a person that was never
+    created.
+    """
+    payload = {
         "id": entity_id,
-        "unique_key": f"pipeline-{run_tag}-bamboohr-{entity_id}",
-        "tenant_id": f"pipeline-tenant-{run_tag}",
-        "source_id": f"pipeline-source-{run_tag}",
         "workEmail": email,
         "displayName": display_name,
         "firstName": display_name.split(" ")[0],
@@ -107,6 +107,26 @@ def _bamboohr_employee(
         "department": "Engineering",
         "division": "Engineering",
         "status": "Active",
+    }
+    # Omitted rather than null when there is no supervisor: an empty
+    # parent_email observation is a different statement from "no statement",
+    # and the root of a chain makes the second one.
+    if supervisor_email is not None:
+        payload["supervisorEmail"] = supervisor_email
+
+    return {
+        # Non-nullable Airbyte CDK columns — real connector rows always carry
+        # these; some staging transformations (e.g. latest-row selection)
+        # rely on `_airbyte_extracted_at`.
+        "_airbyte_raw_id": str(uuid.uuid4()),
+        "_airbyte_extracted_at": "2026-01-05T00:00:00",
+        "_airbyte_meta": "{}",
+        "_airbyte_generation_id": 0,
+        "unique_key": f"pipeline-{run_tag}-bamboohr-{entity_id}",
+        "tenant_id": f"pipeline-tenant-{run_tag}",
+        "source_id": f"pipeline-source-{run_tag}",
+        "raw_data": json.dumps(payload),
+        **payload,
         "supervisorEmail": supervisor_email,
         "supervisorEId": None,
     }

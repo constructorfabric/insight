@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import uuid
 
+import pymysql
 import pytest
 from lib import clickhouse
 from lib import identity_seed as seed
 from lib.ch_seeder import CHSeeder
 from lib.config import SessionConfig
 from lib.dbt_runner import DbtRunner
+from lib.identity import IDENTITY_DATABASE
 from lib.worker import WorkerContext
 
 pytestmark = [pytest.mark.identity, pytest.mark.mutating]
@@ -106,6 +108,43 @@ def _run_connector_dbt_path(
     dbt_runner.run("identity_inputs", worker_ctx=worker_ctx)
 
 
+def _stored_id_binding(cfg: SessionConfig, login: str) -> str | None:
+    """The `value_id` the connector actually wrote, byte for byte.
+
+    Read from the journal rather than probed through the API because no lookup
+    can answer this: `persons.value_id` is `utf8mb4_unicode_ci` since migration
+    004, so a stored `Foo` and a stored `foo` are indistinguishable to every
+    query — including the one in the WHERE clause here, which is what lets it
+    find the row whatever case the connector chose. Only the returned bytes say
+    which case that was.
+    """
+    with (
+        pymysql.connect(
+            host=cfg.mariadb_host,
+            port=cfg.mariadb_port,
+            user=cfg.mariadb_user,
+            password=cfg.mariadb_password,
+            database=IDENTITY_DATABASE,
+        ) as conn,
+        conn.cursor() as cur,
+    ):
+        cur.execute(
+            """
+            SELECT value_id
+            FROM persons
+            WHERE insight_source_type = 'github'
+              AND value_type = 'id'
+              AND value_id = %s
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (login,),
+        )
+        row = cur.fetchone()
+
+    return row[0] if row else None
+
+
 def _resolve_by_external_id(identity_svc, external_id: str) -> str | None:
     """Resolve exactly as the authenticator's login-bootstrap does."""
     with identity_svc.client(
@@ -177,14 +216,24 @@ def test_login_binding_is_lowercased_so_a_brokered_username_matches(
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
     worker_ctx: WorkerContext,
+    compose_stack: SessionConfig,
 ) -> None:
     """GitHub preserves the login's letter-case; Keycloak lowercases the
-    username it brokers from it. `persons.value_id` is `COLLATE utf8mb4_bin`,
-    so the comparison is byte-exact — storing GitHub's casing against a
-    lowercased claim yields a 403 indistinguishable from missing data.
+    username it brokers from it. The connector therefore binds on the
+    LOWERCASED login (ADR-0002), so the form the authenticator arrives with is
+    the form the journal holds.
 
-    The connector therefore binds on the lowercased login, and this pins it:
-    the lowercased form resolves, the mixed-case one does not.
+    Pinned in two steps, because one alone cannot see it. That the brokered form
+    resolves is necessary but not sufficient: `persons.value_id` is
+    `utf8mb4_unicode_ci` — migration 004 moved it off `utf8mb4_bin` deliberately
+    so a value that differs only in case still matches — which means the
+    lowercased lookup would succeed against a binding stored in GitHub's own
+    casing too. Asserting the mixed-case spelling does NOT resolve cannot
+    substitute for it either: under a case-insensitive collation that is
+    unobservable by construction, so the assertion would fail on a connector
+    doing exactly the right thing.
+
+    So the normalization itself is read from the journal, where the bytes are.
     """
     if not identity_svc.supports_seed_cli:
         pytest.skip("the seed CLI exists only on the Rust implementation (#1690)")
@@ -212,7 +261,10 @@ def test_login_binding_is_lowercased_so_a_brokered_username_matches(
     assert _resolve_by_external_id(identity_svc, mixed_case_login.lower()) is not None, (
         "a lowercased GitHub login must resolve — this is the form Keycloak brokers"
     )
-    assert _resolve_by_external_id(identity_svc, mixed_case_login) is None, (
-        "the mixed-case login resolved too, so the binding is not the normalized one this "
-        "connector promises — re-check login_normalized and the fields_history entity_id"
+
+    stored = _stored_id_binding(compose_stack, mixed_case_login)
+    assert stored == mixed_case_login.lower(), (
+        f"the id binding holds {stored!r}, not the lowercased login "
+        f"{mixed_case_login.lower()!r} — re-check login_normalized and the "
+        f"fields_history entity_id"
     )

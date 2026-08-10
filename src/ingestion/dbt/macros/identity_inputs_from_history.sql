@@ -154,8 +154,15 @@ id_upserts AS (
         'UPSERT' AS operation_type,
         toDateTime64(updated_at, 3) AS _synced_at,
         toUnixTimestamp64Milli(toDateTime64(updated_at, 3)) AS _version
-    FROM history
-    WHERE entity_id IS NOT NULL AND entity_id != ''
+    -- INVARIANT: one id row per activity instant, not per changed field. Every
+    -- column here derives from these four, and `history` carries one row PER
+    -- FIELD — so reading it directly emits N identical rows sharing a
+    -- unique_key whenever N identity fields change together.
+    FROM (
+        SELECT DISTINCT tenant_id, source_id, entity_id, updated_at
+        FROM history
+        WHERE entity_id IS NOT NULL AND entity_id != ''
+    )
 ),
 
 -- DELETE: mirror id-binding row at deactivation.
@@ -179,7 +186,9 @@ id_deletes AS (
         'DELETE' AS operation_type,
         toDateTime64(d.updated_at, 3) AS _synced_at,
         toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)) AS _version
-    FROM deactivation_events d
+    -- Same invariant as id_upserts: a deactivation condition satisfied by more
+    -- than one field must still retire the binding once.
+    FROM (SELECT DISTINCT tenant_id, source_id, entity_id, updated_at FROM deactivation_events) d
 )
 
 SELECT * FROM upserts
