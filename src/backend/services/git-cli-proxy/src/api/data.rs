@@ -191,7 +191,7 @@ pub async fn list_commits(
 
             Ok(Page {
                 items,
-                next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
+                next_page_token: encode_cursor(cursor, &context.key, &guard),
             })
         })
     })
@@ -257,11 +257,7 @@ pub async fn list_file_changes(
 
             Ok(Page {
                 items,
-                next_page_token: encode_cursor(
-                    early_cursor.or(cursor),
-                    &context.key,
-                    guard.generation(),
-                ),
+                next_page_token: encode_cursor(early_cursor.or(cursor), &context.key, &guard),
             })
         })
     })
@@ -378,7 +374,7 @@ pub async fn list_branches(
 
             Ok(Page {
                 items,
-                next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
+                next_page_token: encode_cursor(cursor, &context.key, &guard),
             })
         })
     })
@@ -473,6 +469,7 @@ async fn open(
             }
             Freshness::Pinned {
                 generation: token.generation,
+                incarnation: token.incarnation.clone(),
             }
         }
         None => Freshness::Refresh {
@@ -528,12 +525,13 @@ where
 fn encode_cursor(
     cursor: Option<(String, String)>,
     key: &CacheKey,
-    generation: u64,
+    guard: &RepoGuard,
 ) -> Option<String> {
     cursor.map(|(primary, secondary)| {
         PageToken {
             entry: PageToken::binding_for(key),
-            generation,
+            generation: guard.generation(),
+            incarnation: guard.incarnation().to_owned(),
             primary,
             secondary,
         }

@@ -291,6 +291,13 @@ the last-resort backstop, not the mechanism.
   (anti-thrashing).
 - **Admission control**: before clone/fetch, check headroom; evict
   synchronously if needed; if nothing can be evicted respond `429`.
+- **Reservation**: admission decides and reserves in one step, holding the
+  reservation for as long as the operation runs. Checking current usage alone
+  answers "is the cache full right now", which several cold clones can all be
+  told no to before any of them writes a byte — and they then overrun the
+  budget together, surfacing as a git or I/O failure where the caller should
+  have seen a `429`. Each operation reserves the distance between the entry's
+  current size and the per-repo cap, which is the most it can still add.
 - **Per-repo cap**: `max_repo_bytes` — a clone, fetch or promotion runs
   under a watcher that measures the tree it is filling and KILLS the child on
   breach. Measuring afterwards is too late: the disk the cap exists to protect
@@ -358,25 +365,36 @@ nowhere else:
   else is `400`. Embedded credentials are refused too: they would override the
   header the service injects and reach git's stderr.
 - `sha=<id>[,<id>…]`: optional explicit selection on `/v1/commits` and
-  `/v1/file-changes`, taking full ids or hex prefixes of at least 7
-  characters. A debugging and incident-review affordance — the sync path pages
-  by cursor instead.
+  `/v1/file-changes`, taking full ids or hex prefixes between 7 characters and
+  the length of an object id. A prefix selects every commit it matches; it is
+  not resolved against the repository and is not required to be unique. A
+  debugging and incident-review affordance — the sync path pages by cursor
+  instead.
 - Required headers: `X-Tenant-Id`, `X-Source-Id`, `X-Git-Username`,
   `X-Git-Token`, `Authorization` (proxy bearer). Optional:
   `X-Max-Staleness: <seconds>`.
 - Pagination: list endpoints order rows **ascending by a two-part key** and
-  return an opaque `next_page_token` encoding the last emitted pair **plus the
-  snapshot generation** it came from. The key is `(committed_date, sha)` for
+  return an opaque `next_page_token` encoding the last emitted pair, the
+  **snapshot generation** it came from, and the **incarnation** of the clone
+  that produced it. Both are needed: the generation restarts at `1` for every
+  clone, so an entry evicted and re-cloned between two pages would otherwise
+  hand the continuation a matching generation over a different history. The key is `(committed_date, sha)` for
   `/v1/commits` and `/v1/file-changes`. `/v1/branches` is the exception: a
   branch has no date to walk by, so it orders by `(name, "")` — the second
   component is the empty string, since branch names are unique within a
   snapshot and nothing is left to break a tie on. Ascending
   order makes pagination deterministic and is friendly to Airbyte cursor
-  checkpointing. `page_size` default 1000, max 10000.
-- **Snapshot pinning.** The generation in the token binds a page sequence to
-  one ref snapshot: a request that carries a token **never fetches** (it is
-  served from that generation, whatever the staleness window says), and only
-  the first page of a walk can trigger a fetch. If the pinned generation is
+  checkpointing. `page_size` default 1000, max 10000. The order is by
+  INSTANT: `%cI` carries the committer's own UTC offset, so two commits from
+  different time zones do not compare correctly as text, and both the walk and
+  the served window normalise before ordering.
+- **Snapshot pinning.** The generation and incarnation in the token bind a
+  page sequence to one ref snapshot: a request that carries a token **never
+  refreshes refs** (it is served from that generation, whatever the staleness
+  window says), and only the first page of a walk can trigger a fetch. A
+  continuation may still ask origin for BLOBS it does not have locally
+  (§3.3) — those are requests for exact object ids and move no ref, so the
+  snapshot the page is sliced from cannot change underneath it. If the pinned generation is
   gone (a fetch by another caller, an eviction, a repack), the request fails
   `409 snapshot_changed` naming the live generation rather than silently
   splicing two snapshots — which would let a commit that became reachable
@@ -459,7 +477,7 @@ never silently under-count. Commit-level dedup does not depend on patch text
 | `sha`, `committed_date` | | join keys to commits |
 | `filename` | string | |
 | `previous_filename` | string \| null | renames |
-| `status` | string | `added` \| `modified` \| `removed` \| `renamed` \| `copied` \| `type_changed` — git's raw statuses; collapsing `copied` into `modified` would misreport it |
+| `status` | string | `added` \| `modified` \| `removed` \| `renamed` \| `copied` \| `type_changed` — git's raw statuses. Rename AND copy detection are both requested (`-M -C`); with `-M` alone git never emits a copy and every copy arrives as an addition |
 | `additions`, `deletions`, `changes` | int \| null | null for binary |
 | `is_binary` | bool | |
 | `patch` | string \| null | per-file unified diff; truncated at `max_patch_bytes` |

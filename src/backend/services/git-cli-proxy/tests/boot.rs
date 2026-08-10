@@ -202,6 +202,41 @@ fn branching_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     Ok(format!("file://{}", origin.display()))
 }
 
+/// A history where one commit copies a file verbatim while modifying the
+/// original — the shape `-C` detects and `-M` alone reports as an addition.
+fn copying_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let origin = root.join("copying");
+    std::fs::create_dir_all(&origin)?;
+    let script = "git init -q -b main . && \
+         git config uploadpack.allowFilter true && \
+         git config uploadpack.allowAnySHA1InWant true && \
+         printf 'alpha\\nbeta\\ngamma\\ndelta\\nepsilon\\nzeta\\n' > a.txt && git add a.txt && \
+         GIT_AUTHOR_DATE='2026-08-01T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-01T10:00:00+0000' \
+           git commit -qm 'base' && \
+         cp a.txt b.txt && printf 'eta\\n' >> a.txt && git add -A && \
+         GIT_AUTHOR_DATE='2026-08-02T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-02T10:00:00+0000' \
+           git commit -qm 'copy a to b'";
+    let output = Command::new("sh")
+        .arg("-ec")
+        .arg(script)
+        .current_dir(&origin)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "fixture setup failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(format!("file://{}", origin.display()))
+}
+
 /// A superproject holding a submodule. The gitlink's object id is a commit in
 /// the inner repository, which the outer origin has never heard of.
 fn submodule_origin(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
@@ -1276,6 +1311,33 @@ async fn a_submodule_does_not_force_a_repository_out_of_the_blobless_cache() -> 
             .as_array()
             .is_some_and(|items| !items.is_empty()),
         "commits must be served for a repository holding a submodule"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_copied_file_reports_the_status_the_contract_lists() -> R {
+    // DESIGN §4.2 lists `copied` and says collapsing it into `modified` would
+    // misreport it — but the invocation passed `-M` alone, under which git
+    // never emits a `C` status and the row came back as `added`.
+    let server = spawn_server("copying", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = copying_origin(&server.dir)?;
+
+    let changes = get_json(server.port, "/v1/file-changes", &repo).await?;
+    let rows = changes["items"].as_array().ok_or("no items")?;
+    let copied = rows
+        .iter()
+        .find(|row| row["filename"] == "b.txt")
+        .ok_or("b.txt must have a row")?;
+
+    assert_eq!(
+        copied["status"], "copied",
+        "a verbatim copy must be reported as such: {copied}"
+    );
+    assert_eq!(
+        copied["previous_filename"], "a.txt",
+        "and must name the file it came from"
     );
     Ok(())
 }

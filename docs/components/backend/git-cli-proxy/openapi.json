@@ -427,7 +427,7 @@
             }
           },
           {
-            "description": "Comma-separated commit ids or hex prefixes of at least 7 characters",
+            "description": "Comma-separated commit ids or hex prefixes, 7 to 64 characters. A prefix selects every commit it matches.",
             "in": "query",
             "name": "sha",
             "required": false,
@@ -567,7 +567,7 @@
             }
           },
           {
-            "description": "Comma-separated commit ids or hex prefixes of at least 7 characters",
+            "description": "Comma-separated commit ids or hex prefixes, 7 to 64 characters. A prefix selects every commit it matches.",
             "in": "query",
             "name": "sha",
             "required": false,

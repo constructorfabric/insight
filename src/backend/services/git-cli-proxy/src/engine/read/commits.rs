@@ -50,7 +50,18 @@ impl CommitHeader {
     }
 }
 
-const FIELD: char = '\u{1f}';
+/// Fields are newline-separated, and the message is always LAST.
+///
+/// Git strips newlines out of an ident, so no name or email can carry one —
+/// verified, not assumed. Every other leading field (`%H`, `%P`, `%aI`,
+/// `%cI`) is newline-free by construction. The message may contain anything,
+/// and `splitn` hands it whatever remains, so it cannot shift a field either.
+///
+/// A printable separator cannot do this. `0x1f` survives inside an ident, so
+/// an author named `A<0x1f>B` used to push `B` into the email field and every
+/// later field one place along, forging a row whose author, email and
+/// committer are attacker-chosen.
+const FIELD: char = '\n';
 
 /// Records are NUL-separated (`git log -z`), and that choice is load-bearing.
 /// A commit message is attacker-controlled — anyone who can push to a synced
@@ -197,7 +208,7 @@ pub async fn headers_for(
     let text = String::from_utf8_lossy(&output.stdout);
 
     let mut headers = parse_headers(&text);
-    headers.sort_by(|a, b| (&a.committed_date, &a.sha).cmp(&(&b.committed_date, &b.sha)));
+    order_window(&mut headers);
     Ok(headers)
 }
 
@@ -285,8 +296,11 @@ pub async fn patch_ids(
 
 /// A full 40-character hex object id, and nothing else. The sha is what
 /// anchors a record; a value that is not one means the record is not one.
+/// A full object id: 40 hex characters under SHA-1, 64 under SHA-256. Pinning
+/// only the SHA-1 length silently discards every commit in a SHA-256
+/// repository, because each parsed record fails this check and is dropped.
 fn is_object_id(value: &str) -> bool {
-    value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit())
+    matches!(value.len(), 40 | 64) && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn parse_headers(text: &str) -> Vec<CommitHeader> {
@@ -304,6 +318,15 @@ fn parse_headers(text: &str) -> Vec<CommitHeader> {
 /// reaches bronze should not carry control bytes either way.
 fn scrub(value: &str) -> String {
     value.chars().filter(|c| !c.is_control()).collect()
+}
+
+/// Order a served window by the key the walk and the page cursor use.
+///
+/// Sorting by the raw `%cI` instead emits a page whose row order disagrees
+/// with the order it was sliced in, as soon as two commits carry different
+/// UTC offsets.
+fn order_window(headers: &mut [CommitHeader]) {
+    headers.sort_by_cached_key(|header| (ordinal_of(&header.committed_date), header.sha.clone()));
 }
 
 fn parse_header(record: &str) -> Option<CommitHeader> {
@@ -371,6 +394,86 @@ mod tests {
             oid(sha),
             parents.join(" ")
         )
+    }
+
+    #[test]
+    fn an_ident_carrying_the_field_separator_cannot_shift_a_row() {
+        // `0x1f` survives inside a git ident. With it as the separator, an
+        // author named `A<0x1f>B` pushed `B` into the email field and moved
+        // every later field one place along — forging a row whose author,
+        // email and committer the pusher chose.
+        let hostile = "Ali\u{1f}ce\u{1f}victim@example.com";
+        let record = format!(
+            "{}{FIELD}{}{FIELD}2026-08-01T09:00:00+00:00{FIELD}2026-08-01T10:00:00+00:00\
+             {FIELD}{hostile}{FIELD}real@example.com{FIELD}C{FIELD}c@example.com{FIELD}subject",
+            oid("f1"),
+            oid("f0")
+        );
+        let parsed = parse_headers(&record);
+
+        assert_eq!(parsed.len(), 1, "one record in, one row out");
+        let row = &parsed[0];
+        assert_eq!(
+            row.author_email, "real@example.com",
+            "the email must come from git's own field, not the pushed name"
+        );
+        assert_eq!(row.committer_name, "C");
+        assert_eq!(row.committer_email, "c@example.com");
+        assert_eq!(row.message, "subject");
+        assert!(
+            !row.author_name.contains('\u{1f}'),
+            "control bytes are scrubbed out of the value that reaches bronze: {:?}",
+            row.author_name
+        );
+    }
+
+    #[test]
+    fn a_message_may_hold_anything_including_newlines() {
+        let record = record("b1", "b0", "2026-08-01T10:00:00+00:00", "subject\n\nbody line\nmore");
+        let parsed = parse_headers(&record);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(
+            parsed[0].message, "subject\n\nbody line\nmore",
+            "the message is the last field and absorbs every remaining newline"
+        );
+    }
+
+    #[test]
+    fn a_sha256_repository_is_not_silently_empty() {
+        // Pinning the SHA-1 length made every record fail the id check, so a
+        // SHA-256 repository served zero commits and no error.
+        let long = "b".repeat(64);
+        let record = format!(
+            "{long}{FIELD}{FIELD}2026-08-01T09:00:00+00:00{FIELD}2026-08-01T10:00:00+00:00\
+             {FIELD}A{FIELD}a@example.com{FIELD}C{FIELD}c@example.com{FIELD}subject"
+        );
+        let parsed = parse_headers(&record);
+        assert_eq!(parsed.len(), 1, "a 64-hex object id is a valid object id");
+        assert_eq!(parsed[0].sha, long);
+
+        let keys = parse_keys(&format!("2026-08-01T10:00:00+00:00{FIELD}{long}{FIELD}"));
+        assert_eq!(keys.len(), 1, "the enumeration must accept it too");
+
+        for bad in ["", "abc", &"f".repeat(39), &"f".repeat(50), &"g".repeat(40)] {
+            assert!(!is_object_id(bad), "must reject: {bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_window_is_ordered_by_instant_not_by_the_offset_it_was_written_in() {
+        // `09:00Z` is later than `10:00+02:00` (= 08:00Z). Sorting the window
+        // by the raw string emits the page in an order the cursor disagrees
+        // with.
+        let text = [
+            record("c2", "", "2026-08-01T09:00:00+00:00", "later"),
+            record("c1", "", "2026-08-01T10:00:00+02:00", "earlier"),
+        ]
+        .join(&RECORD.to_string());
+
+        let mut headers = parse_headers(&text);
+        order_window(&mut headers);
+        let order: Vec<&str> = headers.iter().map(|h| h.message.as_str()).collect();
+        assert_eq!(order, vec!["earlier", "later"]);
     }
 
     fn at(committed: &str) -> CommitKey {

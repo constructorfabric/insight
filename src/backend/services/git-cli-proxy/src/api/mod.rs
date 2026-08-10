@@ -146,7 +146,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param_typed(
             "sha",
             false,
-            "Comma-separated commit ids or hex prefixes of at least 7 characters",
+            "Comma-separated commit ids or hex prefixes, 7 to 64 characters. A prefix selects every commit it matches.",
             "string",
         )
         .query_param_typed("page_size", false, "1..=10000, default 1000", "integer")
@@ -190,7 +190,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param_typed(
             "sha",
             false,
-            "Comma-separated commit ids or hex prefixes of at least 7 characters",
+            "Comma-separated commit ids or hex prefixes, 7 to 64 characters. A prefix selects every commit it matches.",
             "string",
         )
         .query_param_typed(

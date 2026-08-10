@@ -384,7 +384,9 @@ it after any Builder round-trip.
 
 | 10 | Reliability: the blob purge made to actually free disk (`repack` never filters a promisor pack, and every pack in a blobless clone is one), each served window re-measuring its entry so the reclaim planner sees the truth, `max_repo_bytes` enforced by killing a clone mid-transfer rather than measuring afterwards, separate read/prefetch/heavy timeouts so a stalled read cannot hold an entry for half an hour, one metrics layer outside the bearer check with a real response size, problem+json on the two rejection paths that escaped it, and `--raw`/`--numstat` read under `-z` so a filename reaches the row as git has it on disk | `src/…/engine/{store,disk,runner,read/*}.rs`, `src/…/api/*` |
 
-Quality: 174 Rust tests, clippy clean (pedantic, `-D warnings`), 18 Helm
+| 11 | Review follow-through: page tokens carry the clone's incarnation so a cursor cannot survive an eviction and re-clone, object ids accepted at SHA-256 length, commit fields separated by a byte git cannot put inside an ident, admission reserving the headroom it grants, metadata that cannot be published invalidating its entry, copy detection requested so `copied` can actually be emitted, `sha` prefixes bounded above, and a served window ordered by instant | `src/…/engine/{store,meta,page,read/commits}.rs`, `src/…/api/*` |
+
+Quality: 182 Rust tests, clippy clean (pedantic, `-D warnings`), 18 Helm
 render-contract assertions, connector wiring guard green, the committed
 OpenAPI document matching its drift gate.
 

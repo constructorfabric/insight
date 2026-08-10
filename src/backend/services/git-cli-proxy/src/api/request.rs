@@ -24,10 +24,15 @@ const MAX_PATCH_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_PATCH_BYTES: usize = 1024 * 1024;
 
 const MIN_SHA_PREFIX: usize = 7;
+/// A full object id: 40 hex characters under SHA-1, 64 under SHA-256. Anything
+/// longer is not a prefix of any object id and can only ever select nothing.
+const MAX_SHA_PREFIX: usize = 64;
 
-/// Explicit commit selection: full SHAs or unambiguous prefixes, comma
-/// separated. A debugging and incident-review affordance — the sync path pages
-/// by cursor instead.
+/// Explicit commit selection: full ids or hex prefixes of at least
+/// [`MIN_SHA_PREFIX`] characters, comma separated (§4.2). A prefix selects
+/// every commit it matches — it is not required to be unique, and the service
+/// does not resolve it against the repository. A debugging and incident-review
+/// affordance; the sync path pages by cursor instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShaFilter {
     prefixes: Vec<String>,
@@ -50,7 +55,9 @@ impl ShaFilter {
             return Err(BadRequest::MissingParam("sha"));
         }
         for prefix in &prefixes {
-            if prefix.len() < MIN_SHA_PREFIX || !prefix.chars().all(|c| c.is_ascii_hexdigit()) {
+            if !(MIN_SHA_PREFIX..=MAX_SHA_PREFIX).contains(&prefix.len())
+                || !prefix.chars().all(|c| c.is_ascii_hexdigit())
+            {
                 return Err(BadRequest::MalformedSha(prefix.clone()));
             }
         }
@@ -352,15 +359,25 @@ mod tests {
 
     #[test]
     fn sha_filter_rejects_unusable_entries() {
+        let long = "a".repeat(65);
         let cases = vec![
             ("too short", "abc123"),
             ("not hex", "zzzzzzzz"),
             ("only separators", ",,"),
             ("empty", ""),
+            // Longer than any object id: it can never prefix-match, so it
+            // used to be accepted and then silently return no rows.
+            ("longer than an object id", long.as_str()),
         ];
         for (name, raw) in cases {
             assert!(ShaFilter::parse(raw).is_err(), "must reject: {name}");
         }
+
+        let sha256 = "b".repeat(64);
+        assert!(
+            ShaFilter::parse(&sha256).is_ok(),
+            "a full SHA-256 id is exactly at the bound"
+        );
     }
 
     #[test]
@@ -399,6 +416,7 @@ mod tests {
     #[test]
     fn paging_rejects_foreign_tokens_but_accepts_its_own() {
         let token = PageToken {
+            incarnation: "inc0".to_owned(),
             entry: String::new(),
             generation: 4,
             primary: "2026-08-01T00:00:00Z".to_owned(),

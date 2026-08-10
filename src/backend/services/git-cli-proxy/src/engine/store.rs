@@ -98,16 +98,22 @@ impl From<GitError> for StoreError {
 ///
 /// INVARIANT: `Pinned` never contacts origin — a paginating caller stays on
 /// the snapshot its first page observed, so pages cannot straddle a fetch.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Freshness {
-    Refresh { max_staleness: Duration },
-    Pinned { generation: u64 },
+    Refresh {
+        max_staleness: Duration,
+    },
+    Pinned {
+        generation: u64,
+        incarnation: String,
+    },
 }
 
 /// Read access to one cached repository. Holding the guard pins the entry:
 /// fetch/repack/eviction take the write side and wait for readers to drain.
 pub struct RepoGuard {
     git_dir: PathBuf,
+    incarnation: String,
     generation: u64,
     _read: OwnedRwLockReadGuard<()>,
 }
@@ -122,15 +128,35 @@ impl RepoGuard {
     pub fn generation(&self) -> u64 {
         self.generation
     }
+
+    /// Which clone of the entry this guard is reading. A cursor minted here
+    /// carries it, so a continuation cannot land on a re-cloned entry.
+    #[must_use]
+    pub fn incarnation(&self) -> &str {
+        &self.incarnation
+    }
 }
 
 type RefreshResult = Result<u64, RefreshFailure>;
 
-/// Whether the cache may take more disk right now.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Admission {
-    Ok,
-    Rejected,
+/// Headroom promised to one in-flight heavy operation, released on drop.
+///
+/// Admission without it only ever asks whether the cache is full RIGHT NOW.
+/// Several cold clones can each be told yes before any of them has written a
+/// byte, and then collectively overrun the budget — the caller sees a git or
+/// I/O failure where it should have seen a `429`.
+#[derive(Debug)]
+pub struct Reservation<'a> {
+    reserved: &'a AtomicU64,
+    bytes: u64,
+}
+
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        // `fetch_sub` cannot underflow here: every reservation subtracts
+        // exactly what it added, once.
+        self.reserved.fetch_sub(self.bytes, Ordering::Relaxed);
+    }
 }
 
 /// What a background flight is supposed to do to the entry.
@@ -164,6 +190,12 @@ pub struct RepoStore {
     /// When each entry last had its on-disk size re-measured. Without it a
     /// 200-page walk pays a full `dir_size` per page.
     drift_checks: Mutex<HashMap<String, Instant>>,
+    /// Bytes promised to heavy operations that have been admitted but have not
+    /// finished writing them.
+    reserved_bytes: AtomicU64,
+    /// Serialises decide-and-reserve. Two callers that each read usage before
+    /// either reserved would both be admitted against the same headroom.
+    admission: Mutex<()>,
 }
 
 impl RepoStore {
@@ -213,6 +245,8 @@ impl RepoStore {
             tmp_counter: AtomicU64::new(0),
             gauges: Arc::new(DiskGauges::default()),
             drift_checks: Mutex::new(HashMap::new()),
+            reserved_bytes: AtomicU64::new(0),
+            admission: Mutex::new(()),
         })
     }
 
@@ -226,6 +260,20 @@ impl RepoStore {
     #[must_use]
     pub fn gauges(&self) -> &Arc<DiskGauges> {
         &self.gauges
+    }
+
+    /// A value unique to one clone of one entry.
+    ///
+    /// Uniqueness comes from the same three things that already make a staging
+    /// directory unique — process, wall clock, and a per-store counter — so no
+    /// new source of entropy is introduced for a value that is only ever
+    /// compared for equality.
+    fn mint_incarnation(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(std::process::id().to_le_bytes());
+        hasher.update(now_epoch_s().to_le_bytes());
+        hasher.update(self.tmp_counter.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+        hex::encode(hasher.finalize())[..16].to_owned()
     }
 
     fn entry_dir(&self, key: &CacheKey) -> PathBuf {
@@ -261,18 +309,26 @@ impl RepoStore {
         let fingerprint = creds.fingerprint();
 
         match freshness {
-            Freshness::Pinned { generation } => {
+            Freshness::Pinned {
+                generation,
+                incarnation,
+            } => {
                 let read = lock.read_owned().await;
                 let meta = usable_meta(&entry_dir, &fingerprint)
                     .ok_or(StoreError::SnapshotChanged { current: 0 })?;
-                if meta.generation != generation {
+                // INVARIANT: both must match. An entry evicted and re-cloned
+                // between two pages is back at generation 1 with a different
+                // history, and the generation alone cannot see that.
+                if meta.generation != generation || meta.incarnation != incarnation {
                     return Err(StoreError::SnapshotChanged {
                         current: meta.generation,
                     });
                 }
+                let incarnation = meta.incarnation.clone();
                 touch_access(&entry_dir, meta);
                 Ok(RepoGuard {
                     git_dir,
+                    incarnation,
                     generation,
                     _read: read,
                 })
@@ -282,9 +338,11 @@ impl RepoStore {
                     let read = lock.clone().read_owned().await;
                     if let Some(meta) = fresh_meta(&entry_dir, &fingerprint, max_staleness) {
                         let generation = meta.generation;
+                        let incarnation = meta.incarnation.clone();
                         touch_access(&entry_dir, meta);
                         return Ok(RepoGuard {
                             git_dir,
+                            incarnation,
                             generation,
                             _read: read,
                         });
@@ -304,6 +362,7 @@ impl RepoStore {
                     if let Some(meta) = usable_meta(&entry_dir, &fingerprint) {
                         return Ok(RepoGuard {
                             git_dir,
+                            incarnation: meta.incarnation,
                             generation: meta.generation,
                             _read: read,
                         });
@@ -431,9 +490,12 @@ impl RepoStore {
     ) -> Result<u64, GitError> {
         // Reclaim BEFORE taking disk, not after: an admission check that runs
         // post-clone has already overshot the budget.
-        if self.admit().await == Admission::Rejected {
+        // INVARIANT: the reservation lives as long as the operation does. Drop
+        // it early and a concurrent caller is admitted against headroom this
+        // one has not finished consuming.
+        let Some(_reserved) = self.admit(entry_dir).await else {
             return Err(GitError::AdmissionRejected);
-        }
+        };
 
         // INVARIANT: the permit spans the whole clone — the semaphore IS the
         // global heavy-ops cap.
@@ -494,6 +556,7 @@ impl RepoStore {
             size_bytes: cloned_bytes,
             skeleton_bytes: cloned_bytes,
             generation: 1,
+            incarnation: self.mint_incarnation(),
             cred_fingerprint: creds.fingerprint(),
             full_clone: false,
         };
@@ -508,9 +571,12 @@ impl RepoStore {
         git_dir: &Path,
         creds: &GitCredentials,
     ) -> Result<u64, GitError> {
-        if self.admit().await == Admission::Rejected {
+        // INVARIANT: the reservation lives as long as the operation does. Drop
+        // it early and a concurrent caller is admitted against headroom this
+        // one has not finished consuming.
+        let Some(_reserved) = self.admit(entry_dir).await else {
             return Err(GitError::AdmissionRejected);
-        }
+        };
 
         // INVARIANT: the permit spans the whole fetch — the semaphore IS the
         // global heavy-ops cap.
@@ -581,11 +647,16 @@ impl RepoStore {
                 .as_ref()
                 .map_or(fetched_bytes, |m| m.skeleton_bytes.min(fetched_bytes)),
             generation,
+            // A fetch moves refs inside the SAME clone: the incarnation is a
+            // property of the directory, not of the ref snapshot.
+            incarnation: previous
+                .as_ref()
+                .map_or_else(|| self.mint_incarnation(), |m| m.incarnation.clone()),
             cred_fingerprint: creds.fingerprint(),
             // A plain fetch never changes the entry's clone shape.
             full_clone: previous.as_ref().is_some_and(|m| m.full_clone),
         };
-        meta.store(entry_dir).map_err(GitError::Io)?;
+        publish_meta(&meta, entry_dir)?;
         Ok(generation)
     }
 
@@ -627,9 +698,12 @@ impl RepoStore {
         }
 
         // A full clone is much larger than the skeleton it replaces.
-        if self.admit().await == Admission::Rejected {
+        // INVARIANT: the reservation lives as long as the operation does. Drop
+        // it early and a concurrent caller is admitted against headroom this
+        // one has not finished consuming.
+        let Some(_reserved) = self.admit(&entry_dir).await else {
             return Err(GitError::AdmissionRejected);
-        }
+        };
 
         // INVARIANT: the permit spans the whole promotion — the semaphore IS
         // the global heavy-ops cap.
@@ -686,10 +760,14 @@ impl RepoStore {
             // it could ever fetch back.
             skeleton_bytes: promoted_bytes,
             generation,
+            // Rebuilt in place: same directory, so same incarnation. The
+            // generation bump is what a pinned cursor trips over.
+            incarnation: RepoMeta::load(&entry_dir)
+                .map_or_else(|| self.mint_incarnation(), |m| m.incarnation),
             cred_fingerprint: creds.fingerprint(),
             full_clone: true,
         };
-        meta.store(&entry_dir).map_err(GitError::Io)?;
+        publish_meta(&meta, &entry_dir)?;
         Ok(generation)
     }
 
@@ -885,14 +963,20 @@ impl RepoStore {
     /// what the cache published; `statvfs` knows what the VOLUME holds —
     /// including a clone still staging under `tmp/` and anything else sharing
     /// the mount. Neither alone is sufficient.
-    async fn admit(&self) -> Admission {
+    async fn admit(&self, entry_dir: &Path) -> Option<Reservation<'_>> {
+        // INVARIANT: deciding and reserving must be one step. Two callers that
+        // both read usage before either reserved would both be admitted
+        // against the same headroom.
+        let _decision = self.admission.lock().await;
+        let want = self.headroom_for(entry_dir);
+
         let candidates = self.candidates().await;
         let accounted: u64 = candidates.iter().map(|c| c.size_bytes).sum();
-        let used = self.effective_used(accounted);
+        let used = self.effective_used(accounted) + self.reserved_bytes.load(Ordering::Relaxed);
         self.gauges
             .set(used, self.budget.total_bytes, candidates.len() as u64);
-        if !self.budget.over_high_watermark(used) {
-            return Admission::Ok;
+        if !self.budget.over_high_watermark(used + want) {
+            return Some(self.reserve(want));
         }
 
         let target = self.budget.excess_over_low(used);
@@ -938,19 +1022,42 @@ impl RepoStore {
         // step can fail, and an in-use entry is skipped entirely.
         let remaining = self.candidates().await;
         let accounted: u64 = remaining.iter().map(|c| c.size_bytes).sum();
-        let after = self.effective_used(accounted);
+        let after = self.effective_used(accounted) + self.reserved_bytes.load(Ordering::Relaxed);
         self.gauges
             .set(after, self.budget.total_bytes, remaining.len() as u64);
-        if self.budget.over_high_watermark(after) {
+        if self.budget.over_high_watermark(after + want) {
             tracing::warn!(
                 used_bytes = after,
+                reserving_bytes = want,
                 high_watermark = self.budget.high_watermark(),
                 "nothing left to reclaim and still over the high watermark; refusing admission"
             );
             metrics::record_admission_reject();
-            return Admission::Rejected;
+            return None;
         }
-        Admission::Ok
+        Some(self.reserve(want))
+    }
+
+    /// The most this operation can still add to the entry: everything between
+    /// its current size and the per-repository cap, since the cap is what the
+    /// mid-run watcher enforces (§3.6).
+    ///
+    /// Zero when either figure is unbounded — the test constructor uses
+    /// `u64::MAX` for both, and reserving against it would refuse everything.
+    fn headroom_for(&self, entry_dir: &Path) -> u64 {
+        if !self.budget.is_bounded() || self.max_repo_bytes == u64::MAX {
+            return 0;
+        }
+        let git_dir = entry_dir.join("repo.git");
+        self.max_repo_bytes.saturating_sub(dir_size(&git_dir))
+    }
+
+    fn reserve(&self, bytes: u64) -> Reservation<'_> {
+        self.reserved_bytes.fetch_add(bytes, Ordering::Relaxed);
+        Reservation {
+            reserved: &self.reserved_bytes,
+            bytes,
+        }
     }
 
     /// Fingerprint of the entry's branch heads and default branch.
@@ -1051,6 +1158,30 @@ impl RepoStore {
     pub async fn used_bytes(&self) -> u64 {
         self.candidates().await.iter().map(|c| c.size_bytes).sum()
     }
+}
+
+/// Persist metadata that describes refs already on disk.
+///
+/// A failure here is not cosmetic. The refs moved, so the metadata still in
+/// place describes a snapshot that no longer exists: a continuation pinned to
+/// the old generation would be served the NEW refs, and a caller whose
+/// fingerprint matches the old metadata would be served objects fetched with
+/// someone else's credentials. Removing it makes the entry unreadable and the
+/// next request re-clones — the cache is rebuildable by design.
+fn publish_meta(meta: &RepoMeta, entry_dir: &Path) -> Result<(), GitError> {
+    meta.store(entry_dir).map_err(|e| {
+        // Whatever occupies the path goes: leaving anything behind risks a
+        // later read finding the superseded document.
+        let stale = entry_dir.join("meta.json");
+        if std::fs::remove_file(&stale).is_err() {
+            let _ = std::fs::remove_dir_all(&stale);
+        }
+        tracing::error!(
+            error = %e,
+            "could not publish repository metadata after moving refs; entry invalidated"
+        );
+        GitError::Io(e)
+    })
 }
 
 /// Re-assert that every pack came from the promisor remote.
@@ -1231,6 +1362,18 @@ pub(crate) mod tests {
         }
     }
 
+    /// Pin the snapshot the entry currently holds, the way a page token minted
+    /// from a guard does.
+    pub(crate) fn pinned(fixture: &Fixture, key: &CacheKey, generation: u64) -> Freshness {
+        let incarnation = RepoMeta::load(&fixture.store.entry_dir(key))
+            .map(|meta| meta.incarnation)
+            .unwrap_or_default();
+        Freshness::Pinned {
+            generation,
+            incarnation,
+        }
+    }
+
     pub(crate) fn key(fixture: &Fixture) -> CacheKey {
         CacheKey {
             tenant_id: "t".to_owned(),
@@ -1321,6 +1464,7 @@ pub(crate) mod tests {
         freshness: Freshness,
     ) -> RepoGuard {
         for _ in 0..100u32 {
+            let freshness = freshness.clone();
             match fixture.store.open(key, &creds(), freshness).await {
                 Ok(guard) => return guard,
                 Err(StoreError::Busy { .. }) => {
@@ -1407,6 +1551,119 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn a_cursor_does_not_survive_an_eviction_and_re_clone() {
+        // Every clone starts at generation 1. An entry evicted between two
+        // pages and cloned again is back at generation 1 over a repository
+        // that may have moved on, so the generation alone cannot tell the
+        // second page it is looking at a different walk.
+        let f = fixture("incarnation");
+        let k = key(&f);
+        let first = open_until_ready(&f, &k, refresh()).await;
+        let generation = first.generation();
+        let incarnation = first.incarnation().to_owned();
+        drop(first);
+
+        let entry_dir = f.store.entry_dir(&k);
+        if let Err(e) = std::fs::remove_dir_all(&entry_dir) {
+            panic!("evict: {e}");
+        }
+        sh(
+            &f.root.join("origin"),
+            "echo two > b.txt && git add b.txt && git commit -qm c2",
+        );
+        let second = open_until_ready(&f, &k, refresh()).await;
+
+        assert_eq!(
+            second.generation(),
+            generation,
+            "the re-clone is back at the same generation, which is the trap"
+        );
+        assert_ne!(
+            second.incarnation(),
+            incarnation,
+            "but it must be a different incarnation"
+        );
+        drop(second);
+
+        match f
+            .store
+            .open(
+                &k,
+                &creds(),
+                Freshness::Pinned {
+                    generation,
+                    incarnation,
+                },
+            )
+            .await
+        {
+            Err(StoreError::SnapshotChanged { .. }) => {}
+            Ok(_) => panic!("a cursor from the evicted clone must not be served"),
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn refs_that_moved_without_their_metadata_invalidate_the_entry() {
+        // The refs are already published when the metadata write happens. If
+        // the old metadata survived, a continuation pinned to the old
+        // generation would be served the NEW refs.
+        let f = fixture("meta-fail");
+        let k = key(&f);
+        open_until_ready(&f, &k, refresh()).await;
+        let entry_dir = f.store.entry_dir(&k);
+
+        let Some(meta) = RepoMeta::load(&entry_dir) else {
+            panic!("meta must exist")
+        };
+        // A non-empty directory where `meta.json` belongs: the rename cannot
+        // land on it, so publishing fails after the refs are already in place.
+        let stale = entry_dir.join("meta.json");
+        if let Err(e) = std::fs::remove_file(&stale)
+            .and_then(|()| std::fs::create_dir(&stale))
+            .and_then(|()| std::fs::write(stale.join("occupied"), b"x"))
+        {
+            panic!("stage the failure: {e}");
+        }
+
+        assert!(
+            publish_meta(&meta, &entry_dir).is_err(),
+            "the write must fail for this test to mean anything"
+        );
+        assert!(
+            !stale.exists(),
+            "the superseded metadata must be gone, not left for a later read"
+        );
+        assert!(
+            RepoMeta::load(&entry_dir).is_none(),
+            "an entry whose metadata could not be published must not be readable"
+        );
+    }
+
+    #[tokio::test]
+    async fn admission_reserves_headroom_for_work_it_has_already_allowed() {
+        // High watermark is 850k. One reservation of 500k fits; two do not.
+        // Without reservations both callers see an empty cache, are both
+        // admitted, and together overrun the budget.
+        let f = fixture_with_budget("reserve", 1_000_000, 500_000);
+        let entry_dir = f.store.entry_dir(&key(&f));
+
+        let Some(first) = f.store.admit(&entry_dir).await else {
+            panic!("an empty cache must admit the first caller")
+        };
+        assert!(
+            f.store.admit(&entry_dir).await.is_none(),
+            "the second caller must be refused against the first's reservation"
+        );
+
+        drop(first);
+        assert!(
+            f.store.admit(&entry_dir).await.is_some(),
+            "and admitted again once that reservation is released"
+        );
+    }
+
+    #[tokio::test]
     async fn the_purge_probe_accepts_a_capable_git() {
         // Guards the boot check itself: a probe that cannot pass on a git that
         // demonstrably purges would refuse every deployment.
@@ -1482,7 +1739,7 @@ pub(crate) mod tests {
         let entry_dir = f.store.entry_dir(&k);
         let inflated = dir_size(&entry_dir.join("repo.git"));
 
-        let reader = match f.store.open(&k, &creds(), Freshness::Pinned { generation: 1 }).await {
+        let reader = match f.store.open(&k, &creds(), pinned(&f, &k, 1)).await {
             Ok(g) => g,
             Err(e) => panic!("pinned open: {e}"),
         };
@@ -1595,25 +1852,25 @@ pub(crate) mod tests {
             "echo two > b.txt && git add b.txt && git commit -qm c2",
         );
 
-        let pinned = match f
+        let continuation = match f
             .store
-            .open(&k, &creds(), Freshness::Pinned { generation })
+            .open(&k, &creds(), pinned(&f, &k, generation))
             .await
         {
             Ok(g) => g,
             Err(e) => panic!("pinned open: {e}"),
         };
         assert_ne!(
-            head_of(pinned.git_dir()),
+            head_of(continuation.git_dir()),
             head_of(&f.root.join("origin").join(".git")),
             "a continuation page must not contact origin"
         );
-        drop(pinned);
+        drop(continuation);
 
         open_until_ready(&f, &k, always_fetch()).await;
         let stale_page = f
             .store
-            .open(&k, &creds(), Freshness::Pinned { generation })
+            .open(&k, &creds(), pinned(&f, &k, generation))
             .await;
         match stale_page {
             Err(StoreError::SnapshotChanged { current }) => {
@@ -1974,7 +2231,7 @@ pub(crate) mod tests {
         )
         .await;
 
-        let _ = f.store.admit().await;
+        let _ = f.store.admit(&f.store.entry_dir(&key(&f))).await;
         assert!(
             guard.git_dir().is_dir(),
             "a repository with a live reader must never be deleted"

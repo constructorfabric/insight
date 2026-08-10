@@ -21,6 +21,10 @@ const ENTRY_BINDING_LEN: usize = 16;
 pub struct PageToken {
     pub entry: String,
     pub generation: u64,
+    /// The clone the cursor was minted against. `entry` survives an eviction
+    /// and `generation` restarts at `1` after one, so this is the only field
+    /// that tells a re-cloned repository apart from the one that was walked.
+    pub incarnation: String,
     pub primary: String,
     pub secondary: String,
 }
@@ -45,8 +49,8 @@ impl PageToken {
     #[must_use]
     pub fn encode(&self) -> String {
         let plain = format!(
-            "{}\u{1f}{}\u{1f}{}\u{1f}{}",
-            self.entry, self.generation, self.primary, self.secondary
+            "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+            self.entry, self.generation, self.incarnation, self.primary, self.secondary
         );
         BASE64URL.encode(plain)
     }
@@ -61,6 +65,7 @@ impl PageToken {
         let mut parts = plain.split('\u{1f}');
         let entry = parts.next().ok_or(MalformedToken)?;
         let generation = parts.next().ok_or(MalformedToken)?;
+        let incarnation = parts.next().ok_or(MalformedToken)?;
         let primary = parts.next().ok_or(MalformedToken)?;
         let secondary = parts.next().ok_or(MalformedToken)?;
         if parts.next().is_some() {
@@ -70,6 +75,7 @@ impl PageToken {
         Ok(Self {
             entry: entry.to_owned(),
             generation: generation.parse().map_err(|_| MalformedToken)?,
+            incarnation: incarnation.to_owned(),
             primary: primary.to_owned(),
             secondary: secondary.to_owned(),
         })
@@ -91,6 +97,7 @@ mod tests {
 
     fn token() -> PageToken {
         PageToken {
+            incarnation: "inc0".to_owned(),
             entry: "0123456789abcdef".to_owned(),
             generation: 7,
             primary: "2026-08-01T10:00:00Z".to_owned(),
@@ -126,15 +133,19 @@ mod tests {
             ("not base64", "!!!".to_owned()),
             (
                 "too few fields",
-                BASE64URL.encode("abc\u{1f}7\u{1f}2026-08-01T10:00:00Z"),
+                BASE64URL.encode("abc\u{1f}7\u{1f}inc\u{1f}2026-08-01T10:00:00Z"),
             ),
             (
                 "too many fields",
-                BASE64URL.encode("abc\u{1f}7\u{1f}d\u{1f}sha\u{1f}extra"),
+                BASE64URL.encode("abc\u{1f}7\u{1f}inc\u{1f}d\u{1f}sha\u{1f}extra"),
             ),
             (
                 "generation not a number",
-                BASE64URL.encode("abc\u{1f}seven\u{1f}d\u{1f}sha"),
+                BASE64URL.encode("abc\u{1f}seven\u{1f}inc\u{1f}d\u{1f}sha"),
+            ),
+            (
+                "a token from before the incarnation field",
+                BASE64URL.encode("abc\u{1f}7\u{1f}d\u{1f}sha"),
             ),
         ];
         for (name, raw) in cases {

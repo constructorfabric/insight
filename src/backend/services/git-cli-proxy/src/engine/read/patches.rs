@@ -42,6 +42,7 @@ pub async fn read(
         "--no-walk",
         "--patch",
         "-M",
+        "-C",
         "--no-color",
         "--root",
         "--unified=3",

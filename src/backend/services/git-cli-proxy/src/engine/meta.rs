@@ -20,6 +20,15 @@ pub struct RepoMeta {
     /// Bumped on every successful clone/fetch. Page tokens carry it so a
     /// paginating caller is pinned to one ref snapshot.
     pub generation: u64,
+    /// Identifies THIS clone of the entry, for the entry's whole life on disk.
+    ///
+    /// The generation cannot do that job alone: every clone starts at `1`, so
+    /// an entry evicted and re-cloned between two pages hands the second page
+    /// the same generation over a different repository state, and the
+    /// continuation is sliced against a snapshot it never saw. An empty value
+    /// is a pre-incarnation entry and matches no token.
+    #[serde(default)]
+    pub incarnation: String,
     /// Fingerprint of the credentials that last proved origin access.
     /// INVARIANT: a warm read is served only to a caller presenting matching
     /// credentials — the cache key alone is not an authorization claim.
@@ -94,6 +103,7 @@ mod tests {
 
     fn sample() -> RepoMeta {
         RepoMeta {
+            incarnation: "inc0".to_owned(),
             clone_url: "https://example.com/a.git".to_owned(),
             tenant_id: "t".to_owned(),
             source_id: "s".to_owned(),
@@ -158,6 +168,7 @@ mod tests {
         assert_eq!(
             published,
             RepoMeta {
+            incarnation: "inc0".to_owned(),
                 generation: published.generation,
                 ..sample()
             },

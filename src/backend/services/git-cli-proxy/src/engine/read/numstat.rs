@@ -80,6 +80,7 @@ pub async fn read(
         "--raw",
         "--numstat",
         "-M",
+        "-C",
         "-z",
         "--no-color",
         "--root",

@@ -84,6 +84,7 @@ mod tests {
     #[test]
     fn continuation_resumes_strictly_after_the_cursor() {
         let token = PageToken {
+            incarnation: "inc0".to_owned(),
             entry: String::new(),
             generation: 1,
             primary: "2026-08-01T00:00:00Z".to_owned(),
@@ -115,6 +116,7 @@ mod tests {
     #[test]
     fn cursor_past_the_end_yields_nothing() {
         let token = PageToken {
+            incarnation: "inc0".to_owned(),
             entry: String::new(),
             generation: 1,
             primary: "2027-01-01T00:00:00Z".to_owned(),
