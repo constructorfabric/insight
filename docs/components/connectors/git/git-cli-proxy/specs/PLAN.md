@@ -12,10 +12,11 @@
 > [PR #2366](https://github.com/constructorfabric/insight/pull/2366) — see
 > §8.1 — so several sections here span both.
 >
-> Last updated 2026-08-10: hardening and the review pass are in #2288 (§8,
-> §9.3), including full-clone promotion (§7.9) and the default-branch rework
-> (§9.5). Next, in order: vendor-API streams (§9.4), rebase resilience beyond
-> the lookback (§9.6), silver dbt models (§9.7), patch_id spec (§9.8).
+> Last updated 2026-08-10: hardening, the review pass and the reliability
+> pass are in #2288 (§8, §9.3), including full-clone promotion (§7.9) and the
+> default-branch rework (§9.5). Next, in order: vendor-API streams (§9.4),
+> rebase resilience beyond the lookback (§9.6), silver dbt models (§9.7),
+> patch_id spec (§9.8).
 
 ## 1. Problem and premise
 
@@ -381,7 +382,9 @@ it after any Builder round-trip.
 | 8 | Hardening: repo origins restricted to http(s) at the boundary, in-flight refresh joins re-prove credentials, page tokens bound to their cache entry, continuations stop narrowing `--since`, `/v1/file-changes` row/byte caps with commit-boundary cursoring, patch buffer capped while reading, `run_piped` drains producer stderr, per-write-unique `meta.json` tmp names, full-clone promotion for origins refusing promisor wants (§7.9), `branch_names` → `is_in_default_branch`, canonical problem+json errors, `OperationBuilder` + committed OpenAPI + drift gate, `proxyToken` supplied-or-fail, disk-budget render guard, `global.storageClass`, `git_cli_proxy` wired into the `changes`/bump/publish CI graph | proxy + `charts/insight` + `.github/workflows` |
 | 9 | Design alignment: `since` applied as a predicate rather than git's traversal cutoff, `statvfs` as the second free-space view, admission able to refuse (`429`), and the §4.3 metrics implemented. The enumeration walk was split from the window read — keys only (~100 B/commit) for the whole-history pass, full headers for the page's own commits — so per-page memory is bounded by the page, not by history × message size | `src/…/engine/{read/commits,disk,store,metrics}.rs`, `src/…/api/*` |
 
-Quality: 148 Rust tests, clippy clean (pedantic, `-D warnings`), 18 Helm
+| 10 | Reliability: the blob purge made to actually free disk (`repack` never filters a promisor pack, and every pack in a blobless clone is one), each served window re-measuring its entry so the reclaim planner sees the truth, `max_repo_bytes` enforced by killing a clone mid-transfer rather than measuring afterwards, separate read/prefetch/heavy timeouts so a stalled read cannot hold an entry for half an hour, one metrics layer outside the bearer check with a real response size, problem+json on the two rejection paths that escaped it, and `--raw`/`--numstat` read under `-z` so a filename reaches the row as git has it on disk | `src/…/engine/{store,disk,runner,read/*}.rs`, `src/…/api/*` |
+
+Quality: 172 Rust tests, clippy clean (pedantic, `-D warnings`), 18 Helm
 render-contract assertions, connector wiring guard green, the committed
 OpenAPI document matching its drift gate.
 

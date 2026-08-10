@@ -39,6 +39,13 @@ impl Gear for GitCliProxyGear {
         )?;
 
         let store = Arc::new(store);
+        store.require_purge_support().await.map_err(|e| {
+            anyhow::anyhow!(
+                "the installed git cannot run the blob purge \
+                 (`repack --filter --filter-to`, git 2.43+): {e}"
+            )
+        })?;
+
         // §4.3: the gauges observe a cached snapshot the store refreshes on
         // every admission check, so the collector's callback does no I/O.
         crate::engine::metrics::register_disk_gauges(store.gauges());

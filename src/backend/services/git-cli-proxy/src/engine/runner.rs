@@ -563,6 +563,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn credentials_never_print_their_token() {
+        // §3.7: nothing in this service logs a request header, so the tokens
+        // it does hold must not leak through the one thing that does reach a
+        // log line — a `Debug` render inside a `tracing` event.
+        let creds = GitCredentials {
+            username: "x-token-auth".to_owned(),
+            token: "s3cret-value".to_owned(),
+        };
+        let rendered = format!("{creds:?}");
+        assert!(
+            !rendered.contains("s3cret-value"),
+            "Debug leaked the token: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+        assert!(
+            !format!("{:?}", creds.basic_header()).contains("s3cret-value"),
+            "the header value is base64, but the token must not survive verbatim"
+        );
+    }
+
     #[tokio::test]
     async fn run_reports_version() {
         let runner = GitRunner::new(Timeouts::default());

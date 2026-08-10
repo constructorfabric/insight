@@ -51,18 +51,23 @@ FROM debian:bookworm-slim
 ARG TARGETARCH
 ARG WATCHEXEC_VERSION=2.3.2
 
-# Runtime deps + watchexec. `git` is the service's whole point: bookworm ships
-# git 2.39 — new enough for partial clone + `repack --filter=blob:none`
-# (needs ≥ 2.36); the service falls back from `git backfill` (≥ 2.49) to
-# batched `fetch <oid>…` at runtime.
+# Runtime deps + watchexec. `git` is the service's whole point, and it must be
+# new enough to run the blob purge: `repack --filter` with `--filter-to`,
+# which is what actually reclaims a served window's blobs (design §3.3).
+# bookworm's own git is 2.39 and cannot, so it comes from backports. The
+# service probes the invocation at boot and refuses to start if it fails, so a
+# git that regresses here is a failed deploy, not silent disk pressure.
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
       amd64) WX_ARCH=x86_64-unknown-linux-musl ;; \
       arm64) WX_ARCH=aarch64-unknown-linux-musl ;; \
       *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
+    echo 'deb http://deb.debian.org/debian bookworm-backports main' \
+        > /etc/apt/sources.list.d/backports.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates git curl xz-utils; \
+    apt-get install -y --no-install-recommends ca-certificates curl xz-utils; \
+    apt-get install -y --no-install-recommends -t bookworm-backports git; \
     curl -fsSL "https://github.com/watchexec/watchexec/releases/download/v${WATCHEXEC_VERSION}/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}.tar.xz" \
         | tar -xJ -C /tmp; \
     install -m 0755 "/tmp/watchexec-${WATCHEXEC_VERSION}-${WX_ARCH}/watchexec" /usr/local/bin/watchexec; \

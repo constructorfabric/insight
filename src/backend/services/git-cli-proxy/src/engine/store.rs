@@ -693,6 +693,53 @@ impl RepoStore {
         Ok(generation)
     }
 
+    /// Refuse to start on a git that cannot perform the blob purge.
+    ///
+    /// The purge is the mechanism behind the whole blobless design (§3.3): an
+    /// entry that cannot shed the blobs a window pulled grows until eviction
+    /// throws the whole repository away. `repack --filter-to` is what makes it
+    /// work, and a git without it does not fail loudly — it exits non-zero on
+    /// one repack, inside a background task, and the symptom is disk pressure
+    /// weeks later. Boot is the honest place to say so.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] when git cannot be probed, or rejects the invocation.
+    pub async fn require_purge_support(&self) -> Result<(), StoreError> {
+        let probe = self.data_dir.join("tmp").join("purge-probe.git");
+        let _ = std::fs::remove_dir_all(&probe);
+
+        self.runner
+            .run(
+                None,
+                &["init", "--bare", "--quiet", &probe.to_string_lossy()],
+                None,
+            )
+            .await?;
+        let evicted = probe.join("evicted");
+        std::fs::create_dir_all(&evicted)?;
+
+        let filter_to = format!("--filter-to={}", evicted.display());
+        let probed = self
+            .runner
+            .run(
+                Some(&probe),
+                &[
+                    "repack",
+                    "-a",
+                    "-d",
+                    "--filter=blob:none",
+                    &filter_to,
+                    "--no-write-bitmap-index",
+                ],
+                None,
+            )
+            .await;
+        let _ = std::fs::remove_dir_all(&probe);
+
+        probed.map(|_| ()).map_err(StoreError::from)
+    }
+
     /// Return an entry to its skeleton once a served window has left blobs
     /// behind, and in every case re-measure it.
     ///
@@ -1357,6 +1404,16 @@ pub(crate) mod tests {
         drop(guard);
 
         (f, k, skeleton)
+    }
+
+    #[tokio::test]
+    async fn the_purge_probe_accepts_a_capable_git() {
+        // Guards the boot check itself: a probe that cannot pass on a git that
+        // demonstrably purges would refuse every deployment.
+        let f = fixture("purge-probe");
+        if let Err(e) = f.store.require_purge_support().await {
+            panic!("this git runs the purge; the probe must accept it: {e}");
+        }
     }
 
     #[tokio::test]

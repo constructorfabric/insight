@@ -24,8 +24,8 @@ document designs:
    manifest.
 
 Out of scope: PR/review streams (they stay on vendor APIs — that data does not
-exist in git), the silver/gold dbt layer (unchanged), and any v2 features
-listed in §8.
+exist in git), the silver/gold dbt layer (unchanged), and the deferred work
+tracked in PLAN §9.
 
 ### 1.1 Division of labor
 
@@ -75,10 +75,13 @@ username convention for HTTP basic auth against origin (§3.7).
 
 ### 3.1 Repository cache
 
-**Clone form.** `git clone --bare --filter=blob:none <url>` — commits and
-trees only, no working tree, no blobs (~10–20% of full repo size). The origin
-remote becomes a *promisor remote*: any missing blob can be fetched later by
-OID.
+**Clone form.** `git clone --bare --filter=blob:none --no-tags <url>` —
+commits and trees only, no working tree, no blobs (~10–20% of full repo size).
+The origin remote becomes a *promisor remote*: any missing blob can be fetched
+later by OID. `--no-tags` is not a size optimisation: a tag is a ref like any
+other, so a tag pointing into a deleted branch keeps that branch's commits
+reachable and the enumeration keeps emitting them long after the branch is
+gone.
 
 **Cache key.** `(tenant_id, source_id, clone_url)`. The on-disk directory name
 is the SHA-256 of the key — repository names or URL fragments are **never**
@@ -163,16 +166,33 @@ Blobs exist on disk only transiently, for the commit window being served:
 2. **Prefetch in batch** the blob OIDs referenced by the window's diffs
    (both sides of each changed path; the all-zero OID marks an absent side and
    is skipped): one `git fetch origin <oid>...` against the promisor remote —
-   never rely on git's implicit one-blob-per-roundtrip lazy fetching. Where the
-   installed git provides `git backfill` (≥ 2.49), use it instead.
+   never rely on git's implicit one-blob-per-roundtrip lazy fetching.
 3. **Compute** `--numstat` with `--raw` (counts from numstat, exact statuses
    from the tree diff), rename detection (`-M`), and patches locally.
-4. **Purge**: `git repack -a -d --filter=blob:none --no-write-bitmap-index`
-   returns the repo to its skeleton size. Run after serving a window when the
-   repo's size exceeds its skeleton baseline, and during eviction (§3.6).
-   `--no-write-bitmap-index` is mandatory, not cosmetic: `--filter` splits
-   objects across packs while bitmap writing assumes a single pack, so with
-   `repack.writeBitmaps` enabled the repack fails and the blobs stay on disk.
+4. **Purge**: return the repo to its skeleton size. Run after serving a
+   window when the repo has grown past its skeleton baseline, and during
+   eviction (§3.6). Three details are load-bearing, and without any one of
+   them the purge frees nothing at all:
+   - `repack` repacks promisor packs *separately* and never applies
+     `--filter` to them. In a blobless clone every pack is a promisor pack —
+     the clone's own and one per lazy fetch — so the `*.promisor` markers come
+     off before the repack and go back on after. They must go back on: the
+     objects did come from origin, and git has to keep tolerating the ones the
+     purge just dropped.
+   - `--filter` alone writes the filtered-out objects to a second pack beside
+     the first. `--filter-to=<dir>` puts them somewhere the purge can delete.
+   - `--no-write-bitmap-index` is mandatory: the filter splits objects across
+     packs while bitmap writing assumes a single pack, so with
+     `repack.writeBitmaps` enabled the repack fails outright.
+
+   The purge takes the entry's write lock without waiting for it. A reader
+   holding the entry is served, not repacked under; the eviction path (§3.6)
+   is the backstop. Whether or not a purge follows, the check re-measures the
+   entry and writes the result to `meta.json` — a prefetch that grows an entry
+   and reports nothing leaves the reclaim planner believing every entry is
+   skeleton-sized, so it never plans the cheap tier and evicts warm
+   repositories instead. Re-measurement is throttled per entry, or a
+   two-hundred-page walk pays a full directory walk per page.
 
 Blob prefetch is always required: numstat, `patch_id` computation, and patch
 text all need blob content. `include_patch=false` (§4.2) only skips patch
@@ -211,23 +231,36 @@ Every git subprocess invocation MUST:
 - run with `GIT_TRACE*` disabled in production (curl traces dump HTTP
   headers).
 
-Required git version in the image: ≥ 2.36 (`repack --filter`); ≥ 2.49 enables
-`git backfill` as the preferred prefetch.
+The image needs a git that supports `repack --filter` together with
+`--filter-to` (§3.3), which Debian bookworm's own git does not. Rather than
+trusting a version number, the service runs that exact invocation against a
+throwaway repository at boot and refuses to start if git rejects it: a git
+without the purge is a failed deploy, not disk pressure discovered weeks
+later.
 
 ### 3.5 Concurrency model
 
 Cross-repo requests are independent (bare repos share nothing on disk; no
-`alternates` in v1 — see §8). Resource pressure is capped by a global
-semaphore on heavy operations (clone/fetch/repack), sized in config.
+`alternates` in v1 — deferred, PLAN §9). Resource pressure is capped by a
+global semaphore on heavy operations (clone/fetch/repack), sized in config.
 
 Within one repo, a keyed read-write lock plus a reader refcount:
 
 | Operation | Lock |
 |---|---|
 | Read (`log`, `diff-tree`, `for-each-ref`) | shared with other readers only |
-| `fetch` / initial clone | fully exclusive against readers, single-flight for waiters. A fetch updates many refs, so a concurrent `--all` walk could otherwise straddle two ref sets and break the one-snapshot-per-sync property of §3.2 |
+| `fetch` / initial clone | fully exclusive against readers, single-flight for waiters. A fetch updates many refs, so a concurrent `--branches` walk could otherwise straddle two ref sets and break the one-snapshot-per-sync property of §3.2 |
 | `repack -a -d --filter` (deletes packs) | fully exclusive: only at zero reader refcount |
 | Eviction (delete directory) | fully exclusive: only at zero refcount, never for a just-requested repo |
+
+Every git invocation runs under one of three time budgets, and the ordering
+between them is the contract, not the exact numbers:
+
+| Budget | Covers | Why it is separate |
+|---|---|---|
+| read (5 min) | `log`, `for-each-ref`, `rev-list`, `patch-id` | Holds the entry's READ lock. A stalled read — most often a lazy promisor fetch behind what looks like local plumbing — blocks fetch and eviction for its whole budget while other streams retry past the connector's own ceiling and fail the sync. |
+| prefetch (10 min) | the per-page blob prefetch | Network, but bounded by one page. |
+| heavy (30 min) | clone, fetch, repack, promotion | Whole-repository work, and genuinely slow. |
 
 Initial clone lands in a temp directory and is atomically renamed into place.
 
@@ -258,9 +291,15 @@ the last-resort backstop, not the mechanism.
   (anti-thrashing).
 - **Admission control**: before clone/fetch, check headroom; evict
   synchronously if needed; if nothing can be evicted respond `429`.
-- **Per-repo cap**: `max_repo_bytes` — clone/fetch is aborted when the entry
-  exceeds the cap; surfaced as a **permanent** (non-retryable) error to the
-  connector. Protects the shared cache from a single oversized monorepo.
+- **Per-repo cap**: `max_repo_bytes` — a clone, fetch or promotion runs
+  under a watcher that measures the tree it is filling and KILLS the child on
+  breach. Measuring afterwards is too late: the disk the cap exists to protect
+  has already been spent, and a repository an order of magnitude over the cap
+  can fill the volume before anything objects. The watcher polls, so the cap
+  can be overshot by one interval's worth of transfer; the post-hoc check
+  catches that remainder. Either way the caller gets a **permanent**
+  (non-retryable) error. Protects the shared cache from a single oversized
+  monorepo.
 
 Degradation mode: warm-repo reads always keep working; only cold clones queue
 behind `429`. Disk-full is a normal steady state for an LRU cache — the alert
@@ -291,8 +330,13 @@ nowhere else:
   transport): GitHub — any username (e.g. `x-access-token`) + PAT; GitLab —
   `oauth2` + token; Bitbucket Cloud — `x-token-auth` + token. The connector
   supplies the username; the proxy does not hardcode vendor rules.
-- Access-log middleware redacts `Authorization`, `X-Git-Token`, and any
-  header matched by a deny-list.
+- No request header is logged anywhere in this service or its host, so there
+  is nothing to redact at the log boundary. The controls that do exist are
+  structural: `GitCredentials` and the gear config both carry `Debug` impls
+  that print the token as `<redacted>`, credentials reach git through
+  `GIT_CONFIG_KEY_n` and never through argv, and the stored remote URL holds
+  no userinfo. Should an access log ever be added, it must be added with a
+  header deny-list, not after one.
 - **`X-Tenant-Id` / `X-Source-Id` are cache partition inputs, not
   authorization claims.** One deployment-wide bearer token authenticates *the
   caller class*, not a tenant, so those headers alone must never grant access
@@ -354,7 +398,9 @@ nowhere else:
 
 `?repo&since&page_size&page_token`
 
-All branches (`--all`), deduplicated by sha, merge commits included. `since`
+All branches (`--branches`, never `--all`: a tag pinning a deleted branch
+would otherwise keep resurrecting its commits), deduplicated by sha, merge
+commits included. `since`
 filters on `committed_date ≥ since` over everything currently reachable —
 after a force-push this re-emits rewritten commits, which is the correct
 append-only bronze behavior (dedup is downstream RMT's job).
@@ -370,7 +416,7 @@ append-only bronze behavior (dedup is downstream RMT's job).
 | `is_merge` | bool | `len(parents) > 1` |
 | `additions`, `deletions`, `changed_files` | int | numstat pass (shared with file-changes) |
 | `is_in_default_branch` | bool | one `rev-list` over the `HEAD` symref, intersected with the page |
-| `patch_id` | string | `git patch-id --stable` over the commit's full diff — canonical, whitespace- and hunk-order-insensitive hash for duplicate/cherry-pick detection. Always computed from the untruncated diff, so dedup never depends on stored patch text. |
+| `patch_id` | string \| null | `git patch-id --stable` over the commit's full diff, null for a merge commit, which has no single diff — canonical, whitespace- and hunk-order-insensitive hash for duplicate/cherry-pick detection. Always computed from the untruncated diff, so dedup never depends on stored patch text. |
 
 `is_in_default_branch` is evaluated **at emit time**, against the snapshot
 the page was served from. A commit first seen on a feature branch is emitted
@@ -391,8 +437,8 @@ The endpoint no longer reports every branch containing a commit. That form cost
 one `git branch --contains` per commit in the page — up to ten thousand
 subprocess spawns for one request, each walking reachability across all refs —
 and it answered a question no consumer asked. Per-branch reachability is
-therefore not available here; the enumeration itself still walks `--all`, so
-commits off the default branch are still extracted.
+therefore not available here; the enumeration itself still walks every branch,
+so commits off the default branch are still extracted.
 
 #### `GET /v1/file-changes`
 
@@ -470,12 +516,12 @@ rotation gone wrong shows up as `status="401"`, not as silence.
 
 | Status | Meaning | Connector behavior |
 |---|---|---|
-| `400` | missing identity/credential header, empty `repo`, malformed page token | permanent — a config or wiring bug |
-| `401` | proxy bearer token wrong, or origin rejected the supplied git credentials | fail the sync (config error) |
+| `400` | missing identity/credential header, missing or unusable `repo`, malformed page token, malformed `sha`, non-numeric `X-Max-Staleness`, or a query string that does not parse | permanent — a config or wiring bug |
+| `401` | proxy bearer token missing or wrong (`PROXY_TOKEN_REJECTED`), or origin rejected the supplied git credentials (`ORIGIN_CREDENTIALS_REJECTED`) | fail the sync (config error) |
 | `404` | repo not found at origin | fail the slice; parent record is stale |
-| `409` | the pinned snapshot is gone (§4.1) | restart the stream slice from its cursor |
+| `409` | the pinned snapshot is gone (§4.1), including when a promotion (§3.3) or a fetch bumped the generation the cursor pinned | restart the stream slice from its cursor |
 | `413` | repo exceeds `max_repo_bytes` | permanent — do not retry |
-| `429` + `Retry-After` | preparation did not finish within `INLINE_WAIT`, or admission was rejected | retry with backoff (declarative error handler) |
+| `429` + `Retry-After` | preparation did not finish within `INLINE_WAIT`, admission was rejected, or a caller presenting unproven credentials lost the re-proof race to a concurrent caller | retry with backoff (declarative error handler) |
 | `5xx` | internal/transient | retry with backoff |
 
 Error bodies are RFC 9457 `application/problem+json`, produced by the
@@ -722,7 +768,7 @@ bronze branches (append-only → RMT)                    unique_key excludes hea
   — not transport encryption — is what restricts who may call the API. A
   deployment that terminates TLS in front of the Service simply configures an
   `https` URL; nothing here prevents that.
-- **Image**: minimal base + git ≥ 2.36 (≥ 2.49 preferred).
+- **Image**: minimal base + a git that passes the boot purge probe (§3.4).
 
 ## 7. Design Decisions
 
