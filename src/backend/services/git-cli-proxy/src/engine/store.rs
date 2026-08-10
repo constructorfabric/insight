@@ -23,6 +23,7 @@ const BARE_REFSPEC: &str = "+refs/heads/*:refs/heads/*";
 pub enum RefreshFailure {
     Auth,
     NotFound,
+    PromisorRefused,
     Timeout,
     TooLarge { cap_bytes: u64 },
     Other(String),
@@ -33,6 +34,7 @@ impl From<&GitError> for RefreshFailure {
         match error {
             GitError::AuthRejected => Self::Auth,
             GitError::NotFound => Self::NotFound,
+            GitError::PromisorRefused => Self::PromisorRefused,
             GitError::TimedOut(_) => Self::Timeout,
             GitError::Failed(message) => Self::Other(message.clone()),
             GitError::Io(e) => Self::Other(e.to_string()),
@@ -49,6 +51,8 @@ pub enum StoreError {
     AuthRejected,
     #[error("repository not found at origin")]
     NotFound,
+    #[error("origin refuses to serve explicitly requested objects")]
+    PromisorRefused,
     #[error("repository is being prepared; retry in {}s", retry_after.as_secs())]
     Busy { retry_after: Duration },
     #[error("repository snapshot changed (current generation {current})")]
@@ -66,6 +70,7 @@ impl From<RefreshFailure> for StoreError {
         match failure {
             RefreshFailure::Auth => Self::AuthRejected,
             RefreshFailure::NotFound => Self::NotFound,
+            RefreshFailure::PromisorRefused => Self::PromisorRefused,
             RefreshFailure::Timeout => Self::Git("git timed out".to_owned()),
             RefreshFailure::TooLarge { cap_bytes } => Self::TooLarge { cap_bytes },
             RefreshFailure::Other(message) => Self::Git(message),
@@ -111,11 +116,22 @@ impl RepoGuard {
 
 type RefreshResult = Result<u64, RefreshFailure>;
 
-/// Identity of one in-flight refresh: the entry AND the credentials driving it.
+/// What a background flight is supposed to do to the entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RefreshKind {
+    /// Clone when absent, fetch when stale or unproven.
+    Sync,
+    /// Rebuild the entry as a full clone (§ origin refuses promisor wants).
+    Promote,
+}
+
+/// Identity of one in-flight flight: the entry, the credentials driving it,
+/// and the work it performs. Promotion must not adopt a plain sync's result.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FlightKey {
     dir_name: String,
     cred_fingerprint: String,
+    kind: RefreshKind,
 }
 
 pub struct RepoStore {
@@ -243,7 +259,8 @@ impl RepoStore {
                 // caller may read the entry. Re-check the fingerprint under
                 // the read guard and refresh again on a mismatch.
                 for _ in 0..REPROOF_ATTEMPTS {
-                    self.await_refresh(key, creds, max_staleness).await?;
+                    self.await_refresh(key, creds, max_staleness, RefreshKind::Sync)
+                        .await?;
 
                     let read = lock.clone().read_owned().await;
                     if let Some(meta) = usable_meta(&entry_dir, &fingerprint) {
@@ -275,8 +292,9 @@ impl RepoStore {
         key: &CacheKey,
         creds: &GitCredentials,
         max_staleness: Duration,
+        kind: RefreshKind,
     ) -> Result<u64, StoreError> {
-        let mut receiver = self.refresh_task(key, creds, max_staleness).await;
+        let mut receiver = self.refresh_task(key, creds, max_staleness, kind).await;
 
         let waited = tokio::time::timeout(INLINE_WAIT, receiver.wait_for(Option::is_some)).await;
         match waited {
@@ -305,10 +323,12 @@ impl RepoStore {
         key: &CacheKey,
         creds: &GitCredentials,
         max_staleness: Duration,
+        kind: RefreshKind,
     ) -> watch::Receiver<Option<RefreshResult>> {
         let flight = FlightKey {
             dir_name: key.dir_name(),
             cred_fingerprint: creds.fingerprint(),
+            kind,
         };
 
         let mut inflight = self.inflight.lock().await;
@@ -324,7 +344,10 @@ impl RepoStore {
         let key = key.clone();
         let creds = creds.clone();
         tokio::spawn(async move {
-            let outcome = store.refresh(&key, &creds, max_staleness).await;
+            let outcome = match kind {
+                RefreshKind::Sync => store.refresh(&key, &creds, max_staleness).await,
+                RefreshKind::Promote => store.promote(&key, &creds).await,
+            };
             let published = match &outcome {
                 Ok(generation) => Ok(*generation),
                 Err(error) => Err(RefreshFailure::from(error)),
@@ -429,6 +452,7 @@ impl RepoStore {
             skeleton_bytes: cloned_bytes,
             generation: 1,
             cred_fingerprint: creds.fingerprint(),
+            full_clone: false,
         };
         meta.store(entry_dir).map_err(GitError::Io)?;
         Ok(meta.generation)
@@ -479,8 +503,108 @@ impl RepoStore {
                 .map_or(fetched_bytes, |m| m.skeleton_bytes.min(fetched_bytes)),
             generation,
             cred_fingerprint: creds.fingerprint(),
+            // A plain fetch never changes the entry's clone shape.
+            full_clone: previous.as_ref().is_some_and(|m| m.full_clone),
         };
         meta.store(entry_dir).map_err(GitError::Io)?;
+        Ok(generation)
+    }
+
+    /// Rebuild the entry as a full clone.
+    ///
+    /// Some origins serve a plain clone but refuse explicit promisor wants for
+    /// individual objects (GitLab fork-network object pools do this), which
+    /// makes a blobless clone permanently unreadable: every blob prefetch
+    /// fails, on every retry. Heal it once by dropping the filter, refetching
+    /// everything, and recording the entry as no longer partial.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] — typed origin failures, `Busy` while the rebuild runs,
+    /// or `TooLarge` when the full clone exceeds the per-repository cap.
+    pub async fn promote_to_full_clone(
+        self: &Arc<Self>,
+        key: &CacheKey,
+        creds: &GitCredentials,
+    ) -> Result<u64, StoreError> {
+        self.await_refresh(key, creds, Duration::ZERO, RefreshKind::Promote)
+            .await
+    }
+
+    async fn promote(&self, key: &CacheKey, creds: &GitCredentials) -> Result<u64, GitError> {
+        let lock = self.entry_lock(key).await;
+        let entry_dir = self.entry_dir(key);
+        let git_dir = entry_dir.join("repo.git");
+
+        let _write = lock.write().await;
+
+        if let Some(meta) = RepoMeta::load(&entry_dir)
+            && meta.full_clone
+        {
+            return Ok(meta.generation);
+        }
+        if !git_dir.is_dir() {
+            return Err(GitError::NotFound);
+        }
+
+        // A full clone is much larger than the skeleton it replaces.
+        self.reclaim_if_needed().await;
+
+        // INVARIANT: the permit spans the whole promotion — the semaphore IS
+        // the global heavy-ops cap.
+        let _permit = self.heavy.acquire().await;
+
+        // Both must go BEFORE the refetch, or it re-applies the blob filter.
+        for key_name in ["remote.origin.promisor", "remote.origin.partialclonefilter"] {
+            let _ = self
+                .runner
+                .run(Some(&git_dir), &["config", "--unset-all", key_name], None)
+                .await;
+        }
+
+        self.runner
+            .run(
+                Some(&git_dir),
+                &["fetch", "--refetch", "--prune", "origin", BARE_REFSPEC],
+                Some(creds),
+            )
+            .await?;
+
+        remove_promisor_markers(&git_dir);
+
+        self.runner
+            .run(
+                Some(&git_dir),
+                &["repack", "-a", "-d", "--no-write-bitmap-index"],
+                Some(creds),
+            )
+            .await?;
+
+        let promoted_bytes = dir_size(&git_dir);
+        if promoted_bytes > self.max_repo_bytes {
+            let _ = std::fs::remove_dir_all(&entry_dir);
+            return Err(GitError::TooLarge {
+                cap_bytes: self.max_repo_bytes,
+            });
+        }
+
+        let now = now_epoch_s();
+        let generation = RepoMeta::load(&entry_dir).map_or(0, |m| m.generation) + 1;
+        let meta = RepoMeta {
+            clone_url: key.clone_url.as_str().to_owned(),
+            tenant_id: key.tenant_id.clone(),
+            source_id: key.source_id.clone(),
+            last_fetched_at_epoch_s: now,
+            last_accessed_at_epoch_s: now,
+            size_bytes: promoted_bytes,
+            // The full clone IS the baseline now: a purge could free nothing
+            // it could ever fetch back.
+            skeleton_bytes: promoted_bytes,
+            generation,
+            cred_fingerprint: creds.fingerprint(),
+            full_clone: true,
+        };
+        meta.store(&entry_dir).map_err(GitError::Io)?;
         Ok(generation)
     }
 
@@ -602,6 +726,7 @@ impl RepoStore {
                 skeleton_bytes: meta.skeleton_bytes,
                 last_accessed_at_epoch_s: meta.last_accessed_at_epoch_s,
                 in_use,
+                full_clone: meta.full_clone,
             });
         }
         candidates
@@ -652,6 +777,25 @@ impl RepoStore {
     /// Current cache usage, as accounted per entry.
     pub async fn used_bytes(&self) -> u64 {
         self.candidates().await.iter().map(|c| c.size_bytes).sum()
+    }
+}
+
+/// Drop the `.promisor` markers left by a partial clone. Without this git
+/// still treats the packs as promisor packs and keeps deferring to the origin
+/// for objects it now has locally.
+fn remove_promisor_markers(git_dir: &Path) {
+    let pack_dir = git_dir.join("objects").join("pack");
+    let Ok(entries) = std::fs::read_dir(&pack_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|ext| ext == "promisor")
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
     }
 }
 
@@ -819,6 +963,47 @@ pub(crate) mod tests {
             panic!("fixture url must parse: {raw}")
         };
         url
+    }
+
+    /// An origin that serves a clone but refuses explicit object requests —
+    /// the shape of a GitLab fork-network pool. Reproduced faithfully: the
+    /// skeleton's history still references a blob the origin has since
+    /// orphaned and garbage-collected, so asking for it by OID is refused.
+    pub(crate) fn fixture_refusing_promisor_wants(tag: &str) -> Fixture {
+        let f = fixture(tag);
+        sh(
+            &f.root.join("origin"),
+            "echo two > a.txt && git add a.txt && \
+             GIT_AUTHOR_DATE='2026-08-02T10:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-02T10:00:00+0000' git commit -qm c2",
+        );
+        f
+    }
+
+    /// Orphan the newest commit at origin AFTER a clone, so the cached
+    /// skeleton needs objects the origin will no longer hand out.
+    pub(crate) fn orphan_newest_commit_at_origin(f: &Fixture) {
+        sh(
+            &f.root.join("origin"),
+            "git reset -q --hard HEAD~1 && \
+             git reflog expire --expire=now --all && \
+             git gc -q --prune=now",
+        );
+    }
+
+    /// The tip commit of the cached clone.
+    pub(crate) async fn newest_sha(f: &Fixture, git_dir: &Path) -> String {
+        let headers =
+            match crate::engine::read::commits::headers(f.store.runner(), git_dir, None, &creds())
+                .await
+            {
+                Ok(headers) => headers,
+                Err(e) => panic!("read headers: {e}"),
+            };
+        let Some(last) = headers.last() else {
+            panic!("fixture must have commits")
+        };
+        last.sha.clone()
     }
 
     pub(crate) fn creds() -> GitCredentials {
@@ -1040,15 +1225,24 @@ pub(crate) mod tests {
         let lock = f.store.entry_lock(&k).await;
         let held = lock.write_owned().await;
 
-        let mine = f.store.refresh_task(&k, &creds(), Duration::ZERO).await;
-        let mine_again = f.store.refresh_task(&k, &creds(), Duration::ZERO).await;
+        let mine = f
+            .store
+            .refresh_task(&k, &creds(), Duration::ZERO, RefreshKind::Sync)
+            .await;
+        let mine_again = f
+            .store
+            .refresh_task(&k, &creds(), Duration::ZERO, RefreshKind::Sync)
+            .await;
         assert_eq!(
             f.store.inflight.lock().await.len(),
             1,
             "the same credentials must collapse onto one flight"
         );
 
-        let theirs = f.store.refresh_task(&k, &intruder, Duration::ZERO).await;
+        let theirs = f
+            .store
+            .refresh_task(&k, &intruder, Duration::ZERO, RefreshKind::Sync)
+            .await;
         assert_eq!(
             f.store.inflight.lock().await.len(),
             2,
@@ -1096,6 +1290,74 @@ pub(crate) mod tests {
             }
         }
         assert_eq!(served, 4, "every sequential caller must be served");
+    }
+
+    #[tokio::test]
+    async fn a_promisor_refusal_promotes_the_entry_once() {
+        let f = fixture_refusing_promisor_wants("promote");
+        let k = key(&f);
+
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        let git_dir = guard.git_dir().to_path_buf();
+        let before = guard.generation();
+        drop(guard);
+
+        orphan_newest_commit_at_origin(&f);
+
+        // The blob the orphaned commit introduced is still referenced by the
+        // cached history but is gone at origin: an explicit want is refused.
+        let newest = newest_sha(&f, &git_dir).await;
+        let refusal =
+            crate::engine::read::blobs::prefetch(f.store.runner(), &git_dir, &[newest], &creds())
+                .await;
+        assert!(
+            matches!(refusal, Err(GitError::PromisorRefused)),
+            "the fixture must reproduce a promisor refusal, got {refusal:?}"
+        );
+
+        let promoted = f.store.promote_to_full_clone(&k, &creds()).await;
+        let generation = match promoted {
+            Ok(generation) => generation,
+            Err(e) => panic!("promotion failed: {e}"),
+        };
+        assert!(generation > before, "promotion must bump the generation");
+
+        let Some(meta) = RepoMeta::load(&f.store.entry_dir(&k)) else {
+            panic!("meta must exist")
+        };
+        assert!(meta.full_clone, "the entry must be recorded as promoted");
+        assert_eq!(
+            meta.skeleton_bytes, meta.size_bytes,
+            "a promoted entry has no reclaimable blob weight"
+        );
+
+        let markers: Vec<_> = std::fs::read_dir(git_dir.join("objects").join("pack"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".promisor"))
+            .collect();
+        assert!(
+            markers.is_empty(),
+            "promisor markers left behind: {markers:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_already_promoted_entry_is_not_promoted_again() {
+        let f = fixture_refusing_promisor_wants("promote-idempotent");
+        let k = key(&f);
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        drop(guard);
+
+        let Ok(first) = f.store.promote_to_full_clone(&k, &creds()).await else {
+            panic!("first promotion must succeed")
+        };
+        let Ok(second) = f.store.promote_to_full_clone(&k, &creds()).await else {
+            panic!("second promotion must be a no-op, not a failure")
+        };
+        assert_eq!(first, second, "a promoted entry must not be rebuilt again");
     }
 
     #[tokio::test]

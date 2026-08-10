@@ -53,6 +53,8 @@ pub enum GitError {
     AuthRejected,
     #[error("repository not found at origin")]
     NotFound,
+    #[error("origin refuses to serve explicitly requested objects")]
+    PromisorRefused,
     #[error("git timed out after {0:?}")]
     TimedOut(Duration),
     #[error("git failed: {0}")]
@@ -246,6 +248,14 @@ fn classify_failure(output: &Output) -> GitError {
         return GitError::AuthRejected;
     }
 
+    // Before `missing`: an origin that refuses explicit object requests also
+    // prints "could not read from remote repository", which would otherwise
+    // classify a healable repository as permanently absent.
+    let promisor = ["did not send all necessary objects", "not our ref"];
+    if promisor.iter().any(|m| lower.contains(m)) {
+        return GitError::PromisorRefused;
+    }
+
     let missing = [
         "repository not found",
         "http 404",
@@ -297,6 +307,18 @@ mod tests {
             ("remote: Repository not found.", |e| {
                 matches!(e, GitError::NotFound)
             }),
+            // An origin refusing an explicit promisor want. Both shapes are
+            // real: the first is what a pooled GitLab repository returns, the
+            // second what the git transport returns directly.
+            (
+                "fatal: remote error: upload-pack: not our ref f719efd4",
+                |e| matches!(e, GitError::PromisorRefused),
+            ),
+            (
+                "error: https://example.com/a.git did not send all necessary objects\n\
+                 fatal: could not read from remote repository",
+                |e| matches!(e, GitError::PromisorRefused),
+            ),
             ("fatal: 'x' does not appear to be a git repository", |e| {
                 matches!(e, GitError::NotFound)
             }),

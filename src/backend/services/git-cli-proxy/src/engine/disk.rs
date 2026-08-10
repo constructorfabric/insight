@@ -15,6 +15,10 @@ pub struct Candidate {
     pub last_accessed_at_epoch_s: u64,
     /// A repo with readers or a running clone must not be touched.
     pub in_use: bool,
+    /// Promoted out of a partial clone because origin refuses explicit object
+    /// requests. Purging its blobs would strand the entry: they cannot be
+    /// fetched back.
+    pub full_clone: bool,
 }
 
 impl Candidate {
@@ -23,7 +27,8 @@ impl Candidate {
     }
 
     fn worth_purging(&self) -> bool {
-        self.skeleton_bytes > 0
+        !self.full_clone
+            && self.skeleton_bytes > 0
             && self.size_bytes
                 > self.skeleton_bytes + self.skeleton_bytes / PURGE_MIN_GROWTH_DIVISOR
     }
@@ -143,6 +148,7 @@ mod tests {
             skeleton_bytes: skeleton,
             last_accessed_at_epoch_s: accessed,
             in_use: false,
+            full_clone: false,
         }
     }
 
@@ -195,6 +201,24 @@ mod tests {
             plan.iter()
                 .all(|step| matches!(step, Reclaim::Evict { .. })),
             "skeleton-sized repos have nothing to purge: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn a_full_clone_entry_is_never_purged_only_evicted() {
+        let mut promoted = candidate("promoted", 10_000, 1_000, 1);
+        promoted.full_clone = true;
+        let candidates = vec![promoted];
+
+        // Purging would free blobs the origin refuses to serve again, which
+        // would strand the entry: only a whole eviction is safe.
+        let plan = plan_reclaim(&candidates, 5_000);
+        assert_eq!(
+            plan,
+            vec![Reclaim::Evict {
+                dir_name: "promoted".to_owned(),
+                frees: 10_000
+            }]
         );
     }
 

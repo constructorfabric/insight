@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,14 +12,16 @@ use serde::{Deserialize, Serialize};
 use crate::engine::key::CacheKey;
 use crate::engine::page::PageToken;
 use crate::engine::read::{self, Page, blobs, branches, commits, numstat, patches};
-use crate::engine::store::{Freshness, RepoGuard};
+use crate::engine::runner::GitError;
+use crate::engine::store::{Freshness, RepoGuard, StoreError};
 
 use super::AppState;
 use super::error::ApiError;
 use super::request::{
-    BadRequest, Paging, RequestContext, ShaFilter, clamp_page_size, clamp_patch_bytes,
-    parse_sha_filter,
+    BadRequest, Paging, RequestContext, ShaFilter, clamp_patch_bytes, parse_sha_filter,
 };
+
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Debug, Deserialize)]
 pub struct CommitsQuery {
@@ -73,62 +77,64 @@ pub async fn list_commits(
     let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
     let selected = parse_sha_filter(query.sha.as_deref())?;
-    let guard = open(&state, &context, &paging).await?;
 
-    let runner = state.store.runner();
-    let all = commits::headers(
-        runner,
-        guard.git_dir(),
-        query.since.as_deref(),
-        &context.creds,
-    )
-    .await?;
-    let (window, cursor) = read::slice_page(
-        retain_selected(all, selected.as_ref(), |header| &header.sha),
-        paging.token.as_ref(),
-        paging.page_size,
-        |header| (header.committed_date.clone(), header.sha.clone()),
-    );
+    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+        let (state, context, paging) = (&state, &context, &paging);
+        let since = query.since.as_deref();
+        let selected = selected.as_ref();
+        Box::pin(async move {
+            let runner = state.store.runner();
+            let all = commits::headers(runner, guard.git_dir(), since, &context.creds).await?;
+            let (window, cursor) = read::slice_page(
+                retain_selected(all, selected, |header| &header.sha),
+                paging.token.as_ref(),
+                paging.page_size,
+                |header| (header.committed_date.clone(), header.sha.clone()),
+            );
 
-    let shas: Vec<String> = window.iter().map(|header| header.sha.clone()).collect();
-    blobs::prefetch(runner, guard.git_dir(), &shas, &context.creds).await?;
+            let shas: Vec<String> = window.iter().map(|header| header.sha.clone()).collect();
+            blobs::prefetch(runner, guard.git_dir(), &shas, &context.creds).await?;
 
-    let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
-    let membership =
-        commits::branch_membership(runner, guard.git_dir(), &shas, &context.creds).await?;
-    let ids = commits::patch_ids(runner, guard.git_dir(), &shas, &context.creds).await?;
+            let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
+            let membership =
+                commits::branch_membership(runner, guard.git_dir(), &shas, &context.creds).await?;
+            let ids = commits::patch_ids(runner, guard.git_dir(), &shas, &context.creds).await?;
 
-    let items = window
-        .into_iter()
-        .map(|header| {
-            let files = file_stats.get(&header.sha).map_or(&[][..], Vec::as_slice);
-            let additions = files.iter().filter_map(|f| f.additions).sum();
-            let deletions = files.iter().filter_map(|f| f.deletions).sum();
-            commits::CommitRow {
-                is_merge: header.is_merge(),
-                changed_files: files.len() as u64,
-                additions,
-                deletions,
-                branch_names: membership.get(&header.sha).cloned().unwrap_or_default(),
-                patch_id: ids.get(&header.sha).cloned(),
-                sha: header.sha,
-                message: header.message,
-                authored_date: header.authored_date,
-                committed_date: header.committed_date,
-                author_name: header.author_name,
-                author_email: header.author_email,
-                committer_name: header.committer_name,
-                committer_email: header.committer_email,
-                parent_hashes: header.parent_hashes,
-            }
+            let items = window
+                .into_iter()
+                .map(|header| {
+                    let files = file_stats.get(&header.sha).map_or(&[][..], Vec::as_slice);
+                    let additions = files.iter().filter_map(|f| f.additions).sum();
+                    let deletions = files.iter().filter_map(|f| f.deletions).sum();
+                    commits::CommitRow {
+                        is_merge: header.is_merge(),
+                        changed_files: files.len() as u64,
+                        additions,
+                        deletions,
+                        branch_names: membership.get(&header.sha).cloned().unwrap_or_default(),
+                        patch_id: ids.get(&header.sha).cloned(),
+                        sha: header.sha,
+                        message: header.message,
+                        authored_date: header.authored_date,
+                        committed_date: header.committed_date,
+                        author_name: header.author_name,
+                        author_email: header.author_email,
+                        committer_name: header.committer_name,
+                        committer_email: header.committer_email,
+                        parent_hashes: header.parent_hashes,
+                    }
+                })
+                .collect();
+
+            Ok(Page {
+                items,
+                next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
+            })
         })
-        .collect();
-
-    json_page(Page {
-        items,
-        next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
     })
-    .await
+    .await?;
+
+    json_page(page).await
 }
 
 /// # Errors
@@ -145,54 +151,60 @@ pub async fn list_file_changes(
     let selected = parse_sha_filter(query.sha.as_deref())?;
     let include_patch = query.include_patch.unwrap_or(true);
     let max_patch_bytes = clamp_patch_bytes(query.max_patch_bytes);
-    let guard = open(&state, &context, &paging).await?;
 
-    let runner = state.store.runner();
-    let all = commits::headers(
-        runner,
-        guard.git_dir(),
-        query.since.as_deref(),
-        &context.creds,
-    )
-    .await?;
-    // Parity with the CDK connectors: merge commits contribute no file rows.
-    let non_merge: Vec<commits::CommitHeader> =
-        retain_selected(all, selected.as_ref(), |header| &header.sha)
-            .into_iter()
-            .filter(|header| !header.is_merge())
-            .collect();
-    let (window, cursor) = read::slice_page(
-        non_merge,
-        paging.token.as_ref(),
-        clamp_page_size(query.page_size),
-        |header| (header.committed_date.clone(), header.sha.clone()),
-    );
+    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+        let (state, context, paging) = (&state, &context, &paging);
+        let since = query.since.as_deref();
+        let selected = selected.as_ref();
+        Box::pin(async move {
+            let runner = state.store.runner();
+            let all = commits::headers(runner, guard.git_dir(), since, &context.creds).await?;
+            // Parity with the CDK connectors: merge commits contribute no file rows.
+            let non_merge: Vec<commits::CommitHeader> =
+                retain_selected(all, selected, |header| &header.sha)
+                    .into_iter()
+                    .filter(|header| !header.is_merge())
+                    .collect();
+            let (window, cursor) = read::slice_page(
+                non_merge,
+                paging.token.as_ref(),
+                paging.page_size,
+                |header| (header.committed_date.clone(), header.sha.clone()),
+            );
 
-    let shas: Vec<String> = window.iter().map(|header| header.sha.clone()).collect();
-    blobs::prefetch(runner, guard.git_dir(), &shas, &context.creds).await?;
+            let shas: Vec<String> = window.iter().map(|header| header.sha.clone()).collect();
+            blobs::prefetch(runner, guard.git_dir(), &shas, &context.creds).await?;
 
-    let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
-    let texts = if include_patch {
-        patches::read(
-            runner,
-            guard.git_dir(),
-            &shas,
-            max_patch_bytes,
-            &context.creds,
-        )
-        .await?
-    } else {
-        HashMap::new()
-    };
+            let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
+            let texts = if include_patch {
+                patches::read(
+                    runner,
+                    guard.git_dir(),
+                    &shas,
+                    max_patch_bytes,
+                    &context.creds,
+                )
+                .await?
+            } else {
+                HashMap::new()
+            };
 
-    let (items, early_cursor) = emit_file_changes(window, &file_stats, &texts, RowCaps::DEFAULT);
-    let cursor = early_cursor.or(cursor);
+            let (items, early_cursor) =
+                emit_file_changes(window, &file_stats, &texts, RowCaps::DEFAULT);
 
-    json_page(Page {
-        items,
-        next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
+            Ok(Page {
+                items,
+                next_page_token: encode_cursor(
+                    early_cursor.or(cursor),
+                    &context.key,
+                    guard.generation(),
+                ),
+            })
+        })
     })
-    .await
+    .await?;
+
+    json_page(page).await
 }
 
 /// Response-size bounds for `/v1/file-changes`. The page size bounds commits;
@@ -285,22 +297,79 @@ pub async fn list_branches(
 ) -> Result<Response, ApiError> {
     let context = RequestContext::from_parts(&headers, &query.repo, state.clone_url_policy())?;
     let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
-    let guard = open(&state, &context, &paging).await?;
 
-    let mut all = branches::read(state.store.runner(), guard.git_dir(), &context.creds).await?;
-    // Branches have no date cursor, so the walk orders by name — the same
-    // ascending-key contract the other endpoints use, which is what makes the
-    // page token meaningful here too.
-    all.sort_by(|a, b| a.name.cmp(&b.name));
-    let (items, cursor) = read::slice_page(all, paging.token.as_ref(), paging.page_size, |row| {
-        (row.name.clone(), String::new())
-    });
+    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+        let (state, context, paging) = (&state, &context, &paging);
+        Box::pin(async move {
+            let mut all =
+                branches::read(state.store.runner(), guard.git_dir(), &context.creds).await?;
+            // Branches have no date cursor, so the walk orders by name — the same
+            // ascending-key contract the other endpoints use, which is what makes
+            // the page token meaningful here too.
+            all.sort_by(|a, b| a.name.cmp(&b.name));
+            let (items, cursor) =
+                read::slice_page(all, paging.token.as_ref(), paging.page_size, |row| {
+                    (row.name.clone(), String::new())
+                });
 
-    json_page(Page {
-        items,
-        next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
+            Ok(Page {
+                items,
+                next_page_token: encode_cursor(cursor, &context.key, guard.generation()),
+            })
+        })
     })
-    .await
+    .await?;
+
+    json_page(page).await
+}
+
+/// Read one page from a snapshot, healing an entry whose origin refuses to
+/// serve explicitly requested objects.
+///
+/// Such an origin (a GitLab fork-network object pool, for instance) serves the
+/// clone but not the blob prefetch that follows, and it does so on every
+/// retry — so the entry is rebuilt once as a full clone and the read is tried
+/// again. A continuation cannot span that rebuild: the promotion bumps the
+/// generation its cursor is pinned to, which is the documented `409`.
+async fn read_snapshot<'a, T, F>(
+    state: &'a Arc<AppState>,
+    context: &'a RequestContext,
+    paging: &'a Paging,
+    read: F,
+) -> Result<Page<T>, ApiError>
+where
+    // INVARIANT: the reader takes the guard BY VALUE, so it is released before
+    // promotion is requested. Promotion takes the entry's write lock, and
+    // awaiting the write side while holding the read side deadlocks.
+    F: Fn(RepoGuard) -> BoxFuture<'a, Result<Page<T>, ApiError>>,
+{
+    let guard = open(state, context, paging).await?;
+    match read(guard).await {
+        Ok(page) => return Ok(page),
+        Err(e) if !refuses_promisor_wants(&e) => return Err(e),
+        Err(_) => {}
+    }
+
+    let generation = state
+        .store
+        .promote_to_full_clone(&context.key, &context.creds)
+        .await?;
+    if paging.token.is_some() {
+        return Err(StoreError::SnapshotChanged {
+            current: generation,
+        }
+        .into());
+    }
+
+    let guard = open(state, context, paging).await?;
+    read(guard).await
+}
+
+fn refuses_promisor_wants(error: &ApiError) -> bool {
+    matches!(
+        error,
+        ApiError::Git(GitError::PromisorRefused) | ApiError::Store(StoreError::PromisorRefused)
+    )
 }
 
 /// Resolve the snapshot: a first page honors fetch-if-stale, a continuation is

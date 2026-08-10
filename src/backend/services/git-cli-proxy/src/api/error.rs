@@ -45,6 +45,10 @@ impl IntoResponse for ApiError {
                 tracing::error!(error = %internal, "request failed");
                 "internal error".to_owned()
             }
+            Self::Store(internal @ StoreError::PromisorRefused) => {
+                tracing::error!(error = %internal, "request failed");
+                "internal error".to_owned()
+            }
             Self::Git(origin @ (GitError::AuthRejected | GitError::NotFound)) => origin.to_string(),
             Self::Git(internal) => {
                 tracing::error!(error = %internal, "request failed");
@@ -100,8 +104,15 @@ impl ApiError {
             Self::Store(StoreError::TooLarge { .. }) | Self::Git(GitError::TooLarge { .. }) => {
                 (StatusCode::PAYLOAD_TOO_LARGE, "repo_too_large", None)
             }
-            Self::Store(StoreError::Git(_) | StoreError::Io(_))
-            | Self::Git(GitError::TimedOut(_) | GitError::Failed(_) | GitError::Io(_))
+            // Reaching the wire means promotion did not heal the entry; the
+            // caller can do nothing about it, so it is an internal failure.
+            Self::Store(StoreError::Git(_) | StoreError::Io(_) | StoreError::PromisorRefused)
+            | Self::Git(
+                GitError::TimedOut(_)
+                | GitError::Failed(_)
+                | GitError::Io(_)
+                | GitError::PromisorRefused,
+            )
             | Self::Serialization(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal", None),
         }
     }

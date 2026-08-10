@@ -24,6 +24,12 @@ pub struct RepoMeta {
     /// INVARIANT: a warm read is served only to a caller presenting matching
     /// credentials — the cache key alone is not an authorization claim.
     pub cred_fingerprint: String,
+    /// Set once the entry was promoted out of a partial clone because origin
+    /// refuses to serve explicitly requested objects. Purged blobs cannot be
+    /// fetched back on such an entry, so it skips the blob-purge reclaim tier
+    /// and is only ever evicted whole.
+    #[serde(default)]
+    pub full_clone: bool,
 }
 
 const META_FILE: &str = "meta.json";
@@ -97,6 +103,7 @@ mod tests {
             skeleton_bytes: 40,
             generation: 3,
             cred_fingerprint: "deadbeef".to_owned(),
+            full_clone: false,
         }
     }
 
