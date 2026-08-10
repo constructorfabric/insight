@@ -166,15 +166,21 @@ SENTRY_ORG=example-org
 SENTRY_PROJECT=example-project
 ```
 
-The token needs the `project:releases` and `org:read` scopes.
+The token needs the `project:releases` and `org:read` scopes, or `org:ci` on an
+organization auth token.
 
-Store it as the `SENTRY_BUILD_ENV` repository secret. A secret rather than build
-args because this job builds PR-authored source and `ARG` values persist in
-builder history.
+CI holds one secret per line — `SENTRY_AUTH_TOKEN`, `SENTRY_URL`, `SENTRY_ORG`,
+`SENTRY_PROJECT` — and the workflow assembles the file before the build. A
+masked CI variable holds a single line with no whitespace, so the dotenv cannot
+be stored whole. Secrets rather than build args because this job builds
+PR-authored source and `ARG` values persist in builder history.
 
-Without the secret the file is absent and the build skips the upload. A failed
-upload — expired token, Sentry unreachable — logs and continues, so image builds
-do not depend on Sentry being up.
+`SENTRY_URL` may be empty for Sentry's hosted service; the plugin then uses its
+own default.
+
+Without the credentials the file is absent or its values empty, and the build
+skips the upload. A failed upload — expired token, Sentry unreachable — logs and
+continues, so image builds do not depend on Sentry being up.
 
 `@sentry/cli` fetches its binary in a postinstall, so `package.json` allowlists
 it under `pnpm.onlyBuiltDependencies`. Everything else stays blocked: pnpm 10

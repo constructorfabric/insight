@@ -823,6 +823,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      # Both arches emit identical maps under one release, and a pull_request
+      # image is discarded.
+      UPLOAD_SOURCEMAPS: ${{ needs.changes.outputs.should_push == 'true' && matrix.arch == 'amd64' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -834,13 +838,23 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # One secret per setting: a masked CI variable holds a single line, so the
+      # dotenv the build wants is assembled here rather than stored whole.
+      - name: Write the Sentry upload credentials
+        if: env.UPLOAD_SOURCEMAPS == 'true'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_URL: ${{ secrets.SENTRY_URL }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          umask 077
+          printf 'SENTRY_AUTH_TOKEN=%s\nSENTRY_URL=%s\nSENTRY_ORG=%s\nSENTRY_PROJECT=%s\n' \
+            "$SENTRY_AUTH_TOKEN" "$SENTRY_URL" "$SENTRY_ORG" "$SENTRY_PROJECT" \
+            > "$RUNNER_TEMP/sentry.env"
       # No `file:` — the Dockerfile is at the context root.
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         id: build
-        env:
-          # Both arches emit identical maps under one release, and a
-          # pull_request image is discarded.
-          UPLOAD_SOURCEMAPS: ${{ needs.changes.outputs.should_push == 'true' && matrix.arch == 'amd64' }}
         with:
           context: src/frontend
           platforms: ${{ matrix.platform }}
@@ -848,10 +862,8 @@ jobs:
             VITE_SENTRY_DSN=${{ secrets.FRONTEND_SENTRY_DSN }}
             VITE_APP_RELEASE=${{ needs.changes.outputs.build_tag }}
             SENTRY_UPLOAD=${{ env.UPLOAD_SOURCEMAPS }}
-          # Quoted: the value is a multiline dotenv, and the action reads
-          # unquoted newlines as further entries.
-          secrets: |
-            "sentry_env=${{ env.UPLOAD_SOURCEMAPS == 'true' && secrets.SENTRY_BUILD_ENV || '' }}"
+          secret-files: |
+            ${{ env.UPLOAD_SOURCEMAPS == 'true' && format('sentry_env={0}/sentry.env', runner.temp) || '' }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-frontend,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=frontend-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=frontend-{0},ignore-error=true', matrix.arch) || '' }}
