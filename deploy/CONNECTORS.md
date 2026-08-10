@@ -35,6 +35,8 @@ Every connector Secret needs three things for the reconcile loop to discover and
 - **Two annotations**: `insight.cyberfabric.com/connector: <name>` identifies which connector definition to use, and `insight.cyberfabric.com/source-id: <id>` names this specific source instance (the convention is `<name>-main`).
 - **`stringData`** holding the connector's required fields — credentials, base URLs, and similar settings specific to that tool.
 
+A Secret can only hold text, so every value is quoted. Fields a connector expects as a list are written as a JSON array (`'["org-a","org-b"]'`), and numbers and true/false flags as their quoted form (`"25"`, `"true"`); the reconcile loop converts them to the types the connector declares. Leave a field out entirely to keep the connector's own default — an empty value is rejected.
+
 For example, the Jira connector Secret (`connectors/jira.yaml`) looks like this:
 
 ```yaml
@@ -152,7 +154,7 @@ metadata:
 type: Opaque
 stringData:
   github_token:         "CHANGE_ME"
-  github_organizations: "org-a,org-b"
+  github_organizations: '["org-a","org-b"]'    # JSON array
   github_start_date:    "2026-01-01"
   github_skip_archived: "true"
   github_skip_forks:    "true"
@@ -184,7 +186,7 @@ metadata:
 type: Opaque
 stringData:
   bitbucket_token:      "CHANGE_ME"    # Atlassian ATCTT access token (NOT an ATATT API token)
-  bitbucket_workspaces: "workspace-a,workspace-b"
+  bitbucket_workspaces: '["workspace-a","workspace-b"]'    # JSON array
 ```
 
 ```yaml
@@ -380,3 +382,4 @@ stringData:
 | Problem | What to check |
 |---------|-----------------|
 | Connectors are not syncing | Confirm `airbyte-auth-secrets` was mirrored into the `insight` namespace (Step 3 of the deployment runbook, [HELM_DEPLOY.md](./HELM_DEPLOY.md)). The reconcile loop runs as an Argo `CronWorkflow` named `insight-reconcile-loop` — **not** the analytics pod — so inspect the Workflow pods it spawns: `kubectl -n insight get pods -l workflows.argoproj.io/cron-workflow=insight-reconcile-loop`, then `kubectl -n insight logs <pod>` (or `argo logs @latest -n insight` if the Argo CLI is available) |
+| One connector never appears in Airbyte, and the reconcile run ends with errors | The run names the offending field, e.g. `cannot build source config from Secret: github_organizations: expected a JSON array`. Fix that value in the Secret (see [Anatomy of a connector Secret](#anatomy-of-a-connector-secret) for how lists, numbers and flags are written) and re-apply it; the next tick provisions the connector |

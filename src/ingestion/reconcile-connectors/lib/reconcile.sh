@@ -714,9 +714,18 @@ for s in json.load(sys.stdin):
         "would create source ${expected_source_name}"
     else
       local created
-      created="$(ab_create_source "${workspace_id}" "${definition_id}" \
-                  "${expected_source_name}" "${target_cfg_json}")"
+      if ! created="$(ab_create_source "${workspace_id}" "${definition_id}" \
+                  "${expected_source_name}" "${target_cfg_json}")"; then
+        reconcile__log ERROR "${connector_name}" \
+          "Airbyte rejected source ${expected_source_name}: $(ab_error_message "${created}")"
+        return 1
+      fi
       source_id="$(printf '%s' "${created}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("sourceId",""))')"
+      if [[ -z "${source_id}" ]]; then
+        reconcile__log ERROR "${connector_name}" \
+          "source create returned no sourceId for ${expected_source_name}"
+        return 1
+      fi
       reconcile__log CHANGE "${connector_name}" "source ${source_id} created"
       _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
     fi
@@ -763,8 +772,13 @@ for s in json.load(sys.stdin):
         reconcile__log CHANGE "${connector_name}" \
           "would update source ${source_id} with new credentials"
       else
-        ab_update_source "${source_id}" "${target_cfg_json}" \
-          "${expected_source_name}" >/dev/null
+        local updated
+        if ! updated="$(ab_update_source "${source_id}" "${target_cfg_json}" \
+              "${expected_source_name}")"; then
+          reconcile__log ERROR "${connector_name}" \
+            "Airbyte rejected the update of source ${source_id}: $(ab_error_message "${updated}")"
+          return 1
+        fi
         reconcile__log INFO "${connector_name}" "source ${source_id} updated"
         _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
       fi
@@ -1079,9 +1093,18 @@ reconcile_recreate_with_state() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-create
   local new_source_json new_source_id
   # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
-  new_source_json="$(ab_create_source "${workspace_id}" "${definition_id}" \
-                      "${source_name}" "${target_cfg_json}")"
+  if ! new_source_json="$(ab_create_source "${workspace_id}" "${definition_id}" \
+                      "${source_name}" "${target_cfg_json}")"; then
+    reconcile__log ERROR "${source_name}" \
+      "Airbyte rejected the replacement source: $(ab_error_message "${new_source_json}") — old source deleted, state backup: ${state_backup:-none}"
+    return 1
+  fi
   new_source_id="$(printf '%s' "${new_source_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("sourceId",""))')"
+  if [[ -z "${new_source_id}" ]]; then
+    reconcile__log ERROR "${source_name}" \
+      "replacement source create returned no sourceId — old source deleted, state backup: ${state_backup:-none}"
+    return 1
+  fi
 
   local destination_id
   if ! destination_id="$(reconcile_resolve_destination_id "${source_name}")"; then
@@ -1098,14 +1121,23 @@ reconcile_recreate_with_state() {
   tags_json="$(ab_resolve_tags "${workspace_id}" "${tag_names_json}")"
   local new_conn_json new_connection_id
   # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
-  new_conn_json="$(ab_create_connection "${workspace_id}" "${new_source_id}" \
+  if ! new_conn_json="$(ab_create_connection "${workspace_id}" "${new_source_id}" \
                     "${destination_id}" "${source_name}-conn" "${schedule_json}" \
-                    "${tags_json}" "" "${namespace_format}")"
+                    "${tags_json}" "" "${namespace_format}")"; then
+    reconcile__log ERROR "${source_name}" \
+      "Airbyte rejected the replacement connection: $(ab_error_message "${new_conn_json}") — state NOT restored, backup: ${state_backup:-none}"
+    return 1
+  fi
   new_connection_id="$(printf '%s' "${new_conn_json}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("connectionId",""))')"
+  if [[ -z "${new_connection_id}" ]]; then
+    reconcile__log ERROR "${source_name}" \
+      "replacement connection create returned no connectionId — state NOT restored, backup: ${state_backup:-none}"
+    return 1
+  fi
   # @cpt-end:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-create
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-import
-  if [[ -n "${state_json}" && -n "${new_connection_id}" ]]; then
+  if [[ -n "${state_json}" ]]; then
     # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
     # state restore failure on a fresh recreate means the new connection
     # will resync from cursor zero; surface the error so an operator can
@@ -1120,10 +1152,8 @@ reconcile_recreate_with_state() {
   # @cpt-end:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-import
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-tag
-  if [[ -n "${new_connection_id}" ]]; then
-    # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
-    ab_patch_connection_tags "${new_connection_id}" "${tags_json}" >/dev/null
-  fi
+  # RECONCILE_DRY_RUN guarded at top of reconcile_recreate_with_state.
+  ab_patch_connection_tags "${new_connection_id}" "${tags_json}" >/dev/null
   # @cpt-end:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-tag
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-export-import-state-on-recreate:p1:inst-eisor-return
@@ -1324,9 +1354,17 @@ _reconcile_one_connector() {
   fi
 
   local source_cfg_json
-  source_cfg_json="$(python3 "${_RECONCILE_PY_DIR}/compose_source_config.py" \
-    --tenant-id "${tenant_id}" --source-id "${source_id_label}" \
-    --injected "${injected_json}" <<<"${secret_data_json}")"
+  if ! source_cfg_json="$(printf '%s' "${secret_data_json}" \
+      | python3 "${_RECONCILE_PY_DIR}/build_source_config.py" \
+          --connector-dir "${connector_dir}" \
+          --connector-type "${type}" \
+          --tenant-id "${tenant_id}" \
+          --source-id "${source_id_label}" \
+          --injected "${injected_json}")"; then
+    reconcile__log ERROR "${name}" \
+      "cannot build source config from Secret: ${source_cfg_json:-unknown}"
+    return 1
+  fi
 
   # Destination ClickHouse schema (bronze namespace) comes ONLY from
   # descriptor.connection.namespace — no bronze_<slug> fallback. Missing/empty
@@ -1353,8 +1391,12 @@ _reconcile_one_connector() {
   src_action="$(printf '%s' "${src_result}" | tail -1 | awk -F'\t' '{print $1}')"
   src_id="$(printf '%s' "${src_result}" | tail -1 | awk -F'\t' '{print $2}')"
   if [[ -z "${src_id}" ]]; then
-    reconcile__log WARN "${name}" "source not yet created (will be on real run) — skipping connection setup"
-    return 0
+    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+      reconcile__log WARN "${name}" "source not yet created (will be on real run) — skipping connection setup"
+      return 0
+    fi
+    reconcile__log ERROR "${name}" "no source id after reconciling sources — skipping connection setup"
+    return 1
   fi
   # Source create/update/recreate is data-affecting per ADR-0008.
   [[ "${src_action}" != "noop" ]] && data_changed=1

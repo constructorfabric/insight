@@ -559,6 +559,19 @@ print(json.dumps(payload))
 }
 
 # ---------------------------------------------------------------------------
+# ab_error_message <response_body>
+# `curl --fail-with-body` leaves the error body on stdout, so callers hold it
+# when a call fails. Prints the API's `message`, whitespace-collapsed and
+# clipped to one log line; empty for a body that carries none. The rest of the
+# body is a Java stack trace and the echoed request, which must never reach a
+# log line. Slicing in jq keeps the cut on codepoints.
+# ---------------------------------------------------------------------------
+ab_error_message() {
+  printf '%s' "${1:-}" | jq -r '((.message // "") | gsub("\\s+"; " ") | .[0:300])' 2>/dev/null
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # ab_delete_source <source_id>
 # ---------------------------------------------------------------------------
 ab_delete_source() {
