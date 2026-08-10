@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,12 @@ pub struct RepoMeta {
 
 const META_FILE: &str = "meta.json";
 
+/// INVARIANT: every in-flight `store` targets a distinct temporary path.
+/// Concurrent writers to one entry (LRU access bumps run under the read lock)
+/// would otherwise interleave into a shared `meta.json.tmp.<pid>` and rename a
+/// spliced document into place, which `load` rejects and the caller re-clones.
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
 /// Seconds since the UNIX epoch; saturates at zero on a pre-epoch clock.
 #[must_use]
 pub fn now_epoch_s() -> u64 {
@@ -51,10 +58,15 @@ impl RepoMeta {
     ///
     /// I/O failure writing or renaming inside `entry_dir`.
     pub fn store(&self, entry_dir: &Path) -> std::io::Result<()> {
-        let tmp = entry_dir.join(format!("{META_FILE}.tmp.{}", std::process::id()));
+        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = entry_dir.join(format!("{META_FILE}.tmp.{}.{seq}", std::process::id()));
+
         let bytes = serde_json::to_vec_pretty(self)?;
         std::fs::write(&tmp, bytes)?;
-        std::fs::rename(&tmp, entry_dir.join(META_FILE))
+
+        std::fs::rename(&tmp, entry_dir.join(META_FILE)).inspect_err(|_| {
+            let _ = std::fs::remove_file(&tmp);
+        })
     }
 }
 
@@ -106,6 +118,51 @@ mod tests {
             panic!("write: {e}");
         }
         assert_eq!(RepoMeta::load(&dir), None, "corrupt file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_stores_never_publish_a_mixed_document() {
+        let dir = temp_dir("concurrent");
+        let writers = 32;
+
+        std::thread::scope(|scope| {
+            for generation in 0..writers {
+                let dir = &dir;
+                scope.spawn(move || {
+                    let meta = RepoMeta {
+                        generation,
+                        ..sample()
+                    };
+                    if let Err(e) = meta.store(dir) {
+                        panic!("store: {e}");
+                    }
+                });
+            }
+        });
+
+        let Some(published) = RepoMeta::load(&dir) else {
+            panic!("a spliced document was renamed into place")
+        };
+        assert!(published.generation < writers, "generation must be one writer's own value");
+        assert_eq!(
+            published,
+            RepoMeta {
+                generation: published.generation,
+                ..sample()
+            },
+            "the published document must be exactly one writer's, never a splice"
+        );
+
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "temporary files left behind: {leftovers:?}");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

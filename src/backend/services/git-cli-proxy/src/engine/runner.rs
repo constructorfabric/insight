@@ -167,21 +167,20 @@ impl GitRunner {
             .kill_on_drop(true);
         let right_child = right.spawn()?;
 
+        // INVARIANT: both sides are drained concurrently. Awaiting the consumer
+        // to completion first would deadlock the producer once it writes past
+        // the stderr pipe buffer, and the call would surface as a timeout.
         let joined = async {
-            let right_output = right_child.wait_with_output().await?;
-            let left_status = left_child.wait().await?;
-            Ok::<_, std::io::Error>((left_status, right_output))
+            tokio::try_join!(right_child.wait_with_output(), left_child.wait_with_output())
         };
 
-        let (left_status, right_output) = match tokio::time::timeout(self.timeout, joined).await {
+        let (right_output, left_output) = match tokio::time::timeout(self.timeout, joined).await {
             Ok(result) => result?,
             Err(_elapsed) => return Err(GitError::TimedOut(self.timeout)),
         };
 
-        if !left_status.success() {
-            return Err(GitError::Failed(format!(
-                "pipe producer failed with {left_status}"
-            )));
+        if !left_output.status.success() {
+            return Err(classify_failure(&left_output));
         }
         if !right_output.status.success() {
             return Err(classify_failure(&right_output));
@@ -387,14 +386,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn piped_producer_failure_carries_its_stderr() {
+        let dir = std::env::temp_dir().join(format!(
+            "git-cli-proxy-piped-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            panic!("create temp dir: {e}");
+        }
+
+        let runner = GitRunner::new(Duration::from_secs(10));
+        let init = tokio::process::Command::new("git")
+            .args(["init", "--bare", "-q"])
+            .arg(&dir)
+            .output()
+            .await;
+        if let Err(e) = init {
+            panic!("git init: {e}");
+        }
+
+        let creds = GitCredentials {
+            username: "u".to_owned(),
+            token: "t".to_owned(),
+        };
+        let result = runner
+            .run_piped(
+                &dir,
+                &["log", "--no-walk", "refs/heads/no-such-ref"],
+                &["patch-id", "--stable"],
+                &creds,
+            )
+            .await;
+
+        // The producer's stderr is only reachable if it was drained; an
+        // undrained pipe surfaces as TimedOut with no diagnosis at all.
+        match result {
+            Err(GitError::Failed(message)) => assert!(
+                !message.is_empty(),
+                "producer stderr must survive to the caller"
+            ),
+            Err(GitError::NotFound) => {}
+            other => panic!("expected a classified producer failure, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn run_times_out_and_kills() {
-        // `git credential fill` blocks reading stdin; with stdin nulled it
-        // still waits for input on some git versions — cheap forced hang is
-        // fetching an unroutable address. Use a filesystem wait instead:
-        // `git daemon` needs args; simplest reliable hang: clone from a pipe
-        // is flaky. Use --exec-path trick: run `git hash-object --stdin` with
-        // stdin held open is not possible via Stdio::null. So: time out a
-        // clone of a non-listening localhost port with a tiny timeout.
         let runner = GitRunner::new(Duration::from_millis(200));
         let result = runner
             .run(
