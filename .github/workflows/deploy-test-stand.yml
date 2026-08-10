@@ -192,6 +192,11 @@ on:
           - all
           - deploy+seed
           - deploy
+      seed_force:
+        description: "Seed a tenant that already holds person rows the seeder did not write. Overrides a guard — read its refusal first."
+        required: false
+        default: false
+        type: boolean
 
 # One stand, one deploy at a time. `cancel-in-progress: false` because the thing
 # being cancelled would be a `helm upgrade` mid-flight: killing it leaves the
@@ -747,6 +752,9 @@ jobs:
         timeout-minutes: 65
         env:
           SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL }}
+          # `inputs.seed_force` is unset on a workflow_call, so this is the
+          # empty string there and the branch below is never taken.
+          SEED_FORCE: ${{ inputs.seed_force }}
         run: |
           set -euo pipefail
           # seed-stand.sh verbatim — no wrapper, no re-implemented Job manifest.
@@ -769,12 +777,28 @@ jobs:
           # form reaches this public log. `pipefail` (set above) is what makes
           # the seeder's exit status, rather than python's, the status of this
           # step; without it a failed seed would be reported as a clean run.
+          # `--force` is opt-in, dispatch-only, and off by default — the input
+          # does not exist on `workflow_call`, so a merge can never reach this
+          # branch. What it overrides is the seeder's refusal to add demo people
+          # to a tenant already holding `identity.persons` rows it did not write,
+          # and that refusal is not fussiness: the silver step CLEARS the tables
+          # it writes, and on a tenant carrying data from somewhere else that is
+          # data loss rather than a reset. Forcing is a considered answer to a
+          # refusal a human has read, which is why it is a flag on a hand-run
+          # dispatch and not a value in this file.
+          force_args=()
+          if [ "${SEED_FORCE:-false}" = "true" ]; then
+            force_args+=(--force)
+            echo "::warning::seeding with --force — the seeder's foreign-person-rows guard is overridden for this run."
+          fi
+
           kube_context="$(yq -r '.kubeContext' "$INVENTORY_FILE")"
           ./src/ingestion/tools/seed/seed-stand.sh \
             -n "$STAND_NAMESPACE" \
             --context "$kube_context" \
             --email "$SEED_EMAIL" \
             --days 730 \
+            "${force_args[@]}" \
             2>&1 | tee "$RUNNER_TEMP/seed.log" | python3 "$REDACT"
 
       - name: 'Stage 2/3 — capture the seed manifest'
