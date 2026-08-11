@@ -281,9 +281,19 @@ sync:
 
 .PHONY: sync-clean
 sync-clean:
-	@if [ -n "$$(git status --porcelain)" ]; then \
-		echo "$(C_RED)ERROR$(C_RST): working tree has uncommitted changes"; \
-		git status --short; exit 1; fi
+	@# Scoped to THIS directory, not the whole repository. The guarantee worth
+	@# having is "what is about to be deployed is what is committed", and what
+	@# shapes a deploy lives here: values, inventory, the Makefile, the scripts.
+	@#
+	@# Repo-wide, it coupled every deploy to the tidiness of the entire checkout
+	@# — an untracked scratch file anywhere, from any unrelated task, refused the
+	@# deploy. That is not a theoretical annoyance: it fired between the wipe and
+	@# the install of a stand rebuild, which left the stand DOWN with its
+	@# databases already dropped. A guard that turns a recoverable state into an
+	@# outage is too wide.
+	@if [ -n "$$(git status --porcelain -- .)" ]; then \
+		echo "$(C_RED)ERROR$(C_RST): deploy/gitops has uncommitted changes"; \
+		git status --short -- .; exit 1; fi
 	@# The fetch is INSIDE the upstream test. A CI checkout is a detached HEAD
 	@# with no upstream, so the comparison below self-skips — and fetching first
 	@# meant every deploy made a network call to github.com whose result was then

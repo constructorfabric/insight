@@ -69,6 +69,10 @@
 #                          exists because of — but it is the smaller hammer.
 #   --no-deploy            wipe only; do not reinstall. The stand is left EMPTY.
 #   --timeout DURATION     helm timeout for the reinstall (default: 10m)
+#   --version X.Y.Z        chart version to install. Default: whatever
+#                          publish-chart last emitted on the default branch,
+#                          read through the API. NOT this checkout's
+#                          .insight-version, which is as old as its branch.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,6 +87,11 @@ APPLY=0
 KEEP_DATABASES=0
 DO_DEPLOY=1
 TIMEOUT="10m"
+VERSION=""
+# Where the published version is read from. The stand is rebuilt to what
+# publish-chart last emitted, never to what this working tree happens to hold.
+UPSTREAM_REPO="constructorfabric/insight"
+DEFAULT_BRANCH="main"
 
 if [ -t 1 ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
   C_RED=$'\033[31m'; C_GRN=$'\033[32m'; C_YEL=$'\033[33m'; C_CYA=$'\033[36m'; C_RST=$'\033[0m'
@@ -104,6 +113,7 @@ while [ $# -gt 0 ]; do
     --env)            ENV_NAME="${2:?--env needs a name}"; shift 2 ;;
     --confirm)        CONFIRM="${2:?--confirm needs a token}"; shift 2 ;;
     --timeout)        TIMEOUT="${2:?--timeout needs a duration}"; shift 2 ;;
+    --version)        VERSION="${2:?--version needs a semver}"; shift 2 ;;
     --apply)          APPLY=1; shift ;;
     --keep-databases) KEEP_DATABASES=1; shift ;;
     --no-deploy)      DO_DEPLOY=0; shift ;;
@@ -265,17 +275,26 @@ spec:
       labels: {app.kubernetes.io/managed-by: recreate-test-stand.sh}
     spec:
       restartPolicy: Never
-      containers:
-        - name: preflight
+      # TWO containers, one per client, and the split is not cosmetic. The first
+      # draft ran both checks in the mariadb image and died on
+      # `curl: command not found` — the image has a mariadb client and no HTTP
+      # client. The preflight caught it before anything was destroyed, which is
+      # what it is for, but the fix is to use each tool's own image rather than
+      # to hope one image carries both.
+      #
+      # initContainer then container, so MariaDB is checked first and ClickHouse
+      # only runs if it passed. Both are read-only, so the ordering is for
+      # legibility rather than safety here — it is load-bearing in the wipe.
+      initContainers:
+        - name: mariadb
           image: ${MARIADB_IMAGE}
           env:
             # secretKeyRef with EXPLICIT names, never envFrom. The keys in
             # insight-db-creds are hyphenated (\`mariadb-root-password\`), and
-            # envFrom injects each key verbatim as a variable name — which is
+            # envFrom injects each key verbatim as the variable name — which is
             # not a valid shell identifier, so the script would run with the
             # passwords unset and every check would fail for the wrong reason.
-            - {name: MYSQL_PWD,  valueFrom: {secretKeyRef: {name: insight-db-creds, key: mariadb-root-password}}}
-            - {name: CH_PASSWORD, valueFrom: {secretKeyRef: {name: insight-db-creds, key: clickhouse-password}}}
+            - {name: MYSQL_PWD, valueFrom: {secretKeyRef: {name: insight-db-creds, key: mariadb-root-password}}}
           command:
             - bash
             - -ec
@@ -283,21 +302,41 @@ spec:
               echo "MariaDB ${MARIADB_HOST}:${MARIADB_PORT} as root"
               mariadb -h'${MARIADB_HOST}' -P'${MARIADB_PORT}' -uroot -e 'SELECT 1' >/dev/null
               for db in '${IDENTITY_DB}' '${KEYCLOAK_DB}' '${ANALYTICS_DB}'; do
-                n=\$(mariadb -h'${MARIADB_HOST}' -P'${MARIADB_PORT}' -uroot -N -B \\
-                      -e "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='\$db'")
+                n=\$(mariadb -h'${MARIADB_HOST}' -P'${MARIADB_PORT}' -uroot -N -B \
+                      -e "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='\$db'" 2>/dev/null)
                 echo "  \$db: present=\$n"
               done
-              echo "  root can DROP: \$(mariadb -h'${MARIADB_HOST}' -P'${MARIADB_PORT}' -uroot -N -B -e "SHOW GRANTS FOR CURRENT_USER" | grep -c 'ALL PRIVILEGES ON \*\.\*' || true)"
-
+              mariadb -h'${MARIADB_HOST}' -P'${MARIADB_PORT}' -uroot -N -B \
+                -e "SHOW GRANTS FOR CURRENT_USER" 2>/dev/null | grep -q 'ALL PRIVILEGES ON \*\.\*' \
+                || { echo "root cannot DROP — refusing"; exit 1; }
+              echo "  root can DROP: yes"
+      containers:
+        - name: clickhouse
+          image: ${CURL_IMAGE}
+          env:
+            - {name: CH_PASSWORD, valueFrom: {secretKeyRef: {name: insight-db-creds, key: clickhouse-password}}}
+          command:
+            - sh
+            - -ec
+            - |
               echo "ClickHouse ${CH_HOST}:${CH_PORT} as ${CH_USER}"
-              code=\$(curl -s -o /tmp/ch -w '%{http_code}' \\
-                --max-time 20 \\
-                -H "X-ClickHouse-User: ${CH_USER}" \\
-                -H "X-ClickHouse-Key: \$CH_PASSWORD" \\
-                --data-binary 'SELECT count() FROM system.databases' \\
+              code=\$(curl -s -o /tmp/ch -w '%{http_code}' --max-time 20 \
+                -H "X-ClickHouse-User: ${CH_USER}" \
+                -H "X-ClickHouse-Key: \$CH_PASSWORD" \
+                --data-binary 'SELECT count() FROM system.databases' \
                 'http://${CH_HOST}:${CH_PORT}/')
               [ "\$code" = "200" ] || { echo "ClickHouse answered \$code"; cat /tmp/ch; exit 1; }
               echo "  databases visible: \$(cat /tmp/ch)"
+              # Authorisation, not just reachability: a reachable ClickHouse the
+              # app user cannot DROP in would fail AFTER MariaDB was dropped.
+              code=\$(curl -s -o /tmp/g -w '%{http_code}' --max-time 20 \
+                -H "X-ClickHouse-User: ${CH_USER}" \
+                -H "X-ClickHouse-Key: \$CH_PASSWORD" \
+                --data-binary 'SHOW GRANTS' \
+                'http://${CH_HOST}:${CH_PORT}/')
+              [ "\$code" = "200" ] || { echo "SHOW GRANTS answered \$code"; exit 1; }
+              grep -qE 'GRANT .*(DROP|ALL)' /tmp/g || { echo "${CH_USER} holds no DROP grant — refusing"; exit 1; }
+              echo "  ${CH_USER} can DROP: yes"
               echo "PREFLIGHT OK"
 YAML
 }
@@ -306,11 +345,11 @@ run_job() {
   local name="$1" manifest_fn="$2" timeout="$3"
   "$manifest_fn" | "${KUBECTL[@]}" apply -f - >/dev/null
   if ! "${KUBECTL[@]}" -n "$NAMESPACE" wait --for=condition=complete --timeout="$timeout" "job/$name" >/dev/null 2>&1; then
-    "${KUBECTL[@]}" -n "$NAMESPACE" logs "job/$name" 2>&1 | sed 's/^/    /' >&2 || true
+    "${KUBECTL[@]}" -n "$NAMESPACE" logs "job/$name" --all-containers=true 2>&1 | sed 's/^/    /' >&2 || true
     "${KUBECTL[@]}" -n "$NAMESPACE" delete "job/$name" --ignore-not-found >/dev/null 2>&1 || true
     return 1
   fi
-  "${KUBECTL[@]}" -n "$NAMESPACE" logs "job/$name" 2>&1 | sed 's/^/    /' >&2 || true
+  "${KUBECTL[@]}" -n "$NAMESPACE" logs "job/$name" --all-containers=true 2>&1 | sed 's/^/    /' >&2 || true
   "${KUBECTL[@]}" -n "$NAMESPACE" delete "job/$name" --ignore-not-found >/dev/null 2>&1 || true
   return 0
 }
@@ -388,24 +427,22 @@ spec:
       labels: {app.kubernetes.io/managed-by: recreate-test-stand.sh}
     spec:
       restartPolicy: Never
-      containers:
-        - name: wipe
+      # MariaDB in an initContainer, ClickHouse in the container — each with the
+      # client image that actually carries its client. Here the ordering IS
+      # load-bearing: the init must complete before the main container starts, so
+      # a MariaDB failure stops the run before ClickHouse is touched. The
+      # preflight above has already proved both are reachable and authorised, so
+      # neither half is expected to be the one that discovers a problem.
+      initContainers:
+        - name: mariadb
           image: ${MARIADB_IMAGE}
           env:
-            - {name: MYSQL_PWD,   valueFrom: {secretKeyRef: {name: insight-db-creds, key: mariadb-root-password}}}
-            - {name: CH_PASSWORD, valueFrom: {secretKeyRef: {name: insight-db-creds, key: clickhouse-password}}}
+            - {name: MYSQL_PWD, valueFrom: {secretKeyRef: {name: insight-db-creds, key: mariadb-root-password}}}
           command:
             - bash
             - -ec
             - |
               M() { mariadb -h'${MARIADB_HOST}' -P'${MARIADB_PORT}' -uroot "\$@"; }
-              CH() {
-                curl -sf --max-time 120 \\
-                  -H "X-ClickHouse-User: ${CH_USER}" \\
-                  -H "X-ClickHouse-Key: \$CH_PASSWORD" \\
-                  --data-binary "\$1" 'http://${CH_HOST}:${CH_PORT}/'
-              }
-
               echo "MariaDB: dropping ${IDENTITY_DB}, ${KEYCLOAK_DB}, ${ANALYTICS_DB}"
               M -e "DROP DATABASE IF EXISTS \\\`${IDENTITY_DB}\\\`"
               M -e "DROP DATABASE IF EXISTS \\\`${KEYCLOAK_DB}\\\`"
@@ -420,7 +457,22 @@ spec:
               M -e "CREATE DATABASE \\\`${ANALYTICS_DB}\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
               M -e "GRANT ALL PRIVILEGES ON \\\`${ANALYTICS_DB}\\\`.* TO \\\`${DB_USER}\\\`@\\\`%\\\`"
               M -e "FLUSH PRIVILEGES"
-
+              echo "MARIADB WIPE OK"
+      containers:
+        - name: clickhouse
+          image: ${CURL_IMAGE}
+          env:
+            - {name: CH_PASSWORD, valueFrom: {secretKeyRef: {name: insight-db-creds, key: clickhouse-password}}}
+          command:
+            - sh
+            - -ec
+            - |
+              CH() {
+                curl -sf --max-time 120 \
+                  -H "X-ClickHouse-User: ${CH_USER}" \
+                  -H "X-ClickHouse-Key: \$CH_PASSWORD" \
+                  --data-binary "\$1" 'http://${CH_HOST}:${CH_PORT}/'
+              }
               echo "ClickHouse: dropping application databases"
               DBS=\$(CH "SELECT name FROM system.databases WHERE name NOT IN ('system','INFORMATION_SCHEMA','information_schema','default') FORMAT TSV")
               for db in \$DBS; do
@@ -437,8 +489,32 @@ fi
 # ── 6. Deploy ──────────────────────────────────────────────────────────────
 if [ "$DO_DEPLOY" = "1" ]; then
   hdr "deploy"
-  VERSION="$(cat "$GITOPS_DIR/.insight-version" 2>/dev/null || true)"
-  [ -n "$VERSION" ] || die "no version in $GITOPS_DIR/.insight-version — pass INSIGHT_VERSION to make deploy yourself"
+  # NOT `cat .insight-version` from the checkout, however obvious that looks.
+  # That file is committed at the END of a publish, so a working tree is as old
+  # as its branch — this branch's copy said 0.5.115 while the stand it was about
+  # to rebuild was running 0.5.116. Installing it would have been a downgrade
+  # performed by the script whose entire purpose is to avoid one, and nothing
+  # downstream would have said so: the deploy would have reported success
+  # against the version it was asked for.
+  #
+  # Resolved from the DEFAULT BRANCH through the API instead, which is the same
+  # answer whoever asks and from wherever. `--version` overrides it for the case
+  # this cannot serve — an air-gapped operator, or a deliberate pin — and there
+  # is no silent fallback to the checkout, because a silent fallback is exactly
+  # how the downgrade above would have happened.
+  if [ -z "$VERSION" ]; then
+    VERSION="$(gh api "repos/${UPSTREAM_REPO}/contents/deploy/gitops/.insight-version?ref=${DEFAULT_BRANCH}" \
+                 --jq '.content' 2>/dev/null | base64 --decode | tr -d '[:space:]' || true)"
+    [ -n "$VERSION" ] || die "could not resolve the published version from ${UPSTREAM_REPO}@${DEFAULT_BRANCH}. Pass --version X.Y.Z explicitly — deliberately NOT falling back to $GITOPS_DIR/.insight-version, which is as old as this branch."
+    note "resolved insight-$VERSION from ${UPSTREAM_REPO}@${DEFAULT_BRANCH}"
+  else
+    note "using insight-$VERSION (--version)"
+  fi
+
+  LOCAL_FILE="$(cat "$GITOPS_DIR/.insight-version" 2>/dev/null || true)"
+  if [ -n "$LOCAL_FILE" ] && [ "$LOCAL_FILE" != "$VERSION" ]; then
+    note "${C_YEL}note${C_RST}  this checkout's .insight-version says $LOCAL_FILE — ignored, see above"
+  fi
   note "installing insight-$VERSION through the official target"
   make -C "$GITOPS_DIR" --no-print-directory deploy \
     ENV="$ENV_NAME" CONFIRM="yes-deploy-$ENV_NAME" \
