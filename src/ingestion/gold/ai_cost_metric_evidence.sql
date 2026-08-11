@@ -31,6 +31,8 @@ WITH
 seat_month_source AS (
     SELECT
         insight_tenant_id                       AS tenant_id,
+        source_id,
+        account_id,
         lower(email)                            AS entity_id,
         -- Dated at the day the snapshot was last read, NOT period_month. The
         -- vendor re-reads only the month in progress, so a month's row freezes
@@ -63,7 +65,13 @@ SELECT
     seat_measure.1                              AS measure_key,
     -- Keyed on the billing month, not the read day: two months can in
     -- principle be read on one day at a month boundary, and both must survive.
-    concat(toString(period_month), ':', seat_measure.1) AS record_id,
+    -- Connector instance and vendor seat id complete the silver grain, so two
+    -- instances reporting one email stay two rows the drilldown cursor can
+    -- order.
+    concat(
+        toString(period_month), ':', seat_measure.1, ':',
+        hex(sipHash64(concat(coalesce(source_id, ''), ':', coalesce(account_id, ''))))
+    )                                           AS record_id,
     'seat_month'                                AS record_kind,
     'source_summary'                            AS granularity,
     formatDateTime(period_month, '%Y-%m')       AS record_label,
