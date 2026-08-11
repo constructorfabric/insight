@@ -10,11 +10,15 @@ just published actually install, hold data, and let a person log in and see
 that data?*
 
 > **Read this before touching anything here.** This environment is shaped
-> differently from every other environment in `deploy/gitops/`. The usual
-> `make bootstrap` → `make system-*` → `make deploy` sequence is **not** the
-> deploy path for this stand, and two of those three targets would damage it.
-> The [Why not `make deploy`](#why-not-make-deploy) section is not optional
-> reading.
+> differently from every other environment in `deploy/gitops/`. `make deploy` IS
+> the deploy path — CI runs exactly it — but `make bootstrap` and `make system-*`
+> are not, and either would damage this stand by installing a second, competing
+> copy of something an operator already owns. See
+> [How `make deploy` represents this stand](#how-make-deploy-represents-this-stand)
+> for the six declarations that make one deploy procedure serve both this
+> cluster and a sandbox, and
+> [Recovery](#recovery--rebuild-do-not-roll-back) for why a rollback is not how
+> this stand is fixed.
 
 ## Contents
 
@@ -288,18 +292,40 @@ Nothing in the suite has a default: a missing value is reported by name before
 a single request is made. See `tests/stand/smoke/README.md` for the full
 variable table.
 
-### Rollback
+### Recovery — rebuild, do not roll back
+
+**This stand is disposable, and `make rollback` is not its recovery path.**
+Rolling back reinstalls the *previous* chart, which is a downgrade onto a stand
+whose entire job is to show what the newest one does. It has been tried: a
+downgrade here rewrote two live Deployments into the old chart's shape and every
+subsequent upgrade was refused until the stand was rebuilt.
+
+Recovery is fix-forward — the next merge — or a rebuild:
 
 ```bash
-make status   ENV=test-stand
-make rollback ENV=test-stand
+deploy/gitops/scripts/recreate-test-stand.sh \
+  --expect-cluster <cluster> --apply --confirm wipe-test-stand
 ```
 
-Both work for this env unchanged (they take the context from
-`inventory.yaml` and assert it against your current one, so step 0 is a
-prerequisite for both). `rollback` is a human action by design: an
-automated rollback on failure is exactly what `--atomic` would have done, and
-what step 3 deliberately does not do.
+Plan-only without `--apply`; it prints exactly what it would destroy first.
+
+**It drops the databases, and that is the point.** A `helm uninstall` is *not* a
+clean stand: this namespace holds six Deployments and nothing else — no
+StatefulSets, no PersistentVolumeClaims — so MariaDB and ClickHouse are entirely
+untouched by anything helm does here. `identity.persons` is an append-only
+observation log, and a single stale row written by an earlier seed once survived
+a full uninstall/reinstall and produced five API failures that read exactly like
+product defects. A stand you cannot fully recreate is a stand whose red runs you
+cannot trust.
+
+What survives, because it is not Helm-managed and the rebuilt stand cannot start
+without it: `insight-db-creds`, `insight-oidc`, `insight-keycloak-admin`,
+`insight-keycloak-config`, `insight-authenticator-signing-keys`, and the realm
+ConfigMap. The script verifies every one of them *before* it destroys anything
+and refuses if any is missing or empty.
+
+`make status ENV=test-stand` and `make verify-release ENV=test-stand` remain the
+right tools for looking at the stand without changing it.
 
 ## How login works here — the seeded realm
 
@@ -375,44 +401,35 @@ kept for a stand whose realm federates to an external provider and can serve no
 password form at all. This stand is not that stand, and nothing in the gate
 depends on `authenticator.overrideEnabled` any more.
 
-## Why not `make deploy`
+## How `make deploy` represents this stand
 
-`make deploy ENV=test-stand` does not work against this stand, and would not
-be the right tool even if it did. Three separate reasons, in the order you
-would hit them:
+It did not, once. `make deploy ENV=test-stand` aborted on a sealed-secrets
+prerequisite this cluster cannot satisfy; if that hurdle were removed it went on
+to overwrite the three chart-owned `insight-*-config` Secrets from a key name
+this stand does not use, writing a blank OIDC client secret; it packed a realm
+directory this environment deliberately does not ship; it hard-coded `--atomic`
+and `--create-namespace`; and its exit status could not gate anything, because
+helm was piped into `tee` with no `pipefail` and the recipe ended in `|| true`,
+so a failed upgrade reported success.
 
-1. **It aborts on the sealed-secrets prerequisite.** `deploy-insight` depends
-   on `apply-app-secrets`, which requires at least one
-   `*-sealedsecret.yaml` under `environments/<ENV>/sealed-secrets/insight/`
-   and `kubectl apply`s every file it finds. This env has none, on purpose,
-   and the cluster has neither the sealed-secrets controller nor the
-   `SealedSecret` CRD. There is no documented skip switch.
+All of that is fixed in the target rather than worked around here, which is what
+the review of #2404 asked for. Every difference is now a DECLARATION this
+environment makes about itself:
 
-2. **If that hurdle were removed, the target would then do damage.**
-   `apply-app-secrets` goes on to run `compose-app-secrets.sh`, which
-   overwrites the three `insight-*-config` Secrets with locally composed
-   content and reads the OIDC client secret from a key name this stand does
-   not use — writing a blank client secret into the authenticator's config.
-   In `helm` credentials mode the same-run `helm upgrade` rewrites them back,
-   so the visible result is churn plus a broken-login window; if the helm step
-   fails, the broken state is what is left. Sealing `insight-db-creds` into
-   this directory would be worse still: the controller would overwrite the
-   live Secret composed from the operators' own credentials, and every service
-   would lose its datastore login.
+| declared | where | what it turns off |
+| --- | --- | --- |
+| `secrets.services` all `enabled: false` | `inventory.yaml` | the sealed-manifest apply and its controller wait |
+| `credentials.deploymentMode: helm` | `values.yaml` | `compose-app-secrets.sh` — the chart renders those Secrets |
+| `keycloak.realms: external` | `inventory.yaml` | packing a realm ConfigMap owned outside this repo |
+| `deploy.atomic: false` | `inventory.yaml` | `--atomic`, i.e. rollback-on-failure |
+| `bootstrap.namespaces: false` | `inventory.yaml` | `--create-namespace`, which a namespace-scoped credential cannot use |
+| `oidcClientSecret` | `inventory.yaml` | nothing — it says where to READ the client secret at deploy time |
 
-3. **Its exit status cannot gate anything.** The deploy recipe is a single
-   backslash-continued shell line whose last command ends in `|| true`, and
-   the helm call is piped into `tee` with no `pipefail`. A failed upgrade
-   reports success. Acceptance criterion (2) — the workflow result is gated by
-   the deploy, seed and smoke — cannot be built on that. `--atomic` is also
-   hard-coded with no override, which contradicts the leave-it-failed
-   disposition in step 3 above.
+Environments that declare none of these are unaffected: `local` and
+`functional-ci` render byte-identical helm invocations to before.
 
-Making `make deploy` usable here means changing the Makefile: an optional
-sealed-manifest glob, `set -o pipefail` plus a status-bearing final command,
-and a way to opt out of `--atomic`. That is worth doing, and it is a separate
-change from introducing this environment. Until then, the `helm upgrade` in
-step 3 **is** the deploy path, and CI runs that same command.
+So there is one deploy procedure, this README describes it, and CI executes it.
+The command in step 3 above is the command.
 
 ## What CI does
 
