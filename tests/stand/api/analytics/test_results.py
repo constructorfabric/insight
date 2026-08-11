@@ -19,26 +19,77 @@ The 401 half is in `test_gateway.py`, swept over every operation at once.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from insight_stand import ApiClient, ApiResponse, Manifest, analytics_path
 from insight_stand.api import JsonValue
 
 from ..schemas import (
     MetricDefinitionListResponse,
+    MetricOrigin,
     MetricResultsResponse,
     PeriodView,
     ProblemDocument,
 )
 
 METRIC_RESULTS = analytics_path("/v1/metric-results")
+METRIC_DEFINITIONS = analytics_path("/v1/metric-definitions")
+
+# metric_definitions.subject / metric_definition_tags.tag are VARCHAR(64) slugs.
+_SLUG = re.compile(r"^[a-z][a-z0-9_]*$")
+_SLUG_MAX_LEN = 64
 
 
 def _a_metric_key(api: ApiClient) -> str:
-    response = api.get(analytics_path("/v1/metric-definitions"))
+    response = api.get(METRIC_DEFINITIONS)
     assert response.status_code == 200, f"definitions: {response.status_code}"
     metrics = response.parse(MetricDefinitionListResponse).metrics
     assert metrics, "no metric definitions — did the migrations run?"
     return metrics[0].metric_key
+
+
+def test_metric_definitions_expose_subject_and_tags(api: ApiClient) -> None:
+    """`GET /v1/metric-definitions` carries the grouping `subject` and the
+    cross-cutting `tags` a family-listing UI groups and filters by.
+
+    The `extra="forbid"` schema already proves the two fields are on the wire;
+    this asserts they are POPULATED end-to-end from the seeded rows rather than
+    vacuously absent. Every builtin declares a subject in the registry, so a
+    null one here means the reconcile write or the listing SELECT dropped it;
+    and at least one builtin must carry tags, so an empty result everywhere
+    would mean the `metric_definition_tags` join returned nothing. The slug +
+    ≤64 checks mirror the VARCHAR(64) columns, so a truncated or malformed
+    value fails here too.
+    """
+    response = api.get(METRIC_DEFINITIONS)
+    assert response.status_code == 200, f"definitions: {response.status_code}"
+    metrics = response.parse(MetricDefinitionListResponse).metrics
+    assert metrics, "no metric definitions — did the migrations run?"
+
+    builtins = [m for m in metrics if m.origin == MetricOrigin.builtin]
+    assert builtins, "no builtin definitions in the listing"
+
+    for metric in builtins:
+        assert metric.subject is not None, (
+            f"builtin {metric.metric_key} has no subject — reconcile or listing dropped it"
+        )
+        assert _SLUG.match(metric.subject) and len(metric.subject) <= _SLUG_MAX_LEN, (
+            f"{metric.metric_key} subject {metric.subject!r} is not a ≤{_SLUG_MAX_LEN}-char slug"
+        )
+
+    for metric in metrics:
+        assert len(metric.tags) == len(set(metric.tags)), (
+            f"{metric.metric_key} carries duplicate tags: {metric.tags}"
+        )
+        for tag in metric.tags:
+            assert _SLUG.match(tag) and len(tag) <= _SLUG_MAX_LEN, (
+                f"{metric.metric_key} tag {tag!r} is not a ≤{_SLUG_MAX_LEN}-char slug"
+            )
+
+    assert any(metric.tags for metric in builtins), (
+        "no builtin carried any tags — the metric_definition_tags join returned nothing"
+    )
 
 
 def _ask(api: ApiClient, manifest: Manifest, entity_id: str, metric_key: str) -> ApiResponse:
