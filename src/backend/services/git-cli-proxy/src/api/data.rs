@@ -12,7 +12,7 @@ use utoipa::ToSchema;
 
 use crate::engine::key::CacheKey;
 use crate::engine::page::PageToken;
-use crate::engine::read::{self, Page, blobs, branches, commits, numstat, patches};
+use crate::engine::read::{self, Page, branches, commits, numstat, patches};
 use crate::engine::runner::GitError;
 use crate::engine::store::{Freshness, RepoGuard, StoreError};
 
@@ -155,7 +155,10 @@ pub async fn list_commits(
             // would dwarf everything else on the request.
             let window =
                 commits::headers_for(runner, guard.git_dir(), &shas, &context.creds).await?;
-            blobs::prefetch(runner, guard.git_dir(), &shas, &context.creds).await?;
+            state
+                .store
+                .prefetch_window(guard.git_dir(), &shas, &context.creds)
+                .await?;
 
             let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
             let in_default =
@@ -236,7 +239,10 @@ pub async fn list_file_changes(
                 });
 
             let shas: Vec<String> = window.iter().map(|key| key.sha.clone()).collect();
-            blobs::prefetch(runner, guard.git_dir(), &shas, &context.creds).await?;
+            state
+                .store
+                .prefetch_window(guard.git_dir(), &shas, &context.creds)
+                .await?;
 
             let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
             let texts = if include_patch {
@@ -245,6 +251,7 @@ pub async fn list_file_changes(
                     guard.git_dir(),
                     &shas,
                     max_patch_bytes,
+                    RowCaps::DEFAULT.max_patch_bytes,
                     &context.creds,
                 )
                 .await?

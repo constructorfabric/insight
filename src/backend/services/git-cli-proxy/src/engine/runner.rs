@@ -238,6 +238,43 @@ impl GitRunner {
         watch: &Path,
         cap_bytes: u64,
     ) -> Result<Output, GitError> {
+        self.run_capped_within(self.timeouts.heavy, git_dir, args, creds, watch, cap_bytes)
+            .await
+    }
+
+    /// The per-page blob prefetch, under its own budget and the same watcher.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError`] on spawn failure, timeout, non-zero exit, or
+    /// [`GitError::TooLarge`] when `watch` passes the cap mid-run.
+    pub async fn run_prefetch_capped(
+        &self,
+        git_dir: &Path,
+        args: &[&str],
+        creds: &GitCredentials,
+        cap_bytes: u64,
+    ) -> Result<Output, GitError> {
+        self.run_capped_within(
+            self.timeouts.prefetch,
+            Some(git_dir),
+            args,
+            Some(creds),
+            git_dir,
+            cap_bytes,
+        )
+        .await
+    }
+
+    async fn run_capped_within(
+        &self,
+        budget: Duration,
+        git_dir: Option<&Path>,
+        args: &[&str],
+        creds: Option<&GitCredentials>,
+        watch: &Path,
+        cap_bytes: u64,
+    ) -> Result<Output, GitError> {
         let mut command = self.base_command(creds);
         if let Some(dir) = git_dir {
             command.arg("--git-dir").arg(dir);
@@ -280,7 +317,6 @@ impl GitRunner {
             }
         };
 
-        let budget = self.timeouts.heavy;
         let output = match tokio::time::timeout(budget, capped).await {
             Ok(result) => result?,
             Err(_elapsed) => return Err(GitError::TimedOut(budget)),

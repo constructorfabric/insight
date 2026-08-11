@@ -163,15 +163,24 @@ Blobs exist on disk only transiently, for the commit window being served:
    form is `log --no-walk`), and raw output abbreviates OIDs unless
    `--no-abbrev` is given — abbreviated OIDs cannot be fetched (`--full-index`
    affects only patch headers).
-2. **Prefetch in batch** the blob OIDs referenced by the window's diffs
+2. **Prefetch in batch**, refused when the cache is over its watermark and
+   killed mid-transfer if the entry would pass its cap — the same treatment
+   every other operation that grows an entry gets. It deliberately takes no
+   heavy-ops permit and never triggers reclaim: the caller holds this entry's
+   READ guard, and both of those wait on the heavy semaphore whose permits are
+   held by fetches waiting for write guards, one of which is that same guard.
+   Prefetch the blob OIDs referenced by the window's diffs
    (both sides of each changed path; the all-zero OID marks an absent side and
    is skipped): one `git fetch origin <oid>...` against the promisor remote —
    never rely on git's implicit one-blob-per-roundtrip lazy fetching.
 3. **Compute** `--numstat` with `--raw` (counts from numstat, exact statuses
    from the tree diff), rename detection (`-M`), and patches locally.
 4. **Purge**: return the repo to its skeleton size. Run after serving a
-   window when the repo has grown past its skeleton baseline, and during
-   eviction (§3.6). Three details are load-bearing, and without any one of
+   window when the repo has grown past its skeleton baseline, before a fetch,
+   and during eviction (§3.6). Before a fetch is not optional: the cap judges
+   what an entry persistently costs, and a purge that lost its lock race would
+   otherwise leave transient window blobs to be charged against it — deleting
+   a healthy warm entry and answering a permanent `413`. Three details are load-bearing, and without any one of
    them the purge frees nothing at all:
    - `repack` repacks promisor packs *separately* and never applies
      `--filter` to them. In a blobless clone every pack is a promisor pack —
@@ -198,6 +207,12 @@ Blob prefetch is always required: numstat, `patch_id` computation, and patch
 text all need blob content. `include_patch=false` (§4.2) only skips patch
 text assembly and transfer — bronze retention policy, not a disk optimization
 on the proxy side.
+
+Patch text is bounded three ways, because the per-file cap bounds only one
+diff: the `git log --patch` walk is split into fixed-size batches so no single
+invocation buffers a whole page of diffs, retention stops once the response
+byte budget is met, and only whole commits are ever retained — a row is never
+emitted with its patch text silently missing rather than withheld.
 
 Initial backfills of large repositories are processed in **windows** (page-
 sized commit ranges): prefetch → serve → purge, keeping peak disk usage
@@ -291,6 +306,11 @@ the last-resort backstop, not the mechanism.
   (anti-thrashing).
 - **Admission control**: before clone/fetch, check headroom; evict
   synchronously if needed; if nothing can be evicted respond `429`.
+- **Bounded waits**: no request waits on an entry lock indefinitely. A clone
+  or fetch holds the write side for its whole heavy budget, so a reader that
+  cannot take the read side within `INLINE_WAIT` is answered `429` +
+  `Retry-After` — the same answer the first caller got — instead of hanging
+  until the connector's own socket timeout fires.
 - **Reservation**: admission decides and reserves in one step, holding the
   reservation for as long as the operation runs. Checking current usage alone
   answers "is the cache full right now", which several cold clones can all be

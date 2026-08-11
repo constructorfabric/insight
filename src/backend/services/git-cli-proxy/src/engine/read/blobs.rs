@@ -30,6 +30,7 @@ pub async fn prefetch(
     git_dir: &Path,
     shas: &[String],
     creds: &GitCredentials,
+    cap_bytes: u64,
 ) -> Result<usize, GitError> {
     if shas.is_empty() {
         return Ok(0);
@@ -44,7 +45,12 @@ pub async fn prefetch(
     for batch in ordered.chunks(FETCH_BATCH) {
         let mut args = vec!["fetch", "--no-write-fetch-head", "origin"];
         args.extend(batch.iter().map(String::as_str));
-        runner.run_prefetch(git_dir, &args, creds).await?;
+        // Capped mid-transfer like every other operation that grows the
+        // entry: a window whose blobs would take the repository past its cap
+        // must be refused, not discovered afterwards on a full volume.
+        runner
+            .run_prefetch_capped(git_dir, &args, creds, cap_bytes)
+            .await?;
     }
     Ok(ordered.len())
 }

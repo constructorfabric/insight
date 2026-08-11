@@ -14,13 +14,29 @@ pub struct Patch {
 
 const COMMIT_MARK: &str = "\u{1e}commit ";
 
+/// Commits per `git log --patch` invocation.
+///
+/// The runner materialises a child's whole stdout before anything parses it,
+/// so the invocation itself is the bound that matters: asking for a
+/// ten-thousand-commit page in one go buffers every diff in that page at once,
+/// which no per-file cap can undo after the fact.
+#[cfg(not(test))]
+const PATCH_BATCH: usize = 128;
+/// Small under test so batching is observable without a fixture of hundreds of
+/// commits; the logic does not depend on the value.
+#[cfg(test)]
+pub(super) const PATCH_BATCH: usize = 2;
+
 /// Per-file patches for `shas`. Text over `max_bytes` is cut at a character
 /// boundary and flagged, so a consumer recomputing line counts can tell an
 /// incomplete diff from a complete one.
 ///
-/// The retained text is bounded per file, but the runner still materializes
-/// git's whole stdout before parsing — bounding that too needs a streaming
-/// runner API shared with every other reader.
+/// Two bounds, because the per-file cap alone bounds nothing at page scale:
+/// the walk is split into [`PATCH_BATCH`] invocations so git's own buffered
+/// stdout stays small, and retention stops once `total_budget` bytes have been
+/// kept. `shas` is in page order, so the commits dropped by that second bound
+/// are exactly the ones the response cap would have withheld anyway — the
+/// caller stops emitting at or before the commit where retention stopped.
 ///
 /// # Errors
 ///
@@ -30,29 +46,47 @@ pub async fn read(
     git_dir: &Path,
     shas: &[String],
     max_bytes: usize,
+    total_budget: usize,
     creds: &GitCredentials,
 ) -> Result<HashMap<String, CommitPatches>, GitError> {
-    if shas.is_empty() {
-        return Ok(HashMap::new());
-    }
-
     let format = format!("--pretty=format:{COMMIT_MARK}%H");
-    let mut args = vec![
-        "log",
-        "--no-walk",
-        "--patch",
-        "-M",
-        "-C",
-        "--no-color",
-        "--root",
-        "--unified=3",
-        &format,
-    ];
-    args.extend(shas.iter().map(String::as_str));
+    let mut collected: HashMap<String, CommitPatches> = HashMap::new();
+    let mut retained = 0usize;
 
-    let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    Ok(parse(&text, max_bytes))
+    for batch in shas.chunks(PATCH_BATCH) {
+        let mut args = vec![
+            "log",
+            "--no-walk",
+            "--patch",
+            "-M",
+            "-C",
+            "--no-color",
+            "--root",
+            "--unified=3",
+            &format,
+        ];
+        args.extend(batch.iter().map(String::as_str));
+
+        let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let parsed = parse(&text, max_bytes);
+
+        retained = retained.saturating_add(
+            parsed
+                .values()
+                .flat_map(HashMap::values)
+                .map(|patch| patch.text.len())
+                .sum(),
+        );
+        collected.extend(parsed);
+
+        // Whole batches only: stopping mid-commit would hand the caller a row
+        // with its patch text silently missing rather than withheld.
+        if retained >= total_budget {
+            break;
+        }
+    }
+    Ok(collected)
 }
 
 /// A per-file diff accumulated up to `max` bytes.

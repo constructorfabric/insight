@@ -189,7 +189,7 @@ mod live_tests {
 
         let shas: Vec<String> = headers.iter().map(|h| h.sha.clone()).collect();
 
-        let fetched = match blobs::prefetch(runner, git_dir, &shas, &creds()).await {
+        let fetched = match blobs::prefetch(runner, git_dir, &shas, &creds(), u64::MAX).await {
             Ok(count) => count,
             Err(e) => panic!("blobs::prefetch: {e}"),
         };
@@ -211,7 +211,7 @@ mod live_tests {
             "counts must be real: {files:?}"
         );
 
-        let texts = match patches::read(runner, git_dir, &shas, 64 * 1024, &creds()).await {
+        let texts = match patches::read(runner, git_dir, &shas, 64 * 1024, usize::MAX, &creds()).await {
             Ok(t) => t,
             Err(e) => panic!("patches::read: {e}"),
         };
@@ -257,6 +257,54 @@ mod live_tests {
     }
 
     #[tokio::test]
+    async fn patch_retention_stops_at_the_response_budget() {
+        // The per-file cap bounds one diff; it bounds nothing at page scale.
+        // Retention has to stop too, or a page of ten thousand commits keeps
+        // every diff it parsed before any response cap is consulted — and the
+        // invocation itself has already buffered them all.
+        let f = fixture("patch-budget");
+        sh(
+            &f.root.join("origin"),
+            "for i in 2 3 4 5 6; do echo $i > f$i.txt; git add f$i.txt; \
+             GIT_AUTHOR_DATE=\"2026-08-0${i}T10:00:00+0000\" \
+             GIT_COMMITTER_DATE=\"2026-08-0${i}T10:00:00+0000\" git commit -qm c$i; done",
+        );
+
+        let runner = f.store.runner();
+        let guard = open_until_ready(&f, &key(&f), refresh()).await;
+        let git_dir = guard.git_dir();
+
+        let keys = match commits::enumerate(runner, git_dir, &creds()).await {
+            Ok(k) => k,
+            Err(e) => panic!("enumerate: {e}"),
+        };
+        let shas: Vec<String> = keys.iter().map(|k| k.sha.clone()).collect();
+        assert!(shas.len() > patches::PATCH_BATCH, "the window must span batches");
+        if let Err(e) = blobs::prefetch(runner, git_dir, &shas, &creds(), u64::MAX).await {
+            panic!("prefetch: {e}");
+        }
+
+        let all = match patches::read(runner, git_dir, &shas, 64 * 1024, usize::MAX, &creds()).await
+        {
+            Ok(t) => t,
+            Err(e) => panic!("patches::read: {e}"),
+        };
+        assert_eq!(all.len(), shas.len(), "every commit is read when unbounded");
+
+        // A zero budget is met by the first batch, so no later batch is even
+        // invoked — the point of the bound is that the work is not done.
+        let clipped = match patches::read(runner, git_dir, &shas, 64 * 1024, 0, &creds()).await {
+            Ok(t) => t,
+            Err(e) => panic!("patches::read: {e}"),
+        };
+        assert_eq!(
+            clipped.len(),
+            patches::PATCH_BATCH,
+            "retention must stop at the first batch that meets the budget"
+        );
+    }
+
+    #[tokio::test]
     async fn since_filters_the_walk() {
         let f = fixture("since");
         sh(
@@ -297,7 +345,7 @@ mod live_tests {
         let none: Vec<String> = Vec::new();
 
         assert_eq!(
-            blobs::prefetch(runner, guard.git_dir(), &none, &creds())
+            blobs::prefetch(runner, guard.git_dir(), &none, &creds(), u64::MAX)
                 .await
                 .ok(),
             Some(0)
@@ -310,7 +358,7 @@ mod live_tests {
             Some(0)
         );
         assert_eq!(
-            patches::read(runner, guard.git_dir(), &none, 1024, &creds())
+            patches::read(runner, guard.git_dir(), &none, 1024, usize::MAX, &creds())
                 .await
                 .ok()
                 .map(|m| m.len()),
