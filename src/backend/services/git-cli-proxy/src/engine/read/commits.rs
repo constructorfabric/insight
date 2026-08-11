@@ -335,18 +335,26 @@ pub async fn patch_ids(
     shas: &[String],
     creds: &GitCredentials,
 ) -> Result<HashMap<String, String>, GitError> {
-    if shas.is_empty() {
-        return Ok(HashMap::new());
+    // Batched like the other window readers: the full-diff pass is the single
+    // most expensive subprocess on a page, and one invocation over the whole
+    // window pins every diff of the page against a single read-timeout
+    // budget.
+    let mut ids = HashMap::new();
+    for batch in shas.chunks(PATCH_ID_BATCH) {
+        let mut producer = vec!["log", "--no-walk", "--patch", "--no-color", "--root"];
+        producer.extend(batch.iter().map(String::as_str));
+
+        let stdout = runner
+            .run_piped(git_dir, &producer, &["patch-id", "--stable"], creds)
+            .await?;
+        ids.extend(parse_patch_ids(&String::from_utf8_lossy(&stdout)));
     }
-
-    let mut producer = vec!["log", "--no-walk", "--patch", "--no-color", "--root"];
-    producer.extend(shas.iter().map(String::as_str));
-
-    let stdout = runner
-        .run_piped(git_dir, &producer, &["patch-id", "--stable"], creds)
-        .await?;
-    Ok(parse_patch_ids(&String::from_utf8_lossy(&stdout)))
+    Ok(ids)
 }
+
+/// Commits per patch-id invocation; bounds one subprocess's diff work under
+/// the read budget.
+const PATCH_ID_BATCH: usize = 128;
 
 /// A full 40-character hex object id, and nothing else. The sha is what
 /// anchors a record; a value that is not one means the record is not one.
