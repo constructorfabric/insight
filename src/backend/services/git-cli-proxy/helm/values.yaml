@@ -56,10 +56,13 @@ cache:
   # PEM bundle for self-hosted origins behind a private CA. Empty = system
   # trust store (correct for the public clouds).
   caCertPath: ""
-  # Hosts this service may clone from. Empty keeps the built-in refusal of
-  # loopback, link-local, private and cluster-internal destinations — the
-  # service is otherwise a probe of anything its pod can reach, for anyone
-  # holding the bearer token. List hosts only to reach a self-hosted vendor.
+  # EXCEPTIONS to the built-in refusal of loopback, link-local, private and
+  # cluster-internal destinations. Public vendors — github.com, gitlab.com,
+  # bitbucket.org, anything self-hosted on a public address — need nothing
+  # here: tenants add sources without an operator, and this list only ever
+  # widens, never narrows. Name a host only when the vendor sits inside one of
+  # those refused ranges (self-hosted GitLab on a private network), which needs
+  # an operator anyway for egress and DNS.
   allowedRepoHosts: []
 
 # CA bundle mounted for git's TLS verification. Set `secretName` to a Secret

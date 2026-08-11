@@ -13,10 +13,10 @@ pub struct CloneUrl(String);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CloneUrlPolicy<'a> {
     pub allow_file: bool,
-    /// Hosts the operator has explicitly permitted. Empty means "only what the
-    /// built-in rules allow"; a non-empty list is authoritative and admits
-    /// hosts those rules would otherwise refuse, which is how a self-hosted
-    /// vendor on a private range is reached.
+    /// Exceptions to the built-in refusals, and nothing more. Adding one host
+    /// never removes another: tenants add sources without an operator, so a
+    /// list that also had to enumerate every PUBLIC vendor would turn every
+    /// new source into a redeploy.
     pub allowed_hosts: &'a [String],
 }
 
@@ -137,22 +137,29 @@ fn hostname_of(authority: &str) -> &str {
 
 /// Whether this service may open a connection to `host`.
 ///
-/// The bearer token authenticates a caller CLASS, not a tenant, and the
-/// `NetworkPolicy` restricts ingress only — so without this the proxy is a
-/// general-purpose probe of anything its pod can reach: the cloud metadata
-/// endpoint on `169.254.169.254`, a cluster service by its short DNS name, or
-/// any address on the pod network. Names are judged, not resolved addresses:
-/// a resolve-then-connect check is a race git would lose anyway, and an
-/// operator allowlist is the control that actually holds.
+/// `repo` is set by whoever configures a source — a tenant, not an operator —
+/// so it is attacker-influenceable by design. The bearer token authenticates a
+/// caller CLASS rather than a tenant, and the `NetworkPolicy` restricts
+/// ingress only, so without this the proxy is a general-purpose probe of
+/// anything its pod can reach. The case that matters is the cloud metadata
+/// endpoint on `169.254.169.254`: on a node with an instance profile, one
+/// source configuration would otherwise become credential theft.
+///
+/// What is refused is a fixed set of ranges that only ever name something
+/// inside the deployment. `allowed_hosts` adds exceptions for a self-hosted
+/// vendor sitting in one of them; it never subtracts, so every public vendor
+/// works with no configuration at all and a tenant adding a source never waits
+/// on a redeploy.
+///
+/// Names are judged, not resolved addresses — resolve-then-connect is a race
+/// git would lose anyway.
 fn permitted_host(host: &str, allowed: &[String]) -> bool {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     if host.is_empty() {
         return false;
     }
-    if !allowed.is_empty() {
-        return allowed
-            .iter()
-            .any(|entry| entry.eq_ignore_ascii_case(&host));
+    if allowed.iter().any(|entry| entry.eq_ignore_ascii_case(&host)) {
+        return true;
     }
 
     if let Ok(address) = host.parse::<std::net::IpAddr>() {
@@ -241,24 +248,41 @@ mod tests {
     }
 
     #[test]
-    fn an_operator_allowlist_is_authoritative_in_both_directions() {
-        let allowed = vec!["gitlab.internal.example".to_owned()];
+    fn the_allowlist_only_ever_widens() {
+        let allowed = vec!["gitlab.internal".to_owned(), "10.1.2.3".to_owned()];
         let policy = CloneUrlPolicy {
             allow_file: false,
             allowed_hosts: &allowed,
         };
 
-        // A self-hosted vendor the built-in rules would refuse is reachable
-        // once an operator names it.
-        assert!(
-            CloneUrl::parse("https://gitlab.internal.example/g/a.git", policy).is_ok(),
-            "an allowlisted host must be reachable"
-        );
-        // And a public host that is NOT on the list is refused, which is the
-        // point of setting one.
-        match CloneUrl::parse("https://github.com/o/a.git", policy) {
+        // Named exceptions become reachable, by name or by address.
+        for raw in [
+            "https://gitlab.internal/g/a.git",
+            "https://10.1.2.3/g/a.git",
+        ] {
+            assert!(
+                CloneUrl::parse(raw, policy).is_ok(),
+                "an allowlisted host must be reachable: {raw}"
+            );
+        }
+
+        // INVARIANT: naming an exception must not make every other vendor a
+        // deployment change. Tenants add sources; operators own this list.
+        for raw in [
+            "https://github.com/o/a.git",
+            "https://gitlab.com/g/a.git",
+            "https://bitbucket.org/w/a.git",
+        ] {
+            assert!(
+                CloneUrl::parse(raw, policy).is_ok(),
+                "a public vendor must need no configuration: {raw}"
+            );
+        }
+
+        // What the list does NOT do is widen anything it did not name.
+        match CloneUrl::parse("http://169.254.169.254/latest.git", policy) {
             Err(CloneUrlError::ForbiddenHost(_)) => {}
-            other => panic!("a non-allowlisted host must be refused, got {other:?}"),
+            other => panic!("metadata must stay refused, got {other:?}"),
         }
     }
 

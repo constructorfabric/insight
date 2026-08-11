@@ -43,10 +43,9 @@ pub struct GearConfig {
     /// suite clones from local fixture repositories. No deployment sets it —
     /// the chart hard-codes `false`.
     pub allow_file_repos: bool,
-    /// Hosts this service may clone from. Empty keeps the built-in rules,
-    /// which refuse loopback, link-local, private and cluster-internal names —
-    /// without them a bearer-token holder can aim the proxy at anything the
-    /// pod can reach. Set it to reach a self-hosted vendor on a private range.
+    /// Exceptions to the built-in refusal of loopback, link-local, private and
+    /// cluster-internal names. Additive only: a public vendor needs no entry,
+    /// so tenants add sources without an operator redeploying.
     #[serde(default, deserialize_with = "empty_when_null")]
     pub allowed_repo_hosts: Vec<String>,
 }

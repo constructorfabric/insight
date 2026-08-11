@@ -398,12 +398,19 @@ nowhere else:
   makes this service a probe of everything its pod can reach — the cloud
   metadata endpoint, a cluster service by its short name, any address on the
   pod network. Loopback, link-local, private, carrier-grade-NAT and
-  cluster-internal names are refused by default. `allowed_repo_hosts` names
-  the exceptions; a non-empty list is authoritative in both directions, so it
-  both admits a self-hosted vendor on a private range and refuses every public
-  host that is not on it. Names are judged, not resolved addresses: resolving
-  and then connecting is a race git would lose anyway, so the allowlist is the
-  control that actually holds.
+  cluster-internal names are refused. The case that decides this is the cloud
+  metadata endpoint: `repo` is set by whoever configures a source — a tenant,
+  not an operator — so on a node with an instance profile one source
+  configuration would otherwise become credential theft.
+
+  `allowed_repo_hosts` adds EXCEPTIONS to those refusals and never subtracts.
+  A public vendor needs no entry at all, which is deliberate: tenants add
+  sources whenever they like, and a list that also had to enumerate every
+  public vendor would make each new source wait on an operator editing values
+  and redeploying. An entry is needed only for a vendor sitting inside a
+  refused range — a self-hosted GitLab on a private network — which needs an
+  operator for egress and DNS regardless. Names are judged, not resolved
+  addresses: resolving and then connecting is a race git would lose anyway.
 - `sha=<id>[,<id>…]`: optional explicit selection on `/v1/commits` and
   `/v1/file-changes`, taking full ids or hex prefixes between 7 characters and
   the length of an object id. A prefix selects every commit it matches; it is

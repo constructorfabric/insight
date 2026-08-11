@@ -45,10 +45,10 @@ data:
           # Not a values knob on purpose: a file:// origin reads the pod's own
           # filesystem, so no deployment may turn this on.
           allow_file_repos: false
-          # Empty keeps the built-in rules, which refuse loopback, link-local,
-          # private and cluster-internal hosts. Name a host here only to reach
-          # a self-hosted vendor those rules would otherwise block; a non-empty
-          # list becomes the ONLY set of hosts this service will clone from.
+          # Exceptions to the built-in refusal of loopback, link-local,
+          # private and cluster-internal hosts. Additive only: naming one host
+          # never stops another from working, so a tenant adding a public
+          # vendor never waits on a redeploy.
           # `toJson`, not a `range`: an empty range leaves the key with no
           # value, which is YAML null, and the service refuses to start on it.
           allowed_repo_hosts: {{ .Values.cache.allowedRepoHosts | default list | toJson }}
