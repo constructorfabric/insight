@@ -440,6 +440,12 @@ impl GitRunner {
         if let Some(path) = self.ca_cert_path.as_ref() {
             pairs.push(("http.sslCAInfo", path.clone()));
         }
+        // Since git 2.29 every fetch ends with `maintenance run --auto`; on
+        // the per-page prefetch that means a whole-repository gc forking mid
+        // page-serve once enough packs accumulate. Consolidation is owned by
+        // the store's own repack, on its schedule.
+        pairs.push(("maintenance.auto", "false".to_owned()));
+        pairs.push(("gc.auto", "0".to_owned()));
         pairs
     }
 }
@@ -623,22 +629,25 @@ mod tests {
         };
         let plain = GitRunner::new();
         assert!(
-            plain.config_pairs(None).is_empty(),
-            "no creds and no CA means no git config at all"
+            !plain
+                .config_pairs(None)
+                .iter()
+                .any(|(k, _)| *k == "http.extraheader" || *k == "http.sslCAInfo"),
+            "no creds and no CA means neither pair is present"
         );
 
         let with_creds = plain.config_pairs(Some(&creds));
-        assert_eq!(with_creds.len(), 1);
-        assert_eq!(with_creds[0].0, "http.extraheader");
+        assert!(
+            with_creds.iter().any(|(k, _)| *k == "http.extraheader"),
+            "got: {with_creds:?}"
+        );
 
-        let with_ca =
-            GitRunner::new().with_ca_cert(Some("/certs/ca.pem".to_owned()));
+        let with_ca = GitRunner::new().with_ca_cert(Some("/certs/ca.pem".to_owned()));
         let both = with_ca.config_pairs(Some(&creds));
-        assert_eq!(both.len(), 2, "on-prem origins need the CA pair too");
         assert!(
             both.iter()
                 .any(|(k, v)| *k == "http.sslCAInfo" && v == "/certs/ca.pem"),
-            "got: {both:?}"
+            "on-prem origins need the CA pair too, got: {both:?}"
         );
     }
 
@@ -646,9 +655,26 @@ mod tests {
     fn empty_ca_path_is_treated_as_unset() {
         let runner = GitRunner::new().with_ca_cert(Some(String::new()));
         assert!(
-            runner.config_pairs(None).is_empty(),
+            !runner
+                .config_pairs(None)
+                .iter()
+                .any(|(k, _)| *k == "http.sslCAInfo"),
             "an empty CA path must not become a git config value"
         );
+    }
+
+    #[test]
+    fn every_invocation_disables_gits_own_maintenance() {
+        // Auto-maintenance forks a whole-repository gc at the end of a fetch;
+        // on the per-page prefetch that is a gc storm mid page-serve.
+        // Consolidation belongs to the store's repack, on its schedule.
+        let pairs = GitRunner::new().config_pairs(None);
+        for (key, expected) in [("maintenance.auto", "false"), ("gc.auto", "0")] {
+            assert!(
+                pairs.iter().any(|(k, v)| *k == key && v == expected),
+                "{key} must be pinned, got: {pairs:?}"
+            );
+        }
     }
 
     #[test]
@@ -777,12 +803,17 @@ mod tests {
         // shape a fetch presents: the entry already holds a clone. Timing the
         // breach against how fast git happens to write would make this a race,
         // not a test.
-        let runner =
-            GitRunner::new().with_cap_poll(Duration::from_millis(1));
+        let runner = GitRunner::new().with_cap_poll(Duration::from_millis(1));
         let result = runner
             .run_capped(
                 None,
-                &["clone", "--bare", "--quiet", &url, &target.to_string_lossy()],
+                &[
+                    "clone",
+                    "--bare",
+                    "--quiet",
+                    &url,
+                    &target.to_string_lossy(),
+                ],
                 None,
                 &root,
                 1024 * 1024,
@@ -809,12 +840,17 @@ mod tests {
         let target = root.join("clone.git");
         let url = format!("file://{}", root.join("origin").display());
 
-        let runner =
-            GitRunner::new().with_cap_poll(Duration::from_millis(1));
+        let runner = GitRunner::new().with_cap_poll(Duration::from_millis(1));
         if let Err(e) = runner
             .run_capped(
                 None,
-                &["clone", "--bare", "--quiet", &url, &target.to_string_lossy()],
+                &[
+                    "clone",
+                    "--bare",
+                    "--quiet",
+                    &url,
+                    &target.to_string_lossy(),
+                ],
                 None,
                 &root,
                 1024 * 1024 * 1024,

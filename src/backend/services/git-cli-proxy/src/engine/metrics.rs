@@ -52,9 +52,37 @@ impl FetchResult {
     }
 }
 
+/// Why a request was answered `429`. One label on one counter: the wire
+/// collapses every cause into the same status, and without the split
+/// "transient backpressure while a clone runs" is indistinguishable from
+/// "the cache can never admit this work".
+#[derive(Debug, Clone, Copy)]
+pub enum RejectReason {
+    /// The page-serve headroom check refused a blob prefetch.
+    PrefetchHeadroom,
+    /// Reclaim ran and the cache is still over the watermark.
+    AdmissionExhausted,
+    /// Preparation outlived the bounded inline wait.
+    PreparationWait,
+    /// Origin is throttling this client.
+    OriginThrottled,
+}
+
+impl RejectReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::PrefetchHeadroom => "prefetch_headroom",
+            Self::AdmissionExhausted => "admission_exhausted",
+            Self::PreparationWait => "preparation_wait",
+            Self::OriginThrottled => "origin_throttled",
+        }
+    }
+}
+
 struct Instruments {
     evictions: Counter<u64>,
-    admission_rejects: Counter<u64>,
+    rejections: Counter<u64>,
+    purge_escalations: Counter<u64>,
     cold_clones: Counter<u64>,
     fetches: Counter<u64>,
     request_duration: Histogram<f64>,
@@ -70,11 +98,20 @@ fn instruments() -> &'static Instruments {
                 .u64_counter("git_proxy.evictions")
                 .with_description("Cache entries reclaimed, by tier.")
                 .build(),
-            admission_rejects: meter
-                .u64_counter("git_proxy.admission_rejects")
+            rejections: meter
+                .u64_counter("git_proxy.rejections")
                 .with_description(
-                    "Requests refused because the cache was full and nothing could be reclaimed. \
-                     A sustained rise means the budget is too small for the working set.",
+                    "Requests answered 429, by reason. A sustained rise in admission_exhausted \
+                     or prefetch_headroom means the budget is too small for the working set; \
+                     preparation_wait is ordinary while a clone runs.",
+                )
+                .build(),
+            purge_escalations: meter
+                .u64_counter("git_proxy.purge_escalations")
+                .with_description(
+                    "Post-serve purges that stopped yielding to readers and queued for the \
+                     entry lock. Ordinary under continuous paging; a flat zero during one \
+                     means the repack is being starved.",
                 )
                 .build(),
             cold_clones: meter
@@ -99,15 +136,20 @@ fn instruments() -> &'static Instruments {
     })
 }
 
-pub fn record_eviction(tier: EvictionTier, freed_bytes: u64) {
+pub fn record_eviction(tier: EvictionTier) {
     instruments()
         .evictions
         .add(1, &[KeyValue::new("tier", tier.as_str())]);
-    tracing::debug!(tier = tier.as_str(), freed_bytes, "reclaimed");
 }
 
-pub fn record_admission_reject() {
-    instruments().admission_rejects.add(1, &[]);
+pub fn record_rejection(reason: RejectReason) {
+    instruments()
+        .rejections
+        .add(1, &[KeyValue::new("reason", reason.as_str())]);
+}
+
+pub fn record_purge_escalation() {
+    instruments().purge_escalations.add(1, &[]);
 }
 
 pub fn record_cold_clone() {
@@ -208,8 +250,9 @@ mod tests {
         // No global provider is installed in tests; the instruments must still
         // build and record, or every handler would panic under a host that
         // disables metrics.
-        record_eviction(EvictionTier::Blob, 1);
-        record_admission_reject();
+        record_eviction(EvictionTier::Blob);
+        record_rejection(RejectReason::AdmissionExhausted);
+        record_purge_escalation();
         record_cold_clone();
         record_fetch(FetchResult::Updated);
         record_request("/v1/commits", 200, 0.01, 128);

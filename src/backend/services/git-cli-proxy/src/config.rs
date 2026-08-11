@@ -239,7 +239,10 @@ mod tests {
         // request forever — used=0, nothing to reclaim, 429 in a loop.
         let cases = vec![
             ("cap over the whole budget", 20_000_000_000_u64),
-            ("cap inside the budget but over its 85% watermark", 9_000_000_000),
+            (
+                "cap inside the budget but over its 85% watermark",
+                9_000_000_000,
+            ),
         ];
         for (name, cap) in cases {
             let cfg = GearConfig {

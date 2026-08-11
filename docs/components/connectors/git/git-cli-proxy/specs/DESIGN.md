@@ -194,11 +194,21 @@ Blobs exist on disk only transiently, for the commit window being served:
      packs while bitmap writing assumes a single pack, so with
      `repack.writeBitmaps` enabled the repack fails outright.
 
-   The re-measurement runs under NO lock — `dir_size` only reads and the
-   metadata write is atomic — and always lands: a prefetch that grows an entry
-   and reports nothing leaves the reclaim planner believing every entry is
-   skeleton-sized. It is throttled per entry, or a two-hundred-page walk pays
-   a full directory walk per page.
+   The re-measurement runs under the entry's READ side — readers coexist, so
+   continuous paging cannot starve it, while the write-side publishers are
+   excluded: measured lock-free it raced the fetch, and storing a pre-fetch
+   document rolled the just-published generation and credentials back. It is
+   throttled per entry, or a two-hundred-page walk pays a full directory walk
+   per page.
+
+   The repack triggers on either byte drift over the skeleton or pack count.
+   Both are needed: every page's prefetch writes at least one pack and git
+   pays a per-pack object-lookup cost on every invocation, so a backfill of
+   small blobs degrades every subprocess linearly without ever tripping a
+   byte threshold. Git's own auto-maintenance is disabled on every invocation
+   (`maintenance.auto=false`, `gc.auto=0`) — consolidation belongs to this
+   repack on this schedule, not to a gc forking in the middle of a served
+   page.
 
    The repack starts opportunistic — a reader holding the entry is served,
    not repacked under — but escalates: under continuous paging the next
@@ -293,6 +303,54 @@ Initial clone lands in a temp directory and is atomically renamed into place.
 
 **Invariant:** the proxy may lose a whole repo and re-clone it; it must never
 let a reader observe a partially deleted one.
+
+#### Resource-ordering and progress contract
+
+Four shared resources exist: the per-entry read-write lock, the heavy-ops
+semaphore, the admission mutex (decide-and-reserve), and the small state maps
+(`entries`, `inflight`, drift). Each acquisition site was individually
+justified, and every stress-found defect so far — frozen accounting, starved
+purge, admission livelock, a fetch deadlocking against its own pre-purge —
+was an interaction between two of them that no single site could see. The
+rules below are the global contract; a new acquisition site is checked
+against them, not against its own local argument.
+
+**Ordering.** Resources are acquired in this order and released in reverse:
+
+1. entry lock (read or write)
+2. heavy permit
+3. admission mutex
+
+Never acquire earlier-ordered while holding later-ordered; never acquire a
+second instance of the same resource (a repack must receive its caller's
+permit, not take its own — two permits nested in one task is how the
+fetch-vs-pre-purge deadlock arose). The inverted order — permit before entry
+lock — is rejected deliberately: a permit holder waiting for an entry lock
+whose holder is waiting for a permit is an AB-BA cycle, so the escalated
+purge pays its permit wait *inside* the write lock (readers wait out one
+queue, bounded by the heavy budget) rather than risking the cycle.
+
+The admission mutex sits last: a fetch releases it before taking its permit,
+so permit holders never wait on admission and admission may wait on a permit
+(reclaim's repacks) without a cycle. Known accepted deviation: reclaim
+*executes* its plan while holding the admission mutex, serializing all
+admissions behind it for the duration — bounded by the plan, revisit if
+admission latency ever matters.
+
+**State maps are leaves.** `entries`, `inflight` and the drift map are locked
+for map operations only, never across an await on any ordered resource.
+
+**Progress.** Every "not now" answer must name what makes it "later":
+
+| Refusal | Progress source |
+|---|---|
+| read/inline wait expires → `429` | the preparing flight keeps running detached |
+| prefetch headroom → `429` | post-serve purge + reclaim free headroom (open gap: under sustained watermark pressure the purge throttle is the only driver — see PLAN) |
+| admission exhausted → `429` | a reader releasing an entry makes the next reclaim plan effective |
+| opportunistic purge loses its probe | counted; escalates to a blocking acquire after 3 losses |
+
+A non-blocking probe with no counter behind it, or a reject whose retry can
+never observe different state, violates this table.
 
 ### 3.6 Disk self-management
 
@@ -596,10 +654,15 @@ disk figures are gauges (§4.3), not a health payload.
 
 `git_proxy_disk_used_bytes`, `git_proxy_disk_budget_bytes`,
 `git_proxy_repos`, `git_proxy_evictions_total{tier=blob|full}`,
-`git_proxy_admission_rejects_total`, `git_proxy_cold_clones_total`,
+`git_proxy_rejections_total{reason=prefetch_headroom|admission_exhausted|preparation_wait|origin_throttled}`,
+`git_proxy_purge_escalations_total`, `git_proxy_cold_clones_total`,
 `git_proxy_fetches_total{result=noop|updated|error}`,
 `git_proxy_request_duration_seconds{endpoint,status}`,
 `git_proxy_response_size_bytes{endpoint}`.
+
+The rejection reasons exist because the wire collapses every cause into the
+same `429`: without the split, transient backpressure while a clone runs is
+indistinguishable from a cache that can never admit the work.
 
 `git_proxy_repos` carries no `_total` suffix: it is a gauge, and the exporter
 appends that suffix only to counters. `endpoint` is the matched route

@@ -9,6 +9,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use toolkit_canonical_errors::{CanonicalError, Problem, resource_error};
 
+use crate::engine::metrics;
 use crate::engine::runner::GitError;
 use crate::engine::store::StoreError;
 
@@ -49,6 +50,19 @@ const THROTTLED_RETRY_AFTER_SECONDS: u64 = 60;
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        // The admission reasons are counted where the store decides them;
+        // these two 429 causes reach the wire without touching admission and
+        // would otherwise be invisible in the rejection counter.
+        match &self {
+            Self::Store(StoreError::Busy { .. }) => {
+                metrics::record_rejection(metrics::RejectReason::PreparationWait);
+            }
+            Self::Store(StoreError::Throttled) | Self::Git(GitError::Throttled) => {
+                metrics::record_rejection(metrics::RejectReason::OriginThrottled);
+            }
+            _ => {}
+        }
+
         let retry_after = self.retry_after();
         let status_override = self.status_override();
         let error = self.into_canonical();

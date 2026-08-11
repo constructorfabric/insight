@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, Semaphore, watch};
 
-use super::disk::{Budget, Candidate, Reclaim, dir_size, worth_purging};
+use super::disk::{Budget, Candidate, Reclaim, dir_size, needs_consolidation};
 use super::key::CacheKey;
 use super::meta::{RepoMeta, now_epoch_s};
 use super::metrics::{self, DiskGauges, EvictionTier, FetchResult};
@@ -247,10 +247,33 @@ impl RepoStore {
         // reclaim planner only walks repos/, so the loss is invisible to the
         // budget and permanent. Startup is the one moment no clone is running.
         let tmp = data_dir.join("tmp");
-        if tmp.is_dir() {
-            let _ = std::fs::remove_dir_all(&tmp);
+        if tmp.is_dir()
+            && let Err(e) = std::fs::remove_dir_all(&tmp)
+        {
+            tracing::warn!(error = %e, "could not clear staging leftovers; stranded clones stay invisible to the budget");
         }
         std::fs::create_dir_all(&tmp)?;
+
+        // An entry whose metadata is missing or unreadable — a crash between
+        // moving refs and publishing, or a failed publish — can never be
+        // served, never matches a cursor, and is invisible to the reclaim
+        // planner: without this sweep its bytes are leaked until someone
+        // requests the same repository again.
+        if let Ok(entries) = std::fs::read_dir(data_dir.join("repos")) {
+            for entry in entries.filter_map(Result::ok) {
+                let dir = entry.path();
+                if dir.is_dir() && RepoMeta::load(&dir).is_none() {
+                    match std::fs::remove_dir_all(&dir) {
+                        Ok(()) => {
+                            tracing::info!(dir = %dir.display(), "removed an entry without readable metadata");
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, dir = %dir.display(), "could not remove a metadata-less entry");
+                        }
+                    }
+                }
+            }
+        }
         Ok(Self {
             data_dir: data_dir.to_owned(),
             runner: GitRunner::new().with_ca_cert(ca_cert_path),
@@ -289,7 +312,11 @@ impl RepoStore {
         let mut hasher = Sha256::new();
         hasher.update(std::process::id().to_le_bytes());
         hasher.update(now_epoch_s().to_le_bytes());
-        hasher.update(self.tmp_counter.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+        hasher.update(
+            self.tmp_counter
+                .fetch_add(1, Ordering::Relaxed)
+                .to_le_bytes(),
+        );
         hex::encode(hasher.finalize())[..16].to_owned()
     }
 
@@ -300,6 +327,21 @@ impl RepoStore {
     async fn entry_lock(&self, key: &CacheKey) -> Arc<RwLock<()>> {
         let mut entries = self.entries.lock().await;
         entries.entry(key.dir_name()).or_default().clone()
+    }
+
+    /// One slot of the global heavy-ops cap.
+    ///
+    /// INVARIANT: acquired AFTER the entry's write lock, never before —
+    /// fetch/clone/promote and the escalated purge all order write-lock →
+    /// permit, and a permit-first path would deadlock against them (permit
+    /// holder waits for the write lock a lock holder needs a permit to
+    /// release). Never acquired while already holding a permit.
+    async fn heavy_permit(&self) -> tokio::sync::SemaphorePermit<'_> {
+        // The semaphore is never closed, so acquire cannot fail.
+        match self.heavy.acquire().await {
+            Ok(permit) => permit,
+            Err(_) => unreachable!("the heavy semaphore is never closed"),
+        }
     }
 
     /// Resolve `key` into a readable snapshot.
@@ -458,13 +500,41 @@ impl RepoStore {
         let key = key.clone();
         let creds = creds.clone();
         tokio::spawn(async move {
-            let outcome = match kind {
-                RefreshKind::Sync => store.refresh(&key, &creds, max_staleness).await,
-                RefreshKind::Promote => store.promote(&key, &creds).await,
+            // The work runs in its own task so a panic inside it becomes a
+            // JoinError here instead of skipping the cleanup below — a flight
+            // that dies without removing itself leaves a dead receiver in the
+            // map, and every later request for this entry answers Busy until
+            // the process restarts.
+            let work = tokio::spawn({
+                let store = Arc::clone(&store);
+                let key = key.clone();
+                let creds = creds.clone();
+                async move {
+                    match kind {
+                        RefreshKind::Sync => store.refresh(&key, &creds, max_staleness).await,
+                        RefreshKind::Promote => store.promote(&key, &creds).await,
+                    }
+                }
+            });
+            let outcome = match work.await {
+                Ok(result) => result,
+                Err(join_error) => Err(GitError::Failed(format!(
+                    "refresh task died before finishing: {join_error}"
+                ))),
             };
             let published = match &outcome {
                 Ok(generation) => Ok(*generation),
-                Err(error) => Err(RefreshFailure::from(error)),
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        dir = %key.dir_name(),
+                        tenant_id = %key.tenant_id,
+                        source_id = %key.source_id,
+                        kind = ?kind,
+                        "background refresh failed"
+                    );
+                    Err(RefreshFailure::from(error))
+                }
             };
             store.inflight.lock().await.remove(&flight);
             let _ = sender.send(Some(published));
@@ -516,7 +586,7 @@ impl RepoStore {
 
         // INVARIANT: the permit spans the whole clone — the semaphore IS the
         // global heavy-ops cap.
-        let _permit = self.heavy.acquire().await;
+        let _permit = self.heavy_permit().await;
 
         let tmp = self.data_dir.join("tmp").join(format!(
             "clone-{}-{}",
@@ -584,6 +654,15 @@ impl RepoStore {
             full_clone: false,
         };
         meta.store(entry_dir).map_err(GitError::Io)?;
+        // The one place the dir hash is tied to its tenant and source: every
+        // later log line names only the hash, and this line is what lets an
+        // operator resolve it without reading meta.json off the volume.
+        tracing::info!(
+            dir = %key.dir_name(),
+            tenant_id = %key.tenant_id,
+            source_id = %key.source_id,
+            "entry created"
+        );
         Ok(meta.generation)
     }
 
@@ -603,7 +682,7 @@ impl RepoStore {
 
         // INVARIANT: the permit spans the whole fetch — the semaphore IS the
         // global heavy-ops cap.
-        let _permit = self.heavy.acquire().await;
+        let permit = self.heavy_permit().await;
 
         // Shed the last window's blobs FIRST, while this task holds the write
         // side. The cap judges what the entry persistently costs; transient
@@ -612,13 +691,23 @@ impl RepoStore {
         // would be deleted and answered `413` — which §4.4 tells the connector
         // never to retry. The mid-run watcher below would trip on the same
         // weight, permanently, on its very first poll.
-        if let Err(e) = self.repack_if_drifted(entry_dir).await {
+        if let Err(e) = self.repack_if_drifted(entry_dir, &permit).await {
             tracing::warn!(error = %e, "pre-fetch purge failed; the cap check may see transient weight");
         }
 
         let before = self.ref_digest(git_dir).await;
+        let previous = RepoMeta::load(entry_dir);
 
-        self.runner
+        // Park the metadata before the refs can move. A crash between the
+        // `--atomic` fetch and the meta publish would otherwise leave the OLD
+        // document — old generation, old fingerprint — describing the NEW
+        // refs, and a pinned cursor would silently validate against a
+        // snapshot it never saw. Parked, a crash leaves a meta-less entry:
+        // treated as absent, re-cloned, and every old cursor answers 409.
+        park_meta(entry_dir);
+
+        let fetched = self
+            .runner
             .run_capped(
                 Some(git_dir),
                 &["fetch", "--prune", "--atomic", "origin", BARE_REFSPEC],
@@ -626,8 +715,15 @@ impl RepoStore {
                 git_dir,
                 self.max_repo_bytes,
             )
-            .await
-            .inspect_err(|_| metrics::record_fetch(FetchResult::Error))?;
+            .await;
+        if let Err(e) = fetched {
+            // `--atomic` means a failed fetch moved nothing: the parked
+            // document is still true, and restoring it keeps a warm entry
+            // serveable through a transient origin outage.
+            unpark_meta(entry_dir);
+            metrics::record_fetch(FetchResult::Error);
+            return Err(e);
+        }
 
         self.track_origin_head(git_dir, creds).await;
 
@@ -640,7 +736,12 @@ impl RepoStore {
 
         let fetched_bytes = dir_size_off_reactor(git_dir.to_path_buf()).await;
         if fetched_bytes > self.max_repo_bytes {
-            let _ = std::fs::remove_dir_all(entry_dir);
+            // The meta is parked, so even a failed removal leaves the entry
+            // reading as absent — never as its pre-fetch snapshot.
+            if let Err(e) = std::fs::remove_dir_all(entry_dir) {
+                tracing::error!(error = %e, "could not remove an over-cap entry; it stays invalidated on disk");
+            }
+            self.drift.lock().await.remove(&key.dir_name());
             return Err(GitError::TooLarge {
                 cap_bytes: self.max_repo_bytes,
             });
@@ -653,7 +754,6 @@ impl RepoStore {
         });
 
         let now = now_epoch_s();
-        let previous = RepoMeta::load(entry_dir);
         let generation = match (&previous, unchanged) {
             (Some(meta), true) => meta.generation,
             (previous, _) => previous.as_ref().map_or(0, |m| m.generation) + 1,
@@ -689,6 +789,7 @@ impl RepoStore {
             full_clone: previous.as_ref().is_some_and(|m| m.full_clone),
         };
         publish_meta(&meta, entry_dir)?;
+        discard_parked_meta(entry_dir);
         Ok(generation)
     }
 
@@ -720,7 +821,8 @@ impl RepoStore {
 
         let _write = lock.write().await;
 
-        if let Some(meta) = RepoMeta::load(&entry_dir)
+        let previous = RepoMeta::load(&entry_dir);
+        if let Some(meta) = &previous
             && meta.full_clone
         {
             return Ok(meta.generation);
@@ -739,7 +841,15 @@ impl RepoStore {
 
         // INVARIANT: the permit spans the whole promotion — the semaphore IS
         // the global heavy-ops cap.
-        let _permit = self.heavy.acquire().await;
+        let _permit = self.heavy_permit().await;
+
+        // Park the metadata before the first mutation. Unlike fetch there is
+        // no restore on failure: the refetch below is not `--atomic`, so a
+        // failure can leave refs (and the promisor config stripped next)
+        // half-moved — the parked state honestly reads as "this entry no
+        // longer matches any published snapshot", and the recovery is a
+        // re-clone.
+        park_meta(&entry_dir);
 
         // Both must go BEFORE the refetch, or it re-applies the blob filter.
         for key_name in ["remote.origin.promisor", "remote.origin.partialclonefilter"] {
@@ -773,14 +883,19 @@ impl RepoStore {
 
         let promoted_bytes = dir_size_off_reactor(git_dir.clone()).await;
         if promoted_bytes > self.max_repo_bytes {
-            let _ = std::fs::remove_dir_all(&entry_dir);
+            // The meta is parked, so even a failed removal leaves the entry
+            // reading as absent — never as its pre-promotion snapshot.
+            if let Err(e) = std::fs::remove_dir_all(&entry_dir) {
+                tracing::error!(error = %e, "could not remove an over-cap entry; it stays invalidated on disk");
+            }
+            self.drift.lock().await.remove(&key.dir_name());
             return Err(GitError::TooLarge {
                 cap_bytes: self.max_repo_bytes,
             });
         }
 
         let now = now_epoch_s();
-        let generation = RepoMeta::load(&entry_dir).map_or(0, |m| m.generation) + 1;
+        let generation = previous.as_ref().map_or(0, |m| m.generation) + 1;
         self.build_page_index(&git_dir, generation, creds).await;
         let promoted_bytes = promoted_bytes + index_len(&git_dir, generation);
         let meta = RepoMeta {
@@ -796,12 +911,14 @@ impl RepoStore {
             generation,
             // Rebuilt in place: same directory, so same incarnation. The
             // generation bump is what a pinned cursor trips over.
-            incarnation: RepoMeta::load(&entry_dir)
-                .map_or_else(|| self.mint_incarnation(), |m| m.incarnation),
+            incarnation: previous
+                .as_ref()
+                .map_or_else(|| self.mint_incarnation(), |m| m.incarnation.clone()),
             cred_fingerprint: creds.fingerprint(),
             full_clone: true,
         };
         publish_meta(&meta, &entry_dir)?;
+        discard_parked_meta(&entry_dir);
         Ok(generation)
     }
 
@@ -875,23 +992,41 @@ impl RepoStore {
             return;
         }
 
-        // The measurement needs NO lock: `dir_size` only reads, and the meta
-        // write is atomic tmp+rename. Gating it behind the same non-blocking
-        // probe as the repack starved the accounting under continuous paging —
-        // the next page's read guard was always in place before this task ran,
-        // so `size_bytes` sat at the clone-time figure while the entry tripled.
-        let Some(mut meta) = RepoMeta::load(&entry_dir) else {
-            return;
+        let lock = self.entry_lock(key).await;
+
+        // The measurement runs under the READ side: readers coexist, so it
+        // cannot re-starve the accounting the way the old write probe did —
+        // and it excludes the write-side publishers. Lock-free load-measure-
+        // store here clobbered a concurrent fetch's meta: the walk takes
+        // seconds, and storing the pre-walk document rolled generation and
+        // credentials back, answering 409 to every cursor the fetch had just
+        // validated. A concurrent `touch_access` can still lose one LRU bump
+        // to this write; that is the documented best-effort trade.
+        let (measured, meta) = {
+            let Ok(_read) = read_within(&lock, INLINE_WAIT).await else {
+                // A writer holds the entry; it publishes fresh sizes itself.
+                return;
+            };
+            let Some(mut meta) = RepoMeta::load(&entry_dir) else {
+                return;
+            };
+            let measured = dir_size_off_reactor(git_dir.clone()).await;
+            if meta.size_bytes != measured {
+                meta.size_bytes = measured;
+                if let Err(e) = meta.store(&entry_dir) {
+                    tracing::warn!(error = %e, dir = %key.dir_name(), "could not record the measured size; the planner will understate this entry");
+                }
+            }
+            (measured, meta)
         };
-        let measured = dir_size_off_reactor(git_dir.clone()).await;
-        if meta.size_bytes != measured {
-            meta.size_bytes = measured;
-            let _ = meta.store(&entry_dir);
-        }
 
         // A promoted entry holds the only copy of its blobs: origin refuses to
-        // serve them again, so purging would strand it.
-        if meta.full_clone || !worth_purging(measured, meta.skeleton_bytes) {
+        // serve them again, so purging would strand it. Pack count is its own
+        // trigger: every page's prefetch adds packs, and object lookup slows
+        // with each one, so a byte threshold alone lets a backfill of small
+        // blobs degrade every git invocation without ever tripping a purge.
+        let packs = pack_count(&git_dir);
+        if meta.full_clone || !needs_consolidation(measured, meta.skeleton_bytes, packs) {
             self.settle_purge_debt(&key.dir_name()).await;
             return;
         }
@@ -902,21 +1037,23 @@ impl RepoStore {
         // NEVER wins, so after enough losses it queues for the lock like a
         // fetch would. Readers wait out one repack; the alternative is an
         // entry that grows for as long as anyone keeps reading it.
-        let lock = self.entry_lock(key).await;
         let _write = if let Ok(guard) = lock.try_write() {
             guard
         } else {
             if !self.purge_debt_due(&key.dir_name()).await {
                 return;
             }
+            metrics::record_purge_escalation();
+            tracing::info!(dir = %key.dir_name(), "purge starved by readers; queueing for the entry lock");
             lock.write().await
         };
         self.settle_purge_debt(&key.dir_name()).await;
 
-        match self.repack_blobless(&entry_dir).await {
+        let permit = self.heavy_permit().await;
+        match self.repack_blobless(&entry_dir, &permit).await {
             Ok(freed) => {
-                metrics::record_eviction(EvictionTier::Blob, freed);
-                tracing::debug!(dir = %key.dir_name(), freed_bytes = freed, "purged a served window");
+                metrics::record_eviction(EvictionTier::Blob);
+                tracing::info!(dir = %key.dir_name(), freed_bytes = freed, "purged a served window");
             }
             Err(e) => tracing::warn!(error = %e, dir = %key.dir_name(), "post-serve purge failed"),
         }
@@ -959,7 +1096,7 @@ impl RepoStore {
         creds: &GitCredentials,
     ) -> Result<usize, GitError> {
         if !self.has_headroom().await {
-            metrics::record_admission_reject();
+            metrics::record_rejection(metrics::RejectReason::PrefetchHeadroom);
             return Err(GitError::AdmissionRejected);
         }
         super::read::blobs::prefetch(&self.runner, git_dir, shas, creds, self.max_repo_bytes).await
@@ -974,15 +1111,24 @@ impl RepoStore {
         let candidates = self.candidates().await;
         let accounted: u64 = candidates.iter().map(|c| c.size_bytes).sum();
         let used = self.effective_used(accounted) + self.reserved_bytes.load(Ordering::Relaxed);
+        // A pure paging workload admits nothing, so without this the gauges
+        // freeze at the last clone-time figure while prefetched blobs grow.
+        self.gauges
+            .set(used, self.budget.total_bytes, candidates.len() as u64);
         !self.budget.over_high_watermark(used)
     }
 
     /// Repack the entry to its skeleton if it has drifted above it.
     ///
-    /// The caller must hold the entry's write guard; unlike
-    /// [`Self::purge_if_drifted`] this neither probes the lock nor throttles,
-    /// because the caller is already committed to exclusive work.
-    async fn repack_if_drifted(&self, entry_dir: &Path) -> Result<(), StoreError> {
+    /// The caller must hold the entry's write guard and pass its own heavy
+    /// permit; unlike [`Self::purge_if_drifted`] this neither probes the lock
+    /// nor throttles, because the caller is already committed to exclusive
+    /// work.
+    async fn repack_if_drifted(
+        &self,
+        entry_dir: &Path,
+        permit: &tokio::sync::SemaphorePermit<'_>,
+    ) -> Result<(), StoreError> {
         let git_dir = entry_dir.join("repo.git");
         if !git_dir.is_dir() {
             return Ok(());
@@ -990,15 +1136,13 @@ impl RepoStore {
         let Some(meta) = RepoMeta::load(entry_dir) else {
             return Ok(());
         };
+        let measured = dir_size_off_reactor(git_dir.clone()).await;
         if meta.full_clone
-            || !worth_purging(
-                dir_size_off_reactor(git_dir.clone()).await,
-                meta.skeleton_bytes,
-            )
+            || !needs_consolidation(measured, meta.skeleton_bytes, pack_count(&git_dir))
         {
             return Ok(());
         }
-        self.repack_blobless(entry_dir).await.map(|_| ())
+        self.repack_blobless(entry_dir, permit).await.map(|_| ())
     }
 
     /// Whether this entry is due a size re-measurement, marking it checked.
@@ -1012,7 +1156,13 @@ impl RepoStore {
                 true
             }
             None => {
-                drift.insert(dir_name.to_owned(), DriftState { checked: now, losses: 0 });
+                drift.insert(
+                    dir_name.to_owned(),
+                    DriftState {
+                        checked: now,
+                        losses: 0,
+                    },
+                );
                 true
             }
         }
@@ -1037,8 +1187,15 @@ impl RepoStore {
     /// objects across packs, and bitmap writing assumes a single pack — with
     /// bitmaps enabled the repack fails and the blobs stay on disk.
     ///
-    /// The caller must hold the entry's write guard.
-    async fn repack_blobless(&self, entry_dir: &Path) -> Result<u64, StoreError> {
+    /// The caller must hold the entry's write guard AND a heavy permit —
+    /// acquiring one here deadlocked when the caller (a fetch's pre-purge)
+    /// already held its own: N such fetches exhaust the semaphore and each
+    /// waits forever for a permit none will release.
+    async fn repack_blobless(
+        &self,
+        entry_dir: &Path,
+        _permit: &tokio::sync::SemaphorePermit<'_>,
+    ) -> Result<u64, StoreError> {
         let git_dir = entry_dir.join("repo.git");
         let before = dir_size_off_reactor(git_dir.clone()).await;
 
@@ -1050,8 +1207,6 @@ impl RepoStore {
         ));
         std::fs::create_dir_all(&evicted)?;
         let filter_to = format!("--filter-to={}", evicted.display());
-
-        let _permit = self.heavy.acquire().await;
 
         remove_promisor_markers(&git_dir);
         let repacked = self
@@ -1077,7 +1232,9 @@ impl RepoStore {
         if let Some(mut meta) = RepoMeta::load(entry_dir) {
             meta.size_bytes = purged;
             meta.skeleton_bytes = purged;
-            let _ = meta.store(entry_dir);
+            if let Err(e) = meta.store(entry_dir) {
+                tracing::warn!(error = %e, "could not record the purged size; the planner will overstate this entry");
+            }
         }
         Ok(before.saturating_sub(purged))
     }
@@ -1124,7 +1281,7 @@ impl RepoStore {
                 Reclaim::PurgeBlobs { dir_name, frees } => {
                     match self.purge_blobs_by_dir(&dir_name).await {
                         Ok(()) => {
-                            metrics::record_eviction(EvictionTier::Blob, frees);
+                            metrics::record_eviction(EvictionTier::Blob);
                             tracing::info!(dir = %dir_name, freed_bytes = frees, "purged blobs");
                         }
                         Err(e) => tracing::warn!(error = %e, dir = %dir_name, "blob purge failed"),
@@ -1140,7 +1297,10 @@ impl RepoStore {
                     };
                     match remove_tree_off_reactor(path.clone()).await {
                         Ok(()) => {
-                            metrics::record_eviction(EvictionTier::Full, frees);
+                            // A re-clone must not inherit the evicted entry's
+                            // drift throttle or escalation losses.
+                            self.drift.lock().await.remove(&dir_name);
+                            metrics::record_eviction(EvictionTier::Full);
                             tracing::info!(dir = %dir_name, freed_bytes = frees, "evicted repo");
                         }
                         Err(e) => tracing::warn!(error = %e, dir = %dir_name, "eviction failed"),
@@ -1163,7 +1323,7 @@ impl RepoStore {
                 high_watermark = self.budget.high_watermark(),
                 "nothing left to reclaim and still over the high watermark; refusing admission"
             );
-            metrics::record_admission_reject();
+            metrics::record_rejection(metrics::RejectReason::AdmissionExhausted);
             return None;
         }
         Some(self.reserve(want))
@@ -1365,7 +1525,8 @@ impl RepoStore {
             return Ok(());
         };
 
-        self.repack_blobless(&entry_dir).await.map(|_| ())
+        let permit = self.heavy_permit().await;
+        self.repack_blobless(&entry_dir, &permit).await.map(|_| ())
     }
 
     /// Current cache usage, as accounted per entry.
@@ -1440,6 +1601,36 @@ fn parse_head_symref(listing: &str) -> Option<String> {
 /// fingerprint matches the old metadata would be served objects fetched with
 /// someone else's credentials. Removing it makes the entry unreadable and the
 /// next request re-clones — the cache is rebuildable by design.
+const PARKED_META: &str = "meta.json.parked";
+
+/// Take the published metadata out of circulation before mutating the refs
+/// it describes. While parked the entry reads as absent; the caller either
+/// republishes a fresh document or restores this one.
+fn park_meta(entry_dir: &Path) {
+    let _ = std::fs::rename(entry_dir.join("meta.json"), entry_dir.join(PARKED_META));
+}
+
+/// Put the parked document back — only valid when the refs demonstrably did
+/// not move (an `--atomic` fetch that failed).
+fn unpark_meta(entry_dir: &Path) {
+    let _ = std::fs::rename(entry_dir.join(PARKED_META), entry_dir.join("meta.json"));
+}
+
+fn discard_parked_meta(entry_dir: &Path) {
+    let _ = std::fs::remove_file(entry_dir.join(PARKED_META));
+}
+
+/// How many packs the entry's object store currently holds. Cheap: one
+/// directory listing, no tree walk.
+fn pack_count(git_dir: &Path) -> usize {
+    std::fs::read_dir(git_dir.join("objects").join("pack")).map_or(0, |entries| {
+        entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "pack"))
+            .count()
+    })
+}
+
 fn publish_meta(meta: &RepoMeta, entry_dir: &Path) -> Result<(), GitError> {
     meta.store(entry_dir).map_err(|e| {
         // Whatever occupies the path goes: leaving anything behind risks a
@@ -1540,7 +1731,6 @@ fn touch_access(entry_dir: &Path, mut meta: RepoMeta) {
     meta.last_accessed_at_epoch_s = now_epoch_s();
     let _ = meta.store(entry_dir);
 }
-
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -1812,9 +2002,14 @@ pub(crate) mod tests {
         };
 
         let head = head_of(guard.git_dir());
-        if let Err(e) =
-            crate::engine::read::blobs::prefetch(f.store.runner(), guard.git_dir(), &[head], &creds(), u64::MAX)
-                .await
+        if let Err(e) = crate::engine::read::blobs::prefetch(
+            f.store.runner(),
+            guard.git_dir(),
+            &[head],
+            &creds(),
+            u64::MAX,
+        )
+        .await
         {
             panic!("prefetch: {e}");
         }
@@ -1967,7 +2162,12 @@ pub(crate) mod tests {
             parse_head_symref(listing).as_deref(),
             Some("refs/heads/trunk")
         );
-        for absent in ["", "4f0a71e8\tHEAD\n", "ref: refs/tags/v1\tHEAD\n", "ref: refs/heads/x"] {
+        for absent in [
+            "",
+            "4f0a71e8\tHEAD\n",
+            "ref: refs/tags/v1\tHEAD\n",
+            "ref: refs/heads/x",
+        ] {
             assert!(
                 parse_head_symref(absent).is_none(),
                 "must not invent a symref: {absent:?}"
@@ -1985,7 +2185,10 @@ pub(crate) mod tests {
         open_until_ready(&f, &k, refresh()).await;
 
         let origin = f.root.join("origin");
-        sh(&origin, "git branch -m main trunk && git symbolic-ref HEAD refs/heads/trunk");
+        sh(
+            &origin,
+            "git branch -m main trunk && git symbolic-ref HEAD refs/heads/trunk",
+        );
 
         let guard = open_until_ready(&f, &k, always_fetch()).await;
         let head = match f
@@ -2033,7 +2236,10 @@ pub(crate) mod tests {
         let guard = open_until_ready(&f, &k, refresh()).await;
         let shas = vec![head_of(guard.git_dir())];
 
-        sh(guard.git_dir(), "git symbolic-ref HEAD refs/heads/never-existed");
+        sh(
+            guard.git_dir(),
+            "git symbolic-ref HEAD refs/heads/never-existed",
+        );
 
         match crate::engine::read::commits::default_branch_membership(
             f.store.runner(),
@@ -2129,10 +2335,7 @@ pub(crate) mod tests {
             panic!("meta must exist")
         };
         let measured = dir_size(guard.git_dir());
-        assert!(
-            meta.size_bytes >= measured.min(meta.size_bytes),
-            "sanity"
-        );
+        assert!(meta.size_bytes >= measured.min(meta.size_bytes), "sanity");
         assert!(
             meta.size_bytes >= index_bytes,
             "the published size must include the index: {} vs index {index_bytes}",
@@ -2322,6 +2525,81 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn a_fetch_of_a_drifted_entry_completes_with_one_heavy_permit() {
+        // The pre-fetch purge repacks while the fetch already holds the only
+        // permit; a repack that acquired its own would deadlock right here —
+        // no git subprocess running, no timeout ever starting.
+        let (f, k, _) = entry_with_fetched_blobs("drift-one-permit").await;
+        let one_permit = match RepoStore::new(&f.root.join("cache"), 1) {
+            Ok(s) => Arc::new(s),
+            Err(e) => panic!("store init: {e}"),
+        };
+
+        let fetched = tokio::time::timeout(
+            Duration::from_mins(2),
+            one_permit.open(&k, &creds(), always_fetch()),
+        )
+        .await;
+        let Ok(outcome) = fetched else {
+            panic!("the fetch deadlocked against its own pre-purge")
+        };
+        if let Err(e) = outcome {
+            panic!("the fetch must succeed: {e}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_fetch_keeps_the_entry_serveable() {
+        // A transient origin outage must cost one failed sync, not the warm
+        // cache: the metadata parked before the --atomic fetch is restored,
+        // because a failed atomic fetch moved nothing.
+        let f = fixture("fetch-outage");
+        let k = key(&f);
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        let generation = guard.generation();
+        drop(guard);
+
+        let origin = f.root.join("origin");
+        let parked_origin = f.root.join("origin-gone");
+        if let Err(e) = std::fs::rename(&origin, &parked_origin) {
+            panic!("park origin: {e}");
+        }
+        let refused = f.store.open(&k, &creds(), always_fetch()).await;
+        assert!(refused.is_err(), "a fetch without an origin must fail");
+
+        if let Err(e) = std::fs::rename(&parked_origin, &origin) {
+            panic!("restore origin: {e}");
+        }
+        let pinned_read = f.store.open(&k, &creds(), pinned(&f, &k, generation)).await;
+        match pinned_read {
+            Ok(g) => assert_eq!(g.generation(), generation, "the snapshot must survive"),
+            Err(e) => panic!("the entry must stay serveable after a failed fetch: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn boot_removes_an_entry_without_metadata() {
+        // A crash between moving refs and publishing metadata leaves a dir no
+        // request can use and no reclaim plan can see: without the boot sweep
+        // its bytes are leaked until the same repository is requested again.
+        let f = fixture("boot-sweep");
+        let orphan = f.root.join("cache").join("repos").join("a".repeat(64));
+        if let Err(e) = std::fs::create_dir_all(orphan.join("repo.git")) {
+            panic!("stage orphan: {e}");
+        }
+
+        let rebooted = match RepoStore::new(&f.root.join("cache"), 2) {
+            Ok(s) => s,
+            Err(e) => panic!("reboot: {e}"),
+        };
+        drop(rebooted);
+        assert!(
+            !orphan.exists(),
+            "boot must remove an entry whose metadata cannot be read"
+        );
+    }
+
+    #[tokio::test]
     async fn a_purged_entry_still_serves_and_refetches() {
         // The dangerous half of a purge: an entry that frees bytes but can no
         // longer produce the objects it dropped is worse than one that frees
@@ -2421,11 +2699,7 @@ pub(crate) mod tests {
             "echo two > b.txt && git add b.txt && git commit -qm c2",
         );
 
-        let continuation = match f
-            .store
-            .open(&k, &creds(), pinned(&f, &k, generation))
-            .await
-        {
+        let continuation = match f.store.open(&k, &creds(), pinned(&f, &k, generation)).await {
             Ok(g) => g,
             Err(e) => panic!("pinned open: {e}"),
         };
@@ -2437,10 +2711,7 @@ pub(crate) mod tests {
         drop(continuation);
 
         open_until_ready(&f, &k, always_fetch()).await;
-        let stale_page = f
-            .store
-            .open(&k, &creds(), pinned(&f, &k, generation))
-            .await;
+        let stale_page = f.store.open(&k, &creds(), pinned(&f, &k, generation)).await;
         match stale_page {
             Err(StoreError::SnapshotChanged { current }) => {
                 assert_eq!(current, generation + 1, "reports the live generation");
@@ -2589,9 +2860,14 @@ pub(crate) mod tests {
         // The blob the orphaned commit introduced is still referenced by the
         // cached history but is gone at origin: an explicit want is refused.
         let newest = newest_sha(&f, &git_dir).await;
-        let refusal =
-            crate::engine::read::blobs::prefetch(f.store.runner(), &git_dir, &[newest], &creds(), u64::MAX)
-                .await;
+        let refusal = crate::engine::read::blobs::prefetch(
+            f.store.runner(),
+            &git_dir,
+            &[newest],
+            &creds(),
+            u64::MAX,
+        )
+        .await;
         assert!(
             matches!(refusal, Err(GitError::PromisorRefused)),
             "the fixture must reproduce a promisor refusal, got {refusal:?}"

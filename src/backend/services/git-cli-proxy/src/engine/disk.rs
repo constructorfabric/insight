@@ -66,6 +66,56 @@ pub fn worth_purging(size_bytes: u64, skeleton_bytes: u64) -> bool {
     skeleton_bytes > 0 && size_bytes > skeleton_bytes + skeleton_bytes / PURGE_MIN_GROWTH_DIVISOR
 }
 
+/// Packs an entry may accumulate before the serve-path purge consolidates
+/// regardless of byte drift. Every page's prefetch writes at least one pack,
+/// and git's object lookup pays a per-pack cost on every invocation — a
+/// backfill of small blobs degrades linearly without ever tripping the byte
+/// threshold. Well under git's own `gc.autoPackLimit` default (50), since
+/// auto-maintenance is disabled on our invocations and this is what replaces
+/// it.
+const PACK_CONSOLIDATION_LIMIT: usize = 24;
+
+/// Whether the serve-path purge should repack: byte drift over the skeleton,
+/// or pack-count growth that byte drift cannot see.
+#[must_use]
+pub fn needs_consolidation(size_bytes: u64, skeleton_bytes: u64, packs: usize) -> bool {
+    worth_purging(size_bytes, skeleton_bytes) || packs >= PACK_CONSOLIDATION_LIMIT
+}
+
+#[cfg(test)]
+mod consolidation_tests {
+    use super::*;
+
+    #[test]
+    fn pack_growth_triggers_a_repack_that_byte_drift_cannot_see() {
+        let cases = [
+            ("no drift, few packs", 100, 100, 1, false),
+            ("byte drift alone", 120, 100, 1, true),
+            (
+                "pack growth alone",
+                100,
+                100,
+                PACK_CONSOLIDATION_LIMIT,
+                true,
+            ),
+            (
+                "one under the pack limit",
+                100,
+                100,
+                PACK_CONSOLIDATION_LIMIT - 1,
+                false,
+            ),
+        ];
+        for (name, size, skeleton, packs, expected) in cases {
+            assert_eq!(
+                needs_consolidation(size, skeleton, packs),
+                expected,
+                "case: {name}"
+            );
+        }
+    }
+}
+
 /// One step of a reclaim plan. Blob purge first — it keeps the repo warm, so
 /// the next sync fetches instead of re-cloning.
 #[derive(Debug, Clone, PartialEq, Eq)]
