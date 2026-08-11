@@ -193,7 +193,14 @@ models:
       - name: is_over_limit
         description: "1 when used > limit (soft overage). NULL when limit unknown"
       - name: is_enabled
-        description: "Whether overage/extra-usage is enabled for the seat"
+        description: >
+          Vendor boolean, semantics not confirmed. Anthropic documents extra usage as
+          admin-gated per person, which reads as "overage spending is permitted for this
+          seat"; its published Spend Limits API models the allowance with no equivalent
+          boolean. On live data the single false row is an unassigned seat with a NULL
+          limit, zero consumption and no activity, which fits equally "the seat is not
+          assigned". Not used as a state filter — seat state is credit_limit_cents IS NOT
+          NULL.
       - name: overage_metrics_json
         description: "Raw vendor extras: limit_type, used_credits_basis, out_of_credits, seat_tier"
       - name: source

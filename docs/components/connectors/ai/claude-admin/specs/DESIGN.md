@@ -46,6 +46,8 @@ Two dbt Silver models ship with this connector:
 - `claude_admin__ai_api_usage` — Bronze `claude_admin_messages_usage` → `class_ai_api_usage` (enriched with API key names and workspace names)
 - `claude_admin__ai_dev_usage` — Bronze `claude_admin_code_usage` filtered to `actor_type = 'user'`. **Not tagged for `silver:class_ai_dev_usage` as of PR #239** — Claude Enterprise (`claude_enterprise__ai_dev_usage`) is the canonical Code feed for orgs on the Enterprise subscription (per-user attribution without api_key resolution). This model is retained as the Admin-only fallback path; activate the `silver:class_ai_dev_usage` tag for tenants without Enterprise.
 
+A third model, `claude_admin__ai_cost` (Bronze `claude_admin_cost_report` → `class_ai_cost`), is specified but not yet built — see ADR-0003 and `docs/domain/metrics/specs/ai-cost/DESIGN.md`. The same work extends `claude_admin__ai_api_usage` with the `model`, `service_tier` and `context_window` columns and stops summing the two cache-creation token types, both of which the price card requires.
+
 #### System Context
 
 ```mermaid
@@ -100,7 +102,13 @@ graph LR
 
 #### Architecture Decision Records
 
-No new ADRs have been authored for this merged connector. Inherited decisions from the predecessor connectors (now consolidated) are captured inline in §2.2 Constraints and in the Migration section (§4):
+ADRs authored for this connector live under `specs/ADR/`:
+
+- **ADR-0001** — `cursor_granularity` boundary fix (accepted).
+- **ADR-0002** — day-aligned exclusive `ending_at` for the usage and cost streams (accepted; supersedes ADR-0001).
+- **ADR-0003** — price card as the source of per-person token cost (proposed). Governs how `claude_admin_messages_usage` tokens become money at person grain, and the role `cost_report` plays as a reconciliation signal rather than an attribution source.
+
+Inherited decisions from the predecessor connectors (now consolidated) are captured inline in §2.2 Constraints and in the Migration section (§4):
 
 - **Drop `inference_geo` from `group_by`** — API max-5 limit; `inference_geo` and `speed` remain nullable Bronze fields. (Inherited from the former `claude-api` ADR-001.)
 - **Nested response extraction with P1D step + `AddFields` mapping** — `field_path: [data, "0", results]` for messages and cost; field name mapping `cache_read_input_tokens → cache_read_tokens`, `cache_creation.ephemeral_5m_input_tokens → cache_creation_5m_tokens`, etc. (Inherited from the former `claude-api` ADR-002.)

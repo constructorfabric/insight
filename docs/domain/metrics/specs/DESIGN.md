@@ -112,6 +112,12 @@ the `insight` database:
 - `insight.ai_metric_observations`
 - `insight.metric_entity_cohorts_current`
 
+Specified but not yet built: `insight.ai_cost_metric_observations` and
+`insight.ai_cost_metric_evidence`, carrying per-token and seat cost measures at
+person grain. A separate family because seat measures are monthly snapshots
+rather than daily activity, and one evidence relation is bound per source. See
+`ai-cost/DESIGN.md`.
+
 dbt owns lineage to silver, build ordering, column documentation, and data
 tests (including cohort uniqueness). The backend owns the registry, query
 compilation, and runtime schema validation against these relations. Column

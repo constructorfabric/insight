@@ -17,7 +17,7 @@ models:
           - not_null
           - accepted_values:
               arguments:
-                values: ['ai_usage', 'collab', 'git', 'task', 'wiki']
+                values: ['ai_usage', 'ai_cost', 'collab', 'git', 'task', 'wiki']
       - name: entity_type
         description: "Measured entity type"
         tests:
@@ -102,6 +102,79 @@ models:
       Page creation rows retain event grain; edits and engagement expose the
       established daily summaries retained by the silver contracts.
     columns: *metric_evidence_columns
+
+  - name: ai_cost_metric_evidence
+    description: >
+      Materialized MergeTree evidence serving table for AI cost measures. Seat
+      figures are monthly snapshots rather than daily activity, so a row is one
+      seat-month at source_summary granularity, dated at the day the snapshot
+      was last read. A separate family from ai_metric_evidence because one
+      evidence relation is bound per source.
+    columns: *metric_evidence_columns
+
+  - name: ai_cost_metric_observations
+    description: >
+      Source measure observations for the unified metrics runtime, AI cost
+      family. One row per (tenant, entity, read day, measure, dimension tuple).
+      extra_usage_usd is the money the vendor billed once a seat exhausted the
+      usage included in its fee; extra_usage_limit_usd is the admin-set ceiling
+      on that spend, and serves only as the utilisation denominator.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ai_cost']
+      - name: entity_type
+        description: "Measured entity type"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['person']
+      - name: entity_id
+        description: >
+          Canonical person id, stamped into the evidence relation once per gold
+          build. Source rows whose email identity cannot resolve never reach
+          this relation.
+        tests:
+          - not_null
+      - name: metric_date
+        description: >
+          The day the seat snapshot was last read, not the first of its billing
+          month — a date pinned to the 1st falls outside short rolling windows.
+        tests:
+          - not_null
+      - name: observed_at
+        description: "NULL — seat figures are month-grain aggregates."
+      - name: measure_key
+        description: "Source measure key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - extra_usage_usd
+                  - extra_usage_limit_usd
+      - name: value
+        description: >
+          Measure value. Rows are emitted only when the source provides a
+          value, so value is never NULL; the column stays Nullable(Float64)
+          in the published contract.
+        tests:
+          - not_null
+      - name: subject_key
+        description: "Always NULL — no distinct-count measure in this family."
+      - name: dimensions
+        description: >
+          Array(Tuple(key, value, label)) carrying tool and seat_tier. A seat
+          with no tier reports 'unknown' rather than dropping the dimension.
 
   - name: ai_metric_observations
     description: >
