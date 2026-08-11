@@ -54,3 +54,11 @@ templates:
     $ref: "#/templates/claude_team_seat"
     account_email: erin@example.com
     account_uuid: seat-erin
+
+  # A seat holder absent from the HR feed, so outside every org-unit cohort: a
+  # test can give this seat no ceiling without shrinking a peer pool below the
+  # five contributors the peer view needs.
+  frank:
+    $ref: "#/templates/claude_team_seat"
+    account_email: frank@example.com
+    account_uuid: seat-frank
