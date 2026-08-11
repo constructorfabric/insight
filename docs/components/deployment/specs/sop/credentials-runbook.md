@@ -2,7 +2,7 @@
 
 **Audience**: platform engineers with an admin kubeconfig for the test-stand cluster, and repo admins on `constructorfabric/insight`.
 **Covers**: provisioning, verifying, storing, rotating, revoking and cleaning up the credential CI uses to deploy the Insight umbrella chart onto the test stand (issue #2244, decision D5).
-**Last verified**: 2026-08-10.
+**Last verified**: 2026-08-11.
 
 > Every value in this document is a placeholder. Substitute your own and never
 > paste a real one back in — this repository is public, and so are its issues,
@@ -23,35 +23,40 @@
 The split is the whole point of D5: **admin kubeconfigs stay human-only.** CI gets
 a credential that is namespace-scoped and destroyable, and nothing else.
 
-The provisioning tool is
-[`deploy/gitops/scripts/provision-ci-deployer.sh`](../../../../../deploy/gitops/scripts/provision-ci-deployer.sh).
-Its header explains *why* a ServiceAccount token beats a copied admin kubeconfig
-(one-line answer: a token can be revoked; a client certificate cannot be revoked
-without rotating the cluster CA). Read it once before your first run.
+Provisioning is three `make` targets in
+[`deploy/gitops/Makefile`](../../../../../deploy/gitops/Makefile) —
+`provision-ci`, `verify-ci-credential`, `revoke-ci` — acting on the committed,
+static RBAC manifest
+[`deploy/gitops/environments/test-stand/ci-deployer-rbac.yaml`](../../../../../deploy/gitops/environments/test-stand/ci-deployer-rbac.yaml).
+[`deploy/gitops/scripts/provision-ci-deployer.sh`](../../../../../deploy/gitops/scripts/provision-ci-deployer.sh)
+is a thin CLI wrapper over the same targets, kept only because this runbook
+names it as the entrypoint; `make` directly works identically.
+
+One-line answer to "why a ServiceAccount token and not a copied admin
+kubeconfig": a token can be revoked (delete the Secret, or the ServiceAccount
+itself); a client certificate cannot be revoked without rotating the cluster
+CA, which invalidates every other certificate on the cluster at once.
 
 ---
 
 ## 1. Prerequisites
 
-1. `kubectl` ≥ 1.27 and `git` on PATH — `make doctor` from `deploy/gitops/` covers
-   the wider toolchain.
-2. An admin kubeconfig for the target cluster, readable at a path you know.
-   This runbook writes it as `~/.kube/<stand>-admin.kubeconfig`.
-3. The **exact cluster name** that kubeconfig's context resolves to. Find it
-   without acting on anything:
+1. `kubectl` ≥ 1.27, `yq` and `git` on PATH — `make doctor` from `deploy/gitops/`
+   covers the wider toolchain.
+2. An admin kubeconfig for the target cluster, with its **current-context**
+   equal to `deploy/gitops/environments/test-stand/inventory.yaml`'s
+   `kubeContext` (or pass `KUBE_CTX=<your context>` on every `make` call
+   below). The Makefile's `kube-ctx` target refuses to act otherwise — the
+   mechanical guard against provisioning a standing grant on the wrong stand.
+   Confirm without acting on anything:
 
    ```bash
-   kubectl --kubeconfig ~/.kube/<stand>-admin.kubeconfig config current-context
-   kubectl --kubeconfig ~/.kube/<stand>-admin.kubeconfig config view -o json \
-     | jq -r '.contexts[] | "\(.name) -> \(.context.cluster)"'
+   kubectl config current-context
+   yq -r '.kubeContext' deploy/gitops/environments/test-stand/inventory.yaml
    ```
-
-   You will pass that cluster name as `--expect-cluster`. The script refuses to
-   do anything if the kubeconfig resolves to a different cluster, which is the
-   mechanical guard against provisioning a standing grant on the wrong stand.
-4. The application namespace already exists (`insight` by default). See
+3. The application namespace already exists (`insight` by default). See
    §7 "First install into an empty namespace" if it does not.
-5. `gh` authenticated with admin rights on the repository, for §4.
+4. `gh` authenticated with admin rights on the repository, for §4.
 
 ---
 
@@ -59,70 +64,65 @@ without rotating the cluster CA). Read it once before your first run.
 
 ### 2.1 Read the plan first
 
-The script is **dry-run by default**. It reads the cluster, prints the exact
-manifests it would apply and the exact assertions it would run, and exits
-without writing anything:
+The manifest **is** the plan — it is committed, static YAML, so reading it
+takes the place of a dry-run print. Optionally validate it against the
+cluster without applying anything:
 
 ```bash
-cd deploy/gitops
-./scripts/provision-ci-deployer.sh \
-  --kubeconfig ~/.kube/<stand>-admin.kubeconfig \
-  --expect-cluster '<cluster-name>'
+cat deploy/gitops/environments/test-stand/ci-deployer-rbac.yaml
+kubectl --context "$(yq -r '.kubeContext' deploy/gitops/environments/test-stand/inventory.yaml)" \
+  apply --dry-run=client -f deploy/gitops/environments/test-stand/ci-deployer-rbac.yaml
 ```
 
-Read the printed manifests. You are looking for five things:
+Read the manifest. You are looking for five things:
 
 - the binding is a `RoleBinding`, not a `ClusterRoleBinding`;
 - its `roleRef` is `ClusterRole/admin` — a cluster role bound namespace-wide, which
   is not the same as a cluster-wide grant;
 - the supplemental `Role` lists only `gateway.networking.k8s.io`, `argoproj.io`,
   `onepassword.com` and `cert-manager.io`;
-- there is a **second, much smaller** `Role` + `RoleBinding` in the `airbyte`
-  namespace. The umbrella renders its `insight-airbyte-auth-reader` Role and
-  RoleBinding *there* rather than in `insight` (that is what `airbyte.namespace`
-  in the values file decides), so a credential scoped only to `insight` fails
-  every upgrade. That supplement grants exactly `create`/`update` on Roles and
-  RoleBindings in `airbyte`, plus `get` on the single Secret `airbyte-auth-secrets`
-  by name — it deliberately cannot read anything else in that namespace;
+- the manifest does **not** touch the `airbyte` namespace. The umbrella renders
+  its `insight-airbyte-auth-reader` Role and RoleBinding *there* rather than in
+  `insight` (that is what `airbyte.namespace` in the values file decides), so a
+  credential scoped only to `insight` fails every upgrade — but authorising a
+  deployment identity over a namespace this repository does not own is
+  infrastructure policy, owned by whoever installs Airbyte. `make
+  verify-ci-credential` (§3) asserts the grant exists there; it never creates it;
 - the token `Secret` carries no `data:` block (the token controller fills it).
 
-If the cluster name does not match, the script prints a refusal banner and exits
-2 having touched nothing. That is the expected outcome of a typo — do not "fix"
-it by changing `--expect-cluster` until you are certain which cluster you mean.
+If your kube-context does not resolve to the inventory's `kubeContext`, the
+Makefile's `kube-ctx` precondition refuses with a clear error and nothing is
+touched. That is the expected outcome of a typo — do not "fix" it by overriding
+`KUBE_CTX` until you are certain which cluster you mean.
 
 ### 2.2 Apply
 
 ```bash
-./scripts/provision-ci-deployer.sh \
-  --kubeconfig ~/.kube/<stand>-admin.kubeconfig \
-  --expect-cluster '<cluster-name>' \
-  --out ~/.kube/insight-test-stand-ci-deployer.kubeconfig \
-  --apply
+make -C deploy/gitops provision-ci ENV=test-stand
 ```
 
 What happens, in order:
 
-1. the manifests are applied (idempotent — re-running is safe and is the
+1. the manifest is applied (idempotent — re-running is safe and is the
    supported way to repair drift);
-2. the script waits for the token controller to populate the Secret;
-3. the kubeconfig is assembled at `--out` with **mode 0600** and its contents are
-   never printed;
-4. the scope assertions run, and a single failure aborts with a non-zero exit and
-   a "do not put this kubeconfig in a GitHub environment" message.
+2. `make` waits for the token controller to populate the Secret;
+3. the kubeconfig is assembled at `CI_DEPLOYER_OUT` with **mode 0600** and its
+   contents are never printed;
+4. `verify-ci-credential` (§3) runs, and a single failing assertion aborts with
+   a non-zero exit and a "do not put this kubeconfig in a GitHub environment"
+   message.
 
-`--out` defaults to `~/.kube/insight-test-stand-ci-deployer.kubeconfig`. The
-script refuses any path inside a git work tree unless that path is gitignored —
-a bearer token one `git add -A` away from a public repository is not a risk worth
-carrying.
+`CI_DEPLOYER_OUT` defaults to `~/.kube/insight-test-stand-ci-deployer.kubeconfig`
+(override with `CI_DEPLOYER_OUT=<path> make …`). `provision-ci` refuses any path
+inside a git work tree unless that path is gitignored — a bearer token one
+`git add -A` away from a public repository is not a risk worth carrying.
 
 ### 2.3 Context name
 
-The generated kubeconfig's context is named `insight-test-stand` by default,
-matching the gitops convention `insight-<env>` documented in
-`deploy/gitops/README.md`. That matters because the Makefile's `kube-ctx` target
-refuses to act unless `kubectl config current-context` equals the environment
-inventory's `kubeContext`. If your inventory says something else, either fix the
-inventory or pass `--context-name <name>` when provisioning.
+The generated kubeconfig's context is named after `KUBE_CTX` itself — the
+cluster context you just provisioned against — so it always matches the
+environment inventory's `kubeContext`, and `KUBECONFIG=<out> make deploy
+ENV=test-stand` works with no further `KUBE_CTX` override.
 
 ---
 
@@ -133,11 +133,7 @@ upgrade, after someone edits the Role, before you trust a run — without
 re-provisioning:
 
 ```bash
-./scripts/provision-ci-deployer.sh \
-  --kubeconfig ~/.kube/<stand>-admin.kubeconfig \
-  --expect-cluster '<cluster-name>' \
-  --out ~/.kube/insight-test-stand-ci-deployer.kubeconfig \
-  --verify-only
+make -C deploy/gitops verify-ci-credential ENV=test-stand
 ```
 
 ### 3.1 What it asserts
@@ -459,19 +455,13 @@ immediately.
 #    `test-stand-deploy`, and it coalesces rather than cancels.
 gh run list --repo "$REPO" --workflow build-images.yml --limit 5
 
-# 2. Plan, then rotate.
-./scripts/provision-ci-deployer.sh \
-  --kubeconfig ~/.kube/<stand>-admin.kubeconfig \
-  --expect-cluster '<cluster-name>' \
-  --out ~/.kube/insight-test-stand-ci-deployer.kubeconfig \
-  --rotate                     # prints the plan and exits
-
-./scripts/provision-ci-deployer.sh \
-  --kubeconfig ~/.kube/<stand>-admin.kubeconfig \
-  --expect-cluster '<cluster-name>' \
-  --out ~/.kube/insight-test-stand-ci-deployer.kubeconfig \
-  --rotate --apply             # deletes the old token, mints a new one,
-                               # rewrites --out, re-runs the assertions
+# 2. Rotate: delete the old token, mint a new one, rewrite CI_DEPLOYER_OUT,
+#    re-run the assertions. There is no separate "kill token, keep identity"
+#    step any more — revoke-ci removes the whole ServiceAccount + RBAC, and
+#    provision-ci re-creates all of it from the same committed manifest, so
+#    a rotation is just running both in order.
+make -C deploy/gitops revoke-ci    ENV=test-stand
+make -C deploy/gitops provision-ci ENV=test-stand
 
 # 3. Upload the new one (base64, single line — see §4.2).
 base64 < ~/.kube/insight-test-stand-ci-deployer.kubeconfig | tr -d '\n' \
@@ -505,34 +495,21 @@ environment's README ("Known gaps") for the follow-up that fixes it properly.
 
 ## 6. Revoke
 
-Two levels. Both are immediate: the API server re-validates a ServiceAccount
-token against the Secret and against the ServiceAccount's UID on every request,
-so the credential stops working as soon as the delete propagates. (That
-re-validation depends on `--service-account-lookup`, on by default since 1.7 —
-the confirmation step below is what actually proves it on *your* cluster, so do
-not skip it.)
-
-**Level 1 — kill the token, keep the identity.** Use when the credential leaked
-but you still want CI to work after re-issuing.
-
-```bash
-./scripts/provision-ci-deployer.sh \
-  --kubeconfig ~/.kube/<stand>-admin.kubeconfig \
-  --expect-cluster '<cluster-name>' \
-  --revoke --apply
-```
-
-**Level 2 — remove the identity entirely.** Use when decommissioning the stand
-or the CI integration.
+`revoke-ci` deletes the ServiceAccount, both RoleBindings, the Role and the
+token Secret in one `kubectl delete -f` of the committed manifest — there is
+no partial "kill the token, keep the identity" mode. Immediate: the API
+server re-validates a ServiceAccount token against the Secret and against the
+ServiceAccount's UID on every request, so the credential stops working as
+soon as the delete propagates. (That re-validation depends on
+`--service-account-lookup`, on by default since 1.7 — the confirmation step
+below is what actually proves it on *your* cluster, so do not skip it.)
+Re-issuing afterward is one `make provision-ci` away, from the same manifest.
 
 ```bash
-./scripts/provision-ci-deployer.sh \
-  --kubeconfig ~/.kube/<stand>-admin.kubeconfig \
-  --expect-cluster '<cluster-name>' \
-  --purge --apply
+make -C deploy/gitops revoke-ci ENV=test-stand
 ```
 
-Either way, clear the stored copy too — a dead credential in a secret store is a
+Then clear the stored copy too — a dead credential in a secret store is a
 false sense of coverage and an obstacle to the next person debugging:
 
 ```bash
@@ -569,9 +546,9 @@ becomes a workflow change, not a secret change.
 **`attempt to grant extra privileges` during `helm upgrade`**
 RBAC escalation prevention: a subject cannot create a Role granting permissions
 it does not itself hold, and `admin` does not carry `escalate`. The chart renders
-its own reconcile Role with `argoproj.io` and `onepassword.com` rules. You almost
-certainly ran with `--no-supplement`, or someone trimmed the supplemental Role.
-Re-run provisioning without `--no-supplement`.
+its own reconcile Role with `argoproj.io` and `onepassword.com` rules. Someone
+trimmed the supplemental `Role` in `ci-deployer-rbac.yaml` — diff it against
+git history and re-run `make provision-ci ENV=test-stand` to repair drift.
 
 **`namespaces is forbidden` on a first install**
 `helm upgrade --install --create-namespace` POSTs a Namespace at cluster scope,
@@ -587,9 +564,11 @@ Do **not** grant namespace-create to CI to make this go away. Upgrades of an
 existing release never reach that code path.
 
 **`Error: context "…" does not exist` from the gitops Makefile**
-The generated kubeconfig's context name and the environment inventory's
-`kubeContext` disagree. Re-provision with `--context-name <inventory value>`, or
-pass `KUBE_CTX=<generated name>` on the make invocation.
+Should not happen by construction — `provision-ci` names the generated
+kubeconfig's context after `KUBE_CTX` itself, so it always matches the
+environment inventory's `kubeContext`. If it does, the kubeconfig was hand-
+edited or copied from a different environment; re-run `make provision-ci
+ENV=test-stand`.
 
 **A Gateway or an object in another namespace is unreadable**
 Expected, and it does not block the deploy. The gateway controller's own
@@ -644,10 +623,10 @@ history | tail -40                # find the offending entries
 Decide deliberately whether to keep the local CI kubeconfig at all:
 
 - **Keep it** (mode 0600, in `~/.kube`, never in the repo) if you expect to
-  re-verify the scope with `--verify-only`.
+  re-verify the scope with `make verify-ci-credential`.
 - **Delete it** once it is in the GitHub environment. Re-issuing is one
-  `--rotate --apply` away, and a credential that does not exist on your laptop
-  cannot leak from it. This is the recommended default.
+  `make provision-ci` away, and a credential that does not exist on your
+  laptop cannot leak from it. This is the recommended default.
 
 Finally, confirm nothing sensitive reached the repository. The gitops tree ships
 `.gitleaks.toml` for the pre-commit hook; run it explicitly if you have it:
@@ -660,7 +639,8 @@ gitleaks detect --source <path-to-repo> --config <path-to-repo>/deploy/gitops/.g
 
 ## 9. Done when
 
-- `--verify-only` passes every assertion against the credential CI will use.
+- `make -C deploy/gitops verify-ci-credential ENV=test-stand` passes every
+  assertion against the credential CI will use.
 - `gh api "repos/$REPO/environments/$ENVIRONMENT/deployment-branch-policies"`
   lists exactly `main`.
 - `gh secret list --env "$ENVIRONMENT"` shows the kubeconfig and the persona

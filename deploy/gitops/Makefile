@@ -33,12 +33,9 @@
 # to oci://ghcr.io/constructorfabric/charts/insight; INSIGHT_VERSION pins one
 # semver from .insight-version.
 
-# bash, not /bin/sh. `deploy-insight` needs `set -o pipefail` to recover helm's
-# exit status from `helm ... | tee`, and /bin/sh on a GitHub runner is dash,
-# which does not have it. Without this the deploy reports SUCCESS on a failed
-# upgrade, which is disqualifying for a target CI is gated on.
-# .SHELLFLAGS is left at its default `-c` on purpose: adding `-e` would give
-# every existing recipe error semantics it was not written for.
+# bash, not /bin/sh: `deploy-insight` needs `set -o pipefail` to recover
+# helm's exit status from `helm ... | tee` — dash (a GitHub runner's
+# /bin/sh) lacks it, and without it a failed upgrade reports SUCCESS.
 SHELL            := /bin/bash
 
 ENV              ?= local
@@ -68,41 +65,18 @@ VALUES           ?= environments/$(ENV)/values.yaml
 TIMEOUT          ?= 30m
 RENDER_DIR       := .deploy
 
-# ── Deploy shape, declared per environment ─────────────────────────────────
+# Deploy shape (namespace bootstrap, sealed secrets, realm ownership, cred
+# mode) is declared per environment (inventory/values). KNOBS (`?=`) are
+# operator-overridable per run; FACTS (`:=`) are read only from the
+# environment's files, so an ambient env var cannot silently change a deploy.
 #
-# What `deploy-insight` does differs between a sandbox that bootstraps its own
-# namespaces and sealed secrets, and a cluster where all of that is provisioned
-# outside this repository. Every one of those differences used to be a reason
-# NOT to use this target — which is how a second, hand-written helm procedure
-# ends up in a CI workflow, drifting from the documented one. They are declared
-# here instead, so there is one deploy path and the environment says what it is.
+# Two yq traps: `//` treats an explicit `false` as absent (so
+# `.deploy.atomic // true` reads `atomic: false` back as TRUE), and a
+# missing KEY (not a missing file) in an existing inventory prints the
+# literal string "null" — CREATE_NS/ATOMIC below have no `//` fallback.
 #
-# Two kinds of variable, assigned two different ways on purpose:
-#
-#   KNOBS use `?=`, so an operator can override them for one run
-#   (`make deploy ATOMIC=true`). Both are safe to get wrong in either direction.
-#
-#   FACTS use `:=` and are read only from the environment's own files. An
-#   environment variable of the same name must NOT be able to win: a stray
-#   `CRED_MODE=helm` in a shell would silently skip compose-app-secrets.sh on a
-#   gitops environment and leave the release running unconfigured Secrets, and
-#   `SEALED_ENABLED=0` would skip the sealed manifests with the same result.
-#   Nothing about the deploy should be settable by accident.
-# READ RAW, and let make decide. Two traps, both of which silently change what
-# a deploy does:
-#
-#   1. yq's `//` is an ALTERNATIVE operator, and it treats `false` as absent
-#      exactly like `null`. So `.deploy.atomic // true` reads an explicit
-#      `atomic: false` back as TRUE — the flag the environment turned off would
-#      have stayed on, and nothing would have said so.
-#   2. ENV=local has NO inventory.yaml and NO values.yaml in the tree: both are
-#      written by the first-run wizard. Every read below therefore returns
-#      EMPTY at parse time for that environment.
-#
-# So each switch below is written as "take the non-default path ONLY on an
-# explicit value", never "take the default path unless told otherwise". An
-# unreadable inventory then falls back to exactly today's behaviour — do the
-# work — rather than to skipping a step nobody asked to skip.
+# These five $(shell yq ...) calls run at PARSE TIME, on every invocation
+# including `make help` — the cost of always-current values.
 CREATE_NS        ?= $(shell yq -r '.bootstrap.namespaces' $(INVENTORY) 2>/dev/null)
 ATOMIC           ?= $(shell yq -r '.deploy.atomic'        $(INVENTORY) 2>/dev/null)
 
@@ -116,11 +90,9 @@ OIDC_SECRET_KEY  := $(shell yq -r '.oidcClientSecret.key // "client-secret"' $(I
 CRED_MODE        := $(shell yq -r '.credentials.deploymentMode' $(VALUES) 2>/dev/null)
 
 HELM_NS_FLAG     := $(if $(filter false,$(CREATE_NS)),,--create-namespace)
-# `--atomic` rolls a failed upgrade back to the previous revision — i.e. it
-# reinstalls the PREVIOUS chart and deletes the pods holding the reason. On a
-# stand whose entire job is to show what the newest chart does, that is both a
-# downgrade and the destruction of the evidence. Environments that want it keep
-# it; `deploy.atomic: false` turns it off.
+# `--atomic` rolls a failed upgrade back, reinstalling the PREVIOUS chart and
+# deleting the pods holding the failure's evidence — a downgrade on a stand
+# whose job is to show the newest chart. `deploy.atomic: false` turns it off.
 HELM_ATOMIC_FLAG := $(if $(filter false,$(ATOMIC)),,--atomic)
 
 # Extra flags appended to helm invocations. Default empty.
@@ -234,6 +206,7 @@ help:
 	@echo "  make sync                         git pull --ff-only origin main"
 	@echo "  make diff ENV=$(ENV)              Show poller commits + render diff"
 	@echo "  make deploy ENV=$(ENV)            L3 only — helm install/upgrade the umbrella (alias: deploy-app)"
+	@echo "  make print-confirm-token ENV=$(ENV)  Print the CONFIRM token 'make deploy' expects — the one source of truth"
 	@echo "  make apply-app-secrets ENV=$(ENV)   L3 prereq — apply sealed manifests + derive *-config Secrets from insight-db-creds"
 	@echo "  make system ENV=$(ENV)            L2 — install all services with inventory.system.<svc>: true"
 	@echo "  make system-mariadb ENV=$(ENV)            }"
@@ -247,6 +220,9 @@ help:
 	@echo "  make system-alloy ENV=$(ENV)              } L2 — observability (LGTM, bundled mode)."
 	@echo "  make system-grafana ENV=$(ENV)            }"
 	@echo "  make system-status ENV=$(ENV)             Show what's installed in insight-infra"
+	@echo "  make provision-ci ENV=$(ENV)      Provision the namespace-scoped CI deploy credential"
+	@echo "  make verify-ci-credential ENV=$(ENV)  Assert the CI credential's RBAC scope"
+	@echo "  make revoke-ci ENV=$(ENV)         Delete the CI deploy credential (SA + RBAC + token)"
 	@echo "  make rollback ENV=$(ENV)          Roll back the umbrella to previous revision"
 	@echo "  make status ENV=$(ENV)            kubectl rollout status + helm status"
 	@echo "  make tag                          Tag current commit as deploy-…"
@@ -281,23 +257,16 @@ sync:
 
 .PHONY: sync-clean
 sync-clean:
-	@# Scoped to THIS directory, not the whole repository. The guarantee worth
-	@# having is "what is about to be deployed is what is committed", and what
-	@# shapes a deploy lives here: values, inventory, the Makefile, the scripts.
-	@#
-	@# Repo-wide, it coupled every deploy to the tidiness of the entire checkout
-	@# — an untracked scratch file anywhere, from any unrelated task, refused the
-	@# deploy. That is not a theoretical annoyance: it fired between the wipe and
-	@# the install of a stand rebuild, which left the stand DOWN with its
-	@# databases already dropped. A guard that turns a recoverable state into an
-	@# outage is too wide.
+	@# Scoped to THIS directory, not the whole repository: the guarantee is
+	@# "what is about to be deployed is committed", and only values/inventory/
+	@# Makefile/scripts shape a deploy. A repo-wide check refuses on any
+	@# untracked scratch file anywhere, mid-rebuild, which is a wider outage.
 	@if [ -n "$$(git status --porcelain -- .)" ]; then \
 		echo "$(C_RED)ERROR$(C_RST): deploy/gitops has uncommitted changes"; \
 		git status --short -- .; exit 1; fi
-	@# The fetch is INSIDE the upstream test. A CI checkout is a detached HEAD
-	@# with no upstream, so the comparison below self-skips — and fetching first
-	@# meant every deploy made a network call to github.com whose result was then
-	@# thrown away, which is one more way for a deploy to go red for nothing.
+	@# Fetch is INSIDE the upstream test: a CI checkout is a detached HEAD
+	@# with no upstream, so this self-skips there instead of making a network
+	@# call whose result is thrown away.
 	@if ! git rev-parse --abbrev-ref @{u} >/dev/null 2>&1; then \
 		echo "$(C_YEL)WARN$(C_RST): no upstream tracked; skipping HEAD-vs-remote check"; \
 	else \
@@ -330,35 +299,43 @@ kube-ctx-required: inventory-present
 
 .PHONY: vpn-up
 vpn-up: kube-ctx-required
-	@# `auth can-i --list`, not `cluster-info`. cluster-info LISTS SERVICES IN
-	@# kube-system, which a namespace-scoped credential is refused — so this
-	@# check failed with "is the VPN up?" against a perfectly reachable cluster
-	@# whenever the deploy ran as anything less than a cluster admin.
-	@#
-	@# `auth can-i --list` posts a SelfSubjectRulesReview, which stock RBAC
-	@# allows every AUTHENTICATED principal and denies an anonymous one, so it
-	@# still fails closed on a kubeconfig whose credential has expired. It needs
-	@# no object to exist, so it also works before bootstrap on an empty cluster.
+	@# `auth can-i --list`, not `cluster-info`: cluster-info lists services in
+	@# kube-system, which a namespace-scoped credential is refused, failing
+	@# this check on a perfectly reachable cluster. `can-i --list` needs no
+	@# object to exist and still fails closed on an expired credential.
 	@kubectl --context $(KUBE_CTX) --request-timeout=5s auth can-i --list -n $(NS_APP) >/dev/null 2>&1 \
 		|| { echo "$(C_RED)ERROR$(C_RST): cannot reach cluster '$(KUBE_CTX)' as an authenticated principal;"; \
-		     echo "       is the VPN up, and is the kubeconfig's credential still valid?"; exit 1; }
+		     echo "       is the VPN up, and is the kubeconfig's credential still valid? On a namespace-scoped"; \
+		     echo "       CI credential, re-issue it with scripts/provision-ci-deployer.sh."; exit 1; }
 
+# Does not print the ACTUAL current context on a mismatch: an arbitrary
+# context string is not credential-shaped, so the redactor would not catch
+# it in a public CI log. $(KUBE_CTX), the EXPECTED value, is enough to act on.
 .PHONY: kube-ctx
 kube-ctx: kube-ctx-required
 	@CUR=$$(kubectl config current-context 2>/dev/null || echo none); \
 	if [ "$$CUR" != "$(KUBE_CTX)" ]; then \
-		echo "$(C_RED)ERROR$(C_RST): current kube-context is '$$CUR', expected '$(KUBE_CTX)'"; \
-		echo "       run: kubectl config use-context $(KUBE_CTX)"; \
+		echo "$(C_RED)ERROR$(C_RST): the active kube-context is not '$(KUBE_CTX)' ($(INVENTORY)'s kubeContext)."; \
+		echo "       Either the credential in use points at the wrong cluster, or the inventory was"; \
+		echo "       changed without rotating it — run: kubectl config use-context $(KUBE_CTX)"; \
 		exit 1; fi
+
+# Single source of truth for the deploy CONFIRM token contract. Consumed by
+# `confirm` below and by anything that needs to pass a deploy through
+# (`make -s print-confirm-token`) rather than re-deriving the format.
+CONFIRM_TOKEN := yes-deploy-$(ENV)
 
 .PHONY: confirm
 confirm: inventory-present
 	@if [ "$$(yq -r '.protected // false' $(INVENTORY))" = "true" ]; then \
-		EXPECTED="yes-deploy-$(ENV)"; \
-		if [ "$(CONFIRM)" != "$$EXPECTED" ]; then \
-			echo "$(C_RED)ERROR$(C_RST): deploy to '$(ENV)' requires CONFIRM=$$EXPECTED (per inventory.protected)"; \
+		if [ "$(CONFIRM)" != "$(CONFIRM_TOKEN)" ]; then \
+			echo "$(C_RED)ERROR$(C_RST): deploy to '$(ENV)' requires CONFIRM=$(CONFIRM_TOKEN) (per inventory.protected)"; \
 			exit 1; fi; \
 	fi
+
+.PHONY: print-confirm-token
+print-confirm-token:
+	@echo "$(CONFIRM_TOKEN)"
 
 .PHONY: chart-present
 chart-present:
@@ -366,7 +343,8 @@ chart-present:
 		|| { echo "$(C_RED)ERROR$(C_RST): INSIGHT_VERSION is empty; populate .insight-version"; exit 1; }
 	@helm show chart $(CHART) --version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) >/dev/null 2>&1 \
 		|| { echo "$(C_RED)ERROR$(C_RST): chart $(CHART):$(INSIGHT_VERSION) not found in registry"; \
-		     echo "       check .insight-version and that the chart was published by CI"; \
+		     echo "       publish-chart is what puts it there; if that job failed after pushing but"; \
+		     echo "       before committing the version bump, re-run it rather than deploying by hand."; \
 		     exit 1; }
 
 .PHONY: values-present
@@ -469,14 +447,10 @@ keycloak-realm: kube-ctx values-present
 # umbrella's keycloak-config-cli hook Job applies (ADR-0003). Chained into
 # deploy-insight; no-op unless keycloakConfig.enabled=true.
 keycloak-broker-realms: kube-ctx values-present
-	@# `external` means the realm ConfigMap is written by a bring-up outside this
-	@# repository and this target must not touch it. Two writers on one object is
-	@# a stand where whoever ran last decides who can log in, and neither writer
-	@# reports the conflict.
-	@#
-	@# Driven off the inventory and NOT off keycloakConfig.enabled, which is true
-	@# in every environment: the question here is who OWNS the realm content, not
-	@# whether the chart applies it.
+	@# `external` means the realm ConfigMap is written by a bring-up outside
+	@# this repository — two writers on one object is a stand where whoever
+	@# ran last decides who can log in. Driven off the inventory, not off
+	@# keycloakConfig.enabled: the question is who OWNS the content.
 	@if [ "$(KEYCLOAK_REALMS)" = "external" ]; then \
 	  echo "$(C_YEL)skip$(C_RST) keycloak-broker-realms (inventory.keycloak.realms=external — $(RELEASE)-keycloak-config-realms is owned outside this repo)"; exit 0; fi; \
 	if [ "$$(yq -r '.keycloakConfig.enabled // false' $(VALUES))" != "true" ]; then \
@@ -497,22 +471,10 @@ deploy-app: deploy-insight
 # Derived Secrets are NOT sealed/committed — they're regenerated from
 # the already-sealed insight-db-creds on every deploy. Idempotent.
 #
-# TWO INDEPENDENT SKIPS, because they answer two different questions and an
-# environment can need either without the other:
-#
-#   SEALED_ENABLED=0  — this environment seals nothing. Every Secret the release
-#                       consumes was created outside this repository (by a
-#                       bring-up, an operator, a password manager). There is no
-#                       sealed-secrets controller to wait for, and demanding a
-#                       manifest that by definition does not exist is what made
-#                       this target unusable for such a cluster.
-#   CRED_MODE != gitops — the CHART renders the *-config Secrets itself
-#                       (credentials.deploymentMode: helm). Running
-#                       compose-app-secrets.sh anyway would overwrite
-#                       chart-owned objects from a different source, and on an
-#                       environment whose OIDC Secret uses a different key name
-#                       it composes a BLANK client secret — every pod Ready, the
-#                       release `deployed`, and every login broken.
+# Two independent skips: SEALED_ENABLED=0 (every Secret this release
+# consumes is created outside this repo — no sealed-secrets controller to
+# wait for) and CRED_MODE != gitops (the chart renders *-config Secrets
+# itself; composing over it can write a BLANK client secret instead).
 .PHONY: apply-app-secrets
 apply-app-secrets: vpn-up kube-ctx
 	@if [ "$(SEALED_ENABLED)" = "0" ]; then \
@@ -570,16 +532,10 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 		-n $(NS_APP) -f $(VALUES) \
 		> $(RENDER_DIR)/last-render-$(ENV).yaml
 	@echo "$(C_GRN)rendered$(C_RST) $(CHART):$(INSIGHT_VERSION) → $(RENDER_DIR)/last-render-$(ENV).yaml"
-	@# A release whose ONLY revision is a failed install cannot be upgraded:
-	@# `helm upgrade --install` answers `has no deployed releases` and keeps
-	@# answering it, so the stand stays red on every merge until a human
-	@# uninstalls by hand. That state is reachable precisely when --atomic is
-	@# off, which is the setting a disposable stand wants — so the two have to
-	@# be handled together rather than discovered together.
-	@#
-	@# Refused rather than auto-recovered: uninstalling is destructive and the
-	@# operator is one command away. `pending-*` is reported for the same reason
-	@# — it means a previous helm was KILLED mid-flight and is a different fix.
+	@# A release whose only revision is a failed install cannot be upgraded
+	@# (`has no deployed releases`), and a `pending-*` status means a previous
+	@# helm was killed mid-flight — refused rather than auto-recovered. See
+	@# INFRA.md, "pending-upgrade wedge".
 	@set -o pipefail; \
 	STATUS=$$(helm list -n $(NS_APP) --failed --pending --uninstalling --filter '^$(RELEASE)$$' -o json $(HELM_EXTRA_FLAGS) 2>/dev/null | jq -r '.[0].status // ""'); \
 	case "$$STATUS" in \
@@ -599,23 +555,15 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 	    echo "         helm uninstall $(RELEASE) -n $(NS_APP)  # if the stand is disposable"; \
 	    exit 1 ;; \
 	esac
-	@# `set -o pipefail` and an explicit rc: helm is piped into `tee`, so without
-	@# it the recipe took TEE's exit status and `make deploy` reported success on
-	@# a failed upgrade. A target CI gates on cannot do that.
+	@# `set -o pipefail` + explicit rc: helm is piped into `tee`, so without it
+	@# the recipe took TEE's exit status. `--wait` is explicit, not inherited
+	@# from `--atomic` — an omitted `--wait` on helm 4 defaults to hooks only,
+	@# silently skipping the rollout wait.
 	@#
-	@# --wait is passed explicitly rather than inherited from --atomic. On helm 3
-	@# --atomic was the only thing supplying it, so turning atomic off silently
-	@# stopped the deploy waiting for rollout and let the post-deploy steps race
-	@# a half-started stand. On helm 4 an omitted --wait defaults to hooks only,
-	@# which is the same trap wearing a different hat.
-	@#
-	@# The OIDC client secret is read from the cluster and passed with
-	@# --set-file, not --set-string: --set-string splits its value on commas and
-	@# interprets backslashes, so a generated secret containing either is
-	@# silently truncated into a client secret that is not the one the realm
-	@# agrees with. The file is mktemp'd and trapped, and it is deliberately NOT
-	@# passed to `helm template` above, so the rendered manifest on disk never
-	@# contains it.
+	@# --set-file, not --set-string: --set-string splits on commas and
+	@# interprets backslashes, silently truncating a generated secret that
+	@# contains either. mktemp'd and trapped; never passed to `helm template`
+	@# above, so the rendered manifest on disk never contains it.
 	@set -o pipefail; \
 	SET_ARGS=(); \
 	if [ -n "$(OIDC_SECRET)" ]; then \
@@ -645,11 +593,9 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 	exit $$rc
 	@$(MAKE) --no-print-directory verify-release ENV=$(ENV) INSIGHT_VERSION=$(INSIGHT_VERSION)
 
-# What a release REPORTS is not what it IS: a run can be `deployed` and still be
-# the wrong chart — a resumed job, a hand-deploy that raced this one, an input
-# that did not say what it meant. Separate from the upgrade's exit status
-# because they answer different questions, and a target rather than a step in
-# the workflow so a human running `make deploy` gets the same check CI does.
+# What a release REPORTS is not what it IS: a run can be `deployed` and still
+# be the wrong chart. A target, not a workflow step, so an operator running
+# `make deploy` gets the same check CI does.
 .PHONY: verify-release
 verify-release: vpn-up kube-ctx
 	@# Status flags enumerated instead of `--all`: `--all` is a helm 3 flag that
@@ -905,6 +851,114 @@ system-status: vpn-up kube-ctx
 	@echo
 	@echo "=== Pods in $(NS_INFRA) ==="
 	@kubectl -n $(NS_INFRA) get pods -o wide 2>/dev/null || true
+
+# The namespace-scoped ServiceAccount credential CI uses to deploy. RBAC
+# objects are committed, static YAML at environments/$(ENV)/ci-deployer-rbac.yaml.
+# Procedure: docs/components/deployment/specs/sop/credentials-runbook.md.
+CI_DEPLOYER_MANIFEST     := environments/$(ENV)/ci-deployer-rbac.yaml
+CI_DEPLOYER_SA           := ci-deployer
+CI_DEPLOYER_TOKEN_SECRET := ci-deployer-token
+CI_DEPLOYER_TOKEN_WAIT_S ?= 60
+# Context-named after $(KUBE_CTX), not a fixed string: `KUBECONFIG=<out> make
+# deploy ENV=$(ENV)` then needs no KUBE_CTX override.
+CI_DEPLOYER_OUT          ?= $(HOME)/.kube/insight-$(ENV)-ci-deployer.kubeconfig
+CI_DEPLOYER_CA_FILE      ?=
+# The chart renders its airbyte-auth-reader Role/RoleBinding into this
+# namespace (airbyte.namespace in $(VALUES)), not the release namespace.
+AIRBYTE_NAMESPACE        := $(shell yq -r '.airbyte.namespace // ""' $(VALUES) 2>/dev/null)
+
+.PHONY: provision-ci
+provision-ci: vpn-up kube-ctx
+	@test -f $(CI_DEPLOYER_MANIFEST) \
+		|| { echo "$(C_RED)ERROR$(C_RST): no manifest at $(CI_DEPLOYER_MANIFEST)"; exit 1; }
+	kubectl --context $(KUBE_CTX) apply -f $(CI_DEPLOYER_MANIFEST)
+	@set -o pipefail; \
+	echo "waiting for the token controller to populate $(NS_APP)/$(CI_DEPLOYER_TOKEN_SECRET)…"; \
+	i=0; FILLED=""; \
+	while [ "$$i" -lt $(CI_DEPLOYER_TOKEN_WAIT_S) ]; do \
+		FILLED=$$(kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret $(CI_DEPLOYER_TOKEN_SECRET) -o go-template='{{if .data.token}}yes{{end}}' 2>/dev/null); \
+		[ -n "$$FILLED" ] && break; \
+		i=$$((i + 1)); sleep 1; \
+	done; \
+	[ -n "$$FILLED" ] || { echo "$(C_RED)ERROR$(C_RST): token controller never populated $(CI_DEPLOYER_TOKEN_SECRET) within $(CI_DEPLOYER_TOKEN_WAIT_S)s"; exit 1; }; \
+	OUT_DIR=$$(dirname "$(CI_DEPLOYER_OUT)"); \
+	[ -d "$$OUT_DIR" ] || { echo "$(C_RED)ERROR$(C_RST): parent directory of CI_DEPLOYER_OUT does not exist: $$OUT_DIR"; exit 1; }; \
+	OUT_ABS="$$OUT_DIR/$$(basename $(CI_DEPLOYER_OUT))"; \
+	if git -C "$$OUT_DIR" rev-parse --show-toplevel >/dev/null 2>&1 && ! git -C "$$OUT_DIR" check-ignore -q "$$OUT_ABS" 2>/dev/null; then \
+		echo "$(C_RED)ERROR$(C_RST): refusing to write a bearer token to '$$OUT_ABS' — inside a git work tree and not gitignored"; exit 1; \
+	fi; \
+	TOKEN=$$(kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret $(CI_DEPLOYER_TOKEN_SECRET) -o go-template='{{if .data.token}}{{.data.token | base64decode}}{{end}}' 2>/dev/null); \
+	[ -n "$$TOKEN" ] || { echo "$(C_RED)ERROR$(C_RST): token Secret $(CI_DEPLOYER_TOKEN_SECRET) carries no token"; exit 1; }; \
+	CLUSTER=$$(kubectl config view -o jsonpath="{.contexts[?(@.name==\"$(KUBE_CTX)\")].context.cluster}"); \
+	[ -n "$$CLUSTER" ] || { echo "$(C_RED)ERROR$(C_RST): context $(KUBE_CTX) not found in the active kubeconfig"; exit 1; }; \
+	CA_B64=$$(kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret $(CI_DEPLOYER_TOKEN_SECRET) -o jsonpath='{.data.ca\.crt}' 2>/dev/null); \
+	[ -n "$$CA_B64" ] || [ -z "$(CI_DEPLOYER_CA_FILE)" ] || CA_B64=$$(base64 < "$(CI_DEPLOYER_CA_FILE)" | tr -d '\n'); \
+	[ -n "$$CA_B64" ] || CA_B64=$$(kubectl config view --raw -o jsonpath="{.clusters[?(@.name==\"$$CLUSTER\")].cluster.certificate-authority-data}"); \
+	[ -n "$$CA_B64" ] || { echo "$(C_RED)ERROR$(C_RST): could not resolve a cluster CA — set CI_DEPLOYER_CA_FILE=<pem>"; exit 1; }; \
+	SERVER=$$(kubectl config view -o jsonpath="{.clusters[?(@.name==\"$$CLUSTER\")].cluster.server}"); \
+	[ -n "$$SERVER" ] || { echo "$(C_RED)ERROR$(C_RST): could not resolve the API server for context $(KUBE_CTX)"; exit 1; }; \
+	OLD_UMASK=$$(umask); umask 077; \
+	printf '%s\n' \
+		"apiVersion: v1" "kind: Config" "current-context: $(KUBE_CTX)" \
+		"clusters:" "  - name: $(KUBE_CTX)" "    cluster:" \
+		"      server: $$SERVER" "      certificate-authority-data: $$CA_B64" \
+		"contexts:" "  - name: $(KUBE_CTX)" "    context:" \
+		"      cluster: $(KUBE_CTX)" "      namespace: $(NS_APP)" "      user: $(CI_DEPLOYER_SA)" \
+		"users:" "  - name: $(CI_DEPLOYER_SA)" "    user:" "      token: '$$TOKEN'" \
+		> "$$OUT_ABS"; \
+	umask "$$OLD_UMASK"; chmod 600 "$$OUT_ABS"; \
+	unset TOKEN; \
+	echo "$(C_GRN)wrote$(C_RST) $$OUT_ABS (mode 600, contents not printed)"
+	$(MAKE) --no-print-directory verify-ci-credential ENV=$(ENV)
+
+# Assertions, not a report: every mismatch fails the target. The `no` rows
+# pass --all-namespaces so a cluster-scoped request is actually exercised
+# (a namespaced request like `get namespace insight` can pass on a
+# RoleBinding alone and would prove nothing about containment).
+.PHONY: verify-ci-credential
+verify-ci-credential: vpn-up kube-ctx
+	@test -r "$(CI_DEPLOYER_OUT)" \
+		|| { echo "$(C_RED)ERROR$(C_RST): no kubeconfig at $(CI_DEPLOYER_OUT) — run 'make provision-ci ENV=$(ENV)' first"; exit 1; }
+	@test -n "$(AIRBYTE_NAMESPACE)" \
+		|| { echo "$(C_RED)ERROR$(C_RST): airbyte.namespace is empty in $(VALUES) — nothing to verify the airbyte supplement against"; exit 1; }
+	@FAILURES=0; \
+	check() { \
+		WANT=$$1; DESC=$$2; shift 2; \
+		GOT=$$(kubectl --kubeconfig "$(CI_DEPLOYER_OUT)" auth can-i "$$@" 2>/dev/null | head -1 | awk '{print $$1}'); \
+		[ -n "$$GOT" ] || GOT="(no answer)"; \
+		if [ "$$GOT" = "$$WANT" ]; then echo "$(C_GRN)OK$(C_RST)   $$DESC"; \
+		else echo "$(C_RED)FAIL$(C_RST) want $$WANT got $$GOT — $$DESC"; FAILURES=$$((FAILURES + 1)); fi; \
+	}; \
+	check yes "create jobs in $(NS_APP) (seed stage renders a Job)"          create jobs -n $(NS_APP); \
+	check yes "get pods/log in $(NS_APP) (seed + diagnostics)"               get pods/log -n $(NS_APP); \
+	check yes "create secrets in $(NS_APP) (helm release storage)"          create secrets -n $(NS_APP); \
+	check yes "update deployments in $(NS_APP) (helm upgrade, rollout)"     update deployments.apps -n $(NS_APP); \
+	check yes "create Roles in $(NS_APP) (chart renders its own RBAC)"      create roles.rbac.authorization.k8s.io -n $(NS_APP); \
+	check yes "create WorkflowTemplates in $(NS_APP)"                        create workflowtemplates.argoproj.io -n $(NS_APP); \
+	check yes "update HTTPRoutes in $(NS_APP) (chart renders the edge routes)" update httproutes.gateway.networking.k8s.io -n $(NS_APP); \
+	check yes "get Roles in $(AIRBYTE_NAMESPACE) (helm reads airbyte-auth-reader every upgrade)" get roles.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
+	check yes "update Roles in $(AIRBYTE_NAMESPACE) (its chart/version labels change every bump)" update roles.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
+	check yes "create Roles in $(AIRBYTE_NAMESPACE)"                         create roles.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
+	check yes "create RoleBindings in $(AIRBYTE_NAMESPACE) (the chart's airbyte-auth-reader)" create rolebindings.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
+	check no  "read pods in $(AIRBYTE_NAMESPACE) (the exception is RBAC-only)" get pods -n $(AIRBYTE_NAMESPACE); \
+	check no  "anything, anywhere (the blanket check)"                       '*' '*' --all-namespaces; \
+	check no  "list namespaces at cluster scope"                            list namespaces --all-namespaces; \
+	check no  "create namespaces (hence the --create-namespace limitation)" create namespaces --all-namespaces; \
+	check no  "read Secrets across all namespaces"                          get secrets --all-namespaces; \
+	check no  "list nodes"                                                  list nodes --all-namespaces; \
+	check no  "create ClusterRoleBindings"                                  create clusterrolebindings.rbac.authorization.k8s.io --all-namespaces; \
+	check no  "read pods in kube-system"                                    get pods -n kube-system; \
+	[ "$$FAILURES" -eq 0 ] || { echo "$(C_RED)ERROR$(C_RST): $$FAILURES scope assertion(s) failed — do not put this kubeconfig in a GitHub environment"; exit 1; }; \
+	echo "$(C_GRN)all scope assertions hold$(C_RST)"
+
+# Deletes the ServiceAccount, both RoleBindings, the Role and the token
+# Secret in one call — the credential stops authenticating immediately
+# (Kubernetes re-validates the SA's UID on every request).
+.PHONY: revoke-ci
+revoke-ci: vpn-up kube-ctx
+	kubectl --context $(KUBE_CTX) delete -f $(CI_DEPLOYER_MANIFEST) --ignore-not-found
+	@echo "$(C_GRN)OK$(C_RST) ci-deployer ServiceAccount, RBAC and token Secret removed from $(NS_APP)"
+	@echo "$(C_YEL)NOTE$(C_RST) a GitHub environment secret may still hold the dead kubeconfig; replace or delete it"
 
 .PHONY: rollback
 rollback: vpn-up kube-ctx

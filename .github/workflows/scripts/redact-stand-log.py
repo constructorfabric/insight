@@ -91,24 +91,10 @@ _BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=\-]{8,}")
 _SESSION_COOKIE = re.compile(r"(?i)(__Host-sid|__Secure-sid|sid)=[^\s;,\"']{8,}")
 _PRIVATE_KEY_HEADER = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 
-#: Keys whose value is material wherever they appear — kubeconfig, Secret dumps,
-#: rendered values, connection errors. Matched case-insensitively against the
-#: token immediately left of a `:` or `=`.
-#:
-#: The leading boundary is `(?<![A-Za-z0-9])`, NOT `\b`, and an optional prefix
-#: is allowed to precede the keyword. This is the difference between redacting
-#: and not redacting, because `\b` does not match between `_` and a letter —
-#: underscore is a word character. With `\b` the pattern matched a bare
-#: `password:` but sailed straight past every underscore-joined name, which is
-#: the dominant convention in this stack:
-#:
-#:     MARIADB_PASSWORD=…                                     leaked
-#:     kubectl_token=…                                        leaked
-#:     APP__gears__authenticator__config__idp__client_secret: leaked
-#:
-#: On a public repository those lines are published forever, so the boundary is
-#: load-bearing rather than stylistic. The prefix group is bounded to characters
-#: that appear in env-var and YAML key names so it cannot run away across a line.
+#: Matched case-insensitively against the token left of a `:`/`=`. Boundary
+#: is `(?<![A-Za-z0-9])`, not `\b`: `\b` does not match between `_` and a
+#: letter, so it silently missed every underscore-joined secret name in this
+#: stack (`MARIADB_PASSWORD=`, `APP__…__client_secret:`) — load-bearing here.
 _SECRET_KEY = re.compile(
     r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_.\-]*(?:"
     r"password|passwd|pwd|secret|secret[_\-]?key|client[_\-]?secret|"
@@ -124,8 +110,9 @@ _DIGEST = re.compile(r"\bsha(?:256|512):[0-9a-fA-F]{32,128}\b")
 
 #: The catch-all. 40 characters is above every Kubernetes object name and image
 #: tag in this stack (all of which carry `-`, `.` or `/`) and below every key,
-#: token and certificate body.
-_LONG_BLOB = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{40,}={0,2}(?![A-Za-z0-9+/=])")
+#: token and certificate body. Alphabet covers both base64 and base64url
+#: (`-`/`_`) — Keycloak client secrets and PKCE verifiers use the latter.
+_LONG_BLOB = re.compile(r"(?<![A-Za-z0-9+/_=-])[A-Za-z0-9+/_-]{40,}={0,2}(?![A-Za-z0-9+/_=-])")
 
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 
@@ -177,10 +164,16 @@ def _clean(line: str, *, max_line: int) -> str:
     if len(out) > max_line:
         out = out[:max_line] + f" …[truncated at {max_line} chars by CI]"
 
-    # The result, not the input, is what gets published — so the check is on the
-    # result. Anything credential-shaped that survived every rule above means a
-    # rule has a hole, and the safe reading of a hole is "do not print this".
-    if _EMAIL.search(out) or _JWT.search(out) or _PRIVATE_KEY_HEADER.search(out):
+    # The result, not the input, is checked: anything credential-shaped that
+    # survived every rule above means a rule has a hole. Digests are
+    # stripped first so a legitimate, exempted one cannot itself trip the
+    # blob re-check.
+    if (
+        _EMAIL.search(out)
+        or _JWT.search(out)
+        or _PRIVATE_KEY_HEADER.search(out)
+        or _LONG_BLOB.search(_DIGEST.sub("", out))
+    ):
         return LINE_MARKER
     return out
 

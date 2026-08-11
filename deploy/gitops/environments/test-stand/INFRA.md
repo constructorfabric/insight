@@ -618,27 +618,30 @@ setting is `auto`**, which drops the `loadBalancerIP` line entirely and lets the
 cloud controller allocate; the deploy script then prints the allocated address
 to pin.
 
-### 25. After every upgrade, Analytics, Authenticator and Identity Resolution must be restarted
+### 25. Config-Secret changes do not roll pods — accepted gap, manual restart
 
-**The setting.** Not a value — a step. See
-[`README.md` step 4](README.md#deploying-by-hand).
+**The setting.** Analytics, Authenticator and Identity Resolution read the
+umbrella-rendered leaf Secret (`insight-<svc>-config`) via
+`envFrom.secretRef`. Their `checksum/config` annotations hash only each
+subchart's own gears ConfigMap, not that Secret.
 
-**What breaks without it.** The chart injects `insight-<svc>-config` with
-`envFrom.secretRef`, and environment variables are read once at container start.
-Each subchart's `checksum/config` annotation covers its **gears ConfigMap**, not
-that Secret.
+**What breaks.** Environment variables are read once at container start,
+and a Secret-content change leaves the pod spec byte-identical, so
+`helm upgrade --wait` rolls nothing. Release `deployed`, every pod Ready,
+running pods keep serving the previous configuration — e.g. a service
+silently dialling a datastore coordinate that no longer applies.
 
-**How it presents.** `helm upgrade` rewrites datastore hosts and passwords, the
-pod spec is identical so nothing restarts, and the running pods keep serving the
-old configuration. Moving Redis from one endpoint shape to another is the
-canonical case: the release reported `deployed`, every pod stayed Ready, and the
-authenticator went on dialling a Service that no longer existed. Note a
-disagreement worth resolving: the deployment repository rolls two Deployments
-(authenticator, analytics) while this repository's README rolls three —
-`identity-resolution` also consumes its config Secret with `envFrom` and is
-subject to the identical staleness, so three is the correct list. `gateway` and
-`frontend` are excluded deliberately: neither reads that Secret, and restarting
-them drops live traffic for nothing.
+**Which guard holds it.** None, deliberately: this stand's config values
+are pinned in this environment and rotations are rare manual events, so
+the gap is accepted rather than guarded (decision 2026-08-11; extending
+`checksum/config` to hash the Secret was tried and backed out to keep the
+service charts out of the stand PR). After any deliberate config-values
+change, roll the readers by hand:
+`kubectl -n insight rollout restart deploy/insight-analytics deploy/insight-authenticator deploy/insight-identity-resolution`.
+Candidate permanent fix: hash the Secret's data into each
+`checksum/config` from the same values it is templated from (not
+`lookup`). `gateway` and `frontend` are unaffected: neither reads that
+Secret.
 
 ### 26. `helm --wait` does not wait on HTTPRoute status
 
@@ -698,6 +701,120 @@ fails at admission with a message naming neither the stand nor the file. The
 repository asserts in both directions — it fails a deploy on any leftover
 placeholder, and it fails if a literal value creeps back **into** a template,
 which would silently re-pin every stand to one host or address.
+
+## Incidents that shaped this environment
+
+Six failure modes with a guard each, kept here once rather than as narrative
+comments scattered across the workflow, the scripts and the seed tooling.
+Entries describe the technical condition and the guard that now holds it, not
+facts about any real deployment.
+
+### 1. Fork-downgrade wedge
+
+**What broke.** Resolving the chart version to install from a file in the git
+checkout (`deploy/gitops/.insight-version`) rather than from the OCI
+registry. That file is only committed at the END of a successful publish, so
+a checkout of a stale branch — a fork, or a topic branch behind main — reads
+whatever version was current when it last synced, which can be several minor
+releases behind what is actually deployed.
+
+**How it presents.** Installing the stale version is a downgrade: helm
+rewrites live Deployments into the older chart's shape mid-upgrade, and if
+that also fails, the release is left refusing every subsequent upgrade until
+an operator rebuilds the stand. Nothing before the install step disputes the
+downgrade, because a post-deploy check that only compares against the
+version REQUESTED calls a successful downgrade a pass.
+
+**Which guard holds it.** The chart-version resolver reads the OCI
+registry's own latest tag first (and `.insight-version` on the default
+branch only as a fallback, via the GitHub API — never a local checkout);
+`deploy-test-stand.yml`'s "refuse a version downgrade" step and
+`recreate-test-stand.sh` both compare the currently-deployed chart version
+against the requested one and refuse a downgrade unless explicitly
+overridden.
+
+### 2. `TEST_STAND_SEED_EMAIL` drift
+
+**What broke.** The dev-lead persona's address was declared in two places
+with no check that they agreed: the Keycloak realm applied at deploy time,
+and a value handed to the seeder from a separate credential.
+
+**How it presents.** The two values disagree silently. The release stays
+`deployed`, every pod stays Ready, and only the dev-lead's login fails — a
+login authenticates against the realm and then resolves to nobody in
+`identity.persons`, while every other seeded persona signs in normally.
+
+**Which guard holds it.** `seed-stand.sh` reads the dev-lead address out of
+the realm ConfigMap the deploy itself applied (keyed on the roster's own
+UUID, not by name), so there is one writer. The credential survives only as
+an explicit override, and using it prints a warning naming the override
+rather than silently taking precedence.
+
+### 3. 730-day seed window
+
+**What broke.** The seed stage requested a history window wider than the
+analytics API's maximum queryable period, so a request spanning the full
+seeded window was refused even though the underlying data was fine.
+
+**How it presents.** Every window-derived request against the seeded data
+fails with the same validation error (period must not exceed the API's
+cap), which reads like a data problem across many otherwise-unrelated test
+failures rather than the single root cause it is.
+
+**Which guard holds it.** The seed window is capped well inside the API's
+limit, and the query-window helper used by both the api suite and the
+smoke checks caps any period it derives from the manifest at the same
+limit — one definition of the cap, not two that can disagree.
+
+### 4. Pending-upgrade wedge
+
+**What broke.** An interrupted `helm upgrade` — a step timeout, a killed
+runner, a network drop — can leave the release in `pending-upgrade` (or
+`pending-install`/`pending-rollback`), a state helm itself refuses to
+upgrade over.
+
+**How it presents.** Every subsequent deploy fails immediately with a
+generic "another operation is in progress" error, with nothing pointing at
+which run left it that way or what to do about it.
+
+**Which guard holds it.** `make deploy` checks the release's status before
+attempting an upgrade and refuses with an explicit fix (`helm rollback` or
+`helm uninstall`) rather than retrying blindly. Workflow step timeouts are
+kept below helm's own `--timeout`, so a step timeout is never what fires
+first and kills helm mid-write.
+
+### 5. Diagnostics-allowlist retreat
+
+**What broke.** An earlier version of the deploy workflow published cluster
+diagnostics — helm history, a pod table, warning events, container logs —
+into the public job log on a failure, gated by a curated allowlist of what
+was considered safe to show.
+
+**How it presents.** An allowlist like this only grows: removing an entry
+looks like a regression to whoever next notices something missing, and on a
+public repository every line added to it is a standing invitation to widen
+it further.
+
+**Which guard holds it.** A failed run now prints only the stage that died
+and the black-box edge probe's status codes. Full cluster output is read
+operator-side, by someone holding a credential, never published into a log
+the whole internet can read.
+
+### 6. `max_user_connections` crash-loop
+
+**What broke.** The MariaDB user backing every service's connection pool —
+including the bundled Keycloak's own pool — defaulted to the operator's
+stock per-user connection limit, too low for the combined pool count across
+services.
+
+**How it presents.** Identity Resolution and the Analytics `migrate`
+initContainer crash-loop at startup with a `max_user_connections` error,
+while every other service stays Ready; the deploy's own failure mode is an
+unrelated-looking rate-limiter timeout rather than this message. Full
+detail: "The load-bearing settings" §1 above.
+
+**Which guard holds it.** `maxUserConnections: 100` on the MariaDB
+`User/insight` object.
 
 ## Bootstrap steps that are not a `helm install`
 

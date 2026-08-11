@@ -1,61 +1,9 @@
 #!/usr/bin/env bash
 # Rebuild a disposable stand from the state it is in to the state CI expects.
-#
-# WHY THIS EXISTS, AND WHY `helm uninstall` IS NOT IT
-# ---------------------------------------------------
-# The recovery model for this stand is wipe-and-recreate rather than rollback:
-# rolling back reinstalls the PREVIOUS chart, which is a downgrade onto a stand
-# whose entire job is to show what the newest one does, and it leaves live
-# objects in the old chart's shape that the next upgrade cannot patch.
-#
-# But a helm uninstall is NOT a wipe, and believing it is cost a full afternoon
-# once. The `insight` namespace holds six Deployments and nothing else — no
-# StatefulSets, no PersistentVolumeClaims. MariaDB, ClickHouse, Redis and
-# Redpanda are operator-managed in their OWN namespaces and are untouched by
-# anything helm does to this release. So a "clean redeploy" leaves every row of
-# application data exactly where it was.
-#
-# That is not academic. `identity.persons` is an APPEND-ONLY observation log. A
-# single stale email observation, written by a seed run five hours earlier and
-# carried across a full uninstall/reinstall, made five API tests fail in a way
-# that read convincingly as a product defect — profiles-by-email 404, a session
-# resolving to the wrong person, a visibility grant that would not apply. It was
-# diagnosed as a product bug twice before anybody looked at the row. A stand you
-# cannot fully recreate is a stand whose red runs you cannot trust.
-#
-# So this script drops the application DATABASES as well as the release.
-#
-# WHAT IT PRESERVES, AND WHY IT CHECKS FIRST
-# ------------------------------------------
-# Several Secrets in the namespace are NOT helm-managed and survive an uninstall
-# by design — the database credentials, the OIDC client secret, the Keycloak
-# bootstrap admin, the authenticator's signing keys — along with the realm
-# ConfigMap. They are also the only way back: without them the reinstalled
-# release cannot reach its datastores, cannot complete a login, and cannot
-# re-import the realm. They are verified BEFORE anything is destroyed, and a
-# missing one is a refusal rather than a warning.
-#
-# ORDER, AND WHY IT IS THIS ORDER
-# -------------------------------
-#   1. guards            — right cluster, right namespace, explicit confirmation
-#   2. survivors         — the credentials that must outlive the wipe are present
-#   3. datastore preflight — MariaDB and ClickHouse are reachable AND authorised
-#   3b. deploy preconditions — the guards `make deploy` would apply AFTER the
-#                          wipe, applied before it instead
-#   4. helm uninstall    — the release
-#   5. database wipe     — one Job, both datastores, after (3) proved both work
-#   6. deploy            — `make deploy`, the same target CI runs
-#   7. verify            — the release is deployed and the public edge answers
-#
-# Step 3 is not politeness. The wipes are sequential: without it, an unreachable
-# ClickHouse or a missing DROP grant is discovered AFTER MariaDB has already been
-# dropped, which turns a refusal into a half-destroyed stand.
-#
-# SAFE TO RE-RUN. Every step is idempotent or absent-tolerant: uninstalling an
-# absent release, dropping an absent database and deploying an already-current
-# release are all no-ops that report themselves.
-#
-# PLAN BY DEFAULT. Nothing is destroyed without --apply.
+# Wipe-and-recreate, not rollback (rollback downgrades); `helm uninstall`
+# alone is NOT a wipe (datastores are operator-managed outside this
+# release), so this script also drops the application DATABASES. SAFE TO
+# RE-RUN. PLAN BY DEFAULT — nothing destroyed without --apply.
 #
 # Usage:
 #   recreate-test-stand.sh --expect-cluster <name> [--apply] [options]
@@ -66,19 +14,16 @@
 #   --env NAME             gitops environment (default: test-stand)
 #   --confirm TOKEN        required with --apply: `wipe-<env>`
 #   --apply                actually do it
-#   --keep-databases       uninstall and redeploy, but do NOT drop any database.
-#                          Rarely what you want — it is the state this script
-#                          exists because of — but it is the smaller hammer.
+#   --keep-databases       uninstall+redeploy without dropping any database
 #   --no-deploy            wipe only; do not reinstall. The stand is left EMPTY.
 #   --timeout DURATION     helm timeout for the reinstall (default: 10m)
-#   --version X.Y.Z        chart version to install. Default: whatever
-#                          publish-chart last emitted on the default branch,
-#                          read through the API. NOT this checkout's
-#                          .insight-version, which is as old as its branch.
+#   --version X.Y.Z        chart version (default: latest published — INFRA.md, "fork-downgrade wedge")
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GITOPS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
 
 ENV_NAME="test-stand"
 KUBECONFIG_IN=""
@@ -95,15 +40,7 @@ VERSION=""
 UPSTREAM_REPO="constructorfabric/insight"
 DEFAULT_BRANCH="main"
 
-if [ -t 1 ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
-  C_RED=$'\033[31m'; C_GRN=$'\033[32m'; C_YEL=$'\033[33m'; C_CYA=$'\033[36m'; C_RST=$'\033[0m'
-else
-  C_RED=""; C_GRN=""; C_YEL=""; C_CYA=""; C_RST=""
-fi
-
-hdr()  { printf '\n%s── %s %s\n' "$C_CYA" "$1" "$C_RST" >&2; }
-note() { printf '  %s\n' "$1" >&2; }
-die()  { printf '%sERROR%s: %s\n' "$C_RED" "$C_RST" "$1" >&2; exit 1; }
+# Colour vars + hdr/note/die/ok come from lib.sh, sourced above.
 
 usage() { sed -n '/^# Usage:/,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//; $d' >&2; }
 
@@ -142,12 +79,12 @@ CH_PORT="$(yq -r '.clickhouse.port // 8123' "$VALUES")"
 CH_USER="$(yq -r '.clickhouse.username // "insight"' "$VALUES")"
 
 # Images taken from the chart's OWN hook Jobs rather than chosen here, so the
-# wipe never introduces a pull this stand does not already do. Kept in step with
-# templates/{mariadb,clickhouse}-init-svcdbs-job.yaml.
-MARIADB_IMAGE="docker.io/bitnamilegacy/mariadb:11.4.4-debian-12-r0"
-CURL_IMAGE="curlimages/curl:8.10.1"
+# wipe never introduces a pull this stand does not already do.
+MARIADB_IMAGE="docker.io/bitnamilegacy/mariadb:11.4.4-debian-12-r0"  # mirrors templates/mariadb-init-svcdbs-job.yaml
+CURL_IMAGE="curlimages/curl:8.10.1"  # mirrors templates/clickhouse-init-svcdbs-job.yaml
 
-# Not helm-managed, must survive, and the stand cannot be rebuilt without them.
+# Not helm-managed; must survive the wipe. LIMIT: hand-maintained list — a
+# newly-required secret not added here is wiped through silently.
 SURVIVORS_SECRET=(
   insight-db-creds
   insight-oidc
@@ -167,13 +104,8 @@ HELM=(helm)
 [ -n "$KUBECONFIG_IN" ] && HELM+=(--kubeconfig "$KUBECONFIG_IN")
 [ -n "$CONTEXT" ] && HELM+=(--kube-context "$CONTEXT")
 
-# ── 1. Guards ──────────────────────────────────────────────────────────────
-# The same shape as provision-ci-deployer.sh's target guard, and for a stronger
-# reason: that script mints a credential, this one drops three databases.
-#
-# Compared on the CLUSTER the context resolves to, never on the context NAME. A
-# context is a label in a file somebody wrote; two kubeconfigs on one laptop
-# routinely name the same context differently and the same name differently.
+# Compared on the CLUSTER the context resolves to, never the context NAME —
+# two kubeconfigs on one laptop can name the same cluster differently.
 hdr "target"
 
 if [ -z "$CONTEXT" ]; then
@@ -185,35 +117,20 @@ fi
 
 [ -n "$EXPECT_CLUSTER" ] || die "--expect-cluster is required. There is no default: this script destroys data, and the one thing it must never do is destroy somebody else's."
 
-ACTUAL_CLUSTER="$("${KUBECTL[@]}" config view -o "jsonpath={.contexts[?(@.name==\"${CONTEXT}\")].context.cluster}" 2>/dev/null || true)"
-[ -n "$ACTUAL_CLUSTER" ] || die "context '$CONTEXT' is not present in this kubeconfig"
-
-if [ "$ACTUAL_CLUSTER" != "$EXPECT_CLUSTER" ]; then
-  printf '%s\n' "$C_RED" >&2
-  printf '  ┌──────────────────────────────────────────────────────────────┐\n' >&2
-  printf '  │  REFUSING TO ACT — CLUSTER MISMATCH                          │\n' >&2
-  printf '  └──────────────────────────────────────────────────────────────┘%s\n' "$C_RST" >&2
-  printf '    context           : %s\n' "$CONTEXT" >&2
-  printf '    resolves to       : %s\n' "$ACTUAL_CLUSTER" >&2
-  printf '    --expect-cluster  : %s\n\n' "$EXPECT_CLUSTER" >&2
-  printf '  Nothing was read, deleted or written.\n' >&2
-  exit 2
-fi
+cluster_guard "$CONTEXT" "$EXPECT_CLUSTER"   # from lib.sh; sets ACTUAL_CLUSTER
 note "context   : $CONTEXT"
 note "cluster   : $ACTUAL_CLUSTER"
 note "namespace : $NAMESPACE"
 note "release   : $RELEASE"
 note "env       : $ENV_NAME"
 
-"${KUBECTL[@]}" get namespace "$NAMESPACE" -o name >/dev/null 2>&1 \
-  || die "namespace '$NAMESPACE' does not exist or is not readable with this credential"
+namespace_assert "$NAMESPACE"   # from lib.sh
 
 EXPECT_CONFIRM="wipe-$ENV_NAME"
 if [ "$APPLY" = "1" ] && [ "$CONFIRM" != "$EXPECT_CONFIRM" ]; then
   die "--apply requires --confirm $EXPECT_CONFIRM (a literal token, so it cannot be produced by a variable that happens to be wrong)"
 fi
 
-# ── 2. Survivors ───────────────────────────────────────────────────────────
 # Checked BEFORE the uninstall, because after it they are the only way back.
 hdr "survivors — what must outlive the wipe"
 
@@ -233,35 +150,25 @@ for c in "${SURVIVORS_CM[@]}"; do
   fi
 done
 
-# Presence is not enough for this one: the chart writes whatever it is given
-# into the authenticator's config, so a Secret that exists with an empty value
-# produces a confidential OIDC client with no secret — every pod Ready, the
-# release `deployed`, and every login failing at the code exchange. The value is
-# never printed; only its emptiness is.
+# Presence is not enough: an empty value produces a confidential OIDC client
+# with no secret — every pod Ready, every login failing at the code exchange.
 if "${KUBECTL[@]}" -n "$NAMESPACE" get secret insight-oidc -o name >/dev/null 2>&1; then
-  if [ -z "$("${KUBECTL[@]}" -n "$NAMESPACE" get secret insight-oidc -o "jsonpath={.data['client-secret']}" 2>/dev/null)" ]; then
-    note "${C_RED}EMPTY${C_RST}   secret/insight-oidc has no 'client-secret' value"; missing=1
-  else
-    note "${C_GRN}ok${C_RST}    secret/insight-oidc carries a non-empty client-secret"
-  fi
+  oidc_secret_nonempty "$NAMESPACE" insight-oidc client-secret || missing=1   # from lib.sh
 fi
 
 if [ "$missing" = "1" ]; then
   die "refusing to wipe: something the rebuilt stand needs is absent. Restore it first — these objects are created by the bring-up outside this repository, not by the chart."
 fi
 
-# Helm-owned objects are listed for the reader's benefit: they are DESTROYED and
-# REGENERATED, which is fine, and saying so here stops the next person wondering
-# whether the uninstall lost something.
+# Listed for the reader: DESTROYED and REGENERATED, which is fine.
 hdr "regenerated by the chart (destroyed on purpose)"
 "${KUBECTL[@]}" -n "$NAMESPACE" get secret,configmap \
   -l app.kubernetes.io/managed-by=Helm -o name 2>/dev/null | sed 's/^/  /' >&2 || true
 
-# ── 3. Datastore preflight ─────────────────────────────────────────────────
-# READ-ONLY, and it runs before anything is destroyed. The two wipes below are
-# sequential, so discovering an unreachable ClickHouse after MariaDB has been
-# dropped would leave the stand in a state worse than the one being fixed.
-hdr "datastore preflight (read-only)"
+# Read-only against APPLICATION data; DROP capability proved directly
+# (create+drop a scratch database), not by parsing grant text. Sequential
+# wipes below: ClickHouse must be caught before MariaDB is dropped.
+hdr "datastore preflight (verifies DROP capability directly)"
 
 PREFLIGHT_JOB="recreate-preflight-$(date -u +%Y%m%d%H%M%S)"
 preflight_manifest() {
@@ -280,25 +187,15 @@ spec:
       labels: {app.kubernetes.io/managed-by: recreate-test-stand.sh}
     spec:
       restartPolicy: Never
-      # TWO containers, one per client, and the split is not cosmetic. The first
-      # draft ran both checks in the mariadb image and died on
-      # `curl: command not found` — the image has a mariadb client and no HTTP
-      # client. The preflight caught it before anything was destroyed, which is
-      # what it is for, but the fix is to use each tool's own image rather than
-      # to hope one image carries both.
-      #
-      # initContainer then container, so MariaDB is checked first and ClickHouse
-      # only runs if it passed. Both are read-only, so the ordering is for
-      # legibility rather than safety here — it is load-bearing in the wipe.
+      # Two containers, each with the client image that actually carries its
+      # client (mariadb has no curl); read-only here, so the init-then-main
+      # ordering is for legibility (it is load-bearing in the wipe below).
       initContainers:
         - name: mariadb
           image: ${MARIADB_IMAGE}
           env:
-            # secretKeyRef with EXPLICIT names, never envFrom. The keys in
-            # insight-db-creds are hyphenated (\`mariadb-root-password\`), and
-            # envFrom injects each key verbatim as the variable name — which is
-            # not a valid shell identifier, so the script would run with the
-            # passwords unset and every check would fail for the wrong reason.
+            # EXPLICIT secretKeyRef names, never envFrom: the keys in
+            # insight-db-creds are hyphenated, not valid shell identifiers.
             - {name: MYSQL_PWD, valueFrom: {secretKeyRef: {name: insight-db-creds, key: mariadb-root-password}}}
           command:
             - bash
@@ -311,10 +208,10 @@ spec:
                       -e "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='\$db'" 2>/dev/null)
                 echo "  \$db: present=\$n"
               done
-              mariadb -h'${MARIADB_HOST}' -P'${MARIADB_PORT}' -uroot -N -B \
-                -e "SHOW GRANTS FOR CURRENT_USER" 2>/dev/null | grep -q 'ALL PRIVILEGES ON \*\.\*' \
-                || { echo "root cannot DROP — refusing"; exit 1; }
-              echo "  root can DROP: yes"
+              mariadb -h'${MARIADB_HOST}' -P'${MARIADB_PORT}' -uroot \
+                -e "CREATE DATABASE IF NOT EXISTS \\\`__cf_probe__\\\`; DROP DATABASE \\\`__cf_probe__\\\`" \
+                || { echo "root cannot CREATE+DROP a scratch database — refusing"; exit 1; }
+              echo "  root can DROP: yes (verified: created+dropped __cf_probe__)"
       containers:
         - name: clickhouse
           image: ${CURL_IMAGE}
@@ -332,16 +229,22 @@ spec:
                 'http://${CH_HOST}:${CH_PORT}/')
               [ "\$code" = "200" ] || { echo "ClickHouse answered \$code"; cat /tmp/ch; exit 1; }
               echo "  databases visible: \$(cat /tmp/ch)"
-              # Authorisation, not just reachability: a reachable ClickHouse the
-              # app user cannot DROP in would fail AFTER MariaDB was dropped.
+              # Authorisation, not just reachability — proved directly rather
+              # than by parsing SHOW GRANTS text, which a role-based grant
+              # can satisfy without matching a fixed pattern.
               code=\$(curl -s -o /tmp/g -w '%{http_code}' --max-time 20 \
                 -H "X-ClickHouse-User: ${CH_USER}" \
                 -H "X-ClickHouse-Key: \$CH_PASSWORD" \
-                --data-binary 'SHOW GRANTS' \
+                --data-binary 'CREATE DATABASE IF NOT EXISTS __cf_probe__' \
                 'http://${CH_HOST}:${CH_PORT}/')
-              [ "\$code" = "200" ] || { echo "SHOW GRANTS answered \$code"; exit 1; }
-              grep -qE 'GRANT .*(DROP|ALL)' /tmp/g || { echo "${CH_USER} holds no DROP grant — refusing"; exit 1; }
-              echo "  ${CH_USER} can DROP: yes"
+              [ "\$code" = "200" ] || { echo "CREATE DATABASE probe answered \$code"; cat /tmp/g; exit 1; }
+              code=\$(curl -s -o /tmp/g -w '%{http_code}' --max-time 20 \
+                -H "X-ClickHouse-User: ${CH_USER}" \
+                -H "X-ClickHouse-Key: \$CH_PASSWORD" \
+                --data-binary 'DROP DATABASE __cf_probe__' \
+                'http://${CH_HOST}:${CH_PORT}/')
+              [ "\$code" = "200" ] || { echo "DROP DATABASE probe answered \$code"; cat /tmp/g; exit 1; }
+              echo "  ${CH_USER} can DROP: yes (verified: created+dropped __cf_probe__)"
               echo "PREFLIGHT OK"
 YAML
 }
@@ -364,23 +267,13 @@ if [ "$APPLY" = "1" ]; then
     || die "datastore preflight failed — nothing has been destroyed. Fix the connection or the grant and re-run."
   note "${C_GRN}preflight passed${C_RST}"
 else
-  note "would run a read-only Job asserting MariaDB and ClickHouse are reachable and authorised"
+  note "would run a Job asserting MariaDB and ClickHouse are reachable, then verify"
+  note "DROP capability by creating and dropping a scratch __cf_probe__ database in each"
 fi
 
-# ── 3b. The DEPLOY's own preconditions, checked BEFORE anything is destroyed ─
-#
-# This block exists because its absence cost an outage. `make deploy` has its own
-# guards — a clean tree, a reachable cluster, the expected context, a values file,
-# a published chart — and every one of them is correct when a human types the
-# command. Inherited by a rebuild they sat BETWEEN the wipe and the reinstall, so
-# an untracked scratch file and a context named differently from the inventory
-# each turned "wiped, about to reinstall" into "wiped, and refusing to
-# reinstall". The stand stayed down until a human noticed.
-#
-# So they run here, against the same target, with the same arguments the deploy
-# below will use. A refusal now costs nothing; the same refusal thirty seconds
-# later costs the stand. This is the whole of the fix: the guards did not need
-# weakening, they needed to be asked earlier.
+# `make deploy`'s own guards, run here against the same target and arguments
+# the deploy below will use — a refusal now costs nothing; the same refusal
+# between the wipe and the reinstall costs the stand.
 if [ "$DO_DEPLOY" = "1" ]; then
   hdr "deploy preconditions (before anything is destroyed)"
   if [ -z "$VERSION" ]; then
@@ -397,6 +290,11 @@ if [ "$DO_DEPLOY" = "1" ]; then
     die "the deploy would be refused AFTER the wipe — refusing now instead. Nothing has been destroyed."
   fi
   note "${C_GRN}the deploy's own guards pass${C_RST} — a wipe now can be followed by an install"
+
+  # The Makefile's `confirm` target is the one place the deploy CONFIRM token
+  # format is defined; consumed here, never re-derived, so the two cannot drift.
+  DEPLOY_CONFIRM="$(make -C "$GITOPS_DIR" --no-print-directory -s print-confirm-token ENV="$ENV_NAME")"
+  [ -n "$DEPLOY_CONFIRM" ] || die "could not resolve the deploy CONFIRM token via 'make print-confirm-token' in $GITOPS_DIR"
 fi
 
 # ── Plan ───────────────────────────────────────────────────────────────────
@@ -412,9 +310,11 @@ else
   note "    pre-install hook; ${ANALYTICS_DB} is recreated here, because that hook"
   note "    does not create the analytics database and the operator's Database CR"
   note "    is cleanupPolicy: Skip)"
-  note "   drop ClickHouse every application database (bronze_*, silver, insight,"
-  note "   identity, staging, person, presentation, dbt_test__audit); the seed's"
-  note "   create-bronze-placeholders.sh and the chart's migrate hook rebuild them"
+  note "   drop ClickHouse every database except system/INFORMATION_SCHEMA/default,"
+  note "   whatever it is currently named (the seed's create-bronze-placeholders.sh"
+  note "   and the chart's migrate hook rebuild them)"
+  note "   RISK: on a shared ClickHouse host this drops every non-system database"
+  note "   ${CH_USER} can see, not just this stand's"
 fi
 if [ "$DO_DEPLOY" = "1" ]; then
   note "3. make deploy ENV=$ENV_NAME  (the same target CI runs)"
@@ -438,10 +338,8 @@ else
   note "no release named $RELEASE — nothing to uninstall"
 fi
 
-# A FAILED hook Job is not deleted by its own hook-delete-policy (only a
-# succeeded one is) and is not removed by uninstall either, so it would sit in
-# the namespace and confuse the next run's diagnostics. Helm-labelled objects
-# only: the survivors above carry no such label and are not matched.
+# A FAILED hook Job survives its own hook-delete-policy and `helm uninstall`
+# alike. Helm-labelled only: the survivors above carry no such label.
 "${KUBECTL[@]}" -n "$NAMESPACE" delete jobs -l app.kubernetes.io/managed-by=Helm --ignore-not-found >/dev/null 2>&1 || true
 
 # ── 5. Database wipe ───────────────────────────────────────────────────────
@@ -464,12 +362,9 @@ spec:
       labels: {app.kubernetes.io/managed-by: recreate-test-stand.sh}
     spec:
       restartPolicy: Never
-      # MariaDB in an initContainer, ClickHouse in the container — each with the
-      # client image that actually carries its client. Here the ordering IS
-      # load-bearing: the init must complete before the main container starts, so
-      # a MariaDB failure stops the run before ClickHouse is touched. The
-      # preflight above has already proved both are reachable and authorised, so
-      # neither half is expected to be the one that discovers a problem.
+      # Ordering IS load-bearing here (unlike the preflight above): the init
+      # must complete before the main container starts, so a MariaDB failure
+      # stops the run before ClickHouse is touched.
       initContainers:
         - name: mariadb
           image: ${MARIADB_IMAGE}
@@ -485,11 +380,9 @@ spec:
               M -e "DROP DATABASE IF EXISTS \\\`${KEYCLOAK_DB}\\\`"
               M -e "DROP DATABASE IF EXISTS \\\`${ANALYTICS_DB}\\\`"
 
-              # Recreated HERE, unlike the other two. The chart's
-              # mariadb-init-svcdbs hook creates identity and keycloak on the
-              # next install but never the analytics database, and the
-              # operator's Database CR is cleanupPolicy: Skip — so nothing else
-              # would bring it back. Charset and collation match that CR.
+              # Recreated HERE, unlike the other two: the chart's install hook
+              # never creates the analytics database, and the operator's
+              # Database CR is cleanupPolicy: Skip.
               echo "MariaDB: recreating ${ANALYTICS_DB} and granting ${DB_USER}"
               M -e "CREATE DATABASE \\\`${ANALYTICS_DB}\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
               M -e "GRANT ALL PRIVILEGES ON \\\`${ANALYTICS_DB}\\\`.* TO \\\`${DB_USER}\\\`@\\\`%\\\`"
@@ -526,19 +419,9 @@ fi
 # ── 6. Deploy ──────────────────────────────────────────────────────────────
 if [ "$DO_DEPLOY" = "1" ]; then
   hdr "deploy"
-  # NOT `cat .insight-version` from the checkout, however obvious that looks.
-  # That file is committed at the END of a publish, so a working tree is as old
-  # as its branch — this branch's copy said 0.5.115 while the stand it was about
-  # to rebuild was running 0.5.116. Installing it would have been a downgrade
-  # performed by the script whose entire purpose is to avoid one, and nothing
-  # downstream would have said so: the deploy would have reported success
-  # against the version it was asked for.
-  #
-  # Resolved from the DEFAULT BRANCH through the API instead, which is the same
-  # answer whoever asks and from wherever. `--version` overrides it for the case
-  # this cannot serve — an air-gapped operator, or a deliberate pin — and there
-  # is no silent fallback to the checkout, because a silent fallback is exactly
-  # how the downgrade above would have happened.
+  # Resolved from the DEFAULT BRANCH through the API, not `cat .insight-version`
+  # from the checkout — that file is committed at the END of a publish, so a
+  # working tree is as old as its branch. See INFRA.md, "fork-downgrade wedge".
   note "installing insight-$VERSION (resolved in the preconditions above)"
 
   LOCAL_FILE="$(cat "$GITOPS_DIR/.insight-version" 2>/dev/null || true)"
@@ -546,17 +429,12 @@ if [ "$DO_DEPLOY" = "1" ]; then
     note "${C_YEL}note${C_RST}  this checkout's .insight-version says $LOCAL_FILE — ignored, see above"
   fi
   note "installing insight-$VERSION through the official target"
-  # KUBE_CTX and KUBECONFIG are passed through rather than left to `make` to
-  # rediscover. The Makefile defaults KUBE_CTX to the inventory's `kubeContext`
-  # and asserts it against `kubectl config current-context`, which is the right
-  # guard for a human typing `make deploy` — but this script has ALREADY proved
-  # something stronger: that the context it was given resolves to the cluster the
-  # caller named. Making the operator rename a context to satisfy a name
-  # comparison, after the identity of the cluster has been established, is
-  # ceremony — and it failed here between a wipe and an install, which is the
-  # worst possible moment for ceremony.
+  # KUBE_CTX/KUBECONFIG passed through rather than left for `make` to
+  # rediscover: this script has already proved the context resolves to the
+  # cluster the caller named, which is stronger than the Makefile's own
+  # context-NAME guard.
   make -C "$GITOPS_DIR" --no-print-directory deploy \
-    ENV="$ENV_NAME" CONFIRM="yes-deploy-$ENV_NAME" \
+    ENV="$ENV_NAME" CONFIRM="$DEPLOY_CONFIRM" \
     KUBE_CTX="$CONTEXT" ${KUBECONFIG_IN:+KUBECONFIG="$KUBECONFIG_IN"} \
     INSIGHT_VERSION="$VERSION" TIMEOUT="$TIMEOUT" 2>&1 | sed 's/^/  /' >&2
 
