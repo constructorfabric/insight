@@ -77,10 +77,16 @@ name: Deploy test stand
 #   * All cluster and seeder output goes through
 #     .github/workflows/scripts/redact-stand-log.py before it reaches the
 #     console. The raw copy stays in $RUNNER_TEMP.
-#   * Failure diagnostics are an allowlist —
-#     .github/workflows/scripts/stand-diagnostics.sh — not "dump everything and
-#     hope". No `kubectl describe`, no `-o yaml`, no environment dumps, no
-#     artifact uploads.
+#   * NO CLUSTER DIAGNOSTICS ARE PUBLISHED. A failed run says which stage died
+#     and prints the black-box edge result — status codes against the public
+#     URL, nothing else. Helm history, pod tables, warning events and container
+#     logs are read OPERATOR-SIDE by somebody holding a credential
+#     (`helm history insight -n insight`, `kubectl -n insight get pods`), not
+#     printed into a log the whole internet can read. An earlier version of this
+#     workflow did publish them, through a curated allowlist; a curated allowlist
+#     is still a standing invitation to widen, and the thing it was protecting
+#     against — an infrastructure map assembled from CI logs — is not worth the
+#     convenience of not opening a terminal.
 #   * Every credential arrives from the `insight-test-stand` GitHub environment.
 #     Nothing about the stand's identity, addresses or accounts is committed here.
 #
@@ -174,16 +180,11 @@ on:
         required: false
         default: all
         type: string
-  # The human path: redeploy a specific version by hand, e.g. after fixing the
-  # stand by hand and wanting CI's view of it back. Same input, same code path —
-  # there is no manual-only branch anywhere below.
+  # The human path: redeploy the CURRENT published chart by hand, e.g. after
+  # rebuilding the stand. There is deliberately no version input here — see the
+  # `Resolve the chart version` step for why an operator cannot name one.
   workflow_dispatch:
     inputs:
-      chart_version:
-        description: "Umbrella chart version to install (e.g. 0.5.101). Leave empty to take the newest one published from main."
-        required: false
-        default: ""
-        type: string
       stages:
         description: "Stages to run. A prefix only: you cannot smoke without seeding, or seed without deploying."
         required: false
@@ -270,7 +271,14 @@ jobs:
       # $GITHUB_ENV, so every later step reads a plain shell variable and no
       # GitHub expression is interpolated into a shell body — the same rule the
       # ref/semver guard is written to.
+      # Empty on a dispatch — the trigger has no version input. The step below
+      # falls back to `.insight-version` on the default branch.
       REQUESTED_CHART_VERSION: ${{ inputs.chart_version }}
+      # Not hardcoded to `main`: the branch allow-list on the `insight-test-stand`
+      # environment is what decides where a deploy may come from, and this has to
+      # agree with whatever that repository calls its default rather than with a
+      # literal written here once.
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       REDACT: .github/workflows/scripts/redact-stand-log.py
 
     steps:
@@ -284,42 +292,45 @@ jobs:
       # `helm upgrade` has started costs a stand; one that fails now costs
       # nothing.
       # ── Which chart version ────────────────────────────────────────────────
-      # A `workflow_call` always names one: it is publish-chart's output, the
-      # version that run just pushed, and guessing there would install something
-      # other than what was published. A `workflow_dispatch` may leave it empty,
-      # which means "whatever is newest in the registry" — the common case for a
-      # human redeploying the current stand, and one nobody should have to look
-      # up.
+      # ONE answer, from one place: the version `publish-chart` last emitted.
+      # Neither trigger can name a different one, and that is the whole design
+      # rather than a missing feature.
       #
-      # Resolved from the REGISTRY, and this is the second attempt. The first read
-      # `deploy/gitops/.insight-version` from `main` of $GITHUB_REPOSITORY, which
-      # is correct in the upstream repository and quietly wrong anywhere else: run
-      # from a fork whose `main` is a stale mirror, it resolved 0.4.8 against a
-      # stand running 0.5.x. Reading it from the checkout has the same shape of
-      # bug, one branch instead of one fork. The registry has no such failure mode
-      # — it is the thing the input actually refers to ("must already be
-      # published") and it is the same answer whoever asks.
+      # A `workflow_call` is handed it directly — publish-chart's output, the
+      # version that run just pushed. A `workflow_dispatch` has no version input
+      # at all, and reads the same fact back out of `deploy/gitops/.insight-version`
+      # on the default branch, which is where publish-chart commits it at the END
+      # of a successful publish.
       #
-      # `?n=1000` because the default page is 100 and the registry does not order
-      # tags: taking a maximum from page one is exactly how you deploy 0.2.14 to
-      # a stand on 0.5.x. The `Link: rel="next"` header is followed anyway, so a
-      # repository that outgrows one page keeps working. Only strict `X.Y.Z` tags
-      # are considered, compared as integer tuples rather than as strings.
+      # WHY AN OPERATOR CANNOT NAME A VERSION. This stand is disposable, and its
+      # recovery is to rebuild it and install the current chart — never to
+      # reinstall an older one. A version box invites exactly the opposite, and
+      # it is not a hypothetical: an earlier draft of this step resolved the
+      # version from a file in the CHECKOUT, which on a fork is that fork's stale
+      # mirror of `main`. It selected 0.4.8 against a stand running 0.5.x — five
+      # minor versions backwards — and the post-deploy check compares against the
+      # version REQUESTED, so it would have called the downgrade a success. It
+      # did not get the chance only because the downgrade also failed, half-way,
+      # after rewriting two live Deployments into the old chart's shape. The
+      # stand then refused every subsequent upgrade until it was rebuilt.
       #
-      # No credential: GHCR issues an anonymous pull token for a public package,
-      # and the chart repository is derived from CHART_REF so a fork resolves the
-      # same upstream chart it deploys.
+      # So: no input, and the read below is `?ref=<default branch>` through the
+      # API rather than a file in the checkout. A checkout is as old as its
+      # branch; the default branch is the fact.
       #
-      # A release branch publishes on its own PATCH stream, so in principle its
-      # newest tag could out-sort main's. It cannot in practice: main's MINOR is
-      # bumped as soon as a release branch is cut, which is what keeps the two
-      # streams from colliding. If that ever changes, pass the version explicitly.
+      # `gh api` and not `curl`/`urllib`: the token is already there, and a
+      # dynamic URL handed to a URL opener is a Semgrep `dynamic-urllib-use`
+      # finding that no suppression in this repository can silence (`nosemgrep`
+      # lands in the SARIF as accepted, Code Scanning opens the alert anyway, and
+      # the added directive shifts the fingerprint so a DUPLICATE is filed).
       - name: Resolve the chart version
         id: chart
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="$REQUESTED_CHART_VERSION"
-          origin="the caller"
+          origin="the caller (publish-chart output)"
 
           if [ -z "$version" ]; then
             if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then
@@ -328,9 +339,19 @@ jobs:
               echo "something other than the chart that run published."
               exit 1
             fi
-            version="$(python3 .github/workflows/scripts/latest-chart-version.py "$CHART_REF")"
-            origin="the registry"
-            [ -n "$version" ] || { echo "::error::could not resolve a version from $CHART_REF."; exit 1; }
+            # -q on the contents endpoint decodes base64 for us; `--jq` keeps the
+            # whole thing in one process so a failure anywhere fails the step.
+            version="$(
+              gh api "repos/$GITHUB_REPOSITORY/contents/deploy/gitops/.insight-version?ref=$DEFAULT_BRANCH" \
+                --jq '.content' | base64 --decode | tr -d '[:space:]'
+            )"
+            origin=".insight-version on $DEFAULT_BRANCH"
+            if [ -z "$version" ]; then
+              echo "::error::could not read deploy/gitops/.insight-version from $DEFAULT_BRANCH of $GITHUB_REPOSITORY."
+              echo "That file is written by publish-chart and is the only thing this workflow will deploy."
+              echo "If it is genuinely absent, publish a chart from $DEFAULT_BRANCH first."
+              exit 1
+            fi
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -340,10 +361,13 @@ jobs:
       - name: Refuse anything that is not main, and anything that is not a version
         env:
           # Through the environment rather than interpolated into the script
-          # body: `chart_version` is a free-text `workflow_dispatch` input, and a
-          # string spliced into a shell line is a script-injection sink. It is
-          # also passed to `make` further down, which is the reason the shape
-          # check below is a refusal and not a warning.
+          # body, and the shape check below is a refusal rather than a warning,
+          # even though there is no longer a free-text version input to inject
+          # through. `CHART_VERSION` now arrives from publish-chart's output or
+          # from a file on the default branch, and it is still passed to `make`
+          # further down — a value that reaches a shell command line is checked
+          # for shape whatever it claims to be, because "it comes from a trusted
+          # place" is exactly the assumption that stops being true first.
           REF_NAME: ${{ github.ref_name }}
           EVENT: ${{ github.event_name }}
         run: |
@@ -671,13 +695,14 @@ jobs:
           fi
           echo "$CHART_REF:$CHART_VERSION is published"
 
-      # ── Stage 1 of 3: deploy ──────────────────────────────────────────────
+      # ── Stage 1 of 4: deploy ──────────────────────────────────────────────
       # `timeout-minutes` is 14 against helm's own `--timeout 10m` on purpose,
       # with room for the chart pull and the render that precede it. The step
       # budget must never be the one that fires: a step timeout SIGKILLs helm and
       # leaves the release in `pending-upgrade`, while helm's own timeout leaves
       # a clean `failed` release that `helm history` explains.
-      - name: 'Stage 1/3 — upgrade the release'
+      - name: 'Stage 1/4 — upgrade the release'
+        id: deploy_upgrade
         timeout-minutes: 14
         run: |
           set -euo pipefail
@@ -725,7 +750,8 @@ jobs:
             --history-max 10 \
             2>&1 | python3 "$REDACT"
 
-      - name: 'Stage 1/3 — verify the release is the chart this run published'
+      - name: 'Stage 1/4 — verify the release is the chart this run published'
+        id: deploy_verify
         run: |
           set -euo pipefail
           # A release can be `deployed` and still be the wrong chart — a resumed
@@ -761,7 +787,8 @@ jobs:
             exit 1
           fi
 
-      - name: 'Stage 1/3 — restart what the chart cannot know to restart'
+      - name: 'Stage 1/4 — restart what the chart cannot know to restart'
+        id: deploy_restart
         timeout-minutes: 8
         run: |
           set -euo pipefail
@@ -781,7 +808,8 @@ jobs:
           # shellcheck disable=SC2086
           kubectl -n "$STAND_NAMESPACE" rollout status --timeout=5m $RESTART_TARGETS
 
-      - name: 'Stage 1/3 — confirm the edge still routes'
+      - name: 'Stage 1/4 — confirm the edge still routes'
+        id: deploy_routes
         run: |
           set -euo pipefail
           # The chart renders both of these, from this environment's
@@ -822,7 +850,119 @@ jobs:
             exit 1
           fi
 
-      # ── Stage 2 of 3: seed ────────────────────────────────────────────────
+      # ── Stage 2 of 4: the public edge, black box ──────────────────────────
+      # Shallow, unconditional, and everything it knows it learned the way an
+      # anonymous visitor learns it: public DNS, a public certificate, four
+      # unauthenticated requests. No kubectl, no helm, nothing about the cluster.
+      # This is what replaces the failure-diagnostics step that used to publish
+      # helm history, a pod table, warning events and container logs into a log
+      # anybody can read.
+      #
+      # It runs BEFORE the seed on purpose. The seed's ceiling is 65 minutes and
+      # every one of them is wasted against a stand nobody can reach; worse, an
+      # unreachable stand currently announces itself an hour later as a smoke
+      # failure, which reads like a product fault rather than a routing one.
+      #
+      # It is not gated on `stages`: it needs no credential and no seeded data,
+      # so there is no partial run for which it is the wrong question.
+      #
+      # It prints status codes, paths and the issuer it expected. It does NOT
+      # echo the /auth/login Location — that URL carries `state`, `nonce` and the
+      # PKCE `code_challenge`, and a redirect target is exactly the kind of thing
+      # that looks harmless in a log until someone replays it.
+      - name: 'Stage 2/4 — black-box the public edge (DNS, TLS, route, auth)'
+        id: edge
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+
+          issuer="$(yq -r '.authenticator.oidc.issuerUrl' "$VALUES_FILE")"
+          base="$(yq -r '.gateway.route.host' "$VALUES_FILE")"
+          [ -n "$issuer" ] && [ "$issuer" != "null" ] || { echo "::error::$VALUES_FILE has no authenticator.oidc.issuerUrl"; exit 1; }
+          [ -n "$base" ] && [ "$base" != "null" ] || { echo "::error::$VALUES_FILE has no gateway.route.host"; exit 1; }
+          base="https://$base"
+          echo "edge: $base   issuer: $issuer"
+
+          # curl's exit code is the difference between "the name does not
+          # resolve", "the certificate is not trusted" and "the app returned the
+          # wrong thing" — three failures with three different owners that all
+          # look identical if you only report the HTTP status.
+          probe() {
+            local path="$1" want="$2" out code rc
+            out="$(curl -sS -o /dev/null -w '%{http_code}' -m 20 "$base$path" 2>&1)" && rc=0 || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              case "$rc" in
+                6)  echo "::error::DNS: $base does not resolve. The stand's public name is missing or wrong." ;;
+                7)  echo "::error::connect: $base resolves but refuses connections — the edge is down or the Gateway has no listener." ;;
+                28) echo "::error::timeout: $base accepted nothing within 20s." ;;
+                35|51|60) echo "::error::TLS: $base presented a certificate this client will not accept (curl $rc)." ;;
+                *)  echo "::error::curl exit $rc against $path" ;;
+              esac
+              return 1
+            fi
+            code="$out"
+            if [ "$code" != "$want" ]; then
+              echo "::error::$path answered $code, expected $want"
+              return 1
+            fi
+            echo "  $code  $path"
+          }
+
+          failed=0
+          # The UI shell. 200 and not a redirect: the app is served to anonymous
+          # browsers and does its own auth bounce client-side.
+          probe "/" 200 || failed=1
+          # The cheap auth endpoint. 401 is the CORRECT answer here — a 200
+          # would mean the session check is not running, and a 5xx would mean
+          # the authenticator cannot reach Redis or its signing keys.
+          probe "/auth/me" 401 || failed=1
+          # Discovery, on the issuer the values file names. This is what the
+          # authenticator itself resolves at startup, so a stand that fails it
+          # cannot complete a login however healthy every pod looks.
+          probe "${issuer#"$base"}/.well-known/openid-configuration" 200 || failed=1
+
+          if [ "$failed" -eq 0 ]; then
+            advertised="$(curl -sS -m 20 "$issuer/.well-known/openid-configuration" | jq -r '.issuer')"
+            if [ "$advertised" != "$issuer" ]; then
+              echo "::error::the IdP advertises issuer '$advertised' but the values file configures '$issuer'."
+              echo "Every token minted here would be rejected by the authenticator's audience check."
+              failed=1
+            else
+              echo "  issuer matches the values file"
+            fi
+
+            # The login bounce. Matched, never printed.
+            location="$(curl -sS -o /dev/null -m 20 -w '%{redirect_url}' "$base/auth/login")"
+            case "$location" in
+              "$issuer/protocol/openid-connect/auth"?*)
+                for param in 'response_type=code' 'scope=openid' 'code_challenge_method=S256'; do
+                  case "$location" in
+                    *"$param"*) ;;
+                    *) echo "::error::/auth/login redirected to the IdP without $param"; failed=1 ;;
+                  esac
+                done
+                [ "$failed" -eq 0 ] && echo "  302  /auth/login -> the realm's authorize endpoint (PKCE, scope=openid)"
+                ;;
+              "")
+                echo "::error::/auth/login did not redirect. The authenticator has no issuer configured for this host."
+                failed=1
+                ;;
+              *)
+                echo "::error::/auth/login redirected somewhere other than $issuer/protocol/openid-connect/auth"
+                failed=1
+                ;;
+            esac
+          fi
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::the stand is not answering correctly at its public edge; the seed and smoke below are skipped."
+            echo "This check uses no credential, so the cause is in the deploy above or in the cluster —"
+            echo "read it operator-side: 'helm history $STAND_RELEASE -n $STAND_NAMESPACE' and the pods in"
+            echo "namespace $STAND_NAMESPACE. CI publishes no cluster output by design."
+            exit 1
+          fi
+
+      # ── Stage 3 of 4: seed ────────────────────────────────────────────────
       # 65 minutes is a CEILING chosen against the seed Job's own
       # activeDeadlineSeconds of 3600s, not a measurement: deliberately just
       # ABOVE it, so the pod's deadline is what fires first. A step timeout that
@@ -833,7 +973,8 @@ jobs:
       # reported wall-clock. If the real figure is (say) 12 minutes, the Job's
       # --deadline should come down with the step budget, in one change, with the
       # measurement quoted.
-      - name: 'Stage 2/3 — seed the stand'
+      - name: 'Stage 3/4 — seed the stand'
+        id: seed
         if: steps.stages.outputs.run_seed == 'true'
         timeout-minutes: 65
         env:
@@ -949,7 +1090,8 @@ jobs:
             "${force_args[@]}" \
             2>&1 | tee "$RUNNER_TEMP/seed.log" | python3 "$REDACT"
 
-      - name: 'Stage 2/3 — capture the seed manifest'
+      - name: 'Stage 3/4 — capture the seed manifest'
+        id: seed_manifest
         if: steps.stages.outputs.run_seed == 'true'
         run: |
           set -euo pipefail
@@ -978,7 +1120,8 @@ jobs:
             exit 1
           fi
 
-      - name: 'Stage 3/3 — smoke the stand through its public URL'
+      - name: 'Stage 4/4 — smoke the stand through its public URL'
+        id: smoke
         if: steps.stages.outputs.run_smoke == 'true'
         timeout-minutes: 5
         env:
@@ -1026,21 +1169,6 @@ jobs:
             pytest tests/stand/smoke -ra --stand-manifest "$INSIGHT_STAND_MANIFEST" \
             2>&1 | python3 "$REDACT"
 
-      # ── Diagnostics ───────────────────────────────────────────────────────
-      # One step, only on failure, and everything it can print is decided by a
-      # committed script rather than by this file — so widening what a red run
-      # publishes is a reviewable diff and not an edit to a `run:` block.
-      - name: Failure diagnostics (curated, redacted)
-        if: failure()
-        timeout-minutes: 6
-        run: |
-          set -uo pipefail
-          if [ -z "${KUBECONFIG:-}" ] || [ ! -f "$KUBECONFIG" ]; then
-            echo "the run failed before a cluster credential existed — nothing to collect"
-            exit 0
-          fi
-          bash .github/workflows/scripts/stand-diagnostics.sh "$STAND_NAMESPACE" "$STAND_RELEASE"
-
       - name: Summarise the run
         if: always()
         env:
@@ -1048,8 +1176,53 @@ jobs:
           RUN_SEED: ${{ steps.stages.outputs.run_seed }}
           RUN_SMOKE: ${{ steps.stages.outputs.run_smoke }}
           STAGES: ${{ inputs.stages }}
+          # Derived from what the steps DID, never from what was requested.
+          #
+          # The row this replaces was built from `steps.stages.outputs.*` — the
+          # request — so a run whose deploy failed still printed "seed ✓, smoke ✓"
+          # for two stages that never started. This table is the thing that gets
+          # screenshotted into a thread, and it was the most confident liar in
+          # the workflow.
+          #
+          # `outcome` and not `conclusion`: outcome is what the step actually
+          # did, before `continue-on-error` could relabel a failure as success.
+          # Nothing here sets that flag today; this keeps telling the truth on
+          # the day something does.
+          #
+          # `|| 'skipped'` because a step the job never REACHED has no entry in
+          # the steps context at all and the expression yields an empty string —
+          # which is precisely how an unrun stage used to render as a tick.
+          #
+          # A stage is several steps; its result is the worst of them, computed
+          # in the script below rather than here, because expressions cannot.
+          DEPLOY_RESULT: >-
+            ${{ steps.deploy_upgrade.outcome || 'skipped' }} ${{ steps.deploy_verify.outcome || 'skipped' }} ${{ steps.deploy_restart.outcome || 'skipped' }} ${{ steps.deploy_routes.outcome || 'skipped' }}
+          EDGE_RESULT: ${{ steps.edge.outcome || 'skipped' }}
+          SEED_RESULT: >-
+            ${{ steps.seed.outcome || 'skipped' }} ${{ steps.seed_manifest.outcome || 'skipped' }}
+          SMOKE_RESULT: ${{ steps.smoke.outcome || 'skipped' }}
         run: |
           set -euo pipefail
+
+          # Worst-first. `failure` beats `cancelled` beats `skipped` beats
+          # `success`, so a stage half of which failed can never render as a
+          # pass, and a stage nobody asked for never renders as one either.
+          render() {
+            local outcomes="$1"
+            case " $outcomes " in
+              *" failure "*)   echo "**failed**" ;;
+              *" cancelled "*) echo "cancelled" ;;
+              *" skipped "*)
+                case " $outcomes " in
+                  *" success "*) echo "**incomplete** — started, did not finish" ;;
+                  *)             echo "— not run" ;;
+                esac
+                ;;
+              *" success "*)   echo "passed" ;;
+              *)               echo "— not run" ;;
+            esac
+          }
+
           {
             echo "### Test stand — \`$CHART_VERSION\`"
             echo ""
@@ -1057,7 +1230,11 @@ jobs:
             echo "|---|---|"
             echo "| chart | \`insight-$CHART_VERSION\` |"
             echo "| environment | \`$ENV_NAME\` (namespace \`$STAND_NAMESPACE\`, release \`$STAND_RELEASE\`) |"
-            echo "| stages | \`${STAGES:-all}\` — deploy ✓, seed $([ "$RUN_SEED" = "true" ] && echo '✓' || echo '— skipped'), smoke $([ "$RUN_SMOKE" = "true" ] && echo '✓' || echo '— skipped') |"
+            echo "| requested | \`${STAGES:-all}\` |"
+            echo "| deploy | $(render "$DEPLOY_RESULT") |"
+            echo "| edge | $(render "$EDGE_RESULT") |"
+            echo "| seed | $(render "$SEED_RESULT") |"
+            echo "| smoke | $(render "$SMOKE_RESULT") |"
             echo "| outcome | **$OUTCOME** |"
             echo ""
             # A partial run that says nothing about being partial is worse than
@@ -1075,7 +1252,15 @@ jobs:
               echo "exist until the merge happened. **The author of the merge commit owns this run.**"
               echo "Fix forward if the cause is small and obvious, revert if it is not."
               echo ""
-              echo "A failed \`helm upgrade\` is left in place on purpose. Recovery is the next"
-              echo "merge, or a deliberate \`helm rollback\` by a human."
+              echo "A failed \`helm upgrade\` is left in place on purpose — the pods holding the"
+              echo "reason are still in namespace \`$STAND_NAMESPACE\` for an operator to read. CI"
+              echo "publishes no cluster output; \`helm history $STAND_RELEASE -n $STAND_NAMESPACE\`"
+              echo "carries the description helm wrote."
+              echo ""
+              echo "This stand is DISPOSABLE. Recovery is the next merge, or rebuilding it with"
+              echo "\`deploy/gitops/scripts/recreate-test-stand.sh\` and letting the current"
+              echo "published chart install onto it. It is never a rollback and never a downgrade:"
+              echo "reinstalling an older chart over a newer one is how this stand was wedged once"
+              echo "already, and it leaves the next merge deploying onto objects it cannot patch."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
