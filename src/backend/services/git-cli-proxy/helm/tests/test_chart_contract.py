@@ -41,6 +41,59 @@ def one(docs: list[dict], kind: str) -> dict:
     return found[0]
 
 
+def gear_config(docs: list[dict]) -> dict:
+    """The git-cli-proxy gear's own config block, parsed out of the ConfigMap."""
+    for doc in of_kind(docs, "ConfigMap"):
+        raw = doc.get("data", {}).get("insight.yaml")
+        if raw is None:
+            continue
+        return yaml.safe_load(raw)["gears"]["git-cli-proxy"]["config"]
+    raise AssertionError("no ConfigMap carries insight.yaml")
+
+
+def test_rendered_config_has_the_types_the_service_parses():
+    """The chart's output must deserialize, not merely be valid YAML.
+
+    An empty `range` leaves its key with no value — YAML null — and the
+    service refuses to start on a null where it expects a list. Nothing else
+    in CI parses the chart's own output, so this is the only gate that sees it.
+    """
+    config = gear_config(render())
+
+    assert isinstance(config["allowed_repo_hosts"], list), (
+        "an empty allowlist must render as [], not null"
+    )
+    assert isinstance(config["data_dir"], str) and config["data_dir"]
+    for numeric in (
+        "disk_budget_bytes",
+        "max_repo_bytes",
+        "default_max_staleness_seconds",
+        "heavy_ops_concurrency",
+    ):
+        assert isinstance(config[numeric], int), f"{numeric} must render as an integer"
+    assert config["allow_file_repos"] is False
+
+
+def test_a_named_allowlist_host_reaches_the_config():
+    config = gear_config(render(cache__allowedRepoHosts="{gitlab.example}"))
+    assert config["allowed_repo_hosts"] == ["gitlab.example"]
+
+
+def test_the_pod_receives_the_platform_emission_contract():
+    """§4.3's metrics are exported only if the OTEL_* env vars reach the pod.
+
+    They live in the umbrella's platform ConfigMap. A deployment that wires
+    only its own Secret computes every metric and exports none of them, and
+    nothing else in CI notices — the instruments still register.
+    """
+    deployment = one(render(), "Deployment")
+    sources = deployment["spec"]["template"]["spec"]["containers"][0]["envFrom"]
+    refs = [s["configMapRef"]["name"] for s in sources if "configMapRef" in s]
+    assert any(name.endswith("-platform") for name in refs), (
+        f"the platform ConfigMap must be wired in, got {sources}"
+    )
+
+
 def test_cache_volume_is_single_writer():
     """One writer, enforced in three places that are one decision."""
     docs = render()
@@ -87,8 +140,15 @@ def test_token_never_reaches_the_configmap():
     assert yaml.safe_load(config)["gears"]["git-cli-proxy"]["config"]["proxy_token"] == ""
 
     container = one(docs, "Deployment")["spec"]["template"]["spec"]["containers"][0]
-    sources = [ref["secretRef"]["name"] for ref in container["envFrom"]]
-    assert sources == ["cfg"], "the token arrives from the Secret, nowhere else"
+    secrets = [
+        ref["secretRef"]["name"] for ref in container["envFrom"] if "secretRef" in ref
+    ]
+    assert secrets == ["cfg"], "the token arrives from the Secret, nowhere else"
+    # Other envFrom sources are allowed (the platform ConfigMap carries the
+    # emission contract) but must never be a second source of the token.
+    assert not any(
+        "token" in str(ref.get("configMapRef", {})).lower() for ref in container["envFrom"]
+    )
 
 
 def test_ingress_is_denied_until_a_namespace_is_allowed():

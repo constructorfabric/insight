@@ -386,7 +386,7 @@ it after any Builder round-trip.
 
 | 11 | Review follow-through: page tokens carry the clone's incarnation so a cursor cannot survive an eviction and re-clone, object ids accepted at SHA-256 length, commit fields separated by a byte git cannot put inside an ident, admission reserving the headroom it grants, metadata that cannot be published invalidating its entry, copy detection requested so `copied` can actually be emitted, `sha` prefixes bounded above, and a served window ordered by instant | `src/…/engine/{store,meta,page,read/commits}.rs`, `src/…/api/*` |
 
-Quality: 201 Rust tests, clippy clean (pedantic, `-D warnings`), 19 Helm
+Quality: 202 Rust tests, clippy clean (pedantic, `-D warnings`), 22 Helm
 render-contract assertions, connector wiring guard green, the committed
 OpenAPI document matching its drift gate.
 

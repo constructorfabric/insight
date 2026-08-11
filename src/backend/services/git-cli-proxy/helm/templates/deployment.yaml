@@ -78,6 +78,13 @@ spec:
               containerPort: {{ .Values.service.port }}
               protocol: TCP
           envFrom:
+            # The umbrella publishes INSIGHT_LOG_LEVEL and, when an OTLP
+            # endpoint is configured, the OTEL_* emission contract here.
+            # Without it the §4.3 metrics are computed and exported nowhere.
+            # The chart ships only as part of the umbrella, so the ref is
+            # hardcoded, as in the sibling services.
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
             # Carries APP__gears__git_cli_proxy__config__proxy_token.
             - secretRef:
                 name: {{ required "existingSecret is required" .Values.existingSecret | quote }}

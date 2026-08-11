@@ -47,12 +47,22 @@ pub struct GearConfig {
     /// which refuse loopback, link-local, private and cluster-internal names —
     /// without them a bearer-token holder can aim the proxy at anything the
     /// pod can reach. Set it to reach a self-hosted vendor on a private range.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "empty_when_null")]
     pub allowed_repo_hosts: Vec<String>,
 }
 
 /// Manual `Debug` that never prints the token — the config is logged on boot
 /// failures and must stay secret-free.
+/// `key:` with nothing after it is YAML null, and it is how a human writes an
+/// empty list. Refusing to start on it is a worse answer than reading it as
+/// one.
+fn empty_when_null<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 impl std::fmt::Debug for GearConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GearConfig")
@@ -229,6 +239,29 @@ mod tests {
             Err(e) => e.to_string(),
         };
         assert!(err.contains("must not exceed"), "got: {err}");
+    }
+
+    #[test]
+    fn an_empty_allowlist_may_be_written_as_a_bare_key() {
+        // `allowed_repo_hosts:` with nothing after it is YAML null. The chart
+        // rendered exactly that for the default empty list and the service
+        // refused to boot on it — no unit test saw it, because nothing parsed
+        // the chart's own output.
+        let json = r#"{
+            "data_dir": "/data",
+            "disk_budget_bytes": 10,
+            "max_repo_bytes": 10,
+            "default_max_staleness_seconds": 1,
+            "heavy_ops_concurrency": 1,
+            "proxy_token": "t",
+            "ca_cert_path": "",
+            "allow_file_repos": false,
+            "allowed_repo_hosts": null
+        }"#;
+        match serde_json::from_str::<GearConfig>(json) {
+            Ok(config) => assert!(config.allowed_repo_hosts.is_empty()),
+            Err(e) => panic!("an explicit null must read as an empty list: {e}"),
+        }
     }
 
     #[test]
