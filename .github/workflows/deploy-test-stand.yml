@@ -33,11 +33,6 @@ on:
         required: false
         default: false
         type: boolean
-      allow_downgrade:
-        description: "Install a chart version older than what is currently deployed. Overrides a guard — read its refusal first."
-        required: false
-        default: false
-        type: boolean
 
 # One stand, one deploy at a time — a burst of merges deploys in order, each
 # run installing the chart its own run published, rather than two upgrades
@@ -344,9 +339,6 @@ jobs:
 
       - name: 'Stage 1/4 — refuse a version downgrade'
         id: deploy_downgrade_guard
-        env:
-          # Unset on a workflow_call, so this compares false below.
-          ALLOW_DOWNGRADE: ${{ inputs.allow_downgrade }}
         run: |
           set -euo pipefail
           # Compares the CHART field ("<name>-<version>"), never app_version:
@@ -366,8 +358,6 @@ jobs:
             verdict="unchanged"
           elif [ "$(printf '%s\n%s\n' "$deployed_version" "$CHART_VERSION" | sort -V | tail -n1)" = "$CHART_VERSION" ]; then
             verdict="forward"
-          elif [ "$ALLOW_DOWNGRADE" = "true" ]; then
-            verdict="DOWNGRADE — allowed by inputs.allow_downgrade"
           else
             verdict="DOWNGRADE — refused"
           fi
@@ -376,7 +366,7 @@ jobs:
             echo "::error::refusing to install $CHART_VERSION over the currently deployed $deployed_version."
             echo "This stand's recovery is always forward — the next merge, or a rebuild — never a reinstall"
             echo "of an older chart. See INFRA.md, \"fork-downgrade wedge\"."
-            echo "Dispatch this workflow by hand with allow_downgrade=true if this is genuinely intended."
+            echo "To genuinely go backwards, wipe and recreate the stand (scripts/recreate-test-stand.sh)."
             exit 1
           fi
 
