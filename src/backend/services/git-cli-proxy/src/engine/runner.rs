@@ -57,6 +57,8 @@ pub enum GitError {
     PromisorRefused,
     #[error("the cache cannot take more disk right now")]
     AdmissionRejected,
+    #[error("the entry is over its cap until purged blobs are reclaimed")]
+    TransientlyOverCap,
     #[error("origin is throttling this client")]
     Throttled,
     #[error("git timed out after {0:?}")]

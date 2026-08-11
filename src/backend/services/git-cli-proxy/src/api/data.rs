@@ -150,7 +150,7 @@ pub async fn list_commits(
                 commits::headers_for(runner, guard.git_dir(), &shas, &context.creds).await?;
             state
                 .store
-                .prefetch_window(guard.git_dir(), &shas, &context.creds)
+                .prefetch_window(&context.key, guard.git_dir(), &shas, &context.creds)
                 .await?;
 
             let file_stats =
@@ -233,7 +233,7 @@ pub async fn list_file_changes(
             let shas: Vec<String> = window.iter().map(|key| key.sha.clone()).collect();
             state
                 .store
-                .prefetch_window(guard.git_dir(), &shas, &context.creds)
+                .prefetch_window(&context.key, guard.git_dir(), &shas, &context.creds)
                 .await?;
 
             let file_stats = numstat::read(

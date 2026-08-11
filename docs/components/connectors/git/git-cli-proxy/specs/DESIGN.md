@@ -345,7 +345,7 @@ for map operations only, never across an await on any ordered resource.
 | Refusal | Progress source |
 |---|---|
 | read/inline wait expires → `429` | the preparing flight keeps running detached |
-| prefetch headroom → `429` | post-serve purge + reclaim free headroom (open gap: under sustained watermark pressure the purge throttle is the only driver — see PLAN) |
+| prefetch refused for space → `429` (`Retry-After: 5`) | a pressure purge is scheduled at rejection — throttle bypassed, escalation pre-armed — so the retry lands after one repack, not after a throttle window |
 | admission exhausted → `429` | a reader releasing an entry makes the next reclaim plan effective |
 | opportunistic purge loses its probe | counted; escalates to a blocking acquire after 3 losses |
 
@@ -678,7 +678,7 @@ rotation gone wrong shows up as `status="401"`, not as silence.
 | `401` | proxy bearer token missing or wrong (`PROXY_TOKEN_REJECTED`), or origin rejected the supplied git credentials (`ORIGIN_CREDENTIALS_REJECTED`) | fail the sync (config error) |
 | `404` | repo not found at origin — only on a specific line saying so; a bare transport failure is `5xx`, because "could not read from remote repository" follows a hang-up as readily as a missing repository | fail the slice; parent record is stale |
 | `409` | the pinned snapshot is gone (§4.1), including when a promotion (§3.3) or a fetch bumped the generation the cursor pinned | restart the stream slice from its cursor |
-| `413` | repo exceeds `max_repo_bytes` | permanent — do not retry |
+| `413` | repo exceeds `max_repo_bytes` at clone/fetch/promote, where the measurement is the repository itself | permanent — do not retry. A page-serve prefetch that trips the cap answers `429` instead: there the measurement includes blob weight a purge reclaims |
 | `429` + `Retry-After` | preparation did not finish within `INLINE_WAIT`, admission was rejected, a caller presenting unproven credentials lost the re-proof race to a concurrent caller, or ORIGIN refused with a rate limit (a vendor may signal that as `403`, so throttling is classified before credentials) | retry with backoff (declarative error handler) |
 | `5xx` | internal/transient | retry with backoff |
 

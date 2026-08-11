@@ -48,6 +48,10 @@ const ADMISSION_RETRY_AFTER_SECONDS: u64 = 30;
 /// a vendor rate-limit window outlives a reader releasing an entry.
 const THROTTLED_RETRY_AFTER_SECONDS: u64 = 60;
 
+/// A prefetch refused for space schedules a pressure purge as it rejects, so
+/// "later" is one repack away — much sooner than a full admission cycle.
+const PRESSURE_RETRY_AFTER_SECONDS: u64 = 5;
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         // The admission reasons are counted where the store decides them;
@@ -111,9 +115,9 @@ impl ApiError {
             }
             Self::Store(StoreError::SnapshotChanged { .. }) => StatusCode::CONFLICT.as_u16(),
             Self::Store(StoreError::Busy { .. } | StoreError::Throttled)
-            | Self::Git(GitError::AdmissionRejected | GitError::Throttled) => {
-                StatusCode::TOO_MANY_REQUESTS.as_u16()
-            }
+            | Self::Git(
+                GitError::AdmissionRejected | GitError::TransientlyOverCap | GitError::Throttled,
+            ) => StatusCode::TOO_MANY_REQUESTS.as_u16(),
             _ => StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
         }
     }
@@ -131,6 +135,7 @@ impl ApiError {
         match self {
             Self::Store(StoreError::Busy { retry_after }) => Some(retry_after.as_secs()),
             Self::Git(GitError::AdmissionRejected) => Some(ADMISSION_RETRY_AFTER_SECONDS),
+            Self::Git(GitError::TransientlyOverCap) => Some(PRESSURE_RETRY_AFTER_SECONDS),
             Self::Store(StoreError::Throttled) | Self::Git(GitError::Throttled) => {
                 Some(THROTTLED_RETRY_AFTER_SECONDS)
             }
@@ -172,6 +177,14 @@ impl ApiError {
             )
             .with_quota_violation("cache_disk_budget", "no reclaimable entry")
             .with_quota_violation_retry_after_seconds(ADMISSION_RETRY_AFTER_SECONDS)
+            .create(),
+            // Retryable, unlike the 413 above: on the page-serve path the
+            // measurement includes blob weight the scheduled purge reclaims.
+            Self::Git(GitError::TransientlyOverCap) => RepositoryError::resource_exhausted(
+                "the entry is over its cap until purged blobs are reclaimed",
+            )
+            .with_quota_violation("entry_blob_weight", "purge scheduled")
+            .with_quota_violation_retry_after_seconds(PRESSURE_RETRY_AFTER_SECONDS)
             .create(),
             Self::Store(StoreError::Busy { retry_after }) => {
                 RepositoryError::resource_exhausted("repository is being prepared")
@@ -313,6 +326,12 @@ mod tests {
                 GitError::TooLarge { cap_bytes: 1024 }.into(),
                 StatusCode::PAYLOAD_TOO_LARGE,
             ),
+            // Over-cap on the page-serve path is transient blob weight a
+            // purge reclaims — retryable, never the permanent 413.
+            (
+                GitError::TransientlyOverCap.into(),
+                StatusCode::TOO_MANY_REQUESTS,
+            ),
             (
                 GitError::Failed("boom".to_owned()).into(),
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -359,6 +378,14 @@ mod tests {
             retry_after.as_deref(),
             Some("30"),
             "a refused admission must tell the caller when to come back"
+        );
+
+        let (status, retry_after, _) = problem(GitError::TransientlyOverCap.into()).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            retry_after.as_deref(),
+            Some("5"),
+            "a pressure rejection promises a purge-soon retry, not an admission cycle"
         );
     }
 

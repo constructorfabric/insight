@@ -43,7 +43,7 @@ impl From<&GitError> for RefreshFailure {
             GitError::AuthRejected => Self::Auth,
             GitError::NotFound => Self::NotFound,
             GitError::PromisorRefused => Self::PromisorRefused,
-            GitError::AdmissionRejected => Self::AdmissionRejected,
+            GitError::AdmissionRejected | GitError::TransientlyOverCap => Self::AdmissionRejected,
             GitError::Throttled => Self::Throttled,
             GitError::TimedOut(_) => Self::Timeout,
             GitError::Failed(message) => Self::Other(message.clone()),
@@ -1089,17 +1089,68 @@ impl RepoStore {
     /// # Errors
     ///
     /// [`GitError`] when the cache has no headroom, or the prefetch fails.
+    /// Space refusals are [`GitError::TransientlyOverCap`] — retryable, and a
+    /// pressure purge has already been scheduled — never the permanent `413`:
+    /// on this path the measurement includes blob weight a purge reclaims, so
+    /// "too large" would abort a sync over a condition that clears itself.
     pub async fn prefetch_window(
-        &self,
+        self: &Arc<Self>,
+        key: &CacheKey,
         git_dir: &Path,
         shas: &[String],
         creds: &GitCredentials,
     ) -> Result<usize, GitError> {
         if !self.has_headroom().await {
             metrics::record_rejection(metrics::RejectReason::PrefetchHeadroom);
-            return Err(GitError::AdmissionRejected);
+            self.purge_under_pressure(key);
+            return Err(GitError::TransientlyOverCap);
         }
-        super::read::blobs::prefetch(&self.runner, git_dir, shas, creds, self.max_repo_bytes).await
+        // Leftover weight from earlier pages can already sit at the cap; the
+        // mid-run watcher would refuse the fetch anyway, so refuse before the
+        // origin round trips — and a fetch quick enough to finish between two
+        // watcher polls is caught here on the NEXT page instead of never.
+        if dir_size_off_reactor(git_dir.to_path_buf()).await > self.max_repo_bytes {
+            metrics::record_rejection(metrics::RejectReason::EntryOverCap);
+            self.purge_under_pressure(key);
+            return Err(GitError::TransientlyOverCap);
+        }
+        let fetched =
+            super::read::blobs::prefetch(&self.runner, git_dir, shas, creds, self.max_repo_bytes)
+                .await;
+        if matches!(fetched, Err(GitError::TooLarge { .. })) {
+            metrics::record_rejection(metrics::RejectReason::EntryOverCap);
+            self.purge_under_pressure(key);
+            return Err(GitError::TransientlyOverCap);
+        }
+        fetched
+    }
+
+    /// Schedule a purge that skips the drift throttle and escalates on its
+    /// first lost probe.
+    ///
+    /// Under space pressure the throttle is the enemy: it is the only thing
+    /// standing between a rejected request and the headroom its retry needs,
+    /// and honoring it turns every retry within the interval into a
+    /// guaranteed second rejection.
+    fn purge_under_pressure(self: &Arc<Self>, key: &CacheKey) -> tokio::task::JoinHandle<()> {
+        let store = Arc::clone(self);
+        let key = key.clone();
+        tokio::spawn(async move {
+            {
+                let mut drift = store.drift.lock().await;
+                let state = drift
+                    .entry(key.dir_name())
+                    .or_insert_with(|| DriftState {
+                        checked: Instant::now(),
+                        losses: 0,
+                    });
+                if let Some(due) = Instant::now().checked_sub(DRIFT_CHECK_INTERVAL) {
+                    state.checked = due;
+                }
+                state.losses = state.losses.max(PURGE_ESCALATION_AFTER - 1);
+            }
+            store.purge_if_drifted(&key).await;
+        })
     }
 
     /// Whether the cache is under its high watermark right now, counting
@@ -2596,6 +2647,72 @@ pub(crate) mod tests {
         assert!(
             !orphan.exists(),
             "boot must remove an entry whose metadata cannot be read"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pressure_purge_needs_no_throttle_window_and_no_repeated_losses() {
+        // The rejected request's retry needs headroom NOW: the pressure purge
+        // must skip the per-minute throttle (a check just ran, from the page
+        // that grew the entry) and must not spend three more losing probes
+        // before it queues behind the reader.
+        let (f, k, skeleton) = entry_with_fetched_blobs("pressure-purge").await;
+        let entry_dir = f.store.entry_dir(&k);
+
+        let reader = match f.store.open(&k, &creds(), pinned(&f, &k, 1)).await {
+            Ok(g) => g,
+            Err(e) => panic!("pinned open: {e}"),
+        };
+        f.store.purge_if_drifted(&k).await;
+        f.store.purge_if_drifted(&k).await;
+        assert!(
+            dir_size(&entry_dir.join("repo.git")) > skeleton * 2,
+            "under a reader and inside the throttle window the plain purge must not reclaim"
+        );
+
+        let purge = f.store.purge_under_pressure(&k);
+        drop(reader);
+        if let Err(e) = purge.await {
+            panic!("the pressure purge must not panic: {e}");
+        }
+
+        let Some(after) = RepoMeta::load(&entry_dir) else {
+            panic!("meta must survive")
+        };
+        assert!(
+            after.size_bytes < skeleton * 2,
+            "one pressure purge must reclaim despite throttle and losses: {} vs skeleton {skeleton}",
+            after.size_bytes
+        );
+    }
+
+    #[tokio::test]
+    async fn a_prefetch_over_the_entry_cap_is_transient_not_permanent() {
+        // The prefetch measurement includes blob weight a purge reclaims, so
+        // "too large" here must be the retryable rejection, never the 413
+        // that tells the connector to abandon the repository for good.
+        let (f, k, skeleton) = entry_with_fetched_blobs("prefetch-cap").await;
+        let git_dir = f.store.entry_dir(&k).join("repo.git");
+
+        let capped = match RepoStore::open_cache(
+            &f.root.join("cache"),
+            2,
+            None,
+            Budget {
+                total_bytes: u64::MAX,
+            },
+            skeleton + 1024,
+        ) {
+            Ok(s) => Arc::new(s),
+            Err(e) => panic!("capped store: {e}"),
+        };
+        let head = head_of(&git_dir);
+        let refused = capped
+            .prefetch_window(&k, &git_dir, &[head], &creds())
+            .await;
+        assert!(
+            matches!(refused, Err(GitError::TransientlyOverCap)),
+            "expected the retryable rejection, got {refused:?}"
         );
     }
 

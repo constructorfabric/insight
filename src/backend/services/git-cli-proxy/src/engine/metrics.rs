@@ -60,6 +60,8 @@ impl FetchResult {
 pub enum RejectReason {
     /// The page-serve headroom check refused a blob prefetch.
     PrefetchHeadroom,
+    /// A prefetch would take one entry past its own cap before a purge.
+    EntryOverCap,
     /// Reclaim ran and the cache is still over the watermark.
     AdmissionExhausted,
     /// Preparation outlived the bounded inline wait.
@@ -72,6 +74,7 @@ impl RejectReason {
     const fn as_str(self) -> &'static str {
         match self {
             Self::PrefetchHeadroom => "prefetch_headroom",
+            Self::EntryOverCap => "entry_over_cap",
             Self::AdmissionExhausted => "admission_exhausted",
             Self::PreparationWait => "preparation_wait",
             Self::OriginThrottled => "origin_throttled",
