@@ -526,8 +526,8 @@ jobs:
           # Pre-merge the toolbox image is main's and predates the sentinel;
           # fall back to the log's trailing pretty-printed manifest document.
           if [ "$manifest_rc" -ne 0 ]; then
-            awk '/^\{$/{doc=""} {doc=doc $0 "\n"} END{printf "%s", doc}' "$RUNNER_TEMP/seed.log" \
-              > "$RUNNER_TEMP/stand-manifest.json" || true
+            awk '/^\{$/{doc=$0 "\n"; on=1; next} on{doc=doc $0 "\n"; if ($0=="}") on=0} END{printf "%s", doc}' \
+              "$RUNNER_TEMP/seed.log" > "$RUNNER_TEMP/stand-manifest.json" || true
             if jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
               echo "::warning::TEMPORARY fallback: manifest recovered from the log tail (pre-merge image lag)."
               manifest_rc=0
