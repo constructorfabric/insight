@@ -19,6 +19,9 @@ const REPROOF_ATTEMPTS: usize = 2;
 const BARE_REFSPEC: &str = "+refs/heads/*:refs/heads/*";
 /// How often one entry's on-disk size is re-measured after being served.
 const DRIFT_CHECK_INTERVAL: Duration = Duration::from_mins(1);
+/// Consecutive drift checks that may find the entry busy and over threshold
+/// before the repack stops being opportunistic and takes a real write lock.
+const PURGE_ESCALATION_AFTER: u32 = 3;
 
 /// Why a refresh failed, in a form that survives being broadcast to every
 /// waiter (`GitError` is not `Clone`).
@@ -195,6 +198,9 @@ pub struct RepoStore {
     /// When each entry last had its on-disk size re-measured. Without it a
     /// 200-page walk pays a full `dir_size` per page.
     drift_checks: Mutex<HashMap<String, Instant>>,
+    /// Per entry: how many drift checks in a row wanted a repack but lost the
+    /// non-blocking lock probe to readers.
+    purge_debt: Mutex<HashMap<String, u32>>,
     /// Bytes promised to heavy operations that have been admitted but have not
     /// finished writing them.
     reserved_bytes: AtomicU64,
@@ -250,6 +256,7 @@ impl RepoStore {
             tmp_counter: AtomicU64::new(0),
             gauges: Arc::new(DiskGauges::default()),
             drift_checks: Mutex::new(HashMap::new()),
+            purge_debt: Mutex::new(HashMap::new()),
             reserved_bytes: AtomicU64::new(0),
             admission: Mutex::new(()),
         })
@@ -863,15 +870,11 @@ impl RepoStore {
             return;
         }
 
-        let lock = self.entry_lock(key).await;
-        // INVARIANT: a repack may follow, and repack DELETES packs. Both the
-        // measurement and the repack take the write side, and neither ever
-        // waits for it: a reader that still holds the entry gets served, not
-        // repacked under.
-        let Ok(_write) = lock.try_write() else {
-            return;
-        };
-
+        // The measurement needs NO lock: `dir_size` only reads, and the meta
+        // write is atomic tmp+rename. Gating it behind the same non-blocking
+        // probe as the repack starved the accounting under continuous paging —
+        // the next page's read guard was always in place before this task ran,
+        // so `size_bytes` sat at the clone-time figure while the entry tripled.
         let Some(mut meta) = RepoMeta::load(&entry_dir) else {
             return;
         };
@@ -884,8 +887,26 @@ impl RepoStore {
         // A promoted entry holds the only copy of its blobs: origin refuses to
         // serve them again, so purging would strand it.
         if meta.full_clone || !worth_purging(measured, meta.skeleton_bytes) {
+            self.purge_debt.lock().await.remove(&key.dir_name());
             return;
         }
+
+        // INVARIANT: repack DELETES packs, so it takes the write side. It is
+        // opportunistic first — a reader that still holds the entry gets
+        // served, not repacked under — but under continuous paging the probe
+        // NEVER wins, so after enough losses it queues for the lock like a
+        // fetch would. Readers wait out one repack; the alternative is an
+        // entry that grows for as long as anyone keeps reading it.
+        let lock = self.entry_lock(key).await;
+        let _write = if let Ok(guard) = lock.clone().try_write_owned() {
+            guard
+        } else {
+            if !self.purge_debt_due(&key.dir_name()).await {
+                return;
+            }
+            lock.write_owned().await
+        };
+        self.purge_debt.lock().await.remove(&key.dir_name());
 
         match self.repack_blobless(&entry_dir).await {
             Ok(freed) => {
@@ -894,6 +915,15 @@ impl RepoStore {
             }
             Err(e) => tracing::warn!(error = %e, dir = %key.dir_name(), "post-serve purge failed"),
         }
+    }
+
+    /// Whether this entry has lost the non-blocking probe often enough that
+    /// the repack should stop yielding to readers.
+    async fn purge_debt_due(&self, dir_name: &str) -> bool {
+        let mut debt = self.purge_debt.lock().await;
+        let count = debt.entry(dir_name.to_owned()).or_insert(0);
+        *count += 1;
+        *count >= PURGE_ESCALATION_AFTER
     }
 
     /// Pull the blobs a window touches, bounded by the per-repository cap.
@@ -2184,9 +2214,84 @@ pub(crate) mod tests {
         assert_eq!(
             dir_size(&entry_dir.join("repo.git")),
             inflated,
-            "repack deletes packs; it must never run under a reader"
+            "repack deletes packs; it must not run opportunistically under a reader"
+        );
+
+        // The measurement, though, needs no lock at all: gating it behind the
+        // repack's probe starves the accounting under continuous paging, and
+        // the reclaim planner then treats an inflated entry as skeleton-sized.
+        let Some(meta) = RepoMeta::load(&entry_dir) else {
+            panic!("meta must exist")
+        };
+        assert_eq!(
+            meta.size_bytes, inflated,
+            "accounting must be updated even while a reader holds the entry"
         );
         drop(reader);
+    }
+
+    #[tokio::test]
+    async fn a_repack_starved_by_readers_eventually_queues_for_the_lock() {
+        // When a reader is always in place before the purge task runs the
+        // opportunistic probe never wins, and an entry served continuously
+        // grows for as long as anyone keeps reading it. After enough losses
+        // the repack must queue for the write side like a fetch would.
+        let (f, k, skeleton) = entry_with_fetched_blobs("drift-escalate").await;
+        let entry_dir = f.store.entry_dir(&k);
+        let inflated = dir_size(&entry_dir.join("repo.git"));
+
+        let reader = match f.store.open(&k, &creds(), pinned(&f, &k, 1)).await {
+            Ok(g) => g,
+            Err(e) => panic!("pinned open: {e}"),
+        };
+
+        // Drive the real entry point, not the counter: each round is one page
+        // served under the held guard, with only the per-minute throttle
+        // stepped forward.
+        for lost in 1..PURGE_ESCALATION_AFTER {
+            f.store.drift_checks.lock().await.clear();
+            f.store.purge_if_drifted(&k).await;
+            assert_eq!(
+                dir_size(&entry_dir.join("repo.git")),
+                inflated,
+                "loss {lost} must stay opportunistic under a reader"
+            );
+        }
+
+        f.store.drift_checks.lock().await.clear();
+        let escalated = tokio::spawn({
+            let store = Arc::clone(&f.store);
+            let k = k.clone();
+            async move { store.purge_if_drifted(&k).await }
+        });
+
+        // The escalated repack must reach the lock while the reader still
+        // holds it: releasing first would let the opportunistic probe win and
+        // the test would pass with no escalation at all.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(
+            dir_size(&entry_dir.join("repo.git")),
+            inflated,
+            "the escalated repack must wait for the reader, not repack under it"
+        );
+
+        drop(reader);
+        if let Err(e) = escalated.await {
+            panic!("the escalated purge must not panic: {e}");
+        }
+
+        let Some(meta) = RepoMeta::load(&entry_dir) else {
+            panic!("meta must exist")
+        };
+        assert!(
+            meta.size_bytes < skeleton * 2,
+            "the repack must have run: {} vs skeleton {skeleton}",
+            meta.size_bytes
+        );
+        assert!(
+            !f.store.purge_debt_due(&k.dir_name()).await,
+            "a completed repack must reset the escalation counter"
+        );
     }
 
     #[tokio::test]

@@ -194,14 +194,19 @@ Blobs exist on disk only transiently, for the commit window being served:
      packs while bitmap writing assumes a single pack, so with
      `repack.writeBitmaps` enabled the repack fails outright.
 
-   The purge takes the entry's write lock without waiting for it. A reader
-   holding the entry is served, not repacked under; the eviction path (§3.6)
-   is the backstop. Whether or not a purge follows, the check re-measures the
-   entry and writes the result to `meta.json` — a prefetch that grows an entry
+   The re-measurement runs under NO lock — `dir_size` only reads and the
+   metadata write is atomic — and always lands: a prefetch that grows an entry
    and reports nothing leaves the reclaim planner believing every entry is
-   skeleton-sized, so it never plans the cheap tier and evicts warm
-   repositories instead. Re-measurement is throttled per entry, or a
-   two-hundred-page walk pays a full directory walk per page.
+   skeleton-sized. It is throttled per entry, or a two-hundred-page walk pays
+   a full directory walk per page.
+
+   The repack starts opportunistic — a reader holding the entry is served,
+   not repacked under — but escalates: under continuous paging the next
+   page's read guard is always in place before the purge task runs, so the
+   non-blocking probe never wins and the entry grows for as long as the
+   client keeps paging. After a few losses it queues for the write lock like
+   a fetch would; readers wait out one repack, answered by the bounded-wait
+   `429` where the wait would exceed `INLINE_WAIT`.
 
 Blob prefetch is always required: numstat, `patch_id` computation, and patch
 text all need blob content. `include_patch=false` (§4.2) only skips patch
