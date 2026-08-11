@@ -84,4 +84,54 @@ export default defineConfig([
       "react-hooks/incompatible-library": "off",
     },
   },
+  {
+    // Keep the text scale from growing back.
+    //
+    // It had drifted to twelve sizes and five greys, and none of that was
+    // decided — each one was a reasonable local choice that nobody could see
+    // the sum of. A reader learns a screen by learning its rules, and twelve
+    // sizes with no rule behind them is not a hierarchy, it is decoration.
+    //
+    // So the sizes a screen may use are the ones in `src/lib/type-scale.ts`,
+    // and a size written by hand is refused here rather than found later by
+    // whoever measures it again. Fractional text greys go the same way: two
+    // levels are readable as "read this / you may skip this", five are not
+    // rankable by anyone and the rule stops holding.
+    //
+    // Vendored primitives under components/ui are exempt — their sizing is
+    // that library's business and `shadcn add` rewrites them.
+    files: ["src/**/*.tsx"],
+    ignores: ["src/components/ui/**"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          // `(^|[\\s:])` rather than `(^|\\s)`: a variant prefix sits directly
+          // against the utility, so `hover:text-[13px]` and `sm:text-[13px]`
+          // walked past the whitespace-anchored version. A guard with a hole
+          // in it is worse than none, because it is believed.
+          selector:
+            "Literal[value=/(^|[\\s:])text-\\[[0-9.]+(px|rem)\\]/]",
+          message:
+            "Hand-set text size. Use a role from src/lib/type-scale.ts, or add one there if none fits.",
+        },
+        {
+          selector:
+            "Literal[value=/(^|[\\s:])text-(muted-)?foreground\\/[0-9]/]",
+          message:
+            "Fractional text grey. There are two: text-foreground and text-muted-foreground.",
+        },
+        {
+          // Every palette family, not the handful that happened to be in the
+          // tree when this was written — the next colour reached for will be
+          // one of the others. `text-black` and `text-white` carry no number
+          // and were missed for that reason alone.
+          selector:
+            "Literal[value=/(^|[\\s:])text-((slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]|(black|white)\\b)/]",
+          message:
+            "Raw palette colour. Good/bad is text-success and text-destructive; text-warning is attention without a verdict.",
+        },
+      ],
+    },
+  },
 ]);

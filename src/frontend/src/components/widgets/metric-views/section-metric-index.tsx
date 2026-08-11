@@ -4,6 +4,8 @@ import {
   PeerMark,
 } from "@/components/widgets/metric-views/peer-mark";
 import { formatMetricValue } from "@/lib/format";
+import { TEXT_BODY, TEXT_EYEBROW, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
+import { cn } from "@/lib/utils";
 import { metricComparisons } from "@/lib/insight/metric-comparison";
 import { derivePeerStanding } from "@/lib/metrics/peer-standing";
 import {
@@ -67,7 +69,7 @@ export function SectionMetricIndex({
 
   return (
     <section className="rounded-xl border p-4 sm:p-5">
-      <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+      <h2 className={TEXT_EYEBROW}>
         Also measured here
       </h2>
       {/* One column, whatever the width. Side-by-side columns of aligned
@@ -90,11 +92,15 @@ export function SectionMetricIndex({
             key={metric.metric_key}
             className="flex items-center justify-between gap-4 border-b border-dashed py-1 last:border-b-0"
           >
-            <dt className="min-w-0 flex-1 truncate text-xs">
+            <dt className={cn("min-w-0 flex-1 truncate", TEXT_NAME)}>
               <MetricName metric={metric} />
             </dt>
-            <dd className="flex shrink-0 items-baseline gap-2 text-xs tabular-nums">
-              <span className="w-32 text-right">
+            {/* Layout only. Putting the label role on the container greyed
+                the person's own value along with its median, so the subject of
+                the row and the context around it read the same — which is the
+                distinction this scale exists to make. */}
+            <dd className="flex shrink-0 items-baseline gap-2 tabular-nums">
+              <span className={cn("w-32 text-right", TEXT_BODY)}>
                 {formatMetricValue(
                   forEntity(metric, entityId).value,
                   metric.format,
@@ -105,7 +111,7 @@ export function SectionMetricIndex({
                   anything. Uncoloured: a list of thirty numbers lit up by
                   quartile is a scoreboard, and the reader did not ask to be
                   scored on every one of them. */}
-              <span className="w-28 text-right text-muted-foreground">
+              <span className={cn("w-28 text-right", TEXT_LABEL)}>
                 {metricComparisons(metric, null, entityId).median ?? ""}
               </span>
               {/* And how far off that middle, on the axis every row shares.

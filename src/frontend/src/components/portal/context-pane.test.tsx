@@ -121,7 +121,7 @@ describe("ContextPane", () => {
   it("renders the person's sections nav in the Person zone", () => {
     mocks.zone = { activeZone: "person", activePerson: "boss@x" };
     pane();
-    expect(screen.getByText("Pick a person")).toBeInTheDocument();
+    expect(screen.getByText("Personal metrics")).toBeInTheDocument();
     expect(screen.getByText("At a glance")).toBeInTheDocument();
   });
 

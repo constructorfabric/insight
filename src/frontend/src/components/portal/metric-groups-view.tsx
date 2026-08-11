@@ -29,6 +29,7 @@ import {
   type MetricCollectionConfig,
 } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { TEXT_EYEBROW } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import { useCohortLabel } from "@/lib/portal/use-cohort-label";
 import { usePersonCohort } from "@/lib/portal/use-person-cohort";
@@ -331,7 +332,7 @@ export function MetricGroupsView({
                 complete picture by then. */}
             <PersonCoverage unmeasured={unmeasured} inactive={inactive} />
             <section className="flex flex-col gap-3">
-              <p className="flex flex-wrap items-baseline gap-x-2 text-xs font-medium tracking-wider text-muted-foreground uppercase">
+              <p className={cn("flex flex-wrap items-baseline gap-x-2", TEXT_EYEBROW)}>
                 At a glance
                 {/* Whose median. Every comparison on this page says "vs median"
                     and none of them said against whom — which is the one thing

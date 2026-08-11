@@ -28,7 +28,7 @@ function list(titles: string[]): string {
 export function PersonCoverage({ unmeasured, inactive }: PersonCoverageProps) {
   if (unmeasured.length === 0 && inactive.length === 0) return null;
   return (
-    <p className="text-xs text-muted-foreground">
+    <p className="text-sm text-muted-foreground">
       {unmeasured.length > 0 ? (
         <>
           No data reaches us for {list(unmeasured)} — this page shows what is

@@ -27,6 +27,7 @@ import {
 import { formatGapMagnitude } from "@/lib/metrics/gap";
 import { PEER_FILL, PEER_TEXT, type PeerCohortLabel } from "@/lib/peers";
 import { STATUS_STRIPE_LEFT, STATUS_STRIPE_TOP } from "@/lib/status";
+import { TEXT_FIGURE, TEXT_LABEL, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 interface PeerStoryProps {
@@ -75,7 +76,7 @@ function HeroCard({
           <span className={cn("size-1.5 rounded-full", PEER_FILL[color])} />
           <span
             className={cn(
-              "text-[10px] font-semibold tracking-widest uppercase",
+              "text-xs font-semibold tracking-widest uppercase",
               PEER_TEXT[color]
             )}
           >
@@ -83,7 +84,7 @@ function HeroCard({
           </span>
         </div>
         <div>
-          <h3 className="text-xl font-semibold tracking-tight sm:text-2xl">
+          <h3 className={TEXT_TITLE}>
             {entry.label}
           </h3>
           {entry.sublabel ? (
@@ -96,7 +97,7 @@ function HeroCard({
           <span className="flex items-baseline gap-1">
             <span
               className={cn(
-                "text-4xl font-semibold tracking-tight tabular-nums sm:text-[2.75rem]",
+                TEXT_FIGURE,
                 PEER_TEXT[color]
               )}
             >
@@ -105,7 +106,7 @@ function HeroCard({
                 : formatMetricNumber(entry.value, entry.format)}
             </span>
             {unit ? (
-              <span className="text-base text-muted-foreground">{unit}</span>
+              <span className={TEXT_LABEL}>{unit}</span>
             ) : null}
           </span>
           {entry.stats ? (
@@ -222,7 +223,7 @@ function SideCard({
                 which outgrows these cards), so chips are the only
                 tooltip-gated tier. */}
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="text-2xl font-semibold tabular-nums">
+              <span className={TEXT_FIGURE}>
                 {entry.format === "percent"
                   ? formatMetricValue(entry.value, entry.format, entry.unit)
                   : formatMetricNumber(entry.value, entry.format)}
@@ -262,7 +263,7 @@ function SideCard({
                 </>
               ) : null}
             </div>
-            <div className="mt-1 truncate text-[11px] text-muted-foreground">
+            <div className="mt-1 truncate text-xs text-muted-foreground">
               {outlierText(entry.status)}
             </div>
           </div>
@@ -359,7 +360,7 @@ function FlatGridCard({ entry }: { entry: PeerStoryEntry }) {
           </div>
         ) : null}
       </div>
-      <div className="mt-5 text-2xl font-semibold tabular-nums">
+      <div className={cn("mt-5", TEXT_FIGURE)}>
         {entry.format === "percent"
           ? formatMetricValue(entry.value, entry.format, entry.unit)
           : formatMetricNumber(entry.value, entry.format)}
@@ -436,7 +437,7 @@ function SupportingFold({
           <div className="text-sm font-medium">
             {open ? "Hide" : "Show"} {summaryLabel}
           </div>
-          <div className="text-[11px] text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             {summaryDescription}
           </div>
         </div>

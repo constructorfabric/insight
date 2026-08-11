@@ -21,6 +21,7 @@ import {
 } from "@/lib/metrics/collection";
 import { seriesColors } from "@/lib/series-colors";
 import { evidenceSelection } from "@/api/metric-drilldown-client";
+import { TEXT_FIGURE } from "@/lib/type-scale";
 
 export interface MetricSummaryCardProps {
   metric: NormalizedMetricResult;
@@ -94,7 +95,7 @@ export function MetricSummaryCard({
           />
         </div>
         <span className="flex items-baseline gap-1 tabular-nums">
-          <span className="text-3xl font-semibold">
+          <span className={TEXT_FIGURE}>
             {value == null
               ? "—"
               : metric.format === "percent"

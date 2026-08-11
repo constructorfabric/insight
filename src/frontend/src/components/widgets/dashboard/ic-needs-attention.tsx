@@ -7,6 +7,7 @@ import { useSettings } from "@/hooks/use-settings";
 import type { AttentionItem } from "@/lib/insight/attention";
 import type { GroupId } from "@/lib/insight/groups";
 import { PEER_TEXT, applyFocus } from "@/lib/peers";
+import { TEXT_EYEBROW, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const COLLAPSED_ATTENTION = 6;
@@ -48,7 +49,7 @@ export function IcNeedsAttention({
 
   return (
     <section>
-      <h2 className="mb-3 text-xs font-medium tracking-wider text-muted-foreground uppercase">
+      <h2 className={cn("mb-3", TEXT_EYEBROW)}>
         Needs attention
       </h2>
       <Card data-size="sm">
@@ -89,13 +90,13 @@ export function IcNeedsAttention({
                     className="-mx-2 flex w-[calc(100%+1rem)] flex-col gap-x-2 rounded px-2 py-1 text-left text-sm transition-colors hover:bg-accent sm:col-span-full sm:grid sm:w-auto sm:grid-cols-subgrid sm:items-baseline"
                   >
                     <span className="flex min-w-0 items-baseline gap-2 sm:contents">
-                      <span className="min-w-0 truncate text-foreground">
+                      <span className={cn("min-w-0 truncate", TEXT_NAME)}>
                         {item.label}
                       </span>
                       {/* Beside the name, not stranded at the far edge of the
                           row: it says what KIND of finding this name is, and
                           half a row away it was read as a fifth number. */}
-                      <span className="shrink-0 justify-self-start rounded border px-1.5 text-[0.6875rem] whitespace-nowrap text-muted-foreground">
+                      <span className={cn("shrink-0 justify-self-start rounded border px-1.5 whitespace-nowrap", TEXT_LABEL)}>
                         {item.kind === "fell"
                           ? "fell this period"
                           : item.noPrevious
@@ -124,7 +125,7 @@ export function IcNeedsAttention({
                       >
                         {item.valueUnit}
                       </span>
-                      <span className="truncate text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+                      <span className={cn("truncate whitespace-nowrap tabular-nums", TEXT_LABEL)}>
                         {item.medianText ? (
                           <>
                             {item.gapText ? <>{item.gapText} vs </> : null}
@@ -137,7 +138,7 @@ export function IcNeedsAttention({
                         a row that only reacts to hover is indistinguishable from
                         a line of text until the mouse happens to cross it. */}
                     <ChevronRight
-                      className="size-3.5 shrink-0 self-center text-muted-foreground/50"
+                      className="size-3.5 shrink-0 self-center text-muted-foreground"
                       aria-hidden
                     />
                   </button>
@@ -149,7 +150,7 @@ export function IcNeedsAttention({
                 <button
                   type="button"
                   onClick={() => setShowAll((v) => !v)}
-                  className="rounded text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
+                  className={cn(TEXT_LABEL, "rounded transition-colors hover:text-foreground")}
                 >
                   {showAll
                     ? "Show fewer"

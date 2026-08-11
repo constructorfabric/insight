@@ -51,7 +51,7 @@ export function Sparkline({ points, className }: SparklineProps) {
       viewBox={`0 0 ${W} ${H + 3}`}
       width={W}
       height={H + 3}
-      className={cn("overflow-visible text-foreground/40", className)}
+      className={cn("overflow-visible text-muted-foreground", className)}
       aria-hidden
     >
       {/* A rule under the line, spanning the whole window.
@@ -67,7 +67,7 @@ export function Sparkline({ points, className }: SparklineProps) {
         y2={H + 2}
         stroke="currentColor"
         strokeWidth={0.75}
-        className="text-foreground/15"
+        className="text-muted-foreground"
       />
       {/* Ticks at the ends, so the span reads as a span. */}
       <line
@@ -77,7 +77,7 @@ export function Sparkline({ points, className }: SparklineProps) {
         y2={H + 3}
         stroke="currentColor"
         strokeWidth={0.75}
-        className="text-foreground/20"
+        className="text-muted-foreground"
       />
       <line
         x1={W}
@@ -86,7 +86,7 @@ export function Sparkline({ points, className }: SparklineProps) {
         y2={H + 3}
         stroke="currentColor"
         strokeWidth={0.75}
-        className="text-foreground/20"
+        className="text-muted-foreground"
       />
       {segments.map((d) => (
         <path

@@ -152,7 +152,7 @@ export function PersonHeader({ person }: { person: string }) {
           title
         )}
         {subtitle ? (
-          <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
+          <p className="truncate text-sm text-muted-foreground">{subtitle}</p>
         ) : null}
       </div>
 

@@ -115,7 +115,7 @@ export function AttentionList({
                 {/* Standing affordance — the row opens that person's page, and
                     a border alone does not say so. */}
                 <ChevronRight
-                  className="ml-auto size-3.5 shrink-0 text-muted-foreground/50"
+                  className="ml-auto size-3.5 shrink-0 text-muted-foreground"
                   aria-hidden
                 />
               </Link>

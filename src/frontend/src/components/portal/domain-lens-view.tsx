@@ -68,6 +68,8 @@ import type { TeamMember } from "@/types/insight";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { useMetricCollection } from "@/queries/metric-results";
 import { useMemberGridData } from "@/queries/member-grid";
+import { TEXT_FIGURE } from "@/lib/type-scale";
+import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
 
@@ -304,7 +306,7 @@ export function DomainLensView({
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">{config.title}</h1>
+        <h1 className="text-lg font-semibold tracking-tight">{config.title}</h1>
         <p className="text-sm text-muted-foreground">
           {orgScope.count} members · {config.tagline ?? "trend & balance"}
         </p>
@@ -506,7 +508,7 @@ function CoverageBar({
   return (
     <div className="h-2.5 min-w-px flex-1 overflow-hidden rounded-full bg-muted">
       <div
-        className={`h-full rounded-full ${warn ? "bg-amber-500/80" : "bg-primary/60"}`}
+        className={`h-full rounded-full ${warn ? "bg-warning/80" : "bg-primary/60"}`}
         style={{ width: `${total > 0 ? (filled / total) * 100 : 0}%` }}
       />
     </div>
@@ -545,11 +547,11 @@ function CoverageLevelsSection({
       {/* 1 — the verdict, as a number rather than a sentence: it is meant to
           be seen, not parsed. */}
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="text-4xl font-semibold tabular-nums">
+        <span className={TEXT_FIGURE}>
           {/* Same amber as the rows it is the sum of. The link between the
               number and the block of bars is the one thing a reader has to
               make unaided, and colour makes it without a caption. */}
-          <span className="text-amber-600 dark:text-amber-500">{thin}</span>
+          <span className="text-warning">{thin}</span>
           <span className="text-muted-foreground">/{counted}</span>
         </span>
         <p className="max-w-md text-sm text-muted-foreground">
@@ -569,7 +571,7 @@ function CoverageLevelsSection({
           <div key={part.id} className="flex items-center gap-3 text-sm">
             <span className="w-36 shrink-0 truncate">{part.title}</span>
             {part.unreachable ? (
-              <span className="flex-1 text-xs text-amber-600 dark:text-amber-500">
+              <span className="flex-1 text-xs text-warning">
                 {/* No cause named. Absent observations, a disabled metric and
                     a broken schema all land here, and only the first is a
                     missing connector — sending someone to plumb a live one is
@@ -603,11 +605,11 @@ function CoverageLevelsSection({
             <div key={level} className="flex flex-col gap-2">
               {boundary && (
                 <div className="mt-1 flex items-center gap-3">
-                  <span className="w-36 shrink-0 text-xs text-amber-600 dark:text-amber-500">
+                  <span className="w-36 shrink-0 text-xs text-warning">
                     fewer than half
                   </span>
-                  <span className="h-px flex-1 bg-amber-500/40" />
-                  <span className="w-14 shrink-0 text-right text-xs font-medium text-amber-600 tabular-nums dark:text-amber-500">
+                  <span className="h-px flex-1 bg-warning/40" />
+                  <span className="w-14 shrink-0 text-right text-xs font-medium text-warning tabular-nums dark:text-warning">
                     {thin}
                   </span>
                 </div>
@@ -712,7 +714,7 @@ function CoverageLevelPeople({
               <span className="font-medium">{name}</span>
             )}
             {unconnected.length > 0 && (
-              <span className="text-amber-600 dark:text-amber-500">
+              <span className="text-warning">
                 no connector: {unconnected.join(", ")}
               </span>
             )}
@@ -797,7 +799,7 @@ function ParticipationSection({
                 direction="higher_is_better"
               />
             </div>
-            <div className="mt-1 text-2xl font-semibold tabular-nums">
+            <div className={cn("mt-1", TEXT_FIGURE)}>
               {active} of {memberIds.length}
             </div>
             <div className="text-xs text-muted-foreground">
@@ -860,7 +862,7 @@ function HeadlineSection({
                 />
                 <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
               </div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums">
+              <div className={cn("mt-1", TEXT_FIGURE)}>
                 {formatMetricValue(
                   c.isSum ? perCapita(c.r, memberIds) : c.now,
                   c.r.format,
@@ -922,7 +924,7 @@ function StatTilesSection({
                 />
                 <Delta now={t.median} prev={t.prev} direction={t.r.direction} />
               </div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums">
+              <div className={cn("mt-1", TEXT_FIGURE)}>
                 {formatMetricValue(t.median, t.r.format, t.r.unit)}
               </div>
               <div className="text-xs text-muted-foreground">
@@ -1071,7 +1073,7 @@ function DistributionSection({
               />
             </BarChart>
           </ChartContainer>
-          <p className="mt-1 text-center text-[10px] text-muted-foreground">
+          <p className="mt-1 text-center text-xs text-muted-foreground">
             {spec.unitLabel}
           </p>
         </CardContent>
@@ -1173,7 +1175,7 @@ function EventHistogramSection({
               />
             </BarChart>
           </ChartContainer>
-          <p className="mt-1 text-center text-[10px] text-muted-foreground">
+          <p className="mt-1 text-center text-xs text-muted-foreground">
             {r?.short_label ?? r?.label ?? spec.metric}
             {r?.unit ? ` (${r.unit})` : ""}
           </p>
@@ -1240,7 +1242,7 @@ function ConcentrationSection({
               <div className="text-xs font-medium text-muted-foreground">
                 {c.label}
               </div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums">
+              <div className={cn("mt-1", TEXT_FIGURE)}>
                 {Math.round(c.share * 100)}%
               </div>
               <div className="text-xs text-muted-foreground">

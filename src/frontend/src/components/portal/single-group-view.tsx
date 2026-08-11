@@ -18,6 +18,7 @@ import {
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { usePersonCohort } from "@/lib/portal/use-person-cohort";
 import { useMetricCollection } from "@/queries/metric-results";
+import { TEXT_TITLE } from "@/lib/type-scale";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
 const CLOSED_ENTITY = { type: "person" as const, ids: [] };
@@ -132,7 +133,7 @@ export function SingleGroupView({
   if (!groupHasData(def, injectedData.byKey, entityId)) {
     return (
       <div className="flex flex-col gap-3 p-4 md:p-6">
-        <h1 className="text-xl font-semibold tracking-tight">{def.title}</h1>
+        <h1 className={TEXT_TITLE}>{def.title}</h1>
         <p className="text-sm text-muted-foreground">
           Nothing recorded here for the selected period.
         </p>
@@ -150,7 +151,7 @@ export function SingleGroupView({
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
-      <h1 className="text-xl font-semibold tracking-tight">{def.title}</h1>
+      <h1 className={TEXT_TITLE}>{def.title}</h1>
       {sources.length > 0 ? (
         // What was being watched, next to what it concluded. A low number
         // means one thing when the tool everyone uses is connected and

@@ -31,6 +31,7 @@ import {
 } from "@/lib/scoring";
 import { STATUS_BG_CLASS, applyFocusStatus } from "@/lib/status";
 import type { MetricCollectionResult } from "@/queries/metric-results";
+import { TEXT_HEADING } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export interface MetricGroupCardProps {
@@ -78,7 +79,7 @@ export function MetricGroupCard({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-base font-semibold">{def.title}</CardTitle>
+          <CardTitle className={TEXT_HEADING}>{def.title}</CardTitle>
           {subtitle ? (
             <CardDescription className="text-xs text-muted-foreground">
               {subtitle}
@@ -171,13 +172,13 @@ export function MetricGroupCard({
       )}
     >
       <CardHeader>
-        <CardTitle className="flex items-center gap-1 text-base font-semibold">
+        <CardTitle className={cn("flex items-center gap-1", TEXT_HEADING)}>
           <span className="min-w-0 truncate">{def.title}</span>
           {/* Same standing affordance as the KPI tile — an empty card is not
               interactive and gets none. */}
           {isEmpty ? null : (
             <ChevronRight
-              className="size-4 shrink-0 text-muted-foreground/60"
+              className="size-4 shrink-0 text-muted-foreground"
               aria-hidden
             />
           )}

@@ -156,7 +156,7 @@ export function MetricEvidenceDialog({
                     <SelectTrigger
                       size="sm"
                       aria-label="Metric"
-                      className="border-transparent bg-transparent px-0 text-base font-semibold shadow-none hover:bg-transparent focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+                      className="border-transparent bg-transparent px-0 text-sm font-semibold shadow-none hover:bg-transparent focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
                     >
                       <SelectValue>{activeTarget.label}</SelectValue>
                     </SelectTrigger>

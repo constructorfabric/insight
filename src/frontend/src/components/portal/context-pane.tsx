@@ -56,7 +56,7 @@ import { cn } from "@/lib/utils";
 const ZONE_SUB: Record<string, string> = {
   overview: "Cross-functional org rollup",
   directions: "Functional domains",
-  person: "Pick a person",
+  person: "Personal metrics",
   people: "Roster & org structure",
   aicost: "Adoption funnel & cost",
   scorecard: "Unit × quarter × QoQ",
@@ -339,7 +339,7 @@ function ItemButton({
         {item.badge ? (
           <span
             className={cn(
-              "ml-auto rounded-full px-1.5 py-0.5 text-[9px] font-semibold",
+              "ml-auto rounded-full px-1.5 py-0.5 text-xs font-semibold",
               BADGE_TONE[item.badge.tone],
             )}
           >
@@ -358,7 +358,7 @@ function DirectionsNav() {
     <SidebarGroup>
       <SidebarGroupLabel>
         Directions
-        <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+        <span className="ml-1 text-xs font-normal text-muted-foreground">
           · catalog · {DIRECTIONS.length}
         </span>
       </SidebarGroupLabel>
@@ -406,7 +406,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
           <Icon />
           <span>{direction.name}</span>
           {direction.source === "bullet" ? (
-            <span className="ml-auto rounded-full bg-warning/15 px-1.5 py-0.5 text-[9px] font-semibold text-warning">
+            <span className="ml-auto rounded-full bg-warning/15 px-1.5 py-0.5 text-xs font-semibold text-warning">
               bullet
             </span>
           ) : null}

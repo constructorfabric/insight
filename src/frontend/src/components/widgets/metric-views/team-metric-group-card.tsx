@@ -22,6 +22,7 @@ import {
 import { applyFocus, PEER_TEXT } from "@/lib/peers";
 import { STATUS_BG_CLASS, applyFocusStatus } from "@/lib/status";
 import type { MetricCollectionResult } from "@/queries/metric-results";
+import { TEXT_HEADING } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export interface TeamMetricGroupCardProps {
@@ -53,7 +54,7 @@ export function TeamMetricGroupCard({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-base font-semibold">{def.title}</CardTitle>
+          <CardTitle className={TEXT_HEADING}>{def.title}</CardTitle>
           {subtitle ? (
             <CardDescription className="text-xs text-muted-foreground">
               {subtitle}
@@ -106,7 +107,7 @@ export function TeamMetricGroupCard({
       className={cn("text-left transition-colors hover:bg-accent/50")}
     >
       <CardHeader>
-        <CardTitle className="text-base font-semibold">{def.title}</CardTitle>
+        <CardTitle className={TEXT_HEADING}>{def.title}</CardTitle>
         <CardDescription className="flex flex-col gap-1 text-xs">
           {subtitle ? (
             <span className="text-muted-foreground">{subtitle}</span>

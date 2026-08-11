@@ -8,7 +8,7 @@
  * out of, and a metric with no detail says so rather than leaving a hole that
  * reads as a failed load.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MetricResult } from "@/api/metric-results-client";
@@ -190,6 +190,38 @@ describe("MetricActivity", () => {
     expect(label).toMatch(/Messages Sent by day/);
     expect(label).toMatch(/busiest/);
     expect(label).toMatch(/3 days have no reading/);
+  });
+
+  it("anchors the day readout to the edge of the day it describes", () => {
+    // The readout grows away from the nearer end so it cannot run off the
+    // strip, and which edge it hangs from has to follow: one growing leftwards
+    // ENDS at its day's right boundary. Anchoring both directions to the left
+    // boundary put every readout in the second half a full day to the left of
+    // the day under the pointer.
+    detail.state.data = {
+      columns: [
+        { key: "date", label: "Date", type: "date" },
+        { key: "value", label: "Value", type: "number" },
+      ],
+      rows: [
+        { values: { date: "2026-03-01", value: 4 } },
+        { values: { date: "2026-03-05", value: 9 } },
+      ],
+    };
+    const { container } = draw(metric("collab.messages_sent", ["source_summary"], 13));
+    const bars = container.querySelectorAll<HTMLElement>('[role="img"] > div');
+    expect(bars).toHaveLength(5);
+    const readout = () =>
+      container.querySelector<HTMLElement>('[role="img"] > [aria-hidden]')!;
+
+    fireEvent.pointerEnter(bars[0]!);
+    expect(readout().style.left).toBe("0%");
+    expect(readout().style.transform).toBe("");
+
+    // The last of five days: its right boundary is the strip's own end.
+    fireEvent.pointerEnter(bars[4]!);
+    expect(readout().style.left).toBe("100%");
+    expect(readout().style.transform).toBe("translateX(-100%)");
   });
 
   it("says nothing was recorded rather than drawing an empty chart", () => {

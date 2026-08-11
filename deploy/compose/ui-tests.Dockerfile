@@ -31,10 +31,13 @@
 # fetches a managed 3.13 and builds the venv on it.
 
 # Version policy: pinned by tag AND digest, so a rebuild can never silently
-# pick up a different image. Resolved 2026-07-31 as the newest stable tag in
-# the registry list (v1.61.0, cross-checked against the
-# microsoft/playwright-python v1.61.0 release and PyPI). -noble is the Ubuntu
+# pick up a different image. Resolved 2026-08-11 as the newest stable tag in
+# the registry list (v1.62.0, cross-checked against the
+# microsoft/playwright-python v1.62.0 release and PyPI). -noble is the Ubuntu
 # 24.04 LTS base; a -resolute variant of the same version also exists.
+# This tag, ui_tests.base_image in tests/versions.yaml and the playwright pin
+# in tests/pyproject.toml state one version between them; if they differ, the
+# package looks for a browser build the image does not contain.
 FROM mcr.microsoft.com/playwright/python:v1.62.0-noble@sha256:aa81288e738725378becba5b3e06cb0f3a7f012a610e87e8d767a090ea3f740d
 
 # uv, pinned the same way (0.12.0).
@@ -56,17 +59,22 @@ RUN uv sync --frozen --no-dev
 
 # Fail the BUILD, not a journey, if any of this is wrong: the interpreter must
 # satisfy the suite's floor, the library must import on it, and the pip
-# Playwright must match the browsers baked into the image — a mismatch there
-# means the package looks for a browser build the image does not contain.
+# Playwright must be able to start the browsers baked into the image — if the
+# two versions differ, the package looks for a browser build that is not here.
+#
+# The browser is LAUNCHED rather than version-compared against a literal. A
+# literal states the expected version twice, so it agrees with whichever pin
+# was not the one edited; starting chromium asserts the thing that matters.
 RUN uv run --frozen --no-dev python -c "\
 import sys, insight_stand; \
 assert sys.version_info >= (3, 13), f'interpreter {sys.version.split()[0]} is below the >=3.13 floor'; \
 print('insight_stand imports on', sys.version.split()[0])" \
  && uv run --frozen --no-dev python -c "\
-import subprocess; \
-out = subprocess.run(['playwright', '--version'], capture_output=True, text=True).stdout.strip(); \
-assert '1.61.0' in out, f'playwright pip pin != image: {out!r}'; \
-print('playwright matches the image:', out)"
+from playwright.sync_api import sync_playwright; \
+p = sync_playwright().start(); \
+b = p.chromium.launch(); \
+print('chromium starts:', b.version); \
+b.close(); p.stop()"
 
 # Drop root before anything runs. A browser rendering pages from the stand is
 # the least privileged thing in this repo and had the most privilege — and the

@@ -285,6 +285,9 @@ function DayStrip({
   if (days.length === 0) return null;
 
   const hoveredDay = hovered != null ? (days[hovered] ?? null) : null;
+  // Which way the hover readout grows: rightwards from the bar over the first
+  // half of the strip, leftwards over the second, so it never runs off an end.
+  const leftAnchored = hovered != null && hovered < days.length / 2;
   const silent = silentDays(days);
   // One denominator for the whole period is worth naming: it is the thing a
   // reader argues with when a share looks wrong, and it is invisible in the
@@ -296,10 +299,17 @@ function DayStrip({
     denominators.size === 1 ? [...denominators][0] : null;
 
   return (
-    <div className="flex flex-col gap-1.5">
-      {/* Hover reads out in the caption below rather than in a tooltip per
-          day: a month is thirty-one triggers, and a floating card that covers
-          its neighbours is the wrong shape for asking "what was that bar".
+    <div className="mt-5 flex flex-col gap-1.5">
+      {/* The reading appears over the bar the pointer is on, not in the
+          caption below. Put anywhere else it is a change in the middle of a
+          chart, which is exactly where a reader looking at one bar does not
+          look — they hover, the number moves somewhere in their periphery, and
+          they never learn it was there.
+
+          One positioned element rather than a tooltip per day: a month is
+          thirty-one triggers, and thirty-one floating cards is both heavy and
+          the wrong shape. It sits ABOVE the bars so it never covers the
+          neighbours being compared against.
 
           The strip carries its own description rather than making each day
           focusable. Thirty-one tab stops per strip, three strips to a section,
@@ -307,11 +317,36 @@ function DayStrip({
           the shape is — and the per-day figure is an enhancement over content
           the header and caption already state. */}
       <div
-        className="flex h-10 items-end gap-px border-b"
+        className="relative flex h-10 items-end gap-px border-b"
         role="img"
         aria-label={stripSummary(metric, days, period)}
         onPointerLeave={() => setHovered(null)}
       >
+        {hoveredDay && hovered != null ? (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute bottom-full z-10 mb-1 rounded border bg-popover px-1.5 py-0.5 text-xs whitespace-nowrap text-popover-foreground shadow-sm tabular-nums"
+            style={{
+              // Anchored to the bar's own edge and grown inwards, rather than
+              // centred and clamped. Centring needs to know the readout's
+              // width to keep it inside, and it does not: the text varies from
+              // "3 messages" to "3.5 hours of 8", so any constant guarding the
+              // ends is a guess that the longer strings walk straight past.
+              // Growing inwards cannot overflow whatever the text says.
+              //
+              // Which edge is the bar's own edge depends on the direction it
+              // grows in: a readout on the left half starts at the bar's left
+              // boundary, one on the right half ENDS at its right boundary.
+              // Taking the left boundary for both put every right-half readout
+              // a full bar to the left of the bar it describes, and left the
+              // last bar with a strip of empty space beside it.
+              left: `${((hovered + (leftAnchored ? 0 : 1)) / days.length) * 100}%`,
+              transform: leftAnchored ? undefined : "translateX(-100%)",
+            }}
+          >
+            {dayTitle(metric, hoveredDay)}
+          </div>
+        ) : null}
         {days.map((day, index) => (
           <div
             key={day.date}
@@ -333,21 +368,14 @@ function DayStrip({
           </div>
         ))}
       </div>
-      <div className="flex justify-between text-[0.6875rem] text-muted-foreground">
+      <div className="flex justify-between text-xs text-muted-foreground">
         <span>{period ? formatDate(period.from) : null}</span>
-        <span
-          className={cn(
-            "text-center",
-            hoveredDay ? "text-foreground tabular-nums" : null
-          )}
-        >
-          {hoveredDay
-            ? dayTitle(metric, hoveredDay)
-            : constantDenominator != null
-              ? `measured against ${constantDenominator} per day`
-              : silent > 0
-                ? `${silent} ${silent === 1 ? "day" : "days"} with no reading`
-                : null}
+        <span className="text-center">
+          {constantDenominator != null
+            ? `measured against ${constantDenominator} per day`
+            : silent > 0
+              ? `${silent} ${silent === 1 ? "day" : "days"} with no reading`
+              : null}
         </span>
         <span>{period ? formatDate(period.to) : null}</span>
       </div>

@@ -19,6 +19,7 @@ import { useSettings } from "@/hooks/use-settings";
 import type { KpiTileData } from "@/lib/insight/kpi-row";
 import type { GroupId } from "@/lib/insight/groups";
 import { STATUS_TEXT_CLASS } from "@/lib/status";
+import { TEXT_FIGURE, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 export interface KpiTileProps {
@@ -75,7 +76,7 @@ export function KpiTile({
             tile — it already carries a delta badge. */}
         {interactive ? (
           <ChevronRight
-            className="absolute right-3 bottom-3 size-3.5 text-muted-foreground/50"
+            className="absolute right-3 bottom-3 size-3.5 text-muted-foreground"
             aria-hidden
           />
         ) : null}
@@ -84,11 +85,13 @@ export function KpiTile({
               requests mer…" is not a shorter name, it is a missing one. The
               fixed two-line height keeps tiles in a row aligned whether their
               names take one line or two. */}
-          <CardDescription className="line-clamp-2 min-h-[2lh] min-w-0">
+          <CardDescription
+            className={cn(TEXT_NAME, "line-clamp-2 min-h-[2lh] min-w-0")}
+          >
             {tile.label}
           </CardDescription>
           {showExplanations ? (
-            <CardDescription className="col-span-full line-clamp-2 min-h-[2lh] min-w-0 font-normal text-muted-foreground/70">
+            <CardDescription className={cn(TEXT_LABEL, "col-span-full line-clamp-2 min-h-[2lh] min-w-0 font-normal")}>
               {tile.help?.description}
             </CardDescription>
           ) : null}
@@ -98,7 +101,7 @@ export function KpiTile({
           <CardTitle
             className={cn(
               "col-span-full flex w-full flex-wrap items-baseline justify-between gap-x-2 gap-y-1",
-              "text-2xl font-semibold tabular-nums @[250px]/card:text-3xl"
+              TEXT_FIGURE
             )}
           >
             <span>{tile.value}</span>
@@ -119,7 +122,7 @@ export function KpiTile({
             even when one of them wraps its badge onto a second line; the
             two-line reserve keeps a wrapped comparison from changing the
             card's height. */}
-        <CardFooter className="mt-auto min-h-[2lh] flex-col items-start gap-0.5 text-sm">
+        <CardFooter className={cn("mt-auto min-h-[2lh] flex-col items-start gap-0.5", TEXT_LABEL)}>
           {/* The person's own change first, and the only line carrying a
               verdict. This is their page: their own last period is the one
               comparison they can act on. */}
@@ -140,14 +143,12 @@ export function KpiTile({
               {tile.delta.text} since last {periodNoun}
             </span>
           ) : (
-            <span className="text-muted-foreground">
-              no earlier {periodNoun} to compare
-            </span>
+            <span>no earlier {periodNoun} to compare</span>
           )}
           {/* The cohort, stated and not judged: the reader did not choose these
               people, cannot see who they are, and cannot decide that their
               median is the right target. */}
-          <span className="text-xs text-muted-foreground">
+          <span>
             {tile.medianLabel
               ? `Team ${tile.medianLabel}${tile.gapText ? ` · ${tile.gapText}` : ""}`
               : "No peer data"}
@@ -169,9 +170,9 @@ export function KpiTilePlaceholder({ label }: { label?: string }) {
         {showExplanations ? (
           <CardDescription className="col-span-full min-h-[2lh]" />
         ) : null}
-        <CardTitle className="text-2xl font-semibold tabular-nums">—</CardTitle>
+        <CardTitle className={TEXT_FIGURE}>—</CardTitle>
       </CardHeader>
-      <CardFooter className="gap-1.5 text-sm text-muted-foreground">
+      <CardFooter className={cn("gap-1.5", TEXT_LABEL)}>
         <Sparkles className="size-3.5 shrink-0" aria-hidden />
         Coming soon
       </CardFooter>

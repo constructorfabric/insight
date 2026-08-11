@@ -91,7 +91,7 @@ export function PeerMark({
   // The overview's own verdict, reused rather than re-derived: a section and
   // the page that sent the reader to it must not disagree about what counts.
   const adverse = standing.rank === "bottom";
-  const markClass = adverse ? "text-destructive" : "text-foreground/70";
+  const markClass = adverse ? "text-destructive" : "text-muted-foreground";
 
   const svg = (
     <svg
@@ -114,7 +114,7 @@ export function PeerMark({
           y2={H}
           stroke="currentColor"
           strokeWidth={1}
-          className="text-foreground/10"
+          className="text-muted-foreground"
         />
       ))}
       {spreads == null ? null : pinned ? (
