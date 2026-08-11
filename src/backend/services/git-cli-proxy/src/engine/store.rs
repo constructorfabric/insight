@@ -1554,6 +1554,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn fixture(tag: &str) -> Fixture {
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test fixture; names carry pid/thread/counter and hold no secrets
         let root = std::env::temp_dir().join(format!(
             "git-cli-proxy-store-{tag}-{}-{}",
             std::process::id(),

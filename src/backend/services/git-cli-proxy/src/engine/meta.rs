@@ -90,6 +90,7 @@ mod tests {
     use super::*;
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test fixture; names carry pid/thread/counter and hold no secrets
         let dir = std::env::temp_dir().join(format!(
             "git-cli-proxy-meta-{tag}-{}-{}",
             std::process::id(),

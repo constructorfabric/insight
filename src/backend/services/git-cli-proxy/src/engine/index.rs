@@ -240,6 +240,7 @@ mod tests {
     }
 
     fn fixture_dir(tag: &str) -> PathBuf {
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test fixture; names carry pid/thread/counter and hold no secrets
         let dir = std::env::temp_dir().join(format!(
             "git-cli-proxy-index-{tag}-{}-{:?}",
             std::process::id(),

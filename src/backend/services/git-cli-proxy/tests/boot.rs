@@ -35,6 +35,7 @@ fn free_port() -> Result<u16, Box<dyn std::error::Error>> {
 }
 
 fn test_dir(tag: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test fixture; names carry pid/thread/counter and hold no secrets
     let dir = std::env::temp_dir().join(format!(
         "git-cli-proxy-boot-{tag}-{}-{}",
         std::process::id(),

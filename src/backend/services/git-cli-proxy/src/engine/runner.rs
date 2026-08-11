@@ -672,6 +672,7 @@ mod tests {
 
     #[tokio::test]
     async fn piped_producer_failure_carries_its_stderr() {
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test fixture; names carry pid/thread/counter and hold no secrets
         let dir = std::env::temp_dir().join(format!(
             "git-cli-proxy-piped-{}-{:?}",
             std::process::id(),
@@ -721,6 +722,7 @@ mod tests {
     /// An origin holding one incompressible blob, so a clone of it takes long
     /// enough to be interrupted and large enough to breach a small cap.
     fn heavy_origin(tag: &str) -> std::path::PathBuf {
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test fixture; names carry pid/thread/counter and hold no secrets
         let root = std::env::temp_dir().join(format!(
             "git-cli-proxy-cap-{tag}-{}-{:?}",
             std::process::id(),

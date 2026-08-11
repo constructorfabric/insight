@@ -289,6 +289,7 @@ mod tests {
     /// clears its `tmp/`, so two tests sharing one data dir race each other.
     fn state() -> Arc<AppState> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir -- test fixture; names carry pid/thread/counter and hold no secrets
         let data_dir = std::env::temp_dir().join(format!(
             "git-cli-proxy-api-tests-{}-{}",
             std::process::id(),
