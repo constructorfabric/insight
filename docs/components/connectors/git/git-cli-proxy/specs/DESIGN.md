@@ -137,10 +137,13 @@ hang for the length of a clone, and a client giving up never cancels the work.
 Single-flight guarantees concurrent requests for one repo trigger at most one
 clone/fetch regardless of which of them time out.
 
-**Credential continuity.** Each entry records a one-way fingerprint of the
-credentials that last proved origin access (`meta.json`). A warm read is served
-only to a caller whose credentials match; a mismatch forces a fetch. Rotation
-costs one fetch, never a re-clone. The cache key alone is never treated as an
+**Credential continuity.** Each entry records one-way fingerprints of the
+credentials that have proved origin access for this clone (`meta.json`) — a
+bounded set, reset by a re-clone, not a single slot: two callers holding
+different valid tokens (a rotation mid-sync) would otherwise evict each
+other's proof on every fetch. A warm read is served only to a caller whose
+credentials match a recorded proof; a miss forces a fetch. Rotation costs one
+fetch, never a re-clone. The cache key alone is never treated as an
 authorization claim (§3.7).
 
 This is continuity, **not** current authorization: it proves the caller
