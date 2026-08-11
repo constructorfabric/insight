@@ -122,7 +122,7 @@ pub async fn is_target_in_visible_set(
     )?;
 
     let row = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             values,
@@ -162,7 +162,7 @@ pub async fn has_wildcard_grant(
         [bytes(tenant_id), bytes(viewer_person_id)],
     );
 
-    Ok(db.query_one(stmt).await?.is_some())
+    Ok(db.query_one_raw(stmt).await?.is_some())
 }
 
 /// Batch form of [`is_target_in_visible_set`]: the same union, computed once and
@@ -245,7 +245,7 @@ pub async fn visible_targets(
     let (sql, values) = bind_named(&SQL.replace("@candidates", &list), &params)?;
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             values,
@@ -335,7 +335,7 @@ pub async fn get_subchart_flat(
     )?;
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             values,
@@ -486,7 +486,7 @@ pub async fn get_forest_flat(
     )?;
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             values,

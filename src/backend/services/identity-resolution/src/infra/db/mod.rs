@@ -129,7 +129,7 @@ impl SeedLockGuard {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let conn = connect_single(database_url).await?;
         let acquired: Option<i8> = conn
-            .query_one(Statement::from_sql_and_values(
+            .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 "SELECT GET_LOCK(?, ?)",
                 [
@@ -156,7 +156,7 @@ impl SeedLockGuard {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let _ = self
             .conn
-            .execute(Statement::from_sql_and_values(
+            .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 "SELECT RELEASE_LOCK(?)",
                 [format!("{SEED_LOCK_PREFIX}{}", self.tenant_id).into()],
@@ -194,7 +194,7 @@ impl SyncLockGuard {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let conn = connect_single(database_url).await?;
         let acquired: Option<i8> = conn
-            .query_one(Statement::from_sql_and_values(
+            .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 "SELECT GET_LOCK(?, ?)",
                 [SYNC_LOCK.into(), wait_secs.into()],
@@ -216,7 +216,7 @@ impl SyncLockGuard {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let _ = self
             .conn
-            .execute(Statement::from_sql_and_values(
+            .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 "SELECT RELEASE_LOCK(?)",
                 [SYNC_LOCK.into()],
@@ -259,7 +259,7 @@ pub async fn run_migrations(
     use sea_orm_migration::MigratorTrait;
 
     let acquired: Option<i8> = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             "SELECT GET_LOCK(?, ?)",
             [MIGRATION_LOCK.into(), MIGRATION_LOCK_TIMEOUT_SECS.into()],
@@ -282,7 +282,7 @@ pub async fn run_migrations(
 
     // Best-effort release either way; the lock also dies with the session.
     let _ = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             "SELECT RELEASE_LOCK(?)",
             [MIGRATION_LOCK.into()],
@@ -312,7 +312,7 @@ mod tests {
         values: impl IntoIterator<Item = sea_orm::Value>,
     ) -> anyhow::Result<i64> {
         let row = db
-            .query_one(Statement::from_sql_and_values(
+            .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 sql,
                 values,
@@ -352,12 +352,12 @@ mod tests {
         // Crash-recovery regression (012): a migrator killed between the DROP
         // and ADD CONSTRAINT statements leaves the constraint absent — a
         // re-run must converge, not fail on the unconditional DROP.
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             DbBackend::MySql,
             "ALTER TABLE org_chart DROP CONSTRAINT IF EXISTS chk_no_self_loop",
         ))
         .await?;
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             DbBackend::MySql,
             "DELETE FROM seaql_migrations WHERE version = 'm20260724_000012_org_chart_nullable_parent'",
         ))
