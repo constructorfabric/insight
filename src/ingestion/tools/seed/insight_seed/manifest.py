@@ -22,6 +22,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -89,7 +90,12 @@ CANONICAL_ENV: dict[str, str] = {
 # instead of shipping.
 _FORBIDDEN_LITERALS = frozenset(
     {
-        "insight-dev",  # keycloak_realm dev password
+        "insight-dev",  # keycloak_realm dev password (the default)
+        # The runtime persona password too, when a stand overrides the default —
+        # mirrors keycloak_realm.DEV_PASSWORD without importing it (no cycle).
+        os.environ.get(
+            "INSIGHT_SEED_PERSONA_PASSWORD", "insight-dev"
+        ),  # RULE-DEFAULTS-OK: same tagged default as keycloak_realm.DEV_PASSWORD
         "insight-authenticator-dev-secret",  # keycloak_realm client secret
         "insight-local",  # MariaDB / ClickHouse dev password
         "root-local",  # MariaDB root password

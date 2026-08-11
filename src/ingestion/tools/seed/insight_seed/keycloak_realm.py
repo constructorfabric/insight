@@ -35,7 +35,12 @@ from .profiles import (
 )
 
 REALM_NAME = "insight"
-DEV_PASSWORD = "insight-dev"
+# Every seeded user's login credential. An internet-reachable stand MUST set
+# INSIGHT_SEED_PERSONA_PASSWORD when generating its realm (and hand the same
+# value to CI as TEST_STAND_PERSONA_PASSWORD).
+DEV_PASSWORD = os.environ.get(
+    "INSIGHT_SEED_PERSONA_PASSWORD", "insight-dev"
+)  # RULE-DEFAULTS-OK: documented constant for local/compose stands whose Keycloak is not reachable from outside
 
 # The 4 team org units, plus `executive` for the CEO and `operations` for the
 # admin operator. Every user is placed in the group matching their org unit, so
