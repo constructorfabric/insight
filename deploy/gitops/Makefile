@@ -33,6 +33,14 @@
 # to oci://ghcr.io/constructorfabric/charts/insight; INSIGHT_VERSION pins one
 # semver from .insight-version.
 
+# bash, not /bin/sh. `deploy-insight` needs `set -o pipefail` to recover helm's
+# exit status from `helm ... | tee`, and /bin/sh on a GitHub runner is dash,
+# which does not have it. Without this the deploy reports SUCCESS on a failed
+# upgrade, which is disqualifying for a target CI is gated on.
+# .SHELLFLAGS is left at its default `-c` on purpose: adding `-e` would give
+# every existing recipe error semantics it was not written for.
+SHELL            := /bin/bash
+
 ENV              ?= local
 # Single source of truth for per-env cluster topology. Drives bootstrap,
 # system, seal, and deploy targets. Schema: see
@@ -59,6 +67,61 @@ VALUES           ?= environments/$(ENV)/values.yaml
 # trades speed for reliability — give it room before --atomic rolls back.
 TIMEOUT          ?= 30m
 RENDER_DIR       := .deploy
+
+# ── Deploy shape, declared per environment ─────────────────────────────────
+#
+# What `deploy-insight` does differs between a sandbox that bootstraps its own
+# namespaces and sealed secrets, and a cluster where all of that is provisioned
+# outside this repository. Every one of those differences used to be a reason
+# NOT to use this target — which is how a second, hand-written helm procedure
+# ends up in a CI workflow, drifting from the documented one. They are declared
+# here instead, so there is one deploy path and the environment says what it is.
+#
+# Two kinds of variable, assigned two different ways on purpose:
+#
+#   KNOBS use `?=`, so an operator can override them for one run
+#   (`make deploy ATOMIC=true`). Both are safe to get wrong in either direction.
+#
+#   FACTS use `:=` and are read only from the environment's own files. An
+#   environment variable of the same name must NOT be able to win: a stray
+#   `CRED_MODE=helm` in a shell would silently skip compose-app-secrets.sh on a
+#   gitops environment and leave the release running unconfigured Secrets, and
+#   `SEALED_ENABLED=0` would skip the sealed manifests with the same result.
+#   Nothing about the deploy should be settable by accident.
+# READ RAW, and let make decide. Two traps, both of which silently change what
+# a deploy does:
+#
+#   1. yq's `//` is an ALTERNATIVE operator, and it treats `false` as absent
+#      exactly like `null`. So `.deploy.atomic // true` reads an explicit
+#      `atomic: false` back as TRUE — the flag the environment turned off would
+#      have stayed on, and nothing would have said so.
+#   2. ENV=local has NO inventory.yaml and NO values.yaml in the tree: both are
+#      written by the first-run wizard. Every read below therefore returns
+#      EMPTY at parse time for that environment.
+#
+# So each switch below is written as "take the non-default path ONLY on an
+# explicit value", never "take the default path unless told otherwise". An
+# unreadable inventory then falls back to exactly today's behaviour — do the
+# work — rather than to skipping a step nobody asked to skip.
+CREATE_NS        ?= $(shell yq -r '.bootstrap.namespaces' $(INVENTORY) 2>/dev/null)
+ATOMIC           ?= $(shell yq -r '.deploy.atomic'        $(INVENTORY) 2>/dev/null)
+
+KEYCLOAK_REALMS  := $(shell yq -r '.keycloak.realms'      $(INVENTORY) 2>/dev/null)
+SEALED_ENABLED   := $(shell yq -r '[.secrets.services[]? | select(.enabled == true)] | length' $(INVENTORY) 2>/dev/null)
+OIDC_SECRET      := $(shell yq -r '.oidcClientSecret.secret // ""' $(INVENTORY) 2>/dev/null)
+OIDC_SECRET_KEY  := $(shell yq -r '.oidcClientSecret.key // "client-secret"' $(INVENTORY) 2>/dev/null)
+# Read from VALUES and not from the inventory: compose-app-secrets.sh exists
+# only for `credentials.deploymentMode: gitops`, and the values file is where
+# that mode is declared to the chart. One copy, not two that can disagree.
+CRED_MODE        := $(shell yq -r '.credentials.deploymentMode' $(VALUES) 2>/dev/null)
+
+HELM_NS_FLAG     := $(if $(filter false,$(CREATE_NS)),,--create-namespace)
+# `--atomic` rolls a failed upgrade back to the previous revision — i.e. it
+# reinstalls the PREVIOUS chart and deletes the pods holding the reason. On a
+# stand whose entire job is to show what the newest chart does, that is both a
+# downgrade and the destruction of the evidence. Environments that want it keep
+# it; `deploy.atomic: false` turns it off.
+HELM_ATOMIC_FLAG := $(if $(filter false,$(ATOMIC)),,--atomic)
 
 # Extra flags appended to helm invocations. Default empty.
 #
@@ -221,13 +284,20 @@ sync-clean:
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		echo "$(C_RED)ERROR$(C_RST): working tree has uncommitted changes"; \
 		git status --short; exit 1; fi
-	@git fetch --quiet origin
-	@LOCAL=$$(git rev-parse @); REMOTE=$$(git rev-parse @{u} 2>/dev/null || echo ""); \
-	if [ -z "$$REMOTE" ]; then \
+	@# The fetch is INSIDE the upstream test. A CI checkout is a detached HEAD
+	@# with no upstream, so the comparison below self-skips — and fetching first
+	@# meant every deploy made a network call to github.com whose result was then
+	@# thrown away, which is one more way for a deploy to go red for nothing.
+	@if ! git rev-parse --abbrev-ref @{u} >/dev/null 2>&1; then \
 		echo "$(C_YEL)WARN$(C_RST): no upstream tracked; skipping HEAD-vs-remote check"; \
-	elif [ "$$LOCAL" != "$$REMOTE" ]; then \
-		echo "$(C_RED)ERROR$(C_RST): HEAD is not equal to origin/$$(git rev-parse --abbrev-ref @{u} | cut -d/ -f2-)"; \
-		echo "       run 'make sync' first"; exit 1; fi
+	else \
+		git fetch --quiet origin; \
+		LOCAL=$$(git rev-parse @); REMOTE=$$(git rev-parse @{u}); \
+		if [ "$$LOCAL" != "$$REMOTE" ]; then \
+			echo "$(C_RED)ERROR$(C_RST): HEAD is not equal to origin/$$(git rev-parse --abbrev-ref @{u} | cut -d/ -f2-)"; \
+			echo "       run 'make sync' first"; exit 1; \
+		fi; \
+	fi
 
 .PHONY: inventory-present
 inventory-present:
@@ -250,8 +320,18 @@ kube-ctx-required: inventory-present
 
 .PHONY: vpn-up
 vpn-up: kube-ctx-required
-	@kubectl --context $(KUBE_CTX) --request-timeout=5s cluster-info >/dev/null 2>&1 \
-		|| { echo "$(C_RED)ERROR$(C_RST): cannot reach cluster '$(KUBE_CTX)'; is the VPN up?"; exit 1; }
+	@# `auth can-i --list`, not `cluster-info`. cluster-info LISTS SERVICES IN
+	@# kube-system, which a namespace-scoped credential is refused — so this
+	@# check failed with "is the VPN up?" against a perfectly reachable cluster
+	@# whenever the deploy ran as anything less than a cluster admin.
+	@#
+	@# `auth can-i --list` posts a SelfSubjectRulesReview, which stock RBAC
+	@# allows every AUTHENTICATED principal and denies an anonymous one, so it
+	@# still fails closed on a kubeconfig whose credential has expired. It needs
+	@# no object to exist, so it also works before bootstrap on an empty cluster.
+	@kubectl --context $(KUBE_CTX) --request-timeout=5s auth can-i --list -n $(NS_APP) >/dev/null 2>&1 \
+		|| { echo "$(C_RED)ERROR$(C_RST): cannot reach cluster '$(KUBE_CTX)' as an authenticated principal;"; \
+		     echo "       is the VPN up, and is the kubeconfig's credential still valid?"; exit 1; }
 
 .PHONY: kube-ctx
 kube-ctx: kube-ctx-required
@@ -379,7 +459,17 @@ keycloak-realm: kube-ctx values-present
 # umbrella's keycloak-config-cli hook Job applies (ADR-0003). Chained into
 # deploy-insight; no-op unless keycloakConfig.enabled=true.
 keycloak-broker-realms: kube-ctx values-present
-	@if [ "$$(yq -r '.keycloakConfig.enabled // false' $(VALUES))" != "true" ]; then \
+	@# `external` means the realm ConfigMap is written by a bring-up outside this
+	@# repository and this target must not touch it. Two writers on one object is
+	@# a stand where whoever ran last decides who can log in, and neither writer
+	@# reports the conflict.
+	@#
+	@# Driven off the inventory and NOT off keycloakConfig.enabled, which is true
+	@# in every environment: the question here is who OWNS the realm content, not
+	@# whether the chart applies it.
+	@if [ "$(KEYCLOAK_REALMS)" = "external" ]; then \
+	  echo "$(C_YEL)skip$(C_RST) keycloak-broker-realms (inventory.keycloak.realms=external — $(RELEASE)-keycloak-config-realms is owned outside this repo)"; exit 0; fi; \
+	if [ "$$(yq -r '.keycloakConfig.enabled // false' $(VALUES))" != "true" ]; then \
 	  echo "$(C_YEL)skip$(C_RST) keycloak-broker-realms (keycloakConfig.enabled != true)"; exit 0; fi; \
 	DIR=environments/$(ENV)/keycloak/realms; \
 	ls $$DIR/* >/dev/null 2>&1 \
@@ -396,30 +486,57 @@ deploy-app: deploy-insight
 # *-config Secrets that the chart references via `existingSecret`.
 # Derived Secrets are NOT sealed/committed — they're regenerated from
 # the already-sealed insight-db-creds on every deploy. Idempotent.
+#
+# TWO INDEPENDENT SKIPS, because they answer two different questions and an
+# environment can need either without the other:
+#
+#   SEALED_ENABLED=0  — this environment seals nothing. Every Secret the release
+#                       consumes was created outside this repository (by a
+#                       bring-up, an operator, a password manager). There is no
+#                       sealed-secrets controller to wait for, and demanding a
+#                       manifest that by definition does not exist is what made
+#                       this target unusable for such a cluster.
+#   CRED_MODE != gitops — the CHART renders the *-config Secrets itself
+#                       (credentials.deploymentMode: helm). Running
+#                       compose-app-secrets.sh anyway would overwrite
+#                       chart-owned objects from a different source, and on an
+#                       environment whose OIDC Secret uses a different key name
+#                       it composes a BLANK client secret — every pod Ready, the
+#                       release `deployed`, and every login broken.
 .PHONY: apply-app-secrets
 apply-app-secrets: vpn-up kube-ctx
-	@SEAL_DIR=environments/$(ENV)/sealed-secrets/insight; \
-	if [ ! -d "$$SEAL_DIR" ] || [ -z "$$(ls -A $$SEAL_DIR/*-sealedsecret.yaml 2>/dev/null)" ]; then \
-		echo "$(C_RED)ERROR$(C_RST): no L3 sealed manifests in $$SEAL_DIR/"; \
-		echo "       seal at minimum insight-db-creds before running deploy-app:"; \
-		echo "         make seal-secret ENV=$(ENV) NAMESPACE=$(NS_APP) NAME=insight-db-creds"; \
-		exit 1; \
-	fi; \
-	echo "applying L3 sealed manifests under $$SEAL_DIR/"; \
-	for f in $$SEAL_DIR/*-sealedsecret.yaml; do \
-		kubectl --context $(KUBE_CTX) apply -f "$$f"; \
-	done
-	@echo "waiting for sealed-secrets-controller to materialise insight-db-creds…"; \
-	for i in $$(seq 1 30); do \
-		if kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret insight-db-creds >/dev/null 2>&1; then \
-			break; \
+	@if [ "$(SEALED_ENABLED)" = "0" ]; then \
+		echo "$(C_YEL)skip$(C_RST) sealed manifests (inventory.secrets.services has no enabled entry — every Secret this release consumes is created outside this repo)"; \
+	else \
+		SEAL_DIR=environments/$(ENV)/sealed-secrets/insight; \
+		if [ ! -d "$$SEAL_DIR" ] || [ -z "$$(ls -A $$SEAL_DIR/*-sealedsecret.yaml 2>/dev/null)" ]; then \
+			echo "$(C_RED)ERROR$(C_RST): no L3 sealed manifests in $$SEAL_DIR/"; \
+			echo "       seal at minimum insight-db-creds before running deploy-app:"; \
+			echo "         make seal-secret ENV=$(ENV) NAMESPACE=$(NS_APP) NAME=insight-db-creds"; \
+			exit 1; \
 		fi; \
-		sleep 1; \
-	done; \
-	kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret insight-db-creds >/dev/null 2>&1 \
-		|| { echo "$(C_RED)ERROR$(C_RST): insight-db-creds never materialised (controller down? sealed manifest invalid?)"; exit 1; }
-	@ENV=$(ENV) NS_APP=$(NS_APP) RELEASE=$(RELEASE) \
-		bash scripts/compose-app-secrets.sh
+		echo "applying L3 sealed manifests under $$SEAL_DIR/"; \
+		for f in $$SEAL_DIR/*-sealedsecret.yaml; do \
+			kubectl --context $(KUBE_CTX) apply -f "$$f"; \
+		done; \
+		echo "waiting for sealed-secrets-controller to materialise insight-db-creds…"; \
+		for i in $$(seq 1 30); do \
+			if kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret insight-db-creds >/dev/null 2>&1; then \
+				break; \
+			fi; \
+			sleep 1; \
+		done; \
+		kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret insight-db-creds >/dev/null 2>&1 \
+			|| { echo "$(C_RED)ERROR$(C_RST): insight-db-creds never materialised (controller down? sealed manifest invalid?)"; exit 1; }; \
+	fi
+	@# Tested for `helm` and not against `gitops`: an unreadable values file reads
+	@# back as EMPTY, and "empty is not gitops" would have skipped this step for
+	@# ENV=local, whose values.yaml the wizard has not written yet at parse time.
+	@if [ "$(CRED_MODE)" = "helm" ]; then \
+		echo "$(C_YEL)skip$(C_RST) compose-app-secrets (credentials.deploymentMode=helm — the chart renders the *-config Secrets)"; \
+	else \
+		ENV=$(ENV) NS_APP=$(NS_APP) RELEASE=$(RELEASE) bash scripts/compose-app-secrets.sh; \
+	fi
 
 .PHONY: local-chart-present
 local-chart-present:
@@ -443,17 +560,103 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 		-n $(NS_APP) -f $(VALUES) \
 		> $(RENDER_DIR)/last-render-$(ENV).yaml
 	@echo "$(C_GRN)rendered$(C_RST) $(CHART):$(INSIGHT_VERSION) → $(RENDER_DIR)/last-render-$(ENV).yaml"
-	@LOG=$(RENDER_DIR)/deploy-$(ENV)-$$(date -u +%Y%m%d-%H%M%S).log; \
+	@# A release whose ONLY revision is a failed install cannot be upgraded:
+	@# `helm upgrade --install` answers `has no deployed releases` and keeps
+	@# answering it, so the stand stays red on every merge until a human
+	@# uninstalls by hand. That state is reachable precisely when --atomic is
+	@# off, which is the setting a disposable stand wants — so the two have to
+	@# be handled together rather than discovered together.
+	@#
+	@# Refused rather than auto-recovered: uninstalling is destructive and the
+	@# operator is one command away. `pending-*` is reported for the same reason
+	@# — it means a previous helm was KILLED mid-flight and is a different fix.
+	@set -o pipefail; \
+	STATUS=$$(helm list -n $(NS_APP) --failed --pending --uninstalling --filter '^$(RELEASE)$$' -o json $(HELM_EXTRA_FLAGS) 2>/dev/null | jq -r '.[0].status // ""'); \
+	case "$$STATUS" in \
+	  failed) \
+	    if ! helm history $(RELEASE) -n $(NS_APP) -o json $(HELM_EXTRA_FLAGS) 2>/dev/null | jq -e 'any(.[]; .status == "deployed" or .status == "superseded")' >/dev/null; then \
+	      echo "$(C_RED)ERROR$(C_RST): release '$(RELEASE)' has no deployed revision — its only history is a failed install."; \
+	      echo "       helm refuses to upgrade such a release ('has no deployed releases'), and will keep"; \
+	      echo "       refusing. Remove it and let this target install cleanly:"; \
+	      echo "         helm uninstall $(RELEASE) -n $(NS_APP)"; \
+	      exit 1; \
+	    fi ;; \
+	  pending-install|pending-upgrade|pending-rollback) \
+	    echo "$(C_RED)ERROR$(C_RST): release '$(RELEASE)' is '$$STATUS' — a previous helm was killed mid-flight."; \
+	    echo "       Another operation is in progress as far as helm is concerned, and this upgrade"; \
+	    echo "       would be refused. Check nothing is still running, then:"; \
+	    echo "         helm rollback $(RELEASE) -n $(NS_APP)   # to the last deployed revision, or"; \
+	    echo "         helm uninstall $(RELEASE) -n $(NS_APP)  # if the stand is disposable"; \
+	    exit 1 ;; \
+	esac
+	@# `set -o pipefail` and an explicit rc: helm is piped into `tee`, so without
+	@# it the recipe took TEE's exit status and `make deploy` reported success on
+	@# a failed upgrade. A target CI gates on cannot do that.
+	@#
+	@# --wait is passed explicitly rather than inherited from --atomic. On helm 3
+	@# --atomic was the only thing supplying it, so turning atomic off silently
+	@# stopped the deploy waiting for rollout and let the post-deploy steps race
+	@# a half-started stand. On helm 4 an omitted --wait defaults to hooks only,
+	@# which is the same trap wearing a different hat.
+	@#
+	@# The OIDC client secret is read from the cluster and passed with
+	@# --set-file, not --set-string: --set-string splits its value on commas and
+	@# interprets backslashes, so a generated secret containing either is
+	@# silently truncated into a client secret that is not the one the realm
+	@# agrees with. The file is mktemp'd and trapped, and it is deliberately NOT
+	@# passed to `helm template` above, so the rendered manifest on disk never
+	@# contains it.
+	@set -o pipefail; \
+	SET_ARGS=(); \
+	if [ -n "$(OIDC_SECRET)" ]; then \
+		OIDC_FILE=$$(mktemp); trap 'rm -f "$$OIDC_FILE"' EXIT INT TERM; \
+		kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret $(OIDC_SECRET) \
+			-o "jsonpath={.data['$(OIDC_SECRET_KEY)']}" | base64 --decode > "$$OIDC_FILE"; \
+		[ -s "$$OIDC_FILE" ] \
+			|| { echo "$(C_RED)ERROR$(C_RST): secret $(OIDC_SECRET) has no non-empty '$(OIDC_SECRET_KEY)' in $(NS_APP)."; \
+			     echo "       Refusing to deploy: the upgrade would succeed and leave the authenticator with a"; \
+			     echo "       blank client secret, which looks healthy and fails every login."; exit 1; }; \
+		SET_ARGS+=(--set-file authenticator.oidc.clientSecret="$$OIDC_FILE"); \
+	fi; \
+	LOG=$(RENDER_DIR)/deploy-$(ENV)-$$(date -u +%Y%m%d-%H%M%S).log; \
 	echo "$(C_GRN)applying$(C_RST) → log at $$LOG"; \
+	rc=0; \
 	helm upgrade --install $(RELEASE) $(CHART) \
-		--version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) $(HELM_UPGRADE_FLAGS) \
-		--namespace $(NS_APP) --create-namespace \
+		--version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) $(HELM_UPGRADE_FLAGS) "$${SET_ARGS[@]}" \
+		--namespace $(NS_APP) $(HELM_NS_FLAG) \
 		-f $(VALUES) \
-		--atomic --timeout $(TIMEOUT) \
+		--wait $(HELM_ATOMIC_FLAG) --timeout $(TIMEOUT) \
 		--history-max 10 \
-		2>&1 | tee $$LOG; \
-	NS_INFRA=$(NS_INFRA) KUBE_CTX=$(KUBE_CTX) \
-		bash scripts/push-deploy-log.sh $(ENV) $$LOG $(INSIGHT_VERSION) || true
+		2>&1 | tee $$LOG || rc=$$?; \
+	if [ "$$(yq -r '.system.loki // false' $(INVENTORY) 2>/dev/null)" = "true" ]; then \
+		NS_INFRA=$(NS_INFRA) KUBE_CTX=$(KUBE_CTX) \
+			bash scripts/push-deploy-log.sh $(ENV) $$LOG $(INSIGHT_VERSION) || true; \
+	fi; \
+	exit $$rc
+	@$(MAKE) --no-print-directory verify-release ENV=$(ENV) INSIGHT_VERSION=$(INSIGHT_VERSION)
+
+# What a release REPORTS is not what it IS: a run can be `deployed` and still be
+# the wrong chart — a resumed job, a hand-deploy that raced this one, an input
+# that did not say what it meant. Separate from the upgrade's exit status
+# because they answer different questions, and a target rather than a step in
+# the workflow so a human running `make deploy` gets the same check CI does.
+.PHONY: verify-release
+verify-release: vpn-up kube-ctx
+	@# Status flags enumerated instead of `--all`: `--all` is a helm 3 flag that
+	@# helm 4 removed, and on a v4 host it exits `unknown flag` and reports every
+	@# release as absent. The interesting states are the ones the DEFAULT listing
+	@# hides — a `pending-upgrade` release must be reported as itself.
+	@LISTED=$$(helm list -n $(NS_APP) --deployed --failed --pending --uninstalling --filter '^$(RELEASE)$$' -o json $(HELM_EXTRA_FLAGS)); \
+	STATUS=$$(printf '%s' "$$LISTED" | jq -r '.[0].status // "absent"'); \
+	CHARTV=$$(printf '%s' "$$LISTED" | jq -r '.[0].chart // "absent"'); \
+	REV=$$(printf '%s' "$$LISTED" | jq -r '.[0].revision // "?"'); \
+	echo "release $(RELEASE): status=$$STATUS chart=$$CHARTV revision=$$REV"; \
+	[ "$$STATUS" = "deployed" ] \
+		|| { echo "$(C_RED)ERROR$(C_RST): release is '$$STATUS', not 'deployed' — left in that state on purpose."; exit 1; }; \
+	[ "$$CHARTV" = "insight-$(INSIGHT_VERSION)" ] \
+		|| { echo "$(C_RED)ERROR$(C_RST): the stand runs '$$CHARTV', not 'insight-$(INSIGHT_VERSION)'."; \
+		     echo "       helm reported success while installing something else — treat this as a problem"; \
+		     echo "       with the chart reference or the version input, not with the stand."; exit 1; }
 
 # Helper: chain a sub-target IF the matching inventory.<section>.<key>
 # is true; otherwise print a skip message. Use with $(call …) below.

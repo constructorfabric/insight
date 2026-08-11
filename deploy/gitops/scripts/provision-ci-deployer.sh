@@ -397,8 +397,52 @@ command -v kubectl >/dev/null 2>&1 || die "kubectl is required (brew install kub
 ROLE_NAME="${SA_NAME}-crd-supplement"
 RB_ADMIN="${SA_NAME}-admin"
 RB_SUPPLEMENT="${SA_NAME}-crd-supplement"
+# Kept for the precondition text this script PRINTS. It no longer creates these
+# objects — see the verification section — so these names describe what whoever
+# owns the airbyte namespace is asked to apply, not what is applied from here.
 AIRBYTE_ROLE_NAME="${SA_NAME}-airbyte-rbac"
 AIRBYTE_RB_NAME="${SA_NAME}-airbyte-rbac"
+
+# The rule set the airbyte namespace's owner must grant this ServiceAccount,
+# printed rather than applied so the requirement is transferable to whoever can
+# satisfy it. The `secrets` rule looks like a widening and is the opposite: it
+# is restricted by resourceNames to the exact Secret the chart's own Role names,
+# and it exists only because RBAC escalation prevention forbids creating a Role
+# that grants a permission the creator does not itself hold. Dropping it does
+# not make the credential smaller — it makes the deploy fail.
+print_airbyte_precondition() {
+  [ -n "$AIRBYTE_NAMESPACE" ] || return 0
+  cat <<EOF
+
+  PRECONDITION — owned by whoever owns the '${AIRBYTE_NAMESPACE}' namespace.
+  This script verifies it and refuses to bless a kubeconfig without it, but it
+  does NOT create it: authorising a deployment identity over a namespace this
+  repository does not own is bootstrap policy.
+
+  Apply, once, alongside the airbyte install:
+
+    kind: Role                       name: ${AIRBYTE_ROLE_NAME}
+    namespace: ${AIRBYTE_NAMESPACE}
+    rules:
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        resources: [roles, rolebindings]
+        verbs: [get, list, watch, create, update, patch, delete]
+      - apiGroups: [""]
+        resources: [secrets]
+        resourceNames: [airbyte-auth-secrets]
+        verbs: [get]
+
+    kind: RoleBinding                name: ${AIRBYTE_RB_NAME}
+    namespace: ${AIRBYTE_NAMESPACE}
+    roleRef:  Role/${AIRBYTE_ROLE_NAME}
+    subjects: ServiceAccount ${SA_NAME} in ${NAMESPACE}
+
+  Why it is needed: the umbrella renders \`<release>-airbyte-auth-reader\` into
+  that namespace, and its chart/version labels change on every bump — so helm
+  reads and patches it on EVERY upgrade, not only the first.
+
+EOF
+}
 
 # `kubectl` against the ADMIN kubeconfig. Every call in this script that uses
 # it is either read-only or gated behind $APPLY.
@@ -633,61 +677,6 @@ subjects:
     namespace: ${NAMESPACE}
 EOF
 
-    if [ -n "$AIRBYTE_NAMESPACE" ]; then
-      cat <<EOF
----
-# The cross-namespace exception, and the only one. The umbrella chart renders
-# \`<release>-airbyte-auth-reader\` — a Role granting \`get\` on the single Secret
-# \`airbyte-auth-secrets\`, plus its RoleBinding — into the namespace named by
-# the values' \`airbyte.namespace\`. Without rights over those two objects there,
-# the FIRST \`helm upgrade\` is refused and CI is red before it has deployed
-# anything.
-#
-# The \`secrets\` rule below looks like a widening and is the opposite: it is
-# restricted by \`resourceNames\` to the exact Secret the chart's own Role names,
-# and it exists only because RBAC escalation prevention forbids creating a Role
-# that grants a permission the creator does not hold. Removing it does not make
-# the credential smaller; it makes the deploy fail.
-#
-# Nothing else in this namespace is reachable: no pods, no other Secrets, no
-# workloads, no exec.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: ${AIRBYTE_ROLE_NAME}
-  namespace: ${AIRBYTE_NAMESPACE}
-  labels:
-    app.kubernetes.io/name: ${SA_NAME}
-    app.kubernetes.io/component: ci-credential
-    app.kubernetes.io/managed-by: provision-ci-deployer.sh
-rules:
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: [roles, rolebindings]
-    verbs: [get, list, watch, create, update, patch, delete]
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [airbyte-auth-secrets]
-    verbs: [get]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: ${AIRBYTE_RB_NAME}
-  namespace: ${AIRBYTE_NAMESPACE}
-  labels:
-    app.kubernetes.io/name: ${SA_NAME}
-    app.kubernetes.io/component: ci-credential
-    app.kubernetes.io/managed-by: provision-ci-deployer.sh
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: ${AIRBYTE_ROLE_NAME}
-subjects:
-  - kind: ServiceAccount
-    name: ${SA_NAME}
-    namespace: ${NAMESPACE}
-EOF
-    fi
   fi
 
   cat <<EOF
@@ -807,17 +796,37 @@ run_verification() {
     expect_can yes "update HTTPRoutes in ${NAMESPACE} (the chart renders the edge routes)" update httproutes.gateway.networking.k8s.io -n "$NAMESPACE"
   fi
 
-  # The cross-namespace exception, asserted in both directions. The first pair is
-  # a SUFFICIENCY check, not a containment one: without it the credential looks
-  # perfectly scoped and the first `helm upgrade` is refused, which is a worse
-  # failure than an over-broad token because it only shows up on a merge commit.
-  # The third proves the exception really is narrow — the RBAC objects are
-  # reachable there, the namespace's own workloads are not.
+  # ── The cross-namespace PRECONDITION ────────────────────────────────────
+  #
+  # VERIFIED HERE, NOT INSTALLED HERE. This script used to emit a Role and
+  # RoleBinding into the airbyte namespace itself. It should not: authorising a
+  # deployment identity over a namespace this repository does not own is
+  # infrastructure policy, and it belongs with whoever installs airbyte, not
+  # with an application repository's credential helper.
+  #
+  # The grant is still REQUIRED. The umbrella renders
+  # `<release>-airbyte-auth-reader` — a Role granting `get` on the single Secret
+  # `airbyte-auth-secrets`, plus its RoleBinding — into `airbyte.namespace`, and
+  # those two objects carry the chart's `helm.sh/chart` and
+  # `app.kubernetes.io/version` labels, which change on EVERY version bump. So
+  # helm reads them and patches them on every upgrade, not only the first: `get`
+  # and `update` are as load-bearing as `create`, and the old assertions checked
+  # only `create`.
+  #
+  # Asserted in both directions. The `yes` rows are a SUFFICIENCY check — without
+  # them the credential looks perfectly scoped and the first `helm upgrade` is
+  # refused, which is a worse failure than an over-broad token because it only
+  # appears on a merge commit. The `no` row proves the exception stays narrow:
+  # the RBAC objects are reachable there, the namespace's own workloads are not.
   if [ -n "$AIRBYTE_NAMESPACE" ]; then
-    expect_can yes "create RoleBindings in ${AIRBYTE_NAMESPACE} (the chart's airbyte-auth-reader)" \
-      create rolebindings.rbac.authorization.k8s.io -n "$AIRBYTE_NAMESPACE"
+    expect_can yes "get Roles in ${AIRBYTE_NAMESPACE} (helm reads the chart's airbyte-auth-reader on every upgrade)" \
+      get roles.rbac.authorization.k8s.io -n "$AIRBYTE_NAMESPACE"
+    expect_can yes "update Roles in ${AIRBYTE_NAMESPACE} (its chart/version labels change on every bump)" \
+      update roles.rbac.authorization.k8s.io -n "$AIRBYTE_NAMESPACE"
     expect_can yes "create Roles in ${AIRBYTE_NAMESPACE}" \
       create roles.rbac.authorization.k8s.io -n "$AIRBYTE_NAMESPACE"
+    expect_can yes "create RoleBindings in ${AIRBYTE_NAMESPACE} (the chart's airbyte-auth-reader)" \
+      create rolebindings.rbac.authorization.k8s.io -n "$AIRBYTE_NAMESPACE"
     expect_can no "read pods in ${AIRBYTE_NAMESPACE} (the exception is RBAC-only)" \
       get pods -n "$AIRBYTE_NAMESPACE"
   fi
@@ -958,6 +967,7 @@ provision | rotate)
   fi
   note ""
   render_manifests
+  print_airbyte_precondition
   note ""
   note "then, against the assembled kubeconfig:"
   print_verification_plan

@@ -108,6 +108,60 @@ namespaces:
 # URL below among them), so this is not freely renameable.
 release: insight
 
+# ─── Deploy shape ──────────────────────────────────────────────────────
+#
+# What makes `make deploy ENV=test-stand` represent THIS stand rather than a
+# sandbox. Each key below existed as a reason not to use the official target;
+# declaring them is what lets CI and an operator run the same command.
+deploy:
+  # NO `--atomic`, and this is a property of a disposable stand rather than a
+  # preference. `--atomic` rolls a failed upgrade back to the previous
+  # revision, which here means two bad things at once: it reinstalls the
+  # PREVIOUS chart — a downgrade, on a stand whose entire job is to show what
+  # the newest one does — and it deletes the pods holding the reason it failed.
+  #
+  # Recovery here is the next merge, or wiping the stand and installing the
+  # current chart onto it. Never a rollback, and never a downgrade: reinstalling
+  # an older chart over a newer one leaves live objects in the old chart's shape
+  # that the next upgrade cannot patch, which has wedged this stand once already.
+  #
+  # Consequence handled in the Makefile, not here: with atomic off, a FAILED
+  # FIRST install leaves a release with no deployed revision, which helm then
+  # refuses to upgrade forever ("has no deployed releases"). `deploy-insight`
+  # detects that and says which command clears it.
+  atomic: false
+
+# ─── Keycloak realm ownership ──────────────────────────────────────────
+keycloak:
+  # `external` — the ConfigMap `insight-keycloak-config-realms` is written by
+  # the bring-up outside this repository, and `make keycloak-broker-realms`
+  # must not write it. This directory therefore ships no `keycloak/realms/`,
+  # and that absence is a decision rather than an omission: two writers on one
+  # object means whoever ran last decides who can log in, and neither of them
+  # reports the conflict.
+  #
+  # NOT expressed as `keycloakConfig.enabled`, which is true in every
+  # environment — the question is who owns the realm CONTENT, not whether the
+  # chart applies it.
+  realms: external
+
+# ─── Where the OIDC client secret is read from at deploy time ──────────
+#
+# The values file leaves `authenticator.oidc.clientSecret` empty because this
+# repository is public. The deploy reads it out of the cluster instead, from
+# the Secret named here, and passes it to helm — so there is exactly ONE copy
+# of the value and it is the one the realm was configured with. A second copy
+# in a CI secret store would be a second thing to rotate and a second way for
+# the two to disagree.
+#
+# The key is `client-secret` and not the `oidc-client-secret` that
+# scripts/compose-app-secrets.sh looks for; that script does not run here
+# (credentials.deploymentMode: helm), and naming the key explicitly is what
+# stops the difference from mattering.
+oidcClientSecret:
+  secret: insight-oidc
+  key: client-secret
+
 # ─── L0 — cluster prereqs (drives `make bootstrap`) ────────────────────
 #
 # ALL FALSE. `make bootstrap ENV=test-stand` is a no-op that prints four

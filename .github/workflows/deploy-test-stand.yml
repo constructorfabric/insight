@@ -90,40 +90,32 @@ name: Deploy test stand
 #   * Every credential arrives from the `insight-test-stand` GitHub environment.
 #     Nothing about the stand's identity, addresses or accounts is committed here.
 #
-# ── WHY THE HELM CALL IS SPELLED OUT AND NOT `make deploy` ──────────────────
+# ── WHY THIS CALLS `make deploy` ───────────────────────────────────────────
 #
-# Reusing `deploy/gitops`'s own entry point was the first design and it is the
-# wrong one FOR THIS STAND. `make deploy` → `deploy-insight` depends on
-# `apply-app-secrets`, which:
+# The deploy stage runs `deploy/gitops`'s own entry point, so CI and an operator
+# execute the SAME code, not two descriptions of it that agree until one of them
+# is edited.
 #
-#   * hard-requires at least one *-sealedsecret.yaml under
-#     environments/<ENV>/sealed-secrets/insight/ and `kubectl apply`s it. This
-#     cluster runs no sealed-secrets controller and has no SealedSecret CRD, and
-#     the target has no skip switch;
-#   * then runs compose-app-secrets.sh, which overwrites the three chart-owned
-#     *-config Secrets and reads the OIDC client secret from a key name this
-#     stand's Secret does not use — writing a BLANK client secret and breaking
-#     every login while the release still reports `deployed`.
+# That was not always possible. `deploy-insight` used to be unable to represent
+# this stand at all: it hard-required a sealed manifest for a cluster with no
+# sealed-secrets controller; it ran compose-app-secrets.sh, which overwrites the
+# three chart-owned *-config Secrets and reads the OIDC client secret from a key
+# name this stand does not use, writing a BLANK client secret while the release
+# still reported `deployed`; it packed a realm directory this environment
+# deliberately does not ship; and it hardcoded `--atomic` and
+# `--create-namespace` where this stand can afford neither.
 #
-# and `deploy-insight` additionally hardcodes `--atomic` after
-# $(HELM_UPGRADE_FLAGS), so no existing variable can turn it off (a later
-# `--atomic` re-sets what an earlier `--atomic=false` cleared) — which would roll
-# a failed upgrade back and destroy the evidence this stand exists to produce.
+# Every one of those is now a DECLARATION in
+# environments/test-stand/inventory.yaml (and `credentials.deploymentMode` in
+# its values.yaml) rather than a reason to fork the procedure. The fix belonged
+# in the official target, which is what the review of #2404 asked for, and the
+# result is smaller than the workaround it replaces.
 #
-# So the deploy stage runs the invocation written down in
-# deploy/gitops/environments/test-stand/README.md, step by step. That README is
-# the authority for what this stage does and why `make deploy` is not it — the
-# sealed-secrets prerequisite alone makes that target unable to run against this
-# stand at all, with or without an `--atomic` knob. `make diff`, `make status`
-# and `make rollback` do still work for this environment and are the right tools
-# for their jobs.
-#
-# "CI and humans run the same code path" is therefore kept by that README rather
-# than by a second executable. A rehearsal harness that ran these commands from a
-# laptop and diffed itself against this file was built and then dropped: it was
-# a third copy of the invocation to keep in step, and it drifted from this file
-# within a day of being written. The README is the one copy; when a command here
-# changes, change it there.
+# `make diff`, `make status` and `make verify-release` are the other tools for
+# this environment. `make rollback` is NOT this stand's recovery path — see
+# `deploy.atomic` in the inventory: rolling back reinstalls the previous chart,
+# which is a downgrade onto a stand that exists to show what the newest one
+# does. Recovery is the next merge, or rebuilding the stand.
 #
 # ── PRECONDITIONS THIS WORKFLOW ASSERTS RATHER THAN ASSUMES ─────────────────
 #
@@ -701,91 +693,69 @@ jobs:
       # budget must never be the one that fires: a step timeout SIGKILLs helm and
       # leaves the release in `pending-upgrade`, while helm's own timeout leaves
       # a clean `failed` release that `helm history` explains.
-      - name: 'Stage 1/4 — upgrade the release'
-        id: deploy_upgrade
-        timeout-minutes: 14
+      - name: 'Stage 1/4 — mask the OIDC client secret, and refuse a blank one'
+        id: deploy_secret
         run: |
           set -euo pipefail
-          # The OIDC client secret is read out of the cluster at deploy time and
-          # injected, because the committed values file leaves it empty — this
-          # repository is public. The chart writes whatever it is given straight
-          # into the authenticator's config Secret, so an upgrade without this
-          # produces a confidential client with a blank secret: pods Ready,
-          # release `deployed`, every login broken.
+          # Read ONLY to mask it and to fail fast. `make deploy` reads the same
+          # Secret itself, from the coordinates the inventory names, and hands it
+          # to helm — so there is still exactly one copy of the value and it is
+          # the cluster's. Nothing is exported from here.
           #
-          # Read from the cluster rather than held as a GitHub secret so there is
-          # ONE copy of the value — the one the realm already agrees with. A
-          # second copy in CI is a second thing to rotate and a second way for
-          # the two to disagree.
-          oidc_client_secret="$(
+          # Refusing early matters more than it looks: the chart writes whatever
+          # it is given straight into the authenticator's config Secret, so a
+          # blank one produces a confidential OIDC client with no secret. Every
+          # pod stays Ready, the release reports `deployed`, and every login
+          # fails at the code exchange.
+          s="$(
             kubectl -n "$STAND_NAMESPACE" get secret insight-oidc \
-              -o 'jsonpath={.data.client-secret}' | base64 --decode
+              -o "jsonpath={.data['client-secret']}" | base64 --decode
           )"
-          if [ -z "$oidc_client_secret" ]; then
+          if [ -z "$s" ]; then
             echo "::error::Secret insight-oidc in namespace $STAND_NAMESPACE has no non-empty 'client-secret' key."
             echo "Refusing to deploy: the upgrade would succeed and leave the authenticator with a"
             echo "blank client secret, which looks healthy and fails every login."
             exit 1
           fi
-          # Belt and braces. The value is never echoed below, but a masked value
-          # cannot be leaked by a future edit either.
-          echo "::add-mask::$oidc_client_secret"
+          echo "::add-mask::$s"
+          echo "insight-oidc carries a non-empty client-secret"
 
-          # Deliberately NO --atomic: a failed upgrade is LEFT failed so the pods
-          # holding the reason are still there for the diagnostics step. Recovery
-          # is the next merge, or a human running `make rollback ENV=test-stand`.
-          #
-          # Deliberately NO --create-namespace: the namespace exists, and the CI
-          # credential is namespace-scoped and could not create one anyway —
-          # asking would turn a working deploy into an RBAC failure.
-          #
-          # --timeout 10m rather than the gitops Makefile's 30m default: a deploy
-          # that is going to fail should say so inside the CI budget.
-          helm upgrade --install "$STAND_RELEASE" "$CHART_REF" \
-            --version "$CHART_VERSION" \
-            --namespace "$STAND_NAMESPACE" \
-            --values "$VALUES_FILE" \
-            --set-string authenticator.oidc.clientSecret="$oidc_client_secret" \
-            --wait --timeout 10m \
-            --history-max 10 \
-            2>&1 | python3 "$REDACT"
-
-      - name: 'Stage 1/4 — verify the release is the chart this run published'
-        id: deploy_verify
+      - name: 'Stage 1/4 — upgrade the release through the official gitops target'
+        id: deploy_upgrade
+        timeout-minutes: 14
         run: |
           set -euo pipefail
-          # A release can be `deployed` and still be the wrong chart — a resumed
-          # run, a hand-deploy that raced this one, an input that did not say what
-          # it meant. Checked separately from the upgrade's exit status because
-          # they answer different questions.
+          # THE OFFICIAL PATH, not a second spelling of it. Everything that used
+          # to justify a hand-written `helm upgrade` here is now DECLARED in
+          # environments/test-stand/inventory.yaml, where an operator can read it:
           #
-          # The status flags are enumerated instead of `--all` because `--all` is
-          # a Helm 3 flag that Helm 4 removed: on a runner carrying v4 it exits
-          # `Error: unknown flag: --all` and this verification silently reports
-          # every release as "absent". The explicit set means the same thing on
-          # both majors. The intent it preserves: the interesting failures are
-          # the ones the default listing hides — a `pending-upgrade` release (an
-          # upgrade that was killed rather than one that failed) must be reported
-          # as itself, not as "absent".
-          listed="$(helm list -n "$STAND_NAMESPACE" \
-            --deployed --failed --pending --uninstalling \
-            --filter "^${STAND_RELEASE}\$" -o json)"
-          status="$(printf '%s' "$listed" | jq -r '.[0].status // "absent"')"
-          chart="$(printf '%s' "$listed" | jq -r '.[0].chart // "absent"')"
-          revision="$(printf '%s' "$listed" | jq -r '.[0].revision // "?"')"
-          echo "release $STAND_RELEASE: status=$status chart=$chart revision=$revision"
-          if [ "$status" != "deployed" ]; then
-            echo "::error::release '$STAND_RELEASE' is '$status', not 'deployed'."
-            echo "It has been left in that state on purpose — see the failure diagnostics below,"
-            echo "then either fix forward with another merge or roll back by hand."
-            exit 1
-          fi
-          if [ "$chart" != "insight-$CHART_VERSION" ]; then
-            echo "::error::the stand is running '$chart', not 'insight-$CHART_VERSION'."
-            echo "helm reported success while installing something else — treat this as a"
-            echo "problem with the chart reference or the version input, not with the stand."
-            exit 1
-          fi
+          #   deploy.atomic: false        no rollback-on-failure (see the file)
+          #   bootstrap.namespaces: false no --create-namespace; the CI credential
+          #                               is namespace-scoped and cannot create one
+          #   keycloak.realms: external   the realm ConfigMap is owned outside this repo
+          #   secrets.services all false  nothing to unseal; no controller here
+          #   oidcClientSecret            where to read the client secret from
+          #   credentials.deploymentMode  (in values.yaml) the chart renders the
+          #     = helm                    *-config Secrets, so compose-app-secrets
+          #                               must not overwrite them
+          #
+          # so `make deploy` and this workflow cannot drift: there is one
+          # procedure and the environment describes itself to it.
+          #
+          # CONFIRM is the literal token the target demands — spelled out rather
+          # than composed from $ENV_NAME, because the whole point of the token is
+          # that it cannot be produced by a variable that happens to be wrong.
+          #
+          # TIMEOUT is 10m against the Makefile's 30m default: a deploy that is
+          # going to fail should say so inside the CI budget. The step's own 14
+          # minutes must never be what fires — a step timeout SIGKILLs helm and
+          # leaves `pending-upgrade`, which blocks the NEXT deploy too.
+          make -C deploy/gitops --no-print-directory deploy \
+            ENV="$ENV_NAME" \
+            CONFIRM=yes-deploy-test-stand \
+            INSIGHT_VERSION="$CHART_VERSION" \
+            TIMEOUT=10m \
+            2>&1 | python3 "$REDACT"
 
       - name: 'Stage 1/4 — restart what the chart cannot know to restart'
         id: deploy_restart
@@ -1196,7 +1166,7 @@ jobs:
           # A stage is several steps; its result is the worst of them, computed
           # in the script below rather than here, because expressions cannot.
           DEPLOY_RESULT: >-
-            ${{ steps.deploy_upgrade.outcome || 'skipped' }} ${{ steps.deploy_verify.outcome || 'skipped' }} ${{ steps.deploy_restart.outcome || 'skipped' }} ${{ steps.deploy_routes.outcome || 'skipped' }}
+            ${{ steps.deploy_secret.outcome || 'skipped' }} ${{ steps.deploy_upgrade.outcome || 'skipped' }} ${{ steps.deploy_restart.outcome || 'skipped' }} ${{ steps.deploy_routes.outcome || 'skipped' }}
           EDGE_RESULT: ${{ steps.edge.outcome || 'skipped' }}
           SEED_RESULT: >-
             ${{ steps.seed.outcome || 'skipped' }} ${{ steps.seed_manifest.outcome || 'skipped' }}
