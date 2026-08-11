@@ -6,7 +6,7 @@ import { CollectionDrilldown } from "@/components/widgets/metric-views/collectio
 import { MetricActivity } from "@/components/widgets/metric-views/metric-activity";
 import { SectionMetricIndex } from "@/components/widgets/metric-views/section-metric-index";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
-import { groupHasData } from "@/lib/insight/group-data";
+import { partState, reachableMetricKeys } from "@/lib/insight/coverage";
 import { GROUPS, type GroupId } from "@/lib/insight/groups";
 import { finestGrain } from "@/lib/insight/metric-grain";
 import { sectionSources } from "@/lib/insight/section-sources";
@@ -17,6 +17,7 @@ import {
 } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { usePersonCohort } from "@/lib/portal/use-person-cohort";
+import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
 import { useMetricCollection } from "@/queries/metric-results";
 import { TEXT_TITLE } from "@/lib/type-scale";
 
@@ -59,6 +60,10 @@ export function SingleGroupView({
     // which they neither chose nor can see inside.
     { previousPeriod: period },
   );
+  // The tenant-wide listing of what is wired up, which is what tells the two
+  // empty sections apart below. Already in cache: the section navigation asks
+  // the same question to mark its rows.
+  const definitions = useMetricDefinitionsResponse();
   const cohortIds = usePersonCohort(entityId);
   const cohortData = useMetricCollection(
     def && cohortIds.length ? def.collection : EMPTY_COLLECTION,
@@ -114,7 +119,11 @@ export function SingleGroupView({
       </div>
     );
   }
-  if (data.isPending) return <CenteredSpinner className="min-h-[60vh]" />;
+  // The definitions are part of the answer, not decoration: without them an
+  // empty section cannot say which of the two emptinesses it is, and guessing
+  // while they load would show one sentence and then swap it for the other.
+  if (data.isPending || definitions.isPending)
+    return <CenteredSpinner className="min-h-[60vh]" />;
   // A failed fetch must surface as a retryable error, not a drilldown
   // rendered over an empty dataset (same policy as MetricGroupsView).
   if (data.isError) {
@@ -130,12 +139,35 @@ export function SingleGroupView({
   // in this period", a summary card showing a dash, a distribution saying "no
   // values" — and a reader would meet one fact restated in four wordings down
   // a full page. One sentence says it once.
-  if (!groupHasData(def, injectedData.byKey, entityId)) {
+  //
+  // WHICH sentence is the point. A section this person did none of, and one
+  // nothing feeds, are opposite findings: the first is about them and is
+  // worth asking about, the second is about the install and is nobody's
+  // performance. The sections page already draws that line for the whole list
+  // (see `PersonCoverage`); saying "nothing recorded" here threw it away for
+  // the one section the reader cared enough to open.
+  //
+  // A failed definitions request answers neither. It cannot be allowed to
+  // fall through to one of them: with no listing every section looks
+  // unreachable, and the screen would announce that nothing is measured here
+  // for anyone on the strength of a request that did not arrive. It says
+  // neither instead.
+  const state = partState(
+    def,
+    injectedData.byKey,
+    entityId,
+    reachableMetricKeys(definitions.data?.metrics ?? []),
+  );
+  if (state !== "reads") {
     return (
       <div className="flex flex-col gap-3 p-4 md:p-6">
         <h1 className={TEXT_TITLE}>{def.title}</h1>
         <p className="text-sm text-muted-foreground">
-          Nothing recorded here for the selected period.
+          {definitions.isError
+            ? "Nothing to show here for the selected period."
+            : state === "no_data_reaches_us"
+              ? "No data reaches us for this section — nothing is measured here for anyone yet."
+              : "Nothing recorded here for the selected period."}
         </p>
       </div>
     );
