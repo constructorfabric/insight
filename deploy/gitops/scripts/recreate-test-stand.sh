@@ -516,14 +516,25 @@ if [ "$DO_DEPLOY" = "1" ]; then
     note "${C_YEL}note${C_RST}  this checkout's .insight-version says $LOCAL_FILE — ignored, see above"
   fi
   note "installing insight-$VERSION through the official target"
+  # KUBE_CTX and KUBECONFIG are passed through rather than left to `make` to
+  # rediscover. The Makefile defaults KUBE_CTX to the inventory's `kubeContext`
+  # and asserts it against `kubectl config current-context`, which is the right
+  # guard for a human typing `make deploy` — but this script has ALREADY proved
+  # something stronger: that the context it was given resolves to the cluster the
+  # caller named. Making the operator rename a context to satisfy a name
+  # comparison, after the identity of the cluster has been established, is
+  # ceremony — and it failed here between a wipe and an install, which is the
+  # worst possible moment for ceremony.
   make -C "$GITOPS_DIR" --no-print-directory deploy \
     ENV="$ENV_NAME" CONFIRM="yes-deploy-$ENV_NAME" \
+    KUBE_CTX="$CONTEXT" ${KUBECONFIG_IN:+KUBECONFIG="$KUBECONFIG_IN"} \
     INSIGHT_VERSION="$VERSION" TIMEOUT="$TIMEOUT" 2>&1 | sed 's/^/  /' >&2
 
   # ── 7. Verify ────────────────────────────────────────────────────────────
   hdr "verify"
   make -C "$GITOPS_DIR" --no-print-directory verify-release \
-    ENV="$ENV_NAME" INSIGHT_VERSION="$VERSION" 2>&1 | sed 's/^/  /' >&2
+    ENV="$ENV_NAME" KUBE_CTX="$CONTEXT" ${KUBECONFIG_IN:+KUBECONFIG="$KUBECONFIG_IN"} \
+    INSIGHT_VERSION="$VERSION" 2>&1 | sed 's/^/  /' >&2
 
   BASE="https://$(yq -r '.gateway.route.host' "$VALUES")"
   for probe in "/:200" "/auth/me:401"; do
