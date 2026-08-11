@@ -1402,9 +1402,16 @@ async fn the_index_is_what_a_page_actually_reads() -> R {
             if !file.file_name().to_string_lossy().starts_with("page-index-") {
                 continue;
             }
+            // Drop one ROW and restate the trailer: the count is what lets
+            // the reader tell a deliberate edit from crash truncation.
             let text = std::fs::read_to_string(file.path())?;
             let mut lines: Vec<&str> = text.lines().collect();
+            let trailer = lines.pop().ok_or("index must have a trailer")?;
+            let (tag, count) = trailer.split_once('\u{1f}').ok_or("malformed trailer")?;
+            assert_eq!(tag, "count", "the last line must be the count trailer");
             lines.pop();
+            let restated = format!("count\u{1f}{}", count.parse::<usize>()? - 1);
+            lines.push(&restated);
             std::fs::write(file.path(), lines.join("\n") + "\n")?;
             clipped += 1;
         }
@@ -1416,6 +1423,31 @@ async fn the_index_is_what_a_page_actually_reads() -> R {
         after["items"].as_array().ok_or("no items")?.len(),
         full - 1,
         "a clipped index must clip the response, or the index is not being read"
+    );
+
+    // Crash truncation — a dropped tail with a now-wrong trailer — must NOT
+    // clip the response: the reader detects it, drops the file, and the live
+    // walk serves the full history.
+    for entry in std::fs::read_dir(server.dir.join("data").join("repos"))? {
+        let info = entry?.path().join("repo.git").join("info");
+        let Ok(files) = std::fs::read_dir(&info) else {
+            continue;
+        };
+        for file in files.flatten() {
+            if !file.file_name().to_string_lossy().starts_with("page-index-") {
+                continue;
+            }
+            let text = std::fs::read_to_string(file.path())?;
+            let mut lines: Vec<&str> = text.lines().collect();
+            lines.pop();
+            std::fs::write(file.path(), lines.join("\n") + "\n")?;
+        }
+    }
+    let recovered = get_json(server.port, "/v1/commits", &repo).await?;
+    assert_eq!(
+        recovered["items"].as_array().ok_or("no items")?.len(),
+        full,
+        "a truncated index must fall back to the live walk, never serve short history"
     );
     Ok(())
 }

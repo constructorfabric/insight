@@ -41,7 +41,12 @@ pub async fn prefetch(
         return Ok(0);
     }
 
-    let ordered: Vec<String> = oids.into_iter().collect();
+    // Consecutive pages share blobs — the src side of a file changed on this
+    // page is the dst side fetched on the last one — so whenever the purge
+    // has not run in between, most of the window is already local. Fetching
+    // it again pays origin round trips for nothing and lands duplicate
+    // copies in yet another pack.
+    let ordered = missing_oids(runner, git_dir, oids, creds).await?;
     for batch in ordered.chunks(FETCH_BATCH) {
         let mut args = vec!["fetch", "--no-write-fetch-head", "origin"];
         args.extend(batch.iter().map(String::as_str));
@@ -53,6 +58,41 @@ pub async fn prefetch(
             .await?;
     }
     Ok(ordered.len())
+}
+
+/// The subset of `oids` absent from the local object store.
+///
+/// `rev-list --missing=print` is the partial-clone-safe form: it REPORTS a
+/// missing object (`?<oid>`) instead of lazily fetching it, which is exactly
+/// the behaviour a presence check must have — `cat-file` would trigger the
+/// one-round-trip-per-blob fetches this module exists to prevent.
+async fn missing_oids(
+    runner: &GitRunner,
+    git_dir: &Path,
+    oids: BTreeSet<String>,
+    creds: &GitCredentials,
+) -> Result<Vec<String>, GitError> {
+    let ordered: Vec<String> = oids.into_iter().collect();
+    let mut missing = Vec::new();
+    for batch in ordered.chunks(FETCH_BATCH) {
+        let mut args = vec![
+            "rev-list",
+            "--objects",
+            "--missing=print",
+            "--no-object-names",
+        ];
+        args.extend(batch.iter().map(String::as_str));
+
+        let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
+        let listed = String::from_utf8_lossy(&output.stdout);
+        missing.extend(
+            listed
+                .lines()
+                .filter_map(|line| line.strip_prefix('?'))
+                .map(str::to_owned),
+        );
+    }
+    Ok(missing)
 }
 
 async fn needed_oids(

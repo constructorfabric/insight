@@ -145,29 +145,34 @@ pub async fn list_commits(
             let shas: Vec<String> = keys.iter().map(|key| key.sha.clone()).collect();
             // Only the page's own commits are read in full: a header carries
             // the whole commit message, so reading them for all of history
-            // would dwarf everything else on the request.
-            let window =
-                commits::headers_for(runner, guard.git_dir(), &shas, &context.creds).await?;
-            state
-                .store
-                .prefetch_window(&context.key, guard.git_dir(), &shas, &context.creds)
-                .await?;
+            // would dwarf everything else on the request. Independent of the
+            // prefetch — headers touch commit objects only — so the two run
+            // concurrently, as do the diff readers behind them.
+            let (window, _fetched) = tokio::try_join!(
+                commits::headers_for(runner, guard.git_dir(), &shas, &context.creds),
+                state
+                    .store
+                    .prefetch_window(&context.key, guard.git_dir(), &shas, &context.creds),
+            )?;
 
-            let file_stats =
-                numstat::totals(runner, guard.git_dir(), &shas, &context.creds).await?;
-            let in_default = match indexed_membership {
-                Some(membership) => membership,
-                None => {
-                    commits::default_branch_membership(
-                        runner,
-                        guard.git_dir(),
-                        &shas,
-                        &context.creds,
-                    )
-                    .await?
-                }
-            };
-            let ids = commits::patch_ids(runner, guard.git_dir(), &shas, &context.creds).await?;
+            let (file_stats, ids, in_default) = tokio::try_join!(
+                numstat::totals(runner, guard.git_dir(), &shas, &context.creds),
+                commits::patch_ids(runner, guard.git_dir(), &shas, &context.creds),
+                async {
+                    match indexed_membership {
+                        Some(membership) => Ok(membership),
+                        None => {
+                            commits::default_branch_membership(
+                                runner,
+                                guard.git_dir(),
+                                &shas,
+                                &context.creds,
+                            )
+                            .await
+                        }
+                    }
+                },
+            )?;
 
             let items = window
                 .into_iter()
@@ -236,30 +241,35 @@ pub async fn list_file_changes(
                 .prefetch_window(&context.key, guard.git_dir(), &shas, &context.creds)
                 .await?;
 
-            let file_stats = numstat::read(
-                runner,
-                guard.git_dir(),
-                &shas,
-                RowCaps::DEFAULT.max_rows,
-                &context.creds,
-            )
-            .await?;
-            let texts = if include_patch {
-                patches::read(
+            // Independent after the prefetch: numstat and patch text read the
+            // same blobs, neither needs the other.
+            let (file_stats, mut texts) = tokio::try_join!(
+                numstat::read(
                     runner,
                     guard.git_dir(),
                     &shas,
-                    max_patch_bytes,
-                    RowCaps::DEFAULT.max_patch_bytes,
+                    RowCaps::DEFAULT.max_rows,
                     &context.creds,
-                )
-                .await?
-            } else {
-                HashMap::new()
-            };
+                ),
+                async {
+                    if include_patch {
+                        patches::read(
+                            runner,
+                            guard.git_dir(),
+                            &shas,
+                            max_patch_bytes,
+                            RowCaps::DEFAULT.max_patch_bytes,
+                            &context.creds,
+                        )
+                        .await
+                    } else {
+                        Ok(HashMap::new())
+                    }
+                },
+            )?;
 
             let (items, early_cursor) =
-                emit_file_changes(window, &file_stats, &texts, RowCaps::DEFAULT);
+                emit_file_changes(window, &file_stats, &mut texts, RowCaps::DEFAULT);
 
             Ok(Page {
                 items,
@@ -298,7 +308,7 @@ impl RowCaps {
 fn emit_file_changes(
     window: Vec<commits::CommitKey>,
     file_stats: &HashMap<String, Vec<numstat::FileStat>>,
-    texts: &HashMap<String, patches::CommitPatches>,
+    texts: &mut HashMap<String, patches::CommitPatches>,
     caps: RowCaps,
 ) -> (Vec<FileChangeRow>, Option<(String, String)>) {
     let mut items: Vec<FileChangeRow> = Vec::new();
@@ -326,10 +336,12 @@ fn emit_file_changes(
             break;
         }
 
+        // Consumed, not borrowed: every `(sha, file)` patch is emitted once,
+        // and a page can hold the whole patch budget — keeping the map alive
+        // alongside the rows doubles peak memory for nothing.
+        let mut per_file = texts.remove(&header.sha).unwrap_or_default();
         for file in files {
-            let patch = texts
-                .get(&header.sha)
-                .and_then(|per_file| per_file.get(&file.filename));
+            let patch = per_file.remove(&file.filename);
             items.push(FileChangeRow {
                 sha: header.sha.clone(),
                 committed_date: header.committed_date.clone(),
@@ -340,8 +352,8 @@ fn emit_file_changes(
                 deletions: file.deletions,
                 changes: file.additions.and_then(|a| file.deletions.map(|d| a + d)),
                 is_binary: file.is_binary,
-                patch: patch.map(|p| p.text.clone()),
-                patch_truncated: patch.is_some_and(|p| p.truncated),
+                patch_truncated: patch.as_ref().is_some_and(|p| p.truncated),
+                patch: patch.map(|p| p.text),
             });
         }
 
@@ -739,7 +751,7 @@ mod tests {
             max_rows: usize::MAX,
             max_patch_bytes: 150,
         };
-        let (rows, cursor) = emit_file_changes(vec![early, next.clone()], &stats, &texts, caps);
+        let (rows, cursor) = emit_file_changes(vec![early, next.clone()], &stats, &mut texts.clone(), caps);
         assert_eq!(rows.len(), 1, "only the first commit fits");
         let Some((primary, secondary)) = cursor else {
             panic!("a page stopped early must carry a cursor")
@@ -761,7 +773,7 @@ mod tests {
     #[test]
     fn an_unbounded_page_keeps_every_row_and_no_early_cursor() {
         let (window, stats, texts) = scenario(3, 2, 4);
-        let (rows, cursor) = emit_file_changes(window, &stats, &texts, RowCaps::DEFAULT);
+        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), RowCaps::DEFAULT);
 
         assert_eq!(rows.len(), 6);
         assert_eq!(cursor, None, "nothing was withheld, so nothing to resume");
@@ -774,7 +786,7 @@ mod tests {
             max_rows: 7,
             max_patch_bytes: usize::MAX,
         };
-        let (rows, cursor) = emit_file_changes(window, &stats, &texts, caps);
+        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), caps);
 
         assert_eq!(rows.len(), 6, "two whole commits fit, the third would not");
         assert_eq!(
@@ -791,7 +803,7 @@ mod tests {
             max_rows: usize::MAX,
             max_patch_bytes: 250,
         };
-        let (rows, cursor) = emit_file_changes(window, &stats, &texts, caps);
+        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), caps);
 
         assert_eq!(
             rows.len(),
@@ -808,7 +820,7 @@ mod tests {
             max_rows: 8,
             max_patch_bytes: 95,
         };
-        let (rows, _) = emit_file_changes(window, &stats, &texts, caps);
+        let (rows, _) = emit_file_changes(window, &stats, &mut texts.clone(), caps);
 
         let mut per_sha: HashMap<&str, usize> = HashMap::new();
         for row in &rows {
@@ -826,7 +838,7 @@ mod tests {
             max_rows: 1,
             max_patch_bytes: 1,
         };
-        let (rows, cursor) = emit_file_changes(window, &stats, &texts, caps);
+        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), caps);
 
         assert_eq!(
             rows.len(),
@@ -845,7 +857,7 @@ mod tests {
         let (rows, cursor) = emit_file_changes(
             Vec::new(),
             &HashMap::new(),
-            &HashMap::new(),
+            &mut HashMap::new(),
             RowCaps::DEFAULT,
         );
         assert!(rows.is_empty());

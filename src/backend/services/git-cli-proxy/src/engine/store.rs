@@ -2651,6 +2651,28 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn a_second_prefetch_of_the_same_window_fetches_nothing() {
+        // Consecutive pages share blobs; re-requesting local ones pays origin
+        // round trips and lands duplicate copies in new packs.
+        let (f, k, _) = entry_with_fetched_blobs("prefetch-dedup").await;
+        let git_dir = f.store.entry_dir(&k).join("repo.git");
+        let head = head_of(&git_dir);
+
+        let refetched = crate::engine::read::blobs::prefetch(
+            f.store.runner(),
+            &git_dir,
+            &[head],
+            &creds(),
+            u64::MAX,
+        )
+        .await;
+        match refetched {
+            Ok(count) => assert_eq!(count, 0, "every blob of this window is already local"),
+            Err(e) => panic!("presence filtering must not fail the prefetch: {e}"),
+        }
+    }
+
+    #[tokio::test]
     async fn a_pressure_purge_needs_no_throttle_window_and_no_repeated_losses() {
         // The rejected request's retry needs headroom NOW: the pressure purge
         // must skip the per-minute throttle (a check just ran, from the page

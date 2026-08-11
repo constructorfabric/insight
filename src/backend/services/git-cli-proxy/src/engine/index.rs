@@ -36,7 +36,13 @@ pub struct PageQuery {
 /// dates, hex object ids and a decimal count are all git-generated. This is
 /// NOT the ident separator situation — no attacker-written field is stored.
 const FIELD: char = '\u{1f}';
-const HEADER: &str = "git-cli-proxy page index v1";
+const HEADER_V1: &str = "git-cli-proxy page index v1";
+const HEADER: &str = "git-cli-proxy page index v2";
+/// Last line of a v2 index: `count<FIELD><rows>`. The rename can survive a
+/// power loss whose data blocks did not, leaving a file truncated at a line
+/// boundary — every row parses, and pages near the end are silently short.
+/// The trailer is what makes that detectable.
+const TRAILER_TAG: &str = "count";
 
 /// One page of rows plus the cursor to resume after it, `None` when the walk
 /// is complete.
@@ -77,7 +83,12 @@ pub fn write(git_dir: &Path, generation: u64, rows: &[IndexRow]) -> std::io::Res
                 u8::from(row.in_default_branch),
             )?;
         }
+        writeln!(out, "{TRAILER_TAG}{FIELD}{}", rows.len())?;
         out.flush()?;
+        // Flush reaches the OS, not the platter: without this the rename can
+        // be durable while the data is not, and the index survives a power
+        // loss truncated.
+        out.get_ref().sync_all()?;
     }
     std::fs::rename(&tmp, &target).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
@@ -103,24 +114,39 @@ pub fn read_page(
     generation: u64,
     query: &PageQuery,
 ) -> std::io::Result<Option<IndexPage>> {
-    let file = match std::fs::File::open(index_path(git_dir, generation)) {
+    let path = index_path(git_dir, generation);
+    let file = match std::fs::File::open(&path) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),
     };
     let mut lines = BufReader::new(file).lines();
 
-    match lines.next() {
-        Some(Ok(header)) if header == HEADER => {}
+    let trailer_expected = match lines.next() {
+        Some(Ok(header)) if header == HEADER => true,
+        // Written before the trailer existed; its tail cannot be verified,
+        // which is exactly what the format bump fixes going forward.
+        Some(Ok(header)) if header == HEADER_V1 => false,
         Some(Err(e)) => return Err(e),
         _ => return Err(std::io::Error::other("unrecognised page index header")),
-    }
+    };
 
     let mut selected: Vec<IndexRow> = Vec::new();
     let mut more = false;
+    let mut rows_seen: usize = 0;
+    let mut trailer_ok = false;
 
     for line in lines {
-        let row = parse_row(&line?)?;
+        let line = line?;
+        if let Some(count) = line.strip_prefix(TRAILER_TAG).and_then(|rest| {
+            rest.strip_prefix(FIELD)
+                .and_then(|n| n.parse::<usize>().ok())
+        }) {
+            trailer_ok = count == rows_seen;
+            break;
+        }
+        let row = parse_row(&line)?;
+        rows_seen += 1;
 
         if let Some(bound) = query.since_epoch
             && parse_instant(&row.key.committed_date).is_some_and(|at| at < bound)
@@ -146,6 +172,17 @@ pub fn read_page(
             break;
         }
         selected.push(row);
+    }
+
+    // Only a page that ran to the end concluded anything from the file's
+    // tail; a truncated tail must fail it rather than read as "walk
+    // complete". The file is dropped so the next fetch rebuilds it — the
+    // no-op-fetch guard skips rebuilding while a file exists.
+    if trailer_expected && !more && !trailer_ok {
+        let _ = std::fs::remove_file(&path);
+        return Err(std::io::Error::other(
+            "page index is truncated; removed for rebuild",
+        ));
     }
 
     let cursor = more

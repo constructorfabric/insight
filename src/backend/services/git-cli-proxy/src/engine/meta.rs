@@ -77,7 +77,15 @@ impl RepoMeta {
         let tmp = entry_dir.join(format!("{META_FILE}.tmp.{}.{seq}", std::process::id()));
 
         let bytes = serde_json::to_vec_pretty(self)?;
-        std::fs::write(&tmp, bytes)?;
+        {
+            use std::io::Write as _;
+            let mut file = std::fs::File::create(&tmp)?;
+            file.write_all(&bytes)?;
+            // The rename can survive a power loss whose data blocks did not;
+            // torn JSON at least fails to parse (safe re-clone), but paying
+            // one fsync beats paying a re-clone.
+            file.sync_all()?;
+        }
 
         std::fs::rename(&tmp, entry_dir.join(META_FILE)).inspect_err(|_| {
             let _ = std::fs::remove_file(&tmp);
