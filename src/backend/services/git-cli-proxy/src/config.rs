@@ -109,11 +109,17 @@ impl GearConfig {
         if self.proxy_token.is_empty() {
             missing.push("proxy_token (service-to-service bearer token)");
         }
-        if self.max_repo_bytes > 0
-            && self.disk_budget_bytes > 0
-            && self.max_repo_bytes > self.disk_budget_bytes
+        let watermark = crate::engine::disk::Budget {
+            total_bytes: self.disk_budget_bytes,
+        }
+        .high_watermark();
+        if self.max_repo_bytes > 0 && self.disk_budget_bytes > 0 && self.max_repo_bytes > watermark
         {
-            missing.push("max_repo_bytes must not exceed disk_budget_bytes");
+            missing.push(
+                "max_repo_bytes must fit under the reclaim high watermark (85% of \
+                 disk_budget_bytes) — admission reserves the per-repo cap before a clone, so a \
+                 larger cap is refused even on an empty cache and every request 429s forever",
+            );
         }
         anyhow::ensure!(
             missing.is_empty(),
@@ -227,17 +233,36 @@ mod tests {
     }
 
     #[test]
-    fn repo_cap_above_budget_fails() {
-        let cfg = GearConfig {
-            max_repo_bytes: 20_000_000_000,
+    fn repo_cap_above_the_reclaim_watermark_fails() {
+        // Admission reserves max_repo_bytes before a clone, so a cap between
+        // the high watermark and the budget boots fine and then refuses every
+        // request forever — used=0, nothing to reclaim, 429 in a loop.
+        let cases = vec![
+            ("cap over the whole budget", 20_000_000_000_u64),
+            ("cap inside the budget but over its 85% watermark", 9_000_000_000),
+        ];
+        for (name, cap) in cases {
+            let cfg = GearConfig {
+                max_repo_bytes: cap,
+                disk_budget_bytes: 10_000_000_000,
+                ..valid()
+            };
+            let err = match cfg.validate() {
+                Ok(()) => panic!("{name} must fail validation"),
+                Err(e) => e.to_string(),
+            };
+            assert!(err.contains("high watermark"), "{name}: got: {err}");
+        }
+
+        let at_watermark = GearConfig {
+            max_repo_bytes: 8_500_000_000,
             disk_budget_bytes: 10_000_000_000,
             ..valid()
         };
-        let err = match cfg.validate() {
-            Ok(()) => panic!("max_repo_bytes > disk_budget_bytes must fail"),
-            Err(e) => e.to_string(),
-        };
-        assert!(err.contains("must not exceed"), "got: {err}");
+        assert!(
+            at_watermark.validate().is_ok(),
+            "a cap exactly at the watermark must be admissible"
+        );
     }
 
     #[test]

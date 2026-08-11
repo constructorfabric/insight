@@ -61,7 +61,10 @@ service then refuses to deserialize.
 {{- define "insight-git-cli-proxy.validateDiskBudget" -}}
 {{- $budget := int64 (include "insight-git-cli-proxy.diskBudgetBytes" .) -}}
 {{- $repoCap := int64 (required "cache.maxRepoBytes is required" .Values.cache.maxRepoBytes) -}}
-{{- if gt $repoCap $budget -}}
-  {{- fail (printf "cache.maxRepoBytes (%d) exceeds the cache budget (%d bytes): a repository admitted at the per-repo cap could not fit in the cache at all." $repoCap $budget) -}}
+{{- /* Admission reserves the per-repo cap before a clone, so the cap must fit
+       under the service's reclaim high watermark (85% of the budget) — a cap
+       merely under the budget boots and then 429s every request forever. */ -}}
+{{- if gt (mul $repoCap 100) (mul $budget 85) -}}
+  {{- fail (printf "cache.maxRepoBytes (%d) exceeds 85%% of the cache budget (%d bytes): admission reserves the per-repo cap up front, so such a repository could never be admitted even on an empty cache." $repoCap $budget) -}}
 {{- end -}}
 {{- end }}

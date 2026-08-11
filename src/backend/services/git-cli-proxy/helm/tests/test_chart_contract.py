@@ -244,8 +244,10 @@ def render_fails(**overrides: str) -> str:
         # the app budget has to leave headroom rather than track the volume.
         ({"cache__diskBudgetBytes": "49000000000"}, "at most 90%"),
         ({"cache__diskBudgetBytes": "20000000000"}, "under 50%"),
-        # A repository admitted at the per-repo cap must fit in the cache.
-        ({"cache__maxRepoBytes": "99000000000"}, "exceeds the cache budget"),
+        # Admission reserves the per-repo cap before a clone; a cap over the
+        # watermark can never be admitted, even on an empty cache.
+        ({"cache__maxRepoBytes": "99000000000"}, "exceeds 85%"),
+        ({"cache__maxRepoBytes": "40000000000"}, "exceeds 85%"),
         # An unparseable size would make the guard vacuous, so it is refused
         # rather than read as zero.
         ({"persistence__size": "50Gigs"}, "unsupported unit"),
