@@ -48,7 +48,7 @@ The Identity Manager is a PostgreSQL/MariaDB service that maps source-native use
 
 Sources for identity: email, username, employee_id, git login, and similar fields collected by HR connectors.
 
-HR connectors (BambooHR, Workday, LDAP/AD) feed the Identity Manager directly alongside their Bronze tables.
+HR connectors (BambooHR, LDAP/AD) feed the Identity Manager directly alongside their Bronze tables.
 
 Evidence: `docs/CONNECTORS_REFERENCE.md:22–26` — Identity Manager diagram.
 
@@ -59,12 +59,12 @@ Seven source categories currently defined:
 | Category | Examples |
 |----------|---------|
 | Version Control | GitHub, Bitbucket, GitLab |
-| Task Tracking | YouTrack, Jira |
+| Task Tracking | Jira |
 | Communication | Microsoft 365, Zulip |
-| AI Dev Tool | Cursor, Windsurf, GitHub Copilot |
-| AI Tool | Claude API, Claude Team, OpenAI API, ChatGPT Team |
-| HR | BambooHR, Workday, LDAP/AD |
-| CRM | HubSpot, Salesforce |
+| AI Dev Tool | Cursor |
+| AI Tool | Claude Team, ChatGPT Team |
+| HR | BambooHR, LDAP/AD |
+| CRM | HubSpot |
 | Quality / Testing | Allure TestOps |
 
 Evidence: section headings throughout `docs/CONNECTORS_REFERENCE.md`.

@@ -9,7 +9,6 @@
     tags=['silver']
 ) }}
 
--- depends_on: {{ ref('salesforce__crm_contacts') }}
 -- depends_on: {{ ref('hubspot__crm_contacts') }}
 
 WITH src AS (

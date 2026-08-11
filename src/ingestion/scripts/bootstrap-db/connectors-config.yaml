@@ -12,13 +12,6 @@ connectors:
         value: fake
       proxy_url:
         value: fake
-  claude-admin:
-    path: ai/claude-admin
-    config:
-      admin_api_key:
-        value: fake
-      insight_tenant_id:
-        value: fake
   claude-enterprise:
     path: ai/claude-enterprise
     config:
@@ -50,28 +43,6 @@ connectors:
         value: fake
       insight_tenant_id:
         value: fake
-  github-copilot:
-    path: ai/github-copilot
-    config:
-      github_org:
-        value: my-company
-      github_token:
-        value: fake
-      insight_source_id:
-        value: github-copilot-acme
-      insight_tenant_id:
-        value: fake
-  openai:
-    path: ai/openai
-    config:
-      insight_source_id:
-        value: fake
-      insight_tenant_id:
-        value: fake
-      openai_admin_api_key:
-        value: fake
-      openai_start_date:
-        value: "2020-01-01"
   m365:
     path: collaboration/m365
     config:
@@ -131,21 +102,6 @@ connectors:
         value: hubspot-acme-prod
       insight_tenant_id:
         value: fake
-  salesforce:
-    path: crm/salesforce
-    config:
-      insight_source_id:
-        value: salesforce-acme-prod
-      insight_tenant_id:
-        value: fake
-      salesforce_client_id:
-        value: fake
-      salesforce_client_secret:
-        value: fake
-      salesforce_instance_url:
-        value: https://mycompany.my.salesforce.com
-      salesforce_start_date:
-        value: "2024-01-01"
   bitbucket-cloud:
     path: git/bitbucket-cloud
     config:
@@ -238,23 +194,6 @@ connectors:
         value: fake
       insight_tenant_id:
         value: fake
-  workday:
-    path: hr-directory/workday
-    config:
-      insight_source_id:
-        value: workday-acme-prod
-      insight_tenant_id:
-        value: fake
-      workday_base_url:
-        value: https://wd5-services1.workday.com/ccx/service/customreport2/acme
-      workday_isu_password:
-        value: fake
-      workday_isu_username:
-        value: fake
-      workday_leave_report_path:
-        value: ISU_Insight/Insight_Leave_Sync
-      workday_workers_report_path:
-        value: ISU_Insight/Insight_Employee_Sync
   zendesk:
     path: support/zendesk
     config:
@@ -280,30 +219,6 @@ connectors:
       jira_email:
         value: fake
       jira_instance_url:
-        value: fake
-  youtrack:
-    path: task-tracking/youtrack
-    config:
-      insight_source_id:
-        value: fake
-      insight_tenant_id:
-        value: fake
-      youtrack_base_url:
-        value: fake
-      youtrack_token:
-        value: fake
-  figma:
-    path: ui-design/figma
-    config:
-      figma_start_date:
-        value: "2020-01-01"
-      figma_team_ids:
-        value: fake
-      figma_token:
-        value: fake
-      insight_source_id:
-        value: fake
-      insight_tenant_id:
         value: fake
   confluence:
     path: wiki/confluence

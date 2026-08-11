@@ -1,32 +1,5 @@
 CREATE DATABASE IF NOT EXISTS `silver`;
 
-CREATE TABLE IF NOT EXISTS silver.class_ai_api_usage
-(
-    `insight_tenant_id` Nullable(String),
-    `source_id` Nullable(String),
-    `unique_key` String,
-    `email` Nullable(String),
-    `api_key_id` Nullable(String),
-    `workspace_id` Nullable(String),
-    `day` Nullable(Date),
-    `provider` String,
-    `channel` String,
-    `input_tokens` UInt64,
-    `output_tokens` UInt64,
-    `cache_read_tokens` UInt64,
-    `cache_creation_tokens` UInt64,
-    `cost_amount` Nullable(Decimal(18, 4)),
-    `cost_currency` Nullable(String),
-    `source` String,
-    `data_source` String,
-    `collected_at` Nullable(DateTime64(3)),
-    `_version` Int64
-)
-ENGINE = ReplacingMergeTree(_version)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
-;
-
 CREATE TABLE IF NOT EXISTS silver.class_ai_assistant_usage
 (
     `insight_tenant_id` Nullable(String),
@@ -265,7 +238,7 @@ CREATE TABLE IF NOT EXISTS silver.class_crm_activities
     `contact_id` Nullable(String),
     `deal_id` Nullable(String),
     `account_id` Nullable(String),
-    `timestamp` Nullable(DateTime64(3)),
+    `timestamp` DateTime64(3),
     `duration_seconds` Nullable(Int64),
     `outcome` Nullable(String),
     `metadata` String,
@@ -749,14 +722,14 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 CREATE TABLE IF NOT EXISTS silver.class_task_field_metadata
 (
     `unique_key` Nullable(String),
-    `insight_source_id` Nullable(String),
+    `insight_source_id` String,
     `data_source` String,
     `project_key` Nullable(String),
-    `field_id` Nullable(String),
-    `field_name` Nullable(String),
-    `is_multi` Nullable(UInt8),
-    `field_type` Nullable(String),
-    `has_id` Nullable(UInt8),
+    `field_id` String,
+    `field_name` String,
+    `is_multi` UInt8,
+    `field_type` String,
+    `has_id` UInt8,
     `observed_at` DateTime64(3),
     `_version` Int64
 )
@@ -1151,51 +1124,6 @@ CREATE TABLE IF NOT EXISTS silver.mtr_git_person_weekly
 ENGINE = ReplacingMergeTree
 ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
-;
-
-CREATE TABLE IF NOT EXISTS silver.to_ai_cost
-(
-    `tenant_id` Nullable(String),
-    `insight_source_id` Nullable(String),
-    `unique_id` Nullable(String),
-    `report_date` Date,
-    `line_item` Nullable(String),
-    `project_id` Nullable(String),
-    `amount_value` Nullable(Decimal(38, 9)),
-    `amount_currency` Nullable(String),
-    `provider` String,
-    `data_source` String
-)
-ENGINE = MergeTree
-ORDER BY tuple()
-SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
-;
-
-CREATE TABLE IF NOT EXISTS silver.to_ai_tool_usage
-(
-    `tenant_id` Nullable(String),
-    `insight_source_id` Nullable(String),
-    `unique_id` Nullable(String),
-    `report_date` Date,
-    `user_id` Nullable(String),
-    `project_id` Nullable(String),
-    `model` Nullable(String),
-    `input_tokens` Nullable(Decimal(38, 9)),
-    `output_tokens` Nullable(Decimal(38, 9)),
-    `input_cached_tokens` Nullable(Decimal(38, 9)),
-    `input_audio_tokens` Nullable(Decimal(38, 9)),
-    `output_audio_tokens` Nullable(Decimal(38, 9)),
-    `num_model_requests` Nullable(Decimal(38, 9)),
-    `is_batch` Bool,
-    `service_tier` Nullable(String),
-    `person_id` Nullable(String),
-    `provider` String,
-    `client` String,
-    `data_source` String
-)
-ENGINE = MergeTree
-ORDER BY tuple()
-SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS silver.zendesk__support_event

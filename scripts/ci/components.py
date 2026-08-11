@@ -166,20 +166,6 @@ COMPONENTS = [
         "paths": ["src/ingestion/connectors/crm/hubspot"],
     },
     {
-        "name": "salesforce",
-        "lang": "python",
-        "root": "src/ingestion/connectors/crm/salesforce",
-        "cov_package": "source_salesforce",
-        "paths": ["src/ingestion/connectors/crm/salesforce"],
-    },
-    {
-        "name": "github-copilot",
-        "lang": "python",
-        "root": "src/ingestion/connectors/ai/github-copilot",
-        "cov_package": "source_github_copilot",
-        "paths": ["src/ingestion/connectors/ai/github-copilot"],
-    },
-    {
         "name": "bamboohr",
         "lang": "python",
         "root": "src/ingestion/connectors/hr-directory/bamboohr",
@@ -232,7 +218,7 @@ COMPONENTS = [
         "pytest_args": "--suites-only",
         "cover": False,
         "triggered_by": ["connector-tests-harness"],
-        "paths": ["src/ingestion/connectors/task-tracking/jira", "src/ingestion/connectors/ai/claude-admin"],
+        "paths": ["src/ingestion/connectors/task-tracking/jira"],
     },
     # `src/frontend/helm` falls under this path but has no measured lines, so it
     # never moves the number.

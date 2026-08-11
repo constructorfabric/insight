@@ -26,7 +26,7 @@ set -euo pipefail
 #
 # Example:
 #   $0 validate        collaboration/m365
-#   $0 validate-strict task-tracking/youtrack
+#   $0 validate-strict task-tracking/jira
 #   $0 check           collaboration/m365 example-tenant
 # ---------------------------------------------------------------------------
 
@@ -70,7 +70,7 @@ Arguments:
 
 Examples:
   $0 validate        collaboration/m365
-  $0 validate-strict task-tracking/youtrack
+  $0 validate-strict task-tracking/jira
   $0 check           collaboration/m365 example-tenant
   $0 discover        collaboration/m365 example-tenant
   $0 read            collaboration/m365 example-tenant

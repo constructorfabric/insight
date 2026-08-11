@@ -1,6 +1,6 @@
 # Task Tracking Connectors
 
-> Multi-source task tracking: YouTrack, Jira, GitHub Projects V2, Azure DevOps
+> Multi-source task tracking: Jira, GitHub Projects V2, Azure DevOps
 
 ## Silver Layer
 
@@ -13,7 +13,6 @@ Unified field history with full values (not deltas), field metadata tracking, id
 
 | Source | Bronze Schema | Connector Specs |
 |--------|--------------|-----------------|
-| YouTrack | [youtrack.md](youtrack/youtrack.md) | [specs/](youtrack/specs/) |
 | Jira | [jira.md](jira/jira.md) | [specs/](jira/specs/) |
 | GitHub Projects V2 | Planned | — |
 | Azure DevOps | Planned | — |

@@ -9,7 +9,6 @@
     tags=['silver']
 ) }}
 
--- depends_on: {{ ref('salesforce__crm_activities') }}
 -- depends_on: {{ ref('hubspot__crm_activities') }}
 
 WITH src AS (

@@ -33,7 +33,7 @@ permissions:
 
 env:
   SERVICE_IMAGES: "insight-analytics insight-authenticator insight-frontend insight-gateway insight-identity-resolution insight-toolbox insight-ui-tests"
-  CONNECTOR_IMAGES: "insight-jira-enrich source-active-directory-insight source-bitbucket-cloud-insight source-github-copilot-insight source-github-v2-insight source-gitlab-insight source-hubspot-insight source-salesforce-insight"  # trufflehog:ignore
+  CONNECTOR_IMAGES: "insight-jira-enrich source-active-directory-insight source-bitbucket-cloud-insight source-github-v2-insight source-gitlab-insight source-hubspot-insight"  # trufflehog:ignore
 
 jobs:
   trunk:

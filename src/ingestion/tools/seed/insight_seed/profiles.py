@@ -209,7 +209,6 @@ TEAM_PROFILES: dict[str, TeamProfile] = {
         name="sales",
         weights={
             "hubspot": 1.5,
-            "salesforce": 1.0,
             "slack": 0.8,
             "m365": 1.0,
             "zoom": 1.2,

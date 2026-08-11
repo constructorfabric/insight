@@ -98,26 +98,6 @@ path = "docs/components/connectors/hr-directory/bamboohr.md"
 name = "BambooHR Connector Specification"
 
 [[systems.artifacts]]
-kind = "PRD"
-path = "docs/components/connectors/crm/salesforce/specs/PRD.md"
-name = "Salesforce Connector PRD"
-
-[[systems.artifacts]]
-kind = "DESIGN"
-path = "docs/components/connectors/crm/salesforce/specs/DESIGN.md"
-name = "Salesforce Connector Design"
-
-[[systems.artifacts]]
-kind = "PRD"
-path = "docs/components/connectors/hr-directory/workday/specs/PRD.md"
-name = "Workday Connector PRD"
-
-[[systems.artifacts]]
-kind = "DESIGN"
-path = "docs/components/connectors/hr-directory/workday/specs/DESIGN.md"
-name = "Workday Connector Design"
-
-[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/connectors/hr-directory/ldap.md"
 name = "LDAP Connector Specification"
@@ -144,11 +124,6 @@ name = "Task Tracking Silver Layer Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/task-tracking/youtrack.md"
-name = "YouTrack Connector Specification"
-
-[[systems.artifacts]]
-kind = "DESIGN"
 path = "docs/components/connectors/task-tracking/jira.md"
 name = "Jira Connector Specification"
 
@@ -161,36 +136,6 @@ name = "Jira Connector PRD"
 kind = "DESIGN"
 path = "docs/components/connectors/task-tracking/jira/specs/DESIGN.md"
 name = "Jira Connector Design"
-
-[[systems.artifacts]]
-kind = "PRD"
-path = "docs/components/connectors/task-tracking/youtrack/specs/PRD.md"
-name = "YouTrack Connector PRD"
-
-[[systems.artifacts]]
-kind = "DESIGN"
-path = "docs/components/connectors/task-tracking/youtrack/specs/DESIGN.md"
-name = "YouTrack Connector Design"
-
-[[systems.artifacts]]
-kind = "DECOMPOSITION"
-path = "docs/components/connectors/task-tracking/youtrack/specs/DECOMPOSITION.md"
-name = "YouTrack Task-Tracker Connector Decomposition"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/connectors/task-tracking/youtrack/specs/ADR/ADR-001-project-scoped-custom-fields.md"
-name = "YouTrack Connector ADR-001: Project-Scoped Custom Fields"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/connectors/task-tracking/youtrack/specs/ADR/ADR-002-activitiespage-cursor-pagination.md"
-name = "YouTrack Connector ADR-002: activitiesPage Cursor Pagination"
-
-[[systems.artifacts]]
-kind = "ADR"
-path = "docs/components/connectors/task-tracking/youtrack/specs/ADR/ADR-003-no-whitelist-full-ingestion.md"
-name = "YouTrack Connector ADR-003: No-Whitelist Full-Ingestion Scope"
 
 [[systems.artifacts]]
 kind = "PRD"
@@ -288,36 +233,6 @@ path = "docs/components/connectors/ai/cursor/specs/DESIGN.md"
 name = "Cursor Connector Design"
 
 [[systems.artifacts]]
-kind = "DESIGN"
-path = "docs/components/connectors/ai/windsurf.md"
-name = "Windsurf Connector Specification"
-
-[[systems.artifacts]]
-kind = "PRD"
-path = "docs/components/connectors/ai/github-copilot/specs/PRD.md"
-name = "GitHub Copilot Connector PRD"
-
-[[systems.artifacts]]
-kind = "DESIGN"
-path = "docs/components/connectors/ai/github-copilot/specs/DESIGN.md"
-name = "GitHub Copilot Connector Design"
-
-[[systems.artifacts]]
-kind = "DESIGN"
-path = "docs/components/connectors/ai/claude-admin/README.md"
-name = "Claude Admin Connector Specification"
-
-[[systems.artifacts]]
-kind = "PRD"
-path = "docs/components/connectors/ai/claude-admin/specs/PRD.md"
-name = "Claude Admin Connector PRD"
-
-[[systems.artifacts]]
-kind = "DESIGN"
-path = "docs/components/connectors/ai/claude-admin/specs/DESIGN.md"
-name = "Claude Admin Connector Design"
-
-[[systems.artifacts]]
 kind = "PRD"
 path = "docs/components/connectors/ai/claude-enterprise/specs/PRD.md"
 name = "Claude Enterprise Connector PRD"
@@ -336,16 +251,6 @@ name = "ChatGPT Team Connector PRD"
 kind = "DESIGN"
 path = "docs/components/connectors/ai/chatgpt-team/specs/DESIGN.md"
 name = "ChatGPT Team Connector Design"
-
-[[systems.artifacts]]
-kind = "PRD"
-path = "docs/components/connectors/ai/openai-api/specs/PRD.md"
-name = "OpenAI API Connector PRD"
-
-[[systems.artifacts]]
-kind = "DESIGN"
-path = "docs/components/connectors/ai/openai-api/specs/DESIGN.md"
-name = "OpenAI API Connector Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"

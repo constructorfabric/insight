@@ -1,5 +1,4 @@
 -- depends_on: {{ ref('jira__task_comments') }}
--- depends_on: {{ ref('youtrack__task_comments') }}
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',

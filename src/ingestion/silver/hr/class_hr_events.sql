@@ -1,4 +1,3 @@
--- depends_on: {{ ref('workday__hr_events') }}
 -- depends_on: {{ ref('bamboohr__hr_events') }}
 
 {{ config(

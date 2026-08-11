@@ -40,7 +40,7 @@
 
 ### 1.1 Architectural Vision
 
-The Confluence connector is an Airbyte declarative (no-code) YAML manifest that extracts space directory, page metadata, and version history from the Atlassian Confluence REST API (Cloud) and writes all data to per-source Bronze tables in the shared analytical store (ClickHouse), following the unified `wiki_*` Bronze schema defined in [`confluence.md`](../confluence.md) and [`README.md`](../../README.md). The declarative approach is consistent with all other connectors in the project (m365, bamboohr, claude-admin, jira).
+The Confluence connector is an Airbyte declarative (no-code) YAML manifest that extracts space directory, page metadata, and version history from the Atlassian Confluence REST API (Cloud) and writes all data to per-source Bronze tables in the shared analytical store (ClickHouse), following the unified `wiki_*` Bronze schema defined in [`confluence.md`](../confluence.md) and [`README.md`](../../README.md). The declarative approach is consistent with all other connectors in the project (m365, bamboohr, jira).
 
 Phase 1 targets Confluence Cloud only. The connector uses REST API v2 for spaces, pages, and page versions. Server/Data Center support is deferred to a future iteration.
 
@@ -151,7 +151,7 @@ Phase 1 targets Confluence Cloud only (REST API v2 for spaces/pages/versions, v1
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-conf-declarative-first`
 
-Consistent with project convention, the Confluence connector uses a no-code YAML manifest (Airbyte DeclarativeSource). All other connectors in the project (m365, bamboohr, claude-admin, jira) follow this pattern. Features that cannot be expressed declaratively (email resolution via batch User API lookup, version-to-activity row expansion) are deferred to downstream dbt layers rather than falling back to CDK Python in Phase 1.
+Consistent with project convention, the Confluence connector uses a no-code YAML manifest (Airbyte DeclarativeSource). All other connectors in the project (m365, bamboohr, jira) follow this pattern. Features that cannot be expressed declaratively (email resolution via batch User API lookup, version-to-activity row expansion) are deferred to downstream dbt layers rather than falling back to CDK Python in Phase 1.
 
 ### 2.2 Constraints
 

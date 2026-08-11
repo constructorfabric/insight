@@ -87,8 +87,6 @@ SQL
 heal_ai_dev_staging cursor__ai_dev_usage
 heal_ai_dev_staging claude_enterprise__ai_dev_usage
 heal_ai_dev_staging claude_team__ai_dev_usage
-heal_ai_dev_staging claude_admin__ai_dev_usage
-heal_ai_dev_staging copilot__ai_dev_usage
 heal_ai_dev_staging chatgpt_team__ai_dev_usage
 heal_ai_assistant_staging claude_enterprise__ai_assistant_usage
 heal_ai_assistant_staging chatgpt_team__ai_assistant_usage
@@ -109,7 +107,6 @@ SQL
 }
 
 for _crm_grain in accounts activities contacts deals users; do
-  heal_crm_staging "salesforce__crm_${_crm_grain}"
   heal_crm_staging "hubspot__crm_${_crm_grain}"
 done
 

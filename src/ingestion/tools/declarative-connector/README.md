@@ -12,7 +12,7 @@ Runs Airbyte declarative-manifest connectors in Docker without the full Airbyte 
 | `./source.sh discover <class>/<connector> <tenant>` | yes | List available streams and their schemas. |
 | `./source.sh read <class>/<connector> <tenant>` | yes | Extract data (Airbyte Protocol JSON on stdout). |
 
-`<class>/<connector>` is relative to `src/ingestion/connectors/`, e.g. `collaboration/m365` or `task-tracking/youtrack`.
+`<class>/<connector>` is relative to `src/ingestion/connectors/`, e.g. `collaboration/m365` or `task-tracking/jira`.
 
 ## Validation ladder — always in this order
 

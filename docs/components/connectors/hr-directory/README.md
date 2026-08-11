@@ -72,7 +72,7 @@ prd: pending
 >
 > For the shipped data-flow contract see [ADR-0001](../../../domain/ingestion-data-flow/specs/ADR/0001-rmt-with-version-and-unique-key.md) and [ADR-0004](../../../domain/ingestion-data-flow/specs/ADR/0004-unique-key-formula.md).
 
-The HR Silver Layer transforms raw HR directory data from Bronze source tables (BambooHR, MS Entra, Workday, LDAP/Active Directory) into two canonical, workspace-isolated Silver tables: `class_people` and `class_org_units`.
+The HR Silver Layer transforms raw HR directory data from Bronze source tables (BambooHR, MS Entra, LDAP/Active Directory) into two canonical, workspace-isolated Silver tables: `class_people` and `class_org_units`.
 
 `class_people` is a **current-state snapshot**: exactly one row per person per source, keyed on an entity-level `unique_key`. `valid_from` records when the source last changed the record; there is no `valid_to`. It is `materialized='table'` and rebuilt in full on every run, so it cannot accumulate history by construction.
 
@@ -90,7 +90,7 @@ Extensibility for company-specific HR attributes is handled natively via two typ
 
 | Requirement | Design Response |
 |---|---|
-| Multi-source HR unification (BambooHR, Workday, LDAP) | HR Silver ETL Job normalises source-specific schemas into unified `class_people` and `class_org_units` schemas |
+| Multi-source HR unification (BambooHR, MS Entra, LDAP) | HR Silver ETL Job normalises source-specific schemas into unified `class_people` and `class_org_units` schemas |
 | Canonical person identity across all Silver streams | `person_id` resolved by Identity Resolution V3 before SCD2 merge; all other Silver tables foreign-key to `class_people.person_id` |
 | Org hierarchy traversal for metric scoping | `class_org_units` carries `parent_org_unit_id`, `path` (materialized), `depth`, and `head_person_id`; supports arbitrary depth |
 | Company-specific HR attributes without schema migrations | `custom_str_attrs Map(String, String)` and `custom_num_attrs Map(String, Float64)` carry per-workspace custom fields |
@@ -108,7 +108,7 @@ Extensibility for company-specific HR attributes is handled natively via two typ
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Bronze Layer (ClickHouse)                                   │
-│  bamboohr_employees │ workday_workers │ ldap_users           │
+│  bamboohr_employees │ ldap_users                             │
 └─────────────────────────────┬────────────────────────────────┘
                               │  HR Silver ETL Job
                               ▼
@@ -221,7 +221,6 @@ When two Bronze sources provide conflicting records for the same person in the s
 graph TD
     subgraph Bronze["Bronze Layer (hr-directory)"]
         B1[bamboohr_employees]
-        B2[workday_workers]
         B3[ldap_users]
     end
 
@@ -326,7 +325,7 @@ Not applicable. `class_people` and `class_org_units` are internal ClickHouse tab
 | Dependency Module | Interface Used | Purpose |
 |---|---|---|
 | Identity Resolution V3 | Internal service call | Resolves `source_person_id + source` → canonical `person_id` |
-| Bronze hr-directory tables | ClickHouse direct read | Source of raw HR records (`bamboohr_employees`, `workday_workers`, `ldap_users`) |
+| Bronze hr-directory tables | ClickHouse direct read | Source of raw HR records (`bamboohr_employees`, `ldap_users`) |
 | Permission Architecture (DataScopeFilter) | Query predicate injection | Enforces `workspace_id` isolation on all Silver reads by Gold layer |
 
 **Dependency Rules**:
@@ -429,7 +428,7 @@ sequenceDiagram
 | `person_id` | String | Canonical person ID (from Identity Resolution V3) |
 | `workspace_id` | String | Tenant identifier — partition key component |
 | `valid_from` | DateTime | When the source last changed this record (UTC) |
-| `source` | String | Origin system: `bamboohr` / `ms-entra` / `workday` / `ldap` |
+| `source` | String | Origin system: `bamboohr` / `ms-entra` / `ldap` |
 | `source_person_id` | String | Native ID in the source system (for lineage) |
 | `employee_number` | String | Company-assigned HR employee number |
 | `display_name` | String | Full display name |
@@ -472,7 +471,7 @@ sequenceDiagram
 | `workspace_id` | String | Tenant identifier — partition key component |
 | `valid_from` | DateTime | Start of this state snapshot (UTC) |
 | `valid_to` | DateTime | End of this state snapshot (UTC); NULL = current row |
-| `source` | String | Origin system: `bamboohr` / `workday` / `ldap` |
+| `source` | String | Origin system: `bamboohr` / `ldap` |
 | `source_org_unit_id` | String | Native org unit ID in the source system |
 | `name` | String | Org unit name at time of this snapshot |
 | `unit_type` | String | `department` / `division` / `team` / `tribe` / `squad` — freeform |

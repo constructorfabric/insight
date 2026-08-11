@@ -1,5 +1,4 @@
 -- depends_on: {{ ref('jira__task_sprints') }}
--- depends_on: {{ ref('youtrack__task_sprints') }}
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',

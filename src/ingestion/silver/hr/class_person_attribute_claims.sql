@@ -1,5 +1,4 @@
 -- depends_on: {{ ref('bamboohr__person_attribute_claims') }}
--- depends_on: {{ ref('workday__person_attribute_claims') }}
 -- depends_on: {{ ref('ms_entra__person_attribute_claims') }}
 -- depends_on: {{ ref('active_directory__person_attribute_claims') }}
 
