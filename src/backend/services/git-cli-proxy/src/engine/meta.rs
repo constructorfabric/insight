@@ -29,10 +29,19 @@ pub struct RepoMeta {
     /// is a pre-incarnation entry and matches no token.
     #[serde(default)]
     pub incarnation: String,
-    /// Fingerprint of the credentials that last proved origin access.
+    /// Fingerprints of the credentials that have proved origin access for
+    /// THIS clone — a set, not a slot: two callers holding different valid
+    /// tokens (a rotation mid-sync) would otherwise evict each other's proof
+    /// on every fetch and ping-pong a full origin fetch per page.
     /// INVARIANT: a warm read is served only to a caller presenting matching
     /// credentials — the cache key alone is not an authorization claim.
-    pub cred_fingerprint: String,
+    /// Reset by a re-clone; bounded, oldest proof dropped first.
+    #[serde(
+        default,
+        alias = "cred_fingerprint",
+        deserialize_with = "one_or_many"
+    )]
+    pub cred_fingerprints: Vec<String>,
     /// Set once the entry was promoted out of a partial clone because origin
     /// refuses to serve explicitly requested objects. Purged blobs cannot be
     /// fetched back on such an entry, so it skips the blob-purge reclaim tier
@@ -42,6 +51,28 @@ pub struct RepoMeta {
 }
 
 const META_FILE: &str = "meta.json";
+
+/// Proofs kept per entry. Rotation scenarios need two; the bound exists so a
+/// caller cycling many tokens cannot grow the document without limit.
+const MAX_PROVEN_FINGERPRINTS: usize = 8;
+
+/// A document written before the set existed carries one fingerprint as a
+/// plain string; accepting it keeps every warm entry warm across the deploy.
+fn one_or_many<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match OneOrMany::deserialize(deserializer)? {
+        OneOrMany::One(single) => vec![single],
+        OneOrMany::Many(many) => many,
+    })
+}
 
 /// INVARIANT: every in-flight `store` targets a distinct temporary path.
 /// Concurrent writers to one entry (LRU access bumps run under the read lock)
@@ -64,6 +95,34 @@ impl RepoMeta {
     pub fn load(entry_dir: &Path) -> Option<Self> {
         let bytes = std::fs::read(entry_dir.join(META_FILE)).ok()?;
         serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Whether `fingerprint` has proved origin access for this clone.
+    #[must_use]
+    pub fn proven(&self, fingerprint: &str) -> bool {
+        self.cred_fingerprints
+            .iter()
+            .any(|proof| proof == fingerprint)
+    }
+
+    /// The prior proofs plus `fingerprint`, newest last, oldest dropped past
+    /// the bound.
+    #[must_use]
+    pub fn proofs_with(previous: Option<&Self>, fingerprint: String) -> Vec<String> {
+        let mut proofs: Vec<String> = previous
+            .map(|meta| {
+                meta.cred_fingerprints
+                    .iter()
+                    .filter(|proof| **proof != fingerprint)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        proofs.push(fingerprint);
+        if proofs.len() > MAX_PROVEN_FINGERPRINTS {
+            proofs.drain(..proofs.len() - MAX_PROVEN_FINGERPRINTS);
+        }
+        proofs
     }
 
     /// Atomically persist to `meta.json` (tmp + rename — a crashed writer
@@ -121,9 +180,57 @@ mod tests {
             size_bytes: 42,
             skeleton_bytes: 40,
             generation: 3,
-            cred_fingerprint: "deadbeef".to_owned(),
+            cred_fingerprints: vec!["deadbeef".to_owned()],
             full_clone: false,
         }
+    }
+
+    #[test]
+    fn a_pre_set_document_with_one_fingerprint_still_proves_access() {
+        // Written by the release before proofs became a set: the field is a
+        // plain string under the old name. Refusing it would cold-refetch
+        // every warm entry on deploy day.
+        let dir = temp_dir("legacy-fingerprint");
+        let legacy = r#"{
+            "clone_url": "https://example.com/a.git",
+            "tenant_id": "t",
+            "source_id": "s",
+            "last_fetched_at_epoch_s": 100,
+            "last_accessed_at_epoch_s": 200,
+            "size_bytes": 42,
+            "skeleton_bytes": 40,
+            "generation": 3,
+            "incarnation": "inc0",
+            "cred_fingerprint": "deadbeef"
+        }"#;
+        if let Err(e) = std::fs::write(dir.join("meta.json"), legacy) {
+            panic!("write legacy meta: {e}");
+        }
+        let Some(meta) = RepoMeta::load(&dir) else {
+            panic!("a legacy document must load")
+        };
+        assert!(meta.proven("deadbeef"), "the old single proof must count");
+        assert!(!meta.proven("other"), "and only that one");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn proofs_accumulate_and_the_oldest_falls_off() {
+        let mut meta = sample();
+        for n in 0..12 {
+            meta.cred_fingerprints = RepoMeta::proofs_with(Some(&meta), format!("fp{n}"));
+        }
+        assert!(!meta.proven("deadbeef"), "the oldest proof must fall off");
+        assert!(meta.proven("fp11"), "the newest must be present");
+        assert!(meta.proven("fp4"), "the bound keeps the last eight");
+        assert!(!meta.proven("fp3"), "and nothing before them");
+
+        let repeated = RepoMeta::proofs_with(Some(&meta), "fp11".to_owned());
+        assert_eq!(
+            repeated.iter().filter(|p| *p == "fp11").count(),
+            1,
+            "re-proving must not duplicate"
+        );
     }
 
     #[test]

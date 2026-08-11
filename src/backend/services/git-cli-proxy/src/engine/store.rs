@@ -650,7 +650,7 @@ impl RepoStore {
             skeleton_bytes: cloned_bytes,
             generation: 1,
             incarnation: self.mint_incarnation(),
-            cred_fingerprint: creds.fingerprint(),
+            cred_fingerprints: vec![creds.fingerprint()],
             full_clone: false,
         };
         meta.store(entry_dir).map_err(GitError::Io)?;
@@ -784,7 +784,7 @@ impl RepoStore {
             incarnation: previous
                 .as_ref()
                 .map_or_else(|| self.mint_incarnation(), |m| m.incarnation.clone()),
-            cred_fingerprint: creds.fingerprint(),
+            cred_fingerprints: RepoMeta::proofs_with(previous.as_ref(), creds.fingerprint()),
             // A plain fetch never changes the entry's clone shape.
             full_clone: previous.as_ref().is_some_and(|m| m.full_clone),
         };
@@ -914,7 +914,7 @@ impl RepoStore {
             incarnation: previous
                 .as_ref()
                 .map_or_else(|| self.mint_incarnation(), |m| m.incarnation.clone()),
-            cred_fingerprint: creds.fingerprint(),
+            cred_fingerprints: RepoMeta::proofs_with(previous.as_ref(), creds.fingerprint()),
             full_clone: true,
         };
         publish_meta(&meta, &entry_dir)?;
@@ -1764,7 +1764,7 @@ fn usable_meta(entry_dir: &Path, fingerprint: &str) -> Option<RepoMeta> {
     // Both sides are locally derived sha256 digests, never a presented secret,
     // so a plain compare leaks nothing an attacker can use; the one bearer
     // comparison in the service (`api::auth`) is constant-time.
-    (meta.cred_fingerprint == fingerprint).then_some(meta)
+    meta.proven(fingerprint).then_some(meta)
 }
 
 /// The entry's meta when it is usable AND was fetched within the window.
@@ -2024,9 +2024,8 @@ pub(crate) mod tests {
         };
         assert_eq!(meta.clone_url, f.origin_url);
         assert!(meta.size_bytes > 0, "size accounting must run");
-        assert_eq!(
-            meta.cred_fingerprint,
-            creds().fingerprint(),
+        assert!(
+            meta.proven(&creds().fingerprint()),
             "the credentials that proved access are fingerprinted"
         );
     }
@@ -2896,10 +2895,9 @@ pub(crate) mod tests {
             meta.generation, warm_generation,
             "an unchanged origin must not invalidate live page tokens"
         );
-        assert_eq!(
-            meta.cred_fingerprint,
-            intruder.fingerprint(),
-            "the fingerprint tracks whoever last proved access"
+        assert!(
+            meta.proven(&intruder.fingerprint()),
+            "whoever last proved access is recorded"
         );
     }
 
@@ -2966,10 +2964,9 @@ pub(crate) mod tests {
                     let Some(meta) = RepoMeta::load(&f.store.entry_dir(&k)) else {
                         panic!("meta must exist alongside a served guard")
                     };
-                    assert_eq!(
-                        meta.cred_fingerprint,
-                        who.fingerprint(),
-                        "served a snapshot proved by someone else's credentials"
+                    assert!(
+                        meta.proven(&who.fingerprint()),
+                        "served a snapshot never proved by these credentials"
                     );
                     assert_eq!(
                         guard.generation(),
