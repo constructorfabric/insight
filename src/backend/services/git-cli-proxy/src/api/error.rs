@@ -43,6 +43,10 @@ const REPO_TOO_LARGE: StatusCode = StatusCode::PAYLOAD_TOO_LARGE;
 /// caller is asked back rather than failed.
 const ADMISSION_RETRY_AFTER_SECONDS: u64 = 30;
 
+/// Origin asked this client to slow down. Longer than the cache's own hint:
+/// a vendor rate-limit window outlives a reader releasing an entry.
+const THROTTLED_RETRY_AFTER_SECONDS: u64 = 60;
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let retry_after = self.retry_after();
@@ -92,7 +96,8 @@ impl ApiError {
                 StatusCode::NOT_FOUND.as_u16()
             }
             Self::Store(StoreError::SnapshotChanged { .. }) => StatusCode::CONFLICT.as_u16(),
-            Self::Store(StoreError::Busy { .. }) | Self::Git(GitError::AdmissionRejected) => {
+            Self::Store(StoreError::Busy { .. } | StoreError::Throttled)
+            | Self::Git(GitError::AdmissionRejected | GitError::Throttled) => {
                 StatusCode::TOO_MANY_REQUESTS.as_u16()
             }
             _ => StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
@@ -112,6 +117,9 @@ impl ApiError {
         match self {
             Self::Store(StoreError::Busy { retry_after }) => Some(retry_after.as_secs()),
             Self::Git(GitError::AdmissionRejected) => Some(ADMISSION_RETRY_AFTER_SECONDS),
+            Self::Store(StoreError::Throttled) | Self::Git(GitError::Throttled) => {
+                Some(THROTTLED_RETRY_AFTER_SECONDS)
+            }
             _ => None,
         }
     }
@@ -155,6 +163,16 @@ impl ApiError {
                 RepositoryError::resource_exhausted("repository is being prepared")
                     .with_quota_violation("repository_preparation", "clone or fetch in progress")
                     .with_quota_violation_retry_after_seconds(retry_after.as_secs())
+                    .create()
+            }
+            // The vendor's own limiter, not ours. Same shape as a cache
+            // refusal so the connector's declarative handler backs off
+            // identically, but a distinct quota subject so an operator can
+            // tell "we are full" from "GitHub is throttling us".
+            Self::Store(StoreError::Throttled) | Self::Git(GitError::Throttled) => {
+                RepositoryError::resource_exhausted("origin is throttling this client")
+                    .with_quota_violation("origin_rate_limit", "origin refused with a rate limit")
+                    .with_quota_violation_retry_after_seconds(THROTTLED_RETRY_AFTER_SECONDS)
                     .create()
             }
             Self::Store(StoreError::SnapshotChanged { current }) => RepositoryError::aborted(

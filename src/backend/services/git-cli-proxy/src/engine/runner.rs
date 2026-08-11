@@ -57,6 +57,8 @@ pub enum GitError {
     PromisorRefused,
     #[error("the cache cannot take more disk right now")]
     AdmissionRejected,
+    #[error("origin is throttling this client")]
+    Throttled,
     #[error("git timed out after {0:?}")]
     TimedOut(Duration),
     #[error("git failed: {0}")]
@@ -400,6 +402,20 @@ fn classify_failure(output: &Output) -> GitError {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let lower = stderr.to_lowercase();
 
+    // Before `auth`: a vendor signals throttling with 403 as readily as with
+    // 429 (GitHub's secondary rate limits do exactly that), and calling that a
+    // credential failure fails the whole sync as a config error instead of
+    // backing off and retrying.
+    let throttled = [
+        "rate limit",
+        "too many requests",
+        "http 429",
+        "returned error: 429",
+    ];
+    if throttled.iter().any(|m| lower.contains(m)) {
+        return GitError::Throttled;
+    }
+
     let auth = [
         "authentication failed",
         "http 401",
@@ -419,11 +435,16 @@ fn classify_failure(output: &Output) -> GitError {
         return GitError::PromisorRefused;
     }
 
+    // `could not read from remote repository` is deliberately NOT here. Git
+    // prints it after any transport failure — a hang-up, a proxy fault, a
+    // refused connection — and calling those `404` tells the connector the
+    // parent record is stale when the repository is fine. A genuinely absent
+    // repository over http(s) always carries one of the specific lines below.
     let missing = [
         "repository not found",
         "http 404",
+        "returned error: 404",
         "does not appear to be a git repository",
-        "could not read from remote repository",
     ];
     if missing.iter().any(|m| lower.contains(m)) {
         return GitError::NotFound;
@@ -488,6 +509,25 @@ mod tests {
             ("fatal: something completely different", |e| {
                 matches!(e, GitError::Failed(_))
             }),
+            // Throttling wins over the 403 that carries it: calling this a
+            // credential failure fails the sync as a config error instead of
+            // backing off.
+            (
+                "remote: You have exceeded a secondary rate limit\n\
+                 fatal: unable to access 'https://x/': The requested URL returned error: 403",
+                |e| matches!(e, GitError::Throttled),
+            ),
+            (
+                "fatal: unable to access 'https://x/': The requested URL returned error: 429",
+                |e| matches!(e, GitError::Throttled),
+            ),
+            // A transport fault is not a missing repository: answering `404`
+            // tells the connector its parent record is stale.
+            (
+                "fatal: unable to access 'https://x/': Failed to connect to x port 443: Connection refused\n\
+                 fatal: could not read from remote repository",
+                |e| matches!(e, GitError::Failed(_)),
+            ),
         ];
         for (stderr, check) in cases {
             let err = classify_failure(&failed_output(stderr));

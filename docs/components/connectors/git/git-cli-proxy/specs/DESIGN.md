@@ -436,6 +436,14 @@ append-only bronze behavior (dedup is downstream RMT's job).
 | `is_in_default_branch` | bool | one `rev-list` over the `HEAD` symref, intersected with the page |
 | `patch_id` | string \| null | `git patch-id --stable` over the commit's full diff, null for a merge commit, which has no single diff — canonical, whitespace- and hunk-order-insensitive hash for duplicate/cherry-pick detection. Always computed from the untruncated diff, so dedup never depends on stored patch text. |
 
+The default branch is whatever origin advertises as its `HEAD` symref, re-read
+on every fetch. A fetch does not move a mirror's `HEAD` on its own, and `git
+remote set-head --auto` cannot supply it here — it writes
+`refs/remotes/origin/HEAD`, a namespace this mirror does not keep — so a
+rename at origin would otherwise leave `HEAD` on a branch `--prune` had just
+deleted and fail every subsequent page. A `HEAD` that still names a missing
+branch reports "no default branch" for that sync rather than failing it.
+
 `is_in_default_branch` is evaluated **at emit time**, against the snapshot
 the page was served from. A commit first seen on a feature branch is emitted
 `false`, and merging it later does not change its committed date, so a
@@ -536,10 +544,10 @@ rotation gone wrong shows up as `status="401"`, not as silence.
 |---|---|---|
 | `400` | missing identity/credential header, missing or unusable `repo`, malformed page token, malformed `sha`, non-numeric `X-Max-Staleness`, or a query string that does not parse | permanent — a config or wiring bug |
 | `401` | proxy bearer token missing or wrong (`PROXY_TOKEN_REJECTED`), or origin rejected the supplied git credentials (`ORIGIN_CREDENTIALS_REJECTED`) | fail the sync (config error) |
-| `404` | repo not found at origin | fail the slice; parent record is stale |
+| `404` | repo not found at origin — only on a specific line saying so; a bare transport failure is `5xx`, because "could not read from remote repository" follows a hang-up as readily as a missing repository | fail the slice; parent record is stale |
 | `409` | the pinned snapshot is gone (§4.1), including when a promotion (§3.3) or a fetch bumped the generation the cursor pinned | restart the stream slice from its cursor |
 | `413` | repo exceeds `max_repo_bytes` | permanent — do not retry |
-| `429` + `Retry-After` | preparation did not finish within `INLINE_WAIT`, admission was rejected, or a caller presenting unproven credentials lost the re-proof race to a concurrent caller | retry with backoff (declarative error handler) |
+| `429` + `Retry-After` | preparation did not finish within `INLINE_WAIT`, admission was rejected, a caller presenting unproven credentials lost the re-proof race to a concurrent caller, or ORIGIN refused with a rate limit (a vendor may signal that as `403`, so throttling is classified before credentials) | retry with backoff (declarative error handler) |
 | `5xx` | internal/transient | retry with backoff |
 
 Error bodies are RFC 9457 `application/problem+json`, produced by the

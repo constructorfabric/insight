@@ -249,6 +249,25 @@ pub async fn default_branch_membership(
     // `refs/heads/` keeps the name unambiguous and unreadable as an option;
     // `--` separates revisions from paths.
     let reference = format!("refs/heads/{default}");
+
+    // A `HEAD` naming a branch that no longer exists is not an error: origin
+    // renamed or deleted its default branch and the mirror has not caught up
+    // yet. Walking it would fail every page of the repository until the entry
+    // happened to be evicted; reporting "no default branch" for one sync is
+    // the smaller wrong answer, and the next fetch repairs the symref.
+    if runner
+        .run(
+            Some(git_dir),
+            &["rev-parse", "--verify", "--quiet", &reference],
+            None,
+        )
+        .await
+        .is_err()
+    {
+        tracing::warn!(branch = %default, "HEAD names a branch that is gone; no default branch this sync");
+        return Ok(HashSet::new());
+    }
+
     let output = runner
         .run(Some(git_dir), &["rev-list", &reference, "--"], Some(creds))
         .await?;

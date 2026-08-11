@@ -340,7 +340,12 @@ fn emit_file_changes(
         }
 
         patch_bytes += bytes;
-        last_complete = Some((header.committed_date, header.sha));
+        // INVARIANT: the cursor is minted in the coordinate system the walk is
+        // ORDERED by — the normalised ordinal, never the raw `%cI`. `%cI`
+        // carries the committer's own UTC offset, so a raw cursor compares
+        // against later pages' ordinals as plain text and silently skips every
+        // commit between the two spellings of the same instant.
+        last_complete = Some((header.ordinal, header.sha));
     }
 
     (items, stopped_early.then_some(last_complete).flatten())
@@ -630,6 +635,54 @@ mod tests {
             texts.insert(sha, per_file);
         }
         (window, stats, texts)
+    }
+
+    #[test]
+    fn an_early_cursor_does_not_skip_the_commit_that_follows_it() {
+        // The cursor commit is written `10:00+02:00` — 08:00Z — and the next
+        // commit is 09:00Z, so it genuinely comes later. Minting the cursor
+        // from the raw `%cI` makes the next page compare `09:00…Z` against the
+        // text `10:00+02:00`, decide it does not follow, and drop it: silent,
+        // permanent loss for any committer on a positive offset.
+        let early = header("sha0000", "2026-08-01T10:00:00+02:00");
+        let next = header("sha0001", "2026-08-01T09:00:00+00:00");
+        let mut stats = HashMap::new();
+        let mut texts: HashMap<String, patches::CommitPatches> = HashMap::new();
+        for key in [&early, &next] {
+            let file = stat("f0");
+            let per_file: patches::CommitPatches = std::iter::once((
+                file.filename.clone(),
+                Patch {
+                    text: "x".repeat(100),
+                    truncated: false,
+                },
+            ))
+            .collect();
+            stats.insert(key.sha.clone(), vec![file]);
+            texts.insert(key.sha.clone(), per_file);
+        }
+
+        let caps = RowCaps {
+            max_rows: usize::MAX,
+            max_patch_bytes: 150,
+        };
+        let (rows, cursor) = emit_file_changes(vec![early, next.clone()], &stats, &texts, caps);
+        assert_eq!(rows.len(), 1, "only the first commit fits");
+        let Some((primary, secondary)) = cursor else {
+            panic!("a page stopped early must carry a cursor")
+        };
+
+        let token = PageToken {
+            entry: "e".to_owned(),
+            generation: 1,
+            incarnation: "i".to_owned(),
+            primary,
+            secondary,
+        };
+        assert!(
+            token.precedes(&next.ordinal, &next.sha),
+            "the very next commit must still be reachable from the cursor"
+        );
     }
 
     #[test]

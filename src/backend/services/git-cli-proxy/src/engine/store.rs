@@ -28,6 +28,7 @@ pub enum RefreshFailure {
     NotFound,
     PromisorRefused,
     AdmissionRejected,
+    Throttled,
     Timeout,
     TooLarge { cap_bytes: u64 },
     Other(String),
@@ -40,6 +41,7 @@ impl From<&GitError> for RefreshFailure {
             GitError::NotFound => Self::NotFound,
             GitError::PromisorRefused => Self::PromisorRefused,
             GitError::AdmissionRejected => Self::AdmissionRejected,
+            GitError::Throttled => Self::Throttled,
             GitError::TimedOut(_) => Self::Timeout,
             GitError::Failed(message) => Self::Other(message.clone()),
             GitError::Io(e) => Self::Other(e.to_string()),
@@ -60,6 +62,8 @@ pub enum StoreError {
     PromisorRefused,
     #[error("repository is being prepared; retry in {}s", retry_after.as_secs())]
     Busy { retry_after: Duration },
+    #[error("origin is throttling this client")]
+    Throttled,
     #[error("repository snapshot changed (current generation {current})")]
     SnapshotChanged { current: u64 },
     #[error("git failed: {0}")]
@@ -81,6 +85,7 @@ impl From<RefreshFailure> for StoreError {
             RefreshFailure::AdmissionRejected => Self::Busy {
                 retry_after: COLD_RETRY_AFTER,
             },
+            RefreshFailure::Throttled => Self::Throttled,
             RefreshFailure::Timeout => Self::Git("git timed out".to_owned()),
             RefreshFailure::TooLarge { cap_bytes } => Self::TooLarge { cap_bytes },
             RefreshFailure::Other(message) => Self::Git(message),
@@ -595,18 +600,7 @@ impl RepoStore {
             .await
             .inspect_err(|_| metrics::record_fetch(FetchResult::Error))?;
 
-        // A fetch does not update the mirrored HEAD, so a default-branch
-        // rename at origin would stay invisible until the entry is evicted —
-        // and `is_in_default_branch` would then be wrong for every row.
-        // Best-effort: a vendor that refuses it must not fail the sync.
-        let _ = self
-            .runner
-            .run(
-                Some(git_dir),
-                &["remote", "set-head", "origin", "--auto"],
-                Some(creds),
-            )
-            .await;
+        self.track_origin_head(git_dir, creds).await;
 
         // INVARIANT: the generation identifies a REF SNAPSHOT, not a fetch
         // attempt. Bumping it when nothing moved would 409 every page token
@@ -1060,6 +1054,44 @@ impl RepoStore {
         }
     }
 
+    /// Point the mirror's `HEAD` at whatever origin now advertises.
+    ///
+    /// A fetch does not move `HEAD`, so a default-branch rename at origin
+    /// would otherwise leave it on a branch `--prune` has just deleted, and
+    /// every `/v1/commits` page would fail on `rev-list <gone>` until the
+    /// entry was evicted.
+    ///
+    /// `git remote set-head --auto` cannot do this job here: it writes
+    /// `refs/remotes/origin/HEAD`, and this mirror keeps branches under
+    /// `refs/heads/*` with no remote-tracking namespace at all, so it fails
+    /// with "Not a valid ref" and changes nothing.
+    ///
+    /// Best-effort: an origin that will not advertise a symref leaves the
+    /// previous `HEAD` in place, which [`branches::default_branch`] already
+    /// tolerates.
+    async fn track_origin_head(&self, git_dir: &Path, creds: &GitCredentials) {
+        let Ok(advertised) = self
+            .runner
+            .run(
+                Some(git_dir),
+                &["ls-remote", "--symref", "origin", "HEAD"],
+                Some(creds),
+            )
+            .await
+        else {
+            return;
+        };
+
+        let listing = String::from_utf8_lossy(&advertised.stdout);
+        let Some(reference) = parse_head_symref(&listing) else {
+            return;
+        };
+        let _ = self
+            .runner
+            .run(Some(git_dir), &["symbolic-ref", "HEAD", &reference], None)
+            .await;
+    }
+
     /// Fingerprint of the entry's branch heads and default branch.
     ///
     /// `None` when it cannot be read, which is treated as "changed": failing
@@ -1158,6 +1190,19 @@ impl RepoStore {
     pub async fn used_bytes(&self) -> u64 {
         self.candidates().await.iter().map(|c| c.size_bytes).sum()
     }
+}
+
+/// The branch `ls-remote --symref origin HEAD` reports, if any.
+///
+/// The line is `ref: <refname>\tHEAD`; the rest of the listing is the ordinary
+/// `<sha>\tHEAD` pair.
+fn parse_head_symref(listing: &str) -> Option<String> {
+    listing.lines().find_map(|line| {
+        let rest = line.strip_prefix("ref: ")?;
+        let (reference, name) = rest.split_once('\t')?;
+        (name.trim() == "HEAD" && reference.starts_with("refs/heads/"))
+            .then(|| reference.to_owned())
+    })
 }
 
 /// Persist metadata that describes refs already on disk.
@@ -1661,6 +1706,97 @@ pub(crate) mod tests {
             f.store.admit(&entry_dir).await.is_some(),
             "and admitted again once that reservation is released"
         );
+    }
+
+    #[test]
+    fn the_head_symref_is_read_out_of_an_ls_remote_listing() {
+        let listing = "ref: refs/heads/trunk\tHEAD\n4f0a71e8\tHEAD\n";
+        assert_eq!(
+            parse_head_symref(listing).as_deref(),
+            Some("refs/heads/trunk")
+        );
+        for absent in ["", "4f0a71e8\tHEAD\n", "ref: refs/tags/v1\tHEAD\n", "ref: refs/heads/x"] {
+            assert!(
+                parse_head_symref(absent).is_none(),
+                "must not invent a symref: {absent:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_default_branch_rename_at_origin_is_followed() {
+        // `git remote set-head --auto` writes refs/remotes/origin/HEAD, which
+        // this mirror does not have, so it fails and leaves HEAD on a branch
+        // `--prune` just deleted. Every later page then died on `rev-list`.
+        let f = fixture("rename");
+        let k = key(&f);
+        open_until_ready(&f, &k, refresh()).await;
+
+        let origin = f.root.join("origin");
+        sh(&origin, "git branch -m main trunk && git symbolic-ref HEAD refs/heads/trunk");
+
+        let guard = open_until_ready(&f, &k, always_fetch()).await;
+        let head = match f
+            .store
+            .runner()
+            .run(Some(guard.git_dir()), &["symbolic-ref", "HEAD"], None)
+            .await
+        {
+            Ok(out) => String::from_utf8_lossy(&out.stdout).trim().to_owned(),
+            Err(e) => panic!("symbolic-ref: {e}"),
+        };
+        assert_eq!(head, "refs/heads/trunk", "HEAD must follow the rename");
+
+        // And the membership walk must not fail on the way through.
+        let tip = match f
+            .store
+            .runner()
+            .run(Some(guard.git_dir()), &["rev-parse", "HEAD"], None)
+            .await
+        {
+            Ok(out) => String::from_utf8_lossy(&out.stdout).trim().to_owned(),
+            Err(e) => panic!("rev-parse HEAD: {e}"),
+        };
+        let shas = vec![tip];
+        match crate::engine::read::commits::default_branch_membership(
+            f.store.runner(),
+            guard.git_dir(),
+            &shas,
+            &creds(),
+        )
+        .await
+        {
+            Ok(in_default) => assert!(
+                in_default.contains(&shas[0]),
+                "the renamed branch is still the default branch"
+            ),
+            Err(e) => panic!("membership must not fail after a rename: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_head_pointing_at_a_deleted_branch_does_not_fail_the_page() {
+        let f = fixture("dangling-head");
+        let k = key(&f);
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        let shas = vec![head_of(guard.git_dir())];
+
+        sh(guard.git_dir(), "git symbolic-ref HEAD refs/heads/never-existed");
+
+        match crate::engine::read::commits::default_branch_membership(
+            f.store.runner(),
+            guard.git_dir(),
+            &shas,
+            &creds(),
+        )
+        .await
+        {
+            Ok(in_default) => assert!(
+                in_default.is_empty(),
+                "no default branch is the honest answer, not a 500"
+            ),
+            Err(e) => panic!("a dangling HEAD must not fail the page: {e}"),
+        }
     }
 
     #[tokio::test]
