@@ -8,8 +8,9 @@ on:
     inputs:
       chart_version:
         description: >-
-          Exact umbrella chart version to install, as published to oci://ghcr.io/constructorfabric/charts/insight — e.g. 0.5.101. From publish-chart's output, never from deploy/gitops/.insight-version: that file is committed at the END of publish-chart, so a checkout of the trigger SHA reads the PREVIOUS release.
-        required: true
+          Exact umbrella chart version to install, as published to oci://ghcr.io/constructorfabric/charts/insight — e.g. 0.5.101. Leave empty to install the registry's newest published version. Never from deploy/gitops/.insight-version: that file is committed at the END of publish-chart, so a checkout of the trigger SHA reads the PREVIOUS release.
+        required: false
+        default: ''
         type: string
       stages:
         description: >-
