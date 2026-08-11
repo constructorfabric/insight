@@ -34,6 +34,19 @@ connectors:
         value: fake
       proxy_url:
         value: fake
+  claude-team-invoices:
+    path: ai/claude-team-invoices
+    config:
+      claude_org_id:
+        value: fake
+      insight_source_id:
+        value: ""
+      insight_tenant_id:
+        value: fake
+      proxy_auth_token:
+        value: fake
+      proxy_url:
+        value: fake
   cursor:
     path: ai/cursor
     config:
