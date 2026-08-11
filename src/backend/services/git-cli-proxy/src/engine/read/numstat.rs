@@ -52,13 +52,90 @@ impl FileStatus {
 
 const COMMIT_MARK: &str = "\u{1e}commit ";
 
+/// Commits per `git log` invocation; same rationale as the patches reader —
+/// the runner materialises a child's whole stdout, so the invocation is the
+/// bound that matters.
+#[cfg(not(test))]
+const STAT_BATCH: usize = 128;
+/// Small under test so batching is observable without a huge fixture.
+#[cfg(test)]
+pub(super) const STAT_BATCH: usize = 2;
+
+/// Per-commit aggregate of one commit's file changes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CommitTotals {
+    pub changed_files: u64,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
 /// Per-file stats for an explicit set of commits, keyed by sha. Requires the
 /// touched blobs to be present locally (see `blobs::prefetch`).
+///
+/// Retention stops on the first whole batch that carries `max_files` — the
+/// commits dropped are exactly the ones the row cap would have withheld from
+/// the response anyway. `shas` must be in page order for that to hold.
 ///
 /// # Errors
 ///
 /// [`GitError`] when the git invocation fails.
 pub async fn read(
+    runner: &GitRunner,
+    git_dir: &Path,
+    shas: &[String],
+    max_files: usize,
+    creds: &GitCredentials,
+) -> Result<HashMap<String, Vec<FileStat>>, GitError> {
+    let mut collected: HashMap<String, Vec<FileStat>> = HashMap::new();
+    let mut retained = 0usize;
+
+    for batch in shas.chunks(STAT_BATCH) {
+        let parsed = read_batch(runner, git_dir, batch, creds).await?;
+        retained += parsed.values().map(Vec::len).sum::<usize>();
+        collected.extend(parsed);
+        if retained >= max_files {
+            break;
+        }
+    }
+    Ok(collected)
+}
+
+/// Per-commit totals for an explicit set of commits.
+///
+/// The `/v1/commits` shape: it never emits a per-file row, so holding one
+/// `FileStat` per changed path — which a wide monorepo commit multiplies by
+/// thousands — buys nothing. Each batch is aggregated and its detail dropped,
+/// leaving peak memory proportional to the PAGE, not to how wide its commits
+/// are.
+///
+/// # Errors
+///
+/// [`GitError`] when the git invocation fails.
+pub async fn totals(
+    runner: &GitRunner,
+    git_dir: &Path,
+    shas: &[String],
+    creds: &GitCredentials,
+) -> Result<HashMap<String, CommitTotals>, GitError> {
+    let mut collected: HashMap<String, CommitTotals> = HashMap::new();
+
+    for batch in shas.chunks(STAT_BATCH) {
+        for (sha, files) in read_batch(runner, git_dir, batch, creds).await? {
+            let mut aggregate = CommitTotals {
+                changed_files: files.len() as u64,
+                ..CommitTotals::default()
+            };
+            for file in files {
+                aggregate.additions += file.additions.unwrap_or(0);
+                aggregate.deletions += file.deletions.unwrap_or(0);
+            }
+            collected.insert(sha, aggregate);
+        }
+    }
+    Ok(collected)
+}
+
+async fn read_batch(
     runner: &GitRunner,
     git_dir: &Path,
     shas: &[String],

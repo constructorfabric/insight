@@ -150,7 +150,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             "Comma-separated commit ids or hex prefixes, 7 to 64 characters. A prefix selects every commit it matches.",
             "string",
         )
-        .query_param_typed("page_size", false, "1..=10000, default 1000", "integer")
+        .query_param_typed("page_size", false, "1..=1000, default 1000; larger values are clamped", "integer")
         .query_param_typed(
             "page_token",
             false,
@@ -197,8 +197,9 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param_typed(
             "page_size",
             false,
-            "Commits per page, 1..=10000, default 1000. Rows fan out per changed file, \
-             so a page is additionally capped by row count and total patch bytes.",
+            "Commits per page, 1..=1000, default 1000; larger values are clamped. Rows fan \
+             out per changed file, so a page is additionally capped by row count and total \
+             patch bytes.",
             "integer",
         )
         .query_param_typed(
@@ -249,7 +250,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             "Clone URL of the repository (http/https)",
             "string",
         )
-        .query_param_typed("page_size", false, "1..=10000, default 1000", "integer")
+        .query_param_typed("page_size", false, "1..=1000, default 1000; larger values are clamped", "integer")
         .query_param_typed(
             "page_token",
             false,

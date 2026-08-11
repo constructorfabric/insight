@@ -195,7 +195,7 @@ mod live_tests {
         };
         assert!(fetched > 0, "a blobless clone needs its blobs fetched");
 
-        let stats = match numstat::read(runner, git_dir, &shas, &creds()).await {
+        let stats = match numstat::read(runner, git_dir, &shas, usize::MAX, &creds()).await {
             Ok(s) => s,
             Err(e) => panic!("numstat::read: {e}"),
         };
@@ -254,6 +254,69 @@ mod live_tests {
             rows.iter().all(|r| !r.head_sha.is_empty()),
             "every branch reports a tip"
         );
+    }
+
+    #[tokio::test]
+    async fn stat_retention_stops_at_the_row_cap_and_totals_stay_whole() {
+        // The per-file map is only needed up to the row cap — nothing past it
+        // is ever emitted — while /v1/commits needs a number for EVERY commit
+        // in the window, which is why it gets aggregates instead of detail.
+        let f = fixture("stat-budget");
+        sh(
+            &f.root.join("origin"),
+            "for i in 2 3 4 5 6; do echo $i > s$i.txt; git add s$i.txt; \
+             GIT_AUTHOR_DATE=\"2026-08-0${i}T10:00:00+0000\" \
+             GIT_COMMITTER_DATE=\"2026-08-0${i}T10:00:00+0000\" git commit -qm c$i; done",
+        );
+
+        let runner = f.store.runner();
+        let guard = open_until_ready(&f, &key(&f), refresh()).await;
+        let git_dir = guard.git_dir();
+
+        let keys = match commits::enumerate(runner, git_dir, &creds()).await {
+            Ok(k) => k,
+            Err(e) => panic!("enumerate: {e}"),
+        };
+        let shas: Vec<String> = keys.iter().map(|k| k.sha.clone()).collect();
+        assert!(shas.len() > numstat::STAT_BATCH, "must span batches");
+        if let Err(e) = blobs::prefetch(runner, git_dir, &shas, &creds(), u64::MAX).await {
+            panic!("prefetch: {e}");
+        }
+
+        let clipped = match numstat::read(runner, git_dir, &shas, 1, &creds()).await {
+            Ok(t) => t,
+            Err(e) => panic!("numstat::read: {e}"),
+        };
+        assert_eq!(
+            clipped.len(),
+            numstat::STAT_BATCH,
+            "retention must stop at the first batch that meets the budget"
+        );
+
+        let all = match numstat::totals(runner, git_dir, &shas, &creds()).await {
+            Ok(t) => t,
+            Err(e) => panic!("numstat::totals: {e}"),
+        };
+        assert_eq!(
+            all.len(),
+            shas.len(),
+            "every commit in the window gets its totals, however wide it is"
+        );
+        let detailed = match numstat::read(runner, git_dir, &shas, usize::MAX, &creds()).await {
+            Ok(t) => t,
+            Err(e) => panic!("numstat::read: {e}"),
+        };
+        for (sha, files) in &detailed {
+            let Some(aggregate) = all.get(sha) else {
+                panic!("missing totals for {sha}")
+            };
+            assert_eq!(aggregate.changed_files, files.len() as u64, "sha {sha}");
+            assert_eq!(
+                aggregate.additions,
+                files.iter().filter_map(|f| f.additions).sum::<u64>(),
+                "sha {sha}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -351,7 +414,7 @@ mod live_tests {
             Some(0)
         );
         assert_eq!(
-            numstat::read(runner, guard.git_dir(), &none, &creds())
+            numstat::read(runner, guard.git_dir(), &none, usize::MAX, &creds())
                 .await
                 .ok()
                 .map(|m| m.len()),

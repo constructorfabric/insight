@@ -18,7 +18,13 @@ pub const GIT_USER_HEADER: &str = "x-git-username";
 pub const GIT_TOKEN_HEADER: &str = "x-git-token";
 pub const STALENESS_HEADER: &str = "x-max-staleness";
 
-const MAX_PAGE_SIZE: usize = 10_000;
+/// Ceiling and default are the same on purpose. Every memory bound on the
+/// request path scales linearly with the page, so headroom above the default
+/// is pure exposure: nothing has ever needed a larger page, `page_size` is a
+/// service-to-connector knob rather than tenant configuration, and the row
+/// caps cut an oversized page at emit time anyway — after the memory was
+/// already spent reading it. Smaller pages remain available for debugging.
+const MAX_PAGE_SIZE: usize = 1_000;
 const DEFAULT_PAGE_SIZE: usize = 1_000;
 const MAX_PATCH_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_PATCH_BYTES: usize = 1024 * 1024;

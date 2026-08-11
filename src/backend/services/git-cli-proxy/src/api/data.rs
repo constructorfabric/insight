@@ -160,7 +160,8 @@ pub async fn list_commits(
                 .prefetch_window(guard.git_dir(), &shas, &context.creds)
                 .await?;
 
-            let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
+            let file_stats =
+                numstat::totals(runner, guard.git_dir(), &shas, &context.creds).await?;
             let in_default =
                 commits::default_branch_membership(runner, guard.git_dir(), &shas, &context.creds)
                     .await?;
@@ -169,14 +170,12 @@ pub async fn list_commits(
             let items = window
                 .into_iter()
                 .map(|header| {
-                    let files = file_stats.get(&header.sha).map_or(&[][..], Vec::as_slice);
-                    let additions = files.iter().filter_map(|f| f.additions).sum();
-                    let deletions = files.iter().filter_map(|f| f.deletions).sum();
+                    let totals = file_stats.get(&header.sha).copied().unwrap_or_default();
                     commits::CommitRow {
                         is_merge: header.is_merge(),
-                        changed_files: files.len() as u64,
-                        additions,
-                        deletions,
+                        changed_files: totals.changed_files,
+                        additions: totals.additions,
+                        deletions: totals.deletions,
                         is_in_default_branch: in_default.contains(&header.sha),
                         patch_id: ids.get(&header.sha).cloned(),
                         sha: header.sha,
@@ -244,7 +243,14 @@ pub async fn list_file_changes(
                 .prefetch_window(guard.git_dir(), &shas, &context.creds)
                 .await?;
 
-            let file_stats = numstat::read(runner, guard.git_dir(), &shas, &context.creds).await?;
+            let file_stats = numstat::read(
+                runner,
+                guard.git_dir(),
+                &shas,
+                RowCaps::DEFAULT.max_rows,
+                &context.creds,
+            )
+            .await?;
             let texts = if include_patch {
                 patches::read(
                     runner,

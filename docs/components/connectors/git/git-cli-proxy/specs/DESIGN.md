@@ -214,6 +214,13 @@ invocation buffers a whole page of diffs, retention stops once the response
 byte budget is met, and only whole commits are ever retained — a row is never
 emitted with its patch text silently missing rather than withheld.
 
+The same batching applies to every other window reader — the stat pass and
+the prefetch enumeration — because the runner materialises a child's whole
+stdout, and one monorepo commit can put thousands of paths on it. Stat detail
+is retained only up to the row cap (`/v1/file-changes` never emits past it),
+and `/v1/commits` keeps per-commit AGGREGATES only, so its peak memory is
+proportional to the page rather than to how wide the page's commits are.
+
 Initial backfills of large repositories are processed in **windows** (page-
 sized commit ranges): prefetch → serve → purge, keeping peak disk usage
 bounded regardless of repository history size.
@@ -417,7 +424,13 @@ nowhere else:
   component is the empty string, since branch names are unique within a
   snapshot and nothing is left to break a tie on. Ascending
   order makes pagination deterministic and is friendly to Airbyte cursor
-  checkpointing. `page_size` default 1000, max 10000. The order is by
+  checkpointing. `page_size` defaults to 1000, which is also the ceiling —
+  larger values are clamped, not rejected. The ceiling equals the default on
+  purpose: every memory bound on the request path scales linearly with the
+  page, `page_size` is a service-to-connector knob rather than tenant
+  configuration, and the row caps would cut an oversized page at emit time
+  anyway — after the memory had already been spent reading it. Smaller pages
+  remain available for debugging. The order is by
   INSTANT: `%cI` carries the committer's own UTC offset, so two commits from
   different time zones do not compare correctly as text, and both the walk and
   the served window normalise before ordering.

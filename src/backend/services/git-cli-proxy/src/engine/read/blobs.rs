@@ -61,27 +61,39 @@ async fn needed_oids(
     shas: &[String],
     creds: &GitCredentials,
 ) -> Result<BTreeSet<String>, GitError> {
-    // `log --no-walk` (not `diff-tree`) is the multi-commit form: diff-tree
-    // with several revisions diffs BETWEEN them instead of per commit.
-    // `--no-abbrev` is required — raw output abbreviates OIDs by default, and
-    // `--full-index` only affects patch headers, not raw lines. No `-M` here:
-    // rename detection compares blob CONTENT, which would make the enumeration
-    // step itself trigger the lazy fetches it exists to prevent.
-    let mut args = vec![
-        "log",
-        "--no-walk",
-        "--raw",
-        "--no-abbrev",
-        "--no-color",
-        "--root",
-        "--pretty=format:",
-    ];
-    args.extend(shas.iter().map(String::as_str));
+    // Batched like every other window reader: the runner materialises the
+    // child's whole stdout, and a wide window would buffer it all at once.
+    // The oid SET is kept across batches — it is what the fetch needs, and it
+    // is bounded by unique blobs rather than by raw-output bytes.
+    let mut oids = BTreeSet::new();
+    for batch in shas.chunks(ENUMERATE_BATCH) {
+        // `log --no-walk` (not `diff-tree`) is the multi-commit form:
+        // diff-tree with several revisions diffs BETWEEN them instead of per
+        // commit. `--no-abbrev` is required — raw output abbreviates OIDs by
+        // default, and `--full-index` only affects patch headers, not raw
+        // lines. No `-M` here: rename detection compares blob CONTENT, which
+        // would make the enumeration step itself trigger the lazy fetches it
+        // exists to prevent.
+        let mut args = vec![
+            "log",
+            "--no-walk",
+            "--raw",
+            "--no-abbrev",
+            "--no-color",
+            "--root",
+            "--pretty=format:",
+        ];
+        args.extend(batch.iter().map(String::as_str));
 
-    let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
-    let raw = String::from_utf8_lossy(&output.stdout);
-    Ok(parse_raw_oids(&raw))
+        let output = runner.run(Some(git_dir), &args, Some(creds)).await?;
+        let raw = String::from_utf8_lossy(&output.stdout);
+        oids.append(&mut parse_raw_oids(&raw));
+    }
+    Ok(oids)
 }
+
+/// Commits per raw-diff enumeration; bounds the child's buffered stdout.
+const ENUMERATE_BATCH: usize = 128;
 
 /// Tree entry mode of a submodule reference.
 const GITLINK_MODE: &str = "160000";

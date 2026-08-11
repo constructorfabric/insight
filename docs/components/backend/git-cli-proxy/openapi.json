@@ -296,7 +296,7 @@
             }
           },
           {
-            "description": "1..=10000, default 1000",
+            "description": "1..=1000, default 1000; larger values are clamped",
             "in": "query",
             "name": "page_size",
             "required": false,
@@ -436,7 +436,7 @@
             }
           },
           {
-            "description": "1..=10000, default 1000",
+            "description": "1..=1000, default 1000; larger values are clamped",
             "in": "query",
             "name": "page_size",
             "required": false,
@@ -576,7 +576,7 @@
             }
           },
           {
-            "description": "Commits per page, 1..=10000, default 1000. Rows fan out per changed file, so a page is additionally capped by row count and total patch bytes.",
+            "description": "Commits per page, 1..=1000, default 1000; larger values are clamped. Rows fan out per changed file, so a page is additionally capped by row count and total patch bytes.",
             "in": "query",
             "name": "page_size",
             "required": false,
