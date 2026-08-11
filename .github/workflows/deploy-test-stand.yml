@@ -523,14 +523,21 @@ jobs:
             | cut -d' ' -f2- > "$RUNNER_TEMP/stand-manifest.json" || manifest_rc=$?
 
           # TEMPORARY — dies with debug-test-stand.yml, delete before merge.
-          # Pre-merge the toolbox image is main's and predates the sentinel;
-          # fall back to the log's trailing pretty-printed manifest document.
+          # Pre-merge the toolbox image is main's and predates the sentinel.
+          # The streamed seed.log can be truncated when the container exits
+          # (logs -f), so re-read the COMPLETED Job's log at rest and take its
+          # trailing pretty-printed manifest document.
           if [ "$manifest_rc" -ne 0 ]; then
-            awk '/^\{$/{doc=$0 "\n"; on=1; next} on{doc=doc $0 "\n"; if ($0=="}") on=0} END{printf "%s", doc}' \
-              "$RUNNER_TEMP/seed.log" > "$RUNNER_TEMP/stand-manifest.json" || true
-            if jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
-              echo "::warning::TEMPORARY fallback: manifest recovered from the log tail (pre-merge image lag)."
-              manifest_rc=0
+            job_name="$(grep -m1 '^==> applied Job ' "$RUNNER_TEMP/seed.log" | awk '{print $4}')" || true
+            if [ -n "${job_name:-}" ]; then
+              kubectl -n "$STAND_NAMESPACE" logs "job/$job_name" > "$RUNNER_TEMP/seed-pod.log" 2>/dev/null || true
+              awk '/^\{$/{doc=$0 "\n"; on=1; next} on{doc=doc $0 "\n"; if ($0=="}") on=0} END{printf "%s", doc}' \
+                "$RUNNER_TEMP/seed-pod.log" > "$RUNNER_TEMP/stand-manifest.json" || true
+              echo "fallback: job=$job_name extracted $(wc -c < "$RUNNER_TEMP/stand-manifest.json") bytes"
+              if jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
+                echo "::warning::TEMPORARY fallback: manifest re-read from the completed Job (pre-merge image lag)."
+                manifest_rc=0
+              fi
             fi
           fi
 

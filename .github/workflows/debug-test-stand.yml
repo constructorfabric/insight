@@ -9,7 +9,7 @@
 # nothing and expects the insight-test-stand GitHub environment to carry the
 # credentials; this branch's interim secrets are repo-level.
 #
-# run marker: 5
+# run marker: 6
 name: debug-test-stand
 on:
   push:
