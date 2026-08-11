@@ -11,7 +11,7 @@ use super::disk::{Budget, Candidate, Reclaim, dir_size, worth_purging};
 use super::key::CacheKey;
 use super::meta::{RepoMeta, now_epoch_s};
 use super::metrics::{self, DiskGauges, EvictionTier, FetchResult};
-use super::runner::{GitCredentials, GitError, GitRunner, Timeouts};
+use super::runner::{GitCredentials, GitError, GitRunner};
 
 const INLINE_WAIT: Duration = Duration::from_secs(15);
 const COLD_RETRY_AFTER: Duration = Duration::from_secs(30);
@@ -167,6 +167,14 @@ impl Drop for Reservation<'_> {
     }
 }
 
+/// One entry's drift bookkeeping: the re-measurement throttle and how many
+/// repacks in a row lost the non-blocking lock probe to readers.
+#[derive(Debug)]
+struct DriftState {
+    checked: Instant,
+    losses: u32,
+}
+
 /// What a background flight is supposed to do to the entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum RefreshKind {
@@ -195,12 +203,10 @@ pub struct RepoStore {
     inflight: Mutex<HashMap<FlightKey, watch::Receiver<Option<RefreshResult>>>>,
     tmp_counter: AtomicU64,
     gauges: Arc<DiskGauges>,
-    /// When each entry last had its on-disk size re-measured. Without it a
-    /// 200-page walk pays a full `dir_size` per page.
-    drift_checks: Mutex<HashMap<String, Instant>>,
-    /// Per entry: how many drift checks in a row wanted a repack but lost the
-    /// non-blocking lock probe to readers.
-    purge_debt: Mutex<HashMap<String, u32>>,
+    /// Per entry: when its on-disk size was last re-measured (without the
+    /// throttle a 200-page walk pays a full `dir_size` per page), and how many
+    /// checks in a row wanted a repack but lost the lock probe to readers.
+    drift: Mutex<HashMap<String, DriftState>>,
     /// Bytes promised to heavy operations that have been admitted but have not
     /// finished writing them.
     reserved_bytes: AtomicU64,
@@ -247,7 +253,7 @@ impl RepoStore {
         std::fs::create_dir_all(&tmp)?;
         Ok(Self {
             data_dir: data_dir.to_owned(),
-            runner: GitRunner::new(Timeouts::default()).with_ca_cert(ca_cert_path),
+            runner: GitRunner::new().with_ca_cert(ca_cert_path),
             budget,
             max_repo_bytes,
             heavy: Semaphore::new(heavy_ops_concurrency),
@@ -255,8 +261,7 @@ impl RepoStore {
             inflight: Mutex::new(HashMap::new()),
             tmp_counter: AtomicU64::new(0),
             gauges: Arc::new(DiskGauges::default()),
-            drift_checks: Mutex::new(HashMap::new()),
-            purge_debt: Mutex::new(HashMap::new()),
+            drift: Mutex::new(HashMap::new()),
             reserved_bytes: AtomicU64::new(0),
             admission: Mutex::new(()),
         })
@@ -887,7 +892,7 @@ impl RepoStore {
         // A promoted entry holds the only copy of its blobs: origin refuses to
         // serve them again, so purging would strand it.
         if meta.full_clone || !worth_purging(measured, meta.skeleton_bytes) {
-            self.purge_debt.lock().await.remove(&key.dir_name());
+            self.settle_purge_debt(&key.dir_name()).await;
             return;
         }
 
@@ -898,15 +903,15 @@ impl RepoStore {
         // fetch would. Readers wait out one repack; the alternative is an
         // entry that grows for as long as anyone keeps reading it.
         let lock = self.entry_lock(key).await;
-        let _write = if let Ok(guard) = lock.clone().try_write_owned() {
+        let _write = if let Ok(guard) = lock.try_write() {
             guard
         } else {
             if !self.purge_debt_due(&key.dir_name()).await {
                 return;
             }
-            lock.write_owned().await
+            lock.write().await
         };
-        self.purge_debt.lock().await.remove(&key.dir_name());
+        self.settle_purge_debt(&key.dir_name()).await;
 
         match self.repack_blobless(&entry_dir).await {
             Ok(freed) => {
@@ -920,10 +925,18 @@ impl RepoStore {
     /// Whether this entry has lost the non-blocking probe often enough that
     /// the repack should stop yielding to readers.
     async fn purge_debt_due(&self, dir_name: &str) -> bool {
-        let mut debt = self.purge_debt.lock().await;
-        let count = debt.entry(dir_name.to_owned()).or_insert(0);
-        *count += 1;
-        *count >= PURGE_ESCALATION_AFTER
+        let mut drift = self.drift.lock().await;
+        let Some(state) = drift.get_mut(dir_name) else {
+            return false;
+        };
+        state.losses += 1;
+        state.losses >= PURGE_ESCALATION_AFTER
+    }
+
+    async fn settle_purge_debt(&self, dir_name: &str) {
+        if let Some(state) = self.drift.lock().await.get_mut(dir_name) {
+            state.losses = 0;
+        }
     }
 
     /// Pull the blobs a window touches, bounded by the per-repository cap.
@@ -991,11 +1004,15 @@ impl RepoStore {
     /// Whether this entry is due a size re-measurement, marking it checked.
     async fn drift_check_due(&self, dir_name: &str) -> bool {
         let now = Instant::now();
-        let mut checks = self.drift_checks.lock().await;
-        match checks.get(dir_name) {
-            Some(last) if now.duration_since(*last) < DRIFT_CHECK_INTERVAL => false,
-            _ => {
-                checks.insert(dir_name.to_owned(), now);
+        let mut drift = self.drift.lock().await;
+        match drift.get_mut(dir_name) {
+            Some(state) if now.duration_since(state.checked) < DRIFT_CHECK_INTERVAL => false,
+            Some(state) => {
+                state.checked = now;
+                true
+            }
+            None => {
+                drift.insert(dir_name.to_owned(), DriftState { checked: now, losses: 0 });
                 true
             }
         }
@@ -2236,6 +2253,17 @@ pub(crate) mod tests {
         // opportunistic probe never wins, and an entry served continuously
         // grows for as long as anyone keeps reading it. After enough losses
         // the repack must queue for the write side like a fetch would.
+        //
+        // Rewinding the throttle stands in for waiting out the interval;
+        // losses must survive the rewind.
+        async fn rewind_throttle(store: &RepoStore) {
+            for state in store.drift.lock().await.values_mut() {
+                if let Some(rewound) = Instant::now().checked_sub(DRIFT_CHECK_INTERVAL) {
+                    state.checked = rewound;
+                }
+            }
+        }
+
         let (f, k, skeleton) = entry_with_fetched_blobs("drift-escalate").await;
         let entry_dir = f.store.entry_dir(&k);
         let inflated = dir_size(&entry_dir.join("repo.git"));
@@ -2246,10 +2274,9 @@ pub(crate) mod tests {
         };
 
         // Drive the real entry point, not the counter: each round is one page
-        // served under the held guard, with only the per-minute throttle
-        // stepped forward.
+        // served under the held guard, with only the throttle stepped forward.
         for lost in 1..PURGE_ESCALATION_AFTER {
-            f.store.drift_checks.lock().await.clear();
+            rewind_throttle(&f.store).await;
             f.store.purge_if_drifted(&k).await;
             assert_eq!(
                 dir_size(&entry_dir.join("repo.git")),
@@ -2258,7 +2285,7 @@ pub(crate) mod tests {
             );
         }
 
-        f.store.drift_checks.lock().await.clear();
+        rewind_throttle(&f.store).await;
         let escalated = tokio::spawn({
             let store = Arc::clone(&f.store);
             let k = k.clone();

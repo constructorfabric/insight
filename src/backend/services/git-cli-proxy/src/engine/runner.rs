@@ -120,18 +120,30 @@ const HEAVY_OP_TIMEOUT: Duration = Duration::from_mins(30);
 /// catches that remainder.
 const CAP_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
-impl GitRunner {
-    #[must_use]
-    pub fn new(timeouts: Timeouts) -> Self {
+impl Default for GitRunner {
+    fn default() -> Self {
         Self {
-            timeouts,
+            timeouts: Timeouts::default(),
             cap_poll: CAP_POLL_INTERVAL,
             ca_cert_path: None,
         }
     }
+}
 
+impl GitRunner {
     #[must_use]
-    pub fn with_cap_poll(mut self, interval: Duration) -> Self {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[cfg(test)]
+    fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_cap_poll(mut self, interval: Duration) -> Self {
         self.cap_poll = interval;
         self
     }
@@ -609,7 +621,7 @@ mod tests {
             username: "oauth2".to_owned(),
             token: "tok".to_owned(),
         };
-        let plain = GitRunner::new(Timeouts::default());
+        let plain = GitRunner::new();
         assert!(
             plain.config_pairs(None).is_empty(),
             "no creds and no CA means no git config at all"
@@ -620,7 +632,7 @@ mod tests {
         assert_eq!(with_creds[0].0, "http.extraheader");
 
         let with_ca =
-            GitRunner::new(Timeouts::default()).with_ca_cert(Some("/certs/ca.pem".to_owned()));
+            GitRunner::new().with_ca_cert(Some("/certs/ca.pem".to_owned()));
         let both = with_ca.config_pairs(Some(&creds));
         assert_eq!(both.len(), 2, "on-prem origins need the CA pair too");
         assert!(
@@ -632,7 +644,7 @@ mod tests {
 
     #[test]
     fn empty_ca_path_is_treated_as_unset() {
-        let runner = GitRunner::new(Timeouts::default()).with_ca_cert(Some(String::new()));
+        let runner = GitRunner::new().with_ca_cert(Some(String::new()));
         assert!(
             runner.config_pairs(None).is_empty(),
             "an empty CA path must not become a git config value"
@@ -662,7 +674,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_reports_version() {
-        let runner = GitRunner::new(Timeouts::default());
+        let runner = GitRunner::new();
         let output = match runner.run(None, &["--version"], None).await {
             Ok(o) => o,
             Err(e) => panic!("git --version failed: {e}"),
@@ -682,7 +694,7 @@ mod tests {
             panic!("create temp dir: {e}");
         }
 
-        let runner = GitRunner::new(Timeouts::default());
+        let runner = GitRunner::new();
         let init = tokio::process::Command::new("git")
             .args(["init", "--bare", "-q"])
             .arg(&dir)
@@ -766,7 +778,7 @@ mod tests {
         // breach against how fast git happens to write would make this a race,
         // not a test.
         let runner =
-            GitRunner::new(Timeouts::default()).with_cap_poll(Duration::from_millis(1));
+            GitRunner::new().with_cap_poll(Duration::from_millis(1));
         let result = runner
             .run_capped(
                 None,
@@ -798,7 +810,7 @@ mod tests {
         let url = format!("file://{}", root.join("origin").display());
 
         let runner =
-            GitRunner::new(Timeouts::default()).with_cap_poll(Duration::from_millis(1));
+            GitRunner::new().with_cap_poll(Duration::from_millis(1));
         if let Err(e) = runner
             .run_capped(
                 None,
@@ -829,7 +841,7 @@ mod tests {
 
         let root = heavy_origin("budgets");
         let url = format!("file://{}", root.join("origin").display());
-        let runner = GitRunner::new(Timeouts {
+        let runner = GitRunner::new().with_timeouts(Timeouts {
             read: Duration::from_millis(1),
             prefetch: Duration::from_mins(1),
             heavy: Duration::from_mins(1),
@@ -875,7 +887,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_times_out_and_kills() {
-        let runner = GitRunner::new(Timeouts {
+        let runner = GitRunner::new().with_timeouts(Timeouts {
             read: Duration::from_millis(200),
             ..Timeouts::default()
         });
