@@ -41,10 +41,11 @@ persistence:
   accessMode: ReadWriteOncePod
 
 cache:
-  # Cache budget in bytes. Keep 10-15% below persistence.size — headroom for
-  # transient packs and git temp files (an ENOSPC mid-pack-write is a failed
-  # sync, not a graceful reclaim). 50Gi volume -> ~43Gi budget.
-  diskBudgetBytes: 46170898432
+  # Cache budget in bytes. Empty = 85% of persistence.size; the remainder is
+  # headroom for transient packs and git temp files (an ENOSPC mid-pack-write
+  # is a failed sync, not a graceful reclaim). An explicit value must stay
+  # within 50-90% of the volume.
+  diskBudgetBytes: null
   # Per-repository cap. A clone/fetch beyond it is aborted and answered 413,
   # so one oversized monorepo cannot evict the whole working set.
   maxRepoBytes: 10737418240

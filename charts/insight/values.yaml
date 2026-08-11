@@ -514,9 +514,9 @@ gitCliProxy:
     size: 50Gi
     storageClass: ""
   cache:
-    # Keep the budget 10-15% below persistence.size: the headroom absorbs
-    # transient packs and git temp files.
-    diskBudgetBytes: 46170898432
+    # Budget defaults to 85% of persistence.size (subchart-computed); the
+    # headroom absorbs transient packs and git temp files. Override with
+    # diskBudgetBytes (must stay within 50-90% of the volume).
     maxRepoBytes: 10737418240
     defaultMaxStalenessSeconds: 300
     heavyOpsConcurrency: 4

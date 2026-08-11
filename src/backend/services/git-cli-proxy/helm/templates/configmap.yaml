@@ -37,7 +37,7 @@ data:
       git-cli-proxy:
         config:
           data_dir: "{{ .Values.persistence.mountPath }}"
-          disk_budget_bytes: {{ required "cache.diskBudgetBytes is required" .Values.cache.diskBudgetBytes | int64 }}
+          disk_budget_bytes: {{ include "insight-git-cli-proxy.diskBudgetBytes" . }}
           max_repo_bytes: {{ required "cache.maxRepoBytes is required" .Values.cache.maxRepoBytes | int64 }}
           default_max_staleness_seconds: {{ required "cache.defaultMaxStalenessSeconds is required" .Values.cache.defaultMaxStalenessSeconds | int64 }}
           heavy_ops_concurrency: {{ required "cache.heavyOpsConcurrency is required" .Values.cache.heavyOpsConcurrency | int64 }}

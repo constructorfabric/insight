@@ -32,26 +32,36 @@ silently read as zero, which would make the budget guard below vacuous.
 {{- end }}
 
 {{- /*
-The cache budget must sit below the volume it lives on: the app reclaims to
-its own budget, but the VOLUME filling up is enforced by kubelet as pod
-eviction — a crash, not a mechanism. Guarded rather than computed, so the
-number stays explicit in a GitOps diff instead of moving when someone edits
-persistence.size.
+The effective cache budget in bytes. Defaults to 85% of persistence.size —
+the remainder is headroom for transient packs and git temp files, because the
+app reclaims to its own budget while the VOLUME filling up is enforced by
+kubelet as pod eviction: a crash, not a mechanism. `cache.diskBudgetBytes`
+overrides the default and is validated against the same band.
+
+Integer math only: Helm parses YAML numbers as float64, and a budget in the
+1e10 range renders in scientific notation once it becomes one — which the
+service then refuses to deserialize.
 */ -}}
-{{- define "insight-git-cli-proxy.validateDiskBudget" -}}
+{{- define "insight-git-cli-proxy.diskBudgetBytes" -}}
 {{- $sizeBytes := int64 (include "insight-git-cli-proxy.quantityBytes" (required "persistence.size is required" .Values.persistence.size)) -}}
-{{- $budget := int64 (required "cache.diskBudgetBytes is required" .Values.cache.diskBudgetBytes) -}}
-{{- $repoCap := int64 (required "cache.maxRepoBytes is required" .Values.cache.maxRepoBytes) -}}
-{{- /* Integer comparison only: Helm parses YAML numbers as float64, and a
-       budget in the 1e10 range renders in scientific notation once it becomes
-       one — which the service then refuses to deserialize. */ -}}
+{{- if .Values.cache.diskBudgetBytes -}}
+{{- $budget := int64 .Values.cache.diskBudgetBytes -}}
 {{- if gt (mul $budget 100) (mul $sizeBytes 90) -}}
   {{- fail (printf "cache.diskBudgetBytes (%d) must be at most 90%% of persistence.size (%d bytes). The remainder is headroom for transient packs and git temp files; without it an ENOSPC mid-pack-write is a failed sync, and a full volume is a pod eviction." $budget $sizeBytes) -}}
 {{- end -}}
 {{- if lt (mul $budget 100) (mul $sizeBytes 50) -}}
   {{- fail (printf "cache.diskBudgetBytes (%d) is under 50%% of persistence.size (%d bytes) — over half the volume would be unusable. Raise the budget or shrink the volume." $budget $sizeBytes) -}}
 {{- end -}}
+{{- $budget -}}
+{{- else -}}
+{{- div (mul $sizeBytes 85) 100 -}}
+{{- end -}}
+{{- end }}
+
+{{- define "insight-git-cli-proxy.validateDiskBudget" -}}
+{{- $budget := int64 (include "insight-git-cli-proxy.diskBudgetBytes" .) -}}
+{{- $repoCap := int64 (required "cache.maxRepoBytes is required" .Values.cache.maxRepoBytes) -}}
 {{- if gt $repoCap $budget -}}
-  {{- fail (printf "cache.maxRepoBytes (%d) exceeds cache.diskBudgetBytes (%d): a repository admitted at the per-repo cap could not fit in the cache at all." $repoCap $budget) -}}
+  {{- fail (printf "cache.maxRepoBytes (%d) exceeds the cache budget (%d bytes): a repository admitted at the per-repo cap could not fit in the cache at all." $repoCap $budget) -}}
 {{- end -}}
 {{- end }}

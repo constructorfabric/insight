@@ -79,6 +79,22 @@ def test_a_named_allowlist_host_reaches_the_config():
     assert config["allowed_repo_hosts"] == ["gitlab.example"]
 
 
+def test_the_budget_follows_the_volume_by_default():
+    """Unset, the budget is 85% of persistence.size — resizing the volume
+    moves it, and there is no second number to keep in sync."""
+    fifty_gi = 50 * 1024**3
+    assert gear_config(render())["disk_budget_bytes"] == fifty_gi * 85 // 100
+
+    hundred_gi = 100 * 1024**3
+    resized = gear_config(render(persistence__size="100Gi"))
+    assert resized["disk_budget_bytes"] == hundred_gi * 85 // 100
+
+
+def test_an_explicit_budget_overrides_the_derived_one():
+    config = gear_config(render(cache__diskBudgetBytes="30000000000"))
+    assert config["disk_budget_bytes"] == 30_000_000_000
+
+
 def test_the_pod_receives_the_platform_emission_contract():
     """§4.3's metrics are exported only if the OTEL_* env vars reach the pod.
 
@@ -229,7 +245,7 @@ def render_fails(**overrides: str) -> str:
         ({"cache__diskBudgetBytes": "49000000000"}, "at most 90%"),
         ({"cache__diskBudgetBytes": "20000000000"}, "under 50%"),
         # A repository admitted at the per-repo cap must fit in the cache.
-        ({"cache__maxRepoBytes": "99000000000"}, "exceeds cache.diskBudgetBytes"),
+        ({"cache__maxRepoBytes": "99000000000"}, "exceeds the cache budget"),
         # An unparseable size would make the guard vacuous, so it is refused
         # rather than read as zero.
         ({"persistence__size": "50Gigs"}, "unsupported unit"),
