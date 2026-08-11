@@ -40,6 +40,8 @@
 #   1. guards            — right cluster, right namespace, explicit confirmation
 #   2. survivors         — the credentials that must outlive the wipe are present
 #   3. datastore preflight — MariaDB and ClickHouse are reachable AND authorised
+#   3b. deploy preconditions — the guards `make deploy` would apply AFTER the
+#                          wipe, applied before it instead
 #   4. helm uninstall    — the release
 #   5. database wipe     — one Job, both datastores, after (3) proved both work
 #   6. deploy            — `make deploy`, the same target CI runs
@@ -154,6 +156,9 @@ SURVIVORS_SECRET=(
   insight-authenticator-signing-keys
 )
 SURVIVORS_CM=("${RELEASE}-keycloak-config-realms")
+
+TMP_PRECHECK="$(mktemp)"
+trap 'rm -f "$TMP_PRECHECK"' EXIT INT TERM
 
 KUBECTL=(kubectl)
 [ -n "$KUBECONFIG_IN" ] && KUBECTL+=(--kubeconfig "$KUBECONFIG_IN")
@@ -362,6 +367,38 @@ else
   note "would run a read-only Job asserting MariaDB and ClickHouse are reachable and authorised"
 fi
 
+# ── 3b. The DEPLOY's own preconditions, checked BEFORE anything is destroyed ─
+#
+# This block exists because its absence cost an outage. `make deploy` has its own
+# guards — a clean tree, a reachable cluster, the expected context, a values file,
+# a published chart — and every one of them is correct when a human types the
+# command. Inherited by a rebuild they sat BETWEEN the wipe and the reinstall, so
+# an untracked scratch file and a context named differently from the inventory
+# each turned "wiped, about to reinstall" into "wiped, and refusing to
+# reinstall". The stand stayed down until a human noticed.
+#
+# So they run here, against the same target, with the same arguments the deploy
+# below will use. A refusal now costs nothing; the same refusal thirty seconds
+# later costs the stand. This is the whole of the fix: the guards did not need
+# weakening, they needed to be asked earlier.
+if [ "$DO_DEPLOY" = "1" ]; then
+  hdr "deploy preconditions (before anything is destroyed)"
+  if [ -z "$VERSION" ]; then
+    VERSION="$(gh api "repos/${UPSTREAM_REPO}/contents/deploy/gitops/.insight-version?ref=${DEFAULT_BRANCH}" \
+                 --jq '.content' 2>/dev/null | base64 --decode | tr -d '[:space:]' || true)"
+    [ -n "$VERSION" ] || die "could not resolve the published version from ${UPSTREAM_REPO}@${DEFAULT_BRANCH}. Pass --version X.Y.Z explicitly — deliberately NOT falling back to $GITOPS_DIR/.insight-version, which is as old as this branch."
+  fi
+  note "chart to install: insight-$VERSION"
+  if ! make -C "$GITOPS_DIR" --no-print-directory \
+        sync-clean vpn-up kube-ctx values-present chart-present \
+        ENV="$ENV_NAME" KUBE_CTX="$CONTEXT" ${KUBECONFIG_IN:+KUBECONFIG="$KUBECONFIG_IN"} \
+        INSIGHT_VERSION="$VERSION" >/dev/null 2>"$TMP_PRECHECK"; then
+    sed 's/^/    /' <"$TMP_PRECHECK" >&2
+    die "the deploy would be refused AFTER the wipe — refusing now instead. Nothing has been destroyed."
+  fi
+  note "${C_GRN}the deploy's own guards pass${C_RST} — a wipe now can be followed by an install"
+fi
+
 # ── Plan ───────────────────────────────────────────────────────────────────
 hdr "plan"
 note "1. helm uninstall $RELEASE -n $NAMESPACE   (the release only)"
@@ -502,14 +539,7 @@ if [ "$DO_DEPLOY" = "1" ]; then
   # this cannot serve — an air-gapped operator, or a deliberate pin — and there
   # is no silent fallback to the checkout, because a silent fallback is exactly
   # how the downgrade above would have happened.
-  if [ -z "$VERSION" ]; then
-    VERSION="$(gh api "repos/${UPSTREAM_REPO}/contents/deploy/gitops/.insight-version?ref=${DEFAULT_BRANCH}" \
-                 --jq '.content' 2>/dev/null | base64 --decode | tr -d '[:space:]' || true)"
-    [ -n "$VERSION" ] || die "could not resolve the published version from ${UPSTREAM_REPO}@${DEFAULT_BRANCH}. Pass --version X.Y.Z explicitly — deliberately NOT falling back to $GITOPS_DIR/.insight-version, which is as old as this branch."
-    note "resolved insight-$VERSION from ${UPSTREAM_REPO}@${DEFAULT_BRANCH}"
-  else
-    note "using insight-$VERSION (--version)"
-  fi
+  note "installing insight-$VERSION (resolved in the preconditions above)"
 
   LOCAL_FILE="$(cat "$GITOPS_DIR/.insight-version" 2>/dev/null || true)"
   if [ -n "$LOCAL_FILE" ] && [ "$LOCAL_FILE" != "$VERSION" ]; then
