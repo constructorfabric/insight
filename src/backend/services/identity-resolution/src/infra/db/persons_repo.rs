@@ -69,7 +69,7 @@ pub async fn resolve_person_ids_by_email(
         ],
     );
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     person_ids_from_rows(rows)
 }
 
@@ -122,7 +122,7 @@ pub async fn resolve_person_id_by_email_any_tenant(
         ],
     );
 
-    match db.query_one(stmt).await? {
+    match db.query_one_raw(stmt).await? {
         Some(row) => {
             let bytes: Vec<u8> = row.try_get("", "person_id")?;
             Ok(Some(Uuid::from_slice(&bytes)?))
@@ -197,7 +197,7 @@ pub async fn resolve_person_id_by_source_any_tenant(
         ],
     );
 
-    match db.query_one(stmt).await? {
+    match db.query_one_raw(stmt).await? {
         Some(row) => {
             let bytes: Vec<u8> = row.try_get("", "person_id")?;
             Ok(Some(Uuid::from_slice(&bytes)?))
@@ -256,7 +256,7 @@ pub async fn resolve_person_ids_by_source_id(
         ],
     );
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     person_ids_from_rows(rows)
 }
 
@@ -393,7 +393,7 @@ pub async fn current_source_ids_for_person(
         ],
     );
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     let mut ids = Vec::with_capacity(rows.len());
     for row in rows {
         let source_type: String = row.try_get("", "insight_source_type")?;
@@ -455,7 +455,7 @@ pub async fn current_parents_for_child(
         ],
     );
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     let mut edges = Vec::with_capacity(rows.len());
     for row in rows {
         let source_type: String = row.try_get("", "insight_source_type")?;
@@ -508,7 +508,7 @@ pub async fn current_children_for_parent(
         ],
     );
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     let mut edges = Vec::with_capacity(rows.len());
     for row in rows {
         let source_type: String = row.try_get("", "insight_source_type")?;

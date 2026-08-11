@@ -84,7 +84,7 @@ impl MigrationTrait for Migration {
         for (metrics_hex, bare_keys) in CRM_QUERY_LINKS {
             for bare_key in *bare_keys {
                 let full_key = format!("{CRM_TABLE_PREFIX}.{bare_key}");
-                conn.execute(Statement::from_sql_and_values(
+                conn.execute_raw(Statement::from_sql_and_values(
                     backend,
                     INSERT_LINK_SQL,
                     [Value::from(*metrics_hex), Value::from(full_key)],

@@ -70,7 +70,7 @@ pub async fn current_bindings(
         }
 
         let rows = db
-            .query_all(Statement::from_sql_and_values(
+            .query_all_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 &sql,
                 params,
@@ -140,7 +140,7 @@ pub async fn accounts_of_person(
     ";
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [
@@ -179,7 +179,7 @@ pub async fn person_exists(
         "SELECT 1 AS hit FROM persons WHERE insight_tenant_id = ? AND person_id = ? LIMIT 1";
 
     let row = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [
@@ -240,7 +240,7 @@ pub async fn append_bindings(
         }
 
         let res = txn
-            .execute(Statement::from_sql_and_values(
+            .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 &sql,
                 params,
@@ -287,7 +287,7 @@ pub async fn binding_history(
     ";
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [
@@ -356,7 +356,7 @@ pub async fn present_rows(
         }
 
         let hits = db
-            .query_all(Statement::from_sql_and_values(
+            .query_all_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 &sql,
                 params,

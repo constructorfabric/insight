@@ -27,7 +27,7 @@
 //! single error so a single bad deploy doesn't require N restarts to surface
 //! all gaps.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, FromQueryResult, Statement, Value};
+use sea_orm::{DatabaseConnection, FromQueryResult, Statement, Value};
 
 use crate::migration::REQUIRED_CHECKS_BY_TABLE;
 

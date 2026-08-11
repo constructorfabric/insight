@@ -330,7 +330,7 @@ async fn definition_with_no_inputs_is_still_deletable() -> R {
     // the definition's input rows out of band. The definition is now
     // unreachable through the inputs join, but it must not become a listed,
     // unremovable ghost.
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "DELETE i FROM metric_definition_inputs i \
          INNER JOIN metric_definitions d ON d.id = i.metric_definition_id \
@@ -351,7 +351,7 @@ async fn definition_with_no_inputs_is_still_deletable() -> R {
 /// least one is guaranteed to exist.
 async fn a_builtin_metric_key(db: &DatabaseConnection) -> Result<String, sea_orm::DbErr> {
     let row = db
-        .query_one(Statement::from_string(
+        .query_one_raw(Statement::from_string(
             db.get_database_backend(),
             "SELECT metric_key FROM metric_definitions \
              WHERE origin = 'builtin' AND tenant_id IS NULL LIMIT 1",
