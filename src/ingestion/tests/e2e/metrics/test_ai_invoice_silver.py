@@ -31,10 +31,10 @@ TENANT = "11111111-1111-1111-1111-111111111111"
 SOURCE = "claude-team-invoices-test"
 
 # 2026-08-01 and 2026-09-01 UTC — the window a monthly line charges for.
-AUG_START, SEP_START = 1754006400, 1756684800
+AUG_START, SEP_START = 1785542400, 1788220800
 # The invoice itself is raised at the boundary, a day before the period opens:
 # dating by this instead of by the period would file the line in July.
-RAISED_AT = 1753920000
+RAISED_AT = 1785456000
 
 
 def _row(**over):
