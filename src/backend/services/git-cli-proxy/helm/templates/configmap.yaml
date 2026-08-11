@@ -45,6 +45,14 @@ data:
           # Not a values knob on purpose: a file:// origin reads the pod's own
           # filesystem, so no deployment may turn this on.
           allow_file_repos: false
+          # Empty keeps the built-in rules, which refuse loopback, link-local,
+          # private and cluster-internal hosts. Name a host here only to reach
+          # a self-hosted vendor those rules would otherwise block; a non-empty
+          # list becomes the ONLY set of hosts this service will clone from.
+          allowed_repo_hosts:
+            {{- range .Values.cache.allowedRepoHosts }}
+            - {{ . | quote }}
+            {{- end }}
           # proxy_token is NEVER rendered here — it arrives via envFrom from
           # the config Secret (APP__gears__git_cli_proxy__config__proxy_token).
           proxy_token: ""

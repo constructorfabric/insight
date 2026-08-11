@@ -384,6 +384,19 @@ nowhere else:
   pod's own filesystem — so the value is parsed at the boundary and anything
   else is `400`. Embedded credentials are refused too: they would override the
   header the service injects and reach git's stderr.
+
+  The HOST is checked as well, and this is a security boundary rather than a
+  hygiene one: the bearer token authenticates a caller class, not a tenant,
+  and the `NetworkPolicy` restricts ingress only, so an unrestricted host
+  makes this service a probe of everything its pod can reach — the cloud
+  metadata endpoint, a cluster service by its short name, any address on the
+  pod network. Loopback, link-local, private, carrier-grade-NAT and
+  cluster-internal names are refused by default. `allowed_repo_hosts` names
+  the exceptions; a non-empty list is authoritative in both directions, so it
+  both admits a self-hosted vendor on a private range and refuses every public
+  host that is not on it. Names are judged, not resolved addresses: resolving
+  and then connecting is a race git would lose anyway, so the allowlist is the
+  control that actually holds.
 - `sha=<id>[,<id>…]`: optional explicit selection on `/v1/commits` and
   `/v1/file-changes`, taking full ids or hex prefixes between 7 characters and
   the length of an object id. A prefix selects every commit it matches; it is

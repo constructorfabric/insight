@@ -5,7 +5,16 @@ metadata:
   labels:
     {{- include "insight-git-cli-proxy.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  {{- /*
+    Exactly one writer, enforced rather than documented. The per-repository
+    locks, the LRU state and the single-flight map all live in ONE process, so
+    a second replica does not share them — it races the first one over the same
+    PVC. ReadWriteOnce does not prevent that: it admits many pods on one node.
+  */}}
+  {{- if ne (int .Values.replicaCount) 1 }}
+    {{- fail "replicaCount must be 1: cache locking is process-local, so a second replica corrupts the shared volume" }}
+  {{- end }}
+  replicas: 1
   strategy:
     # Recreate, not RollingUpdate: the cache PVC is ReadWriteOnce and the LRU /
     # lock state lives in one process, so the old pod must be gone before the

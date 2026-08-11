@@ -43,6 +43,12 @@ pub struct GearConfig {
     /// suite clones from local fixture repositories. No deployment sets it —
     /// the chart hard-codes `false`.
     pub allow_file_repos: bool,
+    /// Hosts this service may clone from. Empty keeps the built-in rules,
+    /// which refuse loopback, link-local, private and cluster-internal names —
+    /// without them a bearer-token holder can aim the proxy at anything the
+    /// pod can reach. Set it to reach a self-hosted vendor on a private range.
+    #[serde(default)]
+    pub allowed_repo_hosts: Vec<String>,
 }
 
 /// Manual `Debug` that never prints the token — the config is logged on boot
@@ -60,6 +66,7 @@ impl std::fmt::Debug for GearConfig {
             .field("heavy_ops_concurrency", &self.heavy_ops_concurrency)
             .field("ca_cert_path", &self.ca_cert_path)
             .field("allow_file_repos", &self.allow_file_repos)
+            .field("allowed_repo_hosts", &self.allowed_repo_hosts)
             .field("proxy_token", &"<redacted>")
             .finish()
     }
@@ -122,6 +129,7 @@ mod tests {
             proxy_token: "secret".to_owned(),
             ca_cert_path: String::new(),
             allow_file_repos: false,
+            allowed_repo_hosts: Vec::new(),
         }
     }
 

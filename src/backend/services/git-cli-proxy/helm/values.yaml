@@ -3,6 +3,9 @@
 # user. Two things enforce that — the NetworkPolicy below and the service's own
 # bearer token (`proxy_token` in the config Secret).
 
+# Must be 1. The chart refuses to render anything else: the per-repository
+# locks, the LRU state and the single-flight map live in one process, so a
+# second replica races the first over the same PVC rather than sharing it.
 replicaCount: 1
 
 podAnnotations: {}
@@ -32,6 +35,10 @@ persistence:
   storageClass: ""
   # Fixed mount path; the config's data_dir points here.
   mountPath: /app/data/repos
+  # ReadWriteOncePod is the accurate mode: cache locking is process-local, so
+  # exactly one POD may write this volume. Drop to ReadWriteOnce only on a
+  # cluster older than Kubernetes 1.27, where `replicaCount: 1` is the guard.
+  accessMode: ReadWriteOncePod
 
 cache:
   # Cache budget in bytes. Keep 10-15% below persistence.size — headroom for
@@ -49,6 +56,11 @@ cache:
   # PEM bundle for self-hosted origins behind a private CA. Empty = system
   # trust store (correct for the public clouds).
   caCertPath: ""
+  # Hosts this service may clone from. Empty keeps the built-in refusal of
+  # loopback, link-local, private and cluster-internal destinations — the
+  # service is otherwise a probe of anything its pod can reach, for anyone
+  # holding the bearer token. List hosts only to reach a self-hosted vendor.
+  allowedRepoHosts: []
 
 # CA bundle mounted for git's TLS verification. Set `secretName` to a Secret
 # holding `ca.pem` and point cache.caCertPath at the mounted file.

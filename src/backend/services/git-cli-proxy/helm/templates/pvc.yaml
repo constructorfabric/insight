@@ -12,10 +12,14 @@ metadata:
     helm.sh/resource-policy: keep
 spec:
   accessModes:
-    # ReadWriteOnce is load-bearing, not a default: the in-process locks, the
-    # LRU state and the single-flight map live in ONE process, so exactly one
-    # pod may write this volume (see replicaCount / strategy in deployment).
-    - ReadWriteOnce
+    # Load-bearing, not a default: the in-process locks, the LRU state and the
+    # single-flight map live in ONE process, so exactly one POD may write this
+    # volume. ReadWriteOnce only promises one NODE — two pods scheduled
+    # together would both mount it — so ReadWriteOncePod is the accurate mode
+    # where the cluster supports it (Kubernetes 1.27+). The chart still
+    # enforces `replicaCount: 1`, which is what protects a cluster too old for
+    # it.
+    - {{ .Values.persistence.accessMode | default "ReadWriteOncePod" }}
   resources:
     requests:
       storage: {{ required "persistence.size is required" .Values.persistence.size }}

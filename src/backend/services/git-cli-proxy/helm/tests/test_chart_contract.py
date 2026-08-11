@@ -2,8 +2,8 @@
 
 This is the first chart in the repo that carries a PersistentVolumeClaim, and
 its correctness rests on facts that are invisible in a diff: the cache volume
-is ReadWriteOnce and the process holds its locks in memory, so exactly one pod
-may ever bind it; the service is Airbyte-only, so its ingress must be closed by
+admits exactly one POD — ReadWriteOnce would admit many on one node — because
+the process holds its locks in memory; the service is Airbyte-only, so its ingress must be closed by
 default; and the byte budgets must render as integers, not as the scientific
 notation Helm produces for large YAML numbers (the service parses them as
 u64 and would refuse to boot).
@@ -42,16 +42,25 @@ def one(docs: list[dict], kind: str) -> dict:
 
 
 def test_cache_volume_is_single_writer():
-    """RWO + Recreate + one replica are one decision, not three."""
+    """One writer, enforced in three places that are one decision."""
     docs = render()
     pvc = one(docs, "PersistentVolumeClaim")
-    assert pvc["spec"]["accessModes"] == ["ReadWriteOnce"]
+    # ReadWriteOnce admits many pods on ONE node, which is not what the
+    # process-local locking needs; ReadWriteOncePod is the accurate promise.
+    assert pvc["spec"]["accessModes"] == ["ReadWriteOncePod"]
 
     deployment = one(docs, "Deployment")
     assert deployment["spec"]["replicas"] == 1, "in-memory locks admit one writer"
     assert deployment["spec"]["strategy"]["type"] == "Recreate", (
-        "a rolling update would have two pods racing for one RWO volume"
+        "a rolling update would have two pods racing for one volume"
     )
+
+
+def test_more_than_one_replica_refuses_to_render():
+    """A second replica does not share the cache; it races it."""
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        render(replicaCount="2")
+    assert "replicaCount must be 1" in raised.value.stderr
 
 
 def test_cache_survives_uninstall():

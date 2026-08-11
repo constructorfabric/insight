@@ -11,19 +11,30 @@ pub struct CloneUrl(String);
 /// Whether `file://` origins may be constructed. Off in every shipped
 /// configuration; the hermetic test suite clones from `file://` fixtures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CloneUrlPolicy {
+pub struct CloneUrlPolicy<'a> {
     pub allow_file: bool,
+    /// Hosts the operator has explicitly permitted. Empty means "only what the
+    /// built-in rules allow"; a non-empty list is authoritative and admits
+    /// hosts those rules would otherwise refuse, which is how a self-hosted
+    /// vendor on a private range is reached.
+    pub allowed_hosts: &'a [String],
 }
 
-impl CloneUrlPolicy {
+impl CloneUrlPolicy<'_> {
     #[must_use]
     pub const fn http_only() -> Self {
-        Self { allow_file: false }
+        Self {
+            allow_file: false,
+            allowed_hosts: &[],
+        }
     }
 
     #[must_use]
     pub const fn with_file_origins() -> Self {
-        Self { allow_file: true }
+        Self {
+            allow_file: true,
+            allowed_hosts: &[],
+        }
     }
 }
 
@@ -41,7 +52,19 @@ pub enum CloneUrlError {
     MissingAuthority,
     #[error("`repo` must not embed credentials")]
     Userinfo,
+    #[error("`repo` host `{0}` is not an origin this service may reach")]
+    ForbiddenHost(String),
 }
+
+/// Suffixes a pod's own resolver puts on names that only exist inside the
+/// cluster or the local link.
+const INTERNAL_SUFFIXES: [&str; 5] = [
+    ".local",
+    ".internal",
+    ".svc",
+    ".localhost",
+    ".home.arpa",
+];
 
 const HTTP: &str = "http://";
 const HTTPS: &str = "https://";
@@ -52,7 +75,7 @@ impl CloneUrl {
     ///
     /// [`CloneUrlError`] when the value is not an origin this service is
     /// willing to clone from.
-    pub fn parse(raw: &str, policy: CloneUrlPolicy) -> Result<Self, CloneUrlError> {
+    pub fn parse(raw: &str, policy: CloneUrlPolicy<'_>) -> Result<Self, CloneUrlError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             return Err(CloneUrlError::Empty);
@@ -90,12 +113,85 @@ impl CloneUrl {
             return Err(CloneUrlError::Userinfo);
         }
 
+        let name = hostname_of(host);
+        if !permitted_host(name, policy.allowed_hosts) {
+            return Err(CloneUrlError::ForbiddenHost(name.to_owned()));
+        }
+
         Ok(Self(trimmed.to_owned()))
     }
 
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+/// The host out of an authority, without its port or IPv6 brackets.
+fn hostname_of(authority: &str) -> &str {
+    if let Some(rest) = authority.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest);
+    }
+    authority.split(':').next().unwrap_or(authority)
+}
+
+/// Whether this service may open a connection to `host`.
+///
+/// The bearer token authenticates a caller CLASS, not a tenant, and the
+/// `NetworkPolicy` restricts ingress only — so without this the proxy is a
+/// general-purpose probe of anything its pod can reach: the cloud metadata
+/// endpoint on `169.254.169.254`, a cluster service by its short DNS name, or
+/// any address on the pod network. Names are judged, not resolved addresses:
+/// a resolve-then-connect check is a race git would lose anyway, and an
+/// operator allowlist is the control that actually holds.
+fn permitted_host(host: &str, allowed: &[String]) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    if !allowed.is_empty() {
+        return allowed
+            .iter()
+            .any(|entry| entry.eq_ignore_ascii_case(&host));
+    }
+
+    if let Ok(address) = host.parse::<std::net::IpAddr>() {
+        return is_public_address(address);
+    }
+
+    // A name with no dot is a cluster-internal service; the reserved suffixes
+    // are the ones Kubernetes and mDNS put on the pod's own resolver path.
+    if !host.contains('.') {
+        return false;
+    }
+    !INTERNAL_SUFFIXES
+        .iter()
+        .any(|suffix| host.ends_with(suffix))
+}
+
+/// Whether a literal address is outside every range that only ever names
+/// something inside the deployment.
+fn is_public_address(address: std::net::IpAddr) -> bool {
+    match address {
+        std::net::IpAddr::V4(v4) => {
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                // 100.64.0.0/10, the carrier-grade NAT range kubelets use.
+                || (v4.octets()[0] == 100 && (64..128).contains(&v4.octets()[1])))
+        }
+        std::net::IpAddr::V6(v6) => {
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                // fe80::/10 link-local and fc00::/7 unique-local.
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || (v6.segments()[0] & 0xfe00) == 0xfc00)
+        }
     }
 }
 
@@ -114,6 +210,57 @@ fn scheme_of(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refuses_every_destination_inside_the_deployment() {
+        // The bearer token authenticates a caller CLASS, not a tenant, and the
+        // NetworkPolicy restricts ingress only — so an unrestricted host turns
+        // this service into a probe of anything its pod can reach.
+        let cases = [
+            ("cloud metadata", "http://169.254.169.254/latest/meta-data/"),
+            ("loopback v4", "http://127.0.0.1:8080/a.git"),
+            ("loopback name", "https://localhost/a.git"),
+            ("loopback v6", "http://[::1]:8080/a.git"),
+            ("private 10/8", "https://10.1.2.3/a.git"),
+            ("private 172.16/12", "https://172.20.0.5/a.git"),
+            ("private 192.168/16", "https://192.168.1.10/a.git"),
+            ("carrier-grade NAT", "https://100.64.0.1/a.git"),
+            ("unique-local v6", "http://[fc00::1]/a.git"),
+            ("link-local v6", "http://[fe80::1]/a.git"),
+            ("unspecified", "http://0.0.0.0/a.git"),
+            ("cluster service", "http://clickhouse/a.git"),
+            ("cluster DNS", "http://svc.namespace.svc.cluster.local/a.git"),
+            ("mDNS", "http://printer.local/a.git"),
+        ];
+        for (name, raw) in cases {
+            match CloneUrl::parse(raw, CloneUrlPolicy::http_only()) {
+                Err(CloneUrlError::ForbiddenHost(_)) => {}
+                other => panic!("{name}: {raw:?} must be refused, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_operator_allowlist_is_authoritative_in_both_directions() {
+        let allowed = vec!["gitlab.internal.example".to_owned()];
+        let policy = CloneUrlPolicy {
+            allow_file: false,
+            allowed_hosts: &allowed,
+        };
+
+        // A self-hosted vendor the built-in rules would refuse is reachable
+        // once an operator names it.
+        assert!(
+            CloneUrl::parse("https://gitlab.internal.example/g/a.git", policy).is_ok(),
+            "an allowlisted host must be reachable"
+        );
+        // And a public host that is NOT on the list is refused, which is the
+        // point of setting one.
+        match CloneUrl::parse("https://github.com/o/a.git", policy) {
+            Err(CloneUrlError::ForbiddenHost(_)) => {}
+            other => panic!("a non-allowlisted host must be refused, got {other:?}"),
+        }
+    }
 
     #[test]
     fn accepts_http_and_https_case_insensitively() {

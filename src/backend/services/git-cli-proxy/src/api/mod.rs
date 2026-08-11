@@ -25,9 +25,10 @@ pub struct AppState {
 
 impl AppState {
     #[must_use]
-    pub fn clone_url_policy(&self) -> CloneUrlPolicy {
+    pub fn clone_url_policy(&self) -> CloneUrlPolicy<'_> {
         CloneUrlPolicy {
             allow_file: self.config.allow_file_repos,
+            allowed_hosts: &self.config.allowed_repo_hosts,
         }
     }
 }
@@ -299,6 +300,7 @@ mod tests {
         Arc::new(AppState {
             store: Arc::new(store),
             config: GearConfig {
+                allowed_repo_hosts: Vec::new(),
                 data_dir: data_dir.display().to_string(),
                 disk_budget_bytes: 1_000_000,
                 max_repo_bytes: 500_000,
