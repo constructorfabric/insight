@@ -18,7 +18,7 @@ date: 2026-08-06
   - [Consequences](#consequences)
   - [Confirmation](#confirmation)
 - [Pros and Cons of the Options](#pros-and-cons-of-the-options)
-  - [Option 1 — proportional allocation from `cost_report`](#option-1--proportional-allocation-from-costreport)
+  - [Option 1 — proportional allocation from the cost report](#option-1--proportional-allocation-from-the-cost-report)
   - [Option 2 — price card](#option-2--price-card)
   - [Option 3 — no per-person token cost](#option-3--no-per-person-token-cost)
 - [More Information](#more-information)
@@ -66,12 +66,20 @@ overage are read, not computed. Nothing in this ADR applies to them.
 **Option 2, the price card**, with `cost_report` retained as a reconciliation signal rather
 than a source, the card **versioned by date**, and rates resolvable **per tenant**.
 
-The two options are arithmetically identical, not merely close. Because
-`cost_report_amount = workspace_tokens × rate`, substituting into option 1 gives
+On comparable token rows the two options are arithmetically identical, not merely close.
+Restricted to `cost_type = 'tokens'` under one effective rate,
+`cost_report_amount = workspace_tokens × rate`, so substituting into option 1 gives
 `(key_tokens / workspace_tokens) × workspace_tokens × rate = key_tokens × rate`. The
 workspace total cancels. The card reaches the same number without depending on `cost_report`
 at all — and the effective per-token rate recovered from `cost_report` is observed to be
 constant across days and context tiers.
+
+The identity holds only within those preconditions. It does not extend to non-token charges
+(web search, code execution, session usage), nor to a tenant whose effective rate differs
+from the rate in force on the card — there the two options price the same tokens
+differently. Both bounds are stated below, in
+[Effective rates and negotiated discounts](#effective-rates-and-negotiated-discounts) and
+[Reconciliation scope](#reconciliation-scope).
 
 Three supporting mechanisms are adopted with it:
 
@@ -157,7 +165,7 @@ scope widens to match — symmetrically, never on one side only.
 
 ## Pros and Cons of the Options
 
-### Option 1 — proportional allocation from `cost_report`
+### Option 1 — proportional allocation from the cost report
 
 - Good: no reference data; the vendor's own total is the anchor, so a completed day cannot
   drift from the invoice.

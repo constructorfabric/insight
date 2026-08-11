@@ -177,7 +177,7 @@ expressible.
 Two platform properties bound how NFR-5 can be met. Data-quality checks read silver and gold
 only, never bronze, so a stream returning nothing cannot be observed at its source. And while
 every connector declares `freshness` thresholds on its bronze sources — Claude Team's are
-tuned per stream and annotated as verified on live data — no workflow, chart template or
+tuned per stream — no workflow, chart template or
 script runs `dbt source freshness`, so a stalled stream raises nothing on that path either.
 Visibility is therefore expressed as a silver invariant: activity in `class_ai_dev_usage`
 implies a `class_ai_overage` row for the same billing month, bounded to the current month
@@ -443,6 +443,10 @@ Per-event usage with `chargedCents` and `isChargeable`, keyed by user email.
    row, since the ratio has no denominator.
 3. `Sum` over the window adds whole months exactly; a partial window returns the month in
    full, never a fraction.
+4. The billing month is derived from the read, never declared by the vendor: the endpoint
+   reports period-to-date and resets at the boundary, so a month's value is as complete as
+   its last read before midnight. A fact's month and its read day therefore cannot disagree,
+   which is why the window filters on `metric_date` alone.
 
 ### 3.7 Database schemas & tables
 
@@ -532,6 +536,14 @@ seat fee, so that difference is a rounding artefact and not the money. The measu
 `used_amount_cents`. The column is left in place — it is the input to
 `ai.extra_usage_utilisation` and to the over-ceiling signal — but nothing sums it as cost.
 
+Monthly history lives in this class, not in bronze. The connector's `unique_key` carries no
+month, so the promoted bronze table — `ReplacingMergeTree(_airbyte_extracted_at)`
+`ORDER BY unique_key` — holds one row per seat, the current snapshot, and the staging
+projection extends that key with the month, as the platform rule for a version axis
+requires. A month therefore becomes durable the first time the pipeline runs inside it: a
+month with no run keeps no row and cannot be reconstructed later, the vendor exposing
+period-to-date only.
+
 #### `insight.ai_cost_metric_evidence` and `_observations`
 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-dbtable-metric-relations`
@@ -591,10 +603,10 @@ unit — the same path `ai.cost` already serves. Role-based cohorts arrive with 
 
 | Layer | Check |
 |---|---|
-| Silver | `not_null` on money, currency and `_version`; `accepted_values` on `billing_model`; no `unclassified` row reaching a person-grain model; `/check-dbt-conventions` passes for engine, `order_by`, `unique_key` |
+| Silver | `not_null` on money, currency and `_version`; `accepted_values` on `billing_model`; no `unclassified` row reaching a person-grain model; `/check-dbt-conventions` passes for engine, `order_by`, `unique_key`; activity in `class_ai_dev_usage` implies a `class_ai_overage` row for the same billing month (`assert_ai_overage_covers_active_seats`) |
 | Price card | no overlapping validity intervals for one resolution key; every `(model, token_type)` seen in usage has a rate in force; no `origin = 'derived'` row with `insight_tenant_id IS NULL` |
 | Evidence | standard-column probe healthy; `evidence_granularity` declared for every measure; `measure_key` in `schema.yml` `accepted_values` |
-| Gold | token cost is zero only when tokens are zero; a seat with no ceiling emits no utilisation row |
+| Gold | token cost is zero only when tokens are zero; a seat with no ceiling emits no utilisation row; every read of `class_ai_cost` and `class_ai_overage` keeps `FINAL`, and a retroactive feeder replacement resolves to the latest `_version` |
 | Registry | `cargo test -p analytics`; `passports.md` regenerated and committed |
 | Metric | one e2e per key: seed bronze → run pipeline → call `/v1/metric-results` → assert value, `null` on an empty window, dedup of a repeated bronze row |
 | Cross-model | a response never aggregates two billing models |

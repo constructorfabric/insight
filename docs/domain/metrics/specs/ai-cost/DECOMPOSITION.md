@@ -42,8 +42,8 @@ conflates two figures that arrive from different endpoints and differ by orders 
 | `total_cost`, `avg_cost_per_day` | `GET /api/claude_code/metrics_aggs/users` | person × day | consumption valued at the vendor's API rates — **not** overage. Already served as `ai.cost` |
 | `used_credits`, `monthly_credit_limit` | `GET /api/organizations/{org}/overage_spend_limits` | person × month | money billed above the usage included in the seat fee, and the admin-set ceiling on it |
 
-Measured on `insight-dev`: `total_cost` runs 13×–198× the same person's `used_credits` for
-the same month, and the ratio is not constant — `total_cost` values *all* consumption at API
+`total_cost` exceeds the same person's `used_credits` for the same month by one to two orders
+of magnitude, and the ratio is not constant — `total_cost` values *all* consumption at API
 rates, while `used_credits` counts only what is billed once the seat's included usage is
 exhausted. Phase 1 therefore delivers **both**, as separate metric keys that are never summed
 (FR-5).
@@ -54,7 +54,7 @@ wider than `data_collector` on two of four streams — our overage stream carrie
 which the reference does not persist, and our code-metrics stream carries thirteen fields
 against its eight. The real gaps are elsewhere:
 
-1. **Seat data reaches no client.** `class_ai_overage` holds 294 rows and has no metric key.
+1. **Seat data reaches no client.** `class_ai_overage` is populated and has no metric key.
 2. **Invoices are absent.** The only stream `data_collector` has and we do not — and the only
    source of a seat's base price.
 3. **Two facts stall inside our own pipeline**: `last_active` never leaves bronze, and rows
@@ -64,7 +64,7 @@ against its eight. The real gaps are elsewhere:
 unread, but they answer whether a pull request involved Claude Code — the subject of `#1660`,
 not of cost. No requirement here calls for them, and FR-9 forbids the per-PR cost figure they
 would invite. Recorded as a candidate for `#1660`; the vendor populates them only where
-Anthropic's GitHub app is connected, which no reachable tenant currently has.
+Anthropic's GitHub app is connected.
 
 **Decomposition strategy**:
 
@@ -184,10 +184,17 @@ incremental window against roughly 30-day vendor revisions.
   - `explanation` on each key states its billing model and that it is a monthly fact.
   - Regenerate `passports.md` with `analytics passports`.
   - `schema.yml` — `accepted_values` on `measure_key` for both new models.
-  - e2e `ai_seat_extra_usage.test.yaml`: seed bronze overage rows, run the pipeline, call the API,
-    assert the value, a null result on an empty window, no utilisation row where no ceiling
-    is set, and dedup of a repeated bronze row. One case asserts that `ai.extra_usage_cost` reads
-    `used_credits` and not the excess over the ceiling.
+  - `assert_ai_overage_covers_active_seats` — a dbt data test carrying the coverage
+    invariant: activity in `class_ai_dev_usage` for a billing month implies a
+    `class_ai_overage` row for the same month, evaluated at the current-month boundary.
+  - e2e `ai_seat_extra_usage.test.yaml`: seed one bronze snapshot per seat — all bronze can
+    hold, its key carrying no month — run the pipeline, call the API, assert the value, a null
+    result on an empty window, no utilisation row where no ceiling is set, and dedup of a
+    repeated bronze row. One case asserts that `ai.extra_usage_cost` reads `used_credits` and
+    not the excess over the ceiling.
+  - e2e `test_ai_seat_extra_usage_history.py`: drive the pipeline twice, replacing bronze
+    between runs as a sync does, and assert both billing months survive in
+    `class_ai_overage`. The declarative rig seeds once and cannot express a second sync.
 
 - **Out of scope**: `ai.seat_cost` and `ai.seat_underuse` — both land in 2.6.
 
@@ -250,9 +257,9 @@ incremental window against roughly 30-day vendor revisions.
 - **Scope**:
   - Invoice list through the proxy: `GET /api/stripe/{org_id}/invoices`. The response is a
     claude.ai wrapper carrying `total_excluding_tax`, `currency`, `status`, `created_ts`,
-    `num_seats` and `hosted_invoice_url` — but **no invoice id and no line items**. Measured
-    on `insight-dev`: 108 invoices over 2025-11..2026-08, all USD, 107 `paid` and 1 `void`;
-    `total` differs from `total_excluding_tax` on 98 of them.
+    `num_seats` and `hosted_invoice_url` — but **no invoice id and no line items**. `total`
+    differs from `total_excluding_tax` on most invoices, so the net-amount rule is the rule
+    rather than an edge case.
   - Enrichment via the Stripe hosted chain: derive the account and token pair from
     `hosted_invoice_url`, request the hosted invoice page for the real `invoice_id` and a
     short-lived ephemeral key, then request the full invoice with that key for the line
@@ -265,9 +272,9 @@ incremental window against roughly 30-day vendor revisions.
     A mixed invoice splits into two rows.
   - **The seat price is the line's `hosted_invoice_unit_amount`** — a monthly invoice states
     it directly, so nothing is divided. `quantity` is carried alongside as the seat count for
-    that tier. The wrapper's `num_seats` is read by nothing: it is populated on 9 of 108
-    invoices, and where it is populated it reports one line's quantity while the invoice
-    covers several tiers. Stored for provenance only. This is what makes the hosted chain
+    that tier. The wrapper's `num_seats` is read by nothing: it is sparsely populated, and
+    where it is populated it reports one line's quantity while the invoice covers several
+    tiers. Stored for provenance only. This is what makes the hosted chain
     mandatory rather than an enrichment: without line items there is no seat price at all,
     and 2.6 has no input.
   - **A tier is part of the grain.** One invoice prices several tiers at once — Standard at

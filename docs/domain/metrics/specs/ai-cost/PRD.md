@@ -32,6 +32,11 @@ exist, and what each may and may not claim. Realised by [DESIGN.md](DESIGN.md) a
   - [7.1 Public API Surface](#71-public-api-surface)
   - [7.2 External Integration Contracts](#72-external-integration-contracts)
 - [8. Use Cases](#8-use-cases)
+  - [UC-1 — A lead finds wasted seats](#uc-1--a-lead-finds-wasted-seats)
+  - [UC-2 — A lead explains an unexpected bill](#uc-2--a-lead-explains-an-unexpected-bill)
+  - [UC-3 — Finance compares consumption against spend](#uc-3--finance-compares-consumption-against-spend)
+  - [UC-4 — An engineer checks their own consumption](#uc-4--an-engineer-checks-their-own-consumption)
+  - [UC-5 — A tenant on negotiated rates](#uc-5--a-tenant-on-negotiated-rates)
 - [9. Acceptance Criteria](#9-acceptance-criteria)
 - [10. Dependencies](#10-dependencies)
 - [11. Assumptions](#11-assumptions)
@@ -61,11 +66,11 @@ that are routinely conflated:
 Today one metric exists, `ai.cost`, which is the first layer only. Its own description says
 so: consumption priced at vendor rates, including usage a seat already covered, excluding
 seat fees — *"not the amount invoiced"*. A reader who assumes it is the bill will be wrong by
-an order of magnitude: on `insight-dev` a person's usage-priced figure runs 13× to 198× their
-consumed seat credits.
+an order of magnitude: a person's usage-priced figure can exceed their consumed seat credits
+by one to two orders, and the ratio is not constant.
 
-The second layer exists in silver (`class_ai_overage`, 294 rows) but reaches no client,
-because it has no metric key. The third does not exist.
+The second layer exists in silver (`class_ai_overage`) but reaches no client, because it has
+no metric key. The third does not exist.
 
 ### 1.3 Goals (Business Outcomes)
 
@@ -252,8 +257,8 @@ comparable line items only, and divergence beyond tolerance raises a data-qualit
 Extra usage and its ceiling are exposed as metric keys over `class_ai_overage`. **Extra usage
 is `used_credits` itself** — the vendor bills it only once a seat has exhausted the usage
 included in its fee — not the excess over `credit_limit_cents`, which is an enforced cap on
-that spend rather than the included allowance. Measured on `insight-dev`, the two differ by a
-factor of 61 for the same month.
+that spend rather than the included allowance. The two differ by orders of magnitude over the
+same month.
 
 Their grain is **person × month** and they are **not pro-rated**: a seat's month is a fact
 about that month, not a rate to be sliced. A window covering whole months returns their sum;
@@ -424,7 +429,7 @@ Per-event usage including `chargedCents` and the `isChargeable` flag, keyed by u
 
 ## 8. Use Cases
 
-#### UC-1 — A lead finds wasted seats
+### UC-1 — A lead finds wasted seats
 
 - [ ] `p2` - **ID**: `cpt-insightspec-aicost-usecase-a-lead-finds-wasted-seats`
 
@@ -438,7 +443,7 @@ seat is idle when it is simply not tracked.
 seat is to the ceiling that would block it. A low ratio is not waste: the room under a
 ceiling was never purchased.
 
-#### UC-2 — A lead explains an unexpected bill
+### UC-2 — A lead explains an unexpected bill
 
 - [ ] `p2` - **ID**: `cpt-insightspec-aicost-usecase-a-lead-explains-an-unexpected-bill`
 
@@ -446,7 +451,7 @@ Extra usage appeared on the invoice. `ai.extra_usage_cost` per person per month 
 beyond the usage included in their seat fee, and how much; `seat_tier` as a dimension shows
 whether the tier itself is set correctly for that person.
 
-#### UC-3 — Finance compares consumption against spend
+### UC-3 — Finance compares consumption against spend
 
 - [ ] `p2` - **ID**: `cpt-insightspec-aicost-usecase-finance-compares-consumption-against-spend`
 
@@ -455,14 +460,14 @@ Finance compares `ai.cost` (what the consumption is worth at vendor rates) again
 three are distinct keys, no view sums them; because each states its billing model, the
 comparison is legible rather than misleading.
 
-#### UC-4 — An engineer checks their own consumption
+### UC-4 — An engineer checks their own consumption
 
 - [ ] `p2` - **ID**: `cpt-insightspec-aicost-usecase-an-engineer-checks-their-own-consumption`
 
 An engineer requests their own person figures for the current period and sees where they sit
 in their org unit's distribution — the same peer path `ai.cost` already provides.
 
-#### UC-5 — A tenant on negotiated rates
+### UC-5 — A tenant on negotiated rates
 
 - [ ] `p2` - **ID**: `cpt-insightspec-aicost-usecase-a-tenant-on-negotiated-rates`
 
@@ -513,7 +518,7 @@ list prices, and no other tenant is affected.
    a validity interval. ADR-0003 states the conditions, the tenant-scoped fallback, and the
    reconciliation step that detects a violation.
 2. Money fields from `overage_spend_limits` are already minor units — asserted in the
-   connector schema and consistent with observed data (`10000` ⇒ $100.00).
+   connector schema and consistent with the vendor's documented model (`10000` ⇒ $100.00).
 3. Identity Resolution resolves `api_key_id` to a person for keys carrying per-developer
    ownership; keys that do not remain unattributed rather than being spread.
 4. The set of billing-model classifications is closed enough to enumerate; an unrecognised
