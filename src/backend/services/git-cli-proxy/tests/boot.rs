@@ -1341,3 +1341,80 @@ async fn a_copied_file_reports_the_status_the_contract_lists() -> R {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_deleted_index_changes_nothing_a_caller_can_see() -> R {
+    // The index is a cache of the two whole-history walks, and the walks stay
+    // as the fallback. Deleting it mid-flight must leave the response
+    // byte-identical — otherwise a failed index build would silently change
+    // what bronze receives.
+    let server = spawn_server("index-fallback", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = fixture_origin(&server.dir)?;
+
+    let indexed_commits = get_json(server.port, "/v1/commits", &repo).await?;
+    let indexed_changes = get_json(server.port, "/v1/file-changes", &repo).await?;
+
+    let mut removed = 0;
+    for entry in std::fs::read_dir(server.dir.join("data").join("repos"))? {
+        let info = entry?.path().join("repo.git").join("info");
+        let Ok(files) = std::fs::read_dir(&info) else {
+            continue;
+        };
+        for file in files.flatten() {
+            if file.file_name().to_string_lossy().starts_with("page-index-") {
+                std::fs::remove_file(file.path())?;
+                removed += 1;
+            }
+        }
+    }
+    assert!(removed > 0, "the clone must have built an index to delete");
+
+    let walked_commits = get_json(server.port, "/v1/commits", &repo).await?;
+    let walked_changes = get_json(server.port, "/v1/file-changes", &repo).await?;
+    assert_eq!(indexed_commits, walked_commits, "commits must not depend on the index");
+    assert_eq!(indexed_changes, walked_changes, "file changes must not depend on the index");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_index_is_what_a_page_actually_reads() -> R {
+    // The fallback test proves deleting the index changes nothing; this one
+    // proves the index is not dead weight. A row removed from a VALID index
+    // must disappear from the response — if it did not, every page would be
+    // silently paying the whole-history walk the index exists to remove.
+    let server = spawn_server("index-live", TOKEN)?;
+    wait_healthy(server.port).await?;
+    let repo = fixture_origin(&server.dir)?;
+
+    let before = get_json(server.port, "/v1/commits", &repo).await?;
+    let full = before["items"].as_array().ok_or("no items")?.len();
+    assert!(full >= 2, "the fixture must have at least two commits");
+
+    let mut clipped = 0;
+    for entry in std::fs::read_dir(server.dir.join("data").join("repos"))? {
+        let info = entry?.path().join("repo.git").join("info");
+        let Ok(files) = std::fs::read_dir(&info) else {
+            continue;
+        };
+        for file in files.flatten() {
+            if !file.file_name().to_string_lossy().starts_with("page-index-") {
+                continue;
+            }
+            let text = std::fs::read_to_string(file.path())?;
+            let mut lines: Vec<&str> = text.lines().collect();
+            lines.pop();
+            std::fs::write(file.path(), lines.join("\n") + "\n")?;
+            clipped += 1;
+        }
+    }
+    assert!(clipped > 0, "there must have been an index to clip");
+
+    let after = get_json(server.port, "/v1/commits", &repo).await?;
+    assert_eq!(
+        after["items"].as_array().ok_or("no items")?.len(),
+        full - 1,
+        "a clipped index must clip the response, or the index is not being read"
+    );
+    Ok(())
+}

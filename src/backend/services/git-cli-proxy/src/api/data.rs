@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -139,15 +139,8 @@ pub async fn list_commits(
         let selected = selected.as_ref();
         Box::pin(async move {
             let runner = state.store.runner();
-            let all =
-                commits::enumerate(state.store.runner(), guard.git_dir(), &context.creds).await?;
-            let all = commits::retain_keys_since(all, since);
-            let (keys, cursor) = read::slice_page(
-                retain_selected(all, selected, |key| &key.sha),
-                paging.token.as_ref(),
-                paging.page_size,
-                |key| (key.ordinal.clone(), key.sha.clone()),
-            );
+            let (keys, cursor, indexed_membership) =
+                page_of_keys(state, &guard, context, paging, since, selected, true).await?;
 
             let shas: Vec<String> = keys.iter().map(|key| key.sha.clone()).collect();
             // Only the page's own commits are read in full: a header carries
@@ -162,9 +155,18 @@ pub async fn list_commits(
 
             let file_stats =
                 numstat::totals(runner, guard.git_dir(), &shas, &context.creds).await?;
-            let in_default =
-                commits::default_branch_membership(runner, guard.git_dir(), &shas, &context.creds)
-                    .await?;
+            let in_default = match indexed_membership {
+                Some(membership) => membership,
+                None => {
+                    commits::default_branch_membership(
+                        runner,
+                        guard.git_dir(),
+                        &shas,
+                        &context.creds,
+                    )
+                    .await?
+                }
+            };
             let ids = commits::patch_ids(runner, guard.git_dir(), &shas, &context.creds).await?;
 
             let items = window
@@ -224,18 +226,9 @@ pub async fn list_file_changes(
         let selected = selected.as_ref();
         Box::pin(async move {
             let runner = state.store.runner();
-            let all =
-                commits::enumerate(state.store.runner(), guard.git_dir(), &context.creds).await?;
-            let all = commits::retain_keys_since(all, since);
             // Parity with the CDK connectors: merge commits contribute no file rows.
-            let non_merge: Vec<commits::CommitKey> = retain_selected(all, selected, |key| &key.sha)
-                .into_iter()
-                .filter(|key| !key.is_merge())
-                .collect();
-            let (window, cursor) =
-                read::slice_page(non_merge, paging.token.as_ref(), paging.page_size, |key| {
-                    (key.ordinal.clone(), key.sha.clone())
-                });
+            let (window, cursor, _membership) =
+                page_of_keys(state, &guard, context, paging, since, selected, false).await?;
 
             let shas: Vec<String> = window.iter().map(|key| key.sha.clone()).collect();
             state
@@ -399,6 +392,73 @@ pub async fn list_branches(
     .await?;
 
     json_page(BranchesPage::from(page)).await
+}
+
+/// One page of commit keys, its cursor, and — when the index answered — the
+/// page's default-branch membership.
+///
+/// The index is a per-generation cache of the two whole-history walks; the
+/// walks stay as the fallback so an entry cloned before indexes existed, or
+/// one whose build failed, serves correctly at the old cost. Both paths MUST
+/// apply the same filters in the same order — the parity test in
+/// `engine::read` is what holds them together.
+async fn page_of_keys(
+    state: &Arc<AppState>,
+    guard: &RepoGuard,
+    context: &RequestContext,
+    paging: &Paging,
+    since: Option<&str>,
+    selected: Option<&ShaFilter>,
+    merges: bool,
+) -> Result<
+    (
+        Vec<commits::CommitKey>,
+        Option<(String, String)>,
+        Option<HashSet<String>>,
+    ),
+    ApiError,
+> {
+    let query = crate::engine::index::PageQuery {
+        since_epoch: since.and_then(commits::parse_instant),
+        after: paging.token.clone(),
+        page_size: paging.page_size,
+        merges,
+        sha_prefixes: selected.map(ShaFilter::prefixes),
+    };
+    let git_dir = guard.git_dir().to_path_buf();
+    let generation = guard.generation();
+    let indexed = tokio::task::spawn_blocking(move || {
+        crate::engine::index::read_page(&git_dir, generation, &query)
+    })
+    .await
+    .map_err(|e| ApiError::Store(StoreError::Io(std::io::Error::other(e))))?;
+
+    match indexed {
+        Ok(Some((rows, cursor))) => {
+            let membership = crate::engine::index::membership_of(&rows);
+            let keys = rows.into_iter().map(|row| row.key).collect();
+            return Ok((keys, cursor, Some(membership)));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            // A corrupt index must not take the endpoint down with it; the
+            // walk still knows the truth.
+            tracing::warn!(error = %e, "page index unreadable; falling back to the live walk");
+        }
+    }
+
+    let all = commits::enumerate(state.store.runner(), guard.git_dir(), &context.creds).await?;
+    let all = commits::retain_keys_since(all, since);
+    let all = retain_selected(all, selected, |key| &key.sha);
+    let all: Vec<commits::CommitKey> = if merges {
+        all
+    } else {
+        all.into_iter().filter(|key| !key.is_merge()).collect()
+    };
+    let (keys, cursor) = read::slice_page(all, paging.token.as_ref(), paging.page_size, |key| {
+        (key.ordinal.clone(), key.sha.clone())
+    });
+    Ok((keys, cursor, None))
 }
 
 /// Read one page from a snapshot, healing an entry whose origin refuses to

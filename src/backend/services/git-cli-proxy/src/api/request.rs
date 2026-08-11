@@ -75,6 +75,13 @@ impl ShaFilter {
         let sha = sha.to_ascii_lowercase();
         self.prefixes.iter().any(|prefix| sha.starts_with(prefix))
     }
+
+    /// The lowercase prefixes, for the index reader, whose query type cannot
+    /// carry a borrow into `spawn_blocking`.
+    #[must_use]
+    pub fn prefixes(&self) -> Vec<String> {
+        self.prefixes.clone()
+    }
 }
 
 /// Parse the optional `sha` query parameter.

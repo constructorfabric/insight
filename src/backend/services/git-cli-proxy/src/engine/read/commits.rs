@@ -216,7 +216,7 @@ pub async fn headers_for(
 /// (`%cI`) or a `Z` suffix. `None` for anything else — an unparseable bound
 /// filters nothing, and an unparseable row is kept rather than silently
 /// dropped.
-fn parse_instant(raw: &str) -> Option<i64> {
+pub(crate) fn parse_instant(raw: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(raw.trim())
         .ok()
         .map(|at| at.timestamp())
@@ -274,6 +274,41 @@ pub async fn default_branch_membership(
 
     let listing = String::from_utf8_lossy(&output.stdout);
     Ok(intersect_rev_list(&listing, shas))
+}
+
+/// Every sha reachable from the default branch — the index-build shape, run
+/// once per generation under the write lock, where the page-intersected form
+/// above runs per page. Same dangling-`HEAD` tolerance.
+///
+/// # Errors
+///
+/// [`GitError`] when the git invocation fails.
+pub async fn default_branch_commits(
+    runner: &GitRunner,
+    git_dir: &Path,
+    creds: &GitCredentials,
+) -> Result<HashSet<String>, GitError> {
+    let Some(default) = super::branches::default_branch(runner, git_dir).await? else {
+        return Ok(HashSet::new());
+    };
+    let reference = format!("refs/heads/{default}");
+    if runner
+        .run(
+            Some(git_dir),
+            &["rev-parse", "--verify", "--quiet", &reference],
+            None,
+        )
+        .await
+        .is_err()
+    {
+        return Ok(HashSet::new());
+    }
+
+    let output = runner
+        .run(Some(git_dir), &["rev-list", &reference, "--"], Some(creds))
+        .await?;
+    let listing = String::from_utf8_lossy(&output.stdout);
+    Ok(listing.lines().map(|line| line.trim().to_owned()).collect())
 }
 
 /// The `shas` present in a `rev-list` listing. Streams the listing against the

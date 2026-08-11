@@ -434,6 +434,17 @@ nowhere else:
   INSTANT: `%cI` carries the committer's own UTC offset, so two commits from
   different time zones do not compare correctly as text, and both the walk and
   the served window normalise before ordering.
+- **The page index.** Every page needs whole history in walk order — `since`
+  is a predicate, not a traversal cutoff — and at a million commits the two
+  whole-history walks cost ~9 s and hundreds of megabytes per page. They run
+  ONCE per generation instead: clone, fetch and promotion write
+  `repo.git/info/page-index-<generation>` — rows sorted by `(ordinal, sha)`
+  with parent counts and the default-branch membership bit — and a page
+  streams it (~0.2 s, page-sized memory, measured at 1M commits). The
+  generation IS the invalidation: the file lives inside the entry, superseded
+  generations are deleted by the next build, and a page finding no index falls
+  back to the live walks — a pre-index entry or a failed build costs the old
+  performance, never correctness.
 - **Snapshot pinning.** The generation and incarnation in the token bind a
   page sequence to one ref snapshot: a request that carries a token **never
   refreshes refs** (it is served from that generation, whatever the staleness

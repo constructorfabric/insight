@@ -551,6 +551,12 @@ impl RepoStore {
         std::fs::create_dir_all(entry_dir).map_err(GitError::Io)?;
         std::fs::rename(&tmp, git_dir).map_err(GitError::Io)?;
 
+        self.build_page_index(git_dir, 1, creds).await;
+        // The sizes were measured before the index existed; fold in its own
+        // length rather than paying a second whole-tree walk. The index is
+        // part of the skeleton: a blob purge keeps it.
+        let cloned_bytes = cloned_bytes + index_len(git_dir, 1);
+
         let now = now_epoch_s();
         let meta = RepoMeta {
             clone_url: key.clone_url.as_str().to_owned(),
@@ -640,6 +646,15 @@ impl RepoStore {
             (Some(meta), true) => meta.generation,
             (previous, _) => previous.as_ref().map_or(0, |m| m.generation) + 1,
         };
+
+        // A no-op fetch keeps its generation and normally its index too; the
+        // exception is an entry cloned before indexes existed, which upgrades
+        // here instead of walking history on every page forever.
+        if !unchanged || !super::index::index_path(git_dir, generation).is_file() {
+            self.build_page_index(git_dir, generation, creds).await;
+        }
+        let fetched_bytes = fetched_bytes + index_len(git_dir, generation);
+
         let meta = RepoMeta {
             clone_url: key.clone_url.as_str().to_owned(),
             tenant_id: key.tenant_id.clone(),
@@ -754,6 +769,8 @@ impl RepoStore {
 
         let now = now_epoch_s();
         let generation = RepoMeta::load(&entry_dir).map_or(0, |m| m.generation) + 1;
+        self.build_page_index(&git_dir, generation, creds).await;
+        let promoted_bytes = promoted_bytes + index_len(&git_dir, generation);
         let meta = RepoMeta {
             clone_url: key.clone_url.as_str().to_owned(),
             tenant_id: key.tenant_id.clone(),
@@ -1127,6 +1144,43 @@ impl RepoStore {
         }
     }
 
+    /// Build generation `generation`'s page index: both whole-history walks,
+    /// run ONCE, so no page ever pays them again.
+    ///
+    /// Called with the entry's write lock held, after the refs are final and
+    /// before the metadata that names the generation is published — a crash in
+    /// between strands a file the next successful build deletes. Best-effort
+    /// by design: a page finding no index falls back to the live walks, so a
+    /// failed build costs the old performance, never correctness.
+    async fn build_page_index(&self, git_dir: &Path, generation: u64, creds: &GitCredentials) {
+        let built: Result<(), GitError> = async {
+            let keys =
+                crate::engine::read::commits::enumerate(&self.runner, git_dir, creds).await?;
+            let in_default =
+                crate::engine::read::commits::default_branch_commits(&self.runner, git_dir, creds)
+                    .await?;
+
+            let rows: Vec<super::index::IndexRow> = keys
+                .into_iter()
+                .map(|key| super::index::IndexRow {
+                    in_default_branch: in_default.contains(&key.sha),
+                    key,
+                })
+                .collect();
+
+            let git_dir = git_dir.to_path_buf();
+            tokio::task::spawn_blocking(move || super::index::write(&git_dir, generation, &rows))
+                .await
+                .map_err(|e| GitError::Io(std::io::Error::other(e)))?
+                .map_err(GitError::Io)
+        }
+        .await;
+
+        if let Err(e) = built {
+            tracing::warn!(error = %e, generation, "page index build failed; pages fall back to the live walk");
+        }
+    }
+
     /// Point the mirror's `HEAD` at whatever origin now advertises.
     ///
     /// A fetch does not move `HEAD`, so a default-branch rename at origin
@@ -1271,6 +1325,12 @@ impl RepoStore {
     pub async fn used_bytes(&self) -> u64 {
         self.candidates().await.iter().map(|c| c.size_bytes).sum()
     }
+}
+
+/// The on-disk length of generation `generation`'s page index, zero when the
+/// build failed and left none.
+fn index_len(git_dir: &Path, generation: u64) -> u64 {
+    std::fs::metadata(super::index::index_path(git_dir, generation)).map_or(0, |m| m.len())
 }
 
 /// Walk a tree's size off the reactor.
@@ -1609,13 +1669,13 @@ pub(crate) mod tests {
         }
     }
 
-    fn refresh() -> Freshness {
+    pub(crate) fn refresh() -> Freshness {
         Freshness::Refresh {
             max_staleness: Duration::from_mins(5),
         }
     }
 
-    fn always_fetch() -> Freshness {
+    pub(crate) fn always_fetch() -> Freshness {
         Freshness::Refresh {
             max_staleness: Duration::ZERO,
         }
@@ -1979,6 +2039,62 @@ pub(crate) mod tests {
         assert!(
             entry_dir.join("repo.git").is_dir(),
             "a healthy warm entry must survive its own leftover blobs"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_noop_fetch_rebuilds_a_missing_index() {
+        // The upgrade path for entries cloned before indexes existed, and the
+        // self-heal for a build that failed: the next fetch notices the file
+        // is gone even when the refs did not move.
+        let f = fixture("index-upgrade");
+        let k = key(&f);
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        let path = super::super::index::index_path(guard.git_dir(), guard.generation());
+        assert!(path.is_file(), "the clone must have built an index");
+
+        if let Err(e) = std::fs::remove_file(&path) {
+            panic!("stage: {e}");
+        }
+        drop(guard);
+
+        let guard = open_until_ready(&f, &k, always_fetch()).await;
+        assert!(
+            super::super::index::index_path(guard.git_dir(), guard.generation()).is_file(),
+            "a fetch that moved nothing must still replace a missing index"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_index_is_counted_by_the_entry_accounting() {
+        let f = fixture("index-accounting");
+        let k = key(&f);
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        let path = super::super::index::index_path(guard.git_dir(), guard.generation());
+        let index_bytes = match std::fs::metadata(&path) {
+            Ok(m) => m.len(),
+            Err(e) => panic!("index must exist: {e}"),
+        };
+        assert!(index_bytes > 0);
+
+        let Some(meta) = RepoMeta::load(&f.store.entry_dir(&k)) else {
+            panic!("meta must exist")
+        };
+        let measured = dir_size(guard.git_dir());
+        assert!(
+            meta.size_bytes >= measured.min(meta.size_bytes),
+            "sanity"
+        );
+        assert!(
+            meta.size_bytes >= index_bytes,
+            "the published size must include the index: {} vs index {index_bytes}",
+            meta.size_bytes
+        );
+        assert!(
+            meta.size_bytes + 4096 >= measured,
+            "the published size must not understate the disk by more than noise: \
+             published {} vs measured {measured}",
+            meta.size_bytes
         );
     }
 

@@ -386,7 +386,7 @@ it after any Builder round-trip.
 
 | 11 | Review follow-through: page tokens carry the clone's incarnation so a cursor cannot survive an eviction and re-clone, object ids accepted at SHA-256 length, commit fields separated by a byte git cannot put inside an ident, admission reserving the headroom it grants, metadata that cannot be published invalidating its entry, copy detection requested so `copied` can actually be emitted, `sha` prefixes bounded above, and a served window ordered by instant | `src/…/engine/{store,meta,page,read/commits}.rs`, `src/…/api/*` |
 
-Quality: 192 Rust tests, clippy clean (pedantic, `-D warnings`), 19 Helm
+Quality: 201 Rust tests, clippy clean (pedantic, `-D warnings`), 19 Helm
 render-contract assertions, connector wiring guard green, the committed
 OpenAPI document matching its drift gate.
 
@@ -678,26 +678,34 @@ cap far sooner.
   could be reclaimed. `git_proxy_disk_used_bytes` against
   `git_proxy_disk_budget_bytes` shows how much headroom is left.
 
-### 9.12 Enumeration cache — measured, and rejected
+### 9.12 Enumeration cache — rejected at 50k, reversed at 1M
 
 Applying `since` as a predicate means every page enumerates whole history.
-Snapshot pinning makes that walk immutable per `(entry, generation)`, so
-caching it looked like the obvious follow-up. Measured on a synthetic
-50k-commit repository before building it: the keys-only walk is ~0.25 s and
-~5 MB; the per-page window work around it (blob prefetch over the network,
-patch and numstat reads) dwarfs it. In steady state an incremental sync with
-the default lookback yields about one page, so a cache saves nothing; on a
-backfill it saves tens of seconds once, against a clone and blob transfer
-measured in minutes. What a cache costs is a stateful component in a
-deliberately stateless service (DD-GP-02) with real coherence obligations —
-it must be invalidated on eviction, re-clone and promotion, or it serves a
-previous incarnation's history.
+The first measurement, on a synthetic 50k-commit repository, said no: the
+keys-only walk was ~0.25 s and ~5 MB, dwarfed by the window work around it,
+and the note here ended "revisit only with new numbers".
 
-Not built. What WAS kept from the same investigation is the walk/window
-split in phase 9: the whole-history pass now reads ~100 bytes per commit
-instead of full messages, which bounds per-page memory regardless of any
-cache. Revisit only if paging shows up slow against a measured repository,
-and bring these numbers.
+The new numbers arrived when million-commit repositories became a target
+rather than an outlier. Measured on a synthetic 1M-commit repository: the
+enumeration walk is ~5 s and 103 MB of git output (~350 MB parsed), the
+membership `rev-list` another ~4 s and 39 MB — per page, identically repeated
+for every page. A backfill of ~1000 pages per endpoint spends ~5 hours
+re-deriving the same sorted list, and three concurrent streams put ~1 GB of
+transient memory on the pod.
+
+Built as the **per-generation page index**: both walks run once, under the
+write lock that clone/fetch/promotion already hold, and the result — rows
+sorted by `(ordinal, sha)` with parent counts and the default-branch
+membership bit — is written to `repo.git/info/page-index-<generation>`.
+Measured at 1M commits: ~13 s to build once per generation, ~93 MB on disk,
+~0.2 s and page-sized memory per page after that. The coherence obligations
+that made a cache unattractive are answered structurally rather than with
+invalidation logic: the file lives inside the entry (evicted with it,
+measured by its size accounting), is named by the generation a page is
+already pinned to, and superseded generations are deleted by the next build.
+A page finding no index falls back to the live walks, so a pre-index entry or
+a failed build costs the old performance, never correctness — and the parity
+test in `engine::read` holds the two paths to byte-identical output.
 
 ## 10. Deliberately out of scope
 

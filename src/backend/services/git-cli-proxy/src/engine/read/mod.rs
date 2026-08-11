@@ -133,9 +133,11 @@ mod live_tests {
     use std::time::Duration;
 
     use crate::engine::store::Freshness;
-    use crate::engine::store::tests::{creds, fixture, key, open_until_ready, sh};
+    use crate::engine::store::tests::{always_fetch, creds, fixture, key, open_until_ready, sh};
 
-    use super::{blobs, branches, commits, numstat, patches};
+    use super::{blobs, branches, commits, numstat, patches, slice_page};
+    use crate::engine::page::PageToken;
+    use crate::engine::read::commits::CommitKey;
 
     fn refresh() -> Freshness {
         Freshness::Refresh {
@@ -316,6 +318,163 @@ mod live_tests {
                 files.iter().filter_map(|f| f.additions).sum::<u64>(),
                 "sha {sha}"
             );
+        }
+    }
+
+    /// The load-bearing test of the whole index design: for every filter
+    /// combination the endpoints use, paging through the index and paging
+    /// through the live walks must produce byte-identical sequences. Any
+    /// daylight between them is a correctness bug the fallback would let ship
+    /// silently.
+    #[tokio::test]
+    async fn the_index_and_the_live_walk_agree_page_by_page() {
+        let f = fixture("index-parity");
+        // Mixed offsets (the ordering trap), a merge (the filter trap), and a
+        // side branch (the membership trap).
+        sh(
+            &f.root.join("origin"),
+            "GIT_AUTHOR_DATE='2026-08-02T10:00:00+0200' GIT_COMMITTER_DATE='2026-08-02T10:00:00+0200' \
+               sh -c 'echo p > p.txt && git add p.txt && git commit -qm plus-offset' && \
+             git checkout -q -b side && \
+             GIT_AUTHOR_DATE='2026-08-03T09:30:00+0000' GIT_COMMITTER_DATE='2026-08-03T09:30:00+0000' \
+               sh -c 'echo s > s.txt && git add s.txt && git commit -qm on-side' && \
+             git checkout -q main && \
+             GIT_AUTHOR_DATE='2026-08-03T00:00:00+0000' GIT_COMMITTER_DATE='2026-08-03T00:00:00+0000' \
+               sh -c 'echo b > b.txt && git add b.txt && git commit -qm exactly-at-the-bound' && \
+             GIT_AUTHOR_DATE='2026-08-03T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-03T10:00:00+0000' \
+               sh -c 'echo m > m.txt && git add m.txt && git commit -qm mainline' && \
+             GIT_AUTHOR_DATE='2026-08-04T10:00:00+0000' GIT_COMMITTER_DATE='2026-08-04T10:00:00+0000' \
+               git merge -q --no-ff -m merged side",
+        );
+
+        let k = key(&f);
+        let guard = open_until_ready(&f, &k, always_fetch()).await;
+        let runner = f.store.runner();
+        let git_dir = guard.git_dir();
+        assert!(
+            crate::engine::index::index_path(git_dir, guard.generation()).is_file(),
+            "the fetch must have built an index"
+        );
+
+        let all = match commits::enumerate(runner, git_dir, &creds()).await {
+            Ok(keys) => keys,
+            Err(e) => panic!("enumerate: {e}"),
+        };
+        let prefix = all[0].sha[..8].to_owned();
+
+        let scenarios: Vec<ParityScenario> = vec![
+            ("everything", None, true, None),
+            ("no merges", None, false, None),
+            ("since mid-walk", Some("2026-08-03T00:00:00Z"), true, None),
+            ("sha filter", None, true, Some(vec![prefix.clone()])),
+        ];
+
+        for (name, since, merges, prefixes) in scenarios {
+            let expected = page_all_by_walk(&all, since, merges, prefixes.as_ref());
+            let indexed =
+                page_all_by_index(git_dir, guard.generation(), since, merges, prefixes.as_ref());
+            assert_eq!(indexed, expected, "case {name}: the paths must agree");
+            assert!(
+                !expected.is_empty(),
+                "case {name}: a vacuous case proves nothing"
+            );
+        }
+
+        // Membership parity: the index bit against the live rev-list, over
+        // every commit at once.
+        let shas: Vec<String> = all.iter().map(|key| key.sha.clone()).collect();
+        let live = match commits::default_branch_membership(runner, git_dir, &shas, &creds()).await
+        {
+            Ok(set) => set,
+            Err(e) => panic!("membership: {e}"),
+        };
+        let query = crate::engine::index::PageQuery {
+            since_epoch: None,
+            after: None,
+            page_size: usize::MAX,
+            merges: true,
+            sha_prefixes: None,
+        };
+        let Ok(Some((rows, _))) =
+            crate::engine::index::read_page(git_dir, guard.generation(), &query)
+        else {
+            panic!("the index must answer")
+        };
+        assert_eq!(
+            crate::engine::index::membership_of(&rows),
+            live,
+            "the recorded membership must equal the live rev-list"
+        );
+    }
+
+    type ParityScenario = (&'static str, Option<&'static str>, bool, Option<Vec<String>>);
+
+    /// The fallback path's pagination, applied to completion.
+    fn page_all_by_walk(
+        all: &[CommitKey],
+        since: Option<&str>,
+        merges: bool,
+        prefixes: Option<&Vec<String>>,
+    ) -> Vec<CommitKey> {
+        let mut collected: Vec<CommitKey> = Vec::new();
+        let mut cursor: Option<PageToken> = None;
+        loop {
+            let filtered = commits::retain_keys_since(all.to_vec(), since);
+            let filtered: Vec<CommitKey> = filtered
+                .into_iter()
+                .filter(|key| merges || !key.is_merge())
+                .filter(|key| {
+                    prefixes.is_none_or(|list| list.iter().any(|p| key.sha.starts_with(p.as_str())))
+                })
+                .collect();
+            let (page, next) = slice_page(filtered, cursor.as_ref(), 2, |key: &CommitKey| {
+                (key.ordinal.clone(), key.sha.clone())
+            });
+            collected.extend(page);
+            match next {
+                Some((primary, secondary)) => cursor = Some(token_at(&primary, &secondary)),
+                None => return collected,
+            }
+        }
+    }
+
+    /// The index path's pagination, applied to completion.
+    fn page_all_by_index(
+        git_dir: &std::path::Path,
+        generation: u64,
+        since: Option<&str>,
+        merges: bool,
+        prefixes: Option<&Vec<String>>,
+    ) -> Vec<CommitKey> {
+        let mut collected: Vec<CommitKey> = Vec::new();
+        let mut cursor: Option<PageToken> = None;
+        loop {
+            let query = crate::engine::index::PageQuery {
+                since_epoch: since.and_then(commits::parse_instant),
+                after: cursor.clone(),
+                page_size: 2,
+                merges,
+                sha_prefixes: prefixes.cloned(),
+            };
+            let outcome = crate::engine::index::read_page(git_dir, generation, &query);
+            let Ok(Some((rows, next))) = outcome else {
+                panic!("the index must answer, got {outcome:?}")
+            };
+            collected.extend(rows.into_iter().map(|row| row.key));
+            match next {
+                Some((primary, secondary)) => cursor = Some(token_at(&primary, &secondary)),
+                None => return collected,
+            }
+        }
+    }
+
+    fn token_at(primary: &str, secondary: &str) -> PageToken {
+        PageToken {
+            entry: "e".to_owned(),
+            generation: 1,
+            incarnation: "i".to_owned(),
+            primary: primary.to_owned(),
+            secondary: secondary.to_owned(),
         }
     }
 
