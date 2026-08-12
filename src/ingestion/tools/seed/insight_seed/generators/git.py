@@ -88,7 +88,13 @@ def seed_class_git_commits(
         for d in days_window(days):
             rng = seeded_rng(p.uuid, d, "git.commits")
             mean = 5 * persona * weight * weekday_multiplier(d)
-            n_commits = min(poisson(rng, mean), COMMITS_CAP)
+            # Floor of one commit per person-day: the dashboard's trailing
+            # windows start on whichever calendar day the run lands, so the
+            # leading partial week bucket can cover a single day — and a
+            # zero-commit day renders that bucket "—", undrillable. The floor
+            # makes the git surface drillable in every bucket whatever the
+            # date; weekday_multiplier still shapes the volume.
+            n_commits = max(1, min(poisson(rng, mean), COMMITS_CAP))
             for i in range(n_commits):
                 sha = deterministic_uuid("git.commit", p.uuid, d.isoformat(), str(i))[:40]
                 is_merge = 1 if rng.random() < 0.05 else 0
