@@ -61,7 +61,7 @@ Replace `CHANGE_ME` (and any other placeholder) values in whichever connector fi
 Apply all of them at once, or one at a time:
 
 ```sh
-kubectl -n insight apply -f connectors/      # all 19 connectors at once
+kubectl -n insight apply -f connectors/      # all 22 connectors at once
 # or one at a time:
 kubectl -n insight apply -f connectors/jira.yaml
 ```

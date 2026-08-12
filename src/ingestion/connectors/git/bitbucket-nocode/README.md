@@ -78,6 +78,13 @@ kubectl apply -f src/ingestion/secrets/connectors/bitbucket-nocode.yaml
 | `commits` | proxy `/v1/commits` | incremental, per repository | `committed_date` |
 | `file_changes` | proxy `/v1/file-changes` | incremental, per repository | `committed_date` |
 | `branches` | proxy `/v1/branches` | full refresh, per repository | — |
+| `pull_requests` | Bitbucket `/pullrequests` (all states) | incremental | `updated_on` |
+| `pull_request_comments` | `/pullrequests/{id}/comments` | windowed PR parent, full refresh per PR | — |
+| `pull_request_commits` | `/pullrequests/{id}/commits` | windowed PR parent, full refresh per PR | — |
+| `pull_request_activity` | `/pullrequests/{id}/activity` | windowed PR parent, full refresh per PR | — |
+| `workspace_members` | `/workspaces/{w}/members` | full refresh | — |
+| `pipelines` | `/repositories/{r}/pipelines` | newest-first data feed | `created_on` |
+| `deployments` | `/repositories/{r}/deployments` | newest-first data feed | `created_on` |
 
 ### How the streams fit together
 

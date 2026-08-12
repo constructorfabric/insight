@@ -233,6 +233,57 @@ def test_comments_store_trimmed_bodies_and_inline(http_mocker: HttpMocker) -> No
 
 
 @freezegun.freeze_time(_FROZEN)
+def test_pull_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> None:
+    """PR<->commit membership is vendor-only; the commit payload belongs to
+    the proxy streams, so bronze keeps the sha and the PR identity alone."""
+    config = BitbucketNocodeConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [_pr(9, author=None)]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{BB_URL}/repositories/acme/app/pullrequests/9/commits",
+            query_params=ANY_QUERY_PARAMS,
+        ),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "values": [
+                        {
+                            "type": "commit",
+                            "hash": "a" * 12,
+                            "date": "2026-06-19T10:00:00+00:00",
+                            "message": "feat: x",
+                            "summary": {"raw": "feat: x"},
+                            "author": {"raw": "Alice <alice@example.com>"},
+                            "parents": [{"hash": "b" * 12}],
+                            "links": {"self": {"href": "https://api.bitbucket.org/x"}},
+                            "repository": {"full_name": "acme/app"},
+                            "rendered": {},
+                        }
+                    ]
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_commits", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert rec["sha"] == "a" * 12
+    assert rec["pr_id"] == 9
+    assert rec["repo_full_name"] == "acme/app"
+    assert rec["unique_key"].endswith(f":acme/app:9:{'a' * 12}")
+    assert "message" not in rec and "links" not in rec
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "pull_request_commits", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
 def test_workspace_members_stamping(http_mocker: HttpMocker) -> None:
     config = BitbucketNocodeConfigBuilder().build()
     http_mocker.get(

@@ -23,9 +23,11 @@ type: DeclarativeSource
 # in the background, so every proxy stream retries on 429 and fails fast on the
 # permanent ones (409 superseded snapshot, 413 oversized repository).
 #
-# Vendor-API streams (pull requests, comments, activity, workspace members,
-# pipelines, deployments) live in this same manifest: that data does not
-# exist in git. Issues and projects are deliberately not synced.
+# Vendor-API streams (pull requests, comments, commits, activity, workspace
+# members, pipelines, deployments) live in this same manifest: that data does
+# not exist in git — a PR's commit list included, since a squash-merged PR
+# leaves its original commits unreachable from every ref the proxy clones.
+# Issues and projects are deliberately not synced.
 
 check:
   type: CheckStream
@@ -1329,6 +1331,269 @@ streams:
           - [inline]
           - [content]
 
+  # ── Pull request commits (Bitbucket API) ────────────────────────────────
+  # PR<->commit membership is vendor metadata: it does not exist in git, and a
+  # squash-merged PR leaves its original commits unreachable from every ref
+  # the proxy clones. One light call per PR in the window — the commit
+  # payloads themselves stay on the proxy path, so this stream stores only the
+  # edge.
+  - type: DeclarativeStream
+    name: pull_request_commits
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          pr_id: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+        authenticator:
+          type: ApiKeyAuthenticator
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+          # Personal API tokens are Basic username:token; workspace access
+          # tokens are Bearer and must leave bitbucket_username empty.
+          api_token: >-
+            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+        path: "/repositories/{{ stream_slice.extra_fields['repo_full_name'] }}/pullrequests/{{ stream_partition.pr_id }}/commits"
+        http_method: GET
+        request_parameters:
+          pagelen: "100"
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            # Bitbucket sometimes sends Retry-After as an HTTP date, which this
+            # strategy cannot parse; the exponential fallback covers that case.
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+            - type: ExponentialBackoffStrategy
+              factor: 5
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [429]
+              action: RATE_LIMITED
+              error_message: Bitbucket hourly rate budget exhausted
+            - type: HttpResponseFilter
+              http_codes: [403, 404]
+              action: IGNORE
+              error_message: >-
+                PR gone or not accessible; other pull requests continue.
+            - type: HttpResponseFilter
+              http_codes: [401]
+              action: FAIL
+              failure_type: config_error
+              error_message: >-
+                Bitbucket rejected the credentials. Personal API tokens need
+                bitbucket_username set (Basic auth); workspace access tokens must
+                NOT set it (Bearer). Mixing the two is the most common cause.
+            - type: HttpResponseFilter
+              http_codes: [500, 502, 503, 504]
+              action: RETRY
+              error_message: Transient Bitbucket error
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [values]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('next', '') }}"
+          stop_condition: "{{ not response.get('next') }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: pr_id
+            extra_fields:
+              - [repo_full_name]
+            stream:
+              type: DeclarativeStream
+              name: pull_requests_for_commits
+              primary_key:
+                - id
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id: {type: [integer, "null"]}
+                    repo_full_name: {type: [string, "null"]}
+                    updated_on: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                    # Personal API tokens are Basic username:token; workspace access
+                    # tokens are Bearer and must leave bitbucket_username empty.
+                    api_token: >-
+                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+                  path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
+                  http_method: GET
+                  request_parameters:
+                    # pagelen HARD CAP on /pullrequests is 50 (400 above).
+                    pagelen: "50"
+                    sort: updated_on
+                    # Stateless sliding window: the children have no cursor of their
+                    # own, so parent state would never persist. RMT dedups the
+                    # re-read window.
+                    q: >-
+                      updated_on >= "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                    fields: next,values.id,values.updated_on
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: [values]
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ response.get('next', '') }}"
+                    stop_condition: "{{ not response.get('next') }}"
+                  page_token_option:
+                    type: RequestPath
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: full_name
+                      partition_field: repo_full_name
+                      stream:
+                        type: DeclarativeStream
+                        name: pull_requests_for_commits_repos
+                        primary_key:
+                          - uuid
+                        schema_loader:
+                          type: InlineSchemaLoader
+                          schema:
+                            type: object
+                            $schema: http://json-schema.org/schema#
+                            properties:
+                              uuid: {type: [string, "null"]}
+                              full_name: {type: [string, "null"]}
+                              updated_on: {type: [string, "null"]}
+                            additionalProperties: true
+                        retriever:
+                          type: SimpleRetriever
+                          requester:
+                            type: HttpRequester
+                            url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+                            authenticator:
+                              type: ApiKeyAuthenticator
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: Authorization
+                              # Personal API tokens are Basic username:token; workspace access
+                              # tokens are Bearer and must leave bitbucket_username empty.
+                              api_token: >-
+                                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+                            path: "/repositories/{{ stream_partition.workspace }}"
+                            http_method: GET
+                            request_parameters:
+                              pagelen: "100"
+                              fields: next,values.uuid,values.full_name,values.updated_on
+                          record_selector:
+                            type: RecordSelector
+                            extractor:
+                              type: DpathExtractor
+                              field_path: [values]
+                          paginator:
+                            type: DefaultPaginator
+                            pagination_strategy:
+                              type: CursorPagination
+                              cursor_value: "{{ response.get('next', '') }}"
+                              stop_condition: "{{ not response.get('next') }}"
+                            page_token_option:
+                              type: RequestPath
+                          partition_router:
+                            type: ListPartitionRouter
+                            values: "{{ config['bitbucket_workspaces'] }}"
+                            cursor_field: workspace
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [repo_full_name]
+                      value: "{{ stream_partition.repo_full_name }}"
+                      value_type: string
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_bitbucket_nocode
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [pr_id]
+            value: "{{ stream_partition.pr_id }}"
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [sha]
+            value: "{{ record.get('hash') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pr_id }}:{{ record['hash'] }}
+      - type: RemoveFields
+        # The commit payload comes from the proxy; only the edge is stored.
+        field_pointers:
+          - [hash]
+          - [type]
+          - [date]
+          - [message]
+          - [summary]
+          - [author]
+          - [parents]
+          - [links]
+          - [repository]
+          - [rendered]
+
   # ── Pull request activity (Bitbucket API) ───────────────────────────────
   # The ONLY source of approvals, changes-requested and merge/decline
   # transitions on Bitbucket — there is no reviews endpoint. Entries carry no
@@ -2301,6 +2566,7 @@ metadata:
     branches: false
     pull_requests: false
     pull_request_comments: false
+    pull_request_commits: false
     pull_request_activity: false
     workspace_members: false
     pipelines: false

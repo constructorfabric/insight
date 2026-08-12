@@ -198,6 +198,71 @@ def test_pull_requests_trim_body_and_hoist_author(http_mocker: HttpMocker) -> No
 
 
 @freezegun.freeze_time(_FROZEN)
+def test_pull_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> None:
+    """PR<->commit membership is vendor-only; the commit payload belongs to
+    the proxy streams, so bronze keeps the sha and the PR identity alone."""
+    config = GithubNocodeConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/pulls", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                [
+                    {
+                        "id": 900,
+                        "number": 31,
+                        "state": "open",
+                        "draft": False,
+                        "title": "t",
+                        "body": "b",
+                        "user": {"login": "alice"},
+                        "head": {"ref": "feat", "sha": "e" * 40},
+                        "base": {"ref": "main"},
+                        "author_association": "MEMBER",
+                        "created_at": "2026-06-10T00:00:00Z",
+                        "updated_at": "2026-06-20T00:00:00Z",
+                    }
+                ]
+            ),
+            status_code=200,
+        ),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/pulls/31/commits", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                [
+                    {
+                        "sha": "a" * 40,
+                        "node_id": "C_1",
+                        "commit": {"message": "feat: x", "author": {"name": "Alice"}},
+                        "url": "https://api.github.com/repos/acme/app/commits/" + "a" * 40,
+                        "html_url": "https://github.com/acme/app/commit/" + "a" * 40,
+                        "comments_url": "https://api.github.com/repos/acme/app/commits/x/comments",
+                        "author": {"login": "alice"},
+                        "committer": {"login": "alice"},
+                        "parents": [{"sha": "b" * 40}],
+                    }
+                ]
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_commits", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert rec["sha"] == "a" * 40
+    assert rec["pull_number"] == 31
+    assert rec["repo_full_name"] == "acme/app"
+    assert rec["unique_key"].endswith(f":acme/app:31:{'a' * 40}")
+    assert "commit" not in rec and "parents" not in rec
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "pull_request_commits", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
 def test_issues_filters_out_pull_requests(http_mocker: HttpMocker) -> None:
     """/issues returns PRs too; the record filter must drop them."""
     config = GithubNocodeConfigBuilder().build()

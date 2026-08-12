@@ -92,6 +92,62 @@ def test_merge_requests_and_the_none_guard(http_mocker: HttpMocker) -> None:
 
 
 @freezegun.freeze_time(_FROZEN)
+def test_merge_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> None:
+    """MR<->commit membership is vendor-only; the commit payload belongs to
+    the proxy streams, so bronze keeps the sha and the MR identity alone."""
+    config = GitlabNocodeConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_MRS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps([_mr(5, author={"username": "alice"}, merged_by=None)]),
+            status_code=200,
+        ),
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{GITLAB_URL}/api/v4/projects/7/merge_requests/5/commits",
+            query_params=ANY_QUERY_PARAMS,
+        ),
+        HttpResponse(
+            body=json.dumps(
+                [
+                    {
+                        "id": "a" * 40,
+                        "short_id": "a" * 8,
+                        "title": "feat: x",
+                        "message": "feat: x\n",
+                        "author_name": "Alice",
+                        "author_email": "alice@example.com",
+                        "authored_date": "2026-06-19T10:00:00.000+00:00",
+                        "committer_name": "Alice",
+                        "committer_email": "alice@example.com",
+                        "committed_date": "2026-06-19T10:00:00.000+00:00",
+                        "created_at": "2026-06-19T10:00:00.000+00:00",
+                        "parent_ids": ["b" * 40],
+                        "trailers": {},
+                        "extended_trailers": {},
+                        "web_url": "https://gitlab.example.com/acme/app/-/commit/" + "a" * 40,
+                    }
+                ]
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "merge_request_commits", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert rec["sha"] == "a" * 40
+    assert rec["mr_iid"] == 5
+    assert rec["project_id"] == 7
+    assert rec["unique_key"].endswith(f":7:5:{'a' * 40}")
+    assert "message" not in rec and "author_name" not in rec
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "merge_request_commits", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
 def test_approvals_402_is_a_missing_feature_not_an_error(http_mocker: HttpMocker) -> None:
     config = GitlabNocodeConfigBuilder().build()
     # Windowed MR parent listing.

@@ -19,6 +19,7 @@ Coexists with `git/github-v2` (CDK) under its own `data_source`
 | branches | proxy `/v1/branches` | full refresh, per pushed repo |
 | pull_requests | `/repos/{r}/pulls` (list) | updated_at, newest-first data feed |
 | pull_request_reviews | `/pulls/{n}/reviews` | windowed PR parent, full refresh per PR |
+| pull_request_commits | `/pulls/{n}/commits` | windowed PR parent, full refresh per PR |
 | pull_request_comments | `/repos/{r}/issues/comments` | updated_at, server-side `since` |
 | issues | `/repos/{r}/issues` | updated_at, server-side `since`; PRs filtered out |
 | projects_v2 | GraphQL `organization.projectsV2` | full refresh |

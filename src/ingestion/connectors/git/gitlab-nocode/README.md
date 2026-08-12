@@ -74,6 +74,13 @@ kubectl apply -f src/ingestion/secrets/connectors/gitlab-nocode.yaml
 | `commits` | proxy `/v1/commits` | incremental, per repository | `committed_date` |
 | `file_changes` | proxy `/v1/file-changes` | incremental, per repository | `committed_date` |
 | `branches` | proxy `/v1/branches` | full refresh, per repository | — |
+| `merge_requests` | GitLab `/groups/{g}/merge_requests` | incremental, monthly steps | `updated_at` |
+| `merge_request_notes` | `/merge_requests/{iid}/notes` | windowed MR parent, full refresh per MR | — |
+| `merge_request_commits` | `/merge_requests/{iid}/commits` | windowed MR parent, full refresh per MR | — |
+| `merge_request_approvals` | `/merge_requests/{iid}/approvals` | windowed MR parent, full refresh per MR | — |
+| `users` | `/groups/{g}/members/all` | full refresh | — |
+| `pipelines` | `/projects/{id}/pipelines` | incremental | `updated_at` |
+| `deployments` | `/projects/{id}/deployments` | incremental | `updated_at` |
 
 ### How the incremental streams fit together
 

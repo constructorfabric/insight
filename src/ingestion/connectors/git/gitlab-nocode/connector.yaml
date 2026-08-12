@@ -23,8 +23,10 @@ type: DeclarativeSource
 # in the background, so every proxy stream retries on 429 and fails fast on the
 # permanent ones (409 superseded snapshot, 413 oversized repository).
 #
-# Vendor-API streams (merge requests, notes, approvals, members, pipelines,
-# deployments) live in this same manifest: that data does not exist in git.
+# Vendor-API streams (merge requests, notes, commits, approvals, members,
+# pipelines, deployments) live in this same manifest: that data does not exist
+# in git — an MR's commit list included, since a squashed MR leaves its
+# original commits unreachable from every ref the proxy clones.
 # Issues and epics are deliberately not synced.
 
 check:
@@ -1150,6 +1152,204 @@ streams:
           - [author]
           - [position]
 
+  # ── Merge request commits (GitLab API) ──────────────────────────────────
+  # MR<->commit membership is vendor metadata: it does not exist in git, and a
+  # squashed or rebased MR leaves its original commits unreachable from every
+  # ref the proxy clones. One light call per MR in the window — the commit
+  # payloads themselves stay on the proxy path, so this stream stores only the
+  # edge.
+  - type: DeclarativeStream
+    name: merge_request_commits
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          mr_iid: {type: [integer, "null"]}
+          project_id: {type: [integer, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['gitlab_url'] }}/api/v4"
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['gitlab_token'] }}"
+          inject_into:
+            type: RequestOption
+            field_name: PRIVATE-TOKEN
+            inject_into: header
+        path: "/projects/{{ stream_slice.extra_fields['project_id'] }}/merge_requests/{{ stream_partition.mr_iid }}/commits"
+        http_method: GET
+        request_parameters:
+          per_page: "100"
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [429]
+              action: RATE_LIMITED
+              error_message: GitLab is rate limiting this token
+            - type: HttpResponseFilter
+              http_codes: [403, 404]
+              action: IGNORE
+              error_message: >-
+                MR gone or not visible to this token; other merge requests continue.
+            - type: HttpResponseFilter
+              http_codes: [401]
+              action: FAIL
+              failure_type: config_error
+              error_message: GitLab rejected the token; check gitlab_token scopes (read_api)
+            - type: HttpResponseFilter
+              http_codes: [500, 502, 503, 504]
+              action: RETRY
+              error_message: Transient GitLab error
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: PageIncrement
+          page_size: "100"
+          start_from_page: 1
+        page_token_option:
+          type: RequestOption
+          field_name: page
+          inject_into: request_parameter
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: iid
+            partition_field: mr_iid
+            extra_fields:
+              - [project_id]
+            stream:
+              type: DeclarativeStream
+              name: merge_requests_for_commits
+              primary_key:
+                - id
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id: {type: [integer, "null"]}
+                    iid: {type: [integer, "null"]}
+                    project_id: {type: [integer, "null"]}
+                    updated_at: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  url_base: "{{ config['gitlab_url'] }}/api/v4"
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "{{ config['gitlab_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      field_name: PRIVATE-TOKEN
+                      inject_into: header
+                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/merge_requests"
+                  http_method: GET
+                  request_parameters:
+                    scope: all
+                    order_by: updated_at
+                    sort: asc
+                    per_page: "100"
+                    # Stateless sliding window, not a cursor: these children
+                    # have no cursor of their own, so parent state would never
+                    # persist (incremental_dependency requires an incremental
+                    # child). RMT dedups the re-read window.
+                    updated_after: "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: PageIncrement
+                    page_size: "100"
+                    start_from_page: 1
+                  page_token_option:
+                    type: RequestOption
+                    field_name: page
+                    inject_into: request_parameter
+                partition_router:
+                  type: ListPartitionRouter
+                  values: "{{ config['gitlab_groups'] }}"
+                  cursor_field: group
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_gitlab_nocode
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [mr_iid]
+            value: "{{ stream_partition.mr_iid }}"
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['project_id'] }}"
+          - type: AddedFieldDefinition
+            path: [sha]
+            value: "{{ record.get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_partition.mr_iid }}:{{ record['id'] }}
+      - type: RemoveFields
+        # The commit payload comes from the proxy; only the edge is stored.
+        field_pointers:
+          - [id]
+          - [short_id]
+          - [title]
+          - [message]
+          - [author_name]
+          - [author_email]
+          - [authored_date]
+          - [committer_name]
+          - [committer_email]
+          - [committed_date]
+          - [created_at]
+          - [parent_ids]
+          - [trailers]
+          - [extended_trailers]
+          - [web_url]
+
   # ── Merge request approvals (GitLab API) ────────────────────────────────
   # Single object per MR; snapshot semantics — the RMT keeps the latest row
   # per unique_key. 402 is "approvals are a paid feature", not an error.
@@ -1920,6 +2120,7 @@ metadata:
     branches: false
     merge_requests: false
     merge_request_notes: false
+    merge_request_commits: false
     merge_request_approvals: false
     users: false
     pipelines: false

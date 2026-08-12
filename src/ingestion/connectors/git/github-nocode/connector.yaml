@@ -844,7 +844,7 @@ streams:
             partition_field: pull_number
             extra_fields:
               - [repo_full_name]
-            stream:
+            stream: &pull_requests_window
               type: DeclarativeStream
               name: pull_requests_window
               primary_key:
@@ -938,6 +938,92 @@ streams:
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
           - [user]
+
+  # ── Pull request commits (GitHub API) ───────────────────────────────────
+  # PR<->commit membership is vendor metadata: it does not exist in git, and a
+  # squash- or rebase-merged PR leaves its original commits unreachable from
+  # every ref the proxy clones. One light call per PR in the window — the
+  # commit payloads themselves stay on the proxy path, so this stream stores
+  # only the edge.
+  # VERIFIED CAVEAT: this endpoint returns at most 250 commits per PR.
+  - type: DeclarativeStream
+    name: pull_request_commits
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          pull_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_slice.extra_fields['repo_full_name'] }}/pulls/{{ stream_partition.pull_number }}/commits"
+        request_parameters:
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: number
+            partition_field: pull_number
+            extra_fields:
+              - [repo_full_name]
+            stream: *pull_requests_window
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [pull_number]
+            value: "{{ stream_partition.pull_number }}"
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pull_number }}:{{ record['sha'] }}
+      - type: RemoveFields
+        # The commit payload comes from the proxy; only the edge is stored.
+        field_pointers:
+          - [commit]
+          - [author]
+          - [committer]
+          - [parents]
+          - [node_id]
+          - [url]
+          - [html_url]
+          - [comments_url]
 
   # ── Issue & PR conversation comments (GitHub API) ───────────────────────
   # ONE repo-level endpoint covers both: PR conversation comments are issue
@@ -1753,6 +1839,7 @@ metadata:
     pull_requests: false
     pull_request_reviews: false
     pull_request_comments: false
+    pull_request_commits: false
     issues: false
     projects_v2: false
     workflow_runs: false
