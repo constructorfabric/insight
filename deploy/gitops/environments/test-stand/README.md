@@ -276,21 +276,19 @@ run-internal: it carries persona addresses, UUIDs and in-cluster service URLs,
 so it must not become a CI artifact on a public repository.
 
 **7. Smoke.** Driven through the public URL exactly as a browser would drive
-it — real DNS, real TLS, real IdP redirect. `SMOKE_BASE_URL` is what aims the
-suite; nothing else does:
+it — real DNS, real TLS, real IdP redirect. `INSIGHT_STAND_BASE_URL` is what
+aims the suite; nothing else does:
 
 ```bash
-export SMOKE_BASE_URL=https://insight-test.cfabric.org
-export SMOKE_LOGIN_MODE=password
-export SMOKE_PERSONA_PASSWORD=<the realm generator's DEV_PASSWORD — see below>
+export INSIGHT_STAND_BASE_URL=https://insight-test.cfabric.org
+export INSIGHT_STAND_PERSONA_PASSWORD=<the realm generator's persona password — see below>
+export INSIGHT_STAND_MANIFEST=<the manifest from step 6>
 
-uv run --project tests --frozen \
-  pytest tests/stand/smoke -ra --stand-manifest <the manifest from step 6>
+uv run --project tests --frozen pytest tests/stand -m stand_smoke -ra
 ```
 
 Nothing in the suite has a default: a missing value is reported by name before
-a single request is made. See `tests/stand/smoke/README.md` for the full
-variable table.
+a single request is made.
 
 ### Recovery — rebuild, do not roll back
 
@@ -384,22 +382,14 @@ Five consequences, roughly in the order they bite:
   unsupported way to break this one.
   [`INFRA.md`](INFRA.md#one-roster-two-projections) states the invariant on its
   own, because it is the one a future change is most likely to break.
-* **The persona password is a shared constant, not a per-stand secret.** Every
-  user the realm generator emits carries its `DEV_PASSWORD` constant
-  (`insight_seed.keycloak_realm`), so `SMOKE_PERSONA_PASSWORD` — and its CI
-  spelling `TEST_STAND_PERSONA_PASSWORD` — is one value derived from the
-  checkout rather than minted per stand. The per-persona
-  `SMOKE_PERSONA_PASSWORD__<FIXTURE>` override therefore cannot do anything on a
-  realm the seeder generated: all of its users share the one value. It is stored
-  as a GitHub environment secret so it stays masked in a public run log, but it
-  is not a secret in the sense the word usually carries. See Known gaps.
+* **The persona password is one shared value for every seeded user.** The realm
+  generator applies `INSIGHT_SEED_PERSONA_PASSWORD` (default: the committed
+  `insight-dev` constant, for stands unreachable from outside) to every user it
+  emits, so `INSIGHT_STAND_PERSONA_PASSWORD` — and its CI spelling
+  `TEST_STAND_PERSONA_PASSWORD` — is a single value per stand. An
+  internet-reachable stand must set it when its realm is generated and hand the
+  same value to CI. See Known gaps.
 
-For CI that means `vars.TEST_STAND_SMOKE_LOGIN_MODE` is `password`. The suite's
-`override` mode — one principal authenticates and every persona session is
-minted from it through `/auth/login?__override=<email>` — still works and is
-kept for a stand whose realm federates to an external provider and can serve no
-password form at all. This stand is not that stand, and nothing in the gate
-depends on `authenticator.overrideEnabled` any more.
 
 ## How `make deploy` represents this stand
 

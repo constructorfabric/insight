@@ -17,8 +17,8 @@
 | Admin kubeconfig for the stand | An operator's laptop / password manager | Humans only. **Never** goes into GitHub. |
 | `ServiceAccount insight/ci-deployer` + its RBAC | The cluster | Anyone with cluster read access |
 | The CI kubeconfig (server + CA + SA token), base64-encoded | GitHub environment `insight-test-stand`, secret `TEST_STAND_KUBECONFIG` | Jobs that declare that environment, on `main` only |
-| The persona password — plus, in `override` mode only, the bootstrap principal's credentials, and optionally an explicit seed dev-lead address | Same GitHub environment | Same |
-| Public stand URL, and the smoke login mode | Same environment, as **variables** `TEST_STAND_BASE_URL` and `TEST_STAND_SMOKE_LOGIN_MODE` (not secrets) | Same, and both are public anyway |
+| The persona password, and optionally an explicit seed dev-lead address | Same GitHub environment | Same |
+| Public stand URL | Same environment, as **variable** `TEST_STAND_BASE_URL` (not a secret) | Same, and it is public anyway |
 
 The split is the whole point of D5: **admin kubeconfigs stay human-only.** CI gets
 a credential that is namespace-scoped and destroyable, and nothing else.
@@ -281,9 +281,7 @@ repository one, which is the only reason it is not the starting point.
 |---|---|---|
 | `TEST_STAND_KUBECONFIG` | **base64 of** the file from §2.2 | the only credential CI needs for the cluster |
 | `TEST_STAND_SEED_EMAIL` | an explicit dev-lead address for `seed-stand.sh --email`, e.g. `email_development_lead@company.nonpresent` | **normally unset** — the seeder reads that address back out of the realm the deploy just applied. Kept as a secret rather than a variable purely so it is masked in run logs. See §4.3 |
-| `TEST_STAND_PERSONA_PASSWORD` | the password every seeded persona signs in with — on a seeded-realm stand this is the realm generator's `DEV_PASSWORD` constant (`insight_seed.keycloak_realm`), which every generated user shares | required in `password` mode. The workflow exports it to pytest as **`SMOKE_PERSONA_PASSWORD`** — not `INSIGHT_STAND_PERSONA_PASSWORD`, which belongs to a different helper the smoke suite deliberately does not use |
-| `TEST_STAND_BOOTSTRAP_EMAIL` | the one principal that really authenticates in `override` mode | **`override` mode only.** Not needed on a stand whose realm serves a password form — leave both unset there rather than provisioning credentials nothing reads |
-| `TEST_STAND_BOOTSTRAP_PASSWORD` | that principal's IdP password | as above |
+| `TEST_STAND_PERSONA_PASSWORD` | the password every seeded persona signs in with — the value `INSIGHT_SEED_PERSONA_PASSWORD` carried when the stand's realm was generated (default: the committed `insight-dev` constant, only acceptable for stands unreachable from outside) | required for the smoke stage. The workflow exports it to pytest as `INSIGHT_STAND_PERSONA_PASSWORD` |
 | `TEST_STAND_OIDC_CLIENT_SECRET` | the confidential OIDC client secret | **normally unnecessary** — the deploy workflow reads the value out of the cluster instead. See §4.4 |
 
 The kubeconfig goes in **base64-encoded**, single-line. The workflow decodes it
@@ -323,25 +321,13 @@ value in a log is harder to debug and buys nothing:
 gh variable set TEST_STAND_BASE_URL --env "$ENVIRONMENT" --repo "$REPO" \
   --body 'https://<public-stand-url>'
 
-# How the smoke stage logs in. Set it EXPLICITLY, even though unset falls
-# through to the suite's own default of `password`: a value left over from an
-# earlier configuration keeps the gate in impersonation mode silently, and an
-# environment whose variable list states the mode is one a reader can check.
-gh variable set TEST_STAND_SMOKE_LOGIN_MODE --env "$ENVIRONMENT" --repo "$REPO" \
-  --body 'password'
-
 gh variable list --env "$ENVIRONMENT" --repo "$REPO"
 ```
 
-`password` means every persona authenticates as themselves, which is what a
-stand whose realm carries a local user per persona can serve, and it is the mode
-to use on the test stand. `override` means one principal authenticates and every
-persona session is minted from it through the product's own view-as path; it is
-the fallback for a stand whose realm federates login to an external provider and
-therefore serves no password form at all. The mode decides which secrets above
-are required — `password` needs `TEST_STAND_PERSONA_PASSWORD`, `override` needs
-the two `TEST_STAND_BOOTSTRAP_*` values — and the workflow checks that before it
-touches the cluster rather than twenty minutes later.
+Every persona authenticates as themselves with `TEST_STAND_PERSONA_PASSWORD`,
+which is what a realm carrying a local user per persona serves — and the
+workflow checks the secret is present before it touches the cluster rather than
+twenty minutes later.
 
 ### 4.3 When `TEST_STAND_SEED_EMAIL` is needed
 
@@ -644,13 +630,10 @@ gitleaks detect --source <path-to-repo> --config <path-to-repo>/deploy/gitops/.g
 - `gh api "repos/$REPO/environments/$ENVIRONMENT/deployment-branch-policies"`
   lists exactly `main`.
 - `gh secret list --env "$ENVIRONMENT"` shows the kubeconfig and the persona
-  password — and nothing else, unless you consciously chose the `override` login
-  mode (the two `TEST_STAND_BOOTSTRAP_*` values), an explicit dev-lead address
-  (§4.3) or the injected client secret of §4.4. A `TEST_STAND_SEED_EMAIL` nobody
-  meant to set is not inert: it silently outranks the realm.
-- `gh variable list --env "$ENVIRONMENT"` shows `TEST_STAND_BASE_URL` and
-  `TEST_STAND_SMOKE_LOGIN_MODE`, the latter reading `password` on a stand whose
-  realm serves a password form.
+  password — and nothing else, unless you consciously set an explicit dev-lead
+  address (§4.3) or the injected client secret of §4.4. A `TEST_STAND_SEED_EMAIL`
+  nobody meant to set is not inert: it silently outranks the realm.
+- `gh variable list --env "$ENVIRONMENT"` shows `TEST_STAND_BASE_URL`.
 - One full deploy run on `main` is green.
 - No kubeconfig, token or password exists anywhere in the repository work tree,
   and every local kubeconfig is mode 0600.
