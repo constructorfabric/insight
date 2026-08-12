@@ -57,6 +57,69 @@ definitions:
         http_codes: [500, 502, 503, 504]
         error_message: Transient GitHub error
 
+  # GraphQL errors arrive as HTTP 200 with an `errors` array, so the HTTP-code
+  # filters above never see them. Repo-scoped queries add one more case: an
+  # inaccessible repository is a 200 whose `data.repository` is null and whose
+  # error type is NOT_FOUND or FORBIDDEN — the same skip-not-fail class as a
+  # REST 403/404, and fatal to a whole sync if treated as a query error.
+  graphql_error_handler: &graphql_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies:
+      - type: WaitTimeFromHeader
+        header: Retry-After
+        max_waiting_time_in_seconds: 600
+      - type: WaitUntilTimeFromHeader
+        header: X-RateLimit-Reset
+        max_waiting_time_in_seconds: 3600
+    response_filters:
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [429]
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
+      # Any other GraphQL error still arrives as HTTP 200, and a query-level
+      # one omits `data` entirely; without this the extractor finds nothing and
+      # the paginator throws an unreadable interpolation error. Fail with what
+      # GitHub actually said.
+      - type: HttpResponseFilter
+        action: FAIL
+        predicate: "{{ (response.get('errors') or []) | length > 0 }}"
+        error_message: "GitHub GraphQL error: {{ (response.get('errors') or []) | map(attribute='message') | join('; ') }}"
+      - type: HttpResponseFilter
+        action: RETRY
+        http_codes: [500, 502, 503, 504]
+
+  graphql_error_handler_repo_scoped: &graphql_error_handler_repo_scoped
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies:
+      - type: WaitTimeFromHeader
+        header: Retry-After
+        max_waiting_time_in_seconds: 600
+      - type: WaitUntilTimeFromHeader
+        header: X-RateLimit-Reset
+        max_waiting_time_in_seconds: 3600
+    response_filters:
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [429]
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
+      - type: HttpResponseFilter
+        action: IGNORE
+        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'in', ['NOT_FOUND', 'FORBIDDEN']) | list | length > 0 }}"
+        error_message: Repository not visible to this token; other repositories continue.
+      - type: HttpResponseFilter
+        action: FAIL
+        predicate: "{{ (response.get('errors') or []) | length > 0 }}"
+        error_message: "GitHub GraphQL error: {{ (response.get('errors') or []) | map(attribute='message') | join('; ') }}"
+      - type: HttpResponseFilter
+        action: RETRY
+        http_codes: [500, 502, 503, 504]
+
   # Same handler, plus per-repository denial tolerance for repo-scoped
   # substreams: a fine-grained token can see the org listing yet 403/404 on
   # individual repositories (or a feature — Actions, issues — is disabled).
@@ -1025,6 +1088,123 @@ streams:
           - [html_url]
           - [comments_url]
 
+  # ── Pull request diff totals (GitHub GraphQL) ───────────────────────────
+  # REST carries additions/deletions/changed_files on the PR DETAIL response
+  # only, which would cost one call per pull request. The GraphQL list node
+  # carries all three, so a page of 100 pull requests costs one request and
+  # the stream needs no per-PR fan-out at all.
+  # The connection has no updatedAfter argument (VERIFIED against the live
+  # schema), so this is a newest-first data feed like the REST pull_requests
+  # stream: ordering is UPDATED_AT DESC and the cursor stops the walk.
+  - type: DeclarativeStream
+    name: pull_request_diff_stats
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          pull_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          additions: {type: [integer, "null"]}
+          deletions: {type: [integer, "null"]}
+          changed_files: {type: [integer, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *graphql_error_handler_repo_scoped
+        path: /graphql
+        http_method: POST
+        request_body_json:
+          query: |
+            query($owner: String!, $name: String!, $cursor: String) {
+              repository(owner: $owner, name: $name) {
+                pullRequests(first: 100, after: $cursor, states: [OPEN, CLOSED, MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes { number updatedAt additions deletions changedFiles }
+                }
+              }
+            }
+          variables:
+            owner: "{{ stream_partition.repo_full_name.split('/')[0] }}"
+            name: "{{ stream_partition.repo_full_name.split('/')[1] }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, repository, pullRequests, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          # `data.repository` is null when the token cannot see the repository,
+          # so every hop is guarded rather than subscripted.
+          cursor_value: "{{ ((((response.get('data') or {}).get('repository') or {}).get('pullRequests') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('repository') or {}).get('pullRequests') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: full_name
+            partition_field: repo_full_name
+            stream: *repositories_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      is_data_feed: true
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_partition.repo_full_name }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [pull_number]
+            value: "{{ record.get('number') }}"
+          - type: AddedFieldDefinition
+            path: [changed_files]
+            value: "{{ record.get('changedFiles') }}"
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ record.get('updatedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['number'] }}
+      - type: RemoveFields
+        # Hoisted above; the camelCase originals stay out of bronze.
+        field_pointers:
+          - [number]
+          - [changedFiles]
+          - [updatedAt]
+
   # ── Issue & PR conversation comments (GitHub API) ───────────────────────
   # ONE repo-level endpoint covers both: PR conversation comments are issue
   # comments in GitHub's model. Server-side `since` makes it O(changed).
@@ -1290,34 +1470,7 @@ streams:
         <<: *rest_requester
         path: /graphql
         http_method: POST
-        error_handler:
-          type: DefaultErrorHandler
-          max_retries: 5
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-            - type: WaitUntilTimeFromHeader
-              header: X-RateLimit-Reset
-              max_waiting_time_in_seconds: 3600
-          response_filters:
-            - type: HttpResponseFilter
-              action: RATE_LIMITED
-              http_codes: [429]
-            - type: HttpResponseFilter
-              action: RATE_LIMITED
-              predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
-            # Any other GraphQL error still arrives as HTTP 200, and a
-            # query-level one omits `data` entirely; without this the
-            # extractor finds nothing and the paginator throws an unreadable
-            # interpolation error. Fail with what GitHub actually said.
-            - type: HttpResponseFilter
-              action: FAIL
-              predicate: "{{ (response.get('errors') or []) | length > 0 }}"
-              error_message: "GitHub GraphQL error: {{ (response.get('errors') or []) | map(attribute='message') | join('; ') }}"
-            - type: HttpResponseFilter
-              action: RETRY
-              http_codes: [500, 502, 503, 504]
+        error_handler: *graphql_error_handler
         request_body_json:
           query: |
             query($org: String!, $cursor: String) {
@@ -1365,10 +1518,6 @@ streams:
           - type: AddedFieldDefinition
             path: [number]
             value: "{{ record.get('number') }}"
-          - type: AddedFieldDefinition
-            path: [title]
-            value: "{{ record.get('title') or '' }}"
-            value_type: string
           - type: AddedFieldDefinition
             path: [short_description]
             value: "{{ (record.get('shortDescription') or '')[:1024] }}"
@@ -1840,6 +1989,7 @@ metadata:
     pull_request_reviews: false
     pull_request_comments: false
     pull_request_commits: false
+    pull_request_diff_stats: false
     issues: false
     projects_v2: false
     workflow_runs: false

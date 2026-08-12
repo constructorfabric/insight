@@ -75,6 +75,7 @@ kubectl apply -f src/ingestion/secrets/connectors/gitlab-nocode.yaml
 | `file_changes` | proxy `/v1/file-changes` | incremental, per repository | `committed_date` |
 | `branches` | proxy `/v1/branches` | full refresh, per repository | — |
 | `merge_requests` | GitLab `/groups/{g}/merge_requests` | incremental, monthly steps | `updated_at` |
+| `merge_request_diff_stats` | GraphQL `group.mergeRequests.diffStatsSummary` | incremental, server-side `updatedAfter` | `updated_at` |
 | `merge_request_notes` | `/merge_requests/{iid}/notes` | windowed MR parent, full refresh per MR | — |
 | `merge_request_commits` | `/merge_requests/{iid}/commits` | windowed MR parent, full refresh per MR | — |
 | `merge_request_approvals` | `/merge_requests/{iid}/approvals` | windowed MR parent, full refresh per MR | — |
@@ -108,6 +109,17 @@ the proxy clones it in the background; every proxy stream retries on `429`.
 `409` (the pinned snapshot was superseded) and `413` (repository over the
 proxy's size cap) fail the stream instead — retrying the same page token would
 loop.
+
+### PR size
+
+`merge_request_diff_stats` is the only source of merge-request line counts.
+REST exposes no additions/deletions on a merge request — only `changes_count`,
+a capped string (`"1000+"`) on the detail response — so the stream queries
+GraphQL `diffStatsSummary`, which carries real integers. The group-level
+connection filters server-side by `updatedAfter`, so this costs one paged
+query per group with no per-MR fan-out. A merge request whose stats GitLab has
+not finished computing reports null rather than zero; the next window re-reads
+it.
 
 ## Silver Targets
 

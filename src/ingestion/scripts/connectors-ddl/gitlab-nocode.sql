@@ -154,6 +154,29 @@ ORDER BY _airbyte_raw_id
 SETTINGS index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_gitlab_nocode.merge_request_diff_stats
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `mr_iid` Nullable(Int64),
+    `project_id` Nullable(Int64),
+    `additions` Nullable(Int64),
+    `deletions` Nullable(Int64),
+    `files_changed` Nullable(Int64),
+    `updated_at` Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_gitlab_nocode.merge_request_notes
 (
     `_airbyte_raw_id` String,

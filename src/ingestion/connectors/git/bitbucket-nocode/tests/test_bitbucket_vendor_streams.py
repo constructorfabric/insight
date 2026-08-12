@@ -284,6 +284,87 @@ def test_pull_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> No
 
 
 @freezegun.freeze_time(_FROZEN)
+def test_diffstat_rows_and_uncomputable_diff(http_mocker: HttpMocker) -> None:
+    """Bitbucket carries no diff totals on the PR itself, so per-file diffstat
+    rows are the only source of PR size. A PR whose branches share no history
+    answers 400 — a property of that PR, not a broken request."""
+    config = BitbucketNocodeConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [_pr(9, author=None)]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{BB_URL}/repositories/acme/app/pullrequests/9/diffstat",
+            query_params=ANY_QUERY_PARAMS,
+        ),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "values": [
+                        {
+                            "type": "diffstat",
+                            "status": "modified",
+                            "lines_added": 12,
+                            "lines_removed": 3,
+                            "old": {"path": "src/a.py"},
+                            "new": {"path": "src/a.py"},
+                        },
+                        {
+                            "type": "diffstat",
+                            "status": "removed",
+                            "lines_added": 0,
+                            "lines_removed": 40,
+                            "old": {"path": "src/gone.py"},
+                            "new": None,
+                        },
+                    ]
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_diffstat", config)
+
+    assert not output.errors
+    by_path = {r.record.data["file_path"]: r.record.data for r in output.records}
+    assert (by_path["src/a.py"]["lines_added"], by_path["src/a.py"]["lines_removed"]) == (12, 3)
+    assert by_path["src/gone.py"]["status"] == "removed"
+    assert by_path["src/gone.py"]["old_path"] == "src/gone.py"
+    assert by_path["src/a.py"]["unique_key"].endswith(":acme/app:9:src/a.py")
+    assert "old" not in by_path["src/a.py"] and "new" not in by_path["src/a.py"]
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "pull_request_diffstat", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_diffstat_without_common_ancestor_is_skipped(http_mocker: HttpMocker) -> None:
+    config = BitbucketNocodeConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [_pr(9, author=None)]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{BB_URL}/repositories/acme/app/pullrequests/9/diffstat",
+            query_params=ANY_QUERY_PARAMS,
+        ),
+        HttpResponse(
+            body=json.dumps({"type": "error", "error": {"message": "No common ancestor"}}),
+            status_code=400,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_diffstat", config)
+
+    assert not output.errors
+    assert len(output.records) == 0
+
+
+@freezegun.freeze_time(_FROZEN)
 def test_workspace_members_stamping(http_mocker: HttpMocker) -> None:
     config = BitbucketNocodeConfigBuilder().build()
     http_mocker.get(

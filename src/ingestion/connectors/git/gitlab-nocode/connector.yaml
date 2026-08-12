@@ -944,6 +944,180 @@ streams:
           - [author]
           - [merged_by]
 
+  # ── Merge request diff totals (GitLab GraphQL) ──────────────────────────
+  # REST exposes no line counts on a merge request — only `changes_count`, a
+  # capped STRING ("1000+") on the detail response (VERIFIED against the live
+  # API docs). GraphQL carries real integers in diffStatsSummary, and the
+  # group-level connection filters server-side by updatedAfter, so this stream
+  # costs one paged query per group with no per-MR fan-out.
+  - type: DeclarativeStream
+    name: merge_request_diff_stats
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          mr_iid: {type: [integer, "null"]}
+          project_id: {type: [integer, "null"]}
+          additions: {type: [integer, "null"]}
+          deletions: {type: [integer, "null"]}
+          files_changed: {type: [integer, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['gitlab_url'] }}/api"
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['gitlab_token'] }}"
+          inject_into:
+            type: RequestOption
+            field_name: PRIVATE-TOKEN
+            inject_into: header
+        path: /graphql
+        http_method: POST
+        error_handler:
+          type: DefaultErrorHandler
+          max_retries: 5
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [429]
+              action: RATE_LIMITED
+              error_message: GitLab is rate limiting this token
+            # GraphQL errors arrive as HTTP 200 with an `errors` array. A group
+            # the token cannot see comes back as data.group = null WITHOUT an
+            # error, which the guarded paginator below reads as an empty page.
+            - type: HttpResponseFilter
+              action: FAIL
+              predicate: "{{ (response.get('errors') or []) | length > 0 }}"
+              error_message: "GitLab GraphQL error: {{ (response.get('errors') or []) | map(attribute='message') | join('; ') }}"
+            - type: HttpResponseFilter
+              http_codes: [401]
+              action: FAIL
+              failure_type: config_error
+              error_message: GitLab rejected the token; check gitlab_token scopes (read_api)
+            - type: HttpResponseFilter
+              http_codes: [500, 502, 503, 504]
+              action: RETRY
+              error_message: Transient GitLab error
+        request_body_json:
+          query: |
+            query($group: ID!, $updatedAfter: Time, $cursor: String) {
+              group(fullPath: $group) {
+                mergeRequests(includeSubgroups: true, updatedAfter: $updatedAfter, sort: UPDATED_ASC, first: 100, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    iid
+                    updatedAt
+                    project { id }
+                    diffStatsSummary { additions deletions fileCount }
+                  }
+                }
+              }
+            }
+          variables:
+            group: "{{ stream_partition.group }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, group, mergeRequests, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          # `data.group` is null when the token cannot see the group, so every
+          # hop is guarded rather than subscripted.
+          cursor_value: "{{ ((((response.get('data') or {}).get('group') or {}).get('mergeRequests') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('group') or {}).get('mergeRequests') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['gitlab_groups'] }}"
+        cursor_field: group
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['gitlab_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        inject_into: body_json
+        field_path: [variables, updatedAfter]
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_gitlab_nocode
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [mr_iid]
+            value: "{{ record.get('iid') | int }}"
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ ((record.get('project') or {}).get('id') or '') | replace('gid://gitlab/Project/', '') | int }}"
+          # diffStatsSummary is nullable: GitLab computes the stats
+          # asynchronously, so a just-opened MR reports null rather than zero
+          # and the next window re-reads it.
+          - type: AddedFieldDefinition
+            path: [additions]
+            value: "{{ (record.get('diffStatsSummary') or {}).get('additions') }}"
+          - type: AddedFieldDefinition
+            path: [deletions]
+            value: "{{ (record.get('diffStatsSummary') or {}).get('deletions') }}"
+          - type: AddedFieldDefinition
+            path: [files_changed]
+            value: "{{ (record.get('diffStatsSummary') or {}).get('fileCount') }}"
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ record.get('updatedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ ((record.get('project') or {}).get('id') or '') | replace('gid://gitlab/Project/', '') }}:{{ record['iid'] }}
+      - type: RemoveFields
+        # Hoisted above; the GraphQL originals stay out of bronze.
+        field_pointers:
+          - [iid]
+          - [updatedAt]
+          - [project]
+          - [diffStatsSummary]
+
   # ── Merge request notes (GitLab API) ────────────────────────────────────
   # Child of a stateless sliding window of MRs (see the parent's
   # updated_after comment). Bodies are stored trimmed to 2048 chars — the
@@ -2121,6 +2295,7 @@ metadata:
     merge_requests: false
     merge_request_notes: false
     merge_request_commits: false
+    merge_request_diff_stats: false
     merge_request_approvals: false
     users: false
     pipelines: false

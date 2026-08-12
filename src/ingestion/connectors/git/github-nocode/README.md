@@ -20,6 +20,7 @@ Coexists with `git/github-v2` (CDK) under its own `data_source`
 | pull_requests | `/repos/{r}/pulls` (list) | updated_at, newest-first data feed |
 | pull_request_reviews | `/pulls/{n}/reviews` | windowed PR parent, full refresh per PR |
 | pull_request_commits | `/pulls/{n}/commits` | windowed PR parent, full refresh per PR |
+| pull_request_diff_stats | GraphQL `repository.pullRequests` nodes | updated_at, newest-first data feed |
 | pull_request_comments | `/repos/{r}/issues/comments` | updated_at, server-side `since` |
 | issues | `/repos/{r}/issues` | updated_at, server-side `since`; PRs filtered out |
 | projects_v2 | GraphQL `organization.projectsV2` | full refresh |
@@ -59,6 +60,15 @@ Steady state ≈ 6 calls/repo + 1 call per PR updated in the child window +
 workflow_runs backfill goes back at most 90 days — GitHub's run retention —
 paged in weekly windows because `created` queries cap at 1000 results per
 window.
+
+### PR size
+
+`pull_request_diff_stats` carries per-pull-request `additions`, `deletions` and
+`changed_files`. REST has these on the pull-request DETAIL response only, which
+would cost one call per pull request; the GraphQL list node carries all three,
+so a page of 100 pull requests costs a single request. The connection accepts
+no `updatedAfter` argument, so the stream is a newest-first data feed like
+`pull_requests`.
 
 ## Silver Targets
 

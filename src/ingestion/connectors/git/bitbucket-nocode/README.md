@@ -81,6 +81,7 @@ kubectl apply -f src/ingestion/secrets/connectors/bitbucket-nocode.yaml
 | `pull_requests` | Bitbucket `/pullrequests` (all states) | incremental | `updated_on` |
 | `pull_request_comments` | `/pullrequests/{id}/comments` | windowed PR parent, full refresh per PR | — |
 | `pull_request_commits` | `/pullrequests/{id}/commits` | windowed PR parent, full refresh per PR | — |
+| `pull_request_diffstat` | `/pullrequests/{id}/diffstat` | windowed PR parent, full refresh per PR | — |
 | `pull_request_activity` | `/pullrequests/{id}/activity` | windowed PR parent, full refresh per PR | — |
 | `workspace_members` | `/workspaces/{w}/members` | full refresh | — |
 | `pipelines` | `/repositories/{r}/pipelines` | newest-first data feed | `created_on` |
@@ -134,6 +135,16 @@ first backfill lazily pulls essentially every blob while paging history, so
 the proxy cache should be sized for roughly full-clone weight per Bitbucket
 repository during backfill; the post-serve purge returns entries to the
 blobless skeleton afterwards.
+
+### PR size
+
+`pull_request_diffstat` is the only source of pull-request line counts:
+Bitbucket has no GraphQL API and carries no diff totals on the pull request
+itself, so the per-file diffstat rows are it. Grain therefore differs from the
+GitHub and GitLab diff-stat streams, which get pull-request-level totals in one
+query — silver sums these rows per pull request. A pull request whose branches
+share no history has no computable diff and answers 400; that pull request is
+skipped, the rest continue.
 
 ## Silver Targets
 

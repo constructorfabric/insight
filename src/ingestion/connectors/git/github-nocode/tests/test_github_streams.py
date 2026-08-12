@@ -34,15 +34,15 @@ _REPOS_URL = f"{GH_URL}/orgs/acme/repos"
 _FROZEN = "2026-07-01T00:00:00Z"
 
 
-def _graphql_body(cursor: str | None = None) -> dict:
+def _graphql_body(stream_name: str, variables: dict, cursor: str | None = None) -> dict:
     """The exact request body the manifest sends — POST mocks match on it."""
     manifest = load_manifest(_CONNECTOR)
-    stream = next(st for st in manifest["streams"] if st["name"] == "projects_v2")
+    stream = next(st for st in manifest["streams"] if st["name"] == stream_name)
     body = dict(stream["retriever"]["requester"]["request_body_json"])
     # The CDK's interpolation strips the YAML block scalar's trailing newline
     # at send time; the raw manifest keeps it.
     body["query"] = body["query"].rstrip("\n")
-    body["variables"] = {"org": "acme"}
+    body["variables"] = dict(variables)
     if cursor is not None:
         body["variables"]["cursor"] = cursor
     return body
@@ -262,6 +262,81 @@ def test_pull_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> No
     assert_records_conform(output.records, _CONNECTOR, "pull_request_commits", strict=True)
 
 
+def _diff_stats_body(cursor: str | None = None) -> dict:
+    return _graphql_body("pull_request_diff_stats", {"owner": "acme", "name": "app"}, cursor)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_pull_request_diff_stats_come_from_the_list_node(http_mocker: HttpMocker) -> None:
+    """REST carries additions/deletions on the PR detail response only; the
+    GraphQL list node carries them, so a page of PRs costs one request."""
+    config = GithubNocodeConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_diff_stats_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "pullRequests": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [
+                                    {
+                                        "number": 31,
+                                        "updatedAt": "2026-06-20T00:00:00Z",
+                                        "additions": 120,
+                                        "deletions": 7,
+                                        "changedFiles": 3,
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_diff_stats", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert (rec["additions"], rec["deletions"], rec["changed_files"]) == (120, 7, 3)
+    assert rec["pull_number"] == 31
+    assert rec["repo_full_name"] == "acme/app"
+    assert rec["unique_key"].endswith(":acme/app:31")
+    assert "changedFiles" not in rec and "updatedAt" not in rec
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "pull_request_diff_stats", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_graphql_not_found_skips_the_repository(http_mocker: HttpMocker) -> None:
+    """An inaccessible repository is an HTTP 200 whose data is null and whose
+    error type is NOT_FOUND — a skip, not a query error that fails the sync."""
+    config = GithubNocodeConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_diff_stats_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {"repository": None},
+                    "errors": [{"type": "NOT_FOUND", "message": "Could not resolve to a Repository"}],
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_diff_stats", config)
+
+    assert not output.errors
+    assert len(output.records) == 0
+
+
 @freezegun.freeze_time(_FROZEN)
 def test_issues_filters_out_pull_requests(http_mocker: HttpMocker) -> None:
     """/issues returns PRs too; the record filter must drop them."""
@@ -323,7 +398,7 @@ def test_graphql_error_in_a_200_fails_loudly(http_mocker: HttpMocker) -> None:
     fail with GitHub's message, not report zero projects."""
     config = GithubNocodeConfigBuilder().build()
     http_mocker.post(
-        HttpRequest(f"{GH_URL}/graphql", body=_graphql_body()),
+        HttpRequest(f"{GH_URL}/graphql", body=_graphql_body("projects_v2", {"org": "acme"})),
         HttpResponse(
             body=json.dumps({"errors": [{"type": "INSUFFICIENT_SCOPES", "message": "needs read:project"}]}),
             status_code=200,
@@ -342,7 +417,7 @@ def test_projects_v2_graphql_pagination_cursor_in_body(http_mocker: HttpMocker) 
     node = {"id": "PVT_1", "number": 1, "title": "Roadmap", "shortDescription": None, "public": True, "closed": False, "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-06-01T00:00:00Z"}
     body = {"data": {"organization": {"projectsV2": {"pageInfo": {"hasNextPage": False, "endCursor": "c1"}, "nodes": [node]}}}}
     http_mocker.post(
-        HttpRequest(f"{GH_URL}/graphql", body=_graphql_body()),
+        HttpRequest(f"{GH_URL}/graphql", body=_graphql_body("projects_v2", {"org": "acme"})),
         HttpResponse(body=json.dumps(body), status_code=200),
     )
 

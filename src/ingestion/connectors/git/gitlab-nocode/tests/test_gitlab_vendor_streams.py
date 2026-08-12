@@ -25,6 +25,7 @@ from connector_tests import (
     assert_records_conform,
     read_stream,
 )
+from connector_tests.source import load_manifest
 
 _CONNECTOR = "git/gitlab-nocode"
 _MRS_URL = f"{GITLAB_URL}/api/v4/groups/acme/merge_requests"
@@ -252,3 +253,70 @@ def test_notes_store_trimmed_bodies_and_inline_position(http_mocker: HttpMocker)
     assert by_id[502]["position_new_path"] == ""
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "merge_request_notes", strict=True)
+
+
+def _diff_stats_body(cursor: str | None = None) -> dict:
+    """The exact request body the manifest sends — POST mocks match on it."""
+    manifest = load_manifest(_CONNECTOR)
+    stream = next(st for st in manifest["streams"] if st["name"] == "merge_request_diff_stats")
+    body = dict(stream["retriever"]["requester"]["request_body_json"])
+    # The CDK's interpolation strips the YAML block scalar's trailing newline
+    # at send time; the raw manifest keeps it.
+    body["query"] = body["query"].rstrip("\n")
+    body["variables"] = {"group": "acme", "updatedAfter": "2026-06-01T00:00:00Z"}
+    if cursor is not None:
+        body["variables"]["cursor"] = cursor
+    return body
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_merge_request_diff_stats_carry_real_integers(http_mocker: HttpMocker) -> None:
+    """REST exposes only a capped `changes_count` STRING; GraphQL carries real
+    integers, and a null diffStatsSummary (stats computed asynchronously) must
+    stay null rather than becoming a zero the metrics would trust."""
+    config = GitlabNocodeConfigBuilder().build()
+    http_mocker.post(
+        HttpRequest(f"{GITLAB_URL}/api/graphql", body=_diff_stats_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "group": {
+                            "mergeRequests": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [
+                                    {
+                                        "iid": "5",
+                                        "updatedAt": "2026-06-20T10:00:00Z",
+                                        "project": {"id": "gid://gitlab/Project/7"},
+                                        "diffStatsSummary": {"additions": 120, "deletions": 7, "fileCount": 3},
+                                    },
+                                    {
+                                        "iid": "6",
+                                        "updatedAt": "2026-06-21T10:00:00Z",
+                                        "project": {"id": "gid://gitlab/Project/7"},
+                                        "diffStatsSummary": None,
+                                    },
+                                ],
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "merge_request_diff_stats", config)
+
+    assert not output.errors
+    by_iid = {r.record.data["mr_iid"]: r.record.data for r in output.records}
+    assert (by_iid[5]["additions"], by_iid[5]["deletions"], by_iid[5]["files_changed"]) == (120, 7, 3)
+    assert by_iid[5]["project_id"] == 7
+    assert by_iid[5]["unique_key"].endswith(":7:5")
+    # An absent field lands as SQL NULL; a zero would read as "MR with no
+    # changes", which is a different fact from "stats not computed yet".
+    assert "additions" not in by_iid[6], "pending stats must not read as zero"
+    assert "diffStatsSummary" not in by_iid[5] and "project" not in by_iid[5]
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "merge_request_diff_stats", strict=True)
