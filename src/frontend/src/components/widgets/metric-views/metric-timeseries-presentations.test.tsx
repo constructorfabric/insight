@@ -1,5 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MetricTimeseriesChart } from "@/components/widgets/metric-views/metric-timeseries-chart";
 import {
@@ -33,6 +33,52 @@ const COMPOSED_TABLE = {
   ],
 } satisfies MetricTimeseriesTableConfig;
 
+/**
+ * jsdom has no layout engine and no ResizeObserver, so every dimension reads
+ * zero and the table concludes that nothing overflows. Supplying the geometry
+ * is what lets the real decisions run — which side holds more, how far a page
+ * moves — rather than a stand-in for them.
+ */
+afterEach(() => vi.unstubAllGlobals());
+
+/** Scoped to the tests that need it: charts here measure themselves and a
+ *  no-op observer leaves them with nothing to draw. */
+function stubResizeObserver(): void {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    }
+  );
+}
+
+function giveGeometry(
+  container: HTMLElement,
+  box: Partial<
+    Record<
+      | "clientWidth"
+      | "scrollWidth"
+      | "clientHeight"
+      | "scrollHeight"
+      | "scrollLeft"
+      | "scrollTop",
+      number
+    >
+  >
+): HTMLElement & { scrollBy: ReturnType<typeof vi.fn> } {
+  const el = container.querySelector<HTMLElement>(
+    '[data-slot="table-container"]'
+  )!;
+  for (const [key, value] of Object.entries(box)) {
+    Object.defineProperty(el, key, { value, configurable: true });
+  }
+  const scrollBy = vi.fn();
+  Object.defineProperty(el, "scrollBy", { value: scrollBy, configurable: true });
+  fireEvent.scroll(el);
+  return el as HTMLElement & { scrollBy: typeof scrollBy };
+}
+
 describe("metric timeseries presentations", () => {
   it("renders grouped metrics in a multi-level table", () => {
     render(<MetricTimeseriesTable model={groupedTimeseriesModel()} />);
@@ -58,6 +104,90 @@ describe("metric timeseries presentations", () => {
     expect(screen.getByText("org/repo-b")).toBeInTheDocument();
     expect(screen.queryByText("Commits")).not.toBeInTheDocument();
     expect(screen.getByText("Grand total")).toBeInTheDocument();
+  });
+
+  it("offers no paging control towards a side with nothing on it", () => {
+    // Nothing overflows here: jsdom reports every dimension as zero.
+    render(<MetricTimeseriesTable model={groupedTimeseriesModel()} />);
+    expect(
+      screen.queryByRole("button", { name: /Show (earlier|later)/ })
+    ).toBeNull();
+  });
+
+  it("offers a control for each side that still holds something", () => {
+    stubResizeObserver();
+    const { container } = render(
+      <MetricTimeseriesTable model={groupedTimeseriesModel()} />
+    );
+    giveGeometry(container, {
+      clientWidth: 400,
+      scrollWidth: 1200,
+      clientHeight: 200,
+      scrollHeight: 600,
+      scrollLeft: 0,
+      scrollTop: 0,
+    });
+    // Sitting at both starts: only the two forward controls have anywhere to go.
+    expect(screen.getByRole("button", { name: "Show later columns" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show later rows" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show earlier columns" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show earlier rows" })).toBeNull();
+  });
+
+  it("pages by just under a frame, away from the edge it points at", () => {
+    stubResizeObserver();
+    const { container } = render(
+      <MetricTimeseriesTable model={groupedTimeseriesModel()} />
+    );
+    const box = giveGeometry(container, {
+      clientWidth: 400,
+      scrollWidth: 1200,
+      clientHeight: 200,
+      scrollHeight: 600,
+      scrollLeft: 500,
+      scrollTop: 300,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Show later columns" }));
+    expect(box.scrollBy).toHaveBeenLastCalledWith({
+      left: 320,
+      behavior: "smooth",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Show earlier columns" }));
+    expect(box.scrollBy).toHaveBeenLastCalledWith({
+      left: -320,
+      behavior: "smooth",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Show later rows" }));
+    expect(box.scrollBy).toHaveBeenLastCalledWith({
+      top: 160,
+      behavior: "smooth",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Show earlier rows" }));
+    expect(box.scrollBy).toHaveBeenLastCalledWith({
+      top: -160,
+      behavior: "smooth",
+    });
+  });
+
+  it("pins the totals to the foot of the box, with an edge over the rows", () => {
+    render(<MetricTimeseriesTable model={groupedTimeseriesModel()} />);
+    const foot = screen.getByText("Grand total").closest("tfoot")!;
+    expect(foot.className).toContain("sticky");
+    expect(foot.className).toContain("bottom-0");
+    expect(foot.className).toContain("inset_0_1px_0_0");
+  });
+
+  it("keeps the grand total beside its label when the table is scrolled", () => {
+    // The cell spans every group, so its own start edge scrolls away.
+    render(<MetricTimeseriesTable model={groupedTimeseriesModel()} />);
+    const row = screen.getByText("Grand total").closest("tr")!;
+    const totals = row.querySelectorAll("td")[1]!.querySelector("span")!;
+    expect(totals.className).toContain("sticky");
+    expect(totals.className).toContain("start-28");
   });
 
   it("hides the grand-total row when every total is missing", () => {
