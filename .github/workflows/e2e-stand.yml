@@ -11,7 +11,7 @@ name: E2E — Compose stand
 # appVersions; building them cost ~26 min per job. `up` refuses a tree that
 # changes src/backend/ rather than silently testing it against main's images,
 # so when the diff touches the backend the `changes` job flags it and the
-# lanes pass --build-backend (and take the longer timeout) instead.
+# lanes pass --build (and take the longer timeout) instead.
 #
 # Two independently-reporting checks, split by what they need rather than by
 # what they cover:
@@ -105,7 +105,7 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
       # Whether the diff touches src/backend/ — the lanes turn this into
-      # `up --build-backend`, because `up` refuses a backend-changing tree
+      # `up --build`, because `up` refuses a backend-changing tree
       # rather than silently testing it against main's pulled images.
       backend: ${{ steps.filter.outputs.backend }}
     steps:
@@ -220,7 +220,7 @@ jobs:
         run: |
           set -euo pipefail
           flags=()
-          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
+          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build); fi
           ./dev-compose.sh test-stand up "${flags[@]}"
 
       - name: Run the API suite
@@ -361,7 +361,7 @@ jobs:
         run: |
           set -euo pipefail
           flags=()
-          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
+          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build); fi
           ./dev-compose.sh test-stand up "${flags[@]}"
 
       # The suite's own Chromium, resolved by the locked test environment so

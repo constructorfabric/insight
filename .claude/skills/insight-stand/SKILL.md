@@ -38,11 +38,12 @@ Two consequences you will meet immediately:
 ./dev-compose.sh test-stand down    # stop AND remove volumes
 ```
 
-`up` pulls each backend service pinned to its own chart's `appVersion` — never
-`:latest`, never compiled here. To test a *backend* change pass
-`--build-backend`; `up` otherwise refuses when the tree differs from
-`origin/main` under `src/backend/`, since the pinned images would not be what
-ran.
+`up` pulls the frontend and each backend service pinned to its own chart's
+`appVersion` — never `:latest`, never compiled here. To test a local change
+pass `--build` (the backend compiled from source AND the frontend pnpm-built,
+served by the front-built nginx); `up` otherwise refuses when the tree differs
+from `origin/main` under `src/backend/` or `src/frontend/`, since the pinned
+images would not be what ran.
 
 **A path argument does not narrow the run.** The verb appends it to a hardcoded
 `tests/stand` and pytest unions path arguments, so `test-stand test
