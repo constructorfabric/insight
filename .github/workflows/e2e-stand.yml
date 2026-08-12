@@ -6,11 +6,12 @@ name: E2E — Compose stand
 # exercises the in-process ingestion rig and now carries one blocking gate
 # (metric coverage) — that workflow is untouched by this one.
 #
-# Nothing here compiles the backend. `test-stand up` pulls analytics,
-# authenticator, identity-resolution and gateway at their charts' appVersions;
-# building them cost ~26 min per job, twice over (host binaries, then again
-# inside each image). A PR that DOES touch the backend is refused by `up`
-# rather than silently tested against main's images.
+# By default nothing here compiles the backend. `test-stand up` pulls
+# analytics, authenticator, identity-resolution and gateway at their charts'
+# appVersions; building them cost ~26 min per job. `up` refuses a tree that
+# changes src/backend/ rather than silently testing it against main's images,
+# so when the diff touches the backend the `changes` job flags it and the
+# lanes pass --build-backend (and take the longer timeout) instead.
 #
 # Two independently-reporting checks, split by what they need rather than by
 # what they cover:
@@ -20,11 +21,11 @@ name: E2E — Compose stand
 #   ui-journeys  tests/stand/ui  — 15 browser journeys, run inside the
 #                published ui-tests image.
 #
-# Neither is required on its own. The `Stand E2E` umbrella below is the check
-# meant to be required for the merge queue (merge_group), and the whole
-# workflow is a merge-queue gate rather than a per-push one: pull_request is
-# paths-filtered and every job skips on it regardless, and the lanes run
-# once per queue batch on merge_group. Wall-clock and flake history are in
+# Neither is required on its own; `Stand E2E` below is the one stable context
+# for branch protection. The stand goes with any change it covers: the lanes
+# run on every pull_request whose diff matches the paths filter, once per
+# queue batch on merge_group, nightly, and on dispatch. Superseded PR runs
+# are cancelled by the concurrency group. Wall-clock and flake history are in
 # .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
 #
 # Every stand operation goes through ./dev-compose.sh test-stand — never the
@@ -37,14 +38,13 @@ on:
   pull_request:
     branches: [main]
     # Mirrors the `changes` job's regex below — keep the two lists in sync.
-    # The filter only prunes no-op skipped runs from the Actions tab: every
-    # job below skips on pull_request anyway. The cost is that a PR outside
-    # these paths produces no run at all, so `Stand E2E` cannot be made a
-    # PR-level required check while this filter exists — a required check
-    # whose workflow never triggers reports as pending forever and blocks
-    # queue entry. It can still be required on merge_group, which carries no
-    # paths filter (the event doesn't support one; the `changes` job does
-    # that work there).
+    # This filter decides which PRs run the stand at all; the `changes` job
+    # re-checks the same diff (and is the only filter merge_group gets, since
+    # that event supports no `paths:` key). A PR outside these paths produces
+    # no run at all, so `Stand E2E` cannot be made a PR-level required check
+    # while this filter exists — a required check whose workflow never
+    # triggers reports as pending forever and blocks queue entry. It can
+    # still be required on merge_group.
     paths:
       - "tests/**"
       - "deploy/compose/**"
@@ -105,14 +105,14 @@ jobs:
   # has to run the stand or the gate is decorative.
   changes:
     name: changes
-    # Not on pull_request: the stand gates the merge queue, not every push.
-    # Skipping here cascades — every downstream job skips with it, and a
-    # skipped job satisfies the required check on the PR.
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
+      # Whether the diff touches src/backend/ — the lanes turn this into
+      # `up --build-backend`, because `up` refuses a backend-changing tree
+      # rather than silently testing it against main's pulled images.
+      backend: ${{ steps.filter.outputs.backend }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -124,11 +124,19 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          # No base to diff against (merge_group without one, or a manual run):
-          # assume relevant rather than skipping a gate on a guess.
+          # No base to diff against (merge_group without one, or a manual
+          # run): assume relevant rather than skipping a gate on a guess, and
+          # take the backend answer from the same comparison `up` itself
+          # makes, so the flag and the refusal cannot disagree.
           if [ -z "${BASE:-}" ]; then
+            BASE="$(git rev-parse --verify --quiet origin/main || true)"
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "no base sha — running"
+            if [ -n "$BASE" ] && [ -n "$(git diff --name-only "$BASE" "$HEAD" -- src/backend | head -1)" ]; then
+              echo "backend=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "backend=false" >> "$GITHUB_OUTPUT"
+            fi
             exit 0
           fi
           changed="$(git diff --name-only "$BASE" "$HEAD")"
@@ -138,6 +146,11 @@ jobs:
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "nothing the stand covers changed"
+          fi
+          if echo "$changed" | grep -q '^src/backend/'; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend=false" >> "$GITHUB_OUTPUT"
           fi
 
   resolve-target:
@@ -173,14 +186,14 @@ jobs:
   # Measured: 273 collected here, 10 in ui-journeys, 283 for the whole suite.
   api-smoke:
     name: api-smoke
-    needs: resolve-target
+    needs: [changes, resolve-target]
     if: needs.resolve-target.outputs.target == 'compose'
     runs-on: ubuntu-latest
-    # Was 90 while `up` compiled the backend; measured at 28m for that run, of
-    # which 26m was the build. Pulling instead should land near 8m, so 45
-    # leaves ~5x headroom for a cold runner and a slow registry while no longer
-    # letting a hung stand burn an hour and a half.
-    timeout-minutes: 45
+    # Pull mode measured near 8m, so 45 leaves ~5x headroom for a cold runner
+    # and a slow registry while not letting a hung stand burn an hour and a
+    # half. A backend-building run was measured at 28m (26m of it the build),
+    # hence the wider ceiling on that path.
+    timeout-minutes: ${{ needs.changes.outputs.backend == 'true' && 75 || 45 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -207,7 +220,13 @@ jobs:
       # The gate covers ClickHouse only. A service that failed to start is not
       # its business and will surface as a test failure instead.
       - name: Bring the stand up
-        run: ./dev-compose.sh test-stand up
+        env:
+          BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
+          ./dev-compose.sh test-stand up "${flags[@]}"
 
       - name: Run the API suite
         run: ./dev-compose.sh test-stand test --ignore=tests/stand/ui
@@ -302,12 +321,12 @@ jobs:
   # reportable check, so a red API contract does not hide a broken login.
   ui-journeys:
     name: ui-journeys
-    needs: resolve-target
+    needs: [changes, resolve-target]
     if: needs.resolve-target.outputs.target == 'compose'
     runs-on: ubuntu-latest
     # Same reasoning as api-smoke's, plus the ui-tests image pull. The journeys
     # themselves took 28s.
-    timeout-minutes: 45
+    timeout-minutes: ${{ needs.changes.outputs.backend == 'true' && 75 || 45 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -363,7 +382,13 @@ jobs:
           docker build -f deploy/compose/ui-tests.Dockerfile -t "$UI_TESTS_IMAGE" .
 
       - name: Bring the stand up
-        run: ./dev-compose.sh test-stand up
+        env:
+          BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
+          ./dev-compose.sh test-stand up "${flags[@]}"
 
       # `--image` runs the suite inside the pulled image, joined to the
       # gateway's network namespace so the browser reaches the app at
@@ -464,11 +489,10 @@ jobs:
           ./dev-compose.sh test-stand down
 
   # ─── the required check ───────────────────────────────────────────────────
-  # One stable context name for branch protection — required on merge_group
-  # only; the paths filter above means it cannot be required at PR level. On
-  # pull_request it skips with everything else. On merge-queue builds it runs
-  # whenever the run wasn't cancelled, so it still reports when `changes`
-  # deemed the batch irrelevant and the lanes were skipped.
+  # One stable context name for branch protection — requirable on merge_group
+  # only; the paths filter above means it cannot be required at PR level. It
+  # runs whenever the run wasn't cancelled, so it still reports when `changes`
+  # deemed the diff irrelevant and the lanes were skipped.
   #
   # `skipped` is therefore a PASS here, unlike in e2e-bronze-to-api.yml's
   # umbrella where it is a failure. The difference is what the skip means: there
@@ -478,7 +502,7 @@ jobs:
   stand-suite:
     name: Stand E2E
     needs: [changes, api-smoke, ui-journeys]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

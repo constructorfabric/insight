@@ -1176,14 +1176,17 @@ jobs:
         # environment exists.
         #
         # The package's own tests run here rather than in ci.yml's Python
-        # matrix: they are stdlib `unittest` and touch no database, so the
-        # shipped image can run them with nothing installed on top — and this
-        # way what is tested is exactly what is published.
+        # matrix: they touch no database, so the shipped image can run them
+        # against exactly what is published. They are pytest-style, and pytest
+        # deliberately stays out of the image — it is installed into this
+        # throwaway container only, so the runner is added on top while the
+        # package under test remains the published one.
         run: |
           docker run --rm insight-seed:ci-validate --help
           docker run --rm --entrypoint python insight-seed:ci-validate -c \
             'import insight_seed.identity, insight_seed.silver, insight_seed.analytics, insight_seed.preflight, insight_seed.keycloak_realm'
-          docker run --rm --entrypoint python insight-seed:ci-validate -m unittest discover -s tests -t .
+          docker run --rm --entrypoint sh insight-seed:ci-validate -c \
+            'pip install --no-cache-dir --quiet "pytest>=8,<9" && python -m pytest tests -q'
           docker run --rm --entrypoint dbt insight-seed:ci-validate --version
 
       - name: Build and push seed image (by digest)
