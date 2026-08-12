@@ -13,15 +13,27 @@ Same reasoning as github-copilot ADR-0001.
 
 ## The chain
 
-```
-GET {proxy}/api/stripe/{org}/invoices            -> wrapper rows, hosted_invoice_url
-parse https://invoice.stripe.com/i/{acct}/{tok}  -> (acct, token)
-GET invoicedata.stripe.com/hosted_invoice_page/… -> invoice_id + ephemeral key
-GET api.stripe.com/v1/invoices/{id}/lines        -> line items
-```
+| Step | Request | What it yields |
+|---|---|---|
+| 1 | `GET {proxy}/api/stripe/{org}/invoices` | the wrapper's rows: `total`, `total_excluding_tax`, `currency`, `status`, `num_seats`, `hosted_invoice_url` — no invoice id, no lines |
+| 2 | parse `https://invoice.stripe.com/i/{acct}/{token}?s=ap` | the account and token identifiers |
+| 3 | `GET invoicedata.stripe.com/hosted_invoice_page/{acct}/{token}` | `invoice_id` and a short-lived `ephemeral_key` |
+| 4 | `GET api.stripe.com/v1/invoices/{id}/hosted` | the invoice with its lines embedded |
+| 5 | `GET api.stripe.com/v1/invoices/{id}/lines?limit=100` | the full line set, when step 4 reports more |
 
-The ephemeral key is short-lived, authorises the last hop only, and is never
-written to a record, a state message or a log line.
+Steps 3 to 5 pin `Stripe-Version: 2026-06-24.dahlia` and pass
+`Stripe-Account: {acct}`. The ephemeral key is short-lived, authorises the last
+two hops only, and is never written to a record, a state message or a log line.
+
+Follow a URL inside the run that fetched it. Stripe expires a hosted invoice URL
+30 days after the due date, and claude.ai re-issues a fresh one on every list
+call — so storing a URL and following it later works in every test and then
+fails in production, oldest invoices first.
+
+**What the connector must be allowed to reach.** Steps 3 to 5 leave the cluster
+for `invoicedata.stripe.com` and `api.stripe.com`; where a `NetworkPolicy`
+governs egress it has to admit both. A blocked host surfaces as a chain step
+that did not complete, not as missing money.
 
 ## What a line means
 
@@ -36,8 +48,17 @@ that is not a price. It is also not the wrapper's `num_seats`, which is absent
 on most invoices and, where present, reports one line's quantity while the
 invoice covers several tiers.
 
-One tenant runs several tiers at once, so a seat price binds to a tier — see
-`docs/domain/metrics/specs/ai-cost/research-notes.md` §20 for the measurements.
+One tenant runs several tiers at once — a single invoice prices each of them on
+its own line — so a seat price binds to a tier and reaches a person through
+`class_ai_overage.seat_tier`, never by dividing an invoice total.
+
+`period` dates a line to the window it charges for, which is not always the
+window the invoice was raised in. A line is filed by its period, never by the
+invoice date.
+
+Prepaid extra-usage purchases arrive as invoices of their own, carrying a single
+`overusage` line at `quantity: 1`. They are the invoiced-layer counterpart of
+the extra usage a seat later consumes, and they price no seat.
 
 ## Degradation
 
