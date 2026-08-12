@@ -20,7 +20,11 @@ only support an inequality.
 
 Exports cover one metric per evidence presentation rather than the whole
 catalogue: a presentation is all an export can differ by. `EXPORT_SHAPES` names
-them, and the metrics not in it are deliberately not exported here.
+them, and the metrics not in it are deliberately not exported here. On top of
+the shape sweep, `git.commits` is exported once more cell for cell: the seed
+plants hostile commit titles (formula prefixes, an embedded tab and newline),
+and the parity case asserts the export's actual neutralization contract
+against the page the same selection returns.
 
 The refusal catalogue (#1603 scenario 6) closes the file: every way a request
 can be unservable — tampered pagination cursors included — is refused with a
@@ -34,6 +38,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import datetime as dt
 import io
 import json
 import math
@@ -58,6 +63,7 @@ from ..schemas import (
 )
 from ..schemas.analytics import (
     MetricDrilldownCapability,
+    MetricDrilldownColumnType,
     MetricDrilldownResponse,
 )
 from .drilldown_matrix import EXPORT_SHAPES, MATRIX, Expectation, Tier
@@ -319,6 +325,137 @@ def _xlsx_rows(content: bytes) -> int:
     return len(
         worksheet.findall(".//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row")
     )
+
+
+_SSML = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+#: The CSV neutralization contract, read from `csv_safe_cell` in
+#: `src/backend/services/analytics/src/domain/metric_drilldown/export.rs`: a
+#: cell whose FIRST byte could start a spreadsheet formula (`=` `+` `-` `@`) or
+#: shift the cell's content on paste (tab, CR, LF, space) is prefixed with a
+#: single quote. Embedded occurrences are untouched — RFC 4180 quoting keeps
+#: them inside the cell instead.
+_CSV_NEUTRALIZED_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n", " ")
+
+#: What the seed plants on a handful of the dev lead's commit titles
+#: (`HOSTILE_COMMIT_MESSAGES` in `src/ingestion/tools/seed/insight_seed/
+#: generators/git.py`), named here only to prove the selection under test
+#: actually contains each hostile class — never as an expectation of content.
+_HOSTILE_PREFIXES = ("=", "+", "-", "@")
+_HOSTILE_EMBEDDED = ("\t", "\n")
+
+
+def _assert_csv_cell_matches(text: str, value: object, where: str) -> None:
+    """One exported CSV cell against the paged value it must carry."""
+    if value is None:
+        assert text == "", f"{where}: null must export as an empty cell, got {text!r}"
+    elif isinstance(value, bool):
+        assert text == str(value).lower(), f"{where}: {text!r} is not {value}"
+    elif isinstance(value, str):
+        expected = f"'{value}" if value.startswith(_CSV_NEUTRALIZED_PREFIXES) else value
+        assert text == expected, (
+            f"{where}: exported {text!r}, expected {expected!r} — content must arrive intact, "
+            "neutralized exactly per the export's own prefix rule"
+        )
+    else:
+        assert isinstance(value, int | float), f"{where}: unexpected paged value {value!r}"
+        # A negative number starts with `-`, so it is neutralized like text.
+        bare = text.removeprefix("'")
+        assert bare and _close(float(bare), float(value)), (
+            f"{where}: exported {text!r} does not carry the paged number {value!r}"
+        )
+
+
+def _shared_strings(workbook: zipfile.ZipFile) -> list[str]:
+    if "xl/sharedStrings.xml" not in workbook.namelist():
+        return []
+    root = ElementTree.fromstring(workbook.read("xl/sharedStrings.xml"))
+    return [
+        "".join(node.text or "" for node in item.iter(f"{_SSML}t"))
+        for item in root.findall(f"{_SSML}si")
+    ]
+
+
+def _xlsx_column_index(reference: str) -> int:
+    index = 0
+    for character in reference:
+        if character.isdigit():
+            break
+        index = index * 26 + (ord(character) - ord("A") + 1)
+    return index - 1
+
+
+def _xlsx_cell_matrix(content: bytes, width: int) -> list[list[str | float | bool | None]]:
+    """Every worksheet cell decoded, with the inertness contract asserted.
+
+    A formula cell would carry an `f` element (and a cached result typed
+    `str`); asserting neither exists in ANY cell is what "stored as data, not
+    as a formula" means at the file level. Text arrives as a shared or inline
+    string, blanks as valueless cells, numbers and dates as numeric `v`.
+    """
+    with zipfile.ZipFile(io.BytesIO(content)) as workbook:
+        strings = _shared_strings(workbook)
+        sheet = ElementTree.fromstring(workbook.read("xl/worksheets/sheet1.xml"))
+    matrix: list[list[str | float | bool | None]] = []
+    for row in sheet.iter(f"{_SSML}row"):
+        cells: list[str | float | bool | None] = [None] * width
+        for cell in row.findall(f"{_SSML}c"):
+            reference = cell.get("r", "")
+            where = f"cell {reference or '<unaddressed>'}"
+            assert cell.find(f"{_SSML}f") is None, f"{where}: exported as a formula"
+            kind = cell.get("t", "n")
+            assert kind != "str", f"{where}: typed as a formula's cached string result"
+            index = _xlsx_column_index(reference)
+            assert 0 <= index < width, f"{where}: outside the {width} exported columns"
+            value_node = cell.find(f"{_SSML}v")
+            if kind == "s":
+                assert value_node is not None and value_node.text is not None, (
+                    f"{where}: shared string without an index"
+                )
+                cells[index] = strings[int(value_node.text)]
+            elif kind == "inlineStr":
+                cells[index] = "".join(node.text or "" for node in cell.iter(f"{_SSML}t"))
+            elif kind == "b":
+                cells[index] = value_node is not None and value_node.text == "1"
+            elif value_node is None or value_node.text is None:
+                cells[index] = None
+            else:
+                cells[index] = float(value_node.text)
+        matrix.append(cells)
+    return matrix
+
+
+#: `ExcelDateTime` serial numbers count days from this epoch (the 1900 date
+#: system with its historical two-day offset), so a date cell decodes without
+#: any expectation about which calendar day it holds.
+_XLSX_EPOCH = dt.date(1899, 12, 30)
+
+
+def _assert_xlsx_cell_matches(
+    cell: str | float | bool | None,
+    value: object,
+    column_type: MetricDrilldownColumnType,
+    where: str,
+) -> None:
+    """One decoded XLSX cell against the paged value it must carry."""
+    if value is None:
+        assert cell is None, f"{where}: null arrived as {cell!r}"
+    elif column_type is MetricDrilldownColumnType.date and isinstance(value, str):
+        assert isinstance(cell, float), f"{where}: date arrived as {cell!r}, not a serial"
+        day = _XLSX_EPOCH + dt.timedelta(days=cell)
+        assert day.isoformat() == value, f"{where}: serial {cell!r} decodes to {day}, not {value!r}"
+    elif isinstance(value, bool):
+        assert cell is value, f"{where}: boolean arrived as {cell!r}"
+    elif isinstance(value, str):
+        assert cell == value, (
+            f"{where}: exported {cell!r}, expected {value!r} — XLSX applies no prefix, "
+            "so the string must arrive byte-identical"
+        )
+    else:
+        assert isinstance(value, int | float), f"{where}: unexpected paged value {value!r}"
+        assert isinstance(cell, float) and _close(cell, float(value)), (
+            f"{where}: exported {cell!r} does not carry the paged number {value!r}"
+        )
 
 
 def _numbers(rows: Sequence[Mapping[str, object]], column: str, metric_key: str) -> list[float]:
@@ -660,6 +797,79 @@ def test_drilldown_export_carries_every_row(
     )
     assert ".xlsx" in xlsx_response.headers.get("content-disposition", "")
     assert _xlsx_rows(xlsx_response.content) == len(walk.rows) + 1
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.versatility
+def test_export_cells_match_the_page_and_hostile_values_stay_inert(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """#1603 scenario 11 — export cell parity and escaping.
+
+    The count sweep above proves nothing about content, and content is where
+    an export can betray its reader: a commit title is attacker-shaped free
+    text, and a spreadsheet will happily execute one that starts with `=`. The
+    seed plants clearly synthetic titles covering each formula prefix plus an
+    embedded tab and newline, so the `git.commits` selection is the one whose
+    export has something to get wrong.
+
+    Both formats are compared cell for cell against the page the same
+    selection returns — both sides of every comparison come from the service.
+    The escaping asserted is the backend's actual contract (`csv_safe_cell`):
+    a CSV cell's first byte in the prefix set earns a leading single quote,
+    everything else round-trips byte-identical, and RFC 4180 quoting keeps
+    embedded tabs and newlines inside their cell, so the row count is the
+    page's. XLSX applies no prefix at all: every value arrives byte-identical
+    as a shared or inline string, and no cell is a formula.
+    """
+    walk = _walk(api, stand_manifest, GIT_COMMITS, limit=_PAGE_LIMIT, page_budget=_PAGE_BUDGET)
+    assert walk.complete, "the hostile selection must be small enough to walk whole"
+    keys = walk.column_keys
+    assert "title" in keys, f"no title column in {keys} — nowhere for a hostile value to surface"
+
+    titles = [row["title"] for row in walk.rows if isinstance(row["title"], str)]
+    for prefix in _HOSTILE_PREFIXES:
+        assert any(title.startswith(prefix) for title in titles), (
+            f"no evidence title begins with {prefix!r} — the stand predates the hostile-title "
+            "seed, so this test would prove nothing; re-seed it"
+        )
+    for embedded in _HOSTILE_EMBEDDED:
+        assert any(embedded in title for title in titles), (
+            f"no evidence title embeds {embedded!r} — the stand predates the hostile-title "
+            "seed, so this test would prove nothing; re-seed it"
+        )
+
+    request = _request_for(stand_manifest, GIT_COMMITS)
+
+    csv_response = _export(api, request, "csv")
+    assert csv_response.status_code == 200, f"csv: {csv_response.text[:300]}"
+    csv_rows = list(csv.reader(io.StringIO(csv_response.content.decode("utf-8-sig"))))
+    assert csv_rows[0] == [column.label for column in walk.first.columns]
+    assert len(csv_rows) == len(walk.rows) + 1, (
+        f"CSV parsed to {len(csv_rows) - 1} rows against {len(walk.rows)} paged rows — "
+        "an embedded newline escaped its cell"
+    )
+    for row_index, (page_row, csv_row) in enumerate(zip(walk.rows, csv_rows[1:], strict=True)):
+        assert len(csv_row) == len(keys), (
+            f"CSV row {row_index} has {len(csv_row)} cells for {len(keys)} columns — "
+            "an embedded delimiter escaped its cell"
+        )
+        for key, text in zip(keys, csv_row, strict=True):
+            _assert_csv_cell_matches(text, page_row[key], f"CSV row {row_index} column {key!r}")
+
+    xlsx_response = _export(api, request, "xlsx")
+    assert xlsx_response.status_code == 200, f"xlsx: {xlsx_response.text[:300]}"
+    matrix = _xlsx_cell_matrix(xlsx_response.content, len(keys))
+    assert len(matrix) == len(walk.rows) + 1
+    assert matrix[0] == [column.label for column in walk.first.columns]
+    for row_index, (page_row, sheet_row) in enumerate(zip(walk.rows, matrix[1:], strict=True)):
+        for column_index, column in enumerate(walk.first.columns):
+            _assert_xlsx_cell_matches(
+                sheet_row[column_index],
+                page_row[column.key],
+                column.type,
+                f"XLSX row {row_index} column {column.key!r}",
+            )
 
 
 @pytest.mark.requires_seed("dev_lead")
