@@ -3,10 +3,14 @@
 # under /kc natively (--http-relative-path) and discovery emits absolute URLs
 # off KC_HOSTNAME (= .Values.hostname), so no rewrite.
 #
-# Only the browser/OIDC surface is exposed: /kc/realms (discovery, auth,
-# tokens, broker callbacks, account console) and /kc/resources (theme
-# assets). The admin console and admin REST API (/kc/admin, plus the /kc
-# welcome redirect to it) stay cluster-internal — reach them with
+# Only the browser/OIDC surface of the EXPOSED realms is published: for each
+# `route.realms` entry, /kc/realms/<realm> (discovery, auth, tokens, broker
+# callbacks, account console) — plus /kc/resources (theme assets). A bare
+# /kc/realms prefix would also publish /kc/realms/master, whose admin-cli
+# password-grant token endpoint is a brute-force target; scoping to the app
+# realm(s) keeps master and every other realm off the internet. The admin
+# console and admin REST API (/kc/admin, plus the /kc welcome redirect to it)
+# stay cluster-internal — reach them with
 #   kubectl port-forward svc/<release>-keycloak {{ .Values.service.port }}
 # (adminHostname in values.yaml advertises that URL to the console).
 apiVersion: gateway.networking.k8s.io/v1
@@ -32,13 +36,18 @@ spec:
   {{- end }}
   rules:
     - matches:
+        {{- range .Values.route.realms }}
         - path:
             type: PathPrefix
-            value: /kc/realms
+            value: /kc/realms/{{ . }}
+        {{- end }}
         - path:
             type: PathPrefix
             value: /kc/resources
       backendRefs:
         - name: {{ include "insight-keycloak.fullname" . }}
           port: {{ .Values.service.port }}
+{{- end }}
+{{- if and .Values.route.enabled (not .Values.route.realms) }}
+{{- fail "keycloak.route.realms must list the realm(s) to expose (e.g. [insight]); a bare /kc/realms would publish the master realm to the internet" }}
 {{- end }}
