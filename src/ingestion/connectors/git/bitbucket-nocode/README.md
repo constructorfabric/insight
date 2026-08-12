@@ -125,15 +125,14 @@ the proxy clones it in the background; every proxy stream retries on `429`.
 proxy's size cap) fail the stream instead — retrying the same page token would
 loop.
 
-## Open question: partial clone support
+## Partial clone support: settled
 
-The proxy clones with `--filter=blob:none`. Whether Bitbucket Cloud honours it
-is **unverified** — it is open question #2 in the design and needs a live
-credential to settle. Git degrades gracefully if the server does not support
-filtering (it warns and performs a full clone), so the connector works either
-way; what changes is the proxy's first-clone cost and disk profile, since the
-`repack --filter=blob:none` purge still returns the entry to a blobless
-skeleton afterwards. Measure before sizing the cache volume for Bitbucket.
+Bitbucket Cloud honours `--filter=blob:none` (verified live — git-cli-proxy
+PLAN §9.2). One sizing consequence remains: with `include_patch=true` the
+first backfill lazily pulls essentially every blob while paging history, so
+the proxy cache should be sized for roughly full-clone weight per Bitbucket
+repository during backfill; the post-serve purge returns entries to the
+blobless skeleton afterwards.
 
 ## Silver Targets
 
