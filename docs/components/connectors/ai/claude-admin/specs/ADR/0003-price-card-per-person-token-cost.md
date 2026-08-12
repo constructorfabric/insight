@@ -91,9 +91,11 @@ Three supporting mechanisms are adopted with it:
   the computation a single parameterised JOIN instead of pulling token rows into an
   application, and makes a rate change a data change with an audit trail.
 - **The card self-extends, approximately.** A `(model, service_tier, token_type)` seen in
-  traffic with no rate in force gets one derived from recent `cost_report` rows as
-  `SUM(amount) / SUM(tokens)`, written with `origin = 'derived'` and with `context_window`
-  NULL. The derivation does not group by context window, so where a model prices context
+  traffic with no rate in force gets one derived from recent `cost_report` rows **restricted to
+  `cost_type = 'tokens'`** as `SUM(amount) / SUM(tokens)`, written with `origin = 'derived'`
+  and with `context_window` NULL. Without that restriction the numerator would carry web
+  search, code execution and session charges against a token-only denominator, and the derived
+  rate would be wrong rather than approximate. The derivation does not group by context window, so where a model prices context
   tiers differently the derived figure is a traffic-weighted blend of them, not either tier's
   rate. That is why resolution prefers an exact match and the NULL row is the fallback — see
   [Consequences](#consequences) for the bound this carries. A newly released model still

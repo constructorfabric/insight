@@ -579,33 +579,16 @@ in favour of the registry metric.
 
 ## 19. Invoice feasibility
 
-What 2.5 requires of the vendor's contract, and what the endpoint returns. Established before
-building anything; the readings themselves are not reproduced here.
+**The connector's own README is where the endpoint and chain contract lives** —
+`src/ingestion/connectors/ai/claude-team-invoices/README.md`. It states what the wrapper
+returns and does not return, the hops that reach the line items, the rule that identifies a
+seat price, and what the connector must be allowed to reach. Kept there rather than here
+because that is where the next person to touch the connector will look.
 
-**The proxy already forwards the path.** `claude-team-proxy` exposes exactly three routes —
-`/admin/session-key`, `/health` and a wildcard `/api/*` — so
-`GET {proxy_url}/api/stripe/{org}/invoices` needs no proxy change and no action from whoever
-operates it. The route authorises on the session key the connector already installs, and
-unlike `overage_spend_limits` it does not depend on the `billing:view` scope.
+Two things from this investigation belong to the plan rather than to the connector:
 
-**Volume and shape.** The endpoint pages twelve invoices at a time. Fields: `attempt_count`, `attempted`, `created_ts`, `currency`,
-`due_date_ts`, `gift`, `hosted_invoice_url`, `invoice_pdf_url`, `num_seats`, `payment_intent`,
-`post_payment_credit_notes_amount`, `status`, `total`, `total_excluding_tax`. No invoice id
-and no line items, as expected. `hosted_invoice_url` has the form
-`https://invoice.stripe.com/i/{acct}/{token}?s=ap`.
-
-**`num_seats` cannot carry the seat price.** It is sparsely populated, and where present it
-takes implausible values (0 and 1) alongside plausible ones. The seat count has to come from
-the subscription line item's `quantity`, which only the hosted chain reaches
-— so the chain is a prerequisite for `ai.seat_cost`, not an enrichment.
-
-**`total` is not `total_excluding_tax`** on most invoices. The net-amount rule changes the
-figure as a rule rather than on an edge case.
-
-**Egress requirement.** The chain leaves the cluster for `api.stripe.com` and
-`invoicedata.stripe.com`, so both hosts must be reachable from wherever the connector runs.
-Where a `NetworkPolicy` governs egress, it has to admit them; the connector reports the
-failure as a chain step that did not complete rather than as missing money.
+**`num_seats` cannot carry the seat price**, so the hosted chain is a prerequisite for
+`ai.seat_cost` and not an enrichment of it. That is why 2.5 lands before 2.6.
 
 **The CDK runtime is an existing pattern, not new infrastructure.** Of 26 connectors, 19 are
 declarative manifests and at least five are Python CDK sources with their own `Dockerfile`,
@@ -613,65 +596,24 @@ declarative manifests and at least five are Python CDK sources with their own `D
 salesforce, bitbucket-cloud, github-v2. `build-images.yml` already builds connector images.
 The 2.5 risk note should be read accordingly: the chain is the hard part, the runtime is not.
 
-**Not probed:** the Stripe chain itself. Running it means sending a real invoice token to a
-third party to obtain an ephemeral key, so it waits on an explicit decision. It would confirm
-three things at once — that the URL format still parses, that the bootstrap returns both
-fields, and that line items carry `quantity`.
+## 20. The seat price, and what it binds to
 
-## 20. The Stripe hosted chain
+The line-level rules are in the connector README with the rest of the chain contract. Two
+consequences shape `ai.seat_cost` itself and are recorded here because the metric, not the
+connector, carries them:
 
-The four hops between a `hosted_invoice_url` and the line items, and what each one yields:
+1. **A tenant runs several tiers at once**, and one invoice prices each of them separately. A
+   seat price is therefore per tier, never per organisation, and reaches a person through
+   `class_ai_overage.seat_tier` rather than by dividing an invoice total.
+2. **Proration lines carry no unit price.** A mid-period seat-count change emits a credit for
+   the unused time and a charge for the remainder; both are subscription lines and both are
+   real money, but `amount / quantity` over them yields a partial-period figure that is not a
+   price. They are excluded structurally, by
+   `parent.subscription_item_details.proration`, never by reading a description.
 
-| Step | Request | Result |
-|---|---|---|
-| 1 | `GET {proxy}/api/stripe/{org}/invoices` | list, as §19 |
-| 2 | parse `hosted_invoice_url` | account and token identifiers, per the documented form |
-| 3 | `GET invoicedata.stripe.com/hosted_invoice_page/{acct}/{token}` | `invoice_id` and `ephemeral_key` both present |
-| 4 | `GET api.stripe.com/v1/invoices/{id}/hosted` | lines embedded, `has_more: false` |
-| 5 | `GET api.stripe.com/v1/invoices/{id}/lines?limit=100` | full line set |
-
-The chain pins `Stripe-Version: 2026-06-24.dahlia` and passes `Stripe-Account: {acct}`. The
-URL form the reference implementation parses is the one in force.
-
-**The seat price is `hosted_invoice_unit_amount`, not `amount / quantity`.** A regular monthly
-invoice carries it directly:
-
-```
-qty=18   amount=45000    unit_amount=2500   proration=False  subscriptions  "18 x Team plan - Standard (at $25.00 / month)"
-qty=124  amount=1550000  unit_amount=12500  proration=False  subscriptions  "124 x Team plan - Premium (at $125.00 / month)"
-```
-
-**Two consequences that change the shape of `ai.seat_cost`:**
-
-1. **A tenant runs several tiers at once.** That one invoice prices Standard at $25.00 and
-   Premium at $125.00 in the same billing period. A seat price is therefore per tier, not per
-   organisation, and must be joined to a person through `class_ai_overage.seat_tier` rather
-   than divided out of an invoice total.
-2. **Proration lines carry no unit price.** A mid-period seat-count change produces
-   ```
-   qty=N    amount=-<credit>  unit_amount=None  proration=True  "Unused time on N x Team plan - Premium"
-   qty=N+2  amount=<charge>   unit_amount=None  proration=True  "Remaining time on N+2 x Team plan - Premium"
-   ```
-   Both are `subscriptions` by parent, both are real money, and `amount / quantity` on them
-   yields a partial-period figure that is not a seat price. They are excluded from the price
-   by the structural flag `parent.subscription_item_details.proration`.
-
-**`num_seats` is worse than sparse — it is wrong.** On a multi-tier invoice it reports the
-quantity of one line only, not the seats the invoice covers.
-
-**Also observed.** Prepaid credit purchases arrive as their own invoices — one
-`overusage` line each, `quantity: 1`, descriptions like "Prepaid extra usage, Team plan".
-These are the money behind the `used_credits` a seat later
-consumes, which makes them the invoiced-layer counterpart of `ai.extra_usage_cost`.
-
-Line fields available: `amount`, `currency`, `description`, `discount_amounts`, `discountable`,
-`discounts`, `hosted_invoice_discount_amounts`, `hosted_invoice_discount_objects`,
-`hosted_invoice_metered_dimension_values`, `hosted_invoice_product_name`,
-`hosted_invoice_short_description`, `hosted_invoice_tier_label`, `hosted_invoice_unit_amount`,
-`hosted_invoice_unit_amount_decimal`, `hosted_invoice_unit_bucket_size`, `id`, `invoice`,
-`livemode`, `object`, `parent`, `period`, `pretax_credit_amounts`, `pricing`, `quantity`,
-`quantity_decimal`, `rendering`, `subtotal`, `taxes`. `period` dates a line to its billing
-window without inferring it from the invoice date.
+Prepaid extra-usage purchases arrive as invoices of their own, which makes them the
+invoiced-layer counterpart of `ai.extra_usage_cost` — the money behind the `used_credits` a
+seat later consumes.
 
 ## 21. Hosted invoice URLs expire; the wrapper is what keeps history reachable
 
@@ -684,8 +626,8 @@ Stripe documents the lifetime of a `hosted_invoice_url` plainly:
 and adds that a URL *retrieved through the API* stays valid for at least 10 days even past
 that point.
 
-This explains why §20's probe reached an invoice from 2025-11 through a URL that should long
-have expired: **claude.ai re-issues a fresh URL on every list call.** The reference
+This is why an invoice far older than that window is still reachable through a URL taken
+from the list call: **claude.ai re-issues a fresh URL on every list call.** The reference
 implementation noticed the rotation without connecting it to expiry — its comment reads
 "raw hosted_invoice_url can't be used directly (it rotates)".
 
