@@ -1441,7 +1441,7 @@ for dbt-built gold data rather than for containers to report healthy.
                    test a local change: `up` otherwise refuses when the tree
                    differs from origin/main under src/backend/ or
                    src/frontend/, since the pinned images would not be what
-                   ran. (--build-backend remains as an alias.)
+                   ran.
   seed    Re-seed the running stand (default target: all).
   test    Run the stand suite against an already-up stand. Passes extra
           arguments through to pytest — no `--` separator.
@@ -1801,9 +1801,6 @@ cmd_test_stand() {
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --build) build=true; shift ;;
-          # The old spelling, kept so muscle memory and scripts stay valid.
-          # It builds the frontend too now — the flag means "this tree runs".
-          --build-backend) build=true; shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
         esac

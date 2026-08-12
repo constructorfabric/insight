@@ -43,8 +43,7 @@ Two consequences you will meet immediately:
 pass `--build` (the backend compiled from source AND the frontend pnpm-built,
 served by the front-built nginx); `up` otherwise refuses when the tree differs
 from `origin/main` under `src/backend/` or `src/frontend/`, since the pinned
-images would not be what ran. `--build-backend` survives as an alias of
-`--build`.
+images would not be what ran.
 
 **A path argument does not narrow the run.** The verb appends it to a hardcoded
 `tests/stand` and pytest unions path arguments, so `test-stand test
