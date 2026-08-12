@@ -263,7 +263,7 @@ def _diff_stats_body(cursor: str | None = None) -> dict:
     # The CDK's interpolation strips the YAML block scalar's trailing newline
     # at send time; the raw manifest keeps it.
     body["query"] = body["query"].rstrip("\n")
-    body["variables"] = {"group": "acme", "updatedAfter": "2026-06-01T00:00:00Z"}
+    body["variables"] = {"project": "acme/app", "updatedAfter": "2026-06-01T00:00:00Z"}
     if cursor is not None:
         body["variables"]["cursor"] = cursor
     return body
@@ -275,26 +275,33 @@ def test_merge_request_diff_stats_carry_real_integers(http_mocker: HttpMocker) -
     integers, and a null diffStatsSummary (stats computed asynchronously) must
     stay null rather than becoming a zero the metrics would trust."""
     config = GitlabNocodeConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(f"{GITLAB_URL}/api/v4/groups/acme/projects", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                [{"id": 7, "path_with_namespace": "acme/app", "last_activity_at": "2026-06-20T10:00:00.000+00:00"}]
+            ),
+            status_code=200,
+        ),
+    )
     http_mocker.post(
         HttpRequest(f"{GITLAB_URL}/api/graphql", body=_diff_stats_body()),
         HttpResponse(
             body=json.dumps(
                 {
                     "data": {
-                        "group": {
+                        "project": {
                             "mergeRequests": {
                                 "pageInfo": {"hasNextPage": False, "endCursor": None},
                                 "nodes": [
                                     {
                                         "iid": "5",
                                         "updatedAt": "2026-06-20T10:00:00Z",
-                                        "project": {"id": "gid://gitlab/Project/7"},
                                         "diffStatsSummary": {"additions": 120, "deletions": 7, "fileCount": 3},
                                     },
                                     {
                                         "iid": "6",
                                         "updatedAt": "2026-06-21T10:00:00Z",
-                                        "project": {"id": "gid://gitlab/Project/7"},
                                         "diffStatsSummary": None,
                                     },
                                 ],
@@ -317,6 +324,43 @@ def test_merge_request_diff_stats_carry_real_integers(http_mocker: HttpMocker) -
     # An absent field lands as SQL NULL; a zero would read as "MR with no
     # changes", which is a different fact from "stats not computed yet".
     assert "additions" not in by_iid[6], "pending stats must not read as zero"
-    assert "diffStatsSummary" not in by_iid[5] and "project" not in by_iid[5]
+    assert "diffStatsSummary" not in by_iid[5]
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "merge_request_diff_stats", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_empty_groups_syncs_the_full_instance(http_mocker: HttpMocker) -> None:
+    """gitlab_groups empty flips discovery to keyset-paginated /projects —
+    every project the token can see, no offset ceiling."""
+    config = GitlabNocodeConfigBuilder().build()
+    config["gitlab_groups"] = []
+    http_mocker.get(
+        HttpRequest(f"{GITLAB_URL}/api/v4/projects", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                [
+                    {
+                        "id": 7,
+                        "path_with_namespace": "acme/app",
+                        "name": "app",
+                        "default_branch": "main",
+                        "archived": False,
+                        "visibility": "private",
+                        "http_url_to_repo": "https://gitlab.example.com/acme/app.git",
+                        "web_url": "https://gitlab.example.com/acme/app",
+                        "created_at": "2020-01-01T00:00:00.000+00:00",
+                        "last_activity_at": "2026-06-20T10:00:00.000+00:00",
+                    }
+                ]
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "repositories", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert rec["project_id"] == 7
+    _no_literal_none(output.records)

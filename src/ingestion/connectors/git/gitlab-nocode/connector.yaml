@@ -79,12 +79,17 @@ streams:
             type: RequestOption
             field_name: PRIVATE-TOKEN
             inject_into: header
-        path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/projects"
+        path: "{{ '/projects' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/projects' }}"
         http_method: GET
         request_parameters:
-          include_subgroups: "true"
+          # Instance mode ('*'): keyset pagination on /projects — the
+          # offset cap (default 50k) applies only there, and keyset needs
+          # order_by=id. A parameter whose value renders '' is dropped
+          # from the request entirely (None would send the text "None").
+          include_subgroups: "{{ '' if stream_partition.group == '*' else 'true' }}"
           archived: "false"
-          order_by: last_activity_at
+          pagination: "{{ 'keyset' if stream_partition.group == '*' else '' }}"
+          order_by: "{{ 'id' if stream_partition.group == '*' else 'last_activity_at' }}"
           sort: asc
           per_page: "100"
           statistics: "true"
@@ -96,19 +101,19 @@ streams:
       paginator:
         type: DefaultPaginator
         pagination_strategy:
-          type: PageIncrement
-          page_size: "100"
-          start_from_page: 1
+          type: CursorPagination
+          # GitLab sends Link rel=next for offset AND keyset pagination,
+          # so one cursor serves both modes; the server drives.
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
         page_token_option:
-          type: RequestOption
-          field_name: page
-          inject_into: request_parameter
+          type: RequestPath
       partition_router:
         # INSIDE `retriever`: at stream level the CDK silently ignores it.
-        # A read_api service account is a member of nothing, so /projects?membership
-        # returns zero rows; group scoping works by group visibility instead.
+        # Groups scope every stream's endpoint addressing; empty means one
+        # '*' partition = the whole instance the token can see.
         type: ListPartitionRouter
-        values: "{{ config['gitlab_groups'] }}"
+        values: "{{ config['gitlab_groups'] or ['*'] }}"
         cursor_field: group
     incremental_sync:
       type: DatetimeBasedCursor
@@ -292,12 +297,17 @@ streams:
                       type: RequestOption
                       field_name: PRIVATE-TOKEN
                       inject_into: header
-                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/projects"
+                  path: "{{ '/projects' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/projects' }}"
                   http_method: GET
                   request_parameters:
-                    include_subgroups: "true"
+                    # Instance mode ('*'): keyset pagination on /projects — the
+                    # offset cap (default 50k) applies only there, and keyset needs
+                    # order_by=id. A parameter whose value renders '' is dropped
+                    # from the request entirely (None would send the text "None").
+                    include_subgroups: "{{ '' if stream_partition.group == '*' else 'true' }}"
                     archived: "false"
-                    order_by: last_activity_at
+                    pagination: "{{ 'keyset' if stream_partition.group == '*' else '' }}"
+                    order_by: "{{ 'id' if stream_partition.group == '*' else 'last_activity_at' }}"
                     sort: asc
                     per_page: "100"
                 record_selector:
@@ -308,19 +318,19 @@ streams:
                 paginator:
                   type: DefaultPaginator
                   pagination_strategy:
-                    type: PageIncrement
-                    page_size: "100"
-                    start_from_page: 1
+                    type: CursorPagination
+                    # GitLab sends Link rel=next for offset AND keyset pagination,
+                    # so one cursor serves both modes; the server drives.
+                    cursor_value: "{{ headers['link']['next']['url'] }}"
+                    stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
                   page_token_option:
-                    type: RequestOption
-                    field_name: page
-                    inject_into: request_parameter
+                    type: RequestPath
                 partition_router:
                   # INSIDE `retriever`: at stream level the CDK silently ignores it.
                   # A read_api service account is a member of nothing, so /projects?membership
                   # returns zero rows; group scoping works by group visibility instead.
                   type: ListPartitionRouter
-                  values: "{{ config['gitlab_groups'] }}"
+                  values: "{{ config['gitlab_groups'] or ['*'] }}"
                   cursor_field: group
               incremental_sync:
                 type: DatetimeBasedCursor
@@ -517,12 +527,17 @@ streams:
                       type: RequestOption
                       field_name: PRIVATE-TOKEN
                       inject_into: header
-                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/projects"
+                  path: "{{ '/projects' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/projects' }}"
                   http_method: GET
                   request_parameters:
-                    include_subgroups: "true"
+                    # Instance mode ('*'): keyset pagination on /projects — the
+                    # offset cap (default 50k) applies only there, and keyset needs
+                    # order_by=id. A parameter whose value renders '' is dropped
+                    # from the request entirely (None would send the text "None").
+                    include_subgroups: "{{ '' if stream_partition.group == '*' else 'true' }}"
                     archived: "false"
-                    order_by: last_activity_at
+                    pagination: "{{ 'keyset' if stream_partition.group == '*' else '' }}"
+                    order_by: "{{ 'id' if stream_partition.group == '*' else 'last_activity_at' }}"
                     sort: asc
                     per_page: "100"
                 record_selector:
@@ -533,19 +548,19 @@ streams:
                 paginator:
                   type: DefaultPaginator
                   pagination_strategy:
-                    type: PageIncrement
-                    page_size: "100"
-                    start_from_page: 1
+                    type: CursorPagination
+                    # GitLab sends Link rel=next for offset AND keyset pagination,
+                    # so one cursor serves both modes; the server drives.
+                    cursor_value: "{{ headers['link']['next']['url'] }}"
+                    stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
                   page_token_option:
-                    type: RequestOption
-                    field_name: page
-                    inject_into: request_parameter
+                    type: RequestPath
                 partition_router:
                   # INSIDE `retriever`: at stream level the CDK silently ignores it.
                   # A read_api service account is a member of nothing, so /projects?membership
                   # returns zero rows; group scoping works by group visibility instead.
                   type: ListPartitionRouter
-                  values: "{{ config['gitlab_groups'] }}"
+                  values: "{{ config['gitlab_groups'] or ['*'] }}"
                   cursor_field: group
               incremental_sync:
                 type: DatetimeBasedCursor
@@ -730,11 +745,18 @@ streams:
                       type: RequestOption
                       field_name: PRIVATE-TOKEN
                       inject_into: header
-                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/projects"
+                  path: "{{ '/projects' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/projects' }}"
                   http_method: GET
                   request_parameters:
-                    include_subgroups: "true"
+                    # Instance mode ('*'): keyset pagination on /projects — the
+                    # offset cap (default 50k) applies only there, and keyset needs
+                    # order_by=id. A parameter whose value renders '' is dropped
+                    # from the request entirely (None would send the text "None").
+                    include_subgroups: "{{ '' if stream_partition.group == '*' else 'true' }}"
                     archived: "false"
+                    pagination: "{{ 'keyset' if stream_partition.group == '*' else '' }}"
+                    order_by: "{{ 'id' if stream_partition.group == '*' else '' }}"
+                    sort: "{{ 'asc' if stream_partition.group == '*' else '' }}"
                     per_page: "100"
                 record_selector:
                   type: RecordSelector
@@ -744,19 +766,19 @@ streams:
                 paginator:
                   type: DefaultPaginator
                   pagination_strategy:
-                    type: PageIncrement
-                    page_size: "100"
-                    start_from_page: 1
+                    type: CursorPagination
+                    # GitLab sends Link rel=next for offset AND keyset pagination,
+                    # so one cursor serves both modes; the server drives.
+                    cursor_value: "{{ headers['link']['next']['url'] }}"
+                    stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
                   page_token_option:
-                    type: RequestOption
-                    field_name: page
-                    inject_into: request_parameter
+                    type: RequestPath
                 partition_router:
                   # INSIDE `retriever`: at stream level the CDK silently ignores it.
                   # A read_api service account is a member of nothing, so /projects?membership
                   # returns zero rows; group scoping works by group visibility instead.
                   type: ListPartitionRouter
-                  values: "{{ config['gitlab_groups'] }}"
+                  values: "{{ config['gitlab_groups'] or ['*'] }}"
                   cursor_field: group
     transformations:
       - type: AddFields
@@ -835,7 +857,7 @@ streams:
             type: RequestOption
             field_name: PRIVATE-TOKEN
             inject_into: header
-        path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/merge_requests"
+        path: "{{ '/merge_requests' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/merge_requests' }}"
         http_method: GET
         request_parameters:
           scope: all
@@ -879,7 +901,7 @@ streams:
           inject_into: request_parameter
       partition_router:
         type: ListPartitionRouter
-        values: "{{ config['gitlab_groups'] }}"
+        values: "{{ config['gitlab_groups'] or ['*'] }}"
         cursor_field: group
     incremental_sync:
       type: DatetimeBasedCursor
@@ -947,9 +969,11 @@ streams:
   # ── Merge request diff totals (GitLab GraphQL) ──────────────────────────
   # REST exposes no line counts on a merge request — only `changes_count`, a
   # capped STRING ("1000+") on the detail response (VERIFIED against the live
-  # API docs). GraphQL carries real integers in diffStatsSummary, and the
-  # group-level connection filters server-side by updatedAfter, so this stream
-  # costs one paged query per group with no per-MR fan-out.
+  # API docs). GraphQL carries real integers in diffStatsSummary. There is no
+  # instance-wide GraphQL mergeRequests query, so the stream fans out one
+  # paged query per project — the uniform shape for group-scoped and
+  # full-instance installs alike; incremental_dependency keeps the fan-out
+  # proportional to repository activity, and updatedAfter bounds each query.
   - type: DeclarativeStream
     name: merge_request_diff_stats
     primary_key:
@@ -1000,9 +1024,10 @@ streams:
               http_codes: [429]
               action: RATE_LIMITED
               error_message: GitLab is rate limiting this token
-            # GraphQL errors arrive as HTTP 200 with an `errors` array. A group
-            # the token cannot see comes back as data.group = null WITHOUT an
-            # error, which the guarded paginator below reads as an empty page.
+            # GraphQL errors arrive as HTTP 200 with an `errors` array. A
+            # project the token cannot see (or deleted mid-sync) comes back as
+            # data.project = null WITHOUT an error, which the guarded paginator
+            # below reads as an empty page.
             - type: HttpResponseFilter
               action: FAIL
               predicate: "{{ (response.get('errors') or []) | length > 0 }}"
@@ -1018,42 +1043,123 @@ streams:
               error_message: Transient GitLab error
         request_body_json:
           query: |
-            query($group: ID!, $updatedAfter: Time, $cursor: String) {
-              group(fullPath: $group) {
-                mergeRequests(includeSubgroups: true, updatedAfter: $updatedAfter, sort: UPDATED_ASC, first: 100, after: $cursor) {
+            query($project: ID!, $updatedAfter: Time, $cursor: String) {
+              project(fullPath: $project) {
+                mergeRequests(updatedAfter: $updatedAfter, sort: UPDATED_ASC, first: 100, after: $cursor) {
                   pageInfo { hasNextPage endCursor }
                   nodes {
                     iid
                     updatedAt
-                    project { id }
                     diffStatsSummary { additions deletions fileCount }
                   }
                 }
               }
             }
           variables:
-            group: "{{ stream_partition.group }}"
+            project: "{{ stream_partition.project_path }}"
       record_selector:
         type: RecordSelector
         extractor:
           type: DpathExtractor
-          field_path: [data, group, mergeRequests, nodes]
+          field_path: [data, project, mergeRequests, nodes]
       paginator:
         type: DefaultPaginator
         pagination_strategy:
           type: CursorPagination
-          # `data.group` is null when the token cannot see the group, so every
-          # hop is guarded rather than subscripted.
-          cursor_value: "{{ ((((response.get('data') or {}).get('group') or {}).get('mergeRequests') or {}).get('pageInfo') or {}).get('endCursor') }}"
-          stop_condition: "{{ not ((((response.get('data') or {}).get('group') or {}).get('mergeRequests') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+          # `data.project` is null when the token cannot see the project, so
+          # every hop is guarded rather than subscripted.
+          cursor_value: "{{ ((((response.get('data') or {}).get('project') or {}).get('mergeRequests') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('project') or {}).get('mergeRequests') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
         page_token_option:
           type: RequestOption
           inject_into: body_json
           field_path: [variables, cursor]
       partition_router:
-        type: ListPartitionRouter
-        values: "{{ config['gitlab_groups'] }}"
-        cursor_field: group
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: path_with_namespace
+            partition_field: project_path
+            extra_fields:
+              - [id]
+            # `incremental_dependency` is what keeps the fan-out proportional
+            # to activity: the parent is itself incremental, so only projects
+            # touched since the last sync are queried. The CDK persists parent
+            # state ONLY when the child is incremental — which this stream is.
+            incremental_dependency: true
+            stream:
+              type: DeclarativeStream
+              name: projects_for_diff_stats
+              primary_key:
+                - id
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id: {type: [integer, "null"]}
+                    path_with_namespace: {type: [string, "null"]}
+                    last_activity_at: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  url_base: "{{ config['gitlab_url'] }}/api/v4"
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "{{ config['gitlab_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      field_name: PRIVATE-TOKEN
+                      inject_into: header
+                  path: "{{ '/projects' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/projects' }}"
+                  http_method: GET
+                  request_parameters:
+                    # Instance mode ('*'): keyset pagination on /projects — the
+                    # offset cap (default 50k) applies only there, and keyset needs
+                    # order_by=id. A parameter whose value renders '' is dropped
+                    # from the request entirely (None would send the text "None").
+                    include_subgroups: "{{ '' if stream_partition.group == '*' else 'true' }}"
+                    archived: "false"
+                    pagination: "{{ 'keyset' if stream_partition.group == '*' else '' }}"
+                    order_by: "{{ 'id' if stream_partition.group == '*' else 'last_activity_at' }}"
+                    sort: asc
+                    per_page: "100"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    # GitLab sends Link rel=next for offset AND keyset pagination,
+                    # so one cursor serves both modes; the server drives.
+                    cursor_value: "{{ headers['link']['next']['url'] }}"
+                    stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+                  page_token_option:
+                    type: RequestPath
+                partition_router:
+                  type: ListPartitionRouter
+                  values: "{{ config['gitlab_groups'] or ['*'] }}"
+                  cursor_field: group
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: last_activity_at
+                datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S.%f%z"
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['gitlab_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
+                # No server-side activity filter on this endpoint; the
+                # cursor filters client-side (see repositories stream).
+                is_client_side_incremental: true
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated_at
@@ -1089,7 +1195,7 @@ streams:
             value: "{{ record.get('iid') | int }}"
           - type: AddedFieldDefinition
             path: [project_id]
-            value: "{{ ((record.get('project') or {}).get('id') or '') | replace('gid://gitlab/Project/', '') | int }}"
+            value: "{{ stream_slice.extra_fields['id'] }}"
           # diffStatsSummary is nullable: GitLab computes the stats
           # asynchronously, so a just-opened MR reports null rather than zero
           # and the next window re-reads it.
@@ -1109,13 +1215,12 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ ((record.get('project') or {}).get('id') or '') | replace('gid://gitlab/Project/', '') }}:{{ record['iid'] }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['id'] }}:{{ record['iid'] }}
       - type: RemoveFields
         # Hoisted above; the GraphQL originals stay out of bronze.
         field_pointers:
           - [iid]
           - [updatedAt]
-          - [project]
           - [diffStatsSummary]
 
   # ── Merge request notes (GitLab API) ────────────────────────────────────
@@ -1246,7 +1351,7 @@ streams:
                       type: RequestOption
                       field_name: PRIVATE-TOKEN
                       inject_into: header
-                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/merge_requests"
+                  path: "{{ '/merge_requests' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/merge_requests' }}"
                   http_method: GET
                   request_parameters:
                     scope: all
@@ -1275,7 +1380,7 @@ streams:
                     inject_into: request_parameter
                 partition_router:
                   type: ListPartitionRouter
-                  values: "{{ config['gitlab_groups'] }}"
+                  values: "{{ config['gitlab_groups'] or ['*'] }}"
                   cursor_field: group
     transformations:
       - type: AddFields
@@ -1445,7 +1550,7 @@ streams:
                       type: RequestOption
                       field_name: PRIVATE-TOKEN
                       inject_into: header
-                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/merge_requests"
+                  path: "{{ '/merge_requests' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/merge_requests' }}"
                   http_method: GET
                   request_parameters:
                     scope: all
@@ -1474,7 +1579,7 @@ streams:
                     inject_into: request_parameter
                 partition_router:
                   type: ListPartitionRouter
-                  values: "{{ config['gitlab_groups'] }}"
+                  values: "{{ config['gitlab_groups'] or ['*'] }}"
                   cursor_field: group
     transformations:
       - type: AddFields
@@ -1635,7 +1740,7 @@ streams:
                       type: RequestOption
                       field_name: PRIVATE-TOKEN
                       inject_into: header
-                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/merge_requests"
+                  path: "{{ '/merge_requests' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/merge_requests' }}"
                   http_method: GET
                   request_parameters:
                     scope: all
@@ -1664,7 +1769,7 @@ streams:
                     inject_into: request_parameter
                 partition_router:
                   type: ListPartitionRouter
-                  values: "{{ config['gitlab_groups'] }}"
+                  values: "{{ config['gitlab_groups'] or ['*'] }}"
                   cursor_field: group
     transformations:
       - type: AddFields
@@ -1747,7 +1852,7 @@ streams:
             type: RequestOption
             field_name: PRIVATE-TOKEN
             inject_into: header
-        path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/members/all"
+        path: "{{ '/users' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/members/all' }}"
         http_method: GET
         request_parameters:
           per_page: "100"
@@ -1793,7 +1898,7 @@ streams:
           inject_into: request_parameter
       partition_router:
         type: ListPartitionRouter
-        values: "{{ config['gitlab_groups'] }}"
+        values: "{{ config['gitlab_groups'] or ['*'] }}"
         cursor_field: group
     transformations:
       - type: AddFields
@@ -1950,11 +2055,18 @@ streams:
                       type: RequestOption
                       field_name: PRIVATE-TOKEN
                       inject_into: header
-                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/projects"
+                  path: "{{ '/projects' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/projects' }}"
                   http_method: GET
                   request_parameters:
-                    include_subgroups: "true"
+                    # Instance mode ('*'): keyset pagination on /projects — the
+                    # offset cap (default 50k) applies only there, and keyset needs
+                    # order_by=id. A parameter whose value renders '' is dropped
+                    # from the request entirely (None would send the text "None").
+                    include_subgroups: "{{ '' if stream_partition.group == '*' else 'true' }}"
                     archived: "false"
+                    pagination: "{{ 'keyset' if stream_partition.group == '*' else '' }}"
+                    order_by: "{{ 'id' if stream_partition.group == '*' else '' }}"
+                    sort: "{{ 'asc' if stream_partition.group == '*' else '' }}"
                     per_page: "100"
                 record_selector:
                   type: RecordSelector
@@ -1964,16 +2076,16 @@ streams:
                 paginator:
                   type: DefaultPaginator
                   pagination_strategy:
-                    type: PageIncrement
-                    page_size: "100"
-                    start_from_page: 1
+                    type: CursorPagination
+                    # GitLab sends Link rel=next for offset AND keyset pagination,
+                    # so one cursor serves both modes; the server drives.
+                    cursor_value: "{{ headers['link']['next']['url'] }}"
+                    stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
                   page_token_option:
-                    type: RequestOption
-                    field_name: page
-                    inject_into: request_parameter
+                    type: RequestPath
                 partition_router:
                   type: ListPartitionRouter
-                  values: "{{ config['gitlab_groups'] }}"
+                  values: "{{ config['gitlab_groups'] or ['*'] }}"
                   cursor_field: group
     incremental_sync:
       type: DatetimeBasedCursor
@@ -2134,11 +2246,18 @@ streams:
                       type: RequestOption
                       field_name: PRIVATE-TOKEN
                       inject_into: header
-                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/projects"
+                  path: "{{ '/projects' if stream_partition.group == '*' else '/groups/' ~ (stream_partition.group | string | replace('/', '%2F')) ~ '/projects' }}"
                   http_method: GET
                   request_parameters:
-                    include_subgroups: "true"
+                    # Instance mode ('*'): keyset pagination on /projects — the
+                    # offset cap (default 50k) applies only there, and keyset needs
+                    # order_by=id. A parameter whose value renders '' is dropped
+                    # from the request entirely (None would send the text "None").
+                    include_subgroups: "{{ '' if stream_partition.group == '*' else 'true' }}"
                     archived: "false"
+                    pagination: "{{ 'keyset' if stream_partition.group == '*' else '' }}"
+                    order_by: "{{ 'id' if stream_partition.group == '*' else '' }}"
+                    sort: "{{ 'asc' if stream_partition.group == '*' else '' }}"
                     per_page: "100"
                 record_selector:
                   type: RecordSelector
@@ -2148,16 +2267,16 @@ streams:
                 paginator:
                   type: DefaultPaginator
                   pagination_strategy:
-                    type: PageIncrement
-                    page_size: "100"
-                    start_from_page: 1
+                    type: CursorPagination
+                    # GitLab sends Link rel=next for offset AND keyset pagination,
+                    # so one cursor serves both modes; the server drives.
+                    cursor_value: "{{ headers['link']['next']['url'] }}"
+                    stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
                   page_token_option:
-                    type: RequestOption
-                    field_name: page
-                    inject_into: request_parameter
+                    type: RequestPath
                 partition_router:
                   type: ListPartitionRouter
-                  values: "{{ config['gitlab_groups'] }}"
+                  values: "{{ config['gitlab_groups'] or ['*'] }}"
                   cursor_field: group
     incremental_sync:
       type: DatetimeBasedCursor
@@ -2227,7 +2346,6 @@ spec:
       - insight_source_id
       - gitlab_url
       - gitlab_token
-      - gitlab_groups
       - git_proxy_url
       - git_proxy_token
       - gitlab_start_date
@@ -2261,7 +2379,7 @@ spec:
         items:
           type: string
         description: >-
-          Full paths of the GitLab groups to sync, including nested ones (e.g. acme, acme/platform). Subgroups are included. REQUIRED, and deliberately so: a read-only service account is a member of no project, so membership-scoped discovery returns nothing, and a declarative manifest cannot express the CDK connector's instance-wide fallback. A project reachable from two configured groups is emitted twice under one key and collapses downstream.
+          Full paths of the GitLab groups to sync, including nested ones (e.g. acme, acme/platform). Subgroups are included. Leave EMPTY to sync the full instance — every project the token can see — which uses keyset pagination and so has no offset ceiling. Groups scope every stream's endpoint addressing (projects, merge requests, members), not just discovery. A project reachable from two configured groups is emitted twice under one key and collapses downstream.
         title: GitLab Groups
         order: 4
       git_proxy_url:
@@ -2285,6 +2403,21 @@ spec:
         format: date
         order: 7
     additionalProperties: true
+    allOf:
+      # Full-instance mode on gitlab.com would enumerate every public project
+      # in the world; SaaS installs must scope by group.
+      - if:
+          properties:
+            gitlab_url:
+              pattern: "^https://(www\\.)?gitlab\\.com/?$"
+          required:
+            - gitlab_url
+        then:
+          properties:
+            gitlab_groups:
+              minItems: 1
+          required:
+            - gitlab_groups
 
 metadata:
   autoImportSchema:

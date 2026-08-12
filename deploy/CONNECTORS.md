@@ -237,7 +237,7 @@ type: Opaque
 stringData:
   gitlab_url:      "https://gitlab.example.com"
   gitlab_token:    "CHANGE_ME"            # read_api + read_repository
-  gitlab_groups:   '["mygroup"]'          # JSON array of full group paths
+  gitlab_groups:   '["mygroup"]'          # JSON array; [] = full instance (self-hosted only)
   gitlab_start_date: "2026-01-01"
   git_proxy_url:   "http://insight-git-cli-proxy:8085"
   git_proxy_token: "CHANGE_ME"
