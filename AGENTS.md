@@ -58,11 +58,10 @@ When uncertain whether information came from a real environment, omit it and use
 
 - No comments unless code cannot express the **why**.
 - Allowed, one line, tagged:
-
   - `SAFETY:` — non-obvious safety/security/correctness reasoning.
   - `INVARIANT:` — cross-function/system fact a future edit could break.
   - `WORKAROUND:` — external/platform/dependency behavior being worked around.
-  - Suppressions — justification next to the suppression.
+  - Tool/linter/compiler suppressions — require a brief adjacent justification.
 - No headers, issue/PR references, phase notes, discussion history, or comments explaining obvious code/layout.
 - Non-obvious semantics belong in tests, types, or docs—not comments.
 - Doc comments only for genuinely public/external APIs; keep them brief.
