@@ -56,20 +56,13 @@ When uncertain whether information came from a real environment, omit it and use
 
 ## Comments
 
-- None, unless code cannot express the why. Allowed categories, one line
-  each, tagged so they are greppable and an untagged comment stands out:
-  - `// SAFETY:` — soundness argument for an `unsafe` block.
-  - `// INVARIANT:` — a cross-function fact a future edit could silently
-    break ("the cursor is not an authorization token").
-  - `// WORKAROUND:` — external bug or platform behavior being dodged, with
-    the reason it is needed.
-  - lint suppressions — justification on the same line as the attribute.
-- No module headers, no issue numbers in source, no phase/scope notes — that
-  context lives in issues and PRs. Anything that deserves to outlive a PR
-  becomes a type, a test, or a design-doc section, never a comment.
-- Non-obvious semantics get a test whose name states the rule
-  (`absent_null_and_value_are_three_distinct_states`), not a comment.
-- `///` doc comments: only in shared library crates on exported items —
-  what it does and its error conditions, briefly. Binaries and services get
-  none; their consumers read the source. No `missing_docs` enforcement
-  anywhere.
+- No comments unless code cannot express the **why**.
+- Allowed, one line, tagged:
+
+  - `SAFETY:` — non-obvious safety/security/correctness reasoning.
+  - `INVARIANT:` — cross-function/system fact a future edit could break.
+  - `WORKAROUND:` — external/platform/dependency behavior being worked around.
+  - Suppressions — justification next to the suppression.
+- No headers, issue/PR references, phase notes, discussion history, or comments explaining obvious code/layout.
+- Non-obvious semantics belong in tests, types, or docs—not comments.
+- Doc comments only for genuinely public/external APIs; keep them brief.
