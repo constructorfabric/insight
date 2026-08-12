@@ -71,6 +71,56 @@ definitions:
         action: RETRY
         error_message: Transient proxy error (the origin can reset a clone mid-transfer)
 
+  # Bitbucket sometimes sends Retry-After as an HTTP date, which this strategy
+  # cannot parse; the exponential fallback covers that case and the 5xx that
+  # carry no header at all.
+  vendor_backoff: &vendor_backoff
+    - type: WaitTimeFromHeader
+      header: Retry-After
+      max_waiting_time_in_seconds: 600
+    - type: ExponentialBackoffStrategy
+      factor: 5
+
+  # Repository discovery is the parent every other stream partitions on, so a
+  # throttle or a bad token here must classify, not surface as a generic error.
+  # No 403/404 IGNORE: on the listing itself that would silently yield an empty
+  # workspace instead of failing.
+  discovery_error_handler: &discovery_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: *vendor_backoff
+    response_filters:
+      - type: HttpResponseFilter
+        http_codes: [429]
+        action: RATE_LIMITED
+        error_message: Bitbucket hourly rate budget exhausted
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: FAIL
+        failure_type: config_error
+        error_message: >-
+          Bitbucket rejected the credentials. Personal API tokens need
+          bitbucket_username set (Basic auth); workspace access tokens must
+          NOT set it (Bearer). Mixing the two is the most common cause.
+      - type: HttpResponseFilter
+        http_codes: [500, 502, 503, 504]
+        action: RETRY
+        error_message: Transient Bitbucket error
+
+  proxy_requester: &proxy_requester
+    type: HttpRequester
+    url_base: "{{ config['git_proxy_url'] }}"
+    http_method: GET
+    authenticator:
+      type: BearerAuthenticator
+      api_token: "{{ config['git_proxy_token'] }}"
+    request_headers:
+      X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
+      X-Source-Id: "{{ config['insight_source_id'] }}"
+      X-Git-Username: "{{ 'x-bitbucket-api-token-auth' if config.get('bitbucket_username') else 'x-token-auth' }}"
+      X-Git-Token: "{{ config['bitbucket_token'] }}"
+    error_handler: *proxy_error_handler
+
 check:
   type: CheckStream
   stream_names:
@@ -133,6 +183,7 @@ streams:
           # these fields are used (identity, cursor, clone link).
           fields: >-
             next,values.uuid,values.slug,values.name,values.full_name,values.is_private,values.language,values.size,values.created_on,values.updated_on,values.mainbranch.name,values.workspace.slug,values.links.clone
+        error_handler: *discovery_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -232,22 +283,11 @@ streams:
     retriever:
       type: SimpleRetriever
       requester:
-        type: HttpRequester
-        url_base: "{{ config['git_proxy_url'] }}"
-        authenticator:
-          type: BearerAuthenticator
-          api_token: "{{ config['git_proxy_token'] }}"
-        request_headers:
-          X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
-          X-Source-Id: "{{ config['insight_source_id'] }}"
-          X-Git-Username: "{{ 'x-bitbucket-api-token-auth' if config.get('bitbucket_username') else 'x-token-auth' }}"
-          X-Git-Token: "{{ config['bitbucket_token'] }}"
+        <<: *proxy_requester
         path: /v1/commits
-        http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
           page_size: "500"
-        error_handler: *proxy_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -435,24 +475,13 @@ streams:
     retriever:
       type: SimpleRetriever
       requester:
-        type: HttpRequester
-        url_base: "{{ config['git_proxy_url'] }}"
-        authenticator:
-          type: BearerAuthenticator
-          api_token: "{{ config['git_proxy_token'] }}"
-        request_headers:
-          X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
-          X-Source-Id: "{{ config['insight_source_id'] }}"
-          X-Git-Username: "{{ 'x-bitbucket-api-token-auth' if config.get('bitbucket_username') else 'x-token-auth' }}"
-          X-Git-Token: "{{ config['bitbucket_token'] }}"
+        <<: *proxy_requester
         path: /v1/file-changes
-        http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
           page_size: "500"
           include_patch: "true"
           max_patch_bytes: "1048576"
-        error_handler: *proxy_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -623,22 +652,11 @@ streams:
     retriever:
       type: SimpleRetriever
       requester:
-        type: HttpRequester
-        url_base: "{{ config['git_proxy_url'] }}"
-        authenticator:
-          type: BearerAuthenticator
-          api_token: "{{ config['git_proxy_token'] }}"
-        request_headers:
-          X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
-          X-Source-Id: "{{ config['insight_source_id'] }}"
-          X-Git-Username: "{{ 'x-bitbucket-api-token-auth' if config.get('bitbucket_username') else 'x-token-auth' }}"
-          X-Git-Token: "{{ config['bitbucket_token'] }}"
+        <<: *proxy_requester
         path: /v1/branches
-        http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
           page_size: "500"
-        error_handler: *proxy_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -819,14 +837,8 @@ streams:
             next,values.id,values.title,values.state,values.draft,values.author.uuid,values.author.display_name,values.created_on,values.updated_on,values.merge_commit.hash,values.closed_by.uuid,values.source.branch.name,values.source.commit.hash,values.destination.branch.name,values.comment_count,values.task_count
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            # Bitbucket sometimes sends Retry-After as an HTTP date, which this
-            # strategy cannot parse; the exponential fallback covers that case.
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-            - type: ExponentialBackoffStrategy
-              factor: 5
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -1066,14 +1078,8 @@ streams:
             next,values.id,values.user.uuid,values.user.display_name,values.created_on,values.updated_on,values.deleted,values.parent.id,values.inline.path
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            # Bitbucket sometimes sends Retry-After as an HTTP date, which this
-            # strategy cannot parse; the exponential fallback covers that case.
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-            - type: ExponentialBackoffStrategy
-              factor: 5
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -1344,14 +1350,8 @@ streams:
           pagelen: "100"
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            # Bitbucket sometimes sends Retry-After as an HTTP date, which this
-            # strategy cannot parse; the exponential fallback covers that case.
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-            - type: ExponentialBackoffStrategy
-              factor: 5
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -1611,14 +1611,8 @@ streams:
           pagelen: "100"
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            # Bitbucket sometimes sends Retry-After as an HTTP date, which this
-            # strategy cannot parse; the exponential fallback covers that case.
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-            - type: ExponentialBackoffStrategy
-              factor: 5
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -1887,14 +1881,8 @@ streams:
           pagelen: "50"
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            # Bitbucket sometimes sends Retry-After as an HTTP date, which this
-            # strategy cannot parse; the exponential fallback covers that case.
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-            - type: ExponentialBackoffStrategy
-              factor: 5
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -2168,14 +2156,8 @@ streams:
             next,values.user.account_id,values.user.display_name,values.user.nickname,values.user.uuid
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            # Bitbucket sometimes sends Retry-After as an HTTP date, which this
-            # strategy cannot parse; the exponential fallback covers that case.
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-            - type: ExponentialBackoffStrategy
-              factor: 5
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -2318,14 +2300,8 @@ streams:
           sort: -created_on
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            # Bitbucket sometimes sends Retry-After as an HTTP date, which this
-            # strategy cannot parse; the exponential fallback covers that case.
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-            - type: ExponentialBackoffStrategy
-              factor: 5
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -2553,14 +2529,8 @@ streams:
           pagelen: "100"
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            # Bitbucket sometimes sends Retry-After as an HTTP date, which this
-            # strategy cannot parse; the exponential fallback covers that case.
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-            - type: ExponentialBackoffStrategy
-              factor: 5
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]

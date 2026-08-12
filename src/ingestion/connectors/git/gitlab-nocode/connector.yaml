@@ -71,6 +71,50 @@ definitions:
         action: RETRY
         error_message: Transient proxy error (the origin can reset a clone mid-transfer)
 
+  # Retry-After covers the throttles that carry it; a 5xx does not, so the
+  # exponential fallback is what bounds those retries.
+  vendor_backoff: &vendor_backoff
+    - type: WaitTimeFromHeader
+      header: Retry-After
+      max_waiting_time_in_seconds: 600
+    - type: ExponentialBackoffStrategy
+      factor: 2
+
+  # Repository discovery is the parent every other stream partitions on, so a
+  # throttle or a bad token here must classify, not surface as a generic error.
+  discovery_error_handler: &discovery_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: *vendor_backoff
+    response_filters:
+      - type: HttpResponseFilter
+        http_codes: [429]
+        action: RATE_LIMITED
+        error_message: GitLab is rate limiting this token
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: FAIL
+        failure_type: config_error
+        error_message: GitLab rejected the token; check gitlab_token scopes (read_api)
+      - type: HttpResponseFilter
+        http_codes: [500, 502, 503, 504]
+        action: RETRY
+        error_message: Transient GitLab error
+
+  proxy_requester: &proxy_requester
+    type: HttpRequester
+    url_base: "{{ config['git_proxy_url'] }}"
+    http_method: GET
+    authenticator:
+      type: BearerAuthenticator
+      api_token: "{{ config['git_proxy_token'] }}"
+    request_headers:
+      X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
+      X-Source-Id: "{{ config['insight_source_id'] }}"
+      X-Git-Username: oauth2
+      X-Git-Token: "{{ config['gitlab_token'] }}"
+    error_handler: *proxy_error_handler
+
 check:
   type: CheckStream
   stream_names:
@@ -135,6 +179,7 @@ streams:
           sort: asc
           per_page: "100"
           statistics: "true"
+        error_handler: *discovery_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -236,22 +281,11 @@ streams:
     retriever:
       type: SimpleRetriever
       requester:
-        type: HttpRequester
-        url_base: "{{ config['git_proxy_url'] }}"
-        authenticator:
-          type: BearerAuthenticator
-          api_token: "{{ config['git_proxy_token'] }}"
-        request_headers:
-          X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
-          X-Source-Id: "{{ config['insight_source_id'] }}"
-          X-Git-Username: oauth2
-          X-Git-Token: "{{ config['gitlab_token'] }}"
+        <<: *proxy_requester
         path: /v1/commits
-        http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
           page_size: "500"
-        error_handler: *proxy_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -438,24 +472,13 @@ streams:
     retriever:
       type: SimpleRetriever
       requester:
-        type: HttpRequester
-        url_base: "{{ config['git_proxy_url'] }}"
-        authenticator:
-          type: BearerAuthenticator
-          api_token: "{{ config['git_proxy_token'] }}"
-        request_headers:
-          X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
-          X-Source-Id: "{{ config['insight_source_id'] }}"
-          X-Git-Username: oauth2
-          X-Git-Token: "{{ config['gitlab_token'] }}"
+        <<: *proxy_requester
         path: /v1/file-changes
-        http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
           page_size: "500"
           include_patch: "true"
           max_patch_bytes: "1048576"
-        error_handler: *proxy_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -625,22 +648,11 @@ streams:
     retriever:
       type: SimpleRetriever
       requester:
-        type: HttpRequester
-        url_base: "{{ config['git_proxy_url'] }}"
-        authenticator:
-          type: BearerAuthenticator
-          api_token: "{{ config['git_proxy_token'] }}"
-        request_headers:
-          X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
-          X-Source-Id: "{{ config['insight_source_id'] }}"
-          X-Git-Username: oauth2
-          X-Git-Token: "{{ config['gitlab_token'] }}"
+        <<: *proxy_requester
         path: /v1/branches
-        http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
           page_size: "500"
-        error_handler: *proxy_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -812,10 +824,8 @@ streams:
           per_page: "100"
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -961,10 +971,7 @@ streams:
         error_handler:
           type: DefaultErrorHandler
           max_retries: 5
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -1223,10 +1230,8 @@ streams:
           per_page: "100"
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -1422,10 +1427,8 @@ streams:
           per_page: "100"
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -1620,10 +1623,8 @@ streams:
         http_method: GET
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -1804,10 +1805,8 @@ streams:
           per_page: "100"
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -1931,10 +1930,8 @@ streams:
           per_page: "100"
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]
@@ -2122,10 +2119,8 @@ streams:
           per_page: "100"
         error_handler:
           type: DefaultErrorHandler
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
           response_filters:
             - type: HttpResponseFilter
               http_codes: [429]

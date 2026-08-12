@@ -79,6 +79,11 @@ definitions:
       - type: HttpResponseFilter
         action: RATE_LIMITED
         predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
+      - type: HttpResponseFilter
+        action: FAIL
+        http_codes: [401]
+        failure_type: config_error
+        error_message: GitHub rejected the token; check github_token scopes (repo, read:org)
       # Any other GraphQL error still arrives as HTTP 200, and a query-level
       # one omits `data` entirely; without this the extractor finds nothing and
       # the paginator throws an unreadable interpolation error. Fail with what
@@ -102,6 +107,11 @@ definitions:
       - type: HttpResponseFilter
         action: RATE_LIMITED
         predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
+      - type: HttpResponseFilter
+        action: FAIL
+        http_codes: [401]
+        failure_type: config_error
+        error_message: GitHub rejected the token; check github_token scopes (repo, read:org)
       - type: HttpResponseFilter
         action: IGNORE
         predicate: "{{ (response.get('errors') or []) | selectattr('type', 'in', ['NOT_FOUND', 'FORBIDDEN']) | list | length > 0 }}"
