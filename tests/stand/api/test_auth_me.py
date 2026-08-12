@@ -22,6 +22,9 @@ import pytest
 from insight_stand import Manifest, PersonaSession
 from pydantic import BaseModel
 
+# Whole module asserts who a session IS — access/identity scope.
+pytestmark = pytest.mark.security
+
 ME_PATH = "/auth/me"
 
 
