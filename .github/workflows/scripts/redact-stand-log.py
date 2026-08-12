@@ -68,6 +68,24 @@ _LONG_BLOB = re.compile(r"(?<![A-Za-z0-9+/_=-])[A-Za-z0-9+/_-]{40,}={0,2}(?![A-Z
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 
 
+def _blob_mask(match: re.Match[str]) -> str:
+    """Mask unless the token provably is not base64 of either variant.
+
+    Standard base64 never contains `_`/`-`; base64url never contains `/`/`+`.
+    A token mixing the two exclusive sets (a pytest path like
+    tests/stand/ui/test_logged_out_access_refused) is therefore not a blob.
+    """
+    token = match.group(0)
+    if ("/" in token or "+" in token) and ("-" in token or "_" in token):
+        return token
+    return "[blob redacted]"
+
+
+def _blob_survivor(text: str) -> bool:
+    """True when a maskable (non-exempt) blob is still present in `text`."""
+    return any(_blob_mask(m) != m.group(0) for m in _LONG_BLOB.finditer(_DIGEST.sub("", text)))
+
+
 def _email_slot(match: re.Match[str]) -> str:
     """A stable one-way handle for one address.
 
@@ -105,7 +123,7 @@ def _clean(line: str, *, max_line: int) -> str:
         return _DIGEST_SLOT.format(len(digests) - 1)
 
     out = _DIGEST.sub(_park, out)
-    out = _LONG_BLOB.sub("[blob redacted]", out)
+    out = _LONG_BLOB.sub(_blob_mask, out)
     for index, digest in enumerate(digests):
         out = out.replace(_DIGEST_SLOT.format(index), digest)
 
@@ -116,12 +134,7 @@ def _clean(line: str, *, max_line: int) -> str:
 
     # The result, not the input: anything credential-shaped that survived means
     # a rule has a hole. Digests stripped first so an exempt one cannot trip it.
-    if (
-        _EMAIL.search(out)
-        or _JWT.search(out)
-        or _PRIVATE_KEY_HEADER.search(out)
-        or _LONG_BLOB.search(_DIGEST.sub("", out))
-    ):
+    if _EMAIL.search(out) or _JWT.search(out) or _PRIVATE_KEY_HEADER.search(out) or _blob_survivor(out):
         return LINE_MARKER
     return out
 
