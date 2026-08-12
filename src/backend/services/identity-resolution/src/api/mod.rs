@@ -7,8 +7,10 @@ mod gate;
 mod handlers;
 #[cfg(test)]
 mod http_live_tests;
+mod listing;
 pub mod me;
 pub mod person_roles;
+pub mod persons;
 pub mod resolution;
 pub mod roles;
 pub mod seed;
@@ -140,6 +142,33 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(me::get_me)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/persons")
+        .operation_id("identity_resolution.persons.search")
+        .summary("Search persons by their current observed values (admin)")
+        .authenticated()
+        .query_param(
+            "q",
+            true,
+            "Search terms, at most 8; every whitespace-separated term must match \
+             one of the person's current observed values (case-insensitive \
+             substring)",
+        )
+        .query_param_typed(
+            "limit",
+            false,
+            "Cap on returned persons (1..=100, default 20)",
+            "integer",
+        )
+        .no_license_required()
+        .json_response_with_schema::<persons::PersonListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Matching persons, named-first",
+        )
+        .standard_errors(openapi)
+        .handler(persons::search_persons)
         .register(router, openapi);
 
     // Operator identity corrections (ADR-0003): each verb appends binding

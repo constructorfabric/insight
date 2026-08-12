@@ -65,6 +65,32 @@ impl Fixture {
         Ok(person_id)
     }
 
+    /// Append one observation of `value_type` for an existing person — the
+    /// building block for "this person's value changed later" scenarios.
+    pub(crate) async fn observed(
+        &self,
+        person: Uuid,
+        value_type: &str,
+        value: &str,
+    ) -> anyhow::Result<()> {
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                value_type.into(),
+                SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                value.into(),
+                bytes(person),
+                bytes(person),
+                FIXTURE_REASON.into(),
+            ],
+        )
+        .await
+    }
+
     /// A person the log knows without an email observation — the shape the
     /// `person_id` key exists to serve and the email key structurally cannot.
     pub(crate) async fn emailless_person(&self) -> anyhow::Result<Uuid> {

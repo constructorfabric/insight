@@ -36,6 +36,7 @@ def _me(client: ApiClient) -> MeResponse:
     return response.parse(MeResponse)
 
 
+@pytest.mark.security
 def test_an_unauthenticated_caller_never_reaches_any_of_this(api_client: ApiClient) -> None:
     """Proven per operation by `test_gateway.py`; spot-checked here so this
     module carries its own reason for using a session at all."""
@@ -44,6 +45,7 @@ def test_an_unauthenticated_caller_never_reaches_any_of_this(api_client: ApiClie
 
 
 @pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
 def test_the_admin_operator_sees_their_admin_role_under_its_fixed_id(
     admin_operator_session: PersonaSession,
 ) -> None:
@@ -63,6 +65,7 @@ def test_the_admin_operator_sees_their_admin_role_under_its_fixed_id(
     assert (ADMIN_ROLE_ID, "admin") in roles, f"admin grant missing from {roles}"
 
 
+@pytest.mark.reliability
 def test_a_lead_without_the_grant_gets_an_empty_list_not_a_refusal(
     lead_session: PersonaSession,
 ) -> None:
@@ -79,6 +82,7 @@ def test_a_lead_without_the_grant_gets_an_empty_list_not_a_refusal(
 
 
 @pytest.mark.requires_seed("ceo")
+@pytest.mark.security
 def test_the_realm_admin_role_does_not_leak_into_the_answer(
     realm_admin_session: PersonaSession,
 ) -> None:

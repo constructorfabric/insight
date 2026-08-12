@@ -20,7 +20,7 @@ use uuid::Uuid;
 use super::AppState;
 use super::error::CorrectionError;
 use super::gate::require_admin;
-use crate::domain::person_card::{self, PersonCard};
+use crate::domain::person_card::PersonCard;
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::SourceAccountKey;
@@ -887,16 +887,9 @@ async fn candidate_cards(
         .into_iter()
         .collect();
 
-    let rows = persons_repo::fetch_card_observations(
-        &state.db,
-        tenant,
-        &ids,
-        &person_card::CARD_VALUE_TYPES,
-    )
-    .await
-    .map_err(|e| internal(&e, "failed to read candidate cards"))?;
-
-    Ok(person_card::assemble_cards(rows))
+    persons_repo::person_cards(&state.db, tenant, &ids)
+        .await
+        .map_err(|e| internal(&e, "failed to read candidate cards"))
 }
 
 fn evidence_reader(state: &AppState) -> ClickHouseEvidenceReader {

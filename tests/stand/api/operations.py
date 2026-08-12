@@ -116,12 +116,13 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("DELETE", f"/v1/metrics/{SOME_METRIC_KEY}"),
 )
 
-#: identity-resolution — 18 operations. `/health` and `/healthz` are the host
+#: identity-resolution — 19 operations. `/health` and `/healthz` are the host
 #: router's, not the product API, and are deliberately absent: the real probes
 #: address the pod directly rather than passing the gateway.
 IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     _i("POST", "/v1/profiles"),
     _i("GET", "/v1/me"),
+    _i("GET", "/v1/persons"),
     _i("GET", "/v1/subchart"),
     _i("GET", f"/v1/subchart/{SOME_ID}"),
     _i("GET", "/v1/persons-seed"),
@@ -144,15 +145,30 @@ IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
 
 ALL_OPERATIONS: Final[tuple[Operation, ...]] = ANALYTICS_OPERATIONS + IDENTITY_OPERATIONS
 
-#: The 13 identity operations behind `require_admin`, which resolves the caller
+#: Suffixes of the identity operations behind `require_admin`, enumerated
+#: exactly — a substring rule would silently classify future routes (and
+#: `/visible-persons` is one hyphen away from a false match today).
+_ADMIN_GATED_SUFFIXES: Final[tuple[str, ...]] = (
+    "/v1/persons",
+    "/v1/persons-seed",
+    f"/v1/persons-seed/{SOME_ID}",
+    "/v1/persons-sync",
+    f"/v1/persons-sync/{SOME_ID}",
+    "/v1/roles",
+    f"/v1/roles/{SOME_ID}",
+    "/v1/person-roles",
+    f"/v1/person-roles/{SOME_ID}",
+    "/v1/visibility",
+    f"/v1/visibility/{SOME_ID}",
+)
+
+#: The 14 identity operations behind `require_admin`, which resolves the caller
 #: from the gateway JWT and requires an active `admin` row in `person_roles` —
-#: it never reads the `insight-admin` REALM role. The seed grants nobody that
-#: row, so every persona is refused; see out/endpoint-coverage-preconditions.md.
+#: it never reads the `insight-admin` REALM role. The seed grants that row to
+#: exactly one persona, the admin operator; every other persona is refused.
+#: See out/endpoint-coverage-preconditions.md.
 ADMIN_GATED: Final[frozenset[str]] = frozenset(
     op.label
     for op in IDENTITY_OPERATIONS
-    if any(
-        seg in op.path
-        for seg in ("/persons-seed", "/persons-sync", "/roles", "/person-roles", "/visibility")
-    )
+    if op.path in {identity_path(suffix) for suffix in _ADMIN_GATED_SUFFIXES}
 )

@@ -511,6 +511,15 @@ class MeResponse(BaseModel):
     roles: list[MeRoleResponse]
 
 
+class PersonListResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[PersonSummaryResponse]
+    next_cursor: str | None = Field(None, description='Wire parity with the other listings: declared, always `null`.')
+    truncated: bool = Field(..., description='More persons matched than `limit` allowed — the page is a cut, not the\nanswer, and the UI should ask for narrower terms. Without this flag a\ntruncated page reads as "the person does not exist".')
+
+
 class PersonRoleListResponse(BaseModel):
     """
     List wrapper.
