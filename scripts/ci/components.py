@@ -218,7 +218,12 @@ COMPONENTS = [
         "pytest_args": "--suites-only",
         "cover": False,
         "triggered_by": ["connector-tests-harness"],
-        "paths": ["src/ingestion/connectors/task-tracking/jira"],
+        "paths": [
+            "src/ingestion/connectors/task-tracking/jira",
+            "src/ingestion/connectors/git/gitlab-nocode",
+            "src/ingestion/connectors/git/bitbucket-nocode",
+            "src/ingestion/connectors/git/github-nocode",
+        ],
     },
     # `src/frontend/helm` falls under this path but has no measured lines, so it
     # never moves the number.
