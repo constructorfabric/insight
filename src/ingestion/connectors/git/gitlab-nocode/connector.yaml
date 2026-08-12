@@ -82,7 +82,7 @@ streams:
           archived: "false"
           order_by: last_activity_at
           sort: asc
-          per_page: "{{ config.get('gitlab_page_size', 100) }}"
+          per_page: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -92,7 +92,7 @@ streams:
         type: DefaultPaginator
         pagination_strategy:
           type: PageIncrement
-          page_size: "{{ config.get('gitlab_page_size', 100) }}"
+          page_size: "100"
           start_from_page: 1
         page_token_option:
           type: RequestOption
@@ -114,7 +114,7 @@ streams:
         - "%Y-%m-%dT%H:%M:%S%z"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
+        datetime: "{{ config['gitlab_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       # /groups/:id/projects has no last_activity_after filter (GitLab
       # silently ignores it; the CDK connector full-lists too), so the cursor
@@ -191,7 +191,7 @@ streams:
         http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
-          page_size: "{{ config.get('proxy_page_size', 500) }}"
+          page_size: "500"
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -287,7 +287,7 @@ streams:
                     archived: "false"
                     order_by: last_activity_at
                     sort: asc
-                    per_page: "{{ config.get('gitlab_page_size', 100) }}"
+                    per_page: "100"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -297,7 +297,7 @@ streams:
                   type: DefaultPaginator
                   pagination_strategy:
                     type: PageIncrement
-                    page_size: "{{ config.get('gitlab_page_size', 100) }}"
+                    page_size: "100"
                     start_from_page: 1
                   page_token_option:
                     type: RequestOption
@@ -319,7 +319,7 @@ streams:
                   - "%Y-%m-%dT%H:%M:%S%z"
                 start_datetime:
                   type: MinMaxDatetime
-                  datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
+                  datetime: "{{ config['gitlab_start_date'] }}"
                   datetime_format: "%Y-%m-%d"
                 # No server-side activity filter on this endpoint; the
                 # cursor filters client-side (see repositories stream).
@@ -334,13 +334,13 @@ streams:
       # sync recovers them; bronze dedups the re-read rows. This is a
       # heuristic, not a guarantee — a rewrite older than the window is
       # still lost, and nothing detects it.
-      lookback_window: "{{ config.get('gitlab_lookback_window', 'P1M') }}"
+      lookback_window: "P1M"
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
         - "%Y-%m-%dT%H:%M:%SZ"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
+        datetime: "{{ config['gitlab_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       start_time_option:
         type: RequestOption
@@ -416,9 +416,9 @@ streams:
         http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
-          page_size: "{{ config.get('proxy_page_size', 500) }}"
-          include_patch: "{{ config.get('gitlab_include_patch', true) | lower }}"
-          max_patch_bytes: "{{ config.get('gitlab_max_patch_bytes', 1048576) }}"
+          page_size: "500"
+          include_patch: "true"
+          max_patch_bytes: "1048576"
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -508,7 +508,7 @@ streams:
                     archived: "false"
                     order_by: last_activity_at
                     sort: asc
-                    per_page: "{{ config.get('gitlab_page_size', 100) }}"
+                    per_page: "100"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -518,7 +518,7 @@ streams:
                   type: DefaultPaginator
                   pagination_strategy:
                     type: PageIncrement
-                    page_size: "{{ config.get('gitlab_page_size', 100) }}"
+                    page_size: "100"
                     start_from_page: 1
                   page_token_option:
                     type: RequestOption
@@ -540,7 +540,7 @@ streams:
                   - "%Y-%m-%dT%H:%M:%S%z"
                 start_datetime:
                   type: MinMaxDatetime
-                  datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
+                  datetime: "{{ config['gitlab_start_date'] }}"
                   datetime_format: "%Y-%m-%d"
                 # No server-side activity filter on this endpoint; the
                 # cursor filters client-side (see repositories stream).
@@ -555,13 +555,13 @@ streams:
       # sync recovers them; bronze dedups the re-read rows. This is a
       # heuristic, not a guarantee — a rewrite older than the window is
       # still lost, and nothing detects it.
-      lookback_window: "{{ config.get('gitlab_lookback_window', 'P1M') }}"
+      lookback_window: "P1M"
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
         - "%Y-%m-%dT%H:%M:%SZ"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
+        datetime: "{{ config['gitlab_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       start_time_option:
         type: RequestOption
@@ -630,7 +630,7 @@ streams:
         http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
-          page_size: "{{ config.get('proxy_page_size', 500) }}"
+          page_size: "500"
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -719,7 +719,7 @@ streams:
                   request_parameters:
                     include_subgroups: "true"
                     archived: "false"
-                    per_page: "{{ config.get('gitlab_page_size', 100) }}"
+                    per_page: "100"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -729,7 +729,7 @@ streams:
                   type: DefaultPaginator
                   pagination_strategy:
                     type: PageIncrement
-                    page_size: "{{ config.get('gitlab_page_size', 100) }}"
+                    page_size: "100"
                     start_from_page: 1
                   page_token_option:
                     type: RequestOption
@@ -824,7 +824,7 @@ streams:
           scope: all
           order_by: updated_at
           sort: asc
-          per_page: "{{ config.get('gitlab_page_size', 100) }}"
+          per_page: "100"
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -854,7 +854,7 @@ streams:
         type: DefaultPaginator
         pagination_strategy:
           type: PageIncrement
-          page_size: "{{ config.get('gitlab_page_size', 100) }}"
+          page_size: "100"
           start_from_page: 1
         page_token_option:
           type: RequestOption
@@ -873,7 +873,7 @@ streams:
         - "%Y-%m-%dT%H:%M:%S%z"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
+        datetime: "{{ config['gitlab_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       step: P1M
       cursor_granularity: PT1S
@@ -966,7 +966,7 @@ streams:
         path: "/projects/{{ stream_slice.extra_fields['project_id'] }}/merge_requests/{{ stream_partition.mr_iid }}/notes"
         http_method: GET
         request_parameters:
-          per_page: "{{ config.get('gitlab_page_size', 100) }}"
+          per_page: "100"
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -1001,7 +1001,7 @@ streams:
         type: DefaultPaginator
         pagination_strategy:
           type: PageIncrement
-          page_size: "{{ config.get('gitlab_page_size', 100) }}"
+          page_size: "100"
           start_from_page: 1
         page_token_option:
           type: RequestOption
@@ -1049,12 +1049,12 @@ streams:
                     scope: all
                     order_by: updated_at
                     sort: asc
-                    per_page: "{{ config.get('gitlab_page_size', 100) }}"
+                    per_page: "100"
                     # Stateless sliding window, not a cursor: these children
                     # have no cursor of their own, so parent state would never
                     # persist (incremental_dependency requires an incremental
                     # child). RMT dedups the re-read window.
-                    updated_after: "{{ format_datetime(now_utc() - duration('P' ~ config.get('gitlab_child_window_days', 30) ~ 'D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                    updated_after: "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -1064,7 +1064,7 @@ streams:
                   type: DefaultPaginator
                   pagination_strategy:
                     type: PageIncrement
-                    page_size: "{{ config.get('gitlab_page_size', 100) }}"
+                    page_size: "100"
                     start_from_page: 1
                   page_token_option:
                     type: RequestOption
@@ -1224,12 +1224,12 @@ streams:
                     scope: all
                     order_by: updated_at
                     sort: asc
-                    per_page: "{{ config.get('gitlab_page_size', 100) }}"
+                    per_page: "100"
                     # Stateless sliding window, not a cursor: these children
                     # have no cursor of their own, so parent state would never
                     # persist (incremental_dependency requires an incremental
                     # child). RMT dedups the re-read window.
-                    updated_after: "{{ format_datetime(now_utc() - duration('P' ~ config.get('gitlab_child_window_days', 30) ~ 'D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                    updated_after: "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -1239,7 +1239,7 @@ streams:
                   type: DefaultPaginator
                   pagination_strategy:
                     type: PageIncrement
-                    page_size: "{{ config.get('gitlab_page_size', 100) }}"
+                    page_size: "100"
                     start_from_page: 1
                   page_token_option:
                     type: RequestOption
@@ -1327,7 +1327,7 @@ streams:
         path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/members/all"
         http_method: GET
         request_parameters:
-          per_page: "{{ config.get('gitlab_page_size', 100) }}"
+          per_page: "100"
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -1362,7 +1362,7 @@ streams:
         type: DefaultPaginator
         pagination_strategy:
           type: PageIncrement
-          page_size: "{{ config.get('gitlab_page_size', 100) }}"
+          page_size: "100"
           start_from_page: 1
         page_token_option:
           type: RequestOption
@@ -1446,7 +1446,7 @@ streams:
         request_parameters:
           order_by: updated_at
           sort: asc
-          per_page: "{{ config.get('gitlab_page_size', 100) }}"
+          per_page: "100"
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -1481,7 +1481,7 @@ streams:
         type: DefaultPaginator
         pagination_strategy:
           type: PageIncrement
-          page_size: "{{ config.get('gitlab_page_size', 100) }}"
+          page_size: "100"
           start_from_page: 1
         page_token_option:
           type: RequestOption
@@ -1524,7 +1524,7 @@ streams:
                   request_parameters:
                     include_subgroups: "true"
                     archived: "false"
-                    per_page: "{{ config.get('gitlab_page_size', 100) }}"
+                    per_page: "100"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -1534,7 +1534,7 @@ streams:
                   type: DefaultPaginator
                   pagination_strategy:
                     type: PageIncrement
-                    page_size: "{{ config.get('gitlab_page_size', 100) }}"
+                    page_size: "100"
                     start_from_page: 1
                   page_token_option:
                     type: RequestOption
@@ -1554,7 +1554,7 @@ streams:
       lookback_window: P1D
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
+        datetime: "{{ config['gitlab_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       start_time_option:
         type: RequestOption
@@ -1630,7 +1630,7 @@ streams:
         request_parameters:
           order_by: updated_at
           sort: asc
-          per_page: "{{ config.get('gitlab_page_size', 100) }}"
+          per_page: "100"
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -1665,7 +1665,7 @@ streams:
         type: DefaultPaginator
         pagination_strategy:
           type: PageIncrement
-          page_size: "{{ config.get('gitlab_page_size', 100) }}"
+          page_size: "100"
           start_from_page: 1
         page_token_option:
           type: RequestOption
@@ -1708,7 +1708,7 @@ streams:
                   request_parameters:
                     include_subgroups: "true"
                     archived: "false"
-                    per_page: "{{ config.get('gitlab_page_size', 100) }}"
+                    per_page: "100"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -1718,7 +1718,7 @@ streams:
                   type: DefaultPaginator
                   pagination_strategy:
                     type: PageIncrement
-                    page_size: "{{ config.get('gitlab_page_size', 100) }}"
+                    page_size: "100"
                     start_from_page: 1
                   page_token_option:
                     type: RequestOption
@@ -1738,7 +1738,7 @@ streams:
       lookback_window: P1D
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
+        datetime: "{{ config['gitlab_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       start_time_option:
         type: RequestOption
@@ -1799,6 +1799,7 @@ spec:
       - gitlab_groups
       - git_proxy_url
       - git_proxy_token
+      - gitlab_start_date
     properties:
       insight_tenant_id:
         type: string
@@ -1846,60 +1847,12 @@ spec:
         order: 6
       gitlab_start_date:
         type: string
-        description: Earliest date for incremental sync (YYYY-MM-DD).
+        description: >-
+          Earliest date for incremental sync (YYYY-MM-DD). Required: it bounds
+          the first-sync cost, so choosing it is a deployment decision.
         title: Start Date
         format: date
-        default: "2020-01-01"
         order: 7
-      gitlab_page_size:
-        type: integer
-        description: GitLab API page size (max 100).
-        title: GitLab Page Size
-        default: 100
-        minimum: 1
-        maximum: 100
-        order: 8
-      proxy_page_size:
-        type: integer
-        description: Rows per page requested from the git-cli-proxy.
-        title: Proxy Page Size
-        default: 500
-        minimum: 1
-        maximum: 10000
-        order: 9
-      gitlab_include_patch:
-        type: boolean
-        description: >-
-          Store per-file diff text. Keep enabled to allow recomputing line counts later under different filters (blank lines, comments); disable to cut bronze volume.
-        title: Include Patch Text
-        default: true
-        order: 10
-      gitlab_max_patch_bytes:
-        type: integer
-        description: >-
-          Truncation cap for a single file's diff. Truncated rows are flagged with patch_truncated so downstream never mistakes them for complete.
-        title: Max Patch Bytes
-        default: 1048576
-        minimum: 1024
-        order: 11
-      gitlab_lookback_window:
-        type: string
-        description: >-
-          ISO-8601 duration re-enumerated below the stored cursor on every sync. `git log --since` is a traversal cutoff, so after a rebase the replacement commits can carry dates below the cursor and would never be visited again. Bronze dedups the re-read rows, so the cost is one window per sync. A rewrite older than the window is still lost.
-        title: Rebase Lookback Window
-        default: P1M
-        order: 12
-      gitlab_child_window_days:
-        type: integer
-        description: >-
-          Sliding window, in days, of merge requests whose notes and approvals
-          are re-read each sync. The children have no cursor of their own, so
-          the window is what bounds their cost; edits on MRs older than the
-          window are not picked up.
-        title: MR Child Window (days)
-        default: 30
-        minimum: 1
-        order: 13
     additionalProperties: true
 
 metadata:

@@ -69,13 +69,19 @@ streams:
         type: HttpRequester
         url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
         authenticator:
-          type: BasicHttpAuthenticator
-          username: "{{ config['bitbucket_username'] }}"
-          password: "{{ config['bitbucket_token'] }}"
+          type: ApiKeyAuthenticator
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+          # Personal API tokens are Basic username:token; workspace access
+          # tokens are Bearer and must leave bitbucket_username empty.
+          api_token: >-
+            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_partition.workspace }}"
         http_method: GET
         request_parameters:
-          pagelen: "{{ config.get('bitbucket_page_size', 100) }}"
+          pagelen: "100"
           # Ascending, so the cursor advances monotonically across pages.
           sort: updated_on
           # Trim the payload: the full repository object is large and only
@@ -108,7 +114,7 @@ streams:
         - "%Y-%m-%dT%H:%M:%S%z"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('bitbucket_start_date', '2020-01-01') }}"
+        datetime: "{{ config['bitbucket_start_date'] }}"
         datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
@@ -181,13 +187,13 @@ streams:
         request_headers:
           X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
           X-Source-Id: "{{ config['insight_source_id'] }}"
-          X-Git-Username: "{{ config.get('bitbucket_git_username', 'x-bitbucket-api-token-auth') }}"
+          X-Git-Username: "{{ 'x-bitbucket-api-token-auth' if config.get('bitbucket_username') else 'x-token-auth' }}"
           X-Git-Token: "{{ config['bitbucket_token'] }}"
         path: /v1/commits
         http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
-          page_size: "{{ config.get('proxy_page_size', 500) }}"
+          page_size: "500"
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -270,13 +276,19 @@ streams:
                   type: HttpRequester
                   url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
                   authenticator:
-                    type: BasicHttpAuthenticator
-                    username: "{{ config['bitbucket_username'] }}"
-                    password: "{{ config['bitbucket_token'] }}"
+                    type: ApiKeyAuthenticator
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                    # Personal API tokens are Basic username:token; workspace access
+                    # tokens are Bearer and must leave bitbucket_username empty.
+                    api_token: >-
+                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "{{ config.get('bitbucket_page_size', 100) }}"
+                    pagelen: "100"
                     sort: updated_on
                     fields: >-
                       next,values.uuid,values.slug,values.updated_on,values.links.clone
@@ -306,7 +318,7 @@ streams:
                   - "%Y-%m-%dT%H:%M:%S%z"
                 start_datetime:
                   type: MinMaxDatetime
-                  datetime: "{{ config.get('bitbucket_start_date', '2020-01-01') }}"
+                  datetime: "{{ config['bitbucket_start_date'] }}"
                   datetime_format: "%Y-%m-%d"
               transformations:
                 - type: AddFields
@@ -325,13 +337,13 @@ streams:
       # sync recovers them; bronze dedups the re-read rows. This is a
       # heuristic, not a guarantee — a rewrite older than the window is
       # still lost, and nothing detects it.
-      lookback_window: "{{ config.get('bitbucket_lookback_window', 'P1M') }}"
+      lookback_window: "P1M"
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
         - "%Y-%m-%dT%H:%M:%SZ"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('bitbucket_start_date', '2020-01-01') }}"
+        datetime: "{{ config['bitbucket_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       start_time_option:
         type: RequestOption
@@ -401,15 +413,15 @@ streams:
         request_headers:
           X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
           X-Source-Id: "{{ config['insight_source_id'] }}"
-          X-Git-Username: "{{ config.get('bitbucket_git_username', 'x-bitbucket-api-token-auth') }}"
+          X-Git-Username: "{{ 'x-bitbucket-api-token-auth' if config.get('bitbucket_username') else 'x-token-auth' }}"
           X-Git-Token: "{{ config['bitbucket_token'] }}"
         path: /v1/file-changes
         http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
-          page_size: "{{ config.get('proxy_page_size', 500) }}"
-          include_patch: "{{ config.get('bitbucket_include_patch', true) | lower }}"
-          max_patch_bytes: "{{ config.get('bitbucket_max_patch_bytes', 1048576) }}"
+          page_size: "500"
+          include_patch: "true"
+          max_patch_bytes: "1048576"
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -486,13 +498,19 @@ streams:
                   type: HttpRequester
                   url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
                   authenticator:
-                    type: BasicHttpAuthenticator
-                    username: "{{ config['bitbucket_username'] }}"
-                    password: "{{ config['bitbucket_token'] }}"
+                    type: ApiKeyAuthenticator
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                    # Personal API tokens are Basic username:token; workspace access
+                    # tokens are Bearer and must leave bitbucket_username empty.
+                    api_token: >-
+                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "{{ config.get('bitbucket_page_size', 100) }}"
+                    pagelen: "100"
                     sort: updated_on
                     fields: >-
                       next,values.uuid,values.slug,values.updated_on,values.links.clone
@@ -522,7 +540,7 @@ streams:
                   - "%Y-%m-%dT%H:%M:%S%z"
                 start_datetime:
                   type: MinMaxDatetime
-                  datetime: "{{ config.get('bitbucket_start_date', '2020-01-01') }}"
+                  datetime: "{{ config['bitbucket_start_date'] }}"
                   datetime_format: "%Y-%m-%d"
               transformations:
                 - type: AddFields
@@ -541,13 +559,13 @@ streams:
       # sync recovers them; bronze dedups the re-read rows. This is a
       # heuristic, not a guarantee — a rewrite older than the window is
       # still lost, and nothing detects it.
-      lookback_window: "{{ config.get('bitbucket_lookback_window', 'P1M') }}"
+      lookback_window: "P1M"
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
         - "%Y-%m-%dT%H:%M:%SZ"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('bitbucket_start_date', '2020-01-01') }}"
+        datetime: "{{ config['bitbucket_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       start_time_option:
         type: RequestOption
@@ -610,13 +628,13 @@ streams:
         request_headers:
           X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
           X-Source-Id: "{{ config['insight_source_id'] }}"
-          X-Git-Username: "{{ config.get('bitbucket_git_username', 'x-bitbucket-api-token-auth') }}"
+          X-Git-Username: "{{ 'x-bitbucket-api-token-auth' if config.get('bitbucket_username') else 'x-token-auth' }}"
           X-Git-Token: "{{ config['bitbucket_token'] }}"
         path: /v1/branches
         http_method: GET
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
-          page_size: "{{ config.get('proxy_page_size', 500) }}"
+          page_size: "500"
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -694,13 +712,19 @@ streams:
                   type: HttpRequester
                   url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
                   authenticator:
-                    type: BasicHttpAuthenticator
-                    username: "{{ config['bitbucket_username'] }}"
-                    password: "{{ config['bitbucket_token'] }}"
+                    type: ApiKeyAuthenticator
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                    # Personal API tokens are Basic username:token; workspace access
+                    # tokens are Bearer and must leave bitbucket_username empty.
+                    api_token: >-
+                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "{{ config.get('bitbucket_page_size', 100) }}"
+                    pagelen: "100"
                     fields: >-
                       next,values.uuid,values.slug,values.links.clone
                 record_selector:
@@ -795,9 +819,15 @@ streams:
         type: HttpRequester
         url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
         authenticator:
-          type: BasicHttpAuthenticator
-          username: "{{ config['bitbucket_username'] }}"
-          password: "{{ config['bitbucket_token'] }}"
+          type: ApiKeyAuthenticator
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+          # Personal API tokens are Basic username:token; workspace access
+          # tokens are Bearer and must leave bitbucket_username empty.
+          api_token: >-
+            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
         http_method: GET
         request_parameters:
@@ -880,13 +910,19 @@ streams:
                   type: HttpRequester
                   url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
                   authenticator:
-                    type: BasicHttpAuthenticator
-                    username: "{{ config['bitbucket_username'] }}"
-                    password: "{{ config['bitbucket_token'] }}"
+                    type: ApiKeyAuthenticator
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                    # Personal API tokens are Basic username:token; workspace access
+                    # tokens are Bearer and must leave bitbucket_username empty.
+                    api_token: >-
+                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "{{ config.get('bitbucket_page_size', 100) }}"
+                    pagelen: "100"
                     fields: next,values.uuid,values.full_name,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -915,7 +951,7 @@ streams:
       lookback_window: P1D
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('bitbucket_start_date', '2020-01-01') }}"
+        datetime: "{{ config['bitbucket_start_date'] }}"
         datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
@@ -1014,9 +1050,15 @@ streams:
         type: HttpRequester
         url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
         authenticator:
-          type: BasicHttpAuthenticator
-          username: "{{ config['bitbucket_username'] }}"
-          password: "{{ config['bitbucket_token'] }}"
+          type: ApiKeyAuthenticator
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+          # Personal API tokens are Basic username:token; workspace access
+          # tokens are Bearer and must leave bitbucket_username empty.
+          api_token: >-
+            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_slice.extra_fields['repo_full_name'] }}/pullrequests/{{ stream_partition.pr_id }}/comments"
         http_method: GET
         request_parameters:
@@ -1097,9 +1139,15 @@ streams:
                   type: HttpRequester
                   url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
                   authenticator:
-                    type: BasicHttpAuthenticator
-                    username: "{{ config['bitbucket_username'] }}"
-                    password: "{{ config['bitbucket_token'] }}"
+                    type: ApiKeyAuthenticator
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                    # Personal API tokens are Basic username:token; workspace access
+                    # tokens are Bearer and must leave bitbucket_username empty.
+                    api_token: >-
+                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
                   http_method: GET
                   request_parameters:
@@ -1110,7 +1158,7 @@ streams:
                     # own, so parent state would never persist. RMT dedups the
                     # re-read window.
                     q: >-
-                      updated_on >= "{{ format_datetime(now_utc() - duration('P' ~ config.get('bitbucket_pr_child_window_days', 30) ~ 'D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                      updated_on >= "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
                     fields: next,values.id,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -1152,13 +1200,19 @@ streams:
                             type: HttpRequester
                             url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
                             authenticator:
-                              type: BasicHttpAuthenticator
-                              username: "{{ config['bitbucket_username'] }}"
-                              password: "{{ config['bitbucket_token'] }}"
+                              type: ApiKeyAuthenticator
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: Authorization
+                              # Personal API tokens are Basic username:token; workspace access
+                              # tokens are Bearer and must leave bitbucket_username empty.
+                              api_token: >-
+                                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                             path: "/repositories/{{ stream_partition.workspace }}"
                             http_method: GET
                             request_parameters:
-                              pagelen: "{{ config.get('bitbucket_page_size', 100) }}"
+                              pagelen: "100"
                               fields: next,values.uuid,values.full_name,values.updated_on
                           record_selector:
                             type: RecordSelector
@@ -1270,9 +1324,15 @@ streams:
         type: HttpRequester
         url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
         authenticator:
-          type: BasicHttpAuthenticator
-          username: "{{ config['bitbucket_username'] }}"
-          password: "{{ config['bitbucket_token'] }}"
+          type: ApiKeyAuthenticator
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+          # Personal API tokens are Basic username:token; workspace access
+          # tokens are Bearer and must leave bitbucket_username empty.
+          api_token: >-
+            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/repositories/{{ stream_slice.extra_fields['repo_full_name'] }}/pullrequests/{{ stream_partition.pr_id }}/activity"
         http_method: GET
         request_parameters:
@@ -1352,9 +1412,15 @@ streams:
                   type: HttpRequester
                   url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
                   authenticator:
-                    type: BasicHttpAuthenticator
-                    username: "{{ config['bitbucket_username'] }}"
-                    password: "{{ config['bitbucket_token'] }}"
+                    type: ApiKeyAuthenticator
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                    # Personal API tokens are Basic username:token; workspace access
+                    # tokens are Bearer and must leave bitbucket_username empty.
+                    api_token: >-
+                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
                   http_method: GET
                   request_parameters:
@@ -1365,7 +1431,7 @@ streams:
                     # own, so parent state would never persist. RMT dedups the
                     # re-read window.
                     q: >-
-                      updated_on >= "{{ format_datetime(now_utc() - duration('P' ~ config.get('bitbucket_pr_child_window_days', 30) ~ 'D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                      updated_on >= "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
                     fields: next,values.id,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -1407,13 +1473,19 @@ streams:
                             type: HttpRequester
                             url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
                             authenticator:
-                              type: BasicHttpAuthenticator
-                              username: "{{ config['bitbucket_username'] }}"
-                              password: "{{ config['bitbucket_token'] }}"
+                              type: ApiKeyAuthenticator
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: Authorization
+                              # Personal API tokens are Basic username:token; workspace access
+                              # tokens are Bearer and must leave bitbucket_username empty.
+                              api_token: >-
+                                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                             path: "/repositories/{{ stream_partition.workspace }}"
                             http_method: GET
                             request_parameters:
-                              pagelen: "{{ config.get('bitbucket_page_size', 100) }}"
+                              pagelen: "100"
                               fields: next,values.uuid,values.full_name,values.updated_on
                           record_selector:
                             type: RecordSelector
@@ -1532,9 +1604,15 @@ streams:
         type: HttpRequester
         url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
         authenticator:
-          type: BasicHttpAuthenticator
-          username: "{{ config['bitbucket_username'] }}"
-          password: "{{ config['bitbucket_token'] }}"
+          type: ApiKeyAuthenticator
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+          # Personal API tokens are Basic username:token; workspace access
+          # tokens are Bearer and must leave bitbucket_username empty.
+          api_token: >-
+            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         path: "/workspaces/{{ stream_partition.workspace }}/members"
         http_method: GET
         request_parameters:
@@ -1673,9 +1751,15 @@ streams:
         type: HttpRequester
         url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
         authenticator:
-          type: BasicHttpAuthenticator
-          username: "{{ config['bitbucket_username'] }}"
-          password: "{{ config['bitbucket_token'] }}"
+          type: ApiKeyAuthenticator
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+          # Personal API tokens are Basic username:token; workspace access
+          # tokens are Bearer and must leave bitbucket_username empty.
+          api_token: >-
+            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         # Trailing slash is load-bearing: without it this endpoint 404s.
         path: "/repositories/{{ stream_partition.repo_full_name }}/pipelines/"
         http_method: GET
@@ -1757,13 +1841,19 @@ streams:
                   type: HttpRequester
                   url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
                   authenticator:
-                    type: BasicHttpAuthenticator
-                    username: "{{ config['bitbucket_username'] }}"
-                    password: "{{ config['bitbucket_token'] }}"
+                    type: ApiKeyAuthenticator
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                    # Personal API tokens are Basic username:token; workspace access
+                    # tokens are Bearer and must leave bitbucket_username empty.
+                    api_token: >-
+                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "{{ config.get('bitbucket_page_size', 100) }}"
+                    pagelen: "100"
                     fields: next,values.uuid,values.full_name,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -1794,7 +1884,7 @@ streams:
       is_data_feed: true
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('bitbucket_start_date', '2020-01-01') }}"
+        datetime: "{{ config['bitbucket_start_date'] }}"
         datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
@@ -1889,9 +1979,15 @@ streams:
         type: HttpRequester
         url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
         authenticator:
-          type: BasicHttpAuthenticator
-          username: "{{ config['bitbucket_username'] }}"
-          password: "{{ config['bitbucket_token'] }}"
+          type: ApiKeyAuthenticator
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+          # Personal API tokens are Basic username:token; workspace access
+          # tokens are Bearer and must leave bitbucket_username empty.
+          api_token: >-
+            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
         # Trailing slash is load-bearing: without it this endpoint 404s.
         path: "/repositories/{{ stream_partition.repo_full_name }}/deployments/"
         http_method: GET
@@ -1973,13 +2069,19 @@ streams:
                   type: HttpRequester
                   url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
                   authenticator:
-                    type: BasicHttpAuthenticator
-                    username: "{{ config['bitbucket_username'] }}"
-                    password: "{{ config['bitbucket_token'] }}"
+                    type: ApiKeyAuthenticator
+                    inject_into:
+                      type: RequestOption
+                      inject_into: header
+                      field_name: Authorization
+                    # Personal API tokens are Basic username:token; workspace access
+                    # tokens are Bearer and must leave bitbucket_username empty.
+                    api_token: >-
+                      {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "{{ config.get('bitbucket_page_size', 100) }}"
+                    pagelen: "100"
                     fields: next,values.uuid,values.full_name,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -2010,7 +2112,7 @@ streams:
       is_data_feed: true
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('bitbucket_start_date', '2020-01-01') }}"
+        datetime: "{{ config['bitbucket_start_date'] }}"
         datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
@@ -2080,11 +2182,11 @@ spec:
     required:
       - insight_tenant_id
       - insight_source_id
-      - bitbucket_username
       - bitbucket_token
       - bitbucket_workspaces
       - git_proxy_url
       - git_proxy_token
+      - bitbucket_start_date
     properties:
       insight_tenant_id:
         type: string
@@ -2100,16 +2202,12 @@ spec:
       bitbucket_username:
         type: string
         description: >-
-          Atlassian account username or email. Personal API tokens authenticate as HTTP basic `username:token`, both against the API and against the clone the proxy performs.
-        title: Username / Email
+          Atlassian account email/username. Set it for personal API tokens
+          (HTTP Basic username:token, both against the API and the clone the
+          proxy performs). Leave empty for workspace/repository access tokens,
+          which authenticate as Bearer.
+        title: Username / Email (personal API tokens only)
         order: 2
-      bitbucket_git_username:
-        type: string
-        description: >-
-          Username the proxy presents when CLONING over https, which is NOT the API credential. `x-token-auth` is reserved for workspace/repository access tokens and is rejected for a personal API token; the default works for personal API tokens, and the account's short username works for access tokens.
-        title: Git Clone Username
-        default: x-bitbucket-api-token-auth
-        order: 3
       bitbucket_token:
         type: string
         description: >-
@@ -2141,63 +2239,15 @@ spec:
         description: Bitbucket API base URL.
         title: API Base URL
         default: "https://api.bitbucket.org/2.0"
-        order: 8
+        order: 9
       bitbucket_start_date:
         type: string
-        description: Earliest date for incremental sync (YYYY-MM-DD).
+        description: >-
+          Earliest date for incremental sync (YYYY-MM-DD). Required: it bounds
+          the first-sync cost, so choosing it is a deployment decision.
         title: Start Date
         format: date
-        default: "2020-01-01"
-        order: 9
-      bitbucket_page_size:
-        type: integer
-        description: Bitbucket API page size (max 100).
-        title: Bitbucket Page Size
-        default: 100
-        minimum: 1
-        maximum: 100
-        order: 10
-      proxy_page_size:
-        type: integer
-        description: Rows per page requested from the git-cli-proxy.
-        title: Proxy Page Size
-        default: 500
-        minimum: 1
-        maximum: 10000
-        order: 11
-      bitbucket_include_patch:
-        type: boolean
-        description: >-
-          Store per-file diff text. Keep enabled to allow recomputing line counts later under different filters; disable to cut bronze volume.
-        title: Include Patch Text
-        default: true
-        order: 12
-      bitbucket_max_patch_bytes:
-        type: integer
-        description: >-
-          Truncation cap for a single file's diff. Truncated rows are flagged with patch_truncated so downstream never mistakes them for complete.
-        title: Max Patch Bytes
-        default: 1048576
-        minimum: 1024
-        order: 13
-      bitbucket_lookback_window:
-        type: string
-        description: >-
-          ISO-8601 duration re-enumerated below the stored cursor on every sync. `git log --since` is a traversal cutoff, so after a rebase the replacement commits can carry dates below the cursor and would never be visited again. Bronze dedups the re-read rows, so the cost is one window per sync. A rewrite older than the window is still lost.
-        title: Rebase Lookback Window
-        default: P1M
-        order: 14
-      bitbucket_pr_child_window_days:
-        type: integer
-        description: >-
-          Sliding window, in days, of pull requests whose comments and
-          activity are re-read each sync. The children have no cursor of
-          their own, so the window bounds their cost; edits on PRs older
-          than the window are not picked up.
-        title: PR Child Window (days)
-        default: 30
-        minimum: 1
-        order: 15
+        order: 8
     additionalProperties: true
 
 metadata:

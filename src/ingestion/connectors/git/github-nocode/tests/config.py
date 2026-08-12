@@ -18,7 +18,5 @@ class GithubNocodeConfigBuilder(ConfigBuilder):
                 "git_proxy_url": PROXY_URL,
                 "git_proxy_token": "test-proxy-token",
                 "github_start_date": "2026-06-01",
-                # One weekly slice under the frozen clock.
-                "github_workflow_runs_start_date": "2026-06-25",
             }
         )

@@ -55,9 +55,9 @@ conversation comments and reviews are.
 
 Steady state ≈ 6 calls/repo + 1 call per PR updated in the child window +
 1 call per deployment created in the deploy window + O(changed rows). First
-workflow_runs backfill defaults to the last 90 days (`created` queries cap at
-1000 results per step window — shrink `github_workflow_runs_step` for
-hyperactive repositories).
+workflow_runs backfill goes back at most 90 days — GitHub's run retention —
+paged in weekly windows because `created` queries cap at 1000 results per
+window.
 
 ## Silver Targets
 

@@ -99,7 +99,7 @@ definitions:
 
   rest_requester: &rest_requester
     type: HttpRequester
-    url_base: https://api.github.com
+    url_base: "{{ config.get('github_api_base_url', 'https://api.github.com') }}"
     http_method: GET
     authenticator:
       type: BearerAuthenticator
@@ -209,7 +209,7 @@ definitions:
           type: all
           sort: pushed
           direction: asc
-          per_page: "{{ config.get('github_page_size', 100) }}"
+          per_page: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -217,7 +217,7 @@ definitions:
           field_path: []
         record_filter:
           type: RecordFilter
-          condition: "{{ not (config.get('skip_archived', true) and record.get('archived', false)) and not (config.get('skip_forks', false) and record.get('fork', false)) }}"
+          condition: "{{ not record.get('archived', false) }}"
       paginator:
         type: DefaultPaginator
         pagination_strategy:
@@ -265,7 +265,7 @@ definitions:
         path: "/orgs/{{ stream_partition.org }}/repos"
         request_parameters:
           type: all
-          per_page: "{{ config.get('github_page_size', 100) }}"
+          per_page: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -273,7 +273,7 @@ definitions:
           field_path: []
         record_filter:
           type: RecordFilter
-          condition: "{{ not (config.get('skip_archived', true) and record.get('archived', false)) and not (config.get('skip_forks', false) and record.get('fork', false)) }}"
+          condition: "{{ not record.get('archived', false) }}"
       paginator:
         type: DefaultPaginator
         pagination_strategy:
@@ -336,7 +336,7 @@ streams:
         path: "/orgs/{{ stream_partition.org }}/repos"
         request_parameters:
           type: all
-          per_page: "{{ config.get('github_page_size', 100) }}"
+          per_page: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -344,7 +344,7 @@ streams:
           field_path: []
         record_filter:
           type: RecordFilter
-          condition: "{{ not (config.get('skip_archived', true) and record.get('archived', false)) and not (config.get('skip_forks', false) and record.get('fork', false)) }}"
+          condition: "{{ not record.get('archived', false) }}"
       paginator:
         type: DefaultPaginator
         pagination_strategy:
@@ -413,7 +413,7 @@ streams:
         path: /v1/commits
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
-          page_size: "{{ config.get('proxy_page_size', 500) }}"
+          page_size: "500"
 
       record_selector:
         type: RecordSelector
@@ -449,13 +449,13 @@ streams:
       # replacement commits can carry dates BELOW the stored cursor and would
       # never be visited again. Re-enumerating one window each sync recovers
       # them; bronze dedups the re-read rows.
-      lookback_window: "{{ config.get('github_lookback_window', 'P1M') }}"
+      lookback_window: "P1M"
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
         - "%Y-%m-%dT%H:%M:%SZ"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('github_start_date', '2020-01-01') }}"
+        datetime: "{{ config['github_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       start_time_option:
         type: RequestOption
@@ -513,9 +513,9 @@ streams:
         path: /v1/file-changes
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
-          page_size: "{{ config.get('proxy_page_size', 500) }}"
-          include_patch: "{{{{ config.get('github_include_patch', true) | lower }}}}"
-          max_patch_bytes: "{{{{ config.get('github_max_patch_bytes', 1048576) }}}}"
+          page_size: "500"
+          include_patch: "true"
+          max_patch_bytes: "1048576"
       record_selector:
         type: RecordSelector
         extractor:
@@ -550,13 +550,13 @@ streams:
       # replacement commits can carry dates BELOW the stored cursor and would
       # never be visited again. Re-enumerating one window each sync recovers
       # them; bronze dedups the re-read rows.
-      lookback_window: "{{ config.get('github_lookback_window', 'P1M') }}"
+      lookback_window: "P1M"
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
         - "%Y-%m-%dT%H:%M:%SZ"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('github_start_date', '2020-01-01') }}"
+        datetime: "{{ config['github_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       start_time_option:
         type: RequestOption
@@ -607,7 +607,7 @@ streams:
         path: /v1/branches
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
-          page_size: "{{ config.get('proxy_page_size', 500) }}"
+          page_size: "500"
 
       record_selector:
         type: RecordSelector
@@ -698,7 +698,7 @@ streams:
           state: all
           sort: updated
           direction: desc
-          per_page: "{{ config.get('github_page_size', 100) }}"
+          per_page: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -729,7 +729,7 @@ streams:
       lookback_window: P1D
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('github_start_date', '2020-01-01') }}"
+        datetime: "{{ config['github_start_date'] }}"
         datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
@@ -803,7 +803,7 @@ streams:
         error_handler: *rest_error_handler_repo_scoped
         path: "/repos/{{ stream_slice.extra_fields['repo_full_name'] }}/pulls/{{ stream_partition.pull_number }}/reviews"
         request_parameters:
-          per_page: "{{ config.get('github_page_size', 100) }}"
+          per_page: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -850,7 +850,7 @@ streams:
                     state: all
                     sort: updated
                     direction: desc
-                    per_page: "{{ config.get('github_page_size', 100) }}"
+                    per_page: "100"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -883,7 +883,7 @@ streams:
                 is_data_feed: true
                 start_datetime:
                   type: MinMaxDatetime
-                  datetime: "{{ format_datetime(now_utc() - duration('P' ~ config.get('github_pr_child_window_days', 30) ~ 'D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                  datetime: "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
                   datetime_format: "%Y-%m-%dT%H:%M:%SZ"
               transformations:
                 - type: AddFields
@@ -956,7 +956,7 @@ streams:
         request_parameters:
           sort: updated
           direction: asc
-          per_page: "{{ config.get('github_page_size', 100) }}"
+          per_page: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -986,7 +986,7 @@ streams:
       lookback_window: P1D
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('github_start_date', '2020-01-01') }}"
+        datetime: "{{ config['github_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       start_time_option:
         type: RequestOption
@@ -1062,7 +1062,7 @@ streams:
           state: all
           sort: updated
           direction: asc
-          per_page: "{{ config.get('github_page_size', 100) }}"
+          per_page: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -1095,7 +1095,7 @@ streams:
       lookback_window: P1D
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('github_start_date', '2020-01-01') }}"
+        datetime: "{{ config['github_start_date'] }}"
         datetime_format: "%Y-%m-%d"
       start_time_option:
         type: RequestOption
@@ -1275,7 +1275,7 @@ streams:
   # The `created` range goes in a plain request parameter: start_time_option
   # cannot emit the `A..B` search syntax. VERIFIED CAVEAT: with `created` the
   # endpoint caps at 1000 results per query — the weekly step keeps windows
-  # under it; shrink github_workflow_runs_step for hyperactive repos. The
+  # under it for repositories running up to ~1000 workflows a week. The
   # list returns only the LATEST attempt; run_attempt in the key
   # disambiguates re-runs observed across syncs.
   - type: DeclarativeStream
@@ -1347,15 +1347,16 @@ streams:
       datetime_format: "%Y-%m-%dT%H:%M:%SZ"
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
-      step: "{{ config.get('github_workflow_runs_step', 'P1W') }}"
+      step: "P1W"
       cursor_granularity: PT1S
       lookback_window: P1D
       start_datetime:
         type: MinMaxDatetime
-        # CI history is high-volume and ages fast: default to the last 90
-        # days rather than all history.
-        datetime: "{{ config.get('github_workflow_runs_start_date') or format_datetime(now_utc() - duration('P90D'), '%Y-%m-%d') }}"
+        # CI history is high-volume and ages fast: GitHub retains runs for
+        # 90 days, so windows older than that are guaranteed empty.
+        datetime: "{{ config['github_start_date'] }}"
         datetime_format: "%Y-%m-%d"
+        min_datetime: "{{ format_datetime(now_utc() - duration('P90D'), '%Y-%m-%d') }}"
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -1416,7 +1417,7 @@ streams:
         error_handler: *rest_error_handler_repo_scoped
         path: "/repos/{{ stream_partition.repo_full_name }}/deployments"
         request_parameters:
-          per_page: "{{ config.get('github_page_size', 100) }}"
+          per_page: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -1448,7 +1449,7 @@ streams:
       is_data_feed: true
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('github_start_date', '2020-01-01') }}"
+        datetime: "{{ config['github_start_date'] }}"
         datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
@@ -1510,7 +1511,7 @@ streams:
         error_handler: *rest_error_handler_repo_scoped
         path: "/repos/{{ stream_slice.extra_fields['repo_full_name'] }}/deployments/{{ stream_partition.deployment_id }}/statuses"
         request_parameters:
-          per_page: "{{ config.get('github_page_size', 100) }}"
+          per_page: "100"
       record_selector:
         type: RecordSelector
         extractor:
@@ -1554,7 +1555,7 @@ streams:
                   error_handler: *rest_error_handler_repo_scoped
                   path: "/repos/{{ stream_partition.repo_full_name }}/deployments"
                   request_parameters:
-                    per_page: "{{ config.get('github_page_size', 100) }}"
+                    per_page: "100"
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -1586,7 +1587,7 @@ streams:
                 is_data_feed: true
                 start_datetime:
                   type: MinMaxDatetime
-                  datetime: "{{ format_datetime(now_utc() - duration('P' ~ config.get('github_deploy_window_days', 30) ~ 'D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                  datetime: "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
                   datetime_format: "%Y-%m-%dT%H:%M:%SZ"
               transformations:
                 - type: AddFields
@@ -1638,6 +1639,7 @@ spec:
       - github_organizations
       - git_proxy_url
       - git_proxy_token
+      - github_start_date
     properties:
       insight_tenant_id:
         type: string
@@ -1683,100 +1685,20 @@ spec:
         order: 5
       github_start_date:
         type: string
-        description: Earliest date for incremental sync (YYYY-MM-DD).
+        description: >-
+          Earliest date for incremental sync (YYYY-MM-DD). Required: it bounds
+          the first-sync cost, so choosing it is a deployment decision.
         title: Start Date
         format: date
-        default: "2020-01-01"
         order: 6
-      github_page_size:
-        type: integer
-        description: GitHub API page size (max 100).
-        title: GitHub Page Size
-        default: 100
-        minimum: 1
-        maximum: 100
+      github_api_base_url:
+        type: string
+        description: >-
+          GitHub REST API base URL. Override for GitHub Enterprise Server
+          (e.g. https://ghe.example.com/api/v3).
+        title: API Base URL
+        default: "https://api.github.com"
         order: 7
-      skip_archived:
-        type: boolean
-        description: Skip archived repositories.
-        title: Skip Archived
-        default: true
-        order: 8
-      skip_forks:
-        type: boolean
-        description: Skip forked repositories.
-        title: Skip Forks
-        default: false
-        order: 9
-      proxy_page_size:
-        type: integer
-        description: Rows per page requested from the git-cli-proxy.
-        title: Proxy Page Size
-        default: 500
-        minimum: 1
-        maximum: 10000
-        order: 10
-      github_include_patch:
-        type: boolean
-        description: >-
-          Store per-file diff text. Keep enabled to allow recomputing line
-          counts later under different filters; disable to cut bronze volume.
-        title: Include Patch Text
-        default: true
-        order: 11
-      github_max_patch_bytes:
-        type: integer
-        description: >-
-          Truncation cap for a single file's diff. Truncated rows are flagged
-          with patch_truncated so downstream never mistakes them for complete.
-        title: Max Patch Bytes
-        default: 1048576
-        minimum: 1024
-        order: 12
-      github_lookback_window:
-        type: string
-        description: >-
-          ISO-8601 duration re-enumerated below the stored commit cursor on
-          every sync — the rebase recovery heuristic. A rewrite older than the
-          window is still lost.
-        title: Rebase Lookback Window
-        default: P1M
-        order: 13
-      github_pr_child_window_days:
-        type: integer
-        description: >-
-          Sliding window, in days, of pull requests whose reviews are re-read
-          each sync. Edits on PRs older than the window are not picked up.
-        title: PR Child Window (days)
-        default: 30
-        minimum: 1
-        order: 14
-      github_deploy_window_days:
-        type: integer
-        description: >-
-          Sliding window, in days, of deployments whose statuses are re-read
-          each sync. This is the one cost that scales with deploy frequency —
-          shrink it for hyperactive deployers.
-        title: Deploy Status Window (days)
-        default: 30
-        minimum: 1
-        order: 15
-      github_workflow_runs_start_date:
-        type: string
-        description: >-
-          Earliest date for workflow runs (YYYY-MM-DD). Empty means the last
-          90 days: CI history is high-volume and ages fast.
-        title: Workflow Runs Start Date
-        order: 16
-      github_workflow_runs_step:
-        type: string
-        description: >-
-          ISO-8601 window per workflow-runs query. GitHub caps created-filtered
-          queries at 1000 results per window; shrink this for repositories
-          running more than ~1000 workflows a week.
-        title: Workflow Runs Step
-        default: P1W
-        order: 17
     additionalProperties: true
 
 metadata:

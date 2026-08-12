@@ -220,6 +220,7 @@ type: Opaque
 stringData:
   github_token:         "ghp_CHANGE_ME"   # repo, read:org
   github_organizations: '["myorg"]'       # JSON array
+  github_start_date:    "2026-01-01"
   git_proxy_url:        "http://insight-git-cli-proxy:8085"
   git_proxy_token:      "CHANGE_ME"       # must match the proxy's own Secret
 ```
@@ -237,6 +238,7 @@ stringData:
   gitlab_url:      "https://gitlab.example.com"
   gitlab_token:    "CHANGE_ME"            # read_api + read_repository
   gitlab_groups:   '["mygroup"]'          # JSON array of full group paths
+  gitlab_start_date: "2026-01-01"
   git_proxy_url:   "http://insight-git-cli-proxy:8085"
   git_proxy_token: "CHANGE_ME"
 ```
@@ -254,6 +256,7 @@ stringData:
   bitbucket_username:   "bot@example.com" # for API tokens; omit for workspace access tokens
   bitbucket_token:      "CHANGE_ME"
   bitbucket_workspaces: '["myworkspace"]' # JSON array
+  bitbucket_start_date: "2026-01-01"
   git_proxy_url:        "http://insight-git-cli-proxy:8085"
   git_proxy_token:      "CHANGE_ME"
 ```

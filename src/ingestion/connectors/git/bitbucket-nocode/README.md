@@ -47,19 +47,13 @@ stringData:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `bitbucket_username` | Yes | Atlassian account username or email |
-| `bitbucket_git_username` | No | Username presented when CLONING over https, which is NOT the API credential. Default `x-bitbucket-api-token-auth` works for personal API tokens; use the account's short username for a workspace or repository access token |
+| `bitbucket_username` | No | Atlassian account email/username. Set for personal API tokens (Basic `username:token`); leave empty for workspace/repository access tokens (Bearer). The clone username the proxy presents is derived from the same choice |
 | `bitbucket_token` | Yes | API token with `repository:read` |
 | `bitbucket_workspaces` | Yes | JSON array of workspace slugs |
 | `git_proxy_url` | Yes | git-cli-proxy base URL. No default — a wrong value must fail `check`, not fall back |
 | `git_proxy_token` | Yes | Bearer token the proxy requires on every `/v1` request |
 | `bitbucket_api_base_url` | No | API base URL (default `https://api.bitbucket.org/2.0`) |
-| `bitbucket_start_date` | No | Earliest date for the initial sync (default `2020-01-01`) |
-| `bitbucket_page_size` | No | Bitbucket API page size, max 100 |
-| `proxy_page_size` | No | Rows per proxy page (default 500) |
-| `bitbucket_include_patch` | No | Store per-file diff text (default true) |
-| `bitbucket_lookback_window` | No | ISO-8601 duration re-enumerated below the cursor each sync, so a rebase does not strand commits dated below it (default `P1M`) |
-| `bitbucket_max_patch_bytes` | No | Truncation cap per file diff (default 1 MiB) |
+| `bitbucket_start_date` | Yes | Earliest date for incremental sync (YYYY-MM-DD); bounds the first-sync cost |
 
 ### Automatically injected
 
@@ -128,7 +122,7 @@ loop.
 ## Partial clone support: settled
 
 Bitbucket Cloud honours `--filter=blob:none` (verified live — git-cli-proxy
-PLAN §9.2). One sizing consequence remains: with `include_patch=true` the
+PLAN §9.2). One sizing consequence remains: because patch text is stored, the
 first backfill lazily pulls essentially every blob while paging history, so
 the proxy cache should be sized for roughly full-clone weight per Bitbucket
 repository during backfill; the post-serve purge returns entries to the

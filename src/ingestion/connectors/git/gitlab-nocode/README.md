@@ -49,12 +49,7 @@ stringData:
 | `gitlab_groups` | Yes | Group full paths, subgroups included. Required: a read-only service account is a member of no project, so membership-scoped discovery returns nothing, and a declarative manifest cannot express the CDK connector's instance-wide fallback. A project reachable from two configured groups is emitted twice under one key and collapses downstream |
 | `git_proxy_url` | Yes | git-cli-proxy base URL. No default — a wrong value must fail `check`, not fall back |
 | `git_proxy_token` | Yes | Bearer token the proxy requires on every `/v1` request |
-| `gitlab_start_date` | No | Earliest date for the initial sync (default `2020-01-01`) |
-| `gitlab_page_size` | No | GitLab API page size, max 100 |
-| `proxy_page_size` | No | Rows per proxy page (default 500) |
-| `gitlab_include_patch` | No | Store per-file diff text (default true) |
-| `gitlab_max_patch_bytes` | No | Truncation cap per file diff (default 1 MiB) |
-| `gitlab_lookback_window` | No | ISO-8601 duration re-enumerated below the cursor each sync, so a rebase does not strand commits dated below it (default `P1M`) |
+| `gitlab_start_date` | Yes | Earliest date for incremental sync (YYYY-MM-DD); bounds the first-sync cost |
 
 ### Automatically injected
 
