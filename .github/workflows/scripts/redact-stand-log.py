@@ -1,67 +1,23 @@
 #!/usr/bin/env python3
-"""Mask credentials out of deployed-stand output before it reaches a public run log.
+"""Mask credential-shaped text out of stand output before it reaches a public log.
 
-This repository is PUBLIC, and so is every line a workflow prints. The test-stand
-deploy talks to a real cluster with a real credential, seeds real personas and
-then signs them in — three activities whose natural output carries session
-cookies, bearer tokens, connection strings and people's email addresses. Nothing
-in that chain was written with a public audience in mind: `seed-stand.sh` prints
-the seed manifest so a discarded pod's work is not lost, and `kubectl logs`
-prints whatever the container felt like printing.
+This repository is PUBLIC, and so is every line a workflow prints; cluster and
+seeder output goes through here rather than straight to the console.
 
-So the workflow never pipes cluster or seeder output straight to the console.
-Everything goes through this filter, and the filter is the only thing standing
-between a container that decided to log its DSN and a permanent public record of
-it.
+**Fail closed, per line.** A line this filter cannot prove it cleaned becomes
+`LINE_MARKER`, and the pass at the end of `_clean` re-scans the *result* rather
+than trusting the substitutions; an exception aborts the stream, because a
+truncated diagnostic is recoverable and a published secret is not.
 
-**Fail closed, per line.** A line this script cannot prove it has cleaned is
-replaced wholesale with a marker rather than passed through. The verification
-pass at the end of `_clean` re-scans the *result*: redaction that claims to have
-worked is not the same as redaction that worked, and the cheap way to tell them
-apart is to look at the bytes about to be printed. An exception anywhere aborts
-the stream — a truncated diagnostic is recoverable, a published secret is not.
-
-What is masked, and why each rule exists:
-
-* **URLs carrying credentials** (`scheme://user:pass@host`) — the shape a DSN
-  takes in a connection error. Run first, because the `pass@host.example` tail
-  also matches the email rule and the URL form is the more informative mask.
-* **Email addresses** — replaced by a short, stable digest rather than a flat
-  marker. Two lines about the same person still visibly concern the same person,
-  which is most of what an address is worth in a diagnostic, and the digest is
-  one-way. Seeded personas live on a synthetic domain, but the `--email` the
-  seeder is pointed at is a real one.
-* **`Bearer` values, JWTs and `__Host-sid` cookies** — the credentials the smoke
-  stage handles. A JWT is recognised by its `eyJ` header prefix, so an
-  unsigned or truncated one is caught too.
-* **`key: value` pairs whose KEY names a secret** — `password:`, `token:`,
-  `client-key-data:` and friends. This is what a kubeconfig, a Secret dump or a
-  helm values render looks like, and the key name is the only reliable signal.
-* **Long unbroken base64/hex runs** — the catch-all for a secret whose shape
-  nobody anticipated. Container image digests are exempted (they are
-  diagnostics, not credentials, and losing them makes a pull failure
-  unreadable); everything else of 40+ characters is assumed to be material.
-* **IPv4 literals** — not credentials, but infrastructure detail this repo does
-  not publish. Chart versions and other three-part numbers are untouched: the
-  rule needs four octets.
-* **Over-long lines** — truncated. A 40 KB line is either a heap dump or a blob,
-  and neither belongs in a run log; truncating it also bounds what an unknown
-  secret shape can leak past the rules above.
-
-What this does NOT do, stated plainly: it does not understand structure. A
-secret spread across two lines, or one that looks like an ordinary English word,
-survives. The rule this implements is "credential-shaped text does not reach the
-console"; the workflow's own discipline — no `kubectl describe`, no environment
-dumps, no artifact uploads — is what covers the rest.
+No structure awareness: a secret split across lines, or shaped like an ordinary
+word, survives — the workflow's own no-print discipline covers the rest.
 
 Usage:
     <producer> | redact-stand-log.py            # stdin -> stdout, line at a time
     redact-stand-log.py FILE [FILE ...]         # named files -> stdout
     redact-stand-log.py --max-line 400 FILE     # tighter truncation
 
-Exit status is 0 when the whole stream was cleaned and emitted, 1 when the
-filter aborted. A caller that pipes into this script should run under
-`set -o pipefail` so an abort is not mistaken for a clean run.
+Exit 0 when the stream was cleaned, 1 when it aborted — pipe under `pipefail`.
 """
 
 from __future__ import annotations
@@ -91,10 +47,8 @@ _BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=\-]{8,}")
 _SESSION_COOKIE = re.compile(r"(?i)(__Host-sid|__Secure-sid|sid)=[^\s;,\"']{8,}")
 _PRIVATE_KEY_HEADER = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 
-#: Matched case-insensitively against the token left of a `:`/`=`. Boundary
-#: is `(?<![A-Za-z0-9])`, not `\b`: `\b` does not match between `_` and a
-#: letter, so it silently missed every underscore-joined secret name in this
-#: stack (`MARIADB_PASSWORD=`, `APP__…__client_secret:`) — load-bearing here.
+#: Matched case-insensitively against the token left of a `:`/`=`. Boundary is
+#: `(?<![A-Za-z0-9])`, not `\b`, which misses `MARIADB_PASSWORD=` — load-bearing.
 _SECRET_KEY = re.compile(
     r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_.\-]*(?:"
     r"password|passwd|pwd|secret|secret[_\-]?key|client[_\-]?secret|"
@@ -104,14 +58,11 @@ _SECRET_KEY = re.compile(
     r"))([\"']?\s*[:=]\s*)(?!\s*$)\S+"
 )
 
-#: An image digest: kept, because "which image failed to pull" is the answer to
-#: half the seed failures there are.
+#: An image digest: exempt, because it answers "which image failed to pull".
 _DIGEST = re.compile(r"\bsha(?:256|512):[0-9a-fA-F]{32,128}\b")
 
-#: The catch-all. 40 characters is above every Kubernetes object name and image
-#: tag in this stack (all of which carry `-`, `.` or `/`) and below every key,
-#: token and certificate body. Alphabet covers both base64 and base64url
-#: (`-`/`_`) — Keycloak client secrets and PKCE verifiers use the latter.
+#: The catch-all. 40 chars is above every object name and image tag in this
+#: stack, below every key and token; alphabet covers base64 and base64url.
 _LONG_BLOB = re.compile(r"(?<![A-Za-z0-9+/_=-])[A-Za-z0-9+/_-]{40,}={0,2}(?![A-Za-z0-9+/_=-])")
 
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
@@ -136,9 +87,8 @@ def _clean(line: str, *, max_line: int) -> str:
     last, over the bytes that are actually about to be printed.
     """
     if _PRIVATE_KEY_HEADER.search(line):
-        # The header line names the key type and nothing else useful, and the
-        # body that follows is caught by the blob rule. Drop the whole thing —
-        # a PEM in a CI log is never a diagnostic.
+        # The header names the key type and nothing else useful, and the body
+        # is caught by the blob rule. A PEM in a CI log is never a diagnostic.
         return "[private key material withheld by CI]"
 
     out = _URL_CREDENTIALS.sub(r"\g<scheme>[credentials redacted]@", line)
@@ -164,10 +114,8 @@ def _clean(line: str, *, max_line: int) -> str:
     if len(out) > max_line:
         out = out[:max_line] + f" …[truncated at {max_line} chars by CI]"
 
-    # The result, not the input, is checked: anything credential-shaped that
-    # survived every rule above means a rule has a hole. Digests are
-    # stripped first so a legitimate, exempted one cannot itself trip the
-    # blob re-check.
+    # The result, not the input: anything credential-shaped that survived means
+    # a rule has a hole. Digests stripped first so an exempt one cannot trip it.
     if (
         _EMAIL.search(out)
         or _JWT.search(out)

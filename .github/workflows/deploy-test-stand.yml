@@ -1,8 +1,5 @@
 name: Deploy test stand
 
-# After-merge alarm, not a merge gate: a red run means the stand is broken;
-# the merge commit's author owns fixing it forward or reverting.
-
 on:
   workflow_call:
     inputs:
@@ -35,19 +32,12 @@ on:
         default: false
         type: boolean
 
-# One stand, one deploy at a time — a burst of merges deploys in order, each
-# run installing the chart its own run published, rather than two upgrades
-# racing on one release.
 concurrency:
-  # cancel-in-progress:false — an interrupted helm upgrade leaves the release
-  # in pending-upgrade (see INFRA.md, "pending-upgrade wedge"), which then
-  # refuses every later upgrade. The caller must not set its own
-  # `concurrency:` with this group, or its job would deadlock waiting on it.
+  # cancel-in-progress:false — an interrupted upgrade wedges the release in
+  # pending-upgrade. A caller must not reuse this group, or its job deadlocks.
   group: test-stand-deploy
   cancel-in-progress: false
 
-# Narrower than the caller's: no registry token needed — the umbrella chart
-# pulls anonymously from GHCR.
 permissions:
   contents: read
 
@@ -55,57 +45,40 @@ jobs:
   test-stand:
     name: deploy → seed → smoke
     runs-on: ubuntu-latest
-    # `environment:` cannot go on a job that `uses:` a reusable workflow, so
-    # it is declared here; its branch policy (main only) still evaluates.
+    # `environment:` cannot sit on a job that `uses:` a reusable workflow, so
+    # it is declared here; its main-only branch policy still evaluates.
     environment: insight-test-stand
-    # Ceiling, not expectation: deploy 14 + seed 65 + smoke 5 + toolchain.
     timeout-minutes: 95
     env:
-      # One name, one directory — a second stand gets its own directory and
-      # an input, not a fork of this file. Paths below are spelled out in
-      # full, not composed from ENV_NAME, so a reader need not resolve one.
       ENV_NAME: test-stand
       VALUES_FILE: deploy/gitops/environments/test-stand/values.yaml
       INVENTORY_FILE: deploy/gitops/environments/test-stand/inventory.yaml
       CHART_REF: oci://ghcr.io/constructorfabric/charts/insight
       STAND_NAMESPACE: insight
       STAND_RELEASE: insight
-      # Both routes the chart renders, from gateway.route/keycloak.route —
-      # the check after deploy asks whether the Gateway accepted them.
+      # The routes the chart renders, from values gateway.route/keycloak.route.
       ROUTE_NAMES: insight-gateway insight-keycloak
-      # Empty on a dispatch — the resolver step below falls back to
-      # .insight-version, and exports CHART_VERSION into $GITHUB_ENV so
-      # later steps read a shell var, not a raw GH expression, in a script.
       REQUESTED_CHART_VERSION: ${{ inputs.chart_version }}
-      # Not hardcoded "main" — must agree with the repo's actual default.
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      # Every cluster/seeder/pytest byte is public on this repo — piped
-      # through $REDACT before the console; raw copies stay in $RUNNER_TEMP.
-      # No cluster diagnostics are ever printed here.
+      # This repo is public: every cluster/seeder/pytest byte goes through
+      # $REDACT before the console; raw copies stay in $RUNNER_TEMP.
       REDACT: .github/workflows/scripts/redact-stand-log.py
 
-    # One job, not three: splitting stages would need an artifact to carry
-    # the seed manifest (persona emails/UUIDs — public here) and would
-    # re-materialise the kubeconfig per job. `if:` absence between steps is
-    # what stops smoke running after a failed seed.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
 
-      # Ahead of the guards below: the chart-version resolver needs helm to
-      # query the OCI registry.
+      # Before the guards below: the chart-version resolver needs helm.
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          # Pinned to match publish-chart; also sidesteps the helm 4.2.1
-          # --wait regression deploy/gitops/scripts/doctor.sh refuses.
+          # Pinned to match publish-chart, and below the helm 4.2.1 `--wait`
+          # regression deploy/gitops/scripts/doctor.sh refuses.
           version: '3.14.0'
 
-      # No operator-nameable version: recovery is to rebuild and install the
-      # CURRENT chart, never reinstall an older one (INFRA.md, "fork-downgrade
-      # wedge"). `gh api`, not curl/urllib, for the fallback: a dynamic URL
-      # through a URL opener trips a Semgrep finding no suppression can silence.
+      # `gh api`, not curl/urllib, for the fallback: a dynamic URL through a
+      # URL opener trips a Semgrep finding no suppression can silence.
       - name: Resolve the chart version
         id: chart
         env:
@@ -123,15 +96,11 @@ jobs:
               exit 1
             fi
 
-            # Resolves the OCI ref's latest tag; anonymous-readable, so no
-            # token needed. Falls back below on a registry hiccup.
             oci_chart="$(helm show chart "$CHART_REF" 2>/dev/null || true)"
             version="$(printf '%s' "$oci_chart" | yq -r '.version // ""' 2>/dev/null || true)"
             origin="the OCI registry ($CHART_REF, latest)"
 
             if [ -z "$version" ]; then
-              # `-q`/`--jq` decode+select in one process, so any failure
-              # fails the step rather than silently yielding an empty string.
               version="$(
                 gh api "repos/$GITHUB_REPOSITORY/contents/deploy/gitops/.insight-version?ref=$DEFAULT_BRANCH" \
                   --jq '.content' | base64 --decode | tr -d '[:space:]'
@@ -156,8 +125,8 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # A workflow_call always carries main; a dispatch may come from
-          # another branch — the environment's branch policy decides that.
+          # A dispatch may come from another branch; the environment's
+          # deployment-branch policy is what decides whether it may.
           if [ "$REF_NAME" != "main" ]; then
             if [ "$EVENT" = "workflow_dispatch" ]; then
               echo "::warning::dispatched from '$REF_NAME', not main. Allowed because the" \
@@ -183,8 +152,7 @@ jobs:
           echo "deploying umbrella chart $CHART_VERSION to ENV=$ENV_NAME"
 
       # `stages` is a PREFIX of deploy -> seed -> smoke, never independent
-      # flags — each stage reads a precondition the previous one wrote. A
-      # partial run is a rehearsal — see the summary step.
+      # flags: each stage reads a precondition the previous one wrote.
       - name: Resolve which stages run
         id: stages
         env:
@@ -212,12 +180,10 @@ jobs:
 
       - name: Confirm the environment is wired up
         env:
-          # Presence only, never printed.
           HAVE_KUBECONFIG: ${{ secrets.TEST_STAND_KUBECONFIG != '' }}
           # An override on top of the realm, not a source — see INFRA.md,
           # "TEST_STAND_SEED_EMAIL drift".
           HAVE_SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL != '' }}
-          # Every persona shares one password credential — no second mode.
           HAVE_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD != '' }}
           HAVE_BASE_URL: ${{ vars.TEST_STAND_BASE_URL != '' }}
           RUN_SMOKE: ${{ steps.stages.outputs.run_smoke }}
@@ -227,9 +193,6 @@ jobs:
           [ "$HAVE_KUBECONFIG" = "true" ] || missing="$missing secrets.TEST_STAND_KUBECONFIG"
           [ "$HAVE_BASE_URL" = "true" ]   || missing="$missing vars.TEST_STAND_BASE_URL"
 
-          # Checked here, not left to the smoke suite, so a missing password
-          # is not discovered twenty minutes into a deploy+seed. Skipped when
-          # smoke is not selected, so a deliberate partial run stays runnable.
           if [ "$RUN_SMOKE" != "true" ]; then
             echo "smoke stage not selected — its credentials are not required for this run"
           else
@@ -252,8 +215,6 @@ jobs:
             exit 1
           fi
 
-          # The address itself is never echoed — only whether it is
-          # overridden. See INFRA.md, "TEST_STAND_SEED_EMAIL drift".
           if [ "$HAVE_SEED_EMAIL" = "true" ]; then
             echo "dev-lead address: OVERRIDDEN by secrets.TEST_STAND_SEED_EMAIL."
             echo "  The seeder would otherwise read it out of the realm this deploy applies."
@@ -266,8 +227,8 @@ jobs:
             echo "  realm the seeder cannot read."
           fi
 
-      # Checked before anything touches the cluster: a broken lockfile or
-      # missing binary should not surface after an upgrade has landed.
+      # Before anything touches the cluster: a broken lockfile or a missing
+      # binary must not surface after an upgrade has already landed.
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
 
@@ -278,8 +239,6 @@ jobs:
       - name: Check the tools this workflow and the seeder shell out to
         run: |
           set -euo pipefail
-          # yq/envsubst/jq are expected on the runner image; failing here
-          # beats failing somewhere less obvious.
           missing=""
           for tool in helm kubectl yq jq envsubst python3; do
             command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
@@ -294,7 +253,6 @@ jobs:
       - name: Resolve the smoke suite's dependencies
         run: |
           set -euo pipefail
-          # --frozen: the lockfile is the contract.
           uv sync --project tests --frozen
 
       - name: Write the stand kubeconfig
@@ -303,7 +261,7 @@ jobs:
         run: |
           set -euo pipefail
           target="$RUNNER_TEMP/test-stand.kubeconfig"
-          # umask before the file exists, chmod after: never readable by
+          # umask before the file exists, chmod after — never readable by
           # another process, not even momentarily.
           (
             umask 077
@@ -319,20 +277,12 @@ jobs:
           fi
           echo "KUBECONFIG=$target" >> "$GITHUB_ENV"
 
-      # Kube-context match, reachability and chart-exists are NOT re-checked
-      # here: `make deploy` runs kube-ctx/vpn-up/chart-present as its own
-      # prerequisites — the only place those checks exist.
-
-      # `timeout-minutes` (14) sits above helm's own `--timeout 10m`: a step
-      # timeout SIGKILLs helm and leaves `pending-upgrade`, while helm's own
-      # timeout leaves a clean `failed` release `helm history` explains.
+      # The upgrade step's `timeout-minutes` must stay above helm's own
+      # `--timeout 10m`: a step timeout SIGKILLs helm and wedges the release.
       - name: 'Stage 1/4 — mask the OIDC client secret'
         id: deploy_secret
         run: |
           set -euo pipefail
-          # `::add-mask::` only — the one thing a step can do that a
-          # Makefile target cannot. Refusing a blank secret is
-          # deploy-insight's job; coordinates come from $INVENTORY_FILE.
           secret_name="$(yq -r '.oidcClientSecret.secret // ""' "$INVENTORY_FILE")"
           secret_key="$(yq -r '.oidcClientSecret.key // ""' "$INVENTORY_FILE")"
           if [ -n "$secret_name" ] && [ -n "$secret_key" ]; then
@@ -381,9 +331,6 @@ jobs:
         timeout-minutes: 14
         run: |
           set -euo pipefail
-          # The official path: deploy shape is DECLARED in
-          # environments/test-stand/{inventory,values}.yaml, read by `make
-          # deploy`, so CI and an operator cannot drift apart.
           make -C deploy/gitops --no-print-directory deploy \
             ENV="$ENV_NAME" \
             CONFIRM=yes-deploy-test-stand \
@@ -391,16 +338,12 @@ jobs:
             TIMEOUT=10m \
             2>&1 | python3 "$REDACT"
 
-      # No restart step: this stand's config Secrets are static by policy;
-      # a deliberate config change needs a manual rollout restart (INFRA.md §25).
-
       - name: 'Stage 1/4 — confirm the edge still routes'
         id: deploy_routes
         run: |
           set -euo pipefail
-          # Post-condition: `helm --wait` waits on workloads, not HTTPRoute
-          # status. Every entry in .status.parents[], not just [0] —
-          # Accepted[0]/Refused[1] is still unreachable.
+          # Every entry in .status.parents[], not just [0]: Accepted[0] with
+          # Refused[1] is still unreachable. `helm --wait` never checks this.
           # shellcheck disable=SC2086 # ROUTE_NAMES is a deliberate word list
           routes_json="$(kubectl -n "$STAND_NAMESPACE" get httproute $ROUTE_NAMES -o json)"
           printf '%s' "$routes_json" | jq -r '
@@ -426,9 +369,8 @@ jobs:
             exit 1
           fi
 
-      # Black-box, unauthenticated: public DNS/TLS/route/auth only, no
-      # kubectl/helm. Runs before the 65-minute seed so an unreachable stand
-      # fails fast rather than surfacing later as a misleading smoke failure.
+      # Before the 65-minute seed on purpose: an unreachable stand must fail
+      # fast, not surface later as a misleading smoke failure.
       - name: 'Stage 2/4 — black-box the public edge (DNS, TLS, route, auth)'
         id: edge
         timeout-minutes: 3
@@ -441,8 +383,6 @@ jobs:
           base="https://$base"
           echo "edge: $base   issuer: $issuer"
           failed=0
-          # curl's exit code separates "the name does not resolve" from "the
-          # app answered the wrong thing" — different owners, same HTTP status.
           probe() {
             out="$(curl -sS -o /dev/null -w '%{http_code}' -m 20 "$1" 2>&1)" \
               || { echo "::error::curl could not reach $1 (DNS/TLS/connect)"; failed=1; return; }
@@ -454,9 +394,7 @@ jobs:
           }
           probe "$base/" 200
           probe "$base/auth/me" 401
-          # Strict equality against the IdP's own discovery doc, never by
-          # prefix surgery on $base. No PKCE walk here — tests/stand/ui/flows.py
-          # drives a real browser through that login.
+          # Strict equality against the IdP's discovery doc, not on $base.
           advertised="$(curl -sS -m 20 "$issuer/.well-known/openid-configuration" | jq -r '.issuer // ""')"
           if [ "$advertised" = "$issuer" ]; then
             echo "  issuer matches $VALUES_FILE"
@@ -470,42 +408,33 @@ jobs:
             exit 1
           fi
 
-      # 65 minutes sits just ABOVE the seed Job's own activeDeadlineSeconds
-      # (3600s) on purpose, so the Job's own deadline fires first — a step
-      # timeout would kill the log follow while leaving the Job running.
+      # 65 min sits just ABOVE the seed Job's own activeDeadlineSeconds
+      # (3600s), so the Job's deadline fires first and leaves no orphan Job.
       - name: 'Stage 3/4 — seed the stand'
         id: seed
         if: steps.stages.outputs.run_seed == 'true'
         timeout-minutes: 65
         env:
-          # Empty on every normal run; declared so a stand that genuinely
-          # needs an override does not need a workflow edit to get one.
           SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL }}
           # Unset on a workflow_call, so this branch is never taken there.
           SEED_FORCE: ${{ inputs.seed_force }}
         run: |
           set -euo pipefail
-          # Discovers its own coordinates (CI passes none), so it cannot seed
-          # the wrong tenant. --force is dispatch-only: the silver step it
-          # guards CLEARS its tables, so forcing loses foreign data.
+          # --force is dispatch-only: the silver step it guards CLEARS its
+          # tables, so forcing loses any foreign data on the tenant.
           force_args=()
           if [ "${SEED_FORCE:-false}" = "true" ]; then
             force_args+=(--force)
             echo "::warning::seeding with --force — the seeder's foreign-person-rows guard is overridden for this run."
           fi
 
-          # --email only on an explicit override — the dev-lead address is
-          # otherwise read from the realm this deploy applied. See INFRA.md,
-          # "TEST_STAND_SEED_EMAIL drift".
           email_args=()
           if [ -n "${SEED_EMAIL:-}" ]; then
             email_args+=(--email "$SEED_EMAIL")
             echo "::warning::seeding with an explicit --email from secrets.TEST_STAND_SEED_EMAIL — the dev-lead address is NOT being read from the realm this deploy applied. Unset that secret unless this stand's realm is provisioned outside deploy/gitops."
           fi
 
-          # 365, not more: the API refuses any period ≥400 days — INFRA.md,
-          # "730-day seed window". Redirected, not streamed — the pod log
-          # names every persona.
+          # 365, not more: the API refuses any period ≥ 400 days.
           kube_context="$(yq -r '.kubeContext' "$INVENTORY_FILE")"
           seed_rc=0
           ./src/ingestion/tools/seed/seed-stand.sh \
@@ -516,8 +445,7 @@ jobs:
             "${force_args[@]}" \
             > "$RUNNER_TEMP/seed.log" 2>&1 || seed_rc=$?
 
-          # One sentinel line (insight_seed/manifest.py:write_manifest) —
-          # grep+cut are the whole parser; a missing line fails this.
+          # One sentinel line, written by insight_seed/manifest.py:write_manifest.
           manifest_rc=0
           grep -m1 '^SEED_MANIFEST_JSON: ' "$RUNNER_TEMP/seed.log" \
             | cut -d' ' -f2- > "$RUNNER_TEMP/stand-manifest.json" || manifest_rc=$?
@@ -531,9 +459,8 @@ jobs:
             job_name="$(grep -m1 '^==> applied Job ' "$RUNNER_TEMP/seed.log" | awk '{print $4}')" || true
             if [ -n "${job_name:-}" ]; then
               kubectl -n "$STAND_NAMESPACE" logs "job/$job_name" > "$RUNNER_TEMP/seed-pod.log" 2>/dev/null || true
-              # stderr log lines interleave with the stdout document — the
-              # disease the sentinel cures; filter them exactly like the
-              # deleted parser did before taking the trailing document.
+              # stderr log lines interleave with the stdout document; filter
+              # them before taking the trailing `{...}` document.
               grep -vE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3} (DEBUG|INFO|WARNING|ERROR|CRITICAL) ' \
                 "$RUNNER_TEMP/seed-pod.log" \
                 | awk '/^\{$/{doc=$0 "\n"; on=1; next} on{doc=doc $0 "\n"; if ($0=="}") on=0} END{printf "%s", doc}' \
@@ -554,8 +481,8 @@ jobs:
             exit 0
           fi
 
-          # Allowlisted by shape, not a curated list: only seed-stand.sh's
-          # own `==>`/`ERROR:` lines match — never the pod log it follows.
+          # Allowlist by shape: only seed-stand.sh's own `==>`/`ERROR:` lines
+          # reach the public log, never the pod log it follows.
           echo "::error::the seed stage failed."
           [ "$seed_rc" -eq 0 ] || echo "::error::seed-stand.sh exited $seed_rc."
           [ "$manifest_rc" -eq 0 ] || echo "::error::no SEED_MANIFEST_JSON line in the seed log — the seeder did not reach the end of its run."
@@ -571,24 +498,17 @@ jobs:
         if: steps.stages.outputs.run_smoke == 'true'
         timeout-minutes: 5
         env:
-          # Same variable tests/stand/conftest.py reads for every other lane
-          # — the smoke set is `-m stand_smoke` over that one suite, not a
-          # separately-aimed one.
+          # The variable tests/stand/conftest.py reads for every lane.
           INSIGHT_STAND_BASE_URL: ${{ vars.TEST_STAND_BASE_URL }}
           INSIGHT_STAND_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD }}
           # tests/lib/insight_stand/manifest.py falls back to this when no
-          # --stand-manifest flag is given — setting it once here is what
-          # both readers need.
+          # --stand-manifest flag is given.
           INSIGHT_STAND_MANIFEST: ${{ runner.temp }}/stand-manifest.json
         run: |
           set -euo pipefail
-          # Explicit: the library's own default is relative to its location
-          # on disk, not a runner's checkout.
+          # Explicit: the library default is relative to its own location.
           export INSIGHT_STAND_ARTIFACT_DIR="$RUNNER_TEMP/stand-artifacts"
           mkdir -p "$INSIGHT_STAND_ARTIFACT_DIR"
-          # `-m stand_smoke` over the whole deployed-stand suite, not a
-          # separate package, so it shares fixtures/manifest-reading/scratch
-          # policy with every other lane instead of a second copy of them.
           uv run --project tests --frozen \
             pytest tests/stand -m stand_smoke --stand-manifest "$INSIGHT_STAND_MANIFEST" \
             2>&1 | python3 "$REDACT"
@@ -600,9 +520,7 @@ jobs:
           RUN_SEED: ${{ steps.stages.outputs.run_seed }}
           RUN_SMOKE: ${{ steps.stages.outputs.run_smoke }}
           STAGES: ${{ inputs.stages }}
-          # Derived from what the steps DID, not what was requested, so a
-          # failed deploy cannot render "seed ✓, smoke ✓" for stages that
-          # never ran.
+          # From what the steps DID, not what was requested.
           DEPLOY_RESULT: >-
             ${{ steps.deploy_secret.outcome || 'skipped' }} ${{ steps.deploy_downgrade_guard.outcome || 'skipped' }} ${{ steps.deploy_upgrade.outcome || 'skipped' }} ${{ steps.deploy_routes.outcome || 'skipped' }}
           EDGE_RESULT: ${{ steps.edge.outcome || 'skipped' }}
@@ -611,9 +529,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Worst-first: failure beats cancelled beats skipped beats success,
-          # so a half-failed stage never renders as a pass and an un-run one
-          # never renders as one either.
+          # Worst-first: the case arms must stay in this order, or a
+          # half-failed stage renders as a pass.
           render() {
             local outcomes="$1"
             case " $outcomes " in

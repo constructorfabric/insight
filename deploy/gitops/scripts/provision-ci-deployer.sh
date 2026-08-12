@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-#
-# Thin CLI wrapper around the `make` targets that provision/verify/revoke the
-# CI deploy credential — the RBAC objects and mutation logic live in
-# deploy/gitops/Makefile and .../ci-deployer-rbac.yaml. Procedure:
-# docs/components/deployment/specs/sop/credentials-runbook.md.
+# Thin wrapper: the RBAC objects and mutation logic live in the gitops
+# Makefile. Procedure: docs/components/deployment/specs/sop/credentials-runbook.md.
 
 set -euo pipefail
 

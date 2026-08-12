@@ -138,10 +138,8 @@ need kubectl
 need envsubst
 [[ -f "$JOB_TEMPLATE" ]] || die "Job template not found at $JOB_TEMPLATE."
 [[ -n "$NAMESPACE" ]] || { usage >&2; die "--namespace is required."; }
-# --email is NOT gated here: discovery below needs --release defaulted and
-# the cluster reachable. `gold` is NOT part of `all` (it resolves entity ids
-# at BUILD time, before a fresh cluster's persons-sync has run) — run `all`,
-# then the sync, then `--step gold`.
+# --email is NOT gated here: discovery below needs the cluster first. `gold`
+# is NOT part of `all` — run `all`, then the persons-sync, then `--step gold`.
 case "$STEP" in
   identity|silver|analytics|gold|all) ;;
   *) die "--step must be one of identity, silver, analytics, gold, all (got '$STEP')." ;;
@@ -281,16 +279,14 @@ if [[ -z "$DB_SECRET" ]]; then
   done
 fi
 
-# Two projections of ONE roster — see INFRA.md, "TEST_STAND_SEED_EMAIL
-# drift". The realm user whose `id` is the roster's DEV_LEAD_UUID IS the
-# dev-lead — total, no name matching. A stand may instead copy that UUID
-# into `idp_sub`; both are accepted below.
+# Realm and identity.persons are two projections of ONE roster (INFRA.md,
+# "TEST_STAND_SEED_EMAIL drift"). Dev-lead = roster UUID, never a name match.
 DEV_EMAIL_ORIGIN="--email"
 realm_dev_email=""
 realms_cm=""
 
-# Read from the roster module, not copied here, so a renamed constant is
-# reported by name rather than silently going stale.
+# Scraped, not copied: fail-open, a renamed or reformatted DEV_LEAD_UUID
+# scrapes nothing, the realm read-back is skipped and --email is demanded.
 roster_module="$SCRIPT_DIR/insight_seed/profiles.py"
 dev_lead_uuid=""
 if [[ -r "$roster_module" ]]; then
@@ -300,17 +296,14 @@ if [[ -r "$roster_module" ]]; then
 fi
 
 # Top up release_values if the image/pull-secret block never fetched them.
-# `command -v`, not `need`: an absent tool means "discovered nothing" here,
-# not a hard requirement of every run.
+# `command -v`, not `need`: an absent tool means "discovered nothing" here.
 if [[ -z "$release_values" ]] \
    && command -v helm >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   release_values="$(helm_release get values "$RELEASE" -n "$NAMESPACE" -a -o json 2>/dev/null || true)"
 fi
 
-# NOT "${RELEASE}-keycloak-config-realms": the chart names this ConfigMap from
-# an explicit override first, then a fullname helper (honours fullnameOverride,
-# truncates to 63) — a different rule from platform_cm above, which the chart
-# names from a bare .Release.Name.
+# Explicit override first, then the chart's fullname helper — NOT platform_cm's
+# bare .Release.Name. Fail-open: a wrong guess only reaches the warning below.
 if [[ -n "$release_values" ]] && command -v jq >/dev/null 2>&1; then
   # Gated on keycloakConfig.enabled: the ConfigMap has no owner reference, so
   # a disabled stand can still carry a stale one from a previous bring-up.
@@ -327,17 +320,15 @@ if [[ -n "$release_values" ]] && command -v jq >/dev/null 2>&1; then
 fi
 
 if [[ -n "$realms_cm" && -n "$dev_lead_uuid" ]] && command -v jq >/dev/null 2>&1; then
-  # An absent/unreadable ConfigMap is a bring-up or access problem, told
-  # apart from "no match" so the warning does not send the operator after
-  # the wrong thing.
+  # Absent/unreadable is a bring-up or access problem, told apart from "no
+  # match" so the warning does not send the operator after the wrong thing.
   if ! kube -n "$NAMESPACE" get configmap "$realms_cm" -o name >/dev/null 2>&1; then
     echo "WARNING: ConfigMap $realms_cm is absent or not readable in namespace $NAMESPACE;" >&2
     echo "         the dev-lead address cannot be read from the realm this stand applies." >&2
     echo "         Deploy the stand's realm first, or pass --email to name the persona." >&2
   else
-    # Only the matched address ever leaves this expansion; `realm_json` (which
-    # also carries the client secret) is never echoed. `ascii_downcase`
-    # matches the seeder's own DEV_USER_EMAIL lowercasing.
+    # Only the matched address leaves this expansion; `realm_json` also carries
+    # the client secret and is never echoed. `ascii_downcase` matches the seeder.
     realm_json="$(kube -n "$NAMESPACE" get configmap "$realms_cm" -o json 2>/dev/null || true)"
     realm_matches="$(printf '%s' "$realm_json" | jq -r --arg id "$dev_lead_uuid" '
       [ (.data // {})[]
@@ -370,9 +361,8 @@ if [[ -n "$realms_cm" && -n "$dev_lead_uuid" ]] && command -v jq >/dev/null 2>&1
       echo "         Pack a single roster realm, or pass --email to say which persona" >&2
       echo "         this seed is for." >&2
     elif [[ "$match_count" -eq 1 ]]; then
-      # Shape-asserted before use: this value is substituted into the Job
-      # template, so a newline or quote reaching it would render a broken
-      # manifest, not just a bad address.
+      # Shape-asserted before use: substituted into the Job template, so a
+      # newline or quote would render a broken manifest, not a bad address.
       realm_email_shape='^[^[:space:]"]+@[^[:space:]"]+$'
       if [[ "$realm_matches" =~ $realm_email_shape ]]; then
         realm_dev_email="$realm_matches"
@@ -392,10 +382,8 @@ elif [[ -n "$realm_dev_email" ]]; then
   # bash 3.2 (macOS /bin/bash) has no ${var,,}, hence `tr` for case-folding.
   supplied_folded="$(printf '%s' "$DEV_EMAIL" | tr '[:upper:]' '[:lower:]')"
   if [[ "$supplied_folded" != "$realm_dev_email" ]]; then
-    # A warning, not a refusal: an explicit --email still wins, but this is
-    # the one disagreement that fails silently downstream (a Job that
-    # SUCCEEDS, a stand that looks seeded) — see INFRA.md, "TEST_STAND_SEED_EMAIL
-    # drift".
+    # A warning, not a refusal: an explicit --email wins, but this is the one
+    # disagreement that fails silently downstream (the Job still SUCCEEDS).
     echo "WARNING: --email $DEV_EMAIL disagrees with the realm this stand applies." >&2
     echo "         ConfigMap $realms_cm names the dev-lead as $realm_dev_email" >&2
     echo "         (the realm user whose id is the roster's DEV_LEAD_UUID $dev_lead_uuid)." >&2
@@ -522,8 +510,7 @@ if [[ "$FOLLOW" -eq 0 ]]; then
 fi
 
 # Waits for the CONTAINER, not just the pod object: `logs -f` against a pod
-# still in ContainerCreating fails immediately. A pod that never starts is
-# caught by the poll loop below, so this wait is bounded and never fatal.
+# still in ContainerCreating fails immediately. Bounded, and never fatal.
 for _ in $(seq 1 60); do
   phase="$(kube -n "$NAMESPACE" get pod -l "job-name=$job_name" \
     -o 'jsonpath={.items[0].status.phase}' 2>/dev/null || true)"
@@ -535,9 +522,8 @@ done
 
 kube -n "$NAMESPACE" logs -f "job/$job_name" || true
 
-# The log stream ending is not the verdict — read it from the Job. Polled,
-# not `kubectl wait --for=condition=complete`, which only waits for success:
-# a refused seed would sit there until the timeout.
+# The log stream ending is not the verdict — read it from the Job. Polled, not
+# `kubectl wait --for=condition=complete`, which only waits for success.
 deadline=$((SECONDS + DEADLINE_SECONDS))
 while [[ "$SECONDS" -lt "$deadline" ]]; do
   # `|| true`: a transient apiserver hiccup must not kill an hour-long loop.
