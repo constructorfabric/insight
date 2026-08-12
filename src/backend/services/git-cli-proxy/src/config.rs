@@ -16,6 +16,8 @@ use serde::Deserialize;
 #[derive(Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct GearConfig {
+    /// Address the HTTP host binds, `host:port`.
+    pub bind_addr: String,
     /// Root directory of the repository cache (a PVC mount in K8s).
     pub data_dir: String,
     /// Total disk budget for the cache, bytes. Must sit 10–15% below the
@@ -65,6 +67,7 @@ where
 impl std::fmt::Debug for GearConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GearConfig")
+            .field("bind_addr", &self.bind_addr)
             .field("data_dir", &self.data_dir)
             .field("disk_budget_bytes", &self.disk_budget_bytes)
             .field("max_repo_bytes", &self.max_repo_bytes)
@@ -91,6 +94,9 @@ impl GearConfig {
     /// (so one boot failure surfaces the whole gap, not the first field).
     pub fn validate(&self) -> anyhow::Result<()> {
         let mut missing: Vec<&str> = Vec::new();
+        if self.bind_addr.is_empty() {
+            missing.push("bind_addr (host:port the HTTP server binds)");
+        }
         if self.data_dir.is_empty() {
             missing.push("data_dir (path to the repo cache volume)");
         }
@@ -136,6 +142,7 @@ mod tests {
 
     fn valid() -> GearConfig {
         GearConfig {
+            bind_addr: "127.0.0.1:0".to_owned(),
             data_dir: "/data".to_owned(),
             disk_budget_bytes: 10_000_000_000,
             max_repo_bytes: 2_000_000_000,
@@ -159,6 +166,13 @@ mod tests {
     #[test]
     fn each_missing_field_fails_and_is_named() {
         let cases: Vec<(&str, GearConfig)> = vec![
+            (
+                "bind_addr",
+                GearConfig {
+                    bind_addr: String::new(),
+                    ..valid()
+                },
+            ),
             (
                 "data_dir",
                 GearConfig {
@@ -218,6 +232,7 @@ mod tests {
             Err(e) => e.to_string(),
         };
         for field in [
+            "bind_addr",
             "data_dir",
             "disk_budget_bytes",
             "max_repo_bytes",

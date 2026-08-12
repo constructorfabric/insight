@@ -1,18 +1,16 @@
 //! Binary entry point. Boots as a gears-rust host on
 //! [`toolkit::bootstrap::run_server`] — same host pattern as
-//! `services/identity-resolution`, but WITHOUT the gateway-JWT auth pipeline:
-//! the service is Airbyte-only and cluster-internal (never behind the platform
-//! gateway, never called by other services or users directly), the host runs
-//! with `auth_disabled: true`, and `/v1` is guarded by a static bearer token
+//! `services/identity-resolution`, but the service hosts its own routes (see
+//! `gear.rs`) and has no gateway-JWT auth pipeline: it is Airbyte-only and
+//! cluster-internal (never behind the platform gateway, never called by other
+//! services or users directly), and `/v1` is guarded by a static bearer token
 //! from gear config.
 
-// System gears — linked via inventory for the REST host. `use … as _;` is
-// load-bearing: the gears register through `inventory` at link time, so an
-// unreferenced crate is dropped and never registers. Deliberately minimal set
-// (no oidc-authn-plugin / authz / tenant plugins — own bearer auth instead).
-// The service's own gear registers the same way from the lib crate.
-use api_gateway as _;
-use authn_resolver as _;
+// System gears — linked via inventory. `use … as _;` is load-bearing: the
+// gears register through `inventory` at link time, so an unreferenced crate is
+// dropped and never registers. Deliberately minimal set (no api-gateway host,
+// no authn / authz / tenant plugins — own bearer auth instead). The service's
+// own gear registers the same way from the lib crate.
 use gear_orchestrator as _;
 use git_cli_proxy as _;
 use grpc_hub as _;

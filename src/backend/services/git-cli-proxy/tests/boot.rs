@@ -58,22 +58,14 @@ logging:
   default:
     console_level: info
 gears:
-  api-gateway:
-    config:
-      bind_addr: "127.0.0.1:{port}"
-      enable_docs: false
-      cors_enabled: false
-      auth_disabled: true
   gear-orchestrator:
     config: {{}}
-  authn-resolver:
-    config:
-      vendor: "hyperspot"
   grpc-hub:
     config:
       listen_addr: "uds://{home}-grpc.sock"
   git-cli-proxy:
     config:
+      bind_addr: "127.0.0.1:{port}"
       data_dir: "{data}"
       disk_budget_bytes: 1000000000
       max_repo_bytes: 500000000

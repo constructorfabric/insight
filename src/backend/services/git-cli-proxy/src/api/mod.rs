@@ -36,7 +36,8 @@ impl AppState {
 /// Mount the git-cli-proxy routes onto the host's router.
 ///
 /// Our routes live on a fresh sub-router so the bearer middleware and state
-/// scope to `/v1` only; `/healthz` belongs to the `api-gateway` host gear.
+/// scope to `/v1` only; `/healthz` is mounted by the host's base router
+/// (`gear.rs`) and stays public for probes.
 pub fn register_routes(
     host_router: Router,
     openapi: &dyn OpenApiRegistry,
@@ -58,19 +59,31 @@ pub fn register_routes(
 }
 
 /// Record §4.3's per-endpoint histograms for every request that reached a
-/// route.
+/// route, and log the request line.
 ///
-/// The label is the matched ROUTE, not the request path: a path would make the
-/// label set unbounded. A request that matched nothing has no endpoint to
-/// attribute and is not recorded.
+/// The metric label is the matched ROUTE, not the request path: a path would
+/// make the label set unbounded. A request that matched nothing has no
+/// endpoint to attribute and is not recorded.
 async fn observe(request: Request, next: Next) -> Response {
     let endpoint = request
         .extensions()
         .get::<MatchedPath>()
         .map(|matched| matched.as_str().to_owned());
+    let method = request.method().clone();
+    let query = request.uri().query().unwrap_or_default().to_owned();
 
     let started = Instant::now();
     let response = next.run(request).await;
+    let elapsed = started.elapsed();
+
+    tracing::info!(
+        %method,
+        endpoint = endpoint.as_deref().unwrap_or("<unmatched>"),
+        %query,
+        status = response.status().as_u16(),
+        duration_ms = elapsed.as_millis(),
+        "request"
+    );
 
     if let Some(endpoint) = endpoint {
         let bytes = response
@@ -82,7 +95,7 @@ async fn observe(request: Request, next: Next) -> Response {
         metrics::record_request(
             &endpoint,
             response.status().as_u16(),
-            started.elapsed().as_secs_f64(),
+            elapsed.as_secs_f64(),
             bytes,
         );
     }
@@ -302,6 +315,7 @@ mod tests {
         Arc::new(AppState {
             store: Arc::new(store),
             config: GearConfig {
+                bind_addr: "127.0.0.1:0".to_owned(),
                 allowed_repo_hosts: Vec::new(),
                 data_dir: data_dir.display().to_string(),
                 disk_budget_bytes: 1_000_000,
@@ -481,7 +495,7 @@ mod tests {
 
     #[tokio::test]
     async fn healthz_is_left_to_the_host() {
-        // INVARIANT: the api-gateway host owns GET /healthz; registering our
+        // INVARIANT: the host's base router owns GET /healthz; registering our
         // own panics at boot with an overlapping-route error. In isolation the
         // path falls through our bearer layer, so it answers 401 here.
         assert_eq!(

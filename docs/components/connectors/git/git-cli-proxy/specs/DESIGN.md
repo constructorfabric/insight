@@ -647,9 +647,9 @@ two-part ordering key rather than a date and a sha.
 
 #### `GET /healthz`
 
-Served by the `api-gateway` host gear, not by this service — the platform owns
-that route for every gear, and one service overriding it would diverge from
-the rest. Liveness is process health, readiness is HTTP serving; neither fails
+Mounted on the host's base router, outside the bearer guard, and answers `ok`
+once the listener is bound. Liveness is process health, readiness is HTTP
+serving; neither fails
 on disk pressure, because warm reads keep working when the cache is full. The
 disk figures are gauges (§4.3), not a health payload.
 

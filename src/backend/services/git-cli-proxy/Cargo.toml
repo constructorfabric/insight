@@ -12,13 +12,13 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-# ToolKit host runtime. This service runs as a gears-rust host: routes are
-# served by the `api-gateway` system gear (the REST host) under
-# `toolkit::bootstrap::run_server`. Unlike analytics/identity-resolution, auth
-# is NOT the gateway-JWT pipeline: the service is cluster-internal (consumed by
-# Airbyte connector pods, never routed through the platform gateway), so the
-# host runs with `auth_disabled: true` and every /v1 route is guarded by our
-# own static bearer token middleware (`api::auth`), provisioned via Helm.
+# ToolKit host runtime. This service runs as a gears-rust host under
+# `toolkit::bootstrap::run_server`, but unlike analytics/identity-resolution it
+# is its OWN `rest_host` (see `gear.rs`) instead of a guest of the
+# `api-gateway` system gear, whose hardcoded 30s request timeout cannot hold a
+# page read. Auth is likewise not the gateway-JWT pipeline: the service is
+# cluster-internal (consumed by Airbyte connector pods) and every /v1 route is
+# guarded by our own static bearer token middleware (`api::auth`).
 toolkit = { workspace = true, features = ["bootstrap"] }
 toolkit-canonical-errors = { workspace = true }
 # Pinned to match the `ToSchema` the toolkit OperationBuilder compiles against.
@@ -31,11 +31,10 @@ opentelemetry = "0.31"
 # see. rustix rather than libc — the workspace forbids unsafe code.
 rustix = { version = "1.1", features = ["fs"] }
 
-# System gears linked for the REST host. Discovered at link time via inventory
+# System gears linked into the host. Discovered at link time via inventory
 # (`use … as _;` in main.rs is load-bearing). Deliberately minimal: no
-# oidc-authn-plugin / authz / tenant-resolver — see the auth note above.
-api_gateway = { workspace = true }
-authn-resolver = { workspace = true }
+# api-gateway (this service hosts its own routes), and no authn / authz /
+# tenant-resolver plugins — see the auth note above.
 gear_orchestrator = { workspace = true }
 grpc_hub = { workspace = true }
 types_registry = { workspace = true }
@@ -55,6 +54,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
+# Hosting the routes ourselves: the lifecycle entry the gear macro generates
+# takes a `CancellationToken`, and a panicking handler must still answer.
+tokio-util = "0.7"
+tower-http = { version = "0.6", features = ["catch-panic"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 

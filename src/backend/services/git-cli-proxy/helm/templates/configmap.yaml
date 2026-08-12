@@ -14,21 +14,8 @@ data:
         console_level: info
 
     gears:
-      api-gateway:
-        config:
-          bind_addr: "0.0.0.0:{{ .Values.service.port }}"
-          enable_docs: false
-          cors_enabled: false
-          # Airbyte-only consumer: no gateway-JWT pipeline. /v1 is guarded by
-          # the service's own bearer token from the config Secret.
-          auth_disabled: true
-
       gear-orchestrator:
         config: {}
-
-      authn-resolver:
-        config:
-          vendor: "hyperspot"
 
       grpc-hub:
         config:
@@ -36,6 +23,9 @@ data:
 
       git-cli-proxy:
         config:
+          # Airbyte-only consumer: no gateway-JWT pipeline. /v1 is guarded by
+          # the service's own bearer token from the config Secret.
+          bind_addr: "0.0.0.0:{{ .Values.service.port }}"
           data_dir: "{{ .Values.persistence.mountPath }}"
           disk_budget_bytes: {{ include "insight-git-cli-proxy.diskBudgetBytes" . }}
           max_repo_bytes: {{ required "cache.maxRepoBytes is required" .Values.cache.maxRepoBytes | int64 }}
