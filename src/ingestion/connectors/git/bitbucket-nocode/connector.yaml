@@ -139,8 +139,12 @@ streams:
             # Bitbucket nests clone links in an array; the proxy routes on a
             # flat field, and the API link is authoritative — deriving the URL
             # from full_name would duplicate knowledge of the host layout.
+            # That link carries the authenticated principal as userinfo, which
+            # the proxy rejects: clone credentials travel in X-Git-* headers.
             value: >-
-              {{ (record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first) }}
+              {%- set href = record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first -%}
+              {%- set authority, path = href.split('//', 1)[1].split('/', 1) -%}
+              {{ 'https://' ~ authority.split('@')[-1] ~ '/' ~ path }}
           - type: AddedFieldDefinition
             path: [description]
             value: "{{ (record.get('description') or '')[:1024] }}"
@@ -336,7 +340,9 @@ streams:
                     - type: AddedFieldDefinition
                       path: [clone_url]
                       value: >-
-                        {{ (record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first) }}
+                        {%- set href = record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first -%}
+                        {%- set authority, path = href.split('//', 1)[1].split('/', 1) -%}
+                        {{ 'https://' ~ authority.split('@')[-1] ~ '/' ~ path }}
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: committed_date
@@ -565,7 +571,9 @@ streams:
                     - type: AddedFieldDefinition
                       path: [clone_url]
                       value: >-
-                        {{ (record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first) }}
+                        {%- set href = record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first -%}
+                        {%- set authority, path = href.split('//', 1)[1].split('/', 1) -%}
+                        {{ 'https://' ~ authority.split('@')[-1] ~ '/' ~ path }}
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: committed_date
@@ -770,7 +778,9 @@ streams:
                     - type: AddedFieldDefinition
                       path: [clone_url]
                       value: >-
-                        {{ (record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first) }}
+                        {%- set href = record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first -%}
+                        {%- set authority, path = href.split('//', 1)[1].split('/', 1) -%}
+                        {{ 'https://' ~ authority.split('@')[-1] ~ '/' ~ path }}
     transformations:
       - type: AddFields
         fields:
