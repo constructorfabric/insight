@@ -29,6 +29,7 @@ use toolkit_security::SecurityContext;
 use super::AppState;
 use crate::config::GearConfig;
 use crate::infra::db::test_fixture::{Fixture, fixture_or_skip};
+use crate::infra::db::{person_roles_repo, roles_repo};
 
 type TestResult = anyhow::Result<()>;
 
@@ -89,6 +90,15 @@ fn json_req(uri: &str, body: &Value) -> anyhow::Result<Request<Body>> {
 
 async fn post(app: Router, uri: &str, body: &Value) -> anyhow::Result<(StatusCode, Value)> {
     let resp = app.oneshot(json_req(uri, body)?).await?;
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await?;
+    let payload = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    Ok((status, payload))
+}
+
+async fn get(app: Router, uri: &str) -> anyhow::Result<(StatusCode, Value)> {
+    let req = Request::builder().method("GET").uri(uri).body(Body::empty())?;
+    let resp = app.oneshot(req).await?;
     let status = resp.status();
     let bytes = to_bytes(resp.into_body(), usize::MAX).await?;
     let payload = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
@@ -395,5 +405,113 @@ async fn an_unknown_value_type_is_a_client_error() -> TestResult {
     .await?;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+// ── GET /v1/me ──────────────────────────────────────────────
+
+async fn grant_admin(f: &Fixture, person: Uuid) -> anyhow::Result<Uuid> {
+    let grant = Uuid::now_v7();
+    person_roles_repo::insert(
+        &f.db,
+        grant,
+        f.tenant,
+        person,
+        roles_repo::ADMIN_ROLE_ID,
+        None,
+        person,
+        Some("http-live fixture"),
+    )
+    .await?;
+    Ok(grant)
+}
+
+fn role_names(payload: &Value) -> Vec<String> {
+    payload["roles"]
+        .as_array()
+        .map(|roles| {
+            roles
+                .iter()
+                .filter_map(|r| r["name"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn me_names_the_caller_and_their_active_admin_role() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("me-admin@http-live.test").await?;
+    grant_admin(&f, caller).await?;
+
+    let (status, body) = get(app(&f, caller), "/v1/me").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["person_id"], caller.to_string());
+    assert_eq!(body["insight_tenant_id"], f.tenant.to_string());
+    assert_eq!(role_names(&body), vec!["admin".to_owned()]);
+    assert_eq!(
+        body["roles"][0]["role_id"],
+        roles_repo::ADMIN_ROLE_ID.to_string()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn me_with_no_grants_is_an_empty_list_not_an_error() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("me-plain@http-live.test").await?;
+
+    let (status, body) = get(app(&f, caller), "/v1/me").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(role_names(&body), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn me_omits_a_revoked_grant() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("me-revoked@http-live.test").await?;
+    let grant = grant_admin(&f, caller).await?;
+    person_roles_repo::soft_delete(&f.db, f.tenant, grant, None).await?;
+
+    let (status, body) = get(app(&f, caller), "/v1/me").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(role_names(&body), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn me_omits_a_grant_from_another_tenant() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("me-crosstenant@http-live.test").await?;
+    grant_admin(&f.in_another_tenant(), caller).await?;
+
+    let (status, body) = get(app(&f, caller), "/v1/me").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(role_names(&body), Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn me_without_a_caller_is_unauthenticated() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+
+    let (status, _) = get(app(&f, Uuid::nil()), "/v1/me").await?;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     Ok(())
 }

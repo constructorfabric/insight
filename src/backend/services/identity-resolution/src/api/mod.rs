@@ -7,6 +7,7 @@ mod gate;
 mod handlers;
 #[cfg(test)]
 mod http_live_tests;
+pub mod me;
 pub mod person_roles;
 pub mod resolution;
 pub mod roles;
@@ -125,6 +126,20 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(handlers::resolve_profile)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/me")
+        .operation_id("identity_resolution.me.get")
+        .summary("The caller's identity and active roles")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<me::MeResponse>(
+            openapi,
+            StatusCode::OK,
+            "Who the gateway JWT identifies, with their active identity roles",
+        )
+        .standard_errors(openapi)
+        .handler(me::get_me)
         .register(router, openapi);
 
     // Operator identity corrections (ADR-0003): each verb appends binding

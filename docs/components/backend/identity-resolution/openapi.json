@@ -295,6 +295,48 @@
         ],
         "type": "object"
       },
+      "MeResponse": {
+        "description": "The caller as the gateway JWT identifies them, with their active roles.",
+        "properties": {
+          "insight_tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "roles": {
+            "items": {
+              "$ref": "#/components/schemas/MeRoleResponse"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "person_id",
+          "insight_tenant_id",
+          "roles"
+        ],
+        "type": "object"
+      },
+      "MeRoleResponse": {
+        "description": "One active role assignment of the caller.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "role_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_id",
+          "name"
+        ],
+        "type": "object"
+      },
       "MergeRequest": {
         "properties": {
           "comment": {
@@ -1230,6 +1272,99 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/me": {
+      "get": {
+        "operationId": "identity_resolution.me.get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            },
+            "description": "Who the gateway JWT identifies, with their active identity roles"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The caller's identity and active roles"
+      }
+    },
     "/v1/person-roles": {
       "get": {
         "operationId": "identity_resolution.person_roles.list",
