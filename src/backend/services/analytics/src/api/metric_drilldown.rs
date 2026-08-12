@@ -152,6 +152,20 @@ async fn acquire_export_permit() -> Result<tokio::sync::SemaphorePermit<'static>
         .map_err(|_| export_busy())
 }
 
+async fn acquire_query_permit() -> Result<tokio::sync::SemaphorePermit<'static>, CanonicalError> {
+    tokio::time::timeout(QUERY_ACQUIRE_TIMEOUT, QUERY_SEMAPHORE.acquire())
+        .await
+        .map_err(|_| {
+            tracing::warn!(
+                capacity = MAX_CONCURRENT_QUERIES,
+                available = QUERY_SEMAPHORE.available_permits(),
+                "metric drilldown query capacity exhausted"
+            );
+            query_busy()
+        })?
+        .map_err(|_| query_busy())
+}
+
 async fn collect_export_rows(
     state: &Arc<AppState>,
     validated: &ValidatedMetricDrilldown,
@@ -166,12 +180,17 @@ async fn collect_export_rows(
         .map_err(|_| export_limit("Export exceeded the execution time limit."))??;
     verify_evidence_snapshot(&state.ch, &validated.plan.relation, &validated.snapshot_id).await?;
 
-    if rows.len() > MAX_EXPORT_ROWS {
+    enforce_export_row_limit(rows.len())?;
+    Ok(rows)
+}
+
+fn enforce_export_row_limit(rows: usize) -> Result<(), CanonicalError> {
+    if rows > MAX_EXPORT_ROWS {
         return Err(export_limit(format!(
             "Export exceeds the {MAX_EXPORT_ROWS} row limit."
         )));
     }
-    Ok(rows)
+    Ok(())
 }
 
 async fn serialize_export(
@@ -230,10 +249,7 @@ async fn fetch_rows(
 ) -> Result<Vec<EvidenceQueryRow>, CanonicalError> {
     // INVARIANT: the permit is held across the awaited ClickHouse execution and
     // byte collection below — the hold is the MAX_CONCURRENT_QUERIES cap.
-    let _permit = tokio::time::timeout(QUERY_ACQUIRE_TIMEOUT, QUERY_SEMAPHORE.acquire())
-        .await
-        .map_err(|_| query_busy())?
-        .map_err(|_| query_busy())?;
+    let _permit = acquire_query_permit().await?;
     let (sql, params) = compile_query(req)?;
     let base = state
         .ch
@@ -332,5 +348,55 @@ mod tests {
             internal.status_code(),
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
         );
+    }
+
+    #[test]
+    fn the_export_row_limit_refuses_only_past_the_cap() {
+        assert!(enforce_export_row_limit(MAX_EXPORT_ROWS).is_ok());
+        let refused = enforce_export_row_limit(MAX_EXPORT_ROWS + 1)
+            .err()
+            .map(|error| error.status_code());
+        assert_eq!(
+            refused,
+            Some(axum::http::StatusCode::TOO_MANY_REQUESTS.as_u16())
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn export_permits_refuse_past_the_concurrency_cap() {
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONCURRENT_EXPORTS {
+            held.extend(acquire_export_permit().await.ok());
+        }
+        assert_eq!(held.len(), MAX_CONCURRENT_EXPORTS);
+        let refused = acquire_export_permit()
+            .await
+            .err()
+            .map(|error| error.status_code());
+        assert_eq!(
+            refused,
+            Some(axum::http::StatusCode::TOO_MANY_REQUESTS.as_u16())
+        );
+        drop(held);
+        assert!(acquire_export_permit().await.is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn query_permits_refuse_past_the_concurrency_cap() {
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONCURRENT_QUERIES {
+            held.extend(acquire_query_permit().await.ok());
+        }
+        assert_eq!(held.len(), MAX_CONCURRENT_QUERIES);
+        let refused = acquire_query_permit()
+            .await
+            .err()
+            .map(|error| error.status_code());
+        assert_eq!(
+            refused,
+            Some(axum::http::StatusCode::TOO_MANY_REQUESTS.as_u16())
+        );
+        drop(held);
+        assert!(acquire_query_permit().await.is_ok());
     }
 }

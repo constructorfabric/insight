@@ -12,7 +12,7 @@ import random
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from ..profiles import TEAM_PROFILES, Person
+from ..profiles import DEV_LEAD_UUID, TEAM_PROFILES, Person
 from .base import (
     bulk_insert,
     clamp,
@@ -51,6 +51,24 @@ REPO_SLUG = "insight/insight"
 # The change_type vocabulary gold/git_metric_observations recognises in its
 # change_type_label multiIf; anything else renders as the raw value.
 CHANGE_TYPES = ("added", "modified", "renamed", "deleted")
+
+# Deliberately hostile — and clearly synthetic — commit messages for the
+# drilldown-export escaping scenario (#1603 scenario 11). The gold evidence
+# model surfaces a commit's message as the drilldown "Title" cell, so these
+# cover every value class a spreadsheet consumer can mishandle: the four
+# formula-prefix bytes ('=', '+', '-', '@') and a value with an embedded tab
+# and an embedded newline (which must stay inside one CSV cell). Only the
+# FIRST few commits the dev lead generates carry one; every other commit
+# keeps the column default, so no row count, metric value, or other
+# person's evidence changes.
+HOSTILE_COMMIT_MESSAGES = (
+    "=SUM(A1:A9) synthetic title",
+    "+A1 synthetic title",
+    "-2+3 synthetic title",
+    "@macro synthetic title",
+    "tab\tinside synthetic title",
+    "newline\ninside synthetic title",
+)
 
 
 def _eligible(roster: Sequence[Person]) -> list[Person]:
@@ -96,10 +114,18 @@ def seed_class_git_commits(
         "lines_added",
         "lines_removed",
         "data_source",
+        # Appended after the long-standing columns: the link-parity tests read
+        # this table positionally, so a mid-tuple insertion moves their fields.
+        "message",
         "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
+    # Dealt to the dev lead's first commits in generation order (a merge
+    # commit is skipped — gold's evidence model filters those out, so a
+    # message on one would never reach the drilldown). Deterministic across
+    # re-seeds because the commit stream itself is.
+    hostile_messages = list(HOSTILE_COMMIT_MESSAGES)
     for p in _eligible(roster):
         persona = persona_multiplier(p.uuid)
         weight = TEAM_PROFILES[p.team or ""].weights["github"]
@@ -113,6 +139,9 @@ def seed_class_git_commits(
                 # LOC per commit capped at ≤200 by construction.
                 added = float(rng.randint(2, 180))
                 removed = float(rng.randint(0, 80))
+                message = ""
+                if p.uuid == DEV_LEAD_UUID and not is_merge and hostile_messages:
+                    message = hostile_messages.pop(0)
                 rows.append(
                     (
                         tenant_uuid,
@@ -128,6 +157,7 @@ def seed_class_git_commits(
                         added,
                         removed,
                         "insight_github",
+                        message,
                         version,
                     )
                 )

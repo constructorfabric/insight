@@ -141,6 +141,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             f"(default: ${MANIFEST_PATH_ENV}, else {MANIFEST_PATH})"
         ),
     )
+    parser.addoption(
+        "--rebuild-lane",
+        action="store_true",
+        default=False,
+        help=(
+            "run the tests marked rebuild_lane, which trigger a scoped dbt rebuild of a gold "
+            "evidence relation through the stand's own seed image. Off by default: they need "
+            "docker beside the local compose stand, and they mutate shared stand state mid-run, "
+            "so the run they join must not share the stand with anything else"
+        ),
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -233,6 +244,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     * `requires_seed` — a missing fixture means the stand was seeded wrong and
       the session aborts. That check lives in `pytest_collection_finish`,
       AFTER `-m` deselection, so it judges only the tests that will run.
+    * `rebuild_lane` — OPT-IN, skipped unless `--rebuild-lane` was passed.
+      Neither a capability nor a seeding fact: these tests mutate shared stand
+      state (a scoped dbt rebuild of a gold evidence relation) and shell out to
+      docker, which only works against the local compose stand. A skip rather
+      than a deselect, so `-ra` keeps the lane visible with its reason.
     """
     vectors = quality_vectors(config.getini("markers"))
     misvectored = {
@@ -249,6 +265,20 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             "per-test markers throughout a mixed one (a module default PLUS a per-test marker "
             "leaves both on the item and breaks -m selection).\n" + "\n".join(lines)
         )
+
+    if not config.getoption("--rebuild-lane"):
+        for item in items:
+            if item.get_closest_marker("rebuild_lane") is not None:
+                item.add_marker(
+                    pytest.mark.skip(
+                        reason=(
+                            "rebuild_lane: opt-in only — pass --rebuild-lane. The test "
+                            "rebuilds a gold evidence relation through the stand's own seed "
+                            "image, so it needs docker beside the local compose stand and a "
+                            "run nothing else shares."
+                        )
+                    )
+                )
 
     try:
         manifest = _manifest()

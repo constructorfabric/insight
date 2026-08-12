@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   csv: vi.fn(),
   xlsx: vi.fn(),
   evidenceColumn: "total",
+  tableOverflows: false,
 }));
 
 vi.mock("@/queries/metric-results", () => ({
@@ -49,7 +52,17 @@ vi.mock("@/components/widgets/metric-views/metric-timeseries-chart", () => ({
 }));
 
 vi.mock("@/components/widgets/metric-views/metric-timeseries-table", () => ({
-  MetricTimeseriesTable: () => <div>table presentation</div>,
+  MetricTimeseriesTable: ({
+    onVerticalOverflow,
+  }: {
+    onVerticalOverflow?: (overflows: boolean) => void;
+  }) => {
+    // The real table measures and reports; jsdom cannot, so the test says.
+    useEffect(() => {
+      onVerticalOverflow?.(mocks.tableOverflows);
+    }, [onVerticalOverflow]);
+    return <div>table presentation</div>;
+  },
 }));
 
 vi.mock("@/components/widgets/metric-views/metric-timeseries-csv", () => ({
@@ -76,6 +89,7 @@ describe("MetricTimeseriesView", () => {
     mocks.collectionSet.mockReturnValue(new Map());
     mocks.csv.mockReset();
     mocks.xlsx.mockReset().mockResolvedValue(undefined);
+    mocks.tableOverflows = false;
   });
 
   it("switches presentations and persists presentation per card", async () => {
@@ -284,6 +298,72 @@ describe("MetricTimeseriesView", () => {
 
     expect(screen.queryByLabelText("Metric")).not.toBeInTheDocument();
     expect(screen.getByText("Commits & Lines added")).toBeInTheDocument();
+  });
+
+  it("lets the reader drop the height ceiling, and puts it back on the way out", async () => {
+    mocks.tableOverflows = true;
+    const user = userEvent.setup();
+    const { container } = render(
+      <MetricTimeseriesView
+        id="expandable"
+        entityId={ENTITY_ID}
+        range={RANGE}
+        metricKeys={["git.commits", "git.lines_added"]}
+        groupBy={{ default: "repository" }}
+      />
+    );
+    const body = () => container.querySelector('[data-slot="card-content"]')!;
+    await user.click(screen.getByRole("button", { name: "Table view" }));
+    expect(body().className).toContain("max-h-96");
+
+    await user.click(screen.getByRole("button", { name: "Show every row" }));
+    expect(body().className).not.toContain("max-h-96");
+    expect(
+      screen.getByRole("button", { name: "Scroll the table" })
+    ).toHaveAttribute("aria-pressed", "true");
+
+    // Round trip through the chart: the ceiling comes back rather than the
+    // next table opening uncapped.
+    await user.click(screen.getByRole("button", { name: "Chart view" }));
+    await user.click(screen.getByRole("button", { name: "Table view" }));
+    expect(body().className).toContain("max-h-96");
+  });
+
+  it("lets a table size itself while holding a chart to a fixed box", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <MetricTimeseriesView
+        id="sized"
+        entityId={ENTITY_ID}
+        range={RANGE}
+        metricKeys={["git.commits", "git.lines_added"]}
+        groupBy={{ default: "repository" }}
+      />
+    );
+    const body = () => container.querySelector('[data-slot="card-content"]')!;
+    expect(body().className).toContain("h-96");
+    expect(body().className).not.toContain("max-h-96");
+
+    await user.click(screen.getByRole("button", { name: "Table view" }));
+    expect(body().className).toContain("max-h-96");
+  });
+
+  it("names a grouped table by its grouping, with how many groups there are", async () => {
+    const user = userEvent.setup();
+    render(
+      <MetricTimeseriesView
+        id="by-repo"
+        entityId={ENTITY_ID}
+        range={RANGE}
+        metricKeys={["git.commits", "git.lines_added"]}
+        groupBy={{ default: "repository" }}
+      />
+    );
+    await user.click(screen.getByRole("button", { name: "Table view" }));
+    const heading = screen.getByRole("heading", { name: /By repository/ });
+    expect(heading).toHaveTextContent("By repository");
+    expect(heading).toHaveTextContent("2");
+    expect(screen.queryByLabelText("Metric")).not.toBeInTheDocument();
   });
 
   it("uses visible group controls and supports selecting multiple filters", async () => {
