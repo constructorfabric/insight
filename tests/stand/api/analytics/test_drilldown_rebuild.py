@@ -112,11 +112,12 @@ def _rebuild_evidence_relation() -> None:
         "from insight_seed.silver import apply_ch_migrations; "
         f"apply_ch_migrations(dbt_select={EVIDENCE_MODEL!r})"
     )
+    project = os.environ.get(_COMPOSE_PROJECT_ENV, "").strip() or _DEFAULT_COMPOSE_PROJECT
     command = [
         "docker",
         "compose",
         "--project-name",
-        os.environ.get(_COMPOSE_PROJECT_ENV, "").strip() or _DEFAULT_COMPOSE_PROJECT,
+        project,
         "--env-file",
         str(_stand_env_file()),
         "-f",
@@ -144,15 +145,50 @@ def _rebuild_evidence_relation() -> None:
             check=False,
         )
     except subprocess.TimeoutExpired:
+        # The timeout killed the docker CLI, not the container dockerd runs
+        # for it — without this the rebuild keeps mutating the stand past the
+        # ceiling the failure message claims to enforce.
+        _remove_seed_containers(project)
         pytest.fail(
-            f"rebuild of {EVIDENCE_MODEL} exceeded {_REBUILD_TIMEOUT_SECONDS}s — the stand "
-            "may still be rebuilding; wait for it before trusting other results"
+            f"rebuild of {EVIDENCE_MODEL} exceeded {_REBUILD_TIMEOUT_SECONDS}s and its "
+            "container was force-removed — re-seed before trusting other results"
         )
     if completed.returncode != 0:
         pytest.fail(
             f"rebuild of {EVIDENCE_MODEL} failed (exit {completed.returncode}); the model "
             "either rebuilt or kept its previous build, never half of each — dbt swaps "
             f"atomically.\nstderr tail: {completed.stderr[-2000:]}"
+        )
+
+
+def _remove_seed_containers(project: str) -> None:
+    """Force-remove any seed-sample container of the stand's compose project.
+
+    Best effort: failing to remove must not mask the timeout failure that
+    called this, so errors are reported by the caller's message alone.
+    """
+    listed = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "--quiet",
+            "--filter",
+            f"label=com.docker.compose.project={project}",
+            "--filter",
+            "label=com.docker.compose.service=seed-sample",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    container_ids = listed.stdout.split()
+    if container_ids:
+        subprocess.run(
+            ["docker", "rm", "--force", *container_ids],
+            capture_output=True,
+            timeout=30,
+            check=False,
         )
 
 
@@ -250,25 +286,33 @@ def test_a_rebuild_between_pages_expires_the_cursor_and_never_mixes_builds(
 
     _rebuild_evidence_relation()
 
-    stale = api.post(
-        DRILLDOWN, json_body=_request(stand_manifest, limit=1, cursor=page.next_cursor)
-    )
-    assert stale.status_code == 400, (
-        f"a pre-rebuild cursor answered {stale.status_code}: {stale.text[:300]} — a 200 here "
-        "is a page resumed across two builds"
-    )
-    assert stale.parse(ProblemDocument).status == 400
-    assert "EVIDENCE_SNAPSHOT_EXPIRED" in stale.text, (
-        f"refused, but not with the documented precondition: {stale.text[:300]}"
-    )
-
-    rows = _walk(api, stand_manifest)
-    assert pre_rebuild_row in rows, (
-        "the pre-rebuild first row is gone from the rebuilt evidence — the rebuild changed "
-        "content, so the stand is no longer the one other tests were written against"
-    )
-    period = _period_value(api, stand_manifest)
-    assert period == len(rows), (
-        f"{GIT_COMMITS}: {len(rows)} evidence rows against a metric value of {period} "
-        "after the rebuild"
-    )
+    # The finally holds the equivalence proof: the rebuild has already mutated
+    # the stand, so whether or not the refusal fires as documented, the run
+    # must still establish that other tests face the same content — a refusal
+    # failure alone would otherwise leave that unverified exactly when it
+    # matters most. A failure inside finally supersedes the refusal failure,
+    # which is the right precedence: changed content invalidates more.
+    try:
+        stale = api.post(
+            DRILLDOWN, json_body=_request(stand_manifest, limit=1, cursor=page.next_cursor)
+        )
+        assert stale.status_code == 400, (
+            f"a pre-rebuild cursor answered {stale.status_code}: {stale.text[:300]} — a 200 "
+            "here is a page resumed across two builds"
+        )
+        assert stale.parse(ProblemDocument).status == 400
+        assert "EVIDENCE_SNAPSHOT_EXPIRED" in stale.text, (
+            f"refused, but not with the documented precondition: {stale.text[:300]}"
+        )
+    finally:
+        rows = _walk(api, stand_manifest)
+        assert pre_rebuild_row in rows, (
+            "the pre-rebuild first row is gone from the rebuilt evidence — the rebuild "
+            "changed content, so the stand is no longer the one other tests were written "
+            "against"
+        )
+        period = _period_value(api, stand_manifest)
+        assert period == len(rows), (
+            f"{GIT_COMMITS}: {len(rows)} evidence rows against a metric value of {period} "
+            "after the rebuild"
+        )

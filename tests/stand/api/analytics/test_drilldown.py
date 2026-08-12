@@ -94,10 +94,12 @@ _ABS_TOL = 1e-9
 #: metric to reach, and no lookup can turn it into a 404 on the way.
 _EMPTY_ENTITY_ID = ""
 
-#: One more value than the service's declared per-filter cap
-#: (`MAX_FILTER_VALUES` in the drilldown domain's `dto.rs`), which the refusal
-#: itself re-states — the assertion on the message keeps this in step.
-_FILTER_VALUES_OVER_MAX = 101
+#: Together these send 150 values built from 50 distinct ones — past the
+#: service's declared per-filter cap (`MAX_FILTER_VALUES` in the drilldown
+#: domain's `dto.rs`) as sent, yet far under it once deduplicated, so only a
+#: cap checked before dedup can refuse the request.
+_FILTER_DISTINCT_VALUES = 50
+_FILTER_VALUE_REPEATS = 3
 
 #: A dimension no metric declares: `normalize_key` accepts the spelling, so the
 #: refusal is attributable to the declaration check and nothing earlier.
@@ -1253,13 +1255,18 @@ def test_drilldown_refuses_a_duplicated_filter_dimension(
 def test_drilldown_refuses_a_filter_over_the_declared_value_cap(
     api: ApiClient, stand_manifest: Manifest, path: str
 ) -> None:
-    """#1603 scenario 6 — one value past the per-filter cap is refused up front.
+    """#1603 scenario 6 — a value list past the per-filter cap is refused up front.
 
     The cap is checked before values are deduplicated, so the refusal is about
     the request's size as sent — a caller cannot smuggle an oversized list past
-    it with repeats, and the query never compiles an IN-list this long.
+    it with repeats, and the query never compiles an IN-list this long. The
+    list is deliberately repeats of a few distinct values: it would dedup to
+    well under the cap, so a 400 here pins the before-dedup ordering rather
+    than passing for either.
     """
-    values: list[JsonValue] = [f"value_{index:03d}" for index in range(_FILTER_VALUES_OVER_MAX)]
+    values: list[JsonValue] = [
+        f"value_{index:03d}" for index in range(_FILTER_DISTINCT_VALUES)
+    ] * _FILTER_VALUE_REPEATS
     request = _request_for(
         stand_manifest,
         GIT_COMMITS,
