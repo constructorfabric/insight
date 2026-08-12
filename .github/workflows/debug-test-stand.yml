@@ -1,6 +1,6 @@
 # TEMPORARY — delete before merge (tracked in PR #2404). Pre-merge CI trigger
 # for the deploy pipeline; fires only when this file changes on this branch.
-# run marker: 11
+# run marker: 12 — full suite
 name: debug-test-stand
 on:
   push:

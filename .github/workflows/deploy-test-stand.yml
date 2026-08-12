@@ -489,7 +489,9 @@ jobs:
       - name: 'Stage 4/4 — smoke the stand through its public URL'
         id: smoke
         if: steps.stages.outputs.run_smoke == 'true'
-        timeout-minutes: 5
+        # TEMPORARY — dies with debug-test-stand.yml: full suite instead of
+        # the stand_smoke marker, browsers installed for the ui journeys.
+        timeout-minutes: 45
         env:
           # The variable tests/stand/conftest.py reads for every lane.
           INSIGHT_STAND_BASE_URL: ${{ vars.TEST_STAND_BASE_URL }}
@@ -502,8 +504,9 @@ jobs:
           # Explicit: the library default is relative to its own location.
           export INSIGHT_STAND_ARTIFACT_DIR="$RUNNER_TEMP/stand-artifacts"
           mkdir -p "$INSIGHT_STAND_ARTIFACT_DIR"
+          uv run --project tests --frozen playwright install chromium --with-deps > /dev/null
           uv run --project tests --frozen \
-            pytest tests/stand -m stand_smoke --stand-manifest "$INSIGHT_STAND_MANIFEST" \
+            pytest tests/stand -ra --stand-manifest "$INSIGHT_STAND_MANIFEST" \
             2>&1 | python3 "$REDACT"
 
       - name: Summarise the run
