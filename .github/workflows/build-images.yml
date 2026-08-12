@@ -1784,11 +1784,6 @@ jobs:
         || needs.changes.outputs.umbrella     == 'true'
       )
     runs-on: ubuntu-latest
-    # `chart_version` must come from here, not from a checkout of
-    # deploy/gitops/.insight-version: that file is committed at the END of
-    # this job, so the trigger SHA still carries the PREVIOUS release.
-    outputs:
-      chart_version: ${{ steps.umbrella.outputs.version }}
     steps:
       # Mint a short-lived (1h) installation token from the
       # insight-chart-release-bot GitHub App so the auto-commit push at the
@@ -2044,22 +2039,3 @@ jobs:
             echo "recompute the bump against the new tip." >&2
             exit 1
           fi
-
-  # `success`, not `always()`: chart_version is set before `helm push`, so a
-  # failed publish would point the stand at an unpublished version.
-  deploy-test-stand:
-    needs: [publish-chart]
-    # Re-asserts main: publish-chart's own guard also permits release-**
-    # branches and workflow_dispatch, which must not reach the test stand.
-    if: |
-      needs.publish-chart.result == 'success'
-      && github.event_name == 'push'
-      && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-    uses: ./.github/workflows/deploy-test-stand.yml
-    with:
-      chart_version: ${{ needs.publish-chart.outputs.chart_version }}
-    # No `secrets: inherit`: the callee resolves its own credentials from the
-    # insight-test-stand environment, and inheriting would also hand it
-    # main's branch-protection-bypass App key.
