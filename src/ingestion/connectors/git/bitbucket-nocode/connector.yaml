@@ -828,9 +828,11 @@ streams:
         path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
         http_method: GET
         request_parameters:
-          # pagelen HARD CAP on /pullrequests is 50 (400 above).
+          # pagelen HARD CAP on /pullrequests is 50 (400 above). No sort:
+          # combined with the state filters it 500s deterministically on large
+          # repositories, and the `next`-link pagination and per-slice cursor
+          # close are both order-independent.
           pagelen: "50"
-          sort: updated_on
           q: >-
             updated_on >= "{{ stream_interval.start_time }}"
           fields: >-
@@ -1156,9 +1158,10 @@ streams:
                   path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
                   http_method: GET
                   request_parameters:
-                    # pagelen HARD CAP on /pullrequests is 50 (400 above).
+                    # pagelen HARD CAP on /pullrequests is 50 (400 above). No
+                    # sort: with the state filters it 500s deterministically on
+                    # large repositories; pagination is order-independent.
                     pagelen: "50"
-                    sort: updated_on
                     # Stateless sliding window: the children have no cursor of their
                     # own, so parent state would never persist. RMT dedups the
                     # re-read window.
@@ -1428,9 +1431,10 @@ streams:
                   path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
                   http_method: GET
                   request_parameters:
-                    # pagelen HARD CAP on /pullrequests is 50 (400 above).
+                    # pagelen HARD CAP on /pullrequests is 50 (400 above). No
+                    # sort: with the state filters it 500s deterministically on
+                    # large repositories; pagination is order-independent.
                     pagelen: "50"
-                    sort: updated_on
                     # Stateless sliding window: the children have no cursor of their
                     # own, so parent state would never persist. RMT dedups the
                     # re-read window.
@@ -1698,9 +1702,10 @@ streams:
                   path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
                   http_method: GET
                   request_parameters:
-                    # pagelen HARD CAP on /pullrequests is 50 (400 above).
+                    # pagelen HARD CAP on /pullrequests is 50 (400 above). No
+                    # sort: with the state filters it 500s deterministically on
+                    # large repositories; pagination is order-independent.
                     pagelen: "50"
-                    sort: updated_on
                     # Stateless sliding window: the children have no cursor of their
                     # own, so parent state would never persist. RMT dedups the
                     # re-read window.
@@ -1959,9 +1964,10 @@ streams:
                   path: "/repositories/{{ stream_partition.repo_full_name }}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&state=SUPERSEDED"
                   http_method: GET
                   request_parameters:
-                    # pagelen HARD CAP on /pullrequests is 50 (400 above).
+                    # pagelen HARD CAP on /pullrequests is 50 (400 above). No
+                    # sort: with the state filters it 500s deterministically on
+                    # large repositories; pagination is order-independent.
                     pagelen: "50"
-                    sort: updated_on
                     # Stateless sliding window: the children have no cursor of their
                     # own, so parent state would never persist. RMT dedups the
                     # re-read window.
