@@ -6,8 +6,7 @@
 //!
 //! Spec references in this file (`PRD §x`, `DESIGN §x`) point to the
 //! authenticator specs in this repo:
-//! `docs/components/backend/authenticator/PRD.md` and
-//! `docs/components/backend/authenticator/DESIGN.md`.
+//! the committed contract at `docs/components/backend/authenticator/openapi.json`.
 
 use std::sync::Arc;
 
@@ -225,7 +224,7 @@ pub async fn callback(
     };
 
     // Layer-2 bucket keyed by the presented `state`
-    // (docs/components/backend/authenticator/DESIGN.md §4.4): caps how
+    // caps how
     // often one state value can drive the code-exchange path. Fail open on a
     // Redis error — the coarse gateway layer still guards, and the state
     // lookup below fails closed anyway.

@@ -132,60 +132,60 @@ src/
 
 ### `docs/`
 
-Canonical product, domain, and component specifications. The single source of truth for everything architectural and technical.
+Product intent, shared API conventions, and the committed service contracts.
 
 ```
 docs/
-├── components/                   ← per-component specifications
-│   ├── connectors/               ← per-source connector specs (PRD + DESIGN + ADR)
-│   │   ├── README.md             ← connector index + unified streams table
-│   │   ├── git/                  ← GitHub, Bitbucket Server, GitLab
-│   │   ├── task-tracking/        ← Jira
-│   │   ├── collaboration/        ← Microsoft 365, Slack, Zoom, Zulip
-│   │   ├── wiki/                 ← Confluence, Outline
-│   │   ├── support/              ← Zendesk, Jira Service Management
-│   │   ├── ai/                   ← Claude Enterprise, Claude Team, Cursor, ChatGPT Team
-│   │   ├── hr-directory/         ← BambooHR, LDAP / Active Directory
-│   │   ├── crm/                  ← HubSpot
-│   │   └── testing/              ← Allure TestOps
-│   │
-│   ├── orchestrator/             ← connector orchestration layer specs
-│   ├── backend/                  ← REST API server specs
-│   └── frontend/                 ← SPA specs
-│
-├── domain/                       ← cross-cutting domain designs
-│   ├── connector/                ← Connector Framework: generic architecture, automation
-│   │   └── specs/DESIGN.md       │  boundary, BaseConnector, Unifier, onboarding
-│   │                             │  (per-source details stay in components/connectors/)
-│   └── identity-resolution/      ← Identity Resolution Service: person registry,
-│       └── specs/DESIGN.md       │  alias store, Bootstrap Job, Golden Record,
-│                                 │  match rules, org hierarchy, GDPR erasure
-│
-└── shared/                       ← shared API guidelines, status codes, versioning
-    └── api-guideline/
+├── product/                      ← product vision and scenarios
+├── shared/                       ← API guideline, status codes, versioning, glossary
+│   ├── api-guideline/
+│   └── glossary/
+├── testing/                      ← test plan and reference orgs
+├── domain/
+│   └── identity-resolution/      ← cross-cutting: person registry, binding journal,
+│                                    match rules, org hierarchy
+└── components/backend/           ← backend service specs + committed OpenAPI contracts
+    ├── analytics/                ← DESIGN, openapi.json
+    ├── authenticator/            ← DESIGN, PRD, KEY-ROTATION, ADRs, openapi.json
+    ├── gateway/                  ← DESIGN, ADR
+    └── identity-resolution/      ← DESIGN, PRD, 14 ADRs, openapi.json
 ```
 
-**`docs/domain/` vs `docs/components/`:**
+The `openapi.json` files are generated, not hand-written. CI regenerates each from
+its service and fails the build on drift, so treat them as build output that happens
+to be committed.
 
-| Folder | Contains | When to look here |
-|---|---|---|
-| `docs/domain/` | Cross-cutting platform domains: concepts, algorithms, data models, and contracts that span multiple components | Understanding *how* identity resolution works, *what* the connector framework contract is, *why* the Medallion boundary is where it is |
-| `docs/components/` | Per-component and per-connector specs: PRD (requirements), DESIGN (schemas, APIs, implementation details), ADR | Building, extending, or reviewing a specific connector, the backend, or the frontend |
+Design intent for everything else lives with the code it describes: the connector
+`README.md` beside each `connector.yaml`, module docs under `src/backend/services/`,
+and the pipeline conventions in `.cf-studio/config/rules/architecture.md`.
+
+#### Backend specs — under review
+
+The specs above are **retained but not yet trustworthy**. An audit against the
+implementation found claims in each that the code contradicts. They are kept because
+the surrounding material is worth correcting rather than discarding — but read them
+against the code, not as authority, until the entries below are closed.
+
+| Spec | Do not trust until checked |
+|---|---|
+| `analytics/DESIGN.md` | The endpoint table (§ Public API) lists routes the service does not register — the live surface is `/v1/metric-results`, `/v1/queries*`, `/v1/metric-drilldown*`, `/v1/metric-definitions`, `/v1/metrics*`. Metrics are addressed by `metric_key` (`table.column`), not a UUID. Server-side threshold evaluation and a `_thresholds` response field are described but not implemented. The RBAC column claims Tenant Admin on metric and threshold writes; the handlers declare only `.authenticated()`. The Redis alias cache and Redpanda invalidation are not wired. § 3.7 lists three tables that no runtime code reads. |
+| `authenticator/DESIGN.md`, `PRD.md` | The admin revoke-by-user variant is documented on `DELETE /auth/sessions`; that route is public and self-only, and the admin variant is a separate authenticated route. CSRF is documented as covering logout only — it covers every state-changing `/auth/*` with a live session. A `tenants` claim and a `tenants` session field are described; both are a single `tenant_id`. The listed metric names are not the ones the crate registers. Several documented status codes are redirects in code. |
+| `gateway/DESIGN.md` | The hygiene list describes `auth_request` / `auth_request_set` and `error_page`; routegen emits neither — it uses `access_by_lua_block` and shapes failures in Lua. The JWT cache key is the session cookie value, not a derived session id. |
+| `components/backend/identity-resolution/.../DESIGN.md`, `PRD.md` | An internal `by-email` lookup is documented as present; it was removed. Ambiguous-profile is documented as `422` with structured members; the service returns `409`. `tenant_default_id` is described as a request-time fallback; no request path reads it. Subchart depth is documented as unbounded; it is capped and clamped. The subchart auth is documented as an `X-Insight-Person-Id` header; it is the gateway JWT. The PRD specifies FluentValidation and `IPersonsReader` — .NET idioms that do not exist in this Rust service. |
+| `domain/identity-resolution/specs/DESIGN.md`, `PRD.md` | **Understates the code.** The whole operator resolution surface (`/v1/resolution/{bind,merge,detach,exclude}`, `/attention`, the account and person-accounts reads) is marked planned but is registered, handled and published in the contract. Contested-evidence handling, per-account bindings in divergent groups, author-aware conflict classification and per-account timestamp disambiguation are all described as gaps or future work and are all implemented. Tombstone handling is called inert; DELETE rows are kept deliberately. Going the other way: the v1 resolve macro is described as e-mail-only — it resolves through account bindings and returns nothing when claimants disagree — and the "writes only to its own tables" claim omits `org_chart`, `visibility`, `roles` and `person_roles`. |
+
+The `openapi.json` next to each service is generated from the code and gated by CI,
+so where a spec and the contract disagree, the contract is right.
 
 ### `inbox/`
 
 Incoming documents pending triage and integration into `docs/`. Not yet canonical.
 
-| Folder | Status | Intended destination |
-|--------|--------|----------------------|
-| `architecture/CONNECTORS_ARCHITECTURE.md` + `CONNECTOR_AUTOMATION.md` | **Synthesized** → `docs/domain/connector/specs/DESIGN.md` | Complete |
-| `architecture/IDENTITY_RESOLUTION_V*.md` + `IDENTITY_RESOLUTION.md` | **Synthesized** → `docs/domain/identity-resolution/specs/DESIGN.md` | Complete |
-| `architecture/PRODUCT_SPECIFICATION.md` | Draft | `docs/domain/` or root product spec |
-| `architecture/permissions/` | Draft ADRs | `docs/components/backend/specs/ADR/` |
-| `airbyte-declarative-standalone/` | **Migrated** | `docs/components/connectors/collaboration/m365/` |
-| `stats/backend/` | Draft ADRs | `docs/components/backend/specs/ADR/` |
-| `stats/frontend/` | Draft | `docs/components/frontend/specs/` |
-| `streams/` | Draft schemas | `docs/components/connectors/` — per-source stream definitions |
+| Folder | Status |
+|--------|--------|
+| `architecture/` | Draft — architecture and permission notes |
+| `stats/backend/`, `stats/frontend/` | Draft PRDs + ADRs |
+| `IDENTITY_RESOLUTION.md` | Draft |
 
 ---
 
@@ -240,7 +240,7 @@ The compose stack does **not** ship Airbyte or Argo Workflows — for ingestion 
 
 ### Cluster deployment
 
-Cyberfabric clusters are deployed from the private `infra/insight-gitops` repository — Makefile-driven, OCI-pinned umbrella chart, sealed secrets, L0/L2/L3 layered architecture. Engineers should refer to that repository's README; the deploy model is specified in [`docs/components/deployment/gitops/README.md`](docs/components/deployment/gitops/README.md).
+Cyberfabric clusters are deployed from the private `infra/insight-gitops` repository — Makefile-driven, OCI-pinned umbrella chart, sealed secrets, L0/L2/L3 layered architecture. Engineers should refer to that repository's README; the deploy model is specified in [`deploy/gitops/README.md`](deploy/gitops/README.md).
 
 External consumers run the umbrella chart directly:
 
@@ -251,7 +251,7 @@ helm install insight oci://ghcr.io/constructorfabric/charts/insight \
   -f values.yaml
 ```
 
-Chart versions are published per merge to `main`; see [ADR-0001](docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md) for the publish-on-merge contract. The chart contract — values shape, integration modes, BYO credential keys, OIDC requirements — lives in [`charts/insight/README.md`](charts/insight/README.md).
+Chart versions are published per merge to `main`. The chart contract — values shape, integration modes, BYO credential keys, OIDC requirements — lives in [`charts/insight/README.md`](charts/insight/README.md).
 
 ### Configure connectors
 
@@ -325,7 +325,7 @@ For cluster deployments image tags flow through automatically: the umbrella char
 
 ### CI/CD
 
-GitHub Actions builds and pushes backend + toolbox container images on every merge to `main` (see [`.github/workflows/build-images.yml`](.github/workflows/build-images.yml)). Images are tagged `YYYY.MM.DD.HH.mm-<short-sha>` and `latest`. The same workflow publishes the umbrella Helm chart to `oci://ghcr.io/constructorfabric/charts/insight:<semver>` and auto-commits the version bumps back to `main`. See [ADR-0001](docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md) for the publish-on-merge rationale and [`docs/components/deployment/gitops/README.md`](docs/components/deployment/gitops/README.md) for the gitops deploy contract.
+GitHub Actions builds and pushes backend + toolbox container images on every merge to `main` (see [`.github/workflows/build-images.yml`](.github/workflows/build-images.yml)). Images are tagged `YYYY.MM.DD.HH.mm-<short-sha>` and `latest`. The same workflow publishes the umbrella Helm chart to `oci://ghcr.io/constructorfabric/charts/insight:<semver>` and auto-commits the version bumps back to `main`. See [`deploy/gitops/README.md`](deploy/gitops/README.md) for the gitops deploy contract.
 
 To trigger manually: Actions → "Build & Push Container Images" → Run workflow.
 
@@ -351,10 +351,9 @@ See [`src/backend/services/LOCAL_DEV.md`](src/backend/services/LOCAL_DEV.md) for
 
 ## Working with This Repo
 
-- **Browse specs** — Start at [`docs/components/connectors/README.md`](docs/components/connectors/README.md) for the connector index, or [`docs/domain/`](docs/domain/) for cross-cutting platform concepts (identity resolution, connector framework).
-- **Understand a domain** — Read the relevant `docs/domain/{domain}/specs/DESIGN.md` first. These documents describe the platform's core algorithms, data contracts, and architectural decisions that span multiple components.
-- **Add a connector** — Follow the layout in any existing `docs/components/connectors/{domain}/{source}/` directory. Use `specs/PRD.md` for requirements and `specs/DESIGN.md` for table schemas and pipeline mappings.
-- **Add source code** — Place code under `src/{component}/`. The structure mirrors `docs/components/` — `src/connectors/`, `src/backend/`, `src/frontend/`, `src/orchestrator/`.
+- **Browse connectors** — Each package under `src/ingestion/connectors/{domain}/{source}/` carries its own `README.md`, `connector.yaml` and `dbt/` models.
+- **Add a connector** — Follow the layout of any existing package, and the `/connector` skill.
+- **Add source code** — Place code under `src/{component}/` — `src/ingestion/`, `src/backend/`, `src/frontend/`.
 - **Constructor Studio** — Run `cfs` in a supported AI agent to activate assisted spec authoring, validation, and traceability. Constructor Studio is sourced from [github.com/constructorfabric/studio](https://github.com/constructorfabric/studio).
 - **Inbox** — Documents in `inbox/` are drafts awaiting review. Do not reference them as canonical sources.
 
@@ -364,7 +363,7 @@ See [`src/backend/services/LOCAL_DEV.md`](src/backend/services/LOCAL_DEV.md) for
 
 The `docs/` folder is the single source of truth for all product specifications, architectural decisions, and technical designs. Every document here is considered canonical and must go through a review process before being merged.
 
-`docs/` describes the **architecture and intent** of the platform. The corresponding implementation lives in `src/`. When adding or changing source code, the relevant spec in `docs/components/{component}/specs/DESIGN.md` should be updated in the same PR (or a follow-up ADR opened if it's a significant design change).
+`docs/` carries product intent, shared API conventions and the committed service contracts. Component design lives beside the code it describes — update it in the same PR as the change.
 
 ### Document types
 

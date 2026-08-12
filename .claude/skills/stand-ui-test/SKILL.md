@@ -221,6 +221,17 @@ coverage.
 4. Add or extend a page object; keep it assertion-free.
 5. Declare `@pytest.mark.requires_seed(...)` for every person named.
 6. Derive expectations from the manifest; guard against an empty derivation.
-7. Write the `expect` tree in the test.
+7. Write the `expect` tree in the test. Give the journey its quality-vector
+   marker — module `pytestmark` when the whole module shares a vector,
+   per-test markers throughout a mixed module, never both; the why lives
+   with the marker declarations in `tests/pyproject.toml`. Journeys proving
+   rendering and data are `reliability`, refused-access journeys `security`,
+   breadth-across-domains journeys `versatility`. Collection aborts on any
+   other vector count.
 8. Audit fidelity, then run headed once to confirm it fails for the right
    reason when you break the expectation deliberately.
+9. When the journey implements a scenario tracked in a feature issue's Testing
+   section, cite it in the test docstring (`#2163 scenario 3`) and keep the
+   marker equal to the scenario's vector tag; the full traceability contract
+   (id-not-prose, box-checking after merge) is the `quality-vector-tests`
+   skill's tracking section.

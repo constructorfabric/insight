@@ -4,8 +4,7 @@ Two deployment paths — Docker Compose for day-to-day dev, Kubernetes
 when you need Airbyte / Argo Workflows. Both share a single first-run
 wizard at [`deploy/compose/insight-init.sh`](deploy/compose/insight-init.sh).
 
-Open a PR after reading [AGENTS.md](AGENTS.md) and the relevant spec
-files under `docs/components/<area>/specs/`.
+Open a PR after reading [AGENTS.md](AGENTS.md).
 
 ## Contents
 
@@ -447,9 +446,7 @@ external Keycloak, …) is a config change, not a mode flip:
 > overlays do. To poke a remote cluster quickly: `kubectl port-forward
 > svc/insight-gateway 8080:80` and use `http://localhost:8080`.
 
-See ADR
-[`docs/components/backend/authenticator/specs/ADR/0003-keycloak-identity-broker.md`](docs/components/backend/authenticator/specs/ADR/0003-keycloak-identity-broker.md)
-for the per-environment IdP rationale (Keycloak as the issuer everywhere).
+Keycloak is the issuer in every environment.
 
 ---
 
@@ -655,7 +652,5 @@ Compose stack doesn't ship Airbyte / Argo. Use the
 - Frontend: `pnpm lint` + `pnpm tsc --noEmit`
 - Always sign your commits: `git commit -s ...`
 - Push to your fork (`origin`), not to `cf` upstream
-- PR description should link the relevant spec under
-  `docs/components/<area>/specs/`
 
 CI runs the same checks on every PR.

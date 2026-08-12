@@ -562,7 +562,6 @@ def parse_response(self, response, **kwargs):
 
 If your connector ships at least one `Dockerfile` under its connector directory (CDK source, enrich sidecar, future bootstrap or migrator container), you MUST declare every such image in your `descriptor.yaml.images:` block. CI uses **dynamic discovery** — it scans every descriptor on every run and builds whatever is declared. Adding a new connector with images is a descriptor edit; CI follows automatically.
 
-See [ADR-0016 — Descriptor `images:` Block](../../../../docs/components/airbyte-toolkit/specs/ADR/0016-descriptor-images-block.md) for the rationale.
 
 ### 1. Descriptor `images:` block (REQUIRED for every Dockerfile)
 
@@ -881,7 +880,7 @@ If any stream fails, do NOT deploy. Fix the manifest and re-run both `validate-s
 
 ### 5.7 Write mock-server tests (MANDATORY before deploy)
 
-Normative spec: `docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md` (L1 of the connector test ladder). Mock tests are credential-free pytest suites that load `connector.yaml` in-process through the pinned `airbyte-cdk`, intercept HTTP with `HttpMocker`, and run a full protocol `read` — they are the only deterministic, CI-runnable check of pagination, cursors, error handling, and transformations.
+L1 of the connector test ladder. Mock tests are credential-free pytest suites that load `connector.yaml` in-process through the pinned `airbyte-cdk`, intercept HTTP with `HttpMocker`, and run a full protocol `read` — they are the only deterministic, CI-runnable check of pagination, cursors, error handling, and transformations.
 
 Create `CONNECTOR_DIR/tests/`:
 

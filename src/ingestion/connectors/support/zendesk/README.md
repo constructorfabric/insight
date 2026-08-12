@@ -8,9 +8,6 @@ Extracts Zendesk tickets, satisfaction ratings, and agent directory into the Bro
 
 ## Specification
 
-- **Full spec + Bronze schemas**: [`docs/components/connectors/support/zendesk/zendesk.md`](../../../../../docs/components/connectors/support/zendesk/zendesk.md)
-- **PRD**: [`docs/components/connectors/support/zendesk/specs/PRD.md`](../../../../../docs/components/connectors/support/zendesk/specs/PRD.md)
-- **DESIGN**: [`docs/components/connectors/support/zendesk/specs/DESIGN.md`](../../../../../docs/components/connectors/support/zendesk/specs/DESIGN.md)
 
 ## Prerequisites
 
@@ -101,4 +98,3 @@ Silver and Gold transformations are SHIPPED as `dbt/` models tagged `zendesk`. T
 ## Related
 
 - `jsm` — Jira Service Management connector; same unified `support_*` Bronze tables with `data_source = "insight_jsm"`. JSM also collects `support_ticket_events` (SHIPPED for Zendesk too) and `support_sla` (Phase 2 for Zendesk).
-- Support domain spec: `docs/components/connectors/support/README.md` — unified Bronze schema across Zendesk and JSM.

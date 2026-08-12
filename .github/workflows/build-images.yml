@@ -1743,7 +1743,6 @@ jobs:
   # runs canonically in that follow-up run with toolbox already rebuilt
   # against the patched descriptors.
   #
-  # See ADR-0001 (docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md)
   # and the gitops SPEC §2.4 for the contract.
   publish-chart:
     needs:

@@ -43,10 +43,12 @@ def _saved(api: ApiClient) -> set[str]:
     return {item.name for item in response.parse(SavedQueryListResponse).items}
 
 
+@pytest.mark.reliability
 def test_list_queries_200(api: ApiClient, scratch_saved_query: SavedQuery) -> None:
     assert scratch_saved_query.name in _saved(api)
 
 
+@pytest.mark.reliability
 def test_saved_query_create_run_update_delete_round_trip(api: ApiClient) -> None:
     """One cycle: create → read → run → update → delete → gone.
 
@@ -85,11 +87,13 @@ def test_saved_query_create_run_update_delete_round_trip(api: ApiClient) -> None
     assert created.name not in _saved(api), "a hard-deleted saved query is still listed"
 
 
+@pytest.mark.reliability
 def test_get_query_404_unknown(api: ApiClient) -> None:
     response = api.get(_query_path(UNKNOWN_ID))
     assert response.status_code == 404, f"status={response.status_code} {response.text[:300]}"
 
 
+@pytest.mark.reliability
 def test_update_query_404_unknown(api: ApiClient) -> None:
     response = api.put(
         _query_path(UNKNOWN_ID),
@@ -98,16 +102,19 @@ def test_update_query_404_unknown(api: ApiClient) -> None:
     assert response.status_code == 404, f"status={response.status_code} {response.text[:300]}"
 
 
+@pytest.mark.reliability
 def test_delete_query_404_unknown(api: ApiClient) -> None:
     response = api.delete(_query_path(UNKNOWN_ID))
     assert response.status_code == 404, f"status={response.status_code} {response.text[:300]}"
 
 
+@pytest.mark.reliability
 def test_run_query_404_unknown(api: ApiClient) -> None:
     response = api.post(_query_path(UNKNOWN_ID, "/run"), json_body={})
     assert response.status_code == 404, f"status={response.status_code} {response.text[:300]}"
 
 
+@pytest.mark.reliability
 def test_run_query_415_wrong_content_type(api: ApiClient, scratch_saved_query: SavedQuery) -> None:
     """`/run` takes an OPTIONAL body, and still refuses one it cannot read.
 
@@ -137,6 +144,7 @@ def test_run_query_415_wrong_content_type(api: ApiClient, scratch_saved_query: S
     ["DROP TABLE metrics", "INSERT INTO metrics VALUES (1)"],
     ids=["drop", "insert"],
 )
+@pytest.mark.security
 def test_a_statement_that_is_not_a_read_is_refused_on_create(
     api: ApiClient, statement: str
 ) -> None:
@@ -153,6 +161,7 @@ def test_a_statement_that_is_not_a_read_is_refused_on_create(
     )
 
 
+@pytest.mark.security
 def test_an_update_revalidates_the_sql(api: ApiClient, scratch_saved_query: SavedQuery) -> None:
     """And again on update — a stored query that passed once can be rewritten.
 
@@ -168,6 +177,7 @@ def test_an_update_revalidates_the_sql(api: ApiClient, scratch_saved_query: Save
     )
 
 
+@pytest.mark.reliability
 def test_a_deleted_query_leaves_the_listing_and_the_id_stops_resolving(
     api: ApiClient,
 ) -> None:
@@ -188,6 +198,7 @@ def test_a_deleted_query_leaves_the_listing_and_the_id_stops_resolving(
     )
 
 
+@pytest.mark.security
 def test_run_binds_the_tenant_from_the_session_not_the_request(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:
@@ -214,6 +225,7 @@ def test_run_binds_the_tenant_from_the_session_not_the_request(
         api.delete(_query_path(query.id))
 
 
+@pytest.mark.reliability
 def test_run_binds_a_named_parameter_from_the_body(api: ApiClient) -> None:
     query = create_saved_query(
         api, "period-param", sql="SELECT {period:String} AS period FROM system.one"
@@ -226,6 +238,7 @@ def test_run_binds_a_named_parameter_from_the_body(api: ApiClient) -> None:
         api.delete(_query_path(query.id))
 
 
+@pytest.mark.reliability
 def test_running_with_a_parameter_left_unbound_is_400_not_500(api: ApiClient) -> None:
     """An unbound parameter is the caller's mistake, and must be reported as one.
 

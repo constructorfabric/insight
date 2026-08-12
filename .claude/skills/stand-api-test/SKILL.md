@@ -1,6 +1,6 @@
 ---
 name: stand-api-test
-description: "Write, fix, or review HTTP contract tests in tests/stand/api/ — the deployed-stand suite against a real gateway, real Keycloak sessions and real backend images. Covers the operation catalogue, which persona session to take, requires_seed markers, the scratch-resource policy, the hand-written vs generated response models, status-code discipline (identity 404 vs analytics 403 outside a scope, 400 vs 415 vs 422) and the endpoint coverage gate. Use when adding or changing anything under tests/stand/api/, closing a coverage-gate gap, or turning a stand-scenarios claim into an API case. For browser journeys use stand-ui-test; for the in-process analytics rig under src/ingestion/tests/e2e/api/ use api-test instead — they are different suites with different rules."
+description: "Write, fix, or review HTTP contract tests in tests/stand/api/ — the deployed-stand suite against a real gateway, real Keycloak sessions and real backend images. Covers the operation catalogue, which persona session to take, requires_seed markers, the scratch-resource policy, the hand-written vs generated response models, status-code discipline (identity 404 vs analytics 403 outside a scope, 400 vs 415 vs 422) and the endpoint coverage gate. Use when adding or changing anything under tests/stand/api/, closing a coverage-gate gap, or turning a stand-scenarios claim into an API case. For browser journeys use stand-ui-test. The in-process analytics HTTP rig that once lived at src/ingestion/tests/e2e/api/ (the api-test skill) was retired in favour of this suite — only the data-path metrics rig remains in-process (metric-test)."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
@@ -11,12 +11,11 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 HTTP tests against a **deployed** Insight — the gateway BFF in front of pinned
 service images, sessions won by real Keycloak logins. No browser.
 
-**This is not `src/ingestion/tests/e2e/api/`.** That rig runs an analytics
-binary in-process and mints its own gateway JWT per request, where this suite wins
-a real Keycloak session; it owns four blocking coverage gates. Use
-the `api-test` skill for it. The two suites prove different things and the
-rules differ — most sharply on mutation, because a stand persists between runs
-and the rig discards its whole stack.
+**`src/ingestion/tests/e2e/api/` no longer exists.** That in-process rig's
+HTTP contract lanes were retired in favour of this suite ("refactor(e2e):
+retire the rig's HTTP contract lanes, keep the data path"); the `api-test`
+skill describes the retired suite and remains only as history. The data-path
+metrics rig stays in-process — see `metric-test`.
 
 Environment, sessions and triage: `insight-stand`. What to test:
 `stand-scenarios`.
@@ -252,7 +251,13 @@ the gate's central rule and the reason `template` exists.
    one applies — `requires_service_principal` is **mandatory** for any
    `/internal/*` case, or the test hard-fails on a stand that cannot reach the
    token endpoint instead of skipping with a reason.
-6. Write the tests; extend the module docstring's route table.
+6. Write the tests; extend the module docstring's route table. Every test
+   carries exactly one quality-vector marker — module-level `pytestmark`
+   when the whole module shares a vector, per-test markers throughout a
+   mixed module, never both; the why lives with the marker declarations in
+   `tests/pyproject.toml`. Contract correctness is `reliability`; access,
+   tenancy and refusal-of-access cases are `security`; catalog-breadth
+   checks are `versatility`. Collection aborts on any other vector count.
 7. Run and check the ledger:
 
 ```bash
@@ -277,3 +282,8 @@ python3 tests/lib/insight_stand/coverage.py \
 
 8. Hand a claim marked `EXPECTED TO FAIL` to `file-bug-insight` rather than
    softening the assertion.
+9. When the test implements a scenario tracked in a feature issue's Testing
+   section, cite it in the test docstring (`#2163 scenario 3`) and keep the
+   marker equal to the scenario's vector tag; the full traceability contract
+   (id-not-prose, box-checking after merge) is the `quality-vector-tests`
+   skill's tracking section.

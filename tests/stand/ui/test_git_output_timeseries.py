@@ -24,6 +24,9 @@ from playwright.sync_api import Page, expect
 from .flows import sign_in
 from .pages.person_view import PersonView
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 
 @pytest.mark.requires_seed("dev_lead")
 def test_git_output_repository_timeseries_switches_views_and_downloads(

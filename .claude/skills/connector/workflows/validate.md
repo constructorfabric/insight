@@ -21,7 +21,7 @@ Before the checklist review, always run the automated validators:
 
 If either fails, fix the reported per-path errors before proceeding with the checklist. See `src/ingestion/tools/declarative-connector/README.md` §"Debugging strict-validation errors".
 
-Then run the mock-server test suite (L1 of the test ladder, `docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md`):
+Then run the mock-server test suite (L1 of the test ladder):
 
 ```bash
 # one-time env: cd src/ingestion/tests/connectors && python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'

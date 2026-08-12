@@ -2,8 +2,8 @@
 
 Drill from any metric value to the source records behind it. Shape: **new capability, not yet
 built** — no branch, no PR. This example shows three things the other two don't: staying inside the
-author's own draft scope, explicit `Not applicable` vectors, and how to handle a target whose
-tooling doesn't exist.
+author's own draft scope, explicit `n/a` handling, and how to handle a scenario whose tooling
+doesn't exist.
 
 > **Snapshot.** The denominators in this example were counted when it was
 > written. They are illustrative, not current — re-take them with
@@ -27,92 +27,79 @@ Latency for drill down requests
 **Security** 
 No critical issues in the ci pipeline for static analysis
 ```
-Every vector has something — so this is not a padding problem, it's a *measurability* problem.
-Nothing here has a denominator or a number, "pagination tests" and "Coverage" are filed under
-Efficiency, and the whole trust invariant the epic exists for (BR-1: if a tile says 42, the
-drill-down must account for 42) has no check at all.
+Every vector has something — so this is not a padding problem, it's a *falsifiability* problem.
+Nothing here has a denominator, an oracle or a suite, "pagination tests" and "Coverage" are filed
+under Efficiency, and the whole trust invariant the epic exists for (BR-1: if a tile says 42, the
+drill-down must account for 42) has no scenario at all.
 
-## Grounding that changed the numbers
+## Grounding that changed the scenarios
 - `insight.ic_drill` is an **empty stub view** (`SELECT '' … FROM system.one WHERE 0`) reached via
-  an OData `drill_id eq` filter — the contract exists, the evidence doesn't. So the checks are
+  an OData `drill_id eq` filter — the contract exists, the evidence doesn't. So the scenarios are
   written against the issue's requirement ids, not against code.
+- The issue defines its own requirement ids (`BR-n`); those serve as the reviewed criteria here.
+  The AC review found three scenarios with **no criterion at all** (latency, run-cost, scanning) —
+  flagged to the author rather than silently tagged.
 - Countable denominators found in the repo: **26** connectors, **60** catalog metric keys across 5
   families, **17** acceptance criteria in the issue itself.
-- Semgrep, Trivy and CodeQL run in this repo's CI (`.github/workflows/`), so a Security target is
+- Semgrep, Trivy and CodeQL run in this repo's CI (`.github/workflows/`), so a Security scenario is
   measurable here — and since the SPA lives in `src/frontend`, the same scanners cover it. There is
-  **no load harness anywhere** (no k6, locust, gatling, jmeter). A Performance target naming one
+  **no load harness anywhere** (no k6, locust, gatling, jmeter). A Performance scenario naming one
   would have to be built first — which is a finding, not a formatting detail.
 
 ## After (canonical format)
 ```markdown
 ## Testing
 
-Drill-down exists to make a number believable, so the headline check is the trust invariant itself
-(BR-1): the evidence returned must account for exactly the value it explains. Everything else
-guards the honesty of what surrounds it — volume, coverage, speed and exposure. Speed and run-cost
-are measured on the reference-org dataset.
+Drill-down exists to make a number believable, so the headline scenario is the trust invariant
+itself (BR-1): the evidence returned must account for exactly the value it explains. Everything
+else guards the honesty of what surrounds it — volume, coverage, speed and exposure. Speed and
+run-cost run on the reference-org dataset. The BR ids are the issue's own. Criteria map:
+BR-1,BR-2 → 1 · BR-3 → 2 · BR-9 → 4 · BR-10,BR-11 → 3 · BR-12,BR-18 → 5; the remaining BRs
+are proven by the epic's other subtasks, and scenarios 6–8 await the criteria proposed to the
+author in the AC review.
 
-### Reliability
-1. **Count match** *(main gate — BR-1, BR-2)*
-   - Metric: drilled record count ÷ displayed value.
-   - How measured: for each catalog metric, run the metric query and the drill query with identical
-     period, person and filters, and compare; derived values compare against their stated inputs.
-   - Target: **60/60** metrics match, **0** discrepancy.
-2. **Excluded records shown** *(BR-3)*
-   - Metric: records the metric excluded that appear in its drill-down.
-   - How measured: fixture seeded with bot, automation, migration-artefact and unattributed records.
-   - Target: **0**.
-3. **API coverage** *(BR-10, BR-11)*
-   - Metric: acceptance criteria covered by an automated test.
-   - How measured: happy path plus the two refusal cases — oversized request, undrillable target.
-   - Target: **17/17**; oversized → 4xx + reason, never a partial 200; undrillable → error
-     distinguishable from an empty result.
-4. **Page errors** *(BR-9)*
-   - Metric: duplicate rows, missing rows, and reported-total accuracy.
-   - How measured: page a 3,000-record fixture at page size 500 (7 pages) and union the pages.
-   - Target: **0** duplicates, **0** omissions, total exact (3,000, not 500).
-
-### Versatility
-5. **Connector coverage** *(BR-18, BR-12)*
-   - Metric: connectors and metrics that return evidence or an explicit lineage gap.
-   - How measured: per-connector fixtures driven by the metric catalog.
-   - Target: **26/26** connectors, **60/60** metrics; **0** silently undrillable.
-
-### Performance
-6. **Latency (P95)**
-   - Metric: drill request latency at reference-org scale.
-   - How measured: 200 requests on the reference-org dataset, deepest lineage path included.
-   - Target: **< 1s** — *no load harness exists in the repo today; one is a prerequisite.*
-
-### Efficiency
-7. **Memory growth**
-   - Metric: RSS of the services a drill touches, start vs end.
-   - How measured: 30-minute soak driving repeated paged requests on the reference-org dataset.
-   - Target: **< 5%** growth, CPU back to baseline — *proposed bar, no precedent in the repo.*
-
-### Security
-8. **Critical findings**
-   - Metric: critical findings in the new drill-down code.
-   - How measured: Trivy `--severity CRITICAL` + Semgrep `--severity ERROR` counts, from the
-     workflows already in this repo's CI.
-   - Target: **0** — *covers `src/frontend` too, since the SPA is in this repo.*
+- [ ] 1. **Count match** — Reliability · metric-spec · BR-1, BR-2 — for each catalog metric, run
+      the metric query and the drill query with identical period, person and filters → the drilled
+      record count equals the displayed value for all 60 catalog metrics, 0 discrepancy; derived
+      values account for their stated inputs.
+- [ ] 2. **Excluded records stay out** — Reliability · metric-spec · BR-3 — seed bot, automation,
+      migration-artefact and unattributed records → 0 of them appear in any drill-down.
+- [ ] 3. **Refusals** — Reliability · stand-api · BR-10, BR-11 — drive the two refusal cases →
+      oversized request returns 4xx with a reason, never a partial 200; undrillable target returns
+      an error distinguishable from an empty result.
+- [ ] 4. **Page honesty** — Reliability · stand-api · BR-9 — page a 3,000-record fixture at page
+      size 500 (6 pages) and union the pages → 0 duplicates, 0 omissions, total exact (3,000,
+      not 500).
+- [ ] 5. **Connector coverage** — Versatility · metric-spec · BR-18, BR-12 — per-connector
+      fixtures driven by the metric catalog → all 26 connectors and 60 metrics return evidence or
+      an explicit lineage gap; 0 silently undrillable.
+- [ ] 6. **Drill latency** — Performance · stand-api — 200 requests on the reference-org dataset,
+      deepest lineage path included → P95 < 1s. *No load harness exists in the repo today; wiring
+      one is a prerequisite.*
+- [ ] 7. **Memory growth** — Efficiency · manual — 30-minute soak of repeated paged requests →
+      RSS growth < 5%, CPU back to baseline. *Proposed bar, no precedent in the repo.*
+- [ ] 8. **Critical findings** — Security · ci-static — Trivy CRITICAL + Semgrep ERROR counts
+      from the workflows already in CI → 0 (covers src/frontend too; the SPA is in this repo).
 ```
 
 ## What the format did
-- Renamed behaviours into metrics the author can read at a glance: "pagination tests" → **Page
-  errors**, "Cover all 25 connector data" → **Connector coverage**, "No critical issues in the ci
+- Renamed behaviours into scenarios the author can read at a glance: "pagination tests" → **Page
+  honesty**, "Cover all 25 connector data" → **Connector coverage**, "No critical issues in the ci
   pipeline" → **Critical findings**.
-- Gave every target a denominator counted from the repo (60 metrics, 26 connectors, 3,000/500)
-  — and corrected the issue's own "25 connectors" to the 26 the tree actually has — instead of "all"
-  or "100%".
-- Moved "pagination tests" and "Coverage" from Efficiency to **Reliability** — paging correctness is
-  a correctness claim; Efficiency kept the author's genuine run-cost item.
-- Split "100% reconciliation" from "0 leaked records" into checks 1 and 2, because one target line
-  can't carry two numbers.
-- Added exactly **one** check the author didn't have — the main gate — and flagged it to the user
-  rather than slipping it in. The epic's own AC-1 demanded it.
-- Marked the two unbuildable targets and the one invented bar in italics, so nobody reports them
-  green by default.
+- Gave every countable expect a denominator counted from the repo (60 metrics, 26 connectors,
+  3,000/500) — and corrected the issue's own "25 connectors" to the 26 the tree had when this was written.
+- Moved "pagination tests" and "Coverage" from Efficiency to **Reliability** — paging correctness
+  is a correctness claim; Efficiency kept the author's genuine run-cost item.
+- Split "100% reconciliation" from "0 leaked records" into scenarios 1 and 2, because one expect
+  can't carry two different oracles.
+- Attributed every scenario to the suite it will land in — the two seeded-fixture scenarios to
+  the metrics rig, the HTTP-contract ones to the stand suite, the scan to CI — so an unchecked
+  box after implementation names exactly where the missing test belongs.
+- Added exactly **one** scenario the author didn't have — the main gate — and flagged it to the
+  user rather than slipping it in. The epic's own AC-1 demanded it.
+- Flagged the two unbuildable bars and the one invented bar in italics, so nobody reports them
+  green by default — and surfaced that scenarios 6–8 had no acceptance criterion, which is AC
+  review output, not a formatting detail.
 
 ## Note on co-authored issues
 This body was rewritten by the feature's engineer between two edits, dropping three requirements and

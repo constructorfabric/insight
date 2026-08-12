@@ -15,9 +15,9 @@ name: E2E — Compose stand
 # Two independently-reporting checks, split by what they need rather than by
 # what they cover:
 #
-#   api-smoke    tests/stand/api — 257 HTTP contract tests, plus the harness's
-#                own 16 (tests/stand/meta) and the coverage gate. No browser.
-#   ui-journeys  tests/stand/ui  — 10 browser journeys, run inside the
+#   api-smoke    tests/stand/api — 267 HTTP contract tests, plus the harness's
+#                own 17 (tests/stand/meta) and the coverage gate. No browser.
+#   ui-journeys  tests/stand/ui  — 15 browser journeys, run inside the
 #                published ui-tests image.
 #
 # Neither is required on its own. The `Stand E2E` umbrella below is the check

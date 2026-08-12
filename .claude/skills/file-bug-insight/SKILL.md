@@ -74,7 +74,7 @@ Collect first, write second. The evidence must let someone else reproduce this.
   For a remote stand: `../insight-workspace/scripts/ch.sh query --target <target> "<sql>"` (`ch.sh` lists its targets). Those three queries *are* the three-layer walk; `metric-parity` automates it where it exists.
 - **UI bugs** — reproduce it in a browser first (`drive-ui` owns the stand and the browser; `playwright-cli` owns the commands), then lead with a tight annotated shot of the broken widget plus a contrast shot of something that renders correctly. The stand URL belongs in your commands, never in the issue.
 - **Pipeline / config bugs with no UI** — the failure signal itself: the exact error and stack, or a row-count contrast that runs the code's own filter (returns 0) against the unfiltered count (>0). **If the failure is silent** — completes "successfully" with zero effect — say so explicitly. That is the key symptom.
-- **What the metric is *supposed* to do** lives in `docs/domain/metrics/specs/DESIGN.md` and the model under `src/ingestion/`. Read the intent before calling behaviour wrong.
+- **What the metric is *supposed* to do** lives in the model under `src/ingestion/` and the definition registry in `src/backend/services/analytics/`. Read the intent before calling behaviour wrong.
 
 ## Type and priority
 

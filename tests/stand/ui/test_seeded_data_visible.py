@@ -35,6 +35,7 @@ from .pages.team_view import TeamView
 
 
 @pytest.mark.requires_seed("dev_lead", "development_ic")
+@pytest.mark.reliability
 def test_the_landing_view_shows_the_persona_and_their_reports(
     page: Page,
     base_url: str,
@@ -67,6 +68,7 @@ def test_the_landing_view_shows_the_persona_and_their_reports(
 
 
 @pytest.mark.requires_seed("dev_lead")
+@pytest.mark.versatility
 def test_the_personal_dashboard_renders_every_metric_domain(
     page: Page,
     base_url: str,
@@ -102,6 +104,7 @@ def test_the_personal_dashboard_renders_every_metric_domain(
 
 
 @pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
 def test_the_team_view_lists_every_report_the_roster_declares(
     page: Page,
     base_url: str,

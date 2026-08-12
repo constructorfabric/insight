@@ -82,16 +82,17 @@ def _values(response: ApiResponse, metric_key: str) -> list[tuple[str, float | N
     return pairs
 
 
+@pytest.mark.reliability
 @pytest.mark.xfail(
     reason=(
-        "constructorfabric/insight#2261 reworked identity resolution, and the "
-        "seeder writes none of the identity_inputs/account rows the new "
-        "resolver matches on — 0% of seeded observations bind to a person, so "
-        "gold serves null for EVERY person metric on a freshly seeded stand "
-        "(verified 2026-08-12: all keys x all dev-team personas null; auth, "
-        "definitions, and reconciliation lanes all pass because both sides of "
-        "every reconcile are empty). This is the suite's only value-level "
-        "alarm; un-xfail it with the seeder/resolver fix."
+        "constructorfabric/insight#2447 — since the identity-resolution rework "
+        "the seeder writes none of the identity_inputs/account rows the "
+        "resolver matches on, so gold serves null for EVERY person metric on "
+        "a freshly seeded stand (verified 2026-08-12: all keys x all dev-team "
+        "personas; reconciliation lanes pass because both sides are empty). "
+        "The compose lane is red from the same cause, so no green lane loses "
+        "coverage to this marker. This is the suite's only value-level alarm; "
+        "un-xfail it when #2447 is fixed."
     ),
     strict=False,
 )
@@ -133,6 +134,7 @@ def test_metric_results_200(api: ApiClient, stand_manifest: Manifest) -> None:
     )
 
 
+@pytest.mark.security
 def test_metric_results_403_for_a_person_out_of_scope(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:
@@ -164,6 +166,7 @@ def test_metric_results_403_for_a_person_out_of_scope(
         ("nil uuid", "00000000-0000-0000-0000-000000000000"),
     ],
 )
+@pytest.mark.reliability
 def test_metric_results_400_for_a_key_that_is_not_a_person_id(
     api: ApiClient, stand_manifest: Manifest, label: str, entity_id: str
 ) -> None:
@@ -180,6 +183,7 @@ def test_metric_results_400_for_a_key_that_is_not_a_person_id(
     )
 
 
+@pytest.mark.reliability
 def test_metric_results_422_off_schema(api: ApiClient) -> None:
     """A body that is valid JSON but not the request type.
 
@@ -205,6 +209,7 @@ def _body(api: ApiClient, manifest: Manifest) -> dict[str, JsonValue]:
     }
 
 
+@pytest.mark.reliability
 def test_an_empty_metrics_list_is_400(api: ApiClient, stand_manifest: Manifest) -> None:
     """Nothing asked for is a malformed request, not an empty answer."""
     body = _body(api, stand_manifest)
@@ -221,6 +226,7 @@ def test_an_empty_metrics_list_is_400(api: ApiClient, stand_manifest: Manifest) 
         ("reversed", {"from": "2026-02-01", "to": "2026-01-01"}),
     ],
 )
+@pytest.mark.reliability
 def test_a_period_that_cannot_be_honoured_is_400(
     api: ApiClient, stand_manifest: Manifest, label: str, period: dict[str, str]
 ) -> None:
@@ -239,6 +245,7 @@ def test_a_period_that_cannot_be_honoured_is_400(
     )
 
 
+@pytest.mark.reliability
 def test_an_unknown_metric_key_is_400_not_404(api: ApiClient, stand_manifest: Manifest) -> None:
     """This endpoint has no not-found path, and the spec declares none.
 
@@ -260,6 +267,7 @@ def test_an_unknown_metric_key_is_400_not_404(api: ApiClient, stand_manifest: Ma
 
 
 @pytest.mark.requires_seed("dev_lead", "sales_ic")
+@pytest.mark.security
 def test_one_hidden_person_refuses_the_whole_request(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:

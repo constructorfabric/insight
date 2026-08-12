@@ -3,6 +3,12 @@ status: proposed
 date: 2026-07-06
 ---
 
+> [!WARNING]
+> **Under review — audited against the implementation and found inaccurate in places.**
+> Read it against the code, not as authority. The specific claims the code contradicts
+> are listed in the repository [README](../../../../README.md#backend-specs--under-review). Where this
+> document and the committed `openapi.json` disagree, the contract is right.
+
 # DESIGN -- Gateway (nginx edge)
 
 - [ ] `p3` - **ID**: `cpt-insightspec-design-gateway`
@@ -528,6 +534,5 @@ One OpenResty Deployment behind the single ingress backend, per the edge chain f
 ## 5. Traceability
 
 - **Sibling**: [Authenticator PRD](../authenticator/PRD.md), [Authenticator DESIGN](../authenticator/DESIGN.md) -- session lifecycle, exchange contract (`cpt-insightspec-contract-auth-authz-exchange`), JWT claim contract, JWKS
-- **Parent**: [Backend PRD](../specs/PRD.md), [Backend DESIGN](../specs/DESIGN.md)
 - **Decision document**: the nginx + authorization analysis (workspace-level) that mandated this architecture
 - **ADRs**: [ADR-0001](specs/ADR/0001-access-by-lua-over-auth-request.md) (`cpt-insightspec-adr-gw-0001-access-by-lua-over-auth-request`) -- access-phase Lua over `auth_request` for the exchange (`DD-GW-03`), spike-validated. Remaining decisions captured inline in section 4 until extracted alongside implementation.

@@ -26,7 +26,6 @@ analytics HTTP (POST /v1/metric-results)  →  expect rules
 Airbyte / Kestra / Argo are NOT exercised — bronze is seeded by direct INSERT of the
 `$ref`-resolved records declared in each `*.test.yaml`.
 
-See specs: [PRD](../../../../docs/domain/bronze-to-api-e2e/specs/PRD.md), [DESIGN](../../../../docs/domain/bronze-to-api-e2e/specs/DESIGN.md), [DECOMPOSITION](../../../../docs/domain/bronze-to-api-e2e/specs/DECOMPOSITION.md), [FEATURE yaml-rig](../../../../docs/domain/bronze-to-api-e2e/specs/feature-yaml-rig/FEATURE.md).
 
 ## Prerequisites
 
