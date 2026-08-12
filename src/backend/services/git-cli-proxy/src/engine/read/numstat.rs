@@ -470,7 +470,10 @@ mod tests {
 
     #[test]
     fn ignores_fields_before_the_first_commit_marker() {
-        let parsed = parse(&format!("3\t1\torphan.rs\0{}", stream(&[("aaa", &["1\t0\treal.rs"])])));
+        let parsed = parse(&format!(
+            "3\t1\torphan.rs\0{}",
+            stream(&[("aaa", &["1\t0\treal.rs"])])
+        ));
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed.get("aaa").map(Vec::len), Some(1));
     }

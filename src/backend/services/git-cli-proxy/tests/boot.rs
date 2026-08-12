@@ -1355,7 +1355,11 @@ async fn a_deleted_index_changes_nothing_a_caller_can_see() -> R {
             continue;
         };
         for file in files.flatten() {
-            if file.file_name().to_string_lossy().starts_with("page-index-") {
+            if file
+                .file_name()
+                .to_string_lossy()
+                .starts_with("page-index-")
+            {
                 std::fs::remove_file(file.path())?;
                 removed += 1;
             }
@@ -1365,8 +1369,14 @@ async fn a_deleted_index_changes_nothing_a_caller_can_see() -> R {
 
     let walked_commits = get_json(server.port, "/v1/commits", &repo).await?;
     let walked_changes = get_json(server.port, "/v1/file-changes", &repo).await?;
-    assert_eq!(indexed_commits, walked_commits, "commits must not depend on the index");
-    assert_eq!(indexed_changes, walked_changes, "file changes must not depend on the index");
+    assert_eq!(
+        indexed_commits, walked_commits,
+        "commits must not depend on the index"
+    );
+    assert_eq!(
+        indexed_changes, walked_changes,
+        "file changes must not depend on the index"
+    );
     Ok(())
 }
 
@@ -1391,7 +1401,11 @@ async fn the_index_is_what_a_page_actually_reads() -> R {
             continue;
         };
         for file in files.flatten() {
-            if !file.file_name().to_string_lossy().starts_with("page-index-") {
+            if !file
+                .file_name()
+                .to_string_lossy()
+                .starts_with("page-index-")
+            {
                 continue;
             }
             // Drop one ROW and restate the trailer: the count is what lets
@@ -1426,7 +1440,11 @@ async fn the_index_is_what_a_page_actually_reads() -> R {
             continue;
         };
         for file in files.flatten() {
-            if !file.file_name().to_string_lossy().starts_with("page-index-") {
+            if !file
+                .file_name()
+                .to_string_lossy()
+                .starts_with("page-index-")
+            {
                 continue;
             }
             let text = std::fs::read_to_string(file.path())?;

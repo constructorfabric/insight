@@ -58,13 +58,7 @@ pub enum CloneUrlError {
 
 /// Suffixes a pod's own resolver puts on names that only exist inside the
 /// cluster or the local link.
-const INTERNAL_SUFFIXES: [&str; 5] = [
-    ".local",
-    ".internal",
-    ".svc",
-    ".localhost",
-    ".home.arpa",
-];
+const INTERNAL_SUFFIXES: [&str; 5] = [".local", ".internal", ".svc", ".localhost", ".home.arpa"];
 
 const HTTP: &str = "http://";
 const HTTPS: &str = "https://";
@@ -158,7 +152,10 @@ fn permitted_host(host: &str, allowed: &[String]) -> bool {
     if host.is_empty() {
         return false;
     }
-    if allowed.iter().any(|entry| entry.eq_ignore_ascii_case(&host)) {
+    if allowed
+        .iter()
+        .any(|entry| entry.eq_ignore_ascii_case(&host))
+    {
         return true;
     }
 
@@ -236,7 +233,10 @@ mod tests {
             ("link-local v6", "http://[fe80::1]/a.git"),
             ("unspecified", "http://0.0.0.0/a.git"),
             ("cluster service", "http://clickhouse/a.git"),
-            ("cluster DNS", "http://svc.namespace.svc.cluster.local/a.git"),
+            (
+                "cluster DNS",
+                "http://svc.namespace.svc.cluster.local/a.git",
+            ),
             ("mDNS", "http://printer.local/a.git"),
         ];
         for (name, raw) in cases {

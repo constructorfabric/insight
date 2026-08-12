@@ -491,7 +491,12 @@ mod tests {
 
     #[test]
     fn a_message_may_hold_anything_including_newlines() {
-        let record = record("b1", "b0", "2026-08-01T10:00:00+00:00", "subject\n\nbody line\nmore");
+        let record = record(
+            "b1",
+            "b0",
+            "2026-08-01T10:00:00+00:00",
+            "subject\n\nbody line\nmore",
+        );
         let parsed = parse_headers(&record);
         assert_eq!(parsed.len(), 1);
         assert_eq!(

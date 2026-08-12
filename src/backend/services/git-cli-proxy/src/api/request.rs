@@ -144,7 +144,10 @@ where
 /// # Errors
 ///
 /// [`BadRequest::MissingParam`] naming `name` when it is absent or blank.
-pub fn required_param<'a>(value: Option<&'a str>, name: &'static str) -> Result<&'a str, BadRequest> {
+pub fn required_param<'a>(
+    value: Option<&'a str>,
+    name: &'static str,
+) -> Result<&'a str, BadRequest> {
     value
         .map(str::trim)
         .filter(|value| !value.is_empty())

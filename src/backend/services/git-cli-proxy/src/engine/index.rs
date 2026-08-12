@@ -54,7 +54,9 @@ pub type IndexPage = (Vec<IndexRow>, Option<(String, String)>);
 /// entry's existing eviction, so the index needs no bookkeeping of its own.
 #[must_use]
 pub fn index_path(git_dir: &Path, generation: u64) -> PathBuf {
-    git_dir.join("info").join(format!("page-index-{generation}"))
+    git_dir
+        .join("info")
+        .join(format!("page-index-{generation}"))
 }
 
 /// Persist `rows` — already sorted by `(ordinal, sha)` — as the index for
@@ -68,7 +70,10 @@ pub fn write(git_dir: &Path, generation: u64, rows: &[IndexRow]) -> std::io::Res
     std::fs::create_dir_all(&info)?;
 
     let target = index_path(git_dir, generation);
-    let tmp = info.join(format!("page-index-{generation}.tmp.{}", std::process::id()));
+    let tmp = info.join(format!(
+        "page-index-{generation}.tmp.{}",
+        std::process::id()
+    ));
     {
         let mut out = BufWriter::new(std::fs::File::create(&tmp)?);
         writeln!(out, "{HEADER}")?;
@@ -133,10 +138,9 @@ pub fn read_page(
 
     let mut selected: Vec<IndexRow> = Vec::new();
     let mut more = false;
-    let mut rows_seen: usize = 0;
     let mut trailer_ok = false;
 
-    for line in lines {
+    for (rows_seen, line) in lines.enumerate() {
         let line = line?;
         if let Some(count) = line.strip_prefix(TRAILER_TAG).and_then(|rest| {
             rest.strip_prefix(FIELD)
@@ -146,7 +150,6 @@ pub fn read_page(
             break;
         }
         let row = parse_row(&line)?;
-        rows_seen += 1;
 
         if let Some(bound) = query.since_epoch
             && parse_instant(&row.key.committed_date).is_some_and(|at| at < bound)
@@ -322,7 +325,12 @@ mod tests {
     #[test]
     fn a_new_generation_removes_the_superseded_index() {
         let dir = fixture_dir("supersede");
-        let rows = vec![row("2026-08-01T08:00:00.000000000Z", &"a".repeat(40), 1, true)];
+        let rows = vec![row(
+            "2026-08-01T08:00:00.000000000Z",
+            &"a".repeat(40),
+            1,
+            true,
+        )];
         if let Err(e) = write(&dir, 1, &rows).and_then(|()| write(&dir, 2, &rows)) {
             panic!("write: {e}");
         }

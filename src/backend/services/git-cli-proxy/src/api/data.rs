@@ -751,7 +751,8 @@ mod tests {
             max_rows: usize::MAX,
             max_patch_bytes: 150,
         };
-        let (rows, cursor) = emit_file_changes(vec![early, next.clone()], &stats, &mut texts.clone(), caps);
+        let (rows, cursor) =
+            emit_file_changes(vec![early, next.clone()], &stats, &mut texts.clone(), caps);
         assert_eq!(rows.len(), 1, "only the first commit fits");
         let Some((primary, secondary)) = cursor else {
             panic!("a page stopped early must carry a cursor")
@@ -773,7 +774,8 @@ mod tests {
     #[test]
     fn an_unbounded_page_keeps_every_row_and_no_early_cursor() {
         let (window, stats, texts) = scenario(3, 2, 4);
-        let (rows, cursor) = emit_file_changes(window, &stats, &mut texts.clone(), RowCaps::DEFAULT);
+        let (rows, cursor) =
+            emit_file_changes(window, &stats, &mut texts.clone(), RowCaps::DEFAULT);
 
         assert_eq!(rows.len(), 6);
         assert_eq!(cursor, None, "nothing was withheld, so nothing to resume");

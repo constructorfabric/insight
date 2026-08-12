@@ -213,10 +213,11 @@ mod live_tests {
             "counts must be real: {files:?}"
         );
 
-        let texts = match patches::read(runner, git_dir, &shas, 64 * 1024, usize::MAX, &creds()).await {
-            Ok(t) => t,
-            Err(e) => panic!("patches::read: {e}"),
-        };
+        let texts =
+            match patches::read(runner, git_dir, &shas, 64 * 1024, usize::MAX, &creds()).await {
+                Ok(t) => t,
+                Err(e) => panic!("patches::read: {e}"),
+            };
         let Some(patch) = texts.get(&second.sha).and_then(|per| per.get("b.txt")) else {
             panic!("no patch for b.txt")
         };
@@ -371,8 +372,13 @@ mod live_tests {
 
         for (name, since, merges, prefixes) in scenarios {
             let expected = page_all_by_walk(&all, since, merges, prefixes.as_ref());
-            let indexed =
-                page_all_by_index(git_dir, guard.generation(), since, merges, prefixes.as_ref());
+            let indexed = page_all_by_index(
+                git_dir,
+                guard.generation(),
+                since,
+                merges,
+                prefixes.as_ref(),
+            );
             assert_eq!(indexed, expected, "case {name}: the paths must agree");
             assert!(
                 !expected.is_empty(),
@@ -407,7 +413,12 @@ mod live_tests {
         );
     }
 
-    type ParityScenario = (&'static str, Option<&'static str>, bool, Option<Vec<String>>);
+    type ParityScenario = (
+        &'static str,
+        Option<&'static str>,
+        bool,
+        Option<Vec<String>>,
+    );
 
     /// The fallback path's pagination, applied to completion.
     fn page_all_by_walk(
@@ -501,7 +512,10 @@ mod live_tests {
             Err(e) => panic!("enumerate: {e}"),
         };
         let shas: Vec<String> = keys.iter().map(|k| k.sha.clone()).collect();
-        assert!(shas.len() > patches::PATCH_BATCH, "the window must span batches");
+        assert!(
+            shas.len() > patches::PATCH_BATCH,
+            "the window must span batches"
+        );
         if let Err(e) = blobs::prefetch(runner, git_dir, &shas, &creds(), u64::MAX).await {
             panic!("prefetch: {e}");
         }

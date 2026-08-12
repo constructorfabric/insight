@@ -263,7 +263,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             "Clone URL of the repository (http/https)",
             "string",
         )
-        .query_param_typed("page_size", false, "1..=1000, default 1000; larger values are clamped", "integer")
+        .query_param_typed(
+            "page_size",
+            false,
+            "1..=1000, default 1000; larger values are clamped",
+            "integer",
+        )
         .query_param_typed(
             "page_token",
             false,
@@ -329,7 +334,11 @@ mod tests {
         })
     }
 
-    async fn response_for(uri: &str, bearer: Option<&str>, identity: bool) -> axum::response::Response {
+    async fn response_for(
+        uri: &str,
+        bearer: Option<&str>,
+        identity: bool,
+    ) -> axum::response::Response {
         let mut builder = Request::builder().uri(uri);
         if let Some(token) = bearer {
             builder = builder.header("authorization", format!("Bearer {token}"));
@@ -489,7 +498,10 @@ mod tests {
             let Ok(body) = axum::body::to_bytes(response.into_body(), usize::MAX).await else {
                 panic!("case {name}: body must be readable")
             };
-            assert!(!body.is_empty(), "case {name}: the envelope must have a body");
+            assert!(
+                !body.is_empty(),
+                "case {name}: the envelope must have a body"
+            );
         }
     }
 

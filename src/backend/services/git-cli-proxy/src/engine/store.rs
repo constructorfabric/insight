@@ -1138,12 +1138,10 @@ impl RepoStore {
         tokio::spawn(async move {
             {
                 let mut drift = store.drift.lock().await;
-                let state = drift
-                    .entry(key.dir_name())
-                    .or_insert_with(|| DriftState {
-                        checked: Instant::now(),
-                        losses: 0,
-                    });
+                let state = drift.entry(key.dir_name()).or_insert_with(|| DriftState {
+                    checked: Instant::now(),
+                    losses: 0,
+                });
                 if let Some(due) = Instant::now().checked_sub(DRIFT_CHECK_INTERVAL) {
                     state.checked = due;
                 }

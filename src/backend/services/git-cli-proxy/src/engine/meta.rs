@@ -36,11 +36,7 @@ pub struct RepoMeta {
     /// INVARIANT: a warm read is served only to a caller presenting matching
     /// credentials — the cache key alone is not an authorization claim.
     /// Reset by a re-clone; bounded, oldest proof dropped first.
-    #[serde(
-        default,
-        alias = "cred_fingerprint",
-        deserialize_with = "one_or_many"
-    )]
+    #[serde(default, alias = "cred_fingerprint", deserialize_with = "one_or_many")]
     pub cred_fingerprints: Vec<String>,
     /// Set once the entry was promoted out of a partial clone because origin
     /// refuses to serve explicitly requested objects. Purged blobs cannot be
@@ -284,7 +280,7 @@ mod tests {
         assert_eq!(
             published,
             RepoMeta {
-            incarnation: "inc0".to_owned(),
+                incarnation: "inc0".to_owned(),
                 generation: published.generation,
                 ..sample()
             },
