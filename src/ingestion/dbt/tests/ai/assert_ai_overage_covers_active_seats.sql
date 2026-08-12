@@ -13,9 +13,9 @@
 {#- Bounded to the current billing month on purpose. overage_spend_limits is a
     snapshot of the month in progress and is never backfilled, so a completed
     month only holds the seats that happened to be captured while it was
-    current — measured on insight-dev, 97 people in 2026-05 and 139 in 2026-06
-    have activity with no seat row, against zero in the two months synced end
-    to end. Unbounded, this check would report that gap forever. -#}
+    current: months that predate the connector carry activity with no seat row,
+    and nothing can fill them in later. Unbounded, this check would report that
+    gap forever. -#}
 
 WITH toStartOfMonth(today()) AS billing_month,
 
