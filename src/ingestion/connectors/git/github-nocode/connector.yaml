@@ -475,9 +475,9 @@ streams:
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}
 
-  # ── commit_files (git-cli-proxy) ───────────────────────────────────
+  # ── file_changes (git-cli-proxy) ───────────────────────────────────
   - type: DeclarativeStream
-    name: commit_files
+    name: file_changes
     primary_key:
       - unique_key
     schema_loader:
@@ -576,9 +576,9 @@ streams:
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}:{{ record['filename'] | replace(':', '%3A') }}
 
-  # ── repo_branches (git-cli-proxy) ──────────────────────────────────
+  # ── branches (git-cli-proxy) ──────────────────────────────────
   - type: DeclarativeStream
-    name: repo_branches
+    name: branches
     primary_key:
       - unique_key
     schema_loader:
@@ -653,7 +653,7 @@ streams:
   # data-feed stop halts pagination at the stored per-repo state, and the
   # client-side filter drops the stale tail of the boundary page.
   # additions/deletions/changed_files/merged_by are detail-only and stay
-  # NULL in v1 — PR size comes from the proxy's commit_files.
+  # NULL in v1 — PR size comes from the proxy's file_changes.
   - type: DeclarativeStream
     name: pull_requests
     primary_key:
@@ -1783,8 +1783,8 @@ metadata:
   autoImportSchema:
     repositories: false
     commits: false
-    commit_files: false
-    repo_branches: false
+    file_changes: false
+    branches: false
     pull_requests: false
     pull_request_reviews: false
     pull_request_comments: false

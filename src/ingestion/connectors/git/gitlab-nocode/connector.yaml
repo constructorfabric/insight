@@ -16,8 +16,8 @@ type: DeclarativeSource
 #
 #   repositories     -> GitLab /api/v4/projects        incremental (last_activity_at)
 #   commits          -> proxy /v1/commits              incremental (committed_date), per repo
-#   commit_files     -> proxy /v1/file-changes         incremental (committed_date), per repo
-#   repo_branches    -> proxy /v1/branches             full refresh, per repo
+#   file_changes     -> proxy /v1/file-changes         incremental (committed_date), per repo
+#   branches         -> proxy /v1/branches             full refresh, per repo
 #
 # The proxy answers 429 + Retry-After while a cold repository is being cloned
 # in the background, so every proxy stream retries on 429 and fails fast on the
@@ -116,10 +116,11 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
         datetime_format: "%Y-%m-%d"
-      start_time_option:
-        type: RequestOption
-        field_name: last_activity_after
-        inject_into: request_parameter
+      # /groups/:id/projects has no last_activity_after filter (GitLab
+      # silently ignores it; the CDK connector full-lists too), so the cursor
+      # filters client-side and only repositories active since the last sync
+      # are emitted downstream.
+      is_client_side_incremental: true
     transformations:
       - type: AddFields
         fields:
@@ -320,10 +321,9 @@ streams:
                   type: MinMaxDatetime
                   datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
                   datetime_format: "%Y-%m-%d"
-                start_time_option:
-                  type: RequestOption
-                  field_name: last_activity_after
-                  inject_into: request_parameter
+                # No server-side activity filter on this endpoint; the
+                # cursor filters client-side (see repositories stream).
+                is_client_side_incremental: true
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: committed_date
@@ -371,7 +371,7 @@ streams:
 
   # ── Per-file changes (git-cli-proxy) ────────────────────────────────────
   - type: DeclarativeStream
-    name: commit_files
+    name: file_changes
     primary_key:
       - unique_key
     schema_loader:
@@ -542,10 +542,9 @@ streams:
                   type: MinMaxDatetime
                   datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
                   datetime_format: "%Y-%m-%d"
-                start_time_option:
-                  type: RequestOption
-                  field_name: last_activity_after
-                  inject_into: request_parameter
+                # No server-side activity filter on this endpoint; the
+                # cursor filters client-side (see repositories stream).
+                is_client_side_incremental: true
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: committed_date
@@ -593,7 +592,7 @@ streams:
   # history is derived downstream by the snapshot/fields_history dbt macros —
   # the same pattern user profiles use.
   - type: DeclarativeStream
-    name: repo_branches
+    name: branches
     primary_key:
       - unique_key
     schema_loader:
@@ -1907,8 +1906,8 @@ metadata:
   autoImportSchema:
     repositories: false
     commits: false
-    commit_files: false
-    repo_branches: false
+    file_changes: false
+    branches: false
     merge_requests: false
     merge_request_notes: false
     merge_request_approvals: false

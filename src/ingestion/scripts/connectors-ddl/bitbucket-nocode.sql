@@ -1,6 +1,6 @@
 CREATE DATABASE IF NOT EXISTS `bronze_bitbucket_nocode`;
 
-CREATE TABLE IF NOT EXISTS bronze_bitbucket_nocode.commit_files
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_nocode.branches
 (
     `_airbyte_raw_id` String,
     `_airbyte_extracted_at` DateTime64(3),
@@ -11,17 +11,10 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_nocode.commit_files
     `source_id` Nullable(String),
     `data_source` Nullable(String),
     `repository` Nullable(String),
-    `sha` Nullable(String),
-    `committed_date` Nullable(String),
-    `filename` Nullable(String),
-    `previous_filename` Nullable(String),
-    `status` Nullable(String),
-    `additions` Nullable(Int64),
-    `deletions` Nullable(Int64),
-    `changes` Nullable(Int64),
-    `is_binary` Nullable(Bool),
-    `patch` Nullable(String),
-    `patch_truncated` Nullable(Bool)
+    `name` Nullable(String),
+    `head_sha` Nullable(String),
+    `head_committed_date` Nullable(String),
+    `is_default` Nullable(Bool)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
@@ -80,6 +73,34 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_nocode.deployments
     `deployable_pipeline_uuid` Nullable(String),
     `created_on` Nullable(String),
     `last_update_time` Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_nocode.file_changes
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `repository` Nullable(String),
+    `sha` Nullable(String),
+    `committed_date` Nullable(String),
+    `filename` Nullable(String),
+    `previous_filename` Nullable(String),
+    `status` Nullable(String),
+    `additions` Nullable(Int64),
+    `deletions` Nullable(Int64),
+    `changes` Nullable(Int64),
+    `is_binary` Nullable(Bool),
+    `patch` Nullable(String),
+    `patch_truncated` Nullable(Bool)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
@@ -201,27 +222,6 @@ ORDER BY _airbyte_raw_id
 SETTINGS index_granularity = 8192
 ;
 
-CREATE TABLE IF NOT EXISTS bronze_bitbucket_nocode.repo_branches
-(
-    `_airbyte_raw_id` String,
-    `_airbyte_extracted_at` DateTime64(3),
-    `_airbyte_meta` String,
-    `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
-    `tenant_id` Nullable(String),
-    `source_id` Nullable(String),
-    `data_source` Nullable(String),
-    `repository` Nullable(String),
-    `name` Nullable(String),
-    `head_sha` Nullable(String),
-    `head_committed_date` Nullable(String),
-    `is_default` Nullable(Bool)
-)
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
-;
-
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_nocode.repositories
 (
     `_airbyte_raw_id` String,
@@ -269,4 +269,3 @@ ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
 SETTINGS index_granularity = 8192
 ;
-

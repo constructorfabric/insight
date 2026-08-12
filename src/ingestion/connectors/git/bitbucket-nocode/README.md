@@ -82,8 +82,8 @@ kubectl apply -f src/ingestion/secrets/connectors/bitbucket-nocode.yaml
 |--------|----------|-----------|--------|
 | `repositories` | Bitbucket `/2.0/repositories/{workspace}` | incremental | `updated_on` |
 | `commits` | proxy `/v1/commits` | incremental, per repository | `committed_date` |
-| `commit_files` | proxy `/v1/file-changes` | incremental, per repository | `committed_date` |
-| `repo_branches` | proxy `/v1/branches` | full refresh, per repository | — |
+| `file_changes` | proxy `/v1/file-changes` | incremental, per repository | `committed_date` |
+| `branches` | proxy `/v1/branches` | full refresh, per repository | — |
 
 ### How the streams fit together
 
@@ -91,7 +91,7 @@ kubectl apply -f src/ingestion/secrets/connectors/bitbucket-nocode.yaml
 and is the incremental **parent**: the commit streams route through
 `SubstreamPartitionRouter` with `incremental_dependency: true`, so a sync visits
 only repositories whose `updated_on` advanced. The CDK persists parent state
-only when the child stream is incremental — `commits` and `commit_files` are.
+only when the child stream is incremental — `commits` and `file_changes` are.
 
 The proxy routes on a **flat** `clone_url` field, but Bitbucket nests clone
 links in an array (`links.clone[]`, one entry per protocol). Every repositories
@@ -102,7 +102,7 @@ transformation. The API link is used rather than a URL derived from
 The streams are otherwise independent: each carries its own cursor and asks the
 proxy for its own window. They join downstream by `sha`.
 
-`repo_branches` is full refresh — bronze keeps the latest state per branch, and
+`branches` is full refresh — bronze keeps the latest state per branch, and
 head-movement history is derived by the `snapshot` / `fields_history` dbt
 macros. Its `unique_key` excludes `head_sha`, so the ReplacingMergeTree
 collapses to current state and a head move is a tracked-column change.

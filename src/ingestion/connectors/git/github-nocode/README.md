@@ -15,8 +15,8 @@ Coexists with `git/github-v2` (CDK) under its own `data_source`
 |---|---|---|
 | repositories | GitHub `/orgs/{org}/repos` | full refresh |
 | commits | proxy `/v1/commits` | committed_date, per pushed repo |
-| commit_files | proxy `/v1/file-changes` | committed_date, per pushed repo |
-| repo_branches | proxy `/v1/branches` | full refresh, per pushed repo |
+| file_changes | proxy `/v1/file-changes` | committed_date, per pushed repo |
+| branches | proxy `/v1/branches` | full refresh, per pushed repo |
 | pull_requests | `/repos/{r}/pulls` (list) | updated_at, newest-first data feed |
 | pull_request_reviews | `/pulls/{n}/reviews` | windowed PR parent, full refresh per PR |
 | pull_request_comments | `/repos/{r}/issues/comments` | updated_at, server-side `since` |
@@ -48,7 +48,7 @@ here is a separate migration.
 
 `pull_requests.additions/deletions/changed_files/merged_by` are detail-only
 (`GET /pulls/{n}`) and are not fetched — PR size derives from the proxy's
-commit_files. Inline code-review comments (`/pulls/comments`) are not synced;
+file_changes. Inline code-review comments (`/pulls/comments`) are not synced;
 conversation comments and reviews are.
 
 ## Cost shape

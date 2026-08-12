@@ -77,15 +77,15 @@ kubectl apply -f src/ingestion/secrets/connectors/gitlab-nocode.yaml
 |--------|----------|-----------|--------|
 | `repositories` | GitLab `/projects` | incremental | `last_activity_at` |
 | `commits` | proxy `/v1/commits` | incremental, per repository | `committed_date` |
-| `commit_files` | proxy `/v1/file-changes` | incremental, per repository | `committed_date` |
-| `repo_branches` | proxy `/v1/branches` | full refresh, per repository | — |
+| `file_changes` | proxy `/v1/file-changes` | incremental, per repository | `committed_date` |
+| `branches` | proxy `/v1/branches` | full refresh, per repository | — |
 
 ### How the incremental streams fit together
 
 `repositories` is the incremental **parent**: the commit streams route through
 `SubstreamPartitionRouter` with `incremental_dependency: true`, so a sync visits
 only repositories whose `last_activity_at` advanced. The CDK persists parent
-state only when the child stream is incremental — `commits` and `commit_files`
+state only when the child stream is incremental — `commits` and `file_changes`
 are, which is what makes the dependency hold.
 
 The streams are otherwise **independent**: each carries its own cursor and each
@@ -93,7 +93,7 @@ asks the proxy for its own window. Nothing is shared between them at runtime
 (unlike the CDK connector, where `file_changes` reads a temp file written by
 `commits` in the same process). They join downstream by `sha`.
 
-`repo_branches` is full refresh: bronze keeps the latest state per branch, and
+`branches` is full refresh: bronze keeps the latest state per branch, and
 head-movement history is derived by the `snapshot` / `fields_history` dbt macros
 — the same pattern user profiles use. Its `unique_key` therefore excludes
 `head_sha`, so the ReplacingMergeTree collapses to current state and a head move

@@ -16,8 +16,8 @@ type: DeclarativeSource
 #
 #   repositories     -> Bitbucket /2.0/repositories/{ws} incremental (updated_on)
 #   commits          -> proxy /v1/commits              incremental (committed_date), per repo
-#   commit_files     -> proxy /v1/file-changes         incremental (committed_date), per repo
-#   repo_branches    -> proxy /v1/branches             full refresh, per repo
+#   file_changes     -> proxy /v1/file-changes         incremental (committed_date), per repo
+#   branches         -> proxy /v1/branches             full refresh, per repo
 #
 # The proxy answers 429 + Retry-After while a cold repository is being cloned
 # in the background, so every proxy stream retries on 429 and fails fast on the
@@ -362,7 +362,7 @@ streams:
 
   # ── Per-file changes (git-cli-proxy) ────────────────────────────────────
   - type: DeclarativeStream
-    name: commit_files
+    name: file_changes
     primary_key:
       - unique_key
     schema_loader:
@@ -578,7 +578,7 @@ streams:
   # history is derived downstream by the snapshot/fields_history dbt macros —
   # the same pattern user profiles use.
   - type: DeclarativeStream
-    name: repo_branches
+    name: branches
     primary_key:
       - unique_key
     schema_loader:
@@ -1491,7 +1491,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pr_id }}:{{ 'approval' if record.get('approval') else 'changes_requested' if record.get('changes_requested') else 'update' if record.get('update') else 'comment' }}:{{ ((record.get('approval') or {}).get('date') or (record.get('changes_requested') or {}).get('date') or (record.get('update') or {}).get('date') or (record.get('comment') or {}).get('created_on') or '') | replace(':', '%3A') }}:{{ (((record.get('approval') or {}).get('user') or {}).get('uuid') or ((record.get('changes_requested') or {}).get('user') or {}).get('uuid') or ((record.get('update') or {}).get('author') or {}).get('uuid') or ((record.get('comment') or {}).get('user') or {}).get('uuid') or '') | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pr_id }}:{{ 'approval' if record.get('approval') else 'changes_requested' if record.get('changes_requested') else 'update' if record.get('update') else 'comment' }}:{{ ((record.get('approval') or {}).get('date') or (record.get('changes_requested') or {}).get('date') or (record.get('update') or {}).get('date') or (record.get('comment') or {}).get('created_on') or '') | replace(':', '%3A') }}:{{ (((record.get('approval') or {}).get('user') or {}).get('uuid') or ((record.get('changes_requested') or {}).get('user') or {}).get('uuid') or ((record.get('update') or {}).get('author') or {}).get('uuid') or ((record.get('comment') or {}).get('user') or {}).get('uuid') or '') | replace(':', '%3A') }}:{{ (record.get('comment') or {}).get('id') or '' }}
       - type: RemoveFields
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
@@ -2204,8 +2204,8 @@ metadata:
   autoImportSchema:
     repositories: false
     commits: false
-    commit_files: false
-    repo_branches: false
+    file_changes: false
+    branches: false
     pull_requests: false
     pull_request_comments: false
     pull_request_activity: false
