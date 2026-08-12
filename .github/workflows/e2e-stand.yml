@@ -21,9 +21,9 @@ name: E2E — Compose stand
 #                published ui-tests image.
 #
 # Neither is required on its own. The `Stand E2E` umbrella below is the check
-# meant to be required in branch protection, and the whole workflow is a
-# merge-queue gate rather than a per-push one: on pull_request every job here
-# skips (branch protection counts a skipped job as a pass), and the lanes run
+# meant to be required for the merge queue (merge_group), and the whole
+# workflow is a merge-queue gate rather than a per-push one: pull_request is
+# paths-filtered and every job skips on it regardless, and the lanes run
 # once per queue batch on merge_group. Wall-clock and flake history are in
 # .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
 #
@@ -36,11 +36,26 @@ name: E2E — Compose stand
 on:
   pull_request:
     branches: [main]
-    # Deliberately NO `paths:` filter, even though every job below skips on
-    # pull_request: a required check whose workflow never triggers at all
-    # reports as pending forever and would block queue entry, while a
-    # triggered run whose jobs all skip counts as a pass. The trigger must
-    # therefore keep firing on every PR — it just costs no runner time.
+    # Mirrors the `changes` job's regex below — keep the two lists in sync.
+    # The filter only prunes no-op skipped runs from the Actions tab: every
+    # job below skips on pull_request anyway. The cost is that a PR outside
+    # these paths produces no run at all, so `Stand E2E` cannot be made a
+    # PR-level required check while this filter exists — a required check
+    # whose workflow never triggers reports as pending forever and blocks
+    # queue entry. It can still be required on merge_group, which carries no
+    # paths filter (the event doesn't support one; the `changes` job does
+    # that work there).
+    paths:
+      - "tests/**"
+      - "deploy/compose/**"
+      - "src/ingestion/tools/seed/**"
+      - "docker-compose.yml"
+      - "dev-compose.sh"
+      - "src/backend/**"
+      - "src/frontend/**"
+      - "docs/components/backend/**/openapi.json"
+      - ".github/workflows/e2e-stand.yml"
+      - ".github/workflows/scripts/redact-playwright-trace.py"
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit
   # merge_group, and a required check must report there or every queued PR
   # times out and is evicted.
@@ -80,8 +95,9 @@ jobs:
   # Stages 2 (CI stand) and 3 (E2E stand) are meant to add a target to
   # `resolve-target` below rather than copy this file.
   # ─── changes ──────────────────────────────────────────────────────────────
-  # What the `on: paths:` filter used to do, moved into a job so the workflow
-  # ALWAYS runs and the umbrella below can always report.
+  # The relevance filter for the events that support no `paths:` key —
+  # merge_group above all. Its regex mirrors the pull_request paths list at
+  # the top of the file; keep the two in sync.
   #
   # `src/backend/**` is in the list, and its absence was the reason making this
   # required would have gated nothing that matters: the endpoint contracts this
@@ -117,7 +133,7 @@ jobs:
           fi
           changed="$(git diff --name-only "$BASE" "$HEAD")"
           echo "$changed" | sed 's/^/  /'
-          if echo "$changed" | grep -qE '^(tests/(stand|lib)/|tests/pyproject\.toml|tests/uv\.lock|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/helm/|docs/components/backend/.*/openapi\.json|\.github/workflows/e2e-stand\.yml|\.github/workflows/scripts/redact-playwright-trace\.py)'; then
+          if echo "$changed" | grep -qE '^(tests/|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/|docs/components/backend/.*/openapi\.json|\.github/workflows/e2e-stand\.yml|\.github/workflows/scripts/redact-playwright-trace\.py)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
@@ -448,10 +464,11 @@ jobs:
           ./dev-compose.sh test-stand down
 
   # ─── the required check ───────────────────────────────────────────────────
-  # One stable context name for branch protection. On pull_request it skips
-  # with everything else — the skip IS the passing report. On merge-queue
-  # builds it runs whenever the run wasn't cancelled, so it still reports when
-  # `changes` deemed the batch irrelevant and the lanes were skipped.
+  # One stable context name for branch protection — required on merge_group
+  # only; the paths filter above means it cannot be required at PR level. On
+  # pull_request it skips with everything else. On merge-queue builds it runs
+  # whenever the run wasn't cancelled, so it still reports when `changes`
+  # deemed the batch irrelevant and the lanes were skipped.
   #
   # `skipped` is therefore a PASS here, unlike in e2e-bronze-to-api.yml's
   # umbrella where it is a failure. The difference is what the skip means: there
