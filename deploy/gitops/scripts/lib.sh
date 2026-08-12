@@ -1,5 +1,7 @@
+# shellcheck shell=bash
 # lib.sh — shared guard/helper library for deploy/gitops/scripts/*. Sourced
 # only; guards act through a global KUBECTL array the caller assembles.
+# shellcheck disable=SC2034  # colour vars are used by the sourcing scripts
 
 if [ -t 1 ] && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
   C_RED=$'\033[31m'; C_GRN=$'\033[32m'; C_YEL=$'\033[33m'; C_CYA=$'\033[36m'; C_RST=$'\033[0m'

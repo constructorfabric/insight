@@ -267,7 +267,7 @@ jobs:
           if ! KUBECONFIG="$target" kubectl config view --minify >/dev/null 2>&1; then
             echo "::error::TEST_STAND_KUBECONFIG did not decode into a usable kubeconfig."
             echo "It must be base64 of a complete kubeconfig with a current-context set —"
-            echo "'base64 -w0 < kubeconfig' on Linux, 'base64 < kubeconfig | tr -d \\\\n' on macOS."
+            printf "%s\n" "'base64 -w0 < kubeconfig' on Linux, 'base64 < kubeconfig | tr -d \\n' on macOS."
             exit 1
           fi
           echo "KUBECONFIG=$target" >> "$GITHUB_ENV"
