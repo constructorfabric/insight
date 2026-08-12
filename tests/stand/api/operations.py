@@ -116,11 +116,12 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("DELETE", f"/v1/metrics/{SOME_METRIC_KEY}"),
 )
 
-#: identity-resolution — 17 operations. `/health` and `/healthz` are the host
+#: identity-resolution — 18 operations. `/health` and `/healthz` are the host
 #: router's, not the product API, and are deliberately absent: the real probes
 #: address the pod directly rather than passing the gateway.
 IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     _i("POST", "/v1/profiles"),
+    _i("GET", "/v1/me"),
     _i("GET", "/v1/subchart"),
     _i("GET", f"/v1/subchart/{SOME_ID}"),
     _i("GET", "/v1/persons-seed"),

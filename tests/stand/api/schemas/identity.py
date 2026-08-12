@@ -134,6 +134,17 @@ class ItemResult(BaseModel):
     source_id: UUID
 
 
+class MeRoleResponse(BaseModel):
+    """
+    One active role assignment of the caller.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    name: str
+    role_id: UUID
+
+
 class MergeRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -470,6 +481,18 @@ class CorrectionResponse(BaseModel):
     applied: int = Field(..., ge=0)
     items: list[ItemResult]
     new_person_id: UUID | None = Field(None, description='Set by `detach` when the account reached the new person; absent when\nthe write was refused, since no binding points at that id.')
+
+
+class MeResponse(BaseModel):
+    """
+    The caller as the gateway JWT identifies them, with their active roles.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    insight_tenant_id: UUID
+    person_id: UUID
+    roles: list[MeRoleResponse]
 
 
 class PersonRoleListResponse(BaseModel):
