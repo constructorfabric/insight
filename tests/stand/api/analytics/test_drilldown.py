@@ -1273,7 +1273,7 @@ def test_drilldown_refuses_a_filter_over_the_declared_value_cap(
         filters=[{"dimension": "source", "values": values}],
     )
     response = _send(api, path, request)
-    _refusal(response, 400, "filters.values", "values are required")
+    _refusal(response, 400, "filters.values", "between 1 and 100 values are required")
 
 
 @pytest.mark.requires_seed("dev_lead")

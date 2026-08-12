@@ -350,8 +350,6 @@ mod tests {
         );
     }
 
-    // #1603 scenario 14 — the ceilings refuse explicitly at unit level; the
-    // deployed-stand half (scenario 8) waits on a fixture that can reach them.
     #[test]
     fn the_export_row_limit_refuses_only_past_the_cap() {
         assert!(enforce_export_row_limit(MAX_EXPORT_ROWS).is_ok());
