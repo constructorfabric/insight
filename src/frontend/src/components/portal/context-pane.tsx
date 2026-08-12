@@ -523,11 +523,19 @@ function PersonSectionsNav() {
                     dismiss();
                   }}
                   title={
-                    standing?.hasData !== false
-                      ? standing?.phrase
-                      : standing.peersHaveData
-                        ? "No data this period"
-                        : "No data reaches us for this section"
+                    // Nothing to say until the standings arrive. Both flags
+                    // read false while the queries are in flight, so left to
+                    // fall through, the tooltip announced the strongest of the
+                    // three — that nothing feeds this section — on an answer
+                    // the hook had not given. The mark is hidden for that
+                    // reason already; the words have to follow it.
+                    standing == null || standing.isPending
+                      ? undefined
+                      : standing.hasData
+                        ? standing.phrase
+                        : standing.peersHaveData
+                          ? "No data this period"
+                          : "No data reaches us for this section"
                   }
                 >
                   <Layers />

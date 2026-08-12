@@ -205,5 +205,9 @@ describe("ContextPane", () => {
     pane();
     const button = screen.getByText("Git output").closest("button")!;
     expect(button.querySelector("span[aria-hidden]")).toBeNull();
+    // And says nothing either. Both flags read false while the queries are in
+    // flight, so a tooltip that trusted them would announce the strongest
+    // claim of the three on an answer the hook has not given.
+    expect(button.getAttribute("title")).toBeNull();
   });
 });
