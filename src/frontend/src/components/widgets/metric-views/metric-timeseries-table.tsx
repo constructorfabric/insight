@@ -51,18 +51,16 @@ const NOTHING_MORE: Record<Side, boolean> = {
   down: false,
 };
 
+/** Sub-pixel scroll offsets are noise, not a side with content on it. */
+const EDGE_SLACK_PX = 1;
+
+/** A page that leaves the edge row or column on screen to keep the reader's place. */
+const NEARLY_A_FRAME = 0.8;
+
 /**
- * Where each arrow sits and what it says.
- *
- * The vertical pair is offset from the centre rather than on it: the sticky
- * header carries the group names and the sticky footer carries the totals, and
- * a control parked over either would hide the thing that row exists for. The
- * horizontal pair is centred because the rows it crosses are cells, and one
- * cell behind a button costs nothing — the button is small and the value is a
- * scroll away.
- *
- * The chevrons flip in RTL, which is why they are written as logical sides
- * rather than left and right.
+ * The vertical pair is offset toward the end rather than centred: the sticky
+ * header carries the group names and the sticky footer the totals, and a
+ * control parked over either hides what that row is pinned for.
  */
 const SIDE_CHROME: Record<
   Side,
@@ -182,48 +180,38 @@ export function MetricTimeseriesTable({
   );
 
   const boxRef = useRef<HTMLDivElement | null>(null);
-  // Which way there is more, and whether the rows overrun the box. The table
-  // routinely runs several times the width of its frame, and nothing says so:
-  // the platform's overlay scrollbar stays hidden until a scroll begins, so at
-  // first sight there is no affordance, and a column cut through the middle
-  // reads as a rendering fault. A fade at the edge was tried and does not
-  // work — it hides content to suggest more, and over a pale table whose edge
-  // cells are often empty there is nothing to hide.
   const [more, setMore] = useState(NOTHING_MORE);
   const measure = useCallback(() => {
     const box = boxRef.current;
     if (!box) return;
-    // `scrollLeft` runs negative in RTL, so the distance travelled is its
-    // magnitude either way.
+    // `scrollLeft` is negative in RTL.
     const across = Math.abs(box.scrollLeft);
     const acrossRoom = box.scrollWidth - box.clientWidth;
     const downRoom = box.scrollHeight - box.clientHeight;
     const next = {
-      start: across > 1,
-      end: across < acrossRoom - 1,
-      up: box.scrollTop > 1,
-      down: box.scrollTop < downRoom - 1,
+      start: across > EDGE_SLACK_PX,
+      end: across < acrossRoom - EDGE_SLACK_PX,
+      up: box.scrollTop > EDGE_SLACK_PX,
+      down: box.scrollTop < downRoom - EDGE_SLACK_PX,
     };
-    // A fresh object every call made this a loop once: state changed, the
-    // effect re-ran, it measured, and set state again.
+    // Keeping the object identity where the answer is unchanged; a new one per
+    // scroll event re-renders on every frame of a drag.
     setMore((prev) =>
       SIDES.every((side) => prev[side] === next[side]) ? prev : next
     );
-    onVerticalOverflow?.(downRoom > 1);
+    onVerticalOverflow?.(downRoom > EDGE_SLACK_PX);
   }, [onVerticalOverflow]);
   useEffect(() => {
     measure();
     const box = boxRef.current;
     if (!box) return;
-    // A native listener rather than `onScroll`: what scrolls is the container
-    // the ui table owns, and it takes no props of its own.
+    // `onScroll` would land on the table; the container is what scrolls, and
+    // it takes no props of its own.
     box.addEventListener("scroll", measure, { passive: true });
-    // Both sides of the comparison move, so both are watched. The TABLE
-    // changes when columns or rows arrive; the BOX changes when the window or
-    // the card does, and a box that narrows around an unchanged table is
-    // exactly the case where the arrows would otherwise go stale.
     const observer =
       typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    // Both sides of the comparison move: the box with the window, the table
+    // with its data.
     observer?.observe(box);
     const inner = box.querySelector("table");
     if (inner) observer?.observe(inner);
@@ -231,24 +219,19 @@ export function MetricTimeseriesTable({
       box.removeEventListener("scroll", measure);
       observer?.disconnect();
     };
-    // Deliberately NOT re-run per model: the model is rebuilt on every render,
-    // so depending on it would tear the listener down and put it back on each
-    // one. A change in the data resizes the table, which the observer sees.
+    // `model` is rebuilt every render, so it must stay out of the deps.
   }, [measure]);
 
   function page(side: Side): void {
     const box = boxRef.current;
     if (!box) return;
-    // Just under a full frame, so the row or column at the edge stays on
-    // screen and the reader keeps their place instead of landing among
-    // unfamiliar ones.
     const forward = side === "end" || side === "down";
     if (side === "up" || side === "down") {
-      const step = box.clientHeight * 0.8;
+      const step = box.clientHeight * NEARLY_A_FRAME;
       box.scrollBy({ top: forward ? step : -step, behavior: "smooth" });
       return;
     }
-    const step = box.clientWidth * 0.8;
+    const step = box.clientWidth * NEARLY_A_FRAME;
     const rtl = getComputedStyle(box).direction === "rtl";
     const delta = forward ? step : -step;
     box.scrollBy({ left: rtl ? -delta : delta, behavior: "smooth" });
@@ -256,11 +239,7 @@ export function MetricTimeseriesTable({
 
   return (
     <div className="relative h-full">
-      {/* Not rendered at all where there is nothing that way. Hiding them with
-          opacity left real buttons in the tab order and the accessibility
-          tree, so a keyboard reader could reach "Show earlier columns" while
-          sitting at the first one and press it to no effect. The cost is the
-          fade; an invisible control that answers is the worse trade. */}
+      {/* Rendered, not hidden: opacity would leave them in the tab order. */}
       {SIDES.filter((side) => more[side]).map((side) => {
         const { icon: Icon, label, place } = SIDE_CHROME[side];
         return (
@@ -273,10 +252,7 @@ export function MetricTimeseriesTable({
             title={label}
             onClick={() => page(side)}
             className={cn(
-              // Over the table rather than beside it — the box is already as
-              // wide as the card, and taking a strip for the controls would
-              // narrow the thing they exist to reveal. Opaque, so they stay
-              // legible over whatever cell they land on.
+              // Opaque, so they stay legible over whatever cell they land on.
               "absolute z-40 rounded-full bg-card shadow-md",
               place
             )}
@@ -405,15 +381,8 @@ export function MetricTimeseriesTable({
           </TableRow>
         ))}
       </TableBody>
-      {/* Pinned to the foot of the box, so the totals survive scrolling down
-          the way the sticky first column survives scrolling across. A long
-          table otherwise hides the two rows that summarise it behind exactly
-          the scrolling its length forces, and the reader has to travel to the
-          end to learn what the whole thing came to.
-
-          The top edge is what says the rows continue underneath: without it
-          the pinned block reads as the end of the table, and a reader stops
-          scrolling at a summary that is only sitting on top of more rows. */}
+      {/* The top edge is what says the rows continue underneath; without it
+          the pinned block reads as the end of the table. */}
       <TableFooter className="sticky bottom-0 z-20 shadow-[inset_0_1px_0_0_var(--border)]">
         <TableRow>
           <TableCell className="sticky left-0 z-10 w-28 max-w-28 min-w-28 bg-muted px-2 py-1 font-semibold after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border">
@@ -452,14 +421,8 @@ export function MetricTimeseriesTable({
               colSpan={model.columns.length * tableColumns.length}
               className="bg-muted px-2 pt-1 pb-5 text-left font-semibold tabular-nums"
             >
-              {/* Pinned beside the label, not to the cell.
-                  The cell spans every group, so its left edge sits wherever
-                  the first group is — which, on a table wide enough to scroll,
-                  is off-screen. The totals were still rendered there: scroll
-                  one group across and the summary of the whole table became a
-                  sticky "Grand total" label with nothing next to it. Sticking
-                  the content past the label column keeps it where the label
-                  is, at every scroll position. */}
+              {/* Stuck past the label column, since the cell spans every group
+                  and its own start edge scrolls away. */}
               <span className="sticky start-28 inline-flex flex-wrap items-center gap-1.5">
                 {tableColumns.map((tableColumn, index) => (
                   <span

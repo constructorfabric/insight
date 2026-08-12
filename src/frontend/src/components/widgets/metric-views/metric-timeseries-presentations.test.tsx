@@ -61,10 +61,7 @@ describe("metric timeseries presentations", () => {
   });
 
   it("offers no paging control towards a side with nothing on it", () => {
-    // Hiding them with opacity left real buttons in the tab order and the
-    // accessibility tree: a keyboard reader at the first column could reach
-    // "Show earlier columns" and press it to no effect. Nothing overflows in
-    // this environment — every dimension is zero — so nothing should render.
+    // Nothing overflows here: jsdom reports every dimension as zero.
     render(<MetricTimeseriesTable model={groupedTimeseriesModel()} />);
     expect(
       screen.queryByRole("button", { name: /Show (earlier|later)/ })
@@ -72,10 +69,6 @@ describe("metric timeseries presentations", () => {
   });
 
   it("pins the totals to the foot of the box, with an edge over the rows", () => {
-    // A table long enough to scroll hides the rows that summarise it behind
-    // exactly the scrolling its length forces. The edge matters as much as the
-    // pinning: without it the block reads as the end of the table, and the
-    // reader stops at a summary that is only sitting on top of more rows.
     render(<MetricTimeseriesTable model={groupedTimeseriesModel()} />);
     const foot = screen.getByText("Grand total").closest("tfoot")!;
     expect(foot.className).toContain("sticky");
@@ -84,11 +77,7 @@ describe("metric timeseries presentations", () => {
   });
 
   it("keeps the grand total beside its label when the table is scrolled", () => {
-    // The cell spans every group, so its left edge is wherever the first group
-    // is — off-screen on a table wide enough to scroll, which is the normal
-    // case once there are several groups. Left-aligned inside that cell, the
-    // one row summarising the whole table scrolled away and left its sticky
-    // label sitting next to nothing. It has to stick past the label column.
+    // The cell spans every group, so its own start edge scrolls away.
     render(<MetricTimeseriesTable model={groupedTimeseriesModel()} />);
     const row = screen.getByText("Grand total").closest("tr")!;
     const totals = row.querySelectorAll("td")[1]!.querySelector("span")!;
