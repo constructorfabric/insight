@@ -8,8 +8,6 @@ ALWAYS resolve and enforce prerequisites of skills/workflows/commands BEFORE app
 
 ## Project Rules
 
-ALWAYS open and follow `docs/domain/metrics/specs/DESIGN.md` WHEN adding or changing metrics, metric definitions, metric seeds, observation sources, or gold metric views
-
 NEVER put an identifier containing `_` in a Markdown heading a table of contents links to — the TOC generator drops the underscore while GitHub keeps it, so the anchor breaks (markdownlint MD051). Word the heading in prose and keep the identifier in the body.
 
 ## Never expose production-derived information

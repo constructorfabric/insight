@@ -60,6 +60,7 @@ def _forest(session: PersonaSession) -> SubchartForest:
     return response.parse(SubchartForest)
 
 
+@pytest.mark.reliability
 def test_subchart_is_200_with_a_session(lead_session: PersonaSession) -> None:
     """Same url the gateway sweep refuses anonymously; a session is the only
     difference — and the roots rule out "there was nothing there".
@@ -67,6 +68,7 @@ def test_subchart_is_200_with_a_session(lead_session: PersonaSession) -> None:
     assert _forest(lead_session).roots, "the authenticated subchart carried no roots"
 
 
+@pytest.mark.security
 def test_the_session_belongs_to_the_persona_who_logged_in(lead_session: PersonaSession) -> None:
     """A session that authenticates as somebody else is worse than none.
 
@@ -90,6 +92,7 @@ def test_the_session_belongs_to_the_persona_who_logged_in(lead_session: PersonaS
     )
 
 
+@pytest.mark.security
 def test_org_visibility_scope_differs_by_persona(
     realm_admin_session: PersonaSession,
     lead_session: PersonaSession,
@@ -135,6 +138,7 @@ def test_org_visibility_scope_differs_by_persona(
 
 
 @pytest.mark.requires_seed("dev_lead", "sales_lead")
+@pytest.mark.security
 def test_two_leads_of_different_teams_see_different_people(
     session_for: Callable[[str], PersonaSession],
 ) -> None:
@@ -174,6 +178,7 @@ def _subtree(session: PersonaSession, person_uuid: str) -> Subchart:
     return response.parse(Subchart)
 
 
+@pytest.mark.reliability
 def test_subchart_of_self_is_200(lead_session: PersonaSession) -> None:
     """Distinct from the forest: this route takes an explicit person.
 
@@ -185,6 +190,7 @@ def test_subchart_of_self_is_200(lead_session: PersonaSession) -> None:
     assert subtree.root.email == lead_session.email
 
 
+@pytest.mark.reliability
 def test_subchart_of_a_visible_report_is_200(
     lead_session: PersonaSession, stand_manifest: Manifest
 ) -> None:
@@ -193,6 +199,7 @@ def test_subchart_of_a_visible_report_is_200(
     assert str(_subtree(lead_session, report.uuid).root.person_id) == report.uuid
 
 
+@pytest.mark.security
 def test_subchart_of_someone_out_of_scope_is_404_not_403(
     lead_session: PersonaSession, stand_manifest: Manifest
 ) -> None:
@@ -222,6 +229,7 @@ def test_subchart_of_someone_out_of_scope_is_404_not_403(
     )
 
 
+@pytest.mark.reliability
 def test_subchart_of_an_unknown_person_is_404(lead_session: PersonaSession) -> None:
     response = lead_session.client.get(f"{SUBCHART_OF}/{UNKNOWN_ID}")
     assert response.status_code == 404, f"status={response.status_code} {response.text[:300]}"

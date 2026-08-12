@@ -70,6 +70,7 @@ def _active_admin_assignments(client: ApiClient) -> list[PersonRole]:
 
 
 @pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
 def test_a_role_name_already_in_the_catalogue_is_409(
     admin_operator_session: PersonaSession,
 ) -> None:
@@ -99,6 +100,7 @@ def test_a_role_name_already_in_the_catalogue_is_409(
 
 
 @pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
 def test_deleting_a_role_somebody_still_holds_is_refused(
     admin_operator_session: PersonaSession,
 ) -> None:
@@ -120,6 +122,7 @@ def test_deleting_a_role_somebody_still_holds_is_refused(
 
 
 @pytest.mark.requires_seed("admin_operator")
+@pytest.mark.security
 def test_revoking_the_last_active_admin_is_refused(
     admin_operator_session: PersonaSession, stand_manifest: Manifest
 ) -> None:

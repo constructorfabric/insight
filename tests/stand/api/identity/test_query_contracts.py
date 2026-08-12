@@ -39,6 +39,9 @@ from ..schemas import (
 )
 from .views import in_force
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 PERSON_ROLES = identity_path("/v1/person-roles")
 VISIBILITY = identity_path("/v1/visibility")
 

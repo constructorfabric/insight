@@ -12,7 +12,7 @@ requires-python = ">=3.10,<3.13"
 dependencies = [
     # Pinned to the line matching the `version:` header of the nocode connector
     # manifests (currently 6.60.9). Bump in lockstep with manifest version bumps.
-    "airbyte-cdk>=6.60.9,<7.24",
+    "airbyte-cdk>=6.60.9,<7",
     "pytest>=8.0",
     "freezegun>=1.5",
     # HttpMocker's transport backend — an optional extra of the CDK, required here.

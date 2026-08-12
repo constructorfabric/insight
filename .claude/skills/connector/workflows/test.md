@@ -31,7 +31,7 @@ If fails: show error, suggest fix, STOP.
 
 ## Phase 3: Run Mock-Server Tests (no credentials)
 
-L1 of the test ladder — see `docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md`.
+L1 of the test ladder.
 
 ```bash
 # one-time env: cd src/ingestion/tests/connectors && python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'

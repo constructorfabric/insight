@@ -81,6 +81,7 @@ def _values(response: ApiResponse, metric_key: str) -> list[tuple[str, float | N
     return pairs
 
 
+@pytest.mark.reliability
 def test_metric_results_200(api: ApiClient, stand_manifest: Manifest) -> None:
     """One person, the seeded window, one metric — and a REAL number back.
 
@@ -112,6 +113,7 @@ def test_metric_results_200(api: ApiClient, stand_manifest: Manifest) -> None:
     )
 
 
+@pytest.mark.security
 def test_metric_results_403_for_a_person_out_of_scope(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:
@@ -143,6 +145,7 @@ def test_metric_results_403_for_a_person_out_of_scope(
         ("nil uuid", "00000000-0000-0000-0000-000000000000"),
     ],
 )
+@pytest.mark.reliability
 def test_metric_results_400_for_a_key_that_is_not_a_person_id(
     api: ApiClient, stand_manifest: Manifest, label: str, entity_id: str
 ) -> None:
@@ -159,6 +162,7 @@ def test_metric_results_400_for_a_key_that_is_not_a_person_id(
     )
 
 
+@pytest.mark.reliability
 def test_metric_results_422_off_schema(api: ApiClient) -> None:
     """A body that is valid JSON but not the request type.
 
@@ -184,6 +188,7 @@ def _body(api: ApiClient, manifest: Manifest) -> dict[str, JsonValue]:
     }
 
 
+@pytest.mark.reliability
 def test_an_empty_metrics_list_is_400(api: ApiClient, stand_manifest: Manifest) -> None:
     """Nothing asked for is a malformed request, not an empty answer."""
     body = _body(api, stand_manifest)
@@ -200,6 +205,7 @@ def test_an_empty_metrics_list_is_400(api: ApiClient, stand_manifest: Manifest) 
         ("reversed", {"from": "2026-02-01", "to": "2026-01-01"}),
     ],
 )
+@pytest.mark.reliability
 def test_a_period_that_cannot_be_honoured_is_400(
     api: ApiClient, stand_manifest: Manifest, label: str, period: dict[str, str]
 ) -> None:
@@ -218,6 +224,7 @@ def test_a_period_that_cannot_be_honoured_is_400(
     )
 
 
+@pytest.mark.reliability
 def test_an_unknown_metric_key_is_400_not_404(api: ApiClient, stand_manifest: Manifest) -> None:
     """This endpoint has no not-found path, and the spec declares none.
 
@@ -239,6 +246,7 @@ def test_an_unknown_metric_key_is_400_not_404(api: ApiClient, stand_manifest: Ma
 
 
 @pytest.mark.requires_seed("dev_lead", "sales_ic")
+@pytest.mark.security
 def test_one_hidden_person_refuses_the_whole_request(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:

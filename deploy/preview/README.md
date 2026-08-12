@@ -56,4 +56,4 @@ helm uninstall preview-<name> --namespace <ns>
   prefix in #1972. A per-user RBAC capability supersedes this env-level gate later.
 - **#1981** — CI-driven provisioning.
 
-See `docs/domain/presentation-layer/specs/DESIGN.md` (Preview Environment Router).
+The preview router is defined by this chart's `httproute.yaml`.

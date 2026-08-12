@@ -26,6 +26,9 @@ from .evidence_requests import evidence_selection
 from .flows import sign_in
 from .pages.person_view import PersonView
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 #: The first column of the Task delivery table, so the Total cell opened below
 #: names this metric. The label is the server's.
 TASKS_CLOSED = "Issues closed"

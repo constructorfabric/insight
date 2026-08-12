@@ -3,6 +3,12 @@ status: proposed
 date: 2026-07-06
 ---
 
+> [!WARNING]
+> **Under review — audited against the implementation and found inaccurate in places.**
+> Read it against the code, not as authority. The specific claims the code contradicts
+> are listed in the repository [README](../../../../README.md#backend-specs--under-review). Where this
+> document and the committed `openapi.json` disagree, the contract is right.
+
 # DESIGN -- Authenticator Service
 
 - [ ] `p3` - **ID**: `cpt-insightspec-design-auth`
@@ -1149,6 +1155,5 @@ The authenticator's Key Store loads a mounted PKCS#8 **EC P-256** private key (`
 
 - **PRD**: [PRD.md](./PRD.md)
 - **Sibling**: [Gateway DESIGN](../gateway/DESIGN.md) -- the nginx edge: routing, exchange cache, subrequest contract consumer
-- **Parent**: [Backend PRD](../specs/PRD.md), [Backend DESIGN](../specs/DESIGN.md)
 - **ADRs**: [specs/ADR/](./specs/ADR/) -- 0001 (per-environment IdP, superseded), 0002 (real IdP on deployed stands), 0003 (Keycloak identity broker, configured as code); further decisions captured inline in section 5 until extracted
 - **Decision document**: the nginx + authorization analysis (workspace-level) that mandated this architecture

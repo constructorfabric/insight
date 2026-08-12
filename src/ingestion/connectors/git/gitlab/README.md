@@ -3,7 +3,6 @@
 Airbyte CDK source for self-hosted GitLab (REST API v4). Thin extractor: emits
 source-native RECORD messages, transforms nothing downstream.
 
-Design: [docs/components/connectors/git/gitlab/specs/DESIGN.md](../../../../../docs/components/connectors/git/gitlab/specs/DESIGN.md)
 
 ## Local development
 

@@ -1,7 +1,6 @@
 # Connector mock-server tests
 
-L1 of the connector test ladder (see
-[`docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md`](../../../../docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md)):
+L1 of the connector test ladder:
 credential-free pytest suites for **nocode** (declarative-YAML) connectors.
 
 ## How a nocode connector is tested

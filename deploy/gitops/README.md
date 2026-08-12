@@ -13,7 +13,6 @@ env directory, fill in `kubeContext` + the rest, swap the
 `scripts/secret-fetch.sh` stub for your password-manager integration
 when you go past sandbox, and you have a working gitops setup.
 
-> The reference design lives in [`../../docs/components/deployment/`](../../docs/components/deployment/).
 > Below is the operator-facing summary; the linked docs go deeper into
 > rationale (DESIGN, PRD, ADR).
 
@@ -331,9 +330,7 @@ real `*.yaml` siblings beside them, safe to commit.
 
 1. The public Insight repo's CI publishes umbrella chart versions to
    `oci://ghcr.io/constructorfabric/charts/insight:<semver>` per merge to
-   `main`. See
-   [`../../docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md`](../../docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md)
-   for the contract.
+   `main`.
 2. The `.insight-version` file in this repo pins one semver. Bump it
    to promote a new chart version. The Makefile reads it as
    `INSIGHT_VERSION` and passes `--version $INSIGHT_VERSION` to every

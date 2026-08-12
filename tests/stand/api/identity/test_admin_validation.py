@@ -31,6 +31,9 @@ from insight_stand import Manifest, PersonaSession, identity_path
 from .. import scratch
 from ..schemas import ProblemDocument, RoleList
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 #: Both validators cap `reason` at 500 characters.
 TOO_LONG_REASON = "x" * 501
 

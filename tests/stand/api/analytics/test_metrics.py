@@ -43,6 +43,9 @@ from ..scratch import (
     track,
 )
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 METRICS = analytics_path("/v1/metrics")
 EXPORT = analytics_path("/v1/metrics/export")
 IMPORT = analytics_path("/v1/metrics/import")

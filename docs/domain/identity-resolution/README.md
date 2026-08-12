@@ -22,8 +22,8 @@ This domain covers:
 - GDPR alias deletion (late phase)
 
 Out of scope:
-- Person registry (`persons` table, golden record assembly) — see [`docs/domain/person/`](../person/)
-- Org hierarchy (`org_units`, `person_assignments`) — see [`docs/domain/org-chart/`](../org-chart/)
+- Person registry (`persons` table, golden record assembly)
+- Org hierarchy
 - Permission / RBAC — see `docs/domain/permissions/`
 - Connector implementation
 - Metric aggregation

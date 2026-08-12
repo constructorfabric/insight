@@ -1,13 +1,9 @@
 # Zulip-Proxy Connector
 
 Aggregated Zulip activity collected through a tenant-controlled proxy with Bearer-token auth.
-Same Bronze shape as the direct-API [zulip](../../../../../docs/components/connectors/collaboration/zulip/zulip.md)
+Same Bronze shape as the direct-API zulip connector
 connector spec, but reached through a private proxy endpoint instead of `*.zulipchat.com`.
 
-See the [PRD](../../../../../docs/components/connectors/collaboration/zulip-proxy/specs/PRD.md),
-[DESIGN](../../../../../docs/components/connectors/collaboration/zulip-proxy/specs/DESIGN.md), and
-[FEATURE](../../../../../docs/components/connectors/collaboration/zulip-proxy/specs/FEATURE.md)
-for full context.
 
 ## Prerequisites
 

@@ -9,9 +9,6 @@ Proxy source code, Dockerfile, and deployment docs:
 
 ## Specification
 
-- **PRD**: [../../../../../docs/components/connectors/ai/claude-team/specs/PRD.md](../../../../../docs/components/connectors/ai/claude-team/specs/PRD.md)
-- **DESIGN**: [../../../../../docs/components/connectors/ai/claude-team/specs/DESIGN.md](../../../../../docs/components/connectors/ai/claude-team/specs/DESIGN.md)
-- **FEATURE**: [../../../../../docs/components/connectors/ai/claude-team/specs/FEATURE.md](../../../../../docs/components/connectors/ai/claude-team/specs/FEATURE.md)
 
 ## Prerequisites
 

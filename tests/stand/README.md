@@ -50,14 +50,11 @@ uv run --project tests playwright install chromium   # first time only, for ui/
 uv run --project tests pytest tests/stand
 ```
 
-To run the suite the way CI does — inside the published `ui-tests` image,
-against the gateway's own network namespace — pass `--image`:
-
-```bash
-./dev-compose.sh test-stand test --image ghcr.io/constructorfabric/insight-ui-tests:latest
-```
-
-That mode never builds the image; pull it first. See `dev-compose.sh`'s
+This host-side run is also exactly what CI's `ui-journeys` lane does. The
+verb still accepts `--image <ref>` to run a suite baked into a container
+joined to the gateway's network namespace, but no such image is published
+anymore — the lane ran from a published `ui-tests` image once, and the mode
+remains only as a mechanism. See `dev-compose.sh`'s
 `cmd_test_stand_help` for the full verb reference, including
 `--auth`/`--base-url`/`--stand-manifest` overrides for pointing the suite at
 a stand other than the one it just brought up.

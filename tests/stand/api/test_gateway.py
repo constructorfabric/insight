@@ -25,6 +25,9 @@ from insight_stand import ApiClient
 from .operations import ALL_OPERATIONS, Operation
 from .schemas import PROBLEM_CONTENT_TYPE, ProblemDocument
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.security
+
 #: Bodies are irrelevant: the edge rejects before any handler reads one, and
 #: sending one would only obscure which layer answered.
 _METHODS_WITHOUT_BODY = frozenset({"GET", "DELETE"})

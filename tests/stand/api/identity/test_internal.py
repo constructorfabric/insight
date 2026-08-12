@@ -68,6 +68,7 @@ def _dev_lead_login_id(stand_manifest: Manifest) -> tuple[str, str]:
 
 @pytest.mark.requires_service_principal
 @pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
 def test_by_email_override_serves_a_service_principal(
     service_client: ApiClient, stand_manifest: Manifest
 ) -> None:
@@ -98,6 +99,7 @@ def test_by_email_override_serves_a_service_principal(
 
 @pytest.mark.requires_service_principal
 @pytest.mark.requires_seed("dev_lead")
+@pytest.mark.security
 def test_by_email_override_refuses_a_person(
     lead_session: PersonaSession, stand_manifest: Manifest
 ) -> None:
@@ -119,6 +121,7 @@ def test_by_email_override_refuses_a_person(
 
 
 @pytest.mark.requires_service_principal
+@pytest.mark.reliability
 def test_by_email_override_of_an_unknown_email_is_404(service_client: ApiClient) -> None:
     """An address nobody holds, asked by the one caller entitled to ask.
 
@@ -136,6 +139,7 @@ def test_by_email_override_of_an_unknown_email_is_404(service_client: ApiClient)
 
 
 @pytest.mark.requires_service_principal
+@pytest.mark.reliability
 def test_by_email_override_missing_email_is_400(service_client: ApiClient) -> None:
     """The query param is required — an absent `email` is a bad request, not a
     404, so a caller that forgot the param does not read as "unknown email"."""
@@ -147,6 +151,7 @@ def test_by_email_override_missing_email_is_400(service_client: ApiClient) -> No
 
 @pytest.mark.requires_service_principal
 @pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
 def test_by_external_id_serves_a_service_principal(
     service_client: ApiClient, stand_manifest: Manifest
 ) -> None:
@@ -171,6 +176,7 @@ def test_by_external_id_serves_a_service_principal(
 
 @pytest.mark.requires_service_principal
 @pytest.mark.requires_seed("dev_lead")
+@pytest.mark.security
 def test_by_external_id_refuses_a_person(
     lead_session: PersonaSession, stand_manifest: Manifest
 ) -> None:
@@ -189,6 +195,7 @@ def test_by_external_id_refuses_a_person(
 
 
 @pytest.mark.requires_service_principal
+@pytest.mark.reliability
 def test_by_external_id_of_an_unknown_id_is_404(
     stand_manifest: Manifest, service_client: ApiClient
 ) -> None:
@@ -207,6 +214,7 @@ def test_by_external_id_of_an_unknown_id_is_404(
 
 @pytest.mark.requires_service_principal
 @pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
 def test_by_external_id_missing_source_type_is_400(
     service_client: ApiClient, stand_manifest: Manifest
 ) -> None:
@@ -220,6 +228,7 @@ def test_by_external_id_missing_source_type_is_400(
 
 
 @pytest.mark.requires_service_principal
+@pytest.mark.reliability
 def test_by_external_id_missing_external_id_is_400(
     service_client: ApiClient, stand_manifest: Manifest
 ) -> None:
@@ -233,6 +242,7 @@ def test_by_external_id_missing_external_id_is_400(
 
 @pytest.mark.requires_service_principal
 @pytest.mark.requires_seed("dev_lead")
+@pytest.mark.security
 def test_by_external_id_never_resolves_by_email(
     service_client: ApiClient, stand_manifest: Manifest
 ) -> None:

@@ -26,6 +26,9 @@ from playwright.sync_api import Browser, expect
 from .pages.keycloak_login_page import KeycloakLoginPage
 from .pages.person_view import PersonView
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.security
+
 #: The routes that need no path parameter. The person-scoped route is NOT here:
 #: it needs a real email from the manifest, so it gets its own case below —
 #: which is the one that matters most, since a pasted deep link to a colleague's

@@ -83,6 +83,7 @@ def _forest(session: PersonaSession) -> SubchartForest:
 @pytest.mark.parametrize(
     ("path", "model"), ADMIN_LISTINGS_WITH_MODELS, ids=lambda v: getattr(v, "__name__", v)
 )
+@pytest.mark.reliability
 def test_admin_listing_is_200_for_the_operator(
     admin_operator_session: PersonaSession, path: str, model: type[BaseModel]
 ) -> None:
@@ -101,6 +102,7 @@ def test_admin_listing_is_200_for_the_operator(
 
 @pytest.mark.requires_seed("admin_operator", "ceo")
 @pytest.mark.parametrize("path", [path for path, _ in ADMIN_LISTINGS_WITH_MODELS])
+@pytest.mark.security
 def test_admin_listing_is_403_for_a_realm_admin_without_the_grant(
     realm_admin_session: PersonaSession, path: str
 ) -> None:
@@ -131,6 +133,7 @@ JOURNALS_WITH_A_DETAIL_ROUTE = ("/v1/persons-seed", "/v1/persons-sync")
 
 @pytest.mark.requires_seed("admin_operator")
 @pytest.mark.parametrize("journal", JOURNALS_WITH_A_DETAIL_ROUTE)
+@pytest.mark.reliability
 def test_an_unknown_journal_entry_is_404_for_the_operator(
     admin_operator_session: PersonaSession, journal: str
 ) -> None:
@@ -152,6 +155,7 @@ def test_an_unknown_journal_entry_is_404_for_the_operator(
 
 @pytest.mark.requires_seed("admin_operator", "ceo")
 @pytest.mark.parametrize("journal", JOURNALS_WITH_A_DETAIL_ROUTE)
+@pytest.mark.security
 def test_a_journal_entry_is_403_without_the_grant(
     realm_admin_session: PersonaSession, journal: str
 ) -> None:
@@ -171,6 +175,7 @@ def test_a_journal_entry_is_403_without_the_grant(
 
 
 @pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
 def test_the_roles_catalogue_contains_the_admin_role(
     admin_operator_session: PersonaSession,
 ) -> None:
@@ -184,6 +189,7 @@ def test_the_roles_catalogue_contains_the_admin_role(
 
 
 @pytest.mark.requires_seed("admin_operator")
+@pytest.mark.security
 def test_operator_sees_nobody_in_the_org_chart(
     admin_operator_session: PersonaSession,
 ) -> None:
@@ -217,6 +223,7 @@ def test_operator_sees_nobody_in_the_org_chart(
 
 
 @pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
 def test_role_create_list_delete_round_trip(admin_operator_session: PersonaSession) -> None:
     """`POST` 201 → the catalogue lists it → `DELETE` 204 → it is gone."""
     client = admin_operator_session.client
@@ -246,6 +253,7 @@ def test_role_create_list_delete_round_trip(admin_operator_session: PersonaSessi
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead")
+@pytest.mark.reliability
 def test_person_role_grant_and_revoke_round_trip(
     admin_operator_session: PersonaSession, stand_manifest: Manifest
 ) -> None:
@@ -285,10 +293,13 @@ def test_person_role_grant_and_revoke_round_trip(
     journal = client.get(identity_path("/v1/person-roles")).parse(PersonRoleList)
     after = [item for item in journal.items if str(item.person_role_id) == assignment_id]
     assert len(after) == 1, f"the revoked assignment vanished from the journal: {after}"
-    assert not in_force(after[0]), f"the assignment is still in force after a 204 revoke: {after[0]}"
+    assert not in_force(after[0]), (
+        f"the assignment is still in force after a 204 revoke: {after[0]}"
+    )
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead")
+@pytest.mark.security
 def test_a_visibility_grant_changes_what_the_grantee_can_see(
     admin_operator_session: PersonaSession, stand_manifest: Manifest
 ) -> None:

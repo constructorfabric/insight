@@ -5,7 +5,7 @@
 # Scanner images are NOT covered: they are invoked as `docker run <image>@sha256:…`
 # inside workflow shell steps rather than as `FROM` lines, which the docker
 # ecosystem cannot see. They are refreshed by hand — see
-# docs/components/deployment/specs/sop/scanner-image-refresh.md.
+# the scanner-image refresh SOP.
 version: 2
 updates:
   - package-ecosystem: github-actions

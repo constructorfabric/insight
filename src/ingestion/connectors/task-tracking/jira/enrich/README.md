@@ -2,7 +2,6 @@
 
 Rust binary that materializes `silver.task_tracker_field_history` for the Jira source.
 
-Design docs: [`docs/components/connectors/task-tracking/silver/jira/specs/`](../../../../../../docs/components/connectors/task-tracking/silver/jira/specs/).
 
 ## Scope
 

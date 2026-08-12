@@ -489,6 +489,7 @@ def _assert_evidence_unavailable(
     )
 
 
+@pytest.mark.versatility
 def test_every_metric_definition_is_in_the_drilldown_matrix(
     drilldown_capabilities: Mapping[str, MetricDrilldownCapability | None],
 ) -> None:
@@ -514,6 +515,7 @@ def test_every_metric_definition_is_in_the_drilldown_matrix(
     "is not ok, while the drilldown endpoint serves that metric's evidence, so the UI hides "
     "supporting data that exists",
 )
+@pytest.mark.reliability
 def test_advertised_capability_matches_what_the_endpoint_serves(
     api: ApiClient,
     stand_manifest: Manifest,
@@ -546,6 +548,7 @@ def test_advertised_capability_matches_what_the_endpoint_serves(
 @pytest.mark.parametrize(
     "expectation", MATRIX, ids=[expectation.metric_key for expectation in MATRIX]
 )
+@pytest.mark.reliability
 def test_drilldown_reconciles_with_the_metric_value(
     api: ApiClient,
     stand_manifest: Manifest,
@@ -605,6 +608,7 @@ def test_drilldown_reconciles_with_the_metric_value(
 
 @pytest.mark.requires_seed("dev_lead")
 @pytest.mark.parametrize("metric_key", EXPORT_SHAPES)
+@pytest.mark.reliability
 def test_drilldown_export_carries_every_row(
     api: ApiClient,
     stand_manifest: Manifest,
@@ -644,6 +648,7 @@ def test_drilldown_export_carries_every_row(
     reason="constructorfabric/insight#2361 — intermittent 500 under suite load: the "
     "identity service answers the person-visibility check with 429; passes in isolation",
 )
+@pytest.mark.reliability
 def test_git_commit_drilldown_pages_and_reconciles(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:
@@ -682,6 +687,7 @@ def test_git_commit_drilldown_pages_and_reconciles(
     reason="constructorfabric/insight#2361 — intermittent 500 under suite load: the "
     "identity service answers the person-visibility check with 429; passes in isolation",
 )
+@pytest.mark.reliability
 def test_git_commit_drilldown_exports_all_rows(api: ApiClient, stand_manifest: Manifest) -> None:
     walk = _walk(
         api,
@@ -711,6 +717,7 @@ def test_git_commit_drilldown_exports_all_rows(api: ApiClient, stand_manifest: M
 
 
 @pytest.mark.requires_seed("dev_lead", "sales_ic")
+@pytest.mark.security
 def test_git_commit_drilldown_refuses_a_person_out_of_scope(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:
@@ -731,6 +738,7 @@ def test_git_commit_drilldown_refuses_a_person_out_of_scope(
     reason="constructorfabric/insight#2361 — intermittent 500 under suite load: the "
     "identity service answers the person-visibility check with 429; passes in isolation",
 )
+@pytest.mark.reliability
 def test_supported_metric_with_no_evidence_returns_an_empty_page(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:
@@ -758,11 +766,13 @@ def _request() -> dict[str, JsonValue]:
     }
 
 
+@pytest.mark.reliability
 def test_drilldown_400_empty_entity_id(api: ApiClient) -> None:
     response = api.post(DRILLDOWN, json_body=_request())
     assert response.status_code == 400, f"status={response.status_code} {response.text[:300]}"
 
 
+@pytest.mark.reliability
 def test_drilldown_export_400_empty_entity_id(api: ApiClient) -> None:
     """Same rejection, and it must happen before any format negotiation.
 
@@ -786,6 +796,7 @@ def test_drilldown_export_400_empty_entity_id(api: ApiClient) -> None:
     ],
 )
 @pytest.mark.parametrize("path", [DRILLDOWN, DRILLDOWN_EXPORT], ids=["drilldown", "export"])
+@pytest.mark.reliability
 def test_drilldown_400_for_a_key_that_is_not_a_person_id(
     api: ApiClient, path: str, label: str, entity_id: str
 ) -> None:
