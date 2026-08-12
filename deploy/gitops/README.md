@@ -288,6 +288,109 @@ and imports the canonical realm into a throwaway Keycloak to assert
 token behavior (fail closed without the pin, pin emitted verbatim as a
 single string, tenant-bearing groups inert).
 
+## Enabling GitHub sign-in
+
+Users are identified by their GitHub **primary verified email**, which
+must exactly match an existing person's email: an unknown email is
+refused (unknown-person audit event), no account is auto-created, and
+no access is gained beyond what that email already has. (The broker
+records a realm-local user on first sign-in — that is how Keycloak
+links a brokered identity, it grants nothing by itself, and the person
+match downstream still decides access.) Prerequisite: broker realms as
+code enabled for the environment (previous section).
+
+### 1. Register an OAuth app on GitHub
+
+One OAuth app per environment (an app takes a single callback URL, and
+the callback is realm-specific). On the organization that owns the
+deployment: **Settings → Developer settings → OAuth Apps → New OAuth
+App**:
+
+| Field | Value |
+|---|---|
+| Homepage URL | `https://<host>` |
+| Authorization callback URL | `https://<host>/kc/realms/<realm>/broker/github/endpoint` |
+
+Generate a **client secret**, then stage it and the client id in the
+password manager — never in a committed file.
+
+### 2. Seal the credentials
+
+Add two keys to the environment's staged `insight-keycloak-config`
+manifest, then reseal and commit the sealed manifest:
+
+```yaml
+INSIGHT_GITHUB_CLIENT_ID: "<client id>"
+INSIGHT_GITHUB_CLIENT_SECRET: "<client secret>"
+```
+
+```sh
+make seal-secret ENV=<env> NAMESPACE=insight NAME=insight-keycloak-config
+```
+
+### 3. Register the provider in realm YAML
+
+Add to `environments/<env>/keycloak/realms/<realm>.yaml` — the
+provider plus the two mandatory contract mappers (the idp_sub importer
+is the social-provider JSON one, so its config keys differ from the
+OIDC importer shown above):
+
+```yaml
+identityProviders:
+  - alias: github
+    displayName: GitHub
+    providerId: github
+    enabled: true
+    # GitHub only reports verified addresses; skip the email-verify prompt.
+    trustEmail: true
+    config:
+      clientId: $(env:INSIGHT_GITHUB_CLIENT_ID)
+      clientSecret: $(env:INSIGHT_GITHUB_CLIENT_SECRET)
+      # Grants read access to the primary verified email.
+      defaultScope: user:email
+
+identityProviderMappers:
+  - name: github-tenant-id
+    identityProviderAlias: github
+    identityProviderMapper: hardcoded-attribute-idp-mapper
+    config:
+      syncMode: FORCE
+      attribute: tenant_id
+      attribute.value: $(env:INSIGHT_TENANT_ID)
+  - name: github-idp-sub
+    identityProviderAlias: github
+    identityProviderMapper: github-user-attribute-mapper
+    config:
+      syncMode: FORCE
+      # GitHub's immutable numeric user id.
+      jsonField: id
+      userAttribute: idp_sub
+```
+
+The realm must be listed in `keycloak.route.realms` in the environment
+values — only listed realms are published at the edge, and GitHub's
+callback has to reach `/kc/realms/<realm>/…`.
+
+No sign-in-screen work is needed: the realm login page shows a button
+(labelled from `displayName`) for every enabled provider. To deep-link
+from elsewhere, append `kc_idp_hint=github` to the authorization
+request.
+
+### 4. Deploy and verify
+
+Run `make deploy ENV=<env>` (a failed realm import fails the upgrade),
+then check:
+
+- [ ] the sign-in screen shows GitHub **and** every previously
+      configured option;
+- [ ] a matching primary verified email lands on the dashboard signed
+      in as that person, with no prompt after GitHub's authorization
+      screen;
+- [ ] an email matching nobody is refused — no session, no person
+      created, unknown-person audit event;
+- [ ] searching the repository for the client id and secret finds
+      nothing.
+
 ## Secret management
 
 Sealed secrets ([Bitnami sealed-secrets](https://github.com/bitnami-labs/sealed-secrets))
