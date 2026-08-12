@@ -1,7 +1,7 @@
 # Technical Design — AI Development Cost
 
-Scoped addition to the [Metrics design](../DESIGN.md). Realises [PRD.md](PRD.md) and
-[claude-admin ADR-0003](../../../../components/connectors/ai/claude-admin/specs/ADR/0003-price-card-per-person-token-cost.md).
+Scoped addition to the [Analytics service design](../../DESIGN.md). Realises [PRD.md](PRD.md) and
+[claude-admin ADR-0003](../ADR/0003-price-card-per-person-token-cost.md).
 Everything the parent design already specifies — the evidence contract, the observation
 contract, registry seeding, the result runtime — applies unchanged; this document adds only
 what is specific to cost.
@@ -639,6 +639,13 @@ economics is the more urgent gap; the DECOMPOSITION takes that order.
   reads it; it is documented as unread and left alone.
 - Team or role as a metric entity.
 - Per-PR cost, and the vendor's own pull-request attribution counters — `#1660` territory.
+
+- **Deferred out of this release:** `insight.ai_price_card`, `insight.ai_token_cost_daily`,
+  `silver.class_ai_cost` and the `class_ai_api_usage` extension. `#2437` removed the
+  `claude-admin` connector along with `class_ai_api_usage`, and the `openai` connector whose
+  model was the other feeder named for `class_ai_cost`. The sections that specify them are kept
+  as written — they are the input to whoever revives the branch — but nothing in this release
+  builds them, and `ai.token_cost` is served by Cursor alone until then.
 
 One adjacent defect is recorded rather than fixed here: the 3-day incremental window against
 ~30-day vendor revisions.

@@ -1,8 +1,8 @@
 # PRD — AI Development Cost
 
-Scoped addition to the [Metrics](../DESIGN.md) domain: what AI cost means, which figures
+Scoped addition to the [Analytics service](../../DESIGN.md): what AI cost means, which figures
 exist, and what each may and may not claim. Realised by [DESIGN.md](DESIGN.md) and
-[claude-admin ADR-0003](../../../../components/connectors/ai/claude-admin/specs/ADR/0003-price-card-per-person-token-cost.md).
+[claude-admin ADR-0003](../ADR/0003-price-card-per-person-token-cost.md).
 
 <!-- toc -->
 
@@ -186,6 +186,11 @@ view since June, still cannot be read through the API.
 - Per-PR cost as fact — see FR-9.
 - The impact / ROI conclusion, which consumes these figures (`#1609`).
 - Team and role as *first-class metric entities* — see FR-10 for how they are served.
+- **Deferred out of this release:** everything reading the Claude API. `#2437` removed the
+  `claude-admin` connector and `silver.class_ai_api_usage`, and the `openai` connector with it,
+  so FR-3's Claude Admin supplier, the price card and the reconciliation signal have no
+  substrate. FR-3 is served by Cursor alone until a per-token source returns; the decomposition
+  records what unblocks each shelved entry.
 
 Deferred with an explicit trigger:
 

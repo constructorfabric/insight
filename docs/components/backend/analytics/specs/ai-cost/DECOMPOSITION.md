@@ -2,11 +2,12 @@
 
 Decomposes [DESIGN.md](DESIGN.md) into implementable features. Requirements referenced as
 `FR-n` / `AC-n` are from [PRD.md](PRD.md); pricing decisions from
-[claude-admin ADR-0003](../../../../components/connectors/ai/claude-admin/specs/ADR/0003-price-card-per-person-token-cost.md).
+[claude-admin ADR-0003](../ADR/0003-price-card-per-person-token-cost.md).
 
 <!-- toc -->
 
 - [1. Overview](#1-overview)
+  - [Deferred with the claude-admin removal](#deferred-with-the-claude-admin-removal)
 - [2. Entries](#2-entries)
   - [2.1 Claude Team — extraction audit — HIGH](#21-claude-team--extraction-audit--high)
   - [2.2 Claude Team — permission-failure visibility — HIGH](#22-claude-team--permission-failure-visibility--high)
@@ -14,11 +15,11 @@ Decomposes [DESIGN.md](DESIGN.md) into implementable features. Requirements refe
   - [2.4 Claude Team — confirm and cover the usage-priced metric — MEDIUM](#24-claude-team--confirm-and-cover-the-usage-priced-metric--medium)
   - [2.5 Claude Team — vendor invoices — HIGH](#25-claude-team--vendor-invoices--high)
   - [2.6 Claude Team — seat cost and underuse — MEDIUM](#26-claude-team--seat-cost-and-underuse--medium)
-  - [2.7 Claude API — token usage contract — HIGH](#27-claude-api--token-usage-contract--high)
-  - [2.8 Claude API — price card and per-person token cost — HIGH](#28-claude-api--price-card-and-per-person-token-cost--high)
-  - [2.9 Claude API — org-grain cost class — MEDIUM](#29-claude-api--org-grain-cost-class--medium)
-  - [2.10 Claude API — price reconciliation — MEDIUM](#210-claude-api--price-reconciliation--medium)
-  - [2.11 Cost coverage contract — MEDIUM](#211-cost-coverage-contract--medium)
+  - [2.7 Claude API — token usage contract — HIGH — DEFERRED](#27-claude-api--token-usage-contract--high--deferred)
+  - [2.8 Claude API — price card and per-person token cost — HIGH — DEFERRED](#28-claude-api--price-card-and-per-person-token-cost--high--deferred)
+  - [2.9 Claude API — org-grain cost class — MEDIUM — DEFERRED](#29-claude-api--org-grain-cost-class--medium--deferred)
+  - [2.10 Claude API — price reconciliation — MEDIUM — DEFERRED](#210-claude-api--price-reconciliation--medium--deferred)
+  - [2.11 Cost coverage contract — MEDIUM — DEFERRED](#211-cost-coverage-contract--medium--deferred)
 - [3. Feature Dependencies](#3-feature-dependencies)
 - [4. Conditional Scope](#4-conditional-scope)
 
@@ -32,7 +33,9 @@ demonstrable on real data.
 
 - **Phase 1 — Claude Team.** Everything this connector can yield, at least matching the
   reference implementation in `data_collector` (`apps/claude`).
-- **Phase 2 — Claude API tokens.** The price card and per-person token cost.
+- **Phase 2 — per-token cost.** Reduced to Cursor. The Claude API branch (2.7–2.10) is
+  deferred: the connector it reads was removed from the repository, and so were the two silver
+  relations it fed. See "Deferred with the claude-admin removal" below.
 
 **Two quantities, not one.** The phrase "total_cost / avg_cost_per_day (per-seat overage)"
 conflates two figures that arrive from different endpoints and differ by orders of magnitude:
@@ -90,6 +93,33 @@ Anthropic's GitHub app is connected.
 
 One defect surfaced by this work is tracked separately and is **not** in scope: the 3-day
 incremental window against roughly 30-day vendor revisions.
+
+### Deferred with the claude-admin removal
+
+`chore: remove seven unused connectors` (#2437) deleted the `claude-admin` connector, its dbt
+models and its DDL snapshot, and with them `silver.class_ai_api_usage`. The same commit removed
+the `openai` connector, whose `to_ai_cost.sql` was the other feeder named for
+`silver.class_ai_cost`. Four entries stand on what it deleted and are therefore deferred out of
+this release, kept in place rather than dropped because the analysis in them survives the
+connector:
+
+| Entry | Why it is blocked | What would unblock it |
+|---|---|---|
+| 2.7 Claude API — token usage contract | `class_ai_api_usage`, the relation it extends, no longer exists | the connector returns, or another per-token source lands with the same shape |
+| 2.8 Claude API — price card and per-person token cost | reads `claude_admin_cost_report`, which has no producer | the connector returns |
+| 2.9 Claude API — org-grain cost class | both named feeders were deleted — `claude_admin__ai_cost` was never built and `to_ai_cost.sql` went with `openai` | any vendor billing line item reaches silver |
+| 2.10 Claude API — price reconciliation | depends on 2.8 | 2.8 |
+| 2.11 Cost coverage contract | depends on a token-billed source reaching a metric | the Cursor branch below, or 2.8 |
+
+[ADR-0003](../ADR/0003-price-card-per-person-token-cost.md) governs 2.8 and is deferred with
+it. It stays in the tree: the decision and its reasoning are the input to whoever revives the
+branch, and the ADR itself now records what is open in it.
+
+**What Phase 2 still holds.** Cursor is the only per-token source left in the repository, and it
+needs no price card at all — `chargedCents WHERE isChargeable` is the billed amount, already in
+money (research notes §2). Its entry is deliberately not written here: writing scope for work
+nobody has scheduled produced 2.7–2.10, which are now shelved. It will be written when the
+branch is picked up.
 
 ---
 
@@ -360,7 +390,7 @@ incremental window against roughly 30-day vendor revisions.
 
 ---
 
-### 2.7 Claude API — token usage contract — HIGH
+### 2.7 Claude API — token usage contract — HIGH — DEFERRED
 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-feature-token-usage-contract`
 
@@ -387,7 +417,7 @@ incremental window against roughly 30-day vendor revisions.
 
 ---
 
-### 2.8 Claude API — price card and per-person token cost — HIGH
+### 2.8 Claude API — price card and per-person token cost — HIGH — DEFERRED
 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-feature-token-cost`
 
@@ -419,7 +449,7 @@ incremental window against roughly 30-day vendor revisions.
 
 ---
 
-### 2.9 Claude API — org-grain cost class — MEDIUM
+### 2.9 Claude API — org-grain cost class — MEDIUM — DEFERRED
 
 - [ ] `p2` - **ID**: `cpt-insightspec-aicost-feature-cost-class`
 
@@ -442,7 +472,7 @@ incremental window against roughly 30-day vendor revisions.
 
 ---
 
-### 2.10 Claude API — price reconciliation — MEDIUM
+### 2.10 Claude API — price reconciliation — MEDIUM — DEFERRED
 
 - [ ] `p2` - **ID**: `cpt-insightspec-aicost-feature-reconciliation`
 
@@ -461,7 +491,7 @@ incremental window against roughly 30-day vendor revisions.
 
 ---
 
-### 2.11 Cost coverage contract — MEDIUM
+### 2.11 Cost coverage contract — MEDIUM — DEFERRED
 
 - [ ] `p2` - **ID**: `cpt-insightspec-aicost-feature-cost-coverage`
 

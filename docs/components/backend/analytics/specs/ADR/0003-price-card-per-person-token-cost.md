@@ -26,6 +26,13 @@ date: 2026-08-06
 
 <!-- /toc -->
 
+> [!NOTE]
+> **Deferred, not withdrawn.** `#2437` removed the `claude-admin` connector, and with it the
+> `cost_report` stream this decision prices from and the `class_ai_api_usage` relation it
+> extends. The decision stands as reasoning for whoever revives that branch; nothing in the
+> current release builds it. Cursor, the remaining per-token source, needs no price card — its
+> billed amount arrives in money.
+
 ## Context and Problem Statement
 
 AI cost must be attributable to a person. For per-token billing there is no direct source:
@@ -209,7 +216,7 @@ scope widens to match — symmetrically, never on one side only.
 - `#1901`, `#1902` — Claude Admin ingestion defects; code fixes merged (`#1926`, `#1927`),
   issues open pending verification on data.
 - Evidence for the constant-rate assumption and the token-multiplier comparison:
-  `docs/domain/metrics/specs/ai-cost/research-notes.md` §6–§7.
+  `docs/components/backend/analytics/specs/ai-cost/research-notes.md` §6–§7.
 - **Open, for whoever unblocks the per-token branch:** whether self-extension should group by
   `context_window` and write a row per context tier, falling back to the NULL row only where
   the window under derivation carries one tier. It would make derived rates exact per tier at
