@@ -369,7 +369,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
 
   # ── commits (git-cli-proxy) ────────────────────────────────────────
   - type: DeclarativeStream
@@ -473,7 +473,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | string | replace(':', '%3A') }}:{{ record['sha'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}
 
   # ── commit_files (git-cli-proxy) ───────────────────────────────────
   - type: DeclarativeStream
@@ -574,7 +574,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | string | replace(':', '%3A') }}:{{ record['sha'] | string | replace(':', '%3A') }}:{{ record['filename'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}:{{ record['filename'] | replace(':', '%3A') }}
 
   # ── repo_branches (git-cli-proxy) ──────────────────────────────────
   - type: DeclarativeStream
@@ -646,7 +646,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | string | replace(':', '%3A') }}:{{ record['name'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['name'] | replace(':', '%3A') }}
 
   # ── Pull requests (GitHub API) ──────────────────────────────────────────
   # LIST endpoint only: /pulls has no `since`, so newest-first plus the
@@ -726,7 +726,6 @@ streams:
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
       is_data_feed: true
-      is_client_side_incremental: true
       lookback_window: P1D
       start_datetime:
         type: MinMaxDatetime
@@ -760,7 +759,13 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | string | replace(':', '%3A') }}:{{ record['id'] | string }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
+          - [head]
+          - [base]
 
   # ── Pull request reviews (GitHub API) ───────────────────────────────────
   # No repo-level reviews endpoint exists in REST, so this is one call per PR
@@ -876,7 +881,6 @@ streams:
                 # own, so parent state would never persist. The data-feed
                 # stop is what bounds pagination at the window edge.
                 is_data_feed: true
-                is_client_side_incremental: true
                 start_datetime:
                   type: MinMaxDatetime
                   datetime: "{{ format_datetime(now_utc() - duration('P' ~ config.get('github_pr_child_window_days', 30) ~ 'D'), '%Y-%m-%dT%H:%M:%SZ') }}"
@@ -907,7 +911,11 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | string | replace(':', '%3A') }}:{{ stream_partition.pull_number | string }}:{{ record['id'] | string }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pull_number }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
 
   # ── Issue & PR conversation comments (GitHub API) ───────────────────────
   # ONE repo-level endpoint covers both: PR conversation comments are issue
@@ -1004,7 +1012,11 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | string | replace(':', '%3A') }}:comment:{{ record['id'] | string }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:comment:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
 
   # ── Issues (GitHub API) ─────────────────────────────────────────────────
   # The endpoint returns PRs too; the record filter drops them (a PR carries
@@ -1113,7 +1125,13 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | string | replace(':', '%3A') }}:issue:{{ record['id'] | string }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:issue:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
+          - [assignees]
+          - [labels]
 
   # ── Projects V2 (GitHub GraphQL) ────────────────────────────────────────
   # Projects V2 has no REST API. Cursor rides in the request body — the
@@ -1251,7 +1269,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | string | replace(':', '%3A') }}:project:{{ (record.get('id') or '') | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:project:{{ (record.get('id') or '') | replace(':', '%3A') }}
 
   # ── Actions workflow runs (GitHub API) ──────────────────────────────────
   # The `created` range goes in a plain request parameter: start_time_option
@@ -1354,7 +1372,11 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | string | replace(':', '%3A') }}:run:{{ record['id'] | string }}:{{ record.get('run_attempt', 1) | string }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:run:{{ record['id'] }}:{{ record.get('run_attempt', 1) }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [actor]
 
   # ── Deployments (GitHub API) ────────────────────────────────────────────
   # No date filter and no outcome on this endpoint: newest-first + data-feed
@@ -1424,7 +1446,6 @@ streams:
       # created_at is immutable: no lookback; the data-feed stop is what
       # bounds newest-first pagination at the stored state.
       is_data_feed: true
-      is_client_side_incremental: true
       start_datetime:
         type: MinMaxDatetime
         datetime: "{{ config.get('github_start_date', '2020-01-01') }}"
@@ -1445,7 +1466,12 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | string | replace(':', '%3A') }}:deploy:{{ record['id'] | string }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:deploy:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [creator]
+          - [payload]
 
   # ── Deployment statuses (GitHub API) ────────────────────────────────────
   # A deployment record has no outcome; this child fetches success/failure
@@ -1558,7 +1584,6 @@ streams:
                 # Stateless sliding window; data-feed stop bounds the
                 # newest-first pagination at the window edge.
                 is_data_feed: true
-                is_client_side_incremental: true
                 start_datetime:
                   type: MinMaxDatetime
                   datetime: "{{ format_datetime(now_utc() - duration('P' ~ config.get('github_deploy_window_days', 30) ~ 'D'), '%Y-%m-%dT%H:%M:%SZ') }}"
@@ -1589,8 +1614,11 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | string | replace(':', '%3A') }}:{{ stream_partition.deployment_id | string }}:status:{{ record['id'] | string }}
-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.deployment_id }}:status:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [creator]
 concurrency_level:
   type: ConcurrencyLevel
   # Never 1: the concurrent CDK self-deadlocks at a single worker once a sync

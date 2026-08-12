@@ -135,7 +135,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['uuid'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['uuid'] | replace(':', '%3A') }}
   # ── Commits (git-cli-proxy) ─────────────────────────────────────────────
   - type: DeclarativeStream
     name: commits
@@ -358,7 +358,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | string | replace(':', '%3A') }}:{{ record['sha'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}
 
   # ── Per-file changes (git-cli-proxy) ────────────────────────────────────
   - type: DeclarativeStream
@@ -571,7 +571,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | string | replace(':', '%3A') }}:{{ record['sha'] | string | replace(':', '%3A') }}:{{ record['filename'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}:{{ record['filename'] | replace(':', '%3A') }}
 
   # ── Branch heads (git-cli-proxy) ────────────────────────────────────────
   # Full refresh: bronze keeps the LATEST state per branch, and head-movement
@@ -748,7 +748,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | string | replace(':', '%3A') }}:{{ record['name'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['name'] | replace(':', '%3A') }}
 
   # ── Pull requests (Bitbucket API) ───────────────────────────────────────
   # Default filter is OPEN-only, and repeating `state` is the documented way
@@ -967,7 +967,15 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | string | replace(':', '%3A') }}:{{ record['id'] | string }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [author]
+          - [merge_commit]
+          - [closed_by]
+          - [source]
+          - [destination]
 
   # ── Pull request comments (Bitbucket API) ───────────────────────────────
   # Child of a stateless sliding window of recently updated PRs. Bodies are
@@ -1216,7 +1224,13 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | string | replace(':', '%3A') }}:{{ stream_partition.pr_id | string }}:{{ record['id'] | string }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pr_id }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
+          - [parent]
+          - [inline]
 
   # ── Pull request activity (Bitbucket API) ───────────────────────────────
   # The ONLY source of approvals, changes-requested and merge/decline
@@ -1477,7 +1491,14 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | string | replace(':', '%3A') }}:{{ stream_partition.pr_id | string }}:{{ 'approval' if record.get('approval') else 'changes_requested' if record.get('changes_requested') else 'update' if record.get('update') else 'comment' }}:{{ ((record.get('approval') or {}).get('date') or (record.get('changes_requested') or {}).get('date') or (record.get('update') or {}).get('date') or (record.get('comment') or {}).get('created_on') or '') | string | replace(':', '%3A') }}:{{ (((record.get('approval') or {}).get('user') or {}).get('uuid') or ((record.get('changes_requested') or {}).get('user') or {}).get('uuid') or ((record.get('update') or {}).get('author') or {}).get('uuid') or ((record.get('comment') or {}).get('user') or {}).get('uuid') or '') | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pr_id }}:{{ 'approval' if record.get('approval') else 'changes_requested' if record.get('changes_requested') else 'update' if record.get('update') else 'comment' }}:{{ ((record.get('approval') or {}).get('date') or (record.get('changes_requested') or {}).get('date') or (record.get('update') or {}).get('date') or (record.get('comment') or {}).get('created_on') or '') | replace(':', '%3A') }}:{{ (((record.get('approval') or {}).get('user') or {}).get('uuid') or ((record.get('changes_requested') or {}).get('user') or {}).get('uuid') or ((record.get('update') or {}).get('author') or {}).get('uuid') or ((record.get('comment') or {}).get('user') or {}).get('uuid') or '') | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [approval]
+          - [changes_requested]
+          - [update]
+          - [comment]
 
   # ── Workspace members (Bitbucket API) ───────────────────────────────────
   # Fills the identity gap the CDK connector never covered: Bitbucket exposes
@@ -1607,7 +1628,11 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.workspace | string | replace(':', '%3A') }}:{{ ((record.get('user') or {}).get('uuid') or '') | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.workspace | replace(':', '%3A') }}:{{ ((record.get('user') or {}).get('uuid') or '') | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
 
   # ── CI pipelines (Bitbucket API) ────────────────────────────────────────
   # No `fields=` projection: partial-response support on this endpoint is
@@ -1767,7 +1792,6 @@ streams:
       # created_on is immutable, so no lookback; descending order + data-feed
       # stop is what makes each sync O(new records).
       is_data_feed: true
-      is_client_side_incremental: true
       start_datetime:
         type: MinMaxDatetime
         datetime: "{{ config.get('bitbucket_start_date', '2020-01-01') }}"
@@ -1818,7 +1842,14 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | string | replace(':', '%3A') }}:{{ record['uuid'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['uuid'] | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [state]
+          - [target]
+          - [trigger]
+          - [creator]
 
   # ── Deployments (Bitbucket API) ─────────────────────────────────────────
   # Same pipelines-module shape; outcome (`state`) IS in the list, unlike
@@ -1977,7 +2008,6 @@ streams:
       # created_on is immutable, so no lookback; descending order + data-feed
       # stop is what makes each sync O(new records).
       is_data_feed: true
-      is_client_side_incremental: true
       start_datetime:
         type: MinMaxDatetime
         datetime: "{{ config.get('bitbucket_start_date', '2020-01-01') }}"
@@ -2028,8 +2058,13 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | string | replace(':', '%3A') }}:{{ record['uuid'] | string | replace(':', '%3A') }}
-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['uuid'] | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [state]
+          - [environment]
+          - [deployable]
 concurrency_level:
   type: ConcurrencyLevel
   # Never 1: the concurrent CDK self-deadlocks at a single worker once a sync

@@ -138,7 +138,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
   # ── Commits (git-cli-proxy) ─────────────────────────────────────────────
   - type: DeclarativeStream
     name: commits
@@ -367,7 +367,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | string | replace(':', '%3A') }}:{{ record['sha'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}
 
   # ── Per-file changes (git-cli-proxy) ────────────────────────────────────
   - type: DeclarativeStream
@@ -586,7 +586,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | string | replace(':', '%3A') }}:{{ record['sha'] | string | replace(':', '%3A') }}:{{ record['filename'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}:{{ record['filename'] | replace(':', '%3A') }}
 
   # ── Branch heads (git-cli-proxy) ────────────────────────────────────────
   # Full refresh: bronze keeps the LATEST state per branch, and head-movement
@@ -764,7 +764,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | string | replace(':', '%3A') }}:{{ record['name'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['name'] | replace(':', '%3A') }}
 
   # ── Merge requests (GitLab API) ─────────────────────────────────────────
   # Group-level endpoint: one listing covers the group and its subgroups,
@@ -913,7 +913,12 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [author]
+          - [merged_by]
 
   # ── Merge request notes (GitLab API) ────────────────────────────────────
   # Child of a stateless sliding window of MRs (see the parent's
@@ -1098,7 +1103,11 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] | string }}:{{ record['id'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [author]
 
   # ── Merge request approvals (GitLab API) ────────────────────────────────
   # Single object per MR; snapshot semantics — the RMT keeps the latest row
@@ -1269,7 +1278,11 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] | string }}:{{ stream_partition.mr_iid | string }}:approvals
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_partition.mr_iid }}:approvals
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [approved_by]
 
   # ── Group members (GitLab API) ──────────────────────────────────────────
   # /members/all = direct + inherited. Non-admin tokens see no email; identity
@@ -1382,7 +1395,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.group | string | replace(':', '%3A') }}:{{ record['id'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.group | replace(':', '%3A') }}:{{ record['id'] }}
 
   # ── CI pipelines (GitLab API) ───────────────────────────────────────────
   # Parent is a FULL-REFRESH slim projects copy on purpose: scheduled
@@ -1566,7 +1579,7 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] | string | replace(':', '%3A') }}
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
 
   # ── Deployments (GitLab API) ────────────────────────────────────────────
   # Only populated where teams use GitLab environments; an empty stream is
@@ -1761,8 +1774,12 @@ streams:
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] | string | replace(':', '%3A') }}
-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [environment]
+          - [deployable]
 concurrency_level:
   type: ConcurrencyLevel
   # Never 1: the concurrent CDK self-deadlocks at a single worker once a sync
