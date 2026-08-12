@@ -361,7 +361,7 @@ Five consequences, roughly in the order they bite:
   `authenticator.oidc.externalIdClaim` names that claim. Point it at `sub` and
   every login authenticates and is then denied, against a fully populated
   identity projection — the most expensive way this stand can fail, because
-  nothing about it looks like a configuration error. [`INFRA.md`](INFRA.md#11-authenticatoroidcexternalidclaim-idp_sub--not-sub)
+  nothing about it looks like a configuration error. [`INFRA.md`](INFRA.md#the-load-bearing-settings)
   carries the full contract the generated realm has to satisfy, including the
   declarative user profile that otherwise discards the attribute before the
   mapper ever sees it.
