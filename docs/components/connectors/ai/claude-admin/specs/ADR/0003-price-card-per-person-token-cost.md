@@ -71,8 +71,11 @@ Restricted to `cost_type = 'tokens'` under one effective rate,
 `cost_report_amount = workspace_tokens × rate`, so substituting into option 1 gives
 `(key_tokens / workspace_tokens) × workspace_tokens × rate = key_tokens × rate`. The
 workspace total cancels. The card reaches the same number without depending on `cost_report`
-at all — and the effective per-token rate recovered from `cost_report` is observed to be
-constant across days and context tiers.
+at all. The card's exactness rests on one assumption — that the effective per-token rate
+recovered from `cost_report` is constant across days and context tiers for a given
+`(model, token_type, service_tier)` — which is stated as an assumption, not a measurement,
+under [Effective rates and negotiated discounts](#effective-rates-and-negotiated-discounts),
+and which reconciliation exists to falsify.
 
 The identity holds only within those preconditions. It does not extend to non-token charges
 (web search, code execution, session usage), nor to a tenant whose effective rate differs
@@ -87,10 +90,14 @@ Three supporting mechanisms are adopted with it:
   `(tenant, provider, model, token_type, context_window, service_tier, valid_from)`. This keeps
   the computation a single parameterised JOIN instead of pulling token rows into an
   application, and makes a rate change a data change with an audit trail.
-- **The card self-extends.** A `(model, service_tier, token_type)` seen in traffic with no
-  rate in force gets one derived from recent `cost_report` rows as `SUM(amount) / SUM(tokens)`,
-  written with `origin = 'derived'`. A newly released model prices itself after a day of
-  traffic instead of waiting for a release.
+- **The card self-extends, approximately.** A `(model, service_tier, token_type)` seen in
+  traffic with no rate in force gets one derived from recent `cost_report` rows as
+  `SUM(amount) / SUM(tokens)`, written with `origin = 'derived'` and with `context_window`
+  NULL. The derivation does not group by context window, so where a model prices context
+  tiers differently the derived figure is a traffic-weighted blend of them, not either tier's
+  rate. That is why resolution prefers an exact match and the NULL row is the fallback — see
+  [Consequences](#consequences) for the bound this carries. A newly released model still
+  prices itself after a day of traffic instead of waiting for a release.
 - **Divergence is a signal.** Per completed day and workspace, `Σ tokens × card` is compared
   against `Σ cost_report`, joined so that a day present on only one side still surfaces. A gap
   beyond tolerance raises a data-quality alert.
@@ -199,8 +206,15 @@ scope widens to match — symmetrically, never on one side only.
   reconciliation input here.
 - `#1901`, `#1902` — Claude Admin ingestion defects; code fixes merged (`#1926`, `#1927`),
   issues open pending verification on data.
-- Measured evidence for the constant-rate claim and the token-multiplier figures:
+- Evidence for the constant-rate assumption and the token-multiplier comparison:
   `docs/domain/metrics/specs/ai-cost/research-notes.md` §6–§7.
+- **Open, for whoever unblocks the per-token branch:** whether self-extension should group by
+  `context_window` and write a row per context tier, falling back to the NULL row only where
+  the window under derivation carries one tier. It would make derived rates exact per tier at
+  the cost of sparser derivation — a tier with little traffic would get no rate at all — and
+  it would diverge deliberately from the reference implementation, which groups by
+  `(model, service_tier, token_type)`. Not decided here: the mechanism cannot be built or
+  checked against data while the connector it reads is absent from the repository.
 
 ## Traceability
 
