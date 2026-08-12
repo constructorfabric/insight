@@ -1432,9 +1432,10 @@ for dbt-built gold data rather than for containers to report healthy.
           --base-url <url> and --stand-manifest <path> when pointing it
           somewhere else.
 
-          --image <ref>  Run inside an already-pulled ui-tests image instead
+          --image <ref>  Run inside an already-pulled suite image instead
                          of on the host, sharing the gateway's network
-                         namespace. Never builds: pull the image first. Test
+                         namespace. Never builds: no suite image is published
+                         anymore (CI runs host-side); build one locally. Test
                          paths are then IMAGE-SIDE (/tests/stand/ui, not
                          tests/stand/ui), and pytest-playwright's artefacts
                          land in ./test-results as usual.
@@ -1664,11 +1665,12 @@ TEST_STAND_GATEWAY_CONTAINER=insight-gateway
 # --output flag to keep in step.
 TEST_STAND_ARTIFACT_DIR="test-results"
 
-# Run the suite inside the published ui-tests image against the running stand.
+# Run the suite inside a container image against the running stand.
 #
-# The image is never built here: CI pulls it, a developer builds it once by
-# hand (see deploy/compose/ui-tests.Dockerfile). This function only wires it to
-# the stand, and the wiring is the part that is easy to get wrong.
+# The image is never built here, and none is published anymore (CI runs the
+# suite host-side from the checkout) — a developer builds one by hand if they
+# want this mode. This function only wires it to the stand, and the wiring is
+# the part that is easy to get wrong.
 #
 # Network namespace, not the compose network. The session cookie is
 # `__Host-`-prefixed, so the browser stores it only from a trustworthy origin,
@@ -1713,8 +1715,8 @@ test_stand_test_in_image() {
 
   local run_args=(
     --rm
-    # As the INVOKING user, not the image's declared one. The image drops root
-    # (ui-tests.Dockerfile), but a bind-mounted artifact directory takes its
+    # As the INVOKING user, not the image's declared one. A suite image may
+    # drop root, but a bind-mounted artifact directory takes its
     # ownership from the host, so a container uid that does not match the host's
     # cannot write into it — and the traces a failed journey uploads are the
     # whole reason that mount exists.
@@ -1827,9 +1829,9 @@ cmd_test_stand() {
       # tears it down, so a failing suite leaves the stand intact to inspect.
       #
       # Two runners, one verb. On the host (default) the suite runs from
-      # tests/ with uv. With --image it runs inside an already-pulled ui-tests
-      # image instead, which is what CI uses: the browser, its version and the
-      # locked dependency set then come from a published artefact rather than
+      # tests/ with uv — CI does the same. With --image it runs inside an
+      # already-pulled suite image instead: the browser, its version and the
+      # locked dependency set then come from that artefact rather than
       # from whatever the runner happens to have installed.
       local image=""
       while [[ $# -gt 0 ]]; do
@@ -1871,7 +1873,7 @@ cmd_test_stand() {
         echo "         brew install uv   # or: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
         return 1; }
       # --frozen: run exactly the locked dependency set, never re-resolve
-      # silently, so the host runner and the ui-tests image stay identical.
+      # silently, so every runner stays identical.
       uv run --project tests --frozen pytest tests/stand "$@"
       ;;
 

@@ -122,7 +122,7 @@ cd src/ingestion/tests/e2e
 PR's images and assert `/health` + a few golden metrics.
 
 **CI:** `e2e-stand.yml` — two **non-required** checks against the compose-stand suite: `api-smoke` (the HTTP
-contract tests, no browser) and `ui-journeys` (the browser journeys, run inside the published `ui-tests` image).
+contract tests, no browser) and `ui-journeys` (the browser journeys, run host-side from the checkout).
 Neither blocks merge — both stand up a full stack against a live IdP and their flake rate is still unmeasured.
 
 ---

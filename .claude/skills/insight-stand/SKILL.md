@@ -119,10 +119,12 @@ Chromium's `--unsafely-treat-insecure-origin-as-secure` does not help —
 both `launch()` and `launch_persistent_context()`.
 
 So a containerised runner joins the gateway's network namespace and uses
-`localhost:<port>`:
+`localhost:<port>` (no suite image is published anymore — CI runs host-side
+from the checkout, and host `localhost:<port>` satisfies the same
+constraint; `--image` remains for a locally built runner):
 
 ```bash
-./dev-compose.sh test-stand test --image ghcr.io/constructorfabric/insight-ui-tests:latest
+./dev-compose.sh test-stand test --image <locally-built-suite-image>
 ```
 
 Three preconditions, each refused up front rather than failing opaquely later:
