@@ -64,7 +64,7 @@ The solution consists of five main components:
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                          Frontend (SPA)                          │
-│  Dashboards · Analytics · AI adoption · PR metrics · Team healt  │
+│  Dashboards · Analytics · AI adoption · PR metrics · Team health │
 └────────────────────────────┬─────────────────────────────────────┘
                              │ REST API (auth + data)
 ┌────────────────────────────▼─────────────────────────────────────┐
@@ -80,7 +80,7 @@ The solution consists of five main components:
                              │ write
 ┌────────────────────────────┴─────────────────────────────────────┐
 │              Connector Orchestration Layer                       │
-│         Scheduling · Retry · State management · Monitorin        │
+│         Scheduling · Retry · State management · Monitoring       │
 └────────────────────────────▲─────────────────────────────────────┘
                              │ collect
 ┌────────────────────────────┴─────────────────────────────────────┐
