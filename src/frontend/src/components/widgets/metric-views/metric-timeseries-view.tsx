@@ -359,6 +359,10 @@ export function MetricTimeseriesView({
   if (overflowOf !== presentation) {
     setOverflowOf(presentation);
     setOverflows(false);
+    // The expansion goes with it. Left standing, a table let out to full
+    // height, swapped for the chart and swapped back came up uncapped again —
+    // and offered to collapse a table that already fitted.
+    setExpanded(false);
   }
 
   const shouldCombineMetrics =

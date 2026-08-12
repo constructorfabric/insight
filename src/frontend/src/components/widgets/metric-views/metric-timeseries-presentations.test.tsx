@@ -60,6 +60,17 @@ describe("metric timeseries presentations", () => {
     expect(screen.getByText("Grand total")).toBeInTheDocument();
   });
 
+  it("offers no paging control towards a side with nothing on it", () => {
+    // Hiding them with opacity left real buttons in the tab order and the
+    // accessibility tree: a keyboard reader at the first column could reach
+    // "Show earlier columns" and press it to no effect. Nothing overflows in
+    // this environment — every dimension is zero — so nothing should render.
+    render(<MetricTimeseriesTable model={groupedTimeseriesModel()} />);
+    expect(
+      screen.queryByRole("button", { name: /Show (earlier|later)/ })
+    ).toBeNull();
+  });
+
   it("pins the totals to the foot of the box, with an edge over the rows", () => {
     // A table long enough to scroll hides the rows that summarise it behind
     // exactly the scrolling its length forces. The edge matters as much as the

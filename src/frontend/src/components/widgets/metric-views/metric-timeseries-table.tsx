@@ -30,11 +30,8 @@ export interface MetricTimeseriesTableProps {
   model: MetricTimeseriesModel;
   config?: MetricTimeseriesTableConfig;
   /**
-   * Whether the rows overrun the box vertically — the card above offers to
-   * let the table out to full height, and only when that would do anything.
-   * The fact travels up rather than the node: the card has no use for the
-   * element, and passing a ref back into a child's ref merge is what the
-   * immutability rule forbids.
+   * Whether the rows overrun the box — the card above offers to let the table
+   * out to full height, and only when that would do anything.
    */
   onVerticalOverflow?: (overflows: boolean) => void;
   onEvidence?: (
@@ -221,13 +218,15 @@ export function MetricTimeseriesTable({
     // A native listener rather than `onScroll`: what scrolls is the container
     // the ui table owns, and it takes no props of its own.
     box.addEventListener("scroll", measure, { passive: true });
-    // The observer watches the TABLE, not the box: the box is what gets
-    // capped, so its own size does not change when columns or rows arrive, and
-    // observing it would never fire on the change that matters.
-    const inner =
-      typeof ResizeObserver === "undefined" ? null : box.querySelector("table");
-    const observer = inner ? new ResizeObserver(measure) : null;
-    if (inner && observer) observer.observe(inner);
+    // Both sides of the comparison move, so both are watched. The TABLE
+    // changes when columns or rows arrive; the BOX changes when the window or
+    // the card does, and a box that narrows around an unchanged table is
+    // exactly the case where the arrows would otherwise go stale.
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(box);
+    const inner = box.querySelector("table");
+    if (inner) observer?.observe(inner);
     return () => {
       box.removeEventListener("scroll", measure);
       observer?.disconnect();
@@ -257,7 +256,12 @@ export function MetricTimeseriesTable({
 
   return (
     <div className="relative h-full">
-      {SIDES.map((side) => {
+      {/* Not rendered at all where there is nothing that way. Hiding them with
+          opacity left real buttons in the tab order and the accessibility
+          tree, so a keyboard reader could reach "Show earlier columns" while
+          sitting at the first one and press it to no effect. The cost is the
+          fade; an invisible control that answers is the worse trade. */}
+      {SIDES.filter((side) => more[side]).map((side) => {
         const { icon: Icon, label, place } = SIDE_CHROME[side];
         return (
           <Button
@@ -274,8 +278,7 @@ export function MetricTimeseriesTable({
               // narrow the thing they exist to reveal. Opaque, so they stay
               // legible over whatever cell they land on.
               "absolute z-40 rounded-full bg-card shadow-md",
-              place,
-              more[side] ? "opacity-100" : "pointer-events-none opacity-0"
+              place
             )}
           >
             <Icon className="size-4" />
