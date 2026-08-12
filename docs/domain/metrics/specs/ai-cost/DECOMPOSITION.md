@@ -120,6 +120,10 @@ incremental window against roughly 30-day vendor revisions.
   - Settle whether `is_enabled` can serve as the seat-state filter. Closes PRD OD-5.
   - Decide on the fields stalled in bronze: `last_active`, `api_key_name`, and the derivable
     `avg_cost_per_day`, `avg_lines_accepted_per_day`, `prs_with_cc_percentage`.
+  - Carry `disabled_reason` and `disabled_until` through the stream schema into bronze. They
+    are the only vendor signal that separates "extra usage is switched off" from "the seat is
+    not assigned", and reading them is what will finally define `is_enabled` (PRD OD-5). They
+    reach bronze only; no staging or silver column is added for them here.
 
 - **Out of scope**: building anything; this feature produces findings and decisions.
 
@@ -270,7 +274,7 @@ incremental window against roughly 30-day vendor revisions.
     `num_seats` and `hosted_invoice_url` — but **no invoice id and no line items**. `total`
     differs from `total_excluding_tax` on most invoices, so the net-amount rule is the rule
     rather than an edge case.
-  - Enrichment via the Stripe hosted chain: derive the account and token pair from
+  - Enrichment via the Stripe hosted chain: derive the account and token identifiers from
     `hosted_invoice_url`, request the hosted invoice page for the real `invoice_id` and a
     short-lived ephemeral key, then request the full invoice with that key for the line
     items. The ephemeral key is never persisted.

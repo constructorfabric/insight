@@ -342,8 +342,10 @@ by `cost_type`, not by which connector produced it.** A `billing_model` column o
 Consequence for seat-utilisation metrics: the denominator comes from `class_ai_overage`
 while activity comes from `class_ai_dev_usage` filtered to `status='active'`. A deactivated
 person keeps their overage row but loses their activity rows, and would register as an
-under-utilised seat. The state filter has to live inside the overage branch. `is_enabled` is
-the candidate, pending a definition.
+under-utilised seat. The state filter has to live inside the overage branch. `is_enabled`
+looked like the candidate when this section was written; §16 and audit decision D2 settle it
+the other way — the gate is `credit_limit_cents IS NOT NULL` alone, and `is_enabled` is
+carried as a dimension. This paragraph is kept for the reasoning, not for its conclusion.
 
 ### Other `overage_spend_limits` fields
 
@@ -430,8 +432,11 @@ or script runs the command; the repo invokes
 `dbt run`, `test`, `build`, `parse`, `seed`, `compile` and `snapshot` only. The thresholds are
 inert, so a stream that stops producing raises nothing on that path.
 
-**No e2e test exercises any data-quality check**, and no e2e schema fixture exists for
-`claude_team_overage_spend` (only `claude_team_code_metrics`). 2.3 needs the latter.
+**No e2e test exercises any data-quality check.** The rig selects a silver class without the
+downstream `+`, and a singular test is a node below the model it references, so the
+`data_quality` catalog never enters the selection. The scheduled workflow runs it in a
+deployed environment (`dbt test --selector data_quality`), which is the only place these
+checks execute today. The e2e schema fixture for `claude_team_overage_spend` now exists.
 
 **Coverage check** — people with Claude Team activity but no seat row for the same billing
 month. Months that predate the connector show a shortfall; months it covered show none.
@@ -553,15 +558,16 @@ metrics-registry change would widen the diff past reviewability. Options for who
 repoint `cc_overage` at `used_amount_cents`, relabel it as spend past the ceiling, or retire it
 in favour of the registry metric.
 
-## 19. Invoice feasibility, measured
+## 19. Invoice feasibility
 
-Probed against a populated instance before building anything for 2.5.
+What 2.5 requires of the vendor's contract, and what the endpoint returns. Established before
+building anything; the readings themselves are not reproduced here.
 
 **The proxy already forwards the path.** `claude-team-proxy` exposes exactly three routes —
 `/admin/session-key`, `/health` and a wildcard `/api/*` — so
 `GET {proxy_url}/api/stripe/{org}/invoices` needs no proxy change and no action from whoever
-operates it. Called with the connector's own credentials it answers **HTTP 200**, not 403:
-unlike `overage_spend_limits`, the installed session key already carries the permission.
+operates it. The route authorises on the session key the connector already installs, and
+unlike `overage_spend_limits` it does not depend on the `billing:view` scope.
 
 **Volume and shape.** The endpoint pages twelve invoices at a time. Fields: `attempt_count`, `attempted`, `created_ts`, `currency`,
 `due_date_ts`, `gift`, `hosted_invoice_url`, `invoice_pdf_url`, `num_seats`, `payment_intent`,
@@ -577,10 +583,10 @@ the subscription line item's `quantity`, which only the hosted chain reaches
 **`total` is not `total_excluding_tax`** on most invoices. The net-amount rule changes the
 figure as a rule rather than on an edge case.
 
-**Egress is open.** From the Airbyte worker in the `insight` namespace, `api.stripe.com`
-answers HTTP 404 and `invoicedata.stripe.com` HTTP 301 — real HTTP responses, so DNS, TCP,
-TLS and HTTP all work, at ~83 ms to first byte. The namespace has no `NetworkPolicy` at all.
-Production may be configured differently; this was measured on the dev stand only.
+**Egress requirement.** The chain leaves the cluster for `api.stripe.com` and
+`invoicedata.stripe.com`, so both hosts must be reachable from wherever the connector runs.
+Where a `NetworkPolicy` governs egress, it has to admit them; the connector reports the
+failure as a chain step that did not complete rather than as missing money.
 
 **The CDK runtime is an existing pattern, not new infrastructure.** Of 26 connectors, 19 are
 declarative manifests and at least five are Python CDK sources with their own `Dockerfile`,
@@ -593,21 +599,20 @@ third party to obtain an ephemeral key, so it waits on an explicit decision. It 
 three things at once — that the URL format still parses, that the bootstrap returns both
 fields, and that line items carry `quantity`.
 
-## 20. The Stripe hosted chain, executed
+## 20. The Stripe hosted chain
 
-Run end to end from the Airbyte worker against invoices the endpoint returned. Every step
-answered **HTTP 200**:
+The four hops between a `hosted_invoice_url` and the line items, and what each one yields:
 
 | Step | Request | Result |
 |---|---|---|
 | 1 | `GET {proxy}/api/stripe/{org}/invoices` | list, as §19 |
-| 2 | parse `hosted_invoice_url` | regex matched; token is `live_` + 103 chars |
+| 2 | parse `hosted_invoice_url` | account and token identifiers, per the documented form |
 | 3 | `GET invoicedata.stripe.com/hosted_invoice_page/{acct}/{token}` | `invoice_id` and `ephemeral_key` both present |
 | 4 | `GET api.stripe.com/v1/invoices/{id}/hosted` | lines embedded, `has_more: false` |
 | 5 | `GET api.stripe.com/v1/invoices/{id}/lines?limit=100` | full line set |
 
-`Stripe-Version: 2026-06-24.dahlia` with `Stripe-Account: {acct}` was accepted. The URL format
-the reference implementation parses is still current.
+The chain pins `Stripe-Version: 2026-06-24.dahlia` and passes `Stripe-Account: {acct}`. The
+URL form the reference implementation parses is the one in force.
 
 **The seat price is `hosted_invoice_unit_amount`, not `amount / quantity`.** A regular monthly
 invoice carries it directly:

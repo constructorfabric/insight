@@ -7,7 +7,7 @@
         'domain': 'ai',
         'category': 'coverage',
         'tier': 'error',
-        'remediation': 'A person cannot use Claude Team without occupying a seat, so activity in class_ai_dev_usage implies a class_ai_overage row for the same billing month. Rows here mean the overage stream is not reporting seats that are demonstrably in use. First check the claude-team-proxy sessionKey: /api/organizations/{org}/overage_spend_limits answers 403 without billing:view, and the connector maps 403 to action: IGNORE, so the sync stays green and the stream silently yields nothing. If the permission is intact, compare the seat set the endpoint returns against the emails listed here — a seat removed mid-month is a legitimate explanation for an individual row, an empty result is not.'
+        'remediation': 'A person cannot use Claude Team without occupying a seat, so activity in class_ai_dev_usage implies a class_ai_overage row for the same billing month. Rows here mean the overage stream is not reporting seats that are demonstrably in use. First check the scope on the session key the connector uses: /api/organizations/{org}/overage_spend_limits answers 403 without billing:view, and the connector maps 403 to action: IGNORE, so the sync stays green and the stream silently yields nothing. If the permission is intact, compare the seat set the endpoint returns against the emails listed here — a seat removed mid-month is a legitimate explanation for an individual row, an empty result is not.'
     }
 ) }}
 {#- Bounded to the current billing month on purpose. overage_spend_limits is a

@@ -29,8 +29,12 @@ SOURCE = "claude-team-history-test"
 SEAT_EMAIL = "grace@example.com"
 SEAT_UUID = "seat-grace"
 
+# The seeder coerces each value to its ClickHouse column type, so a row is a flat
+# map of scalars.
+SeatSnapshot = dict[str, str | int | bool | None]
 
-def _snapshot(read_at: str, used_credits: int) -> dict:
+
+def _snapshot(read_at: str, used_credits: int) -> SeatSnapshot:
     """One seat's spend state as the endpoint returns it: current period to date."""
     return {
         "_airbyte_raw_id": "00000000-0000-0000-0000-000000000000",
@@ -55,7 +59,7 @@ def _snapshot(read_at: str, used_credits: int) -> dict:
     }
 
 
-def _sync(ch_seeder: CHSeeder, dbt_runner: DbtRunner, worker_ctx: WorkerContext, row: dict) -> None:
+def _sync(ch_seeder: CHSeeder, dbt_runner: DbtRunner, worker_ctx: WorkerContext, row: SeatSnapshot) -> None:
     """One sync: bronze is replaced by the new snapshot, then the models run."""
     ch_seeder.seed_records(BRONZE_SCHEMA, BRONZE_TABLE, [row])
     dbt_runner.build(STAGING_SELECTOR, worker_ctx=worker_ctx)

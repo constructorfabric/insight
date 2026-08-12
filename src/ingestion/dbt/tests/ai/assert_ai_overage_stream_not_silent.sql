@@ -7,7 +7,7 @@
         'domain': 'ai',
         'category': 'coverage',
         'tier': 'error',
-        'remediation': 'A row here is a connector instance that reported seats in the previous billing month and none in the current one. The seat endpoint returns the month in progress, so a healthy source reports every month it is installed for. The known cause is authorisation: /api/organizations/{org}/overage_spend_limits answers 403 once the claude-team-proxy sessionKey loses billing:view, and the connector maps 403 to action: IGNORE, so the sync stays green while the stream yields nothing. Rotate the sessionKey through the proxy Helm release and re-sync. A source deliberately decommissioned mid-month is the other explanation, and it clears itself once the previous month rolls out of the comparison.'
+        'remediation': 'A row here is a connector instance that reported seats in the previous billing month and none in the current one. The seat endpoint returns the month in progress, so a healthy source reports every month it is installed for. The known cause is authorisation: /api/organizations/{org}/overage_spend_limits answers 403 once the session key the connector uses loses billing:view, and the connector maps 403 to action: IGNORE, so the sync stays green while the stream yields nothing. Restore the scope on the session key the connector uses, then re-sync. A source deliberately decommissioned mid-month is the other explanation, and it clears itself once the previous month rolls out of the comparison.'
     }
 ) }}
 {#- The sibling check, assert_ai_overage_covers_active_seats, only sees a seat

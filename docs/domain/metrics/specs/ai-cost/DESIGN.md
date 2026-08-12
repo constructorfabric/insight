@@ -74,11 +74,11 @@ exist because that decision requires them.
 | NFR-2 Auditability | `ai_cost_metric_evidence` (drilldown population); `origin` on each price row |
 | NFR-3 Minor units | `class_ai_cost.amount_value` + `amount_currency`; `class_ai_overage` already compliant |
 | NFR-4 Extensibility by tag | `union_by_tag('silver:class_ai_cost')` |
-| NFR-5 Failure is visible | Reconciliation signal; the 403-reads-as-empty defect recorded as out of scope |
+| NFR-5 Failure is visible | Reconciliation signal; the 403-reads-as-empty defect is caught one layer up, by `assert_ai_overage_covers_active_seats` and `assert_ai_overage_stream_not_silent` |
 
 ### 1.3 Architecture Layers
 
-```
+```text
 bronze_claude_admin.claude_admin_messages_usage ─┐
 bronze_cursor.cursor_usage_events ───────────────┼─→ silver.class_ai_api_usage ─┐
                                                  │      (+model +tier +ctx,      │
