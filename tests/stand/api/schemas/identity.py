@@ -219,6 +219,22 @@ class PersonRoleResponse(BaseModel):
     valid_to: str | None = None
 
 
+class PersonSummaryResponse(BaseModel):
+    """
+    A person as operator surfaces display them: enough to recognise and pick,
+    nothing more. Every field but the id may be null — a person the journal
+    knows only through bindings still appears, as the id alone.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_name: str | None = None
+    email: str | None = None
+    job_title: str | None = None
+    person_id: UUID
+    status: str | None = None
+
+
 class PersonsSeedOperationResponse(BaseModel):
     """
     One operation's status. Wire shape mirrors the .NET
@@ -330,7 +346,7 @@ class QueueItemResponse(BaseModel):
         extra='forbid',
     )
     account_id: str
-    candidates: list[UUID] = Field(..., description='Persons this account could belong to, if any are known.')
+    candidates: list[PersonSummaryResponse] = Field(..., description='Persons this account could belong to, if any are known — hydrated into\ncards so the operator UI never has to resolve bare ids itself.')
     email: str | None = None
     kind: str = Field(..., description='`contested` | `binding_conflict` | `no_evidence`.')
     source: str

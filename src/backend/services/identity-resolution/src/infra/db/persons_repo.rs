@@ -321,6 +321,33 @@ pub async fn person_exists(
     Ok(found.is_some())
 }
 
+/// Fetch the card-attribute observations (see
+/// [`crate::domain::person_card::CARD_VALUE_TYPES`]) for MANY persons in one
+/// query — the hydration read behind embedding person cards into operator
+/// responses. The caller groups per person and collapses per attribute.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub async fn fetch_card_observations(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_ids: &[Uuid],
+    value_types: &[&str],
+) -> anyhow::Result<Vec<persons::Model>> {
+    if person_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let rows = persons::Entity::find()
+        .filter(persons::Column::InsightTenantId.eq(tenant_id.as_bytes().to_vec()))
+        .filter(persons::Column::PersonId.is_in(person_ids.iter().map(|id| id.as_bytes().to_vec())))
+        .filter(persons::Column::ValueType.is_in(value_types.iter().copied()))
+        .all(db)
+        .await?;
+    Ok(rows)
+}
+
 /// Fetch every observation row for a person within the tenant (all value types,
 /// all sources). The caller collapses them to the current value per attribute.
 ///

@@ -20,10 +20,11 @@ use uuid::Uuid;
 use super::AppState;
 use super::error::CorrectionError;
 use super::gate::require_admin;
+use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::SourceAccountKey;
-use crate::infra::db::{ops_repo, resolution_repo};
+use crate::infra::db::{ops_repo, persons_repo, resolution_repo};
 use crate::infra::identity_evidence::{AccountEvidence, ClickHouseEvidenceReader};
 
 /// How many accounts one bulk call may carry — a prepared matching table is
@@ -613,8 +614,33 @@ pub struct QueueItemResponse {
     pub account_id: String,
     pub email: Option<String>,
     pub username: Option<String>,
-    /// Persons this account could belong to, if any are known.
-    pub candidates: Vec<Uuid>,
+    /// Persons this account could belong to, if any are known — hydrated into
+    /// cards so the operator UI never has to resolve bare ids itself.
+    pub candidates: Vec<PersonSummaryResponse>,
+}
+
+/// A person as operator surfaces display them: enough to recognise and pick,
+/// nothing more. Every field but the id may be null — a person the journal
+/// knows only through bindings still appears, as the id alone.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PersonSummaryResponse {
+    pub person_id: Uuid,
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub job_title: Option<String>,
+    pub status: Option<String>,
+}
+
+impl From<PersonCard> for PersonSummaryResponse {
+    fn from(card: PersonCard) -> Self {
+        Self {
+            person_id: card.person_id,
+            email: card.email,
+            display_name: card.display_name,
+            job_title: card.job_title,
+            status: card.status,
+        }
+    }
 }
 
 /// Share of observed accounts per resolution state — the operator-visible match
@@ -650,11 +676,11 @@ pub async fn attention(
     let limit = params.limit.map_or(DEFAULT_QUEUE_LIMIT, |l| {
         usize::try_from(l).unwrap_or(1).clamp(1, MAX_QUEUE_LIMIT)
     });
+    let page: Vec<_> = review.items.into_iter().take(limit).collect();
 
-    let items = review
-        .items
+    let cards = candidate_cards(state.as_ref(), tenant, &page).await?;
+    let items = page
         .into_iter()
-        .take(limit)
         .map(|i| QueueItemResponse {
             kind: kind_label(i.kind).to_owned(),
             source: i.account.source_type,
@@ -662,7 +688,17 @@ pub async fn attention(
             account_id: i.account.account_id,
             email: i.email,
             username: i.username,
-            candidates: i.candidates,
+            candidates: i
+                .candidates
+                .iter()
+                .map(|id| {
+                    cards
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| PersonCard::empty(*id))
+                        .into()
+                })
+                .collect(),
         })
         .collect();
 
@@ -835,6 +871,32 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<Review, Canonica
         .collect();
 
     Ok(review_queue::build(observed, &bindings))
+}
+
+/// One hydration read for a queue page: every distinct candidate id, fetched
+/// and collapsed into cards.
+async fn candidate_cards(
+    state: &AppState,
+    tenant: Uuid,
+    page: &[review_queue::QueueItem],
+) -> Result<HashMap<Uuid, PersonCard>, CanonicalError> {
+    let ids: Vec<Uuid> = page
+        .iter()
+        .flat_map(|i| i.candidates.iter().copied())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let rows = persons_repo::fetch_card_observations(
+        &state.db,
+        tenant,
+        &ids,
+        &person_card::CARD_VALUE_TYPES,
+    )
+    .await
+    .map_err(|e| internal(&e, "failed to read candidate cards"))?;
+
+    Ok(person_card::assemble_cards(rows))
 }
 
 fn evidence_reader(state: &AppState) -> ClickHouseEvidenceReader {

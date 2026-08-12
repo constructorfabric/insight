@@ -97,7 +97,10 @@ async fn post(app: Router, uri: &str, body: &Value) -> anyhow::Result<(StatusCod
 }
 
 async fn get(app: Router, uri: &str) -> anyhow::Result<(StatusCode, Value)> {
-    let req = Request::builder().method("GET").uri(uri).body(Body::empty())?;
+    let req = Request::builder()
+        .method("GET")
+        .uri(uri)
+        .body(Body::empty())?;
     let resp = app.oneshot(req).await?;
     let status = resp.status();
     let bytes = to_bytes(resp.into_body(), usize::MAX).await?;

@@ -573,6 +573,43 @@
         ],
         "type": "object"
       },
+      "PersonSummaryResponse": {
+        "description": "A person as operator surfaces display them: enough to recognise and pick,\nnothing more. Every field but the id may be null — a person the journal\nknows only through bindings still appears, as the id alone.",
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "job_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "person_id"
+        ],
+        "type": "object"
+      },
       "PersonsSeedListResponse": {
         "description": "List response wrapper (typed for OpenAPI).",
         "properties": {
@@ -922,10 +959,9 @@
             "type": "string"
           },
           "candidates": {
-            "description": "Persons this account could belong to, if any are known.",
+            "description": "Persons this account could belong to, if any are known — hydrated into\ncards so the operator UI never has to resolve bare ids itself.",
             "items": {
-              "format": "uuid",
-              "type": "string"
+              "$ref": "#/components/schemas/PersonSummaryResponse"
             },
             "type": "array"
           },
