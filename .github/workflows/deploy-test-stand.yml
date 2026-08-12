@@ -135,6 +135,9 @@ jobs:
                    "insight-test-stand environment's deployment-branch policy already" \
                    "decided this ref may deploy — but what lands on the stand is that" \
                    "branch's idea of the deploy, not main's."
+            elif [ "$REF_NAME" = "test-stand-ci" ] && [ "$EVENT" = "push" ]; then
+              # TEMPORARY — dies with debug-test-stand.yml, delete both before merge.
+              echo "::warning::TEMPORARY debug exception: running from '$REF_NAME' via debug-test-stand.yml."
             else
               echo "::error::this workflow deploys main and only main (ref was '$REF_NAME', event '$EVENT')."
               echo "A workflow_call arrives from build-images.yml after a publish, which only"
@@ -448,6 +451,24 @@ jobs:
           manifest_rc=0
           grep -m1 '^SEED_MANIFEST_JSON: ' "$RUNNER_TEMP/seed.log" \
             | cut -d' ' -f2- > "$RUNNER_TEMP/stand-manifest.json" || manifest_rc=$?
+
+          # TEMPORARY — dies with debug-test-stand.yml, delete before merge: the
+          # published toolbox image predates the sentinel; re-read the completed
+          # `all` Job's log at rest and take its trailing JSON document.
+          if [ "$manifest_rc" -ne 0 ]; then
+            job_name="$(grep -m1 '^==> applied Job ' "$RUNNER_TEMP/seed.log" | awk '{print $4}')" || true
+            if [ -n "${job_name:-}" ]; then
+              kubectl -n "$STAND_NAMESPACE" logs "job/$job_name" > "$RUNNER_TEMP/seed-pod.log" 2>/dev/null || true
+              grep -vE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3} (DEBUG|INFO|WARNING|ERROR|CRITICAL) ' \
+                "$RUNNER_TEMP/seed-pod.log" \
+                | awk '/^\{$/{doc=$0 "\n"; on=1; next} on{doc=doc $0 "\n"; if ($0=="}") on=0} END{printf "%s", doc}' \
+                > "$RUNNER_TEMP/stand-manifest.json" || true
+              if jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
+                echo "::warning::TEMPORARY fallback: manifest re-read from the completed Job (pre-merge image lag)."
+                manifest_rc=0
+              fi
+            fi
+          fi
 
           if [ "$seed_rc" -eq 0 ] && [ "$manifest_rc" -eq 0 ]; then
             personas="$(jq '.personas | length' "$RUNNER_TEMP/stand-manifest.json")"
