@@ -23,9 +23,9 @@ type: DeclarativeSource
 # in the background, so every proxy stream retries on 429 and fails fast on the
 # permanent ones (409 superseded snapshot, 413 oversized repository).
 #
-# NOT ported here: merge requests, notes, approvals. That data does not exist in
-# git, so it stays on the vendor API — a mechanical port of the CDK connector's
-# streams, tracked separately.
+# Vendor-API streams (merge requests, notes, approvals, members, pipelines,
+# deployments) live in this same manifest: that data does not exist in git.
+# Issues and epics are deliberately not synced.
 
 check:
   type: CheckStream
@@ -766,6 +766,1003 @@ streams:
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | string | replace(':', '%3A') }}:{{ record['name'] | string | replace(':', '%3A') }}
 
+  # ── Merge requests (GitLab API) ─────────────────────────────────────────
+  # Group-level endpoint: one listing covers the group and its subgroups,
+  # server-filtered by updated_after. The P1M step bounds offset-pagination
+  # depth per window (this endpoint has no keyset mode), so deep-offset caps
+  # only ever threaten a single window, not the whole backfill.
+  - type: DeclarativeStream
+    name: merge_requests
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          iid: {type: [integer, "null"]}
+          project_id: {type: [integer, "null"]}
+          state: {type: [string, "null"]}
+          draft: {type: [boolean, "null"]}
+          title: {type: [string, "null"]}
+          author_username: {type: [string, "null"]}
+          source_branch: {type: [string, "null"]}
+          target_branch: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          merge_commit_sha: {type: [string, "null"]}
+          squash_commit_sha: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+          merged_at: {type: [string, "null"]}
+          closed_at: {type: [string, "null"]}
+          merged_by_username: {type: [string, "null"]}
+          user_notes_count: {type: [integer, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['gitlab_url'] }}/api/v4"
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['gitlab_token'] }}"
+          inject_into:
+            type: RequestOption
+            field_name: PRIVATE-TOKEN
+            inject_into: header
+        path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/merge_requests"
+        http_method: GET
+        request_parameters:
+          scope: all
+          order_by: updated_at
+          sort: asc
+          per_page: "{{ config.get('gitlab_page_size', 100) }}"
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [429]
+              action: RATE_LIMITED
+              error_message: GitLab is rate limiting this token
+            - type: HttpResponseFilter
+              http_codes: [401]
+              action: FAIL
+              failure_type: config_error
+              error_message: GitLab rejected the token; check gitlab_token scopes (read_api)
+            - type: HttpResponseFilter
+              http_codes: [500, 502, 503, 504]
+              action: RETRY
+              error_message: Transient GitLab error
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: PageIncrement
+          page_size: "{{ config.get('gitlab_page_size', 100) }}"
+          start_from_page: 1
+        page_token_option:
+          type: RequestOption
+          field_name: page
+          inject_into: request_parameter
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['gitlab_groups'] }}"
+        cursor_field: group
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1M
+      cursor_granularity: PT1S
+      lookback_window: P1D
+      start_time_option:
+        type: RequestOption
+        field_name: updated_after
+        inject_into: request_parameter
+      end_time_option:
+        type: RequestOption
+        field_name: updated_before
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_gitlab_nocode
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [author_username]
+            value: "{{ (record.get('author') or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [merged_by_username]
+            value: "{{ (record.get('merged_by') or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] | string | replace(':', '%3A') }}
+
+  # ── Merge request notes (GitLab API) ────────────────────────────────────
+  # Child of a stateless sliding window of MRs (see the parent's
+  # updated_after comment). Note bodies are deliberately not stored: review
+  # metrics need who/when/what-kind, not prose.
+  - type: DeclarativeStream
+    name: merge_request_notes
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          mr_iid: {type: [integer, "null"]}
+          project_id: {type: [integer, "null"]}
+          author_username: {type: [string, "null"]}
+          system: {type: [boolean, "null"]}
+          type: {type: [string, "null"]}
+          resolvable: {type: [boolean, "null"]}
+          resolved: {type: [boolean, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['gitlab_url'] }}/api/v4"
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['gitlab_token'] }}"
+          inject_into:
+            type: RequestOption
+            field_name: PRIVATE-TOKEN
+            inject_into: header
+        path: "/projects/{{ stream_slice.extra_fields['project_id'] }}/merge_requests/{{ stream_partition.mr_iid }}/notes"
+        http_method: GET
+        request_parameters:
+          per_page: "{{ config.get('gitlab_page_size', 100) }}"
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [429]
+              action: RATE_LIMITED
+              error_message: GitLab is rate limiting this token
+            - type: HttpResponseFilter
+              http_codes: [403, 404]
+              action: IGNORE
+              error_message: >-
+                MR gone or not visible to this token; other merge requests continue.
+            - type: HttpResponseFilter
+              http_codes: [401]
+              action: FAIL
+              failure_type: config_error
+              error_message: GitLab rejected the token; check gitlab_token scopes (read_api)
+            - type: HttpResponseFilter
+              http_codes: [500, 502, 503, 504]
+              action: RETRY
+              error_message: Transient GitLab error
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: PageIncrement
+          page_size: "{{ config.get('gitlab_page_size', 100) }}"
+          start_from_page: 1
+        page_token_option:
+          type: RequestOption
+          field_name: page
+          inject_into: request_parameter
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: iid
+            partition_field: mr_iid
+            extra_fields:
+              - [project_id]
+            stream:
+              type: DeclarativeStream
+              name: merge_requests_for_notes
+              primary_key:
+                - id
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id: {type: [integer, "null"]}
+                    iid: {type: [integer, "null"]}
+                    project_id: {type: [integer, "null"]}
+                    updated_at: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  url_base: "{{ config['gitlab_url'] }}/api/v4"
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "{{ config['gitlab_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      field_name: PRIVATE-TOKEN
+                      inject_into: header
+                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/merge_requests"
+                  http_method: GET
+                  request_parameters:
+                    scope: all
+                    order_by: updated_at
+                    sort: asc
+                    per_page: "{{ config.get('gitlab_page_size', 100) }}"
+                    # Stateless sliding window, not a cursor: these children
+                    # have no cursor of their own, so parent state would never
+                    # persist (incremental_dependency requires an incremental
+                    # child). RMT dedups the re-read window.
+                    updated_after: "{{ format_datetime(now_utc() - duration('P' ~ config.get('gitlab_child_window_days', 30) ~ 'D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: PageIncrement
+                    page_size: "{{ config.get('gitlab_page_size', 100) }}"
+                    start_from_page: 1
+                  page_token_option:
+                    type: RequestOption
+                    field_name: page
+                    inject_into: request_parameter
+                partition_router:
+                  type: ListPartitionRouter
+                  values: "{{ config['gitlab_groups'] }}"
+                  cursor_field: group
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_gitlab_nocode
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [mr_iid]
+            value: "{{ stream_partition.mr_iid }}"
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['project_id'] }}"
+          - type: AddedFieldDefinition
+            path: [author_username]
+            value: "{{ (record.get('author') or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] | string }}:{{ record['id'] | string | replace(':', '%3A') }}
+
+  # ── Merge request approvals (GitLab API) ────────────────────────────────
+  # Single object per MR; snapshot semantics — the RMT keeps the latest row
+  # per unique_key. 402 is "approvals are a paid feature", not an error.
+  - type: DeclarativeStream
+    name: merge_request_approvals
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          mr_iid: {type: [integer, "null"]}
+          project_id: {type: [integer, "null"]}
+          approved: {type: [boolean, "null"]}
+          approvals_required: {type: [integer, "null"]}
+          approvals_left: {type: [integer, "null"]}
+          approved_by_usernames: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['gitlab_url'] }}/api/v4"
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['gitlab_token'] }}"
+          inject_into:
+            type: RequestOption
+            field_name: PRIVATE-TOKEN
+            inject_into: header
+        path: "/projects/{{ stream_slice.extra_fields['project_id'] }}/merge_requests/{{ stream_partition.mr_iid }}/approvals"
+        http_method: GET
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [429]
+              action: RATE_LIMITED
+              error_message: GitLab is rate limiting this token
+            - type: HttpResponseFilter
+              http_codes: [402, 403, 404]
+              action: IGNORE
+              error_message: >-
+                Approvals unavailable for this MR (paid feature, gone, or not visible); other merge requests continue.
+            - type: HttpResponseFilter
+              http_codes: [401]
+              action: FAIL
+              failure_type: config_error
+              error_message: GitLab rejected the token; check gitlab_token scopes (read_api)
+            - type: HttpResponseFilter
+              http_codes: [500, 502, 503, 504]
+              action: RETRY
+              error_message: Transient GitLab error
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: NoPagination
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: iid
+            partition_field: mr_iid
+            extra_fields:
+              - [project_id]
+            stream:
+              type: DeclarativeStream
+              name: merge_requests_for_approvals
+              primary_key:
+                - id
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id: {type: [integer, "null"]}
+                    iid: {type: [integer, "null"]}
+                    project_id: {type: [integer, "null"]}
+                    updated_at: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  url_base: "{{ config['gitlab_url'] }}/api/v4"
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "{{ config['gitlab_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      field_name: PRIVATE-TOKEN
+                      inject_into: header
+                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/merge_requests"
+                  http_method: GET
+                  request_parameters:
+                    scope: all
+                    order_by: updated_at
+                    sort: asc
+                    per_page: "{{ config.get('gitlab_page_size', 100) }}"
+                    # Stateless sliding window, not a cursor: these children
+                    # have no cursor of their own, so parent state would never
+                    # persist (incremental_dependency requires an incremental
+                    # child). RMT dedups the re-read window.
+                    updated_after: "{{ format_datetime(now_utc() - duration('P' ~ config.get('gitlab_child_window_days', 30) ~ 'D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: PageIncrement
+                    page_size: "{{ config.get('gitlab_page_size', 100) }}"
+                    start_from_page: 1
+                  page_token_option:
+                    type: RequestOption
+                    field_name: page
+                    inject_into: request_parameter
+                partition_router:
+                  type: ListPartitionRouter
+                  values: "{{ config['gitlab_groups'] }}"
+                  cursor_field: group
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_gitlab_nocode
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [mr_iid]
+            value: "{{ stream_partition.mr_iid }}"
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_slice.extra_fields['project_id'] }}"
+          - type: AddedFieldDefinition
+            path: [approved_by_usernames]
+            value: "{{ ((record.get('approved_by') or []) | map(attribute='user.username') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] | string }}:{{ stream_partition.mr_iid | string }}:approvals
+
+  # ── Group members (GitLab API) ──────────────────────────────────────────
+  # /members/all = direct + inherited. Non-admin tokens see no email; identity
+  # joins on username. The same user in several groups keeps one row per
+  # group: access_level differs.
+  - type: DeclarativeStream
+    name: users
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          username: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          state: {type: [string, "null"]}
+          access_level: {type: [integer, "null"]}
+          created_at: {type: [string, "null"]}
+          group: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['gitlab_url'] }}/api/v4"
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['gitlab_token'] }}"
+          inject_into:
+            type: RequestOption
+            field_name: PRIVATE-TOKEN
+            inject_into: header
+        path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/members/all"
+        http_method: GET
+        request_parameters:
+          per_page: "{{ config.get('gitlab_page_size', 100) }}"
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [429]
+              action: RATE_LIMITED
+              error_message: GitLab is rate limiting this token
+            - type: HttpResponseFilter
+              http_codes: [403]
+              action: IGNORE
+              error_message: >-
+                Token cannot list this group's members; other groups continue.
+            - type: HttpResponseFilter
+              http_codes: [401]
+              action: FAIL
+              failure_type: config_error
+              error_message: GitLab rejected the token; check gitlab_token scopes (read_api)
+            - type: HttpResponseFilter
+              http_codes: [500, 502, 503, 504]
+              action: RETRY
+              error_message: Transient GitLab error
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: PageIncrement
+          page_size: "{{ config.get('gitlab_page_size', 100) }}"
+          start_from_page: 1
+        page_token_option:
+          type: RequestOption
+          field_name: page
+          inject_into: request_parameter
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['gitlab_groups'] }}"
+        cursor_field: group
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_gitlab_nocode
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [group]
+            value: "{{ stream_partition.group }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.group | string | replace(':', '%3A') }}:{{ record['id'] | string | replace(':', '%3A') }}
+
+  # ── CI pipelines (GitLab API) ───────────────────────────────────────────
+  # Parent is a FULL-REFRESH slim projects copy on purpose: scheduled
+  # pipelines run without bumping the project's last_activity_at, so an
+  # incremental parent would silently skip them. The list object is slim —
+  # `duration` is detail-only and deliberately absent in v1.
+  - type: DeclarativeStream
+    name: pipelines
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          iid: {type: [integer, "null"]}
+          project_id: {type: [integer, "null"]}
+          status: {type: [string, "null"]}
+          source: {type: [string, "null"]}
+          ref: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['gitlab_url'] }}/api/v4"
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['gitlab_token'] }}"
+          inject_into:
+            type: RequestOption
+            field_name: PRIVATE-TOKEN
+            inject_into: header
+        path: "/projects/{{ stream_partition.project_id }}/pipelines"
+        http_method: GET
+        request_parameters:
+          order_by: updated_at
+          sort: asc
+          per_page: "{{ config.get('gitlab_page_size', 100) }}"
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [429]
+              action: RATE_LIMITED
+              error_message: GitLab is rate limiting this token
+            - type: HttpResponseFilter
+              http_codes: [403, 404]
+              action: IGNORE
+              error_message: >-
+                Not visible or disabled for this project; other projects continue.
+            - type: HttpResponseFilter
+              http_codes: [401]
+              action: FAIL
+              failure_type: config_error
+              error_message: GitLab rejected the token; check gitlab_token scopes (read_api)
+            - type: HttpResponseFilter
+              http_codes: [500, 502, 503, 504]
+              action: RETRY
+              error_message: Transient GitLab error
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: PageIncrement
+          page_size: "{{ config.get('gitlab_page_size', 100) }}"
+          start_from_page: 1
+        page_token_option:
+          type: RequestOption
+          field_name: page
+          inject_into: request_parameter
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            stream:
+              type: DeclarativeStream
+              name: projects_for_pipelines
+              primary_key:
+                - id
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id: {type: [integer, "null"]}
+                    last_activity_at: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  url_base: "{{ config['gitlab_url'] }}/api/v4"
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "{{ config['gitlab_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      field_name: PRIVATE-TOKEN
+                      inject_into: header
+                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/projects"
+                  http_method: GET
+                  request_parameters:
+                    include_subgroups: "true"
+                    archived: "false"
+                    per_page: "{{ config.get('gitlab_page_size', 100) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: PageIncrement
+                    page_size: "{{ config.get('gitlab_page_size', 100) }}"
+                    start_from_page: 1
+                  page_token_option:
+                    type: RequestOption
+                    field_name: page
+                    inject_into: request_parameter
+                partition_router:
+                  type: ListPartitionRouter
+                  values: "{{ config['gitlab_groups'] }}"
+                  cursor_field: group
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: updated_after
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_gitlab_nocode
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] | string | replace(':', '%3A') }}
+
+  # ── Deployments (GitLab API) ────────────────────────────────────────────
+  # Only populated where teams use GitLab environments; an empty stream is
+  # normal, not an error. Outcome (`status`) is in the list — the cheap DORA
+  # signal.
+  - type: DeclarativeStream
+    name: deployments
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          iid: {type: [integer, "null"]}
+          project_id: {type: [integer, "null"]}
+          status: {type: [string, "null"]}
+          ref: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          environment_name: {type: [string, "null"]}
+          deployable_status: {type: [string, "null"]}
+          pipeline_id: {type: [integer, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['gitlab_url'] }}/api/v4"
+        authenticator:
+          type: ApiKeyAuthenticator
+          api_token: "{{ config['gitlab_token'] }}"
+          inject_into:
+            type: RequestOption
+            field_name: PRIVATE-TOKEN
+            inject_into: header
+        path: "/projects/{{ stream_partition.project_id }}/deployments"
+        http_method: GET
+        request_parameters:
+          order_by: updated_at
+          sort: asc
+          per_page: "{{ config.get('gitlab_page_size', 100) }}"
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+              max_waiting_time_in_seconds: 600
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [429]
+              action: RATE_LIMITED
+              error_message: GitLab is rate limiting this token
+            - type: HttpResponseFilter
+              http_codes: [403, 404]
+              action: IGNORE
+              error_message: >-
+                Not visible or disabled for this project; other projects continue.
+            - type: HttpResponseFilter
+              http_codes: [401]
+              action: FAIL
+              failure_type: config_error
+              error_message: GitLab rejected the token; check gitlab_token scopes (read_api)
+            - type: HttpResponseFilter
+              http_codes: [500, 502, 503, 504]
+              action: RETRY
+              error_message: Transient GitLab error
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: PageIncrement
+          page_size: "{{ config.get('gitlab_page_size', 100) }}"
+          start_from_page: 1
+        page_token_option:
+          type: RequestOption
+          field_name: page
+          inject_into: request_parameter
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            stream:
+              type: DeclarativeStream
+              name: projects_for_deployments
+              primary_key:
+                - id
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id: {type: [integer, "null"]}
+                    last_activity_at: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  type: HttpRequester
+                  url_base: "{{ config['gitlab_url'] }}/api/v4"
+                  authenticator:
+                    type: ApiKeyAuthenticator
+                    api_token: "{{ config['gitlab_token'] }}"
+                    inject_into:
+                      type: RequestOption
+                      field_name: PRIVATE-TOKEN
+                      inject_into: header
+                  path: "/groups/{{ stream_partition.group | string | replace('/', '%2F') }}/projects"
+                  http_method: GET
+                  request_parameters:
+                    include_subgroups: "true"
+                    archived: "false"
+                    per_page: "{{ config.get('gitlab_page_size', 100) }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: PageIncrement
+                    page_size: "{{ config.get('gitlab_page_size', 100) }}"
+                    start_from_page: 1
+                  page_token_option:
+                    type: RequestOption
+                    field_name: page
+                    inject_into: request_parameter
+                partition_router:
+                  type: ListPartitionRouter
+                  values: "{{ config['gitlab_groups'] }}"
+                  cursor_field: group
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('gitlab_start_date', '2020-01-01') }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: updated_after
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_gitlab_nocode
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [environment_name]
+            value: "{{ (record.get('environment') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [deployable_status]
+            value: "{{ (record.get('deployable') or {}).get('status') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [pipeline_id]
+            value: "{{ ((record.get('deployable') or {}).get('pipeline') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] | string | replace(':', '%3A') }}
+
 concurrency_level:
   type: ConcurrencyLevel
   # Never 1: the concurrent CDK self-deadlocks at a single worker once a sync
@@ -824,20 +1821,20 @@ spec:
         description: >-
           Base URL of the git-cli-proxy service (cluster-internal, e.g. http://insight-git-cli-proxy:8085). No default: a wrong or absent value must fail the check, not fall back somewhere.
         title: Git Proxy URL
-        order: 4
+        order: 5
       git_proxy_token:
         type: string
         description: Bearer token the git-cli-proxy requires on every /v1 request.
         title: Git Proxy Token
         airbyte_secret: true
-        order: 5
+        order: 6
       gitlab_start_date:
         type: string
         description: Earliest date for incremental sync (YYYY-MM-DD).
         title: Start Date
         format: date
         default: "2020-01-01"
-        order: 6
+        order: 7
       gitlab_page_size:
         type: integer
         description: GitLab API page size (max 100).
@@ -845,7 +1842,7 @@ spec:
         default: 100
         minimum: 1
         maximum: 100
-        order: 7
+        order: 8
       proxy_page_size:
         type: integer
         description: Rows per page requested from the git-cli-proxy.
@@ -853,14 +1850,14 @@ spec:
         default: 500
         minimum: 1
         maximum: 10000
-        order: 8
+        order: 9
       gitlab_include_patch:
         type: boolean
         description: >-
           Store per-file diff text. Keep enabled to allow recomputing line counts later under different filters (blank lines, comments); disable to cut bronze volume.
         title: Include Patch Text
         default: true
-        order: 9
+        order: 10
       gitlab_max_patch_bytes:
         type: integer
         description: >-
@@ -868,14 +1865,25 @@ spec:
         title: Max Patch Bytes
         default: 1048576
         minimum: 1024
-        order: 10
+        order: 11
       gitlab_lookback_window:
         type: string
         description: >-
           ISO-8601 duration re-enumerated below the stored cursor on every sync. `git log --since` is a traversal cutoff, so after a rebase the replacement commits can carry dates below the cursor and would never be visited again. Bronze dedups the re-read rows, so the cost is one window per sync. A rewrite older than the window is still lost.
         title: Rebase Lookback Window
         default: P1M
-        order: 11
+        order: 12
+      gitlab_child_window_days:
+        type: integer
+        description: >-
+          Sliding window, in days, of merge requests whose notes and approvals
+          are re-read each sync. The children have no cursor of their own, so
+          the window is what bounds their cost; edits on MRs older than the
+          window are not picked up.
+        title: MR Child Window (days)
+        default: 30
+        minimum: 1
+        order: 13
     additionalProperties: true
 
 metadata:
@@ -884,3 +1892,9 @@ metadata:
     commits: false
     commit_files: false
     repo_branches: false
+    merge_requests: false
+    merge_request_notes: false
+    merge_request_approvals: false
+    users: false
+    pipelines: false
+    deployments: false

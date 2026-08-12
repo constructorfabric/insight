@@ -8,5 +8,12 @@ workflow: sync
 # the dbt tags, and the pipeline's silver step hardcodes `tag:<slug>+`.
 dbt_select: "tag:gitlab-nocode+"
 
+secret:
+  # Fields the deployment Secret must carry beyond the spec's `required` list
+  # (generate-connectors-config.sh unions both when building the fake config).
+  required_fields:
+    - gitlab_token
+    - git_proxy_token
+
 connection:
   namespace: bronze_gitlab_nocode
