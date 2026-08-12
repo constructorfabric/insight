@@ -29,6 +29,48 @@ type: DeclarativeSource
 # leaves its original commits unreachable from every ref the proxy clones.
 # Issues and projects are deliberately not synced.
 
+definitions:
+  proxy_error_handler: &proxy_error_handler
+    type: DefaultErrorHandler
+    # Generous on purpose: a cold blobless clone of a large repository runs
+    # for many Retry-After cycles before the first page can be served.
+    max_retries: 100
+    backoff_strategies:
+      - type: WaitTimeFromHeader
+        header: Retry-After
+        max_waiting_time_in_seconds: 600
+    response_filters:
+      # The repository is being cloned in the background: the proxy is
+      # working, the caller waits.
+      - type: HttpResponseFilter
+        http_codes: [429]
+        action: RETRY
+        error_message: Repository is being prepared by the proxy
+      # Both are permanent for THIS repository and harmless for the rest,
+      # so the partition is skipped rather than the whole stream failed.
+      # A rising git_proxy_admission_rejects_total is the alert: a 413
+      # means a repository is silently absent from bronze until an
+      # operator raises cache.maxRepoBytes.
+      - type: HttpResponseFilter
+        http_codes: [404, 413]
+        action: IGNORE
+        error_message: >-
+          Skipping this repository: gone at origin (404), or larger than
+          cache.maxRepoBytes (413). Other repositories continue.
+      # The pinned snapshot was superseded mid-walk. RETRY would replay
+      # the same dead page token and 409 again; a response filter cannot
+      # reset it. Rerunning the sync resumes each partition from its own
+      # stored cursor against a fresh snapshot.
+      - type: HttpResponseFilter
+        http_codes: [409]
+        action: FAIL
+        error_message: >-
+          Proxy snapshot changed mid-walk; rerun the sync to resume from the stored cursor
+      - type: HttpResponseFilter
+        http_codes: [500, 502, 503, 504]
+        action: RETRY
+        error_message: Transient proxy error (the origin can reset a clone mid-transfer)
+
 check:
   type: CheckStream
   stream_names:
@@ -205,39 +247,7 @@ streams:
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
           page_size: "500"
-        error_handler:
-          type: DefaultErrorHandler
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-          response_filters:
-            # The repository is being cloned in the background: the proxy is
-            # working, the caller waits.
-            - type: HttpResponseFilter
-              http_codes: [429]
-              action: RETRY
-              error_message: Repository is being prepared by the proxy
-            # Both are permanent for THIS repository and harmless for the rest,
-            # so the partition is skipped rather than the whole stream failed.
-            # A rising git_proxy_admission_rejects_total is the alert: a 413
-            # means a repository is silently absent from bronze until an
-            # operator raises cache.maxRepoBytes.
-            - type: HttpResponseFilter
-              http_codes: [404, 413]
-              action: IGNORE
-              error_message: >-
-                Skipping this repository: gone at origin (404), or larger than
-                cache.maxRepoBytes (413). Other repositories continue.
-            # The pinned snapshot was superseded mid-walk. RETRY would replay
-            # the same dead page token and 409 again; a response filter cannot
-            # reset it. Rerunning the sync resumes each partition from its own
-            # stored cursor against a fresh snapshot.
-            - type: HttpResponseFilter
-              http_codes: [409]
-              action: FAIL
-              error_message: >-
-                Proxy snapshot changed mid-walk; rerun the sync to resume from the stored cursor
+        error_handler: *proxy_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -442,39 +452,7 @@ streams:
           page_size: "500"
           include_patch: "true"
           max_patch_bytes: "1048576"
-        error_handler:
-          type: DefaultErrorHandler
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-          response_filters:
-            # The repository is being cloned in the background: the proxy is
-            # working, the caller waits.
-            - type: HttpResponseFilter
-              http_codes: [429]
-              action: RETRY
-              error_message: Repository is being prepared by the proxy
-            # Both are permanent for THIS repository and harmless for the rest,
-            # so the partition is skipped rather than the whole stream failed.
-            # A rising git_proxy_admission_rejects_total is the alert: a 413
-            # means a repository is silently absent from bronze until an
-            # operator raises cache.maxRepoBytes.
-            - type: HttpResponseFilter
-              http_codes: [404, 413]
-              action: IGNORE
-              error_message: >-
-                Skipping this repository: gone at origin (404), or larger than
-                cache.maxRepoBytes (413). Other repositories continue.
-            # The pinned snapshot was superseded mid-walk. RETRY would replay
-            # the same dead page token and 409 again; a response filter cannot
-            # reset it. Rerunning the sync resumes each partition from its own
-            # stored cursor against a fresh snapshot.
-            - type: HttpResponseFilter
-              http_codes: [409]
-              action: FAIL
-              error_message: >-
-                Proxy snapshot changed mid-walk; rerun the sync to resume from the stored cursor
+        error_handler: *proxy_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -660,39 +638,7 @@ streams:
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
           page_size: "500"
-        error_handler:
-          type: DefaultErrorHandler
-          backoff_strategies:
-            - type: WaitTimeFromHeader
-              header: Retry-After
-              max_waiting_time_in_seconds: 600
-          response_filters:
-            # The repository is being cloned in the background: the proxy is
-            # working, the caller waits.
-            - type: HttpResponseFilter
-              http_codes: [429]
-              action: RETRY
-              error_message: Repository is being prepared by the proxy
-            # Both are permanent for THIS repository and harmless for the rest,
-            # so the partition is skipped rather than the whole stream failed.
-            # A rising git_proxy_admission_rejects_total is the alert: a 413
-            # means a repository is silently absent from bronze until an
-            # operator raises cache.maxRepoBytes.
-            - type: HttpResponseFilter
-              http_codes: [404, 413]
-              action: IGNORE
-              error_message: >-
-                Skipping this repository: gone at origin (404), or larger than
-                cache.maxRepoBytes (413). Other repositories continue.
-            # The pinned snapshot was superseded mid-walk. RETRY would replay
-            # the same dead page token and 409 again; a response filter cannot
-            # reset it. Rerunning the sync resumes each partition from its own
-            # stored cursor against a fresh snapshot.
-            - type: HttpResponseFilter
-              http_codes: [409]
-              action: FAIL
-              error_message: >-
-                Proxy snapshot changed mid-walk; rerun the sync to resume from the stored cursor
+        error_handler: *proxy_error_handler
       record_selector:
         type: RecordSelector
         extractor:
