@@ -1,6 +1,5 @@
-# CI deploy credential RBAC for test-stand, applied/verified/removed by the
-# provision-ci/verify-ci-credential/revoke-ci Makefile targets. Procedure:
-# deploy/gitops/environments/test-stand/credentials-runbook.md.
+# CI deploy credential RBAC. Managed by the provision-ci / verify-ci-credential
+# / revoke-ci make targets; see credentials-runbook.md.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -12,10 +11,9 @@ metadata:
     app.kubernetes.io/managed-by: gitops
 automountServiceAccountToken: false
 ---
-# Enumerated instead of binding the built-in `admin` ClusterRole (Trivy
-# KSV-0111): exactly the kinds the umbrella chart manages in this namespace,
-# plus read-only diagnostics. A new chart kind must be added here — the deploy
-# fails closed with a helm "forbidden" naming the missing resource.
+# Enumerated, not a bind to the built-in `admin` ClusterRole (Trivy KSV-0111):
+# the kinds the chart manages here + read-only diagnostics. A new chart kind
+# fails the deploy closed with a helm "forbidden" until it is added here.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -41,8 +39,8 @@ rules:
   - apiGroups: ["batch"]
     resources: [jobs, cronjobs]
     verbs: [get, list, watch, create, update, patch, delete]
-  # The chart renders its own Role/RoleBinding; escalation prevention holds —
-  # this SA can only create grants it itself already holds.
+  # The chart renders its own Role/RoleBinding. Escalation prevention holds:
+  # this SA can only grant what it already holds.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: [roles, rolebindings]
     verbs: [get, list, watch, create, update, patch, delete]
@@ -72,8 +70,8 @@ subjects:
     name: ci-deployer
     namespace: insight
 ---
-# CRDs the built-in `admin` aggregate does not cover. A superset of the chart's
-# own reconcile Role, so RBAC escalation prevention lets this SA create it.
+# CRDs `admin` does not aggregate. A superset of the chart's reconcile Role,
+# so escalation prevention lets this SA create it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
