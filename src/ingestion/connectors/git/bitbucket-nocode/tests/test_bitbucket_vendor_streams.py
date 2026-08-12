@@ -62,7 +62,17 @@ def _pr(pr_id: int, *, author: dict | None) -> dict:
         "merge_commit": {"hash": "a" * 12},
         "closed_by": None,
         "source": {"branch": {"name": "feat"}, "commit": {"hash": "b" * 12}},
-        "destination": {"branch": {"name": "main"}},
+        "destination": {"branch": {"name": "main"}, "commit": {"hash": "c" * 12}},
+        "description": "d" * 3000,
+        "participants": [
+            {
+                "user": {"uuid": "{u-2}", "display_name": "Bob"},
+                "role": "REVIEWER",
+                "state": "approved",
+                "approved": True,
+                "participated_on": "2026-06-19T00:00:00+00:00",
+            }
+        ],
         "comment_count": 1,
         "task_count": 0,
     }
@@ -94,6 +104,12 @@ def test_pull_requests_four_states_and_none_guard(http_mocker: HttpMocker) -> No
     assert by_id[2]["author_uuid"] == ""
     # PR ids are per-repository, so the repo is part of the key.
     assert by_id[1]["unique_key"].endswith(":acme/app:1")
+    assert len(by_id[1]["description"]) == 2048
+    assert by_id[1]["destination_commit_sha"] == "c" * 12
+    participants = json.loads(by_id[1]["participants"])
+    assert participants[0]["uuid"] == "{u-2}"
+    assert participants[0]["role"] == "REVIEWER"
+    assert participants[0]["approved"] is True
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "pull_requests", strict=True)
 
@@ -159,6 +175,61 @@ def test_activity_synthesizes_distinct_keys_without_ids(http_mocker: HttpMocker)
     assert kinds == ["approval", "update"]
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "pull_request_activity", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_comments_store_trimmed_bodies_and_inline(http_mocker: HttpMocker) -> None:
+    """The silver comments model consumes body and the inline location; the
+    body is content.raw trimmed to 2048 chars."""
+    config = BitbucketNocodeConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [_pr(9, author=None)]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{BB_URL}/repositories/acme/app/pullrequests/9/comments",
+            query_params=ANY_QUERY_PARAMS,
+        ),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "values": [
+                        {
+                            "id": 77,
+                            "user": {"uuid": "{u-1}", "display_name": "Alice"},
+                            "content": {"raw": "x" * 3000},
+                            "inline": {"path": "src/a.py", "to": 12},
+                            "deleted": False,
+                            "created_on": "2026-06-20T10:00:00.000000+00:00",
+                            "updated_on": "2026-06-20T10:00:00.000000+00:00",
+                        },
+                        {
+                            "id": 78,
+                            "user": None,
+                            "content": None,
+                            "deleted": False,
+                            "created_on": "2026-06-20T10:00:00.000000+00:00",
+                            "updated_on": "2026-06-20T10:00:00.000000+00:00",
+                        },
+                    ]
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_comments", config)
+
+    assert not output.errors
+    by_id = {r.record.data["id"]: r.record.data for r in output.records}
+    assert len(by_id[77]["body"]) == 2048
+    assert by_id[77]["inline_path"] == "src/a.py"
+    assert by_id[77]["inline_to"] == 12
+    assert by_id[78]["body"] == ""
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "pull_request_comments", strict=True)
 
 
 @freezegun.freeze_time(_FROZEN)

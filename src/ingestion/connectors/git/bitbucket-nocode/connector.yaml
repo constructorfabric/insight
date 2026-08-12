@@ -60,6 +60,7 @@ streams:
           size: {type: [integer, "null"]}
           created_on: {type: [string, "null"]}
           updated_on: {type: [string, "null"]}
+          description: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -138,6 +139,10 @@ streams:
             # from full_name would duplicate knowledge of the host layout.
             value: >-
               {{ (record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first) }}
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:1024] }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -367,6 +372,10 @@ streams:
           # Repository identity is REQUIRED in the key: forks share commit
           # SHAs, so tenant+source+sha alone would let the ReplacingMergeTree
           # collapse commits from different repositories into one row.
+          - type: AddedFieldDefinition
+            path: [message]
+            value: "{{ (record.get('message') or '')[:2048] }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -810,6 +819,9 @@ streams:
           destination_branch: {type: [string, "null"]}
           comment_count: {type: [integer, "null"]}
           task_count: {type: [integer, "null"]}
+          description: {type: [string, "null"]}
+          destination_commit_sha: {type: [string, "null"]}
+          participants: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1001,6 +1013,23 @@ streams:
             value: "{{ ((record.get('destination') or {}).get('branch') or {}).get('name') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [title]
+            value: "{{ (record.get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [destination_commit_sha]
+            value: "{{ ((record.get('destination') or {}).get('commit') or {}).get('hash') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [participants]
+            value: >-
+              [{% for p in record.get('participants') or [] %}{{ {'uuid': ((p.get('user') or {}).get('uuid') or ''), 'display_name': ((p.get('user') or {}).get('display_name') or ''), 'role': p.get('role') or '', 'state': p.get('state') or '', 'approved': p.get('approved', false), 'participated_on': p.get('participated_on') or ''} | tojson }}{% if not loop.last %},{% endif %}{% endfor %}]
+            value_type: string
+          - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['id'] }}
@@ -1015,7 +1044,7 @@ streams:
 
   # ── Pull request comments (Bitbucket API) ───────────────────────────────
   # Child of a stateless sliding window of recently updated PRs. Bodies are
-  # deliberately not stored.
+  # stored trimmed to 2048 chars — the silver comments model consumes them.
   - type: DeclarativeStream
     name: pull_request_comments
     primary_key:
@@ -1041,6 +1070,9 @@ streams:
           inline_path: {type: [string, "null"]}
           created_on: {type: [string, "null"]}
           updated_on: {type: [string, "null"]}
+          body: {type: [string, "null"]}
+          inline_to: {type: [integer, "null"]}
+          inline_from: {type: [integer, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1276,6 +1308,16 @@ streams:
             value: "{{ (record.get('inline') or {}).get('path') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [body]
+            value: "{{ ((record.get('content') or {}).get('raw') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [inline_to]
+            value: "{{ (record.get('inline') or {}).get('to') }}"
+          - type: AddedFieldDefinition
+            path: [inline_from]
+            value: "{{ (record.get('inline') or {}).get('from') }}"
+          - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pr_id }}:{{ record['id'] }}
@@ -1285,6 +1327,7 @@ streams:
           - [user]
           - [parent]
           - [inline]
+          - [content]
 
   # ── Pull request activity (Bitbucket API) ───────────────────────────────
   # The ONLY source of approvals, changes-requested and merge/decline

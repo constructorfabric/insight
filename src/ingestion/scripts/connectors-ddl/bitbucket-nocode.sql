@@ -182,7 +182,10 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_nocode.pull_request_comments
     `parent_id` Nullable(Int64),
     `inline_path` Nullable(String),
     `created_on` Nullable(String),
-    `updated_on` Nullable(String)
+    `updated_on` Nullable(String),
+    `body` Nullable(String),
+    `inline_to` Nullable(Int64),
+    `inline_from` Nullable(Int64)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
@@ -215,7 +218,10 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_nocode.pull_requests
     `source_commit_sha` Nullable(String),
     `destination_branch` Nullable(String),
     `comment_count` Nullable(Int64),
-    `task_count` Nullable(Int64)
+    `task_count` Nullable(Int64),
+    `description` Nullable(String),
+    `destination_commit_sha` Nullable(String),
+    `participants` Nullable(String)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
@@ -241,7 +247,8 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_nocode.repositories
     `language` Nullable(String),
     `size` Nullable(Int64),
     `created_on` Nullable(String),
-    `updated_on` Nullable(String)
+    `updated_on` Nullable(String),
+    `description` Nullable(String)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id

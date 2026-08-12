@@ -126,7 +126,8 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab_nocode.merge_request_approvals
     `approvals_required` Nullable(Int64),
     `approvals_left` Nullable(Int64),
     `approved_by_usernames` Nullable(String),
-    `updated_at` Nullable(String)
+    `updated_at` Nullable(String),
+    `approved_by_ids` Nullable(String)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
@@ -153,7 +154,11 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab_nocode.merge_request_notes
     `resolvable` Nullable(Bool),
     `resolved` Nullable(Bool),
     `created_at` Nullable(String),
-    `updated_at` Nullable(String)
+    `updated_at` Nullable(String),
+    `body` Nullable(String),
+    `author_id` Nullable(Int64),
+    `position_new_path` Nullable(String),
+    `position_new_line` Nullable(Int64)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
@@ -188,7 +193,8 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab_nocode.merge_requests
     `merged_at` Nullable(String),
     `closed_at` Nullable(String),
     `merged_by_username` Nullable(String),
-    `user_notes_count` Nullable(Int64)
+    `user_notes_count` Nullable(Int64),
+    `description` Nullable(String)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
@@ -241,7 +247,9 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab_nocode.repositories
     `web_url` Nullable(String),
     `http_url_to_repo` Nullable(String),
     `created_at` Nullable(String),
-    `last_activity_at` Nullable(String)
+    `last_activity_at` Nullable(String),
+    `description` Nullable(String),
+    `statistics_repository_size` Nullable(Int64)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
@@ -265,7 +273,9 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab_nocode.users
     `state` Nullable(String),
     `access_level` Nullable(Int64),
     `created_at` Nullable(String),
-    `group` Nullable(String)
+    `group` Nullable(String),
+    `email` Nullable(String),
+    `public_email` Nullable(String)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id

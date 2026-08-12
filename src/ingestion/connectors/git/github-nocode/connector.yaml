@@ -326,6 +326,7 @@ streams:
           created_at: {type: [string, "null"]}
           updated_at: {type: [string, "null"]}
           pushed_at: {type: [string, "null"]}
+          description: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -365,6 +366,10 @@ streams:
           - type: AddedFieldDefinition
             path: [org]
             value: "{{ stream_partition.org }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:1024] }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
@@ -469,6 +474,10 @@ streams:
           - type: AddedFieldDefinition
             path: [repository]
             value: "{{ stream_partition.repo_clone_url }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [message]
+            value: "{{ (record.get('message') or '')[:2048] }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
@@ -685,6 +694,7 @@ streams:
           updated_at: {type: [string, "null"]}
           closed_at: {type: [string, "null"]}
           merged_at: {type: [string, "null"]}
+          body: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -757,6 +767,14 @@ streams:
             value: "{{ (record.get('base') or {}).get('ref') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [title]
+            value: "{{ (record.get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [body]
+            value: "{{ (record.get('body') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['id'] }}
@@ -793,6 +811,7 @@ streams:
           state: {type: [string, "null"]}
           commit_id: {type: [string, "null"]}
           submitted_at: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -909,6 +928,9 @@ streams:
             value: "{{ (record.get('user') or {}).get('login') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('user') or {}).get('id') }}"
+          - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pull_number }}:{{ record['id'] }}
@@ -944,6 +966,8 @@ streams:
           author_association: {type: [string, "null"]}
           created_at: {type: [string, "null"]}
           updated_at: {type: [string, "null"]}
+          body: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1009,6 +1033,13 @@ streams:
             path: [author_login]
             value: "{{ (record.get('user') or {}).get('login') or '' }}"
             value_type: string
+          - type: AddedFieldDefinition
+            path: [body]
+            value: "{{ (record.get('body') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('user') or {}).get('id') }}"
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -1121,6 +1152,10 @@ streams:
           - type: AddedFieldDefinition
             path: [label_names]
             value: "{{ ((record.get('labels') or []) | map(attribute='name') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [title]
+            value: "{{ (record.get('title') or '')[:1024] }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
@@ -1250,7 +1285,7 @@ streams:
             value_type: string
           - type: AddedFieldDefinition
             path: [short_description]
-            value: "{{ record.get('shortDescription') or '' }}"
+            value: "{{ (record.get('shortDescription') or '')[:1024] }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [public]
@@ -1265,6 +1300,10 @@ streams:
           - type: AddedFieldDefinition
             path: [updated_at]
             value: "{{ record.get('updatedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [title]
+            value: "{{ (record.get('title') or '')[:1024] }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
@@ -1463,6 +1502,10 @@ streams:
           - type: AddedFieldDefinition
             path: [creator_login]
             value: "{{ (record.get('creator') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:1024] }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]

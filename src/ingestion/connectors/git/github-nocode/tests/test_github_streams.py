@@ -156,6 +156,48 @@ def test_proxy_429_then_success(http_mocker: HttpMocker) -> None:
 
 
 @freezegun.freeze_time(_FROZEN)
+def test_pull_requests_trim_body_and_hoist_author(http_mocker: HttpMocker) -> None:
+    """The silver PR model consumes body as description; it is trimmed to
+    2048 chars, and a deleted author surfaces as '' — never "None"."""
+    config = GithubNocodeConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/pulls", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                [
+                    {
+                        "id": 900,
+                        "number": 31,
+                        "state": "open",
+                        "draft": False,
+                        "title": "t" * 3000,
+                        "body": "b" * 3000,
+                        "user": {"login": "alice"},
+                        "head": {"ref": "feat", "sha": "e" * 40},
+                        "base": {"ref": "main"},
+                        "author_association": "MEMBER",
+                        "created_at": "2026-06-10T00:00:00Z",
+                        "updated_at": "2026-06-20T00:00:00Z",
+                    }
+                ]
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_requests", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert len(rec["body"]) == 2048
+    assert len(rec["title"]) == 1024
+    assert rec["author_login"] == "alice"
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "pull_requests", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
 def test_issues_filters_out_pull_requests(http_mocker: HttpMocker) -> None:
     """/issues returns PRs too; the record filter must drop them."""
     config = GithubNocodeConfigBuilder().build()

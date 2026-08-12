@@ -47,6 +47,7 @@ def _mr(mr_id: int, *, author: dict | None, merged_by: dict | None) -> dict:
         "state": "merged",
         "draft": False,
         "title": f"MR {mr_id}",
+        "description": "d" * 3000,
         "author": author,
         "merged_by": merged_by,
         "source_branch": "feat",
@@ -85,6 +86,7 @@ def test_merge_requests_and_the_none_guard(http_mocker: HttpMocker) -> None:
     assert by_id[1]["author_username"] == "alice"
     assert by_id[1]["merged_by_username"] == ""
     assert by_id[2]["author_username"] == ""
+    assert len(by_id[1]["description"]) == 2048
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "merge_requests", strict=True)
 
@@ -121,7 +123,7 @@ def test_users_full_refresh(http_mocker: HttpMocker) -> None:
         HttpRequest(f"{GITLAB_URL}/api/v4/groups/acme/members/all", query_params=ANY_QUERY_PARAMS),
         HttpResponse(
             body=json.dumps(
-                [{"id": 11, "username": "alice", "name": "Alice", "state": "active", "access_level": 30, "created_at": "2020-01-01T00:00:00.000+00:00"}]
+                [{"id": 11, "username": "alice", "name": "Alice", "state": "active", "access_level": 30, "created_at": "2020-01-01T00:00:00.000+00:00", "public_email": "alice@example.com"}]
             ),
             status_code=200,
         ),
@@ -133,4 +135,64 @@ def test_users_full_refresh(http_mocker: HttpMocker) -> None:
     rec = output.records[0].record.data
     assert rec["group"] == "acme"
     assert rec["unique_key"].endswith(":acme:11")
+    assert rec["public_email"] == "alice@example.com"
     _no_literal_none(output.records)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_notes_store_trimmed_bodies_and_inline_position(http_mocker: HttpMocker) -> None:
+    """The silver comments model consumes body/author_id/position; bodies are
+    trimmed to 2048 chars, and absent nested objects surface as ''/null."""
+    config = GitlabNocodeConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_MRS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps([_mr(5, author={"username": "alice"}, merged_by=None)]),
+            status_code=200,
+        ),
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{GITLAB_URL}/api/v4/projects/7/merge_requests/5/notes",
+            query_params=ANY_QUERY_PARAMS,
+        ),
+        HttpResponse(
+            body=json.dumps(
+                [
+                    {
+                        "id": 501,
+                        "body": "n" * 3000,
+                        "system": False,
+                        "resolvable": True,
+                        "resolved": False,
+                        "author": {"id": 11, "username": "alice"},
+                        "position": {"new_path": "src/a.py", "new_line": 3},
+                        "created_at": "2026-06-20T10:00:00.000+00:00",
+                        "updated_at": "2026-06-20T10:00:00.000+00:00",
+                    },
+                    {
+                        "id": 502,
+                        "body": "short",
+                        "system": True,
+                        "author": None,
+                        "created_at": "2026-06-20T10:00:00.000+00:00",
+                        "updated_at": "2026-06-20T10:00:00.000+00:00",
+                    },
+                ]
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "merge_request_notes", config)
+
+    assert not output.errors
+    by_id = {r.record.data["id"]: r.record.data for r in output.records}
+    assert len(by_id[501]["body"]) == 2048
+    assert by_id[501]["author_id"] == 11
+    assert by_id[501]["position_new_path"] == "src/a.py"
+    assert by_id[501]["position_new_line"] == 3
+    assert by_id[502]["body"] == "short"
+    assert by_id[502]["position_new_path"] == ""
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "merge_request_notes", strict=True)

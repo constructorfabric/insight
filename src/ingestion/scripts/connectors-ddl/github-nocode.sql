@@ -208,7 +208,9 @@ CREATE TABLE IF NOT EXISTS bronze_github_nocode.pull_request_comments
     `author_login` Nullable(String),
     `author_association` Nullable(String),
     `created_at` Nullable(String),
-    `updated_at` Nullable(String)
+    `updated_at` Nullable(String),
+    `body` Nullable(String),
+    `author_id` Nullable(Int64)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
@@ -233,7 +235,8 @@ CREATE TABLE IF NOT EXISTS bronze_github_nocode.pull_request_reviews
     `author_association` Nullable(String),
     `state` Nullable(String),
     `commit_id` Nullable(String),
-    `submitted_at` Nullable(String)
+    `submitted_at` Nullable(String),
+    `author_id` Nullable(Int64)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
@@ -266,7 +269,8 @@ CREATE TABLE IF NOT EXISTS bronze_github_nocode.pull_requests
     `created_at` Nullable(String),
     `updated_at` Nullable(String),
     `closed_at` Nullable(String),
-    `merged_at` Nullable(String)
+    `merged_at` Nullable(String),
+    `body` Nullable(String)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
@@ -298,7 +302,8 @@ CREATE TABLE IF NOT EXISTS bronze_github_nocode.repositories
     `html_url` Nullable(String),
     `created_at` Nullable(String),
     `updated_at` Nullable(String),
-    `pushed_at` Nullable(String)
+    `pushed_at` Nullable(String),
+    `description` Nullable(String)
 )
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id

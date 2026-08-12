@@ -60,6 +60,8 @@ streams:
           http_url_to_repo: {type: [string, "null"]}
           created_at: {type: [string, "null"]}
           last_activity_at: {type: [string, "null"]}
+          description: {type: [string, "null"]}
+          statistics_repository_size: {type: [integer, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -83,6 +85,7 @@ streams:
           order_by: last_activity_at
           sort: asc
           per_page: "100"
+          statistics: "true"
       record_selector:
         type: RecordSelector
         extractor:
@@ -136,6 +139,13 @@ streams:
           - type: AddedFieldDefinition
             path: [project_id]
             value: "{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [statistics_repository_size]
+            value: "{{ (record.get('statistics') or {}).get('repository_size') }}"
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -364,6 +374,10 @@ streams:
           # Repository identity is REQUIRED in the key: forks share commit
           # SHAs, so tenant+source+sha alone would let the ReplacingMergeTree
           # collapse commits from different repositories into one row.
+          - type: AddedFieldDefinition
+            path: [message]
+            value: "{{ (record.get('message') or '')[:2048] }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -803,6 +817,7 @@ streams:
           closed_at: {type: [string, "null"]}
           merged_by_username: {type: [string, "null"]}
           user_notes_count: {type: [integer, "null"]}
+          description: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -910,6 +925,14 @@ streams:
             value: "{{ (record.get('merged_by') or {}).get('username') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [title]
+            value: "{{ (record.get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
@@ -921,8 +944,8 @@ streams:
 
   # ── Merge request notes (GitLab API) ────────────────────────────────────
   # Child of a stateless sliding window of MRs (see the parent's
-  # updated_after comment). Note bodies are deliberately not stored: review
-  # metrics need who/when/what-kind, not prose.
+  # updated_after comment). Bodies are stored trimmed to 2048 chars — the
+  # silver comments model consumes them as content.
   - type: DeclarativeStream
     name: merge_request_notes
     primary_key:
@@ -948,6 +971,10 @@ streams:
           resolved: {type: [boolean, "null"]}
           created_at: {type: [string, "null"]}
           updated_at: {type: [string, "null"]}
+          body: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
+          position_new_path: {type: [string, "null"]}
+          position_new_line: {type: [integer, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1100,6 +1127,20 @@ streams:
             value: "{{ (record.get('author') or {}).get('username') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [body]
+            value: "{{ (record.get('body') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('author') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [position_new_path]
+            value: "{{ (record.get('position') or {}).get('new_path') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [position_new_line]
+            value: "{{ (record.get('position') or {}).get('new_line') }}"
+          - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ record['id'] }}
@@ -1107,6 +1148,7 @@ streams:
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
           - [author]
+          - [position]
 
   # ── Merge request approvals (GitLab API) ────────────────────────────────
   # Single object per MR; snapshot semantics — the RMT keeps the latest row
@@ -1133,6 +1175,7 @@ streams:
           approvals_left: {type: [integer, "null"]}
           approved_by_usernames: {type: [string, "null"]}
           updated_at: {type: [string, "null"]}
+          approved_by_ids: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1275,6 +1318,10 @@ streams:
             value: "{{ ((record.get('approved_by') or []) | map(attribute='user.username') | list) | tojson }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [approved_by_ids]
+            value: "{{ ((record.get('approved_by') or []) | map(attribute='user.id') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['project_id'] }}:{{ stream_partition.mr_iid }}:approvals
@@ -1309,6 +1356,8 @@ streams:
           access_level: {type: [integer, "null"]}
           created_at: {type: [string, "null"]}
           group: {type: [string, "null"]}
+          email: {type: [string, "null"]}
+          public_email: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1390,6 +1439,14 @@ streams:
           - type: AddedFieldDefinition
             path: [group]
             value: "{{ stream_partition.group }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [email]
+            value: "{{ record.get('email') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [public_email]
+            value: "{{ record.get('public_email') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
