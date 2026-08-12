@@ -149,7 +149,11 @@ def registration_violations(realm_doc: dict) -> list[str]:
         ]
         if len(pins) != 1:
             problems.append(f"idp '{alias}': expected exactly one INSIGHT_TENANT_ID pin mapper, found {len(pins)}")
-        if not any((m.get("config") or {}).get("user.attribute") == "idp_sub" for m in mine):
+        # OIDC broker mappers key the target as `user.attribute`; social-provider
+        # mappers (github-user-attribute-mapper and kin) use `userAttribute`.
+        if not any(
+            (m.get("config") or {}).get(key) == "idp_sub" for m in mine for key in ("user.attribute", "userAttribute")
+        ):
             problems.append(f"idp '{alias}': no mapper stamps the idp_sub attribute")
     for g in realm_doc.get("groups") or []:
         if (g.get("attributes") or {}).get("tenant_id"):
