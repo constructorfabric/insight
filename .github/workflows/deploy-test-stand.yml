@@ -48,7 +48,9 @@ jobs:
     # `environment:` cannot sit on a job that `uses:` a reusable workflow, so
     # it is declared here; its main-only branch policy still evaluates.
     environment: insight-test-stand
-    timeout-minutes: 95
+    # Above the sum of the step ceilings: deploy (14) + edge (3) + seed, which
+    # now runs seed + identity projection + gold rebuild (110) + smoke (5).
+    timeout-minutes: 150
     env:
       ENV_NAME: test-stand
       VALUES_FILE: deploy/gitops/environments/test-stand/values.yaml
@@ -403,12 +405,14 @@ jobs:
             exit 1
           fi
 
-      # 65 min sits just ABOVE the seed Job's own activeDeadlineSeconds
-      # (3600s), so the Job's deadline fires first and leaves no orphan Job.
+      # seed-stand.sh now runs three Jobs in sequence — the seed itself, the
+      # identity projection (persons-seed + persons-sync), and the gold rebuild.
+      # 110 min sits above the sum of their own activeDeadlineSeconds, so each
+      # Job's deadline fires first and leaves no orphan Job.
       - name: 'Stage 3/4 — seed the stand'
         id: seed
         if: steps.stages.outputs.run_seed == 'true'
-        timeout-minutes: 65
+        timeout-minutes: 110
         env:
           SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL }}
           # Unset on a workflow_call, so this branch is never taken there.

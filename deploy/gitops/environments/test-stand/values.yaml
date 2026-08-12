@@ -660,57 +660,40 @@ identityResolution:
   deploy: true
   databaseName: "identity"
 
-  # Rebuilds the identity org projection — `persons`, `account_person_map`,
-  # `org_chart` — in MariaDB from the observation history in ClickHouse.
+  # persons-seed: rebuilds the identity org projection — `persons`,
+  # `account_person_map`, `org_chart` — in MariaDB from the ClickHouse
+  # `identity_inputs` observation history the seeder populates.
   #
-  # OFF ON THIS STAND, and the reason is what this environment is for. CI owns
-  # the stand's state: every merge redeploys and reseeds it, and the demo
-  # seeder writes the roster that both the realm and `identity.persons` are
-  # generated from — one roster, two projections that have to agree, or a login
-  # authenticates and then resolves to nobody.
-  #
-  # This CronJob rebuilds the same projection from a different source:
-  # ClickHouse `identity_inputs`.
-  #
-  # CORRECTION, measured on this stand rather than assumed. An earlier version
-  # of this comment said `identity_inputs` is populated by CONNECTORS, that a
-  # stand without them therefore has none, and that the Job consequently fails
-  # its own input guard every morning and writes nothing. All three are false.
-  # THE SEEDER populates it: a seeded stand carries hundreds of
-  # `identity.identity_inputs` rows (email, id, department, job_title and the
-  # rest) under the HR directory's source type, with no connector anywhere.
-  #
-  # What that costs while this stays false is not nothing, and it is worth
-  # writing down because every pod is Ready throughout. `resolve_person_id()`
+  # ON so its CronJob object EXISTS for seed-stand.sh to force once,
+  # synchronously, after every CI seed (`kubectl create job --from=cronjob`).
+  # It is what makes person metrics non-null. `resolve_person_id()`
   # (src/ingestion/dbt/macros/resolve_person_id.sql) binds an account to a
   # person by INNER JOINing the seeded account evidence in `identity_inputs`
   # to the `value_type='id'` rows in `identity.identity_persons` on
-  # (source_type, source_id, account_id). The seeder writes login bindings
-  # under the IdP's source type — `keycloak`, per `authenticator.oidc.sourceType`
-  # above — while the account evidence it writes carries the HR directory's.
-  # Those two source types are not equal, so the join returns zero rows, every
-  # `*_metric_evidence` row is built with an empty `entity_id`, and every
-  # `*_metric_observations` model — which filters `entity_id != ''` — selects
-  # nothing. The API then answers 200 with a null for every metric.
+  # (source_type, source_id, account_id). The seeder writes login bindings only
+  # under the IdP source type (`keycloak`) — not under the connector/HR source
+  # types the account evidence carries — so without this run there is no
+  # connector-account binding to join to, every `*_metric_observations` model
+  # (which filters `entity_id != ''`) selects nothing, and the API answers 200
+  # with a null for every metric.
   #
-  # This CronJob is what would create the missing bindings, by rebuilding
-  # `persons` from that evidence. Turning it on is therefore NOT obviously
-  # wrong, but it is not obviously right either: the rebuild replaces `persons`
-  # from ClickHouse alone, and the seeder's own login rows are not in ClickHouse
-  # — so it could bind the accounts and un-seed the logins in the same run.
-  # Deciding that needs a stand to try it on and a deliberate change, not a flag
-  # flipped while reading this.
+  # persons-seed writes exactly the missing bindings: it LINKS each connector
+  # account to the seeded roster person by e-mail — resolve_assignments'
+  # `LinkedByEmail`, matching the account's e-mail to the person the seeder
+  # already wrote it under — so the roster UUID the login resolves to is the
+  # same UUID gold attributes activity to. Safe over a seeded stand: it APPENDS
+  # to `persons` (INSERT IGNORE — seed_repo.rs), so the login rows survive and
+  # logins keep resolving; it rebuilds account_person_map/org_chart from
+  # `persons`, and the HR directory's supervisorEmail reaches `identity_inputs`,
+  # so the org_chart it derives matches the seeder's. This is the same flow the
+  # compose stand runs (dev-compose.sh `seed_identity_projection`).
   #
-  # Turned off HERE rather than with `kubectl patch cronjob … suspend=true`,
-  # because the CronJob is chart-rendered and helm-owned: a hand-suspend is
-  # reverted by the next `helm upgrade`, which on this stand is the next merge.
-  #
-  # `sync` below stays ON: it publishes the seeded roster into ClickHouse,
-  # which is where the metrics models resolve email -> person_id. Disabling
-  # that would leave every seeded metric unable to attribute anything.
+  # The 06:30 schedule is inert between merges — nothing rebuilds gold overnight,
+  # so served metrics do not change until the next reseed. The projection that
+  # matters is the one seed-stand.sh forces right after each seed.
   seed:
-    enabled: false
-    schedule: "30 6 * * *" # chart default; inert while enabled is false
+    enabled: true
+    schedule: "30 6 * * *" # chart default; the CI seed forces a run, not the cron
     # Trimmed from the chart's 100m/128Mi request: these are transient Jobs
     # and two of them fire within fifteen minutes of each other. Limits stay
     # at the chart's ceiling so a real run can burst.
@@ -737,22 +720,8 @@ identityResolution:
 
   # Both Jobs guard their input and exit non-zero rather than publishing an
   # empty projection: seed aborts on an empty observation read or a tenant
-  # mismatch, sync on an empty persons log. On a stand with no connector data
-  # they therefore fail by design, and a failing seed Job is the guard
-  # working rather than a broken install. Force a run by hand with:
+  # mismatch, sync on an empty persons log. A failing Job is the guard working,
+  # not a broken install. seed-stand.sh forces both after each seed; run one by
+  # hand with:
   #   kubectl -n insight create job --from=cronjob/insight-identity-resolution-seed seed-manual
   #   kubectl -n insight create job --from=cronjob/insight-identity-resolution-sync sync-manual
-  #
-  # OPEN RISK for a CI-seeded stand, stated here because this is where
-  # somebody will look. The seed CronJob rebuilds `persons` from the ClickHouse
-  # evidence, and — see the CORRECTION above — that evidence is NOT empty on a
-  # seeded stand: the seeder writes it. So the guard does not fire, and the
-  # rebuild would replace `persons` with what it can derive from ClickHouse
-  # alone. The seeder's login-bootstrap rows are not derivable from there, so
-  # the risk is real and runs in the direction of un-seeding logins between
-  # merges, overnight, with no signal until the next smoke run.
-  #
-  # That is why `seed.enabled` is false above, and it is also why leaving it
-  # false has a price — the unresolved account bindings described in that
-  # correction. Both directions are a deliberate decision with a cost; neither
-  # is a flag to flip by reflex.

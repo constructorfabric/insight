@@ -85,14 +85,17 @@ def _values(response: ApiResponse, metric_key: str) -> list[tuple[str, float | N
 @pytest.mark.reliability
 @pytest.mark.xfail(
     reason=(
-        "constructorfabric/insight#2447 — since the identity-resolution rework "
-        "the seeder writes none of the identity_inputs/account rows the "
-        "resolver matches on, so gold serves null for EVERY person metric on "
-        "a freshly seeded stand (verified 2026-08-12: all keys x all dev-team "
-        "personas; reconciliation lanes pass because both sides are empty). "
-        "The compose lane is red from the same cause, so no green lane loses "
-        "coverage to this marker. This is the suite's only value-level alarm; "
-        "un-xfail it when #2447 is fixed."
+        "constructorfabric/insight#2447 — the k8s test-stand ran with the "
+        "persons-seed CronJob disabled, so connector accounts were never linked "
+        "to the seeded roster person and gold served null for every person "
+        "metric. Fixed 2026-08-12: persons-seed is enabled and seed-stand.sh "
+        "forces the persons-seed + persons-sync projection and a gold rebuild "
+        "after each seed (persons-seed LINKS each connector account to the "
+        "roster person by email — resolve_assignments' LinkedByEmail — so the "
+        "roster UUID the login resolves to is the UUID gold attributes activity "
+        "to). xfail kept until the next post-merge stand run confirms non-null; "
+        "remove this marker then. strict=False so the confirming run xpasses "
+        "cleanly rather than failing on the pass."
     ),
     strict=False,
 )

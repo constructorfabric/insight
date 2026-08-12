@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Seed a Kubernetes stand with the demo organisation and its activity.
-# Every coordinate is discovered from the cluster, never copied in by an
-# operator; credentials are never read. Nothing is defaulted.
+# Seed a Kubernetes stand with the demo organisation and its activity. An
+# `all`/`silver` run finishes by resolving identity (persons-seed + persons-sync)
+# and rebuilding gold, so the stand serves real metrics rather than a null for
+# every person. Every coordinate is discovered from the cluster, never copied in
+# by an operator; credentials are never read. Nothing is defaulted.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,9 +66,10 @@ Discovered from the stand (pass a flag only to override):
 
 Seed options:
       --step <step>        identity | silver | analytics | gold | all [default: all]
-                           `gold` rebuilds the dbt gold models over the identity
-                           map as it stands NOW; run it after the persons-sync,
-                           never instead of `all`.
+                           `all`/`silver` finish by running the identity
+                           projection (persons-seed + persons-sync) and rebuilding
+                           gold, so the stand serves resolved metrics. `gold`
+                           alone just rebuilds over the map as it stands now.
       --days <n>           activity-window length in days
       --anchor <date>      last day carrying activity (YYYY-MM-DD)
       --cross-tenant       also write the second-tenant refusal fixture
@@ -138,8 +141,8 @@ need kubectl
 need envsubst
 [[ -f "$JOB_TEMPLATE" ]] || die "Job template not found at $JOB_TEMPLATE."
 [[ -n "$NAMESPACE" ]] || { usage >&2; die "--namespace is required."; }
-# --email is NOT gated here: discovery below needs the cluster first. `gold`
-# is NOT part of `all` — run `all`, then the persons-sync, then `--step gold`.
+# --email is NOT gated here: discovery below needs the cluster first. `all` and
+# `silver` finish by running the projection + gold rebuild themselves (see tail).
 case "$STEP" in
   identity|silver|analytics|gold|all) ;;
   *) die "--step must be one of identity, silver, analytics, gold, all (got '$STEP')." ;;
@@ -454,13 +457,10 @@ echo "==> image:     $IMAGE"
 # realm or overrides it, before anything is written.
 echo "==> idp:       source_type=$IDP_SOURCE_TYPE dev_user=$DEV_EMAIL (from $DEV_EMAIL_ORIGIN)"
 
-# A name per run: a Job's pod spec is immutable.
-job_name="insight-seed-${STEP}-$(date -u +%Y%m%d%H%M%S)"
-
-export SEED_JOB_NAME="$job_name"
+# The seeder Job's shared environment. SEED_STEP and SEED_JOB_NAME are the only
+# per-step values, so run_seed_step sets them for each Job it applies.
 export SEED_NAMESPACE="$NAMESPACE"
 export SEED_IMAGE="$IMAGE"
-export SEED_STEP="$STEP"
 export SEED_DEADLINE_SECONDS="$DEADLINE_SECONDS"
 export SEED_DB_SECRET="$DB_SECRET"
 export SEED_MARIADB_HOST="$MARIADB_HOST"
@@ -482,81 +482,164 @@ export SEED_WINDOW_DAYS="$WINDOW_DAYS"
 export SEED_ANCHOR_DATE="$ANCHOR_DATE"
 export SEED_PULL_SECRETS="$PULL_SECRETS"
 
-# Only the seed variables are substituted; a `$HOME`/`$PATH` in the template
-# stays literal.
-manifest="$(envsubst '
-  ${SEED_JOB_NAME} ${SEED_NAMESPACE} ${SEED_IMAGE} ${SEED_STEP}
-  ${SEED_DEADLINE_SECONDS} ${SEED_DB_SECRET}
-  ${SEED_MARIADB_HOST} ${SEED_MARIADB_PORT} ${SEED_MARIADB_USER}
-  ${SEED_IDENTITY_DB} ${SEED_ANALYTICS_DB}
-  ${SEED_CLICKHOUSE_HOST} ${SEED_CLICKHOUSE_HTTP_PORT} ${SEED_CLICKHOUSE_USER}
-  ${SEED_CLICKHOUSE_DATABASE}
-  ${SEED_TENANT_ID} ${SEED_DEV_USER_EMAIL} ${SEED_IDP_SOURCE_TYPE}
-  ${SEED_CROSS_TENANT} ${SEED_FORCE} ${SEED_WINDOW_DAYS} ${SEED_ANCHOR_DATE}
-  ${SEED_PULL_SECRETS}
-' < "$JOB_TEMPLATE")"
+# Renders the Job manifest for the step in $SEED_STEP / name in $SEED_JOB_NAME.
+# Only the seed variables are substituted; a `$HOME`/`$PATH` stays literal.
+render_seed_manifest() {
+  envsubst '
+    ${SEED_JOB_NAME} ${SEED_NAMESPACE} ${SEED_IMAGE} ${SEED_STEP}
+    ${SEED_DEADLINE_SECONDS} ${SEED_DB_SECRET}
+    ${SEED_MARIADB_HOST} ${SEED_MARIADB_PORT} ${SEED_MARIADB_USER}
+    ${SEED_IDENTITY_DB} ${SEED_ANALYTICS_DB}
+    ${SEED_CLICKHOUSE_HOST} ${SEED_CLICKHOUSE_HTTP_PORT} ${SEED_CLICKHOUSE_USER}
+    ${SEED_CLICKHOUSE_DATABASE}
+    ${SEED_TENANT_ID} ${SEED_DEV_USER_EMAIL} ${SEED_IDP_SOURCE_TYPE}
+    ${SEED_CROSS_TENANT} ${SEED_FORCE} ${SEED_WINDOW_DAYS} ${SEED_ANCHOR_DATE}
+    ${SEED_PULL_SECRETS}
+  ' < "$JOB_TEMPLATE"
+}
 
+# wait_for_job NAME — follow the pod's logs, then read the verdict from the Job
+# object (the log stream ending is not the verdict). 0 on success, 1 otherwise;
+# never fatal on a transient apiserver read.
+wait_for_job() {
+  local job_name="$1" phase succeeded failed waiting deadline
+
+  # Waits for the CONTAINER, not just the pod object: `logs -f` against a pod
+  # still in ContainerCreating fails immediately. Bounded, and never fatal.
+  for _ in $(seq 1 60); do
+    phase="$(kube -n "$NAMESPACE" get pod -l "job-name=$job_name" \
+      -o 'jsonpath={.items[0].status.phase}' 2>/dev/null || true)"
+    case "$phase" in Running|Succeeded|Failed) break ;; esac
+    sleep 2
+  done
+
+  kube -n "$NAMESPACE" logs -f "job/$job_name" || true
+
+  # Polled, not `kubectl wait --for=condition=complete`, which only waits for
+  # success. `|| true`: a transient apiserver hiccup must not kill the loop.
+  deadline=$((SECONDS + DEADLINE_SECONDS))
+  while [[ "$SECONDS" -lt "$deadline" ]]; do
+    succeeded="$(kube -n "$NAMESPACE" get "job/$job_name" \
+      -o 'jsonpath={.status.succeeded}' 2>/dev/null || true)"
+    failed="$(kube -n "$NAMESPACE" get "job/$job_name" \
+      -o 'jsonpath={.status.failed}' 2>/dev/null || true)"
+    if [[ "${succeeded:-0}" -ge 1 ]]; then
+      echo "==> job complete: $job_name"
+      return 0
+    fi
+    if [[ "${failed:-0}" -ge 1 ]]; then
+      echo "ERROR: Job $job_name failed. Its logs above hold the reason; it is not" >&2
+      echo "       retried (backoffLimit 0) and survives for an hour" >&2
+      echo "       (ttlSecondsAfterFinished), so it can be read again until then:" >&2
+      echo "         $(kubectl_hint) -n $NAMESPACE logs job/$job_name" >&2
+      return 1
+    fi
+
+    # A pod that cannot start never becomes either; the common cause is an
+    # image the cluster cannot pull.
+    waiting="$(kube -n "$NAMESPACE" get pod -l "job-name=$job_name" \
+      -o 'jsonpath={.items[0].status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)"
+    case "$waiting" in
+      ImagePullBackOff|ErrImagePull|InvalidImageName)
+        echo "ERROR: the pod cannot start: $waiting for image $IMAGE." >&2
+        echo "       Push the image somewhere the cluster can pull it, or pass a tag it already has." >&2
+        return 1 ;;
+    esac
+
+    sleep 3
+  done
+
+  echo "ERROR: Job $job_name neither completed nor failed within ${DEADLINE_SECONDS}s:" >&2
+  echo "         $(kubectl_hint) -n $NAMESPACE describe job/$job_name" >&2
+  return 1
+}
+
+# run_seed_step STEP — apply one seeder Job for STEP and wait for its verdict.
+run_seed_step() {
+  local step="$1" job_name
+  # A name per run: a Job's pod spec is immutable.
+  job_name="insight-seed-${step}-$(date -u +%Y%m%d%H%M%S)"
+  export SEED_STEP="$step"
+  export SEED_JOB_NAME="$job_name"
+  render_seed_manifest | kube apply -f -
+  echo "==> applied Job $SEED_JOB_NAME (step: $step)"
+  wait_for_job "$SEED_JOB_NAME"
+}
+
+# project_identity — force the persons-seed then persons-sync CronJobs to run now
+# and wait for each. These are the SAME runs the chart's CronJobs make on
+# schedule; a fresh CI stand cannot wait for the 06:30 cron, so it forces them.
+# persons-seed LINKS each connector account to the seeded roster person by e-mail
+# (resolve_assignments' LinkedByEmail) and APPENDS to `persons` (INSERT IGNORE —
+# it never rewrites the seeder's login rows); persons-sync publishes the persons
+# log into ClickHouse identity_persons, where gold's resolve_person_id() reads it.
+# Without this, gold resolves nothing and the API answers 200 with a null for
+# every person metric. Discovered by component label, never named, so a chart
+# rename fails loudly here rather than silently skipping the projection.
+project_identity() {
+  local component cronjob job_name
+  for component in persons-seed persons-sync; do
+    cronjob="$(kube -n "$NAMESPACE" get cronjob \
+      -l "app.kubernetes.io/component=$component" \
+      -o 'jsonpath={.items[0].metadata.name}' 2>/dev/null || true)"
+    if [[ -z "$cronjob" ]]; then
+      echo "ERROR: no $component CronJob in namespace $NAMESPACE — the identity" >&2
+      echo "       projection cannot run, so gold would resolve to a null for every" >&2
+      echo "       person. Enable identityResolution.${component#persons-}.enabled on" >&2
+      echo "       this stand, or seed --step silver and run the projection yourself." >&2
+      return 1
+    fi
+    job_name="${cronjob}-ci-$(date -u +%Y%m%d%H%M%S)"
+    echo "==> identity projection: $component (job/$job_name from cronjob/$cronjob)"
+    kube -n "$NAMESPACE" create job --from="cronjob/$cronjob" "$job_name"
+    wait_for_job "$job_name" || {
+      echo "ERROR: $component did not complete; gold would stay unresolved." >&2
+      return 1
+    }
+  done
+}
+
+# --dry-run: print the requested step's manifest and exit, writing nothing.
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  printf '%s\n' "$manifest"
+  dry_job_name="insight-seed-${STEP}-$(date -u +%Y%m%d%H%M%S)"
+  export SEED_STEP="$STEP"
+  export SEED_JOB_NAME="$dry_job_name"
+  render_seed_manifest
   exit 0
 fi
 
-printf '%s\n' "$manifest" | kube apply -f -
-echo "==> applied Job $job_name"
-
+# --no-follow: apply the requested step and return without waiting. The identity
+# projection and gold rebuild need the seed to finish first, so they are skipped
+# here — a no-follow caller has asked for the raw apply only.
 if [[ "$FOLLOW" -eq 0 ]]; then
-  echo "    follow it with: $(kubectl_hint) -n $NAMESPACE logs -f job/$job_name"
+  nofollow_job_name="insight-seed-${STEP}-$(date -u +%Y%m%d%H%M%S)"
+  export SEED_STEP="$STEP"
+  export SEED_JOB_NAME="$nofollow_job_name"
+  render_seed_manifest | kube apply -f -
+  echo "==> applied Job $SEED_JOB_NAME (step: $STEP)"
+  echo "    follow it with: $(kubectl_hint) -n $NAMESPACE logs -f job/$SEED_JOB_NAME"
+  case "$STEP" in
+    all|silver)
+      echo "    NOTE: gold is UNRESOLVED until the persons-seed/persons-sync CronJobs"
+      echo "          run and '--step gold' rebuilds over them. Without --no-follow"
+      echo "          this script does all three for you." ;;
+  esac
   exit 0
 fi
 
-# Waits for the CONTAINER, not just the pod object: `logs -f` against a pod
-# still in ContainerCreating fails immediately. Bounded, and never fatal.
-for _ in $(seq 1 60); do
-  phase="$(kube -n "$NAMESPACE" get pod -l "job-name=$job_name" \
-    -o 'jsonpath={.items[0].status.phase}' 2>/dev/null || true)"
-  case "$phase" in
-    Running|Succeeded|Failed) break ;;
-  esac
-  sleep 2
-done
+# Run the requested step. For the steps that build gold (all, silver), refresh
+# the identity projection and rebuild gold, so the stand serves resolved metrics
+# instead of a null for every person — the k8s analogue of dev-compose.sh's
+# cmd_seed, which does the same for the compose stand.
+run_seed_step "$STEP" || exit 1
 
-kube -n "$NAMESPACE" logs -f "job/$job_name" || true
+case "$STEP" in
+  all|silver)
+    project_identity || exit 1
+    echo "==> rebuilding gold over the refreshed identity map"
+    run_seed_step gold || exit 1
+    ;;
+esac
 
-# The log stream ending is not the verdict — read it from the Job. Polled, not
-# `kubectl wait --for=condition=complete`, which only waits for success.
-deadline=$((SECONDS + DEADLINE_SECONDS))
-while [[ "$SECONDS" -lt "$deadline" ]]; do
-  # `|| true`: a transient apiserver hiccup must not kill an hour-long loop.
-  succeeded="$(kube -n "$NAMESPACE" get "job/$job_name" \
-    -o 'jsonpath={.status.succeeded}' 2>/dev/null || true)"
-  failed="$(kube -n "$NAMESPACE" get "job/$job_name" \
-    -o 'jsonpath={.status.failed}' 2>/dev/null || true)"
-  if [[ "${succeeded:-0}" -ge 1 ]]; then
-    echo "==> seed complete: $job_name"
-    exit 0
-  fi
-  if [[ "${failed:-0}" -ge 1 ]]; then
-    echo "ERROR: Job $job_name failed. Its logs above hold the reason; it is not" >&2
-    echo "       retried (backoffLimit 0) and survives for an hour" >&2
-    echo "       (ttlSecondsAfterFinished), so it can be read again until then:" >&2
-    echo "         $(kubectl_hint) -n $NAMESPACE logs job/$job_name" >&2
-    exit 1
-  fi
-
-  # A pod that cannot start never becomes either; the common cause is an
-  # image the cluster cannot pull.
-  waiting="$(kube -n "$NAMESPACE" get pod -l "job-name=$job_name" \
-    -o 'jsonpath={.items[0].status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || true)"
-  case "$waiting" in
-    ImagePullBackOff|ErrImagePull|InvalidImageName)
-      echo "ERROR: the seed pod cannot start: $waiting for image $IMAGE." >&2
-      echo "       Push the image somewhere the cluster can pull it, or pass a tag it already has." >&2
-      exit 1 ;;
-  esac
-
-  sleep 3
-done
-
-echo "ERROR: Job $job_name neither completed nor failed within ${DEADLINE_SECONDS}s:" >&2
-echo "         $(kubectl_hint) -n $NAMESPACE describe job/$job_name" >&2
-exit 1
+echo "==> seed complete: namespace=$NAMESPACE step=$STEP"
+exit 0
