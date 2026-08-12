@@ -1284,11 +1284,19 @@ jobs:
   #
   # Build context is the repository root because the Dockerfile COPYs
   # `tests/...` paths.
+  #
+  # Push events only, no per-PR validation build: e2e-stand.yml runs the
+  # journeys from the checkout on PR builds and consumes this image solely
+  # via the `:latest` a main push publishes, so a PR-side build proved an
+  # artefact nothing reads. The cost of the trade: a broken
+  # ui-tests.Dockerfile now surfaces on the main push after merge, not on
+  # the PR.
   ui-tests:
     needs: changes
     if: |
-      needs.changes.outputs.ui_tests == 'true'
-      || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
+      needs.changes.outputs.should_push == 'true'
+      && (needs.changes.outputs.ui_tests == 'true'
+      || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only))
     strategy:
       fail-fast: false
       matrix:
