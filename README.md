@@ -15,6 +15,7 @@ This repository is the **monorepo** for the Insight product. It contains:
   - [Components](#components)
   - [Bronze → Silver → Gold pipeline](#bronze--silver--gold-pipeline)
 - [Repository Structure](#repository-structure)
+  - [Root scripts](#root-scripts)
   - [`src/`](#src)
   - [`docs/`](#docs)
   - [`inbox/`](#inbox)
