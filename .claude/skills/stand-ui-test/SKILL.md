@@ -199,8 +199,10 @@ uv run --project tests --frozen playwright install chromium        # first time 
 uv run --project tests --frozen pytest tests/stand/ui                  # a real subset
 uv run --project tests --frozen pytest tests/stand/ui/test_login.py --headed
 
-# --image is the exception: the args replace the image's CMD, so this one narrows
-./dev-compose.sh test-stand test --image ghcr.io/constructorfabric/insight-ui-tests:latest
+# --image is the exception: the args replace the image's CMD, so this one narrows.
+# No suite image is published anymore (CI runs host-side from the checkout);
+# the mode remains for a locally built one.
+./dev-compose.sh test-stand test --image <locally-built-suite-image>
 ```
 
 In `--image` mode test paths are **image-side** (`/tests/stand/ui`), and

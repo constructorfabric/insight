@@ -54,8 +54,17 @@ class GitOutputDetails(GroupDialog):
         return self.dialog.get_by_role("combobox", name="Metric").filter(has_text="Commits")
 
     def open_first_commit_bucket(self) -> MetricEvidenceDialog:
+        """Drill the first bucket whose Commits cell is drillable.
+
+        Filtered rather than `.first`: the leading bucket of a trailing window
+        is a partial week and can render "—" (no button) in the Commits
+        column, depending on which day the window starts. The cell index stays
+        pinned to the Commits column so the dialog opened is the one named.
+        """
         table = self.repository_table()
-        data_row = table.get_by_role("rowgroup").nth(1).get_by_role("row").first
+        commit_button = self.page.get_by_role("cell").nth(1).get_by_role("button")
+        rows = table.get_by_role("rowgroup").nth(1).get_by_role("row")
+        data_row = rows.filter(has=commit_button).first
         data_row.get_by_role("cell").nth(1).get_by_role("button").click()
         return MetricEvidenceDialog(self.page, "Commits")
 

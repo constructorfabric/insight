@@ -8,6 +8,7 @@ get zero rows here by construction.
 from __future__ import annotations
 
 import datetime as _dt
+import random
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -57,6 +58,23 @@ def _eligible(roster: Sequence[Person]) -> list[Person]:
     return [p for p in roster if p.team and TEAM_PROFILES[p.team].weights.get("github", 0) > 0]
 
 
+def _daily_commit_count(rng: random.Random, mean: float) -> int:
+    """The day's commit count, floored at one per person-day.
+
+    The floor keeps every git bucket drillable: the dashboard's trailing
+    windows start on whichever calendar day the run lands, so the leading
+    partial week bucket can cover a single day — and a zero-commit day
+    renders that bucket "—", undrillable. weekday_multiplier still shapes
+    the volume.
+
+    One formula on purpose: seed_class_git_pull_requests_commits re-derives
+    the day's commit list from the same RNG stream seed_class_git_commits
+    draws from, and any divergence — such as only one of them flooring —
+    strands that day's PRs without link rows.
+    """
+    return max(1, min(poisson(rng, mean), COMMITS_CAP))
+
+
 def seed_class_git_commits(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
@@ -88,7 +106,7 @@ def seed_class_git_commits(
         for d in days_window(days):
             rng = seeded_rng(p.uuid, d, "git.commits")
             mean = 5 * persona * weight * weekday_multiplier(d)
-            n_commits = min(poisson(rng, mean), COMMITS_CAP)
+            n_commits = _daily_commit_count(rng, mean)
             for i in range(n_commits):
                 sha = deterministic_uuid("git.commit", p.uuid, d.isoformat(), str(i))[:40]
                 is_merge = 1 if rng.random() < 0.05 else 0
@@ -316,9 +334,7 @@ def seed_class_git_pull_requests_commits(
             # seed_class_git_commits does (same salt, same draw order).
             crng = seeded_rng(p.uuid, d, "git.commits")
             cmean = 5 * persona * weight * weekday_multiplier(d)
-            n_commits = min(poisson(crng, cmean), COMMITS_CAP)
-            if n_commits == 0:
-                continue
+            n_commits = _daily_commit_count(crng, cmean)
             hashes = [
                 deterministic_uuid("git.commit", p.uuid, d.isoformat(), str(i))[:40].replace(
                     "-", ""
@@ -331,9 +347,13 @@ def seed_class_git_pull_requests_commits(
             n_prs = min(poisson(prng, pmean), PRS_CAP)
             for i in range(n_prs):
                 pr_id = deterministic_int("git.pr", p.uuid, d.isoformat(), str(i))
-                # Deal the day's commits round-robin across the day's PRs so
-                # every PR gets at least one and no commit is double-linked.
-                linked = hashes[i::n_prs] if n_prs else []
+                # Deal the day's commits round-robin across the day's PRs.
+                # A day with fewer commits than PRs wraps instead of leaving
+                # the tail PRs linkless: gold's pr_commit_emails derives a
+                # PR's author attribution from these links, so a linkless PR
+                # NULLs its dimensions, while a commit shared by two PRs is
+                # ordinary git.
+                linked = hashes[i::n_prs] or [hashes[i % n_commits]]
                 for order, commit_hash in enumerate(linked):
                     rows.append(
                         (

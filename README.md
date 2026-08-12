@@ -15,6 +15,7 @@ This repository is the **monorepo** for the Insight product. It contains:
   - [Components](#components)
   - [Bronze → Silver → Gold pipeline](#bronze--silver--gold-pipeline)
 - [Repository Structure](#repository-structure)
+  - [Root scripts](#root-scripts)
   - [`src/`](#src)
   - [`docs/`](#docs)
   - [`inbox/`](#inbox)
@@ -64,7 +65,7 @@ The solution consists of five main components:
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                          Frontend (SPA)                          │
-│  Dashboards · Analytics · AI adoption · PR metrics · Team healt  │
+│  Dashboards · Analytics · AI adoption · PR metrics · Team health │
 └────────────────────────────┬─────────────────────────────────────┘
                              │ REST API (auth + data)
 ┌────────────────────────────▼─────────────────────────────────────┐
@@ -80,7 +81,7 @@ The solution consists of five main components:
                              │ write
 ┌────────────────────────────┴─────────────────────────────────────┐
 │              Connector Orchestration Layer                       │
-│         Scheduling · Retry · State management · Monitorin        │
+│         Scheduling · Retry · State management · Monitoring       │
 └────────────────────────────▲─────────────────────────────────────┘
                              │ collect
 ┌────────────────────────────┴─────────────────────────────────────┐
@@ -156,7 +157,7 @@ its service and fails the build on drift, so treat them as build output that hap
 to be committed.
 
 Design intent for everything else lives with the code it describes: the connector
-`README.md` beside each `connector.yaml`, module docs under `src/backend/services/`,
+`README.md` beside each `descriptor.yaml`, module docs under `src/backend/services/`,
 and the pipeline conventions in `.cf-studio/config/rules/architecture.md`.
 
 #### Backend specs — under review
@@ -209,7 +210,7 @@ Incoming documents pending triage and integration into `docs/`. Not yet canonica
 
 **Identity Resolution** — Every Bronze table carries a source-native user identifier (`email`, `login`, `uuid`, etc.). The Identity Manager resolves these to a stable `person_id` in Silver Step 2, enabling cross-source analytics (e.g. joining a developer's git activity with their task tracker throughput and AI tool usage).
 
-**Connector spec** — Each connector defines its Bronze table schemas, identity fields, Silver/Gold target streams, and open questions. The `{source}.md` file is the full technical spec; `specs/PRD.md` captures the code-agnostic requirements.
+**Connector spec** — Each connector defines its Bronze table schemas, identity fields, Silver/Gold target streams, and open questions. The package `README.md` is the full technical spec; `descriptor.yaml` declares the image, schedule and required secret fields the toolkit reconciles.
 
 **Extendability** — Adding a new data source means: (1) defining Bronze tables, (2) mapping identity fields, (3) routing to an existing or new Silver stream. The architecture is designed to accommodate new connectors without changes to existing pipelines.
 
@@ -319,7 +320,7 @@ For cluster deployments image tags flow through automatically: the umbrella char
 | `insight-toolbox` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-toolbox |
 | `insight-seed` (test stands only) | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-seed |
 | `insight-frontend` | this repo | https://github.com/constructorfabric/insight/pkgs/container/insight-frontend |
-| `insight-jira-enrich` | **separate** `constructorfabric/insight-jira-enrich` | https://github.com/constructorfabric/insight/pkgs/container/insight-jira-enrich |
+| `insight-jira-enrich` | **separate** `constructorfabric/insight-jira-enrich` | https://github.com/constructorfabric/insight-jira-enrich/pkgs/container/insight-jira-enrich |
 
 > **Note**: jira-enrich lives in its own repo with an independent release cadence — a tag from this repo (e.g. `2026.04.28.10.34-b08b460`) does **not** exist for `insight-jira-enrich`. Pick the latest tag in that repo separately.
 
@@ -351,7 +352,7 @@ See [`src/backend/services/LOCAL_DEV.md`](src/backend/services/LOCAL_DEV.md) for
 
 ## Working with This Repo
 
-- **Browse connectors** — Each package under `src/ingestion/connectors/{domain}/{source}/` carries its own `README.md`, `connector.yaml` and `dbt/` models.
+- **Browse connectors** — Each package under `src/ingestion/connectors/{domain}/{source}/` carries its own `README.md`, `descriptor.yaml` and `dbt/` models.
 - **Add a connector** — Follow the layout of any existing package, and the `/connector` skill.
 - **Add source code** — Place code under `src/{component}/` — `src/ingestion/`, `src/backend/`, `src/frontend/`.
 - **Constructor Studio** — Run `cfs` in a supported AI agent to activate assisted spec authoring, validation, and traceability. Constructor Studio is sourced from [github.com/constructorfabric/studio](https://github.com/constructorfabric/studio).

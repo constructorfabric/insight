@@ -3,8 +3,8 @@
 #   tests/lib/   — insight_stand, the shared library (importable package)
 #   tests/stand/ — the suite that consumes it (api/, ui/)
 #
-# Both halves share one dependency set and one lockfile, so the host runner and
-# the ui-tests container install byte-identical versions instead of drifting.
+# Both halves share one dependency set and one lockfile, so every runner
+# installs byte-identical versions instead of drifting.
 #
 #   uv sync --project tests                       # create tests/.venv
 #   uv run --project tests playwright install chromium
@@ -24,17 +24,18 @@ description = "Deployed-stand test suite for Insight: shared library plus API an
 # This suite's own floor, not inherited from anywhere: it reads the seeder's
 # manifest as DATA and imports none of its modules, so the seeder's lower 3.12
 # floor (it ships inside the 3.12 toolbox image) does not apply here. uv
-# provisions this interpreter everywhere — including inside the ui-tests image,
-# whose own system Python is older — so the floor holds in every runner rather
-# than being a host-only aspiration.
+# provisions this interpreter everywhere, so the floor holds in every runner
+# rather than being a host-only aspiration. (Workflows' setup-python still
+# pins 3.12 — that interpreter only runs stdlib helper scripts, never this
+# suite; reconciling the pins is CI enablement's call, not a reason to lower
+# the floor.)
 requires-python = ">=3.13"
 dependencies = [
     "pytest>=8",
     # Sync HTTP with a cookie jar — the session transport LoginSession needs.
     "httpx>=0.27",
-    # Pinned to the Playwright version baked into the ui-tests base image
-    # (deploy/compose/ui-tests.Dockerfile). If these drift, the pip package
-    # looks for a browser build the image does not contain.
+    # Pinned so every runner installs the same browser build via
+    # `playwright install chromium`.
     "playwright==1.62.0",
     "pytest-playwright==0.8.0",
     # Response-schema validation. Already a proven version in this repo — the

@@ -12,15 +12,6 @@ on:
       - "src/frontend/**"
       - "src/ingestion/**"
       - "charts/insight/**"
-      # The ui-tests browser runner bakes the stand suite in, so a test change
-      # republishes it. These must be here as well as in the `changes` filter
-      # below: the filter narrows which jobs run, but this list decides whether
-      # the workflow is triggered at all.
-      - "tests/stand/**"
-      - "tests/lib/**"
-      - "tests/pyproject.toml"
-      - "tests/uv.lock"
-      - "deploy/compose/ui-tests.Dockerfile"
       - ".github/workflows/build-images.yml"
       - ".github/workflows/scripts/discover-image-matrix.py"
       - ".github/workflows/scripts/bump-service-appversions.sh"
@@ -31,11 +22,6 @@ on:
       - "src/frontend/**"
       - "src/ingestion/**"
       - "charts/insight/**"
-      - "tests/stand/**"
-      - "tests/lib/**"
-      - "tests/pyproject.toml"
-      - "tests/uv.lock"
-      - "deploy/compose/ui-tests.Dockerfile"
       - ".github/workflows/build-images.yml"
       - ".github/workflows/scripts/discover-image-matrix.py"
       - ".github/workflows/scripts/bump-service-appversions.sh"
@@ -84,7 +70,6 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       toolbox: ${{ steps.filter.outputs.toolbox }}
       seed: ${{ steps.filter.outputs.seed }}
-      ui_tests: ${{ steps.filter.outputs.ui_tests }}
       umbrella: ${{ steps.filter.outputs.umbrella }}
       build_tag: ${{ steps.tag.outputs.build_tag }}
       # Single push-policy switch consumed by every build/merge job below:
@@ -148,16 +133,6 @@ jobs:
             # silently stale published image.
             seed:
               - 'src/ingestion/**'
-            # The browser runner for tests/stand (deploy/compose/ui-tests.Dockerfile).
-            # It COPYs tests/lib + tests/stand and installs from the committed
-            # tests/uv.lock, so all four are baked in and any of them changing
-            # makes the published image stale.
-            ui_tests:
-              - 'tests/stand/**'
-              - 'tests/lib/**'
-              - 'tests/pyproject.toml'
-              - 'tests/uv.lock'
-              - 'deploy/compose/ui-tests.Dockerfile'
             umbrella:
               - 'charts/insight/**'
 
@@ -1176,14 +1151,17 @@ jobs:
         # environment exists.
         #
         # The package's own tests run here rather than in ci.yml's Python
-        # matrix: they are stdlib `unittest` and touch no database, so the
-        # shipped image can run them with nothing installed on top — and this
-        # way what is tested is exactly what is published.
+        # matrix: they touch no database, so the shipped image can run them
+        # against exactly what is published. They are pytest-style, and pytest
+        # deliberately stays out of the image — it is installed into this
+        # throwaway container only, so the runner is added on top while the
+        # package under test remains the published one.
         run: |
           docker run --rm insight-seed:ci-validate --help
           docker run --rm --entrypoint python insight-seed:ci-validate -c \
             'import insight_seed.identity, insight_seed.silver, insight_seed.analytics, insight_seed.preflight, insight_seed.keycloak_realm'
-          docker run --rm --entrypoint python insight-seed:ci-validate -m unittest discover -s tests -t .
+          docker run --rm --entrypoint sh insight-seed:ci-validate -c \
+            'pip install --no-cache-dir --quiet "pytest>=8,<9" && python -m pytest tests -q'
           docker run --rm --entrypoint dbt insight-seed:ci-validate --version
 
       - name: Build and push seed image (by digest)
@@ -1267,131 +1245,6 @@ jobs:
       - name: Report pushed image
         run: |
           echo '- `${{ env.IMAGE_PREFIX }}/insight-seed:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
-
-  # ─── ui-tests browser runner (deployed-stand journeys) ─────────────────────
-  # The Playwright image e2e-stand.yml's `ui-journeys` check pulls. It bakes in
-  # tests/lib + tests/stand and installs from the committed tests/uv.lock, so
-  # it is republished when any of those change — see the `ui_tests` filter.
-  #
-  # NOT a product artefact. It is deliberately absent from bump-descriptors'
-  # and publish-chart's `needs`, and `ui_tests` is deliberately absent from
-  # publish-chart's change allowlist: a test-only change must never bump a
-  # subchart appVersion or republish the umbrella chart, and a red browser
-  # runner must never hold up a release.
-  #
-  # Build context is the repository root because the Dockerfile COPYs
-  # `tests/...` paths.
-  ui-tests:
-    needs: changes
-    if: |
-      needs.changes.outputs.ui_tests == 'true'
-      || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false # don't leave the token in .git/config
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        if: needs.changes.outputs.should_push == 'true'
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # Both pinned bases (playwright/python and astral-sh/uv) publish amd64
-      # and arm64 under the digests the Dockerfile pins, so neither leg of this
-      # matrix needs emulation.
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        id: build
-        with:
-          context: .
-          file: deploy/compose/ui-tests.Dockerfile
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-ui-tests,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
-          cache-from: type=gha,scope=ui-tests-${{ matrix.arch }}
-          cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=ui-tests-{0},ignore-error=true', matrix.arch) || '' }}
-      - name: Export digest
-        if: needs.changes.outputs.should_push == 'true'
-        run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-      - name: Upload digest
-        if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: digests-ui-tests-${{ matrix.arch }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
-  merge-ui-tests:
-    needs: [changes, ui-tests]
-    if: |
-      always()
-      && needs.ui-tests.result != 'skipped'
-      && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require the platform builds to have passed
-        if: needs.ui-tests.result != 'success'
-        run: |
-          echo "::error::ui-tests finished '${{ needs.ui-tests.result }}' — nothing to merge."
-          exit 1
-      - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: /tmp/digests
-          pattern: digests-ui-tests-*
-          merge-multiple: true
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # `latest` on main is what e2e-stand.yml pulls, so a merge to main is
-      # what moves the browser runner CI uses.
-      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        id: meta
-        with:
-          images: ${{ env.IMAGE_PREFIX }}/insight-ui-tests
-          tags: |
-            type=raw,value=${{ needs.changes.outputs.build_tag }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-      - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
-        run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.IMAGE_PREFIX }}/insight-ui-tests@sha256:%s ' *)
-      - name: Inspect manifest digest
-        id: inspect
-        run: |
-          DIGEST=$(docker buildx imagetools inspect \
-            ${{ env.IMAGE_PREFIX }}/insight-ui-tests:${{ needs.changes.outputs.build_tag }} \
-            --format '{{json .Manifest}}' | jq -r .digest)
-          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
-        with:
-          subject-name: ${{ env.IMAGE_PREFIX }}/insight-ui-tests
-          subject-digest: ${{ steps.inspect.outputs.digest }}
-          push-to-registry: true
-      # Copy-pastable pushed ref on the run's Summary page (#1994).
-      - name: Report pushed image
-        run: |
-          echo '- `${{ env.IMAGE_PREFIX }}/insight-ui-tests:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
   # ─── Connector image build (matrix-driven, descriptor-discovered) ──────────
   # One matrix leg per `descriptor.yaml.images.<key>` entry × arch that

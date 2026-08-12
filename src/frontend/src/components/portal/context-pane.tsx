@@ -523,23 +523,43 @@ function PersonSectionsNav() {
                     dismiss();
                   }}
                   title={
-                    standing?.hasData === false
-                      ? "No data this period"
-                      : standing?.phrase
+                    // Nothing to say until the standings arrive. Both flags
+                    // read false while the queries are in flight, so left to
+                    // fall through, the tooltip announced the strongest of the
+                    // three — that nothing feeds this section — on an answer
+                    // the hook had not given. The mark is hidden for that
+                    // reason already; the words have to follow it.
+                    standing == null || standing.isPending
+                      ? undefined
+                      : standing.hasData
+                        ? standing.phrase
+                        : standing.peersHaveData
+                          ? "No data this period"
+                          : "No data reaches us for this section"
                   }
                 >
                   <Layers />
                   <span className="min-w-0 flex-1 truncate">{g.title}</span>
                   {/* The mark that answers "which section is worth opening",
-                      beside the thing you click. Grey means the section has
-                      nothing this period — worth knowing before you open it. */}
+                      beside the thing you click.
+
+                      Three marks, not two, because empty means two different
+                      things. A grey dot is a section that reads fine and holds
+                      nothing for this person this period — a fact about them.
+                      A hollow ring is one nothing feeds — a fact about the
+                      install, and not worth opening at all until that changes.
+                      Drawn identically, the second sent readers looking for a
+                      person's missing work when the connector was the whole
+                      story. */}
                   {standing && !standing.isPending ? (
                     <span
                       className={cn(
                         "size-1.5 shrink-0 rounded-full",
                         standing.hasData
                           ? STATUS_BG_CLASS[standing.status]
-                          : "bg-muted-foreground/30",
+                          : standing.peersHaveData
+                            ? "bg-muted-foreground/30"
+                            : "border border-muted-foreground/40",
                       )}
                       aria-hidden
                     />
