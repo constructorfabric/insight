@@ -798,6 +798,12 @@ streams:
       datetime_format: "%Y-%m-%dT%H:%M:%SZ"
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
+      # VERIFIED against the CDK: the data-feed stop halts pagination at the
+      # first record older than the slice start, but the boundary PAGE's tail
+      # still emits — up to one page of pre-start_date rows per partition
+      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+      # condition evaluates POST-filter records, so filtering the old tail
+      # away would keep pagination walking through all history instead.
       is_data_feed: true
       lookback_window: P1D
       start_datetime:
@@ -962,6 +968,12 @@ streams:
                 # Stateless sliding window: the child has no cursor of its
                 # own, so parent state would never persist. The data-feed
                 # stop is what bounds pagination at the window edge.
+                # VERIFIED against the CDK: the data-feed stop halts pagination at the
+                # first record older than the slice start, but the boundary PAGE's tail
+                # still emits — up to one page of pre-start_date rows per partition
+                # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+                # condition evaluates POST-filter records, so filtering the old tail
+                # away would keep pagination walking through all history instead.
                 is_data_feed: true
                 start_datetime:
                   type: MinMaxDatetime
@@ -1174,6 +1186,12 @@ streams:
         type: MinMaxDatetime
         datetime: "{{ config['github_start_date'] }}"
         datetime_format: "%Y-%m-%d"
+      # VERIFIED against the CDK: the data-feed stop halts pagination at the
+      # first record older than the slice start, but the boundary PAGE's tail
+      # still emits — up to one page of pre-start_date rows per partition
+      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+      # condition evaluates POST-filter records, so filtering the old tail
+      # away would keep pagination walking through all history instead.
       is_data_feed: true
     transformations:
       - type: AddFields
@@ -1720,6 +1738,12 @@ streams:
         - "%Y-%m-%dT%H:%M:%S%z"
       # created_at is immutable: no lookback; the data-feed stop is what
       # bounds newest-first pagination at the stored state.
+      # VERIFIED against the CDK: the data-feed stop halts pagination at the
+      # first record older than the slice start, but the boundary PAGE's tail
+      # still emits — up to one page of pre-start_date rows per partition
+      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+      # condition evaluates POST-filter records, so filtering the old tail
+      # away would keep pagination walking through all history instead.
       is_data_feed: true
       start_datetime:
         type: MinMaxDatetime
@@ -1862,6 +1886,12 @@ streams:
                   - "%Y-%m-%dT%H:%M:%S%z"
                 # Stateless sliding window; data-feed stop bounds the
                 # newest-first pagination at the window edge.
+                # VERIFIED against the CDK: the data-feed stop halts pagination at the
+                # first record older than the slice start, but the boundary PAGE's tail
+                # still emits — up to one page of pre-start_date rows per partition
+                # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+                # condition evaluates POST-filter records, so filtering the old tail
+                # away would keep pagination walking through all history instead.
                 is_data_feed: true
                 start_datetime:
                   type: MinMaxDatetime

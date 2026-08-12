@@ -2463,6 +2463,12 @@ streams:
         - "%Y-%m-%dT%H:%M:%S%z"
       # created_on is immutable, so no lookback; descending order + data-feed
       # stop is what makes each sync O(new records).
+      # VERIFIED against the CDK: the data-feed stop halts pagination at the
+      # first record older than the slice start, but the boundary PAGE's tail
+      # still emits — up to one page of pre-start_date rows per partition
+      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+      # condition evaluates POST-filter records, so filtering the old tail
+      # away would keep pagination walking through all history instead.
       is_data_feed: true
       start_datetime:
         type: MinMaxDatetime
@@ -2691,6 +2697,12 @@ streams:
         - "%Y-%m-%dT%H:%M:%S%z"
       # created_on is immutable, so no lookback; descending order + data-feed
       # stop is what makes each sync O(new records).
+      # VERIFIED against the CDK: the data-feed stop halts pagination at the
+      # first record older than the slice start, but the boundary PAGE's tail
+      # still emits — up to one page of pre-start_date rows per partition
+      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+      # condition evaluates POST-filter records, so filtering the old tail
+      # away would keep pagination walking through all history instead.
       is_data_feed: true
       start_datetime:
         type: MinMaxDatetime

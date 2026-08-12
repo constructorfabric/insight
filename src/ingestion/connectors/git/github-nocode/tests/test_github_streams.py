@@ -198,6 +198,42 @@ def test_pull_requests_trim_body_and_hoist_author(http_mocker: HttpMocker) -> No
 
 
 @freezegun.freeze_time(_FROZEN)
+def test_data_feed_stops_at_start_date_but_boundary_page_tail_emits(http_mocker: HttpMocker) -> None:
+    """First-sync data-feed behavior, pinned: pagination stops at the first
+    record older than start_date (the Link-next page is never mocked, so a
+    fetch would fail the test) — but the boundary page's old tail still
+    emits. A record_filter must never be added to "fix" the tail: the stop
+    condition sees post-filter records, so it would unbound pagination."""
+    config = GithubNocodeConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+
+    def _pr(num: int, updated: str) -> dict:
+        return {
+            "id": 900 + num, "number": num, "state": "open", "draft": False,
+            "title": "t", "body": "b", "user": {"login": "a"},
+            "head": {"ref": "f", "sha": "e" * 40}, "base": {"ref": "main"},
+            "author_association": "MEMBER",
+            "created_at": "2019-01-01T00:00:00Z", "updated_at": updated,
+        }
+
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/pulls", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps([_pr(31, "2026-06-20T00:00:00Z"), _pr(30, "2019-05-20T00:00:00Z")]),
+            status_code=200,
+            headers={"Link": f'<{GH_URL}/repos/acme/app/pulls?page=2>; rel="next"'},
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_requests", config)
+
+    assert not output.errors, "page 2 must never be fetched"
+    nums = [r.record.data["number"] for r in output.records]
+    assert 31 in nums
+    assert 30 in nums, "boundary-page tail is expected to emit (accepted, documented)"
+
+
+@freezegun.freeze_time(_FROZEN)
 def test_pull_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> None:
     """PR<->commit membership is vendor-only; the commit payload belongs to
     the proxy streams, so bronze keeps the sha and the PR identity alone."""
