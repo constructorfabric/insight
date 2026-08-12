@@ -312,10 +312,13 @@ streams:
                     stop_condition: "{{ not response.get('next') }}"
                   page_token_option:
                     type: RequestPath
-              partition_router:
-                type: ListPartitionRouter
-                values: "{{ config['bitbucket_workspaces'] }}"
-                cursor_field: workspace
+                partition_router:
+                  # INSIDE `retriever`: at stream level the CDK silently
+                  # ignores it — one empty partition, an empty workspace in
+                  # the path, and a 410 from the deprecated global listing.
+                  type: ListPartitionRouter
+                  values: "{{ config['bitbucket_workspaces'] }}"
+                  cursor_field: workspace
               incremental_sync:
                 type: DatetimeBasedCursor
                 cursor_field: updated_on
@@ -538,10 +541,13 @@ streams:
                     stop_condition: "{{ not response.get('next') }}"
                   page_token_option:
                     type: RequestPath
-              partition_router:
-                type: ListPartitionRouter
-                values: "{{ config['bitbucket_workspaces'] }}"
-                cursor_field: workspace
+                partition_router:
+                  # INSIDE `retriever`: at stream level the CDK silently
+                  # ignores it — one empty partition, an empty workspace in
+                  # the path, and a 410 from the deprecated global listing.
+                  type: ListPartitionRouter
+                  values: "{{ config['bitbucket_workspaces'] }}"
+                  cursor_field: workspace
               incremental_sync:
                 type: DatetimeBasedCursor
                 cursor_field: updated_on
@@ -751,10 +757,13 @@ streams:
                     stop_condition: "{{ not response.get('next') }}"
                   page_token_option:
                     type: RequestPath
-              partition_router:
-                type: ListPartitionRouter
-                values: "{{ config['bitbucket_workspaces'] }}"
-                cursor_field: workspace
+                partition_router:
+                  # INSIDE `retriever`: at stream level the CDK silently
+                  # ignores it — one empty partition, an empty workspace in
+                  # the path, and a 410 from the deprecated global listing.
+                  type: ListPartitionRouter
+                  values: "{{ config['bitbucket_workspaces'] }}"
+                  cursor_field: workspace
               transformations:
                 - type: AddFields
                   fields:
@@ -2580,11 +2589,12 @@ streams:
         path: "/repositories/{{ stream_partition.repo_full_name }}/deployments/"
         http_method: GET
         request_parameters:
+          # No sort and no q: deploy-service rejects `created_on` as a sort
+          # attribute (VERIFIED live, 400), accepts only `state.started_on`,
+          # which is null until a deployment starts — so no ordering is safe
+          # to lean an incremental stop on. Full refresh per repository; the
+          # ReplacingMergeTree absorbs the re-emission.
           pagelen: "100"
-          # Newest first + data-feed stop: `q` is NOT implemented on the
-          # pipelines-module endpoints, so ascending with a server filter is
-          # impossible and plain ascending would rescan all history each sync.
-          sort: -created_on
         error_handler:
           type: DefaultErrorHandler
           backoff_strategies:
@@ -2688,26 +2698,6 @@ streams:
                   type: ListPartitionRouter
                   values: "{{ config['bitbucket_workspaces'] }}"
                   cursor_field: workspace
-    incremental_sync:
-      type: DatetimeBasedCursor
-      cursor_field: created_on
-      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
-      cursor_datetime_formats:
-        - "%Y-%m-%dT%H:%M:%S.%f%z"
-        - "%Y-%m-%dT%H:%M:%S%z"
-      # created_on is immutable, so no lookback; descending order + data-feed
-      # stop is what makes each sync O(new records).
-      # VERIFIED against the CDK: the data-feed stop halts pagination at the
-      # first record older than the slice start, but the boundary PAGE's tail
-      # still emits — up to one page of pre-start_date rows per partition
-      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
-      # condition evaluates POST-filter records, so filtering the old tail
-      # away would keep pagination walking through all history instead.
-      is_data_feed: true
-      start_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ config['bitbucket_start_date'] }}"
-        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields:
