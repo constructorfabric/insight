@@ -558,29 +558,33 @@ extra usage actually billed, and a majority of seats spend nothing extra at all.
 - The honest-NULL question from §16 mostly dissolves: the money figure does not read the
   limit at all. A null limit only leaves headroom undefined.
 
-## 18. `cc_overage` on the legacy bullet surface computes the other quantity
+## 18. `cc_overage` computed the other quantity, on a surface since retired
 
-`src/ingestion/scripts/migrations/20260618000000_ai-claude-team-overage-gold.sql` adds Branch
-6 to the `insight.ai_bullet_rows` view, serving `cc_overage` from
-`class_ai_overage.overage_cents` — that is, `max(0, used − limit)`. It is live: the backend
-migration `m20260618_000001_ai_claude_team_overage_metric.rs` binds it into the IC Bullet AI
-`query_ref` and `m20260618_000002` seeds its catalog entry.
+A retired gold view, `insight.ai_bullet_rows`, served `cc_overage` from
+`class_ai_overage.overage_cents` — that is, `max(0, used − limit)`. By §17 that is not the
+money, so the figure it showed and `ai.extra_usage_cost` differ by orders of magnitude while
+both are called overage.
 
-By §17 that is not the money. Over the same seats and period `cc_overage` and
-`ai.extra_usage_cost` differ by orders of magnitude, so the dashboard and the metric disagree
-on a figure both call overage.
+**The surface is no longer created.** `refactor(ingestion): remove the superseded gold metric
+views` (#2332) deleted the migrations that build all 51 legacy views, on the reasoning that
+none has a reader: no gold model selects from one, the runtime accepts only relations ending in
+`_metric_observations` or `_metric_evidence`, and the catalog that names them is write-only.
+Two backend migrations still bind `cc_overage` into that catalog and seed its entry, and older
+seed migrations still carry query text selecting from the view — all of it inert while nothing
+reads the catalog.
 
-Our metric was renamed to `ai.extra_usage_cost` so the two names no longer collide, which
-removes the ambiguity but not the disagreement. Not fixed here: `ai_bullet_rows` is a separate
-serving surface with its own backend migration and catalog seed, and rewriting it inside a
-metrics-registry change would widen the diff past reviewability. Options for whoever takes it:
-repoint `cc_overage` at `used_amount_cents`, relabel it as spend past the ceiling, or retire it
-in favour of the registry metric.
+What remains is therefore latent rather than live: a cluster provisioned before the removal
+keeps the relations until they are dropped out of band, and the disagreement returns only if
+something starts reading them again. Our metric was renamed to `ai.extra_usage_cost` so the two
+names no longer collide either. If a reader ever appears, the choice recorded here still
+applies: repoint `cc_overage` at `used_amount_cents`, relabel it as spend past the ceiling, or
+retire it in favour of the registry metric.
 
 ## 19. Invoice feasibility
 
 **The connector's own README is where the endpoint and chain contract lives** —
-`src/ingestion/connectors/ai/claude-team-invoices/README.md`. It states what the wrapper
+`src/ingestion/connectors/ai/claude-team-invoices/README.md`, which arrives with the connector
+itself (#2429). It states what the wrapper
 returns and does not return, the hops that reach the line items, the rule that identifies a
 seat price, and what the connector must be allowed to reach. Kept there rather than here
 because that is where the next person to touch the connector will look.

@@ -86,10 +86,6 @@ Anthropic's GitHub app is connected.
 - **Per-PR cost as `allocated` or `cohort-ratio`** — blocked on `#1674` (FR-9).
 - **Invoices for vendors other than Claude Team** (ChatGPT, Cursor) — different mechanisms;
   Phase 1 covers Claude Team only.
-- **AI connector coverage matrix refresh** — `docs/components/connectors/ai/README.md` is a
-  2026-04-28 snapshot. Separate story, separate PR.
-- **The stale relation list** in the parent metrics design names two observation relations
-  where six exist. Pre-existing, not caused here.
 
 One defect surfaced by this work is tracked separately and is **not** in scope: the 3-day
 incremental window against roughly 30-day vendor revisions.
@@ -217,8 +213,9 @@ branch is picked up.
   - `insight.ai_cost_metric_observations` — derived from that evidence, via
     `metric_observations_table`. Measures `extra_usage_usd` (`used_credits`, the money) and
     `extra_usage_limit_usd` (the ceiling); dimensions `tool`, `seat_tier`.
-  - Carry over the dating convention from `20260618000000_ai-claude-team-overage-gold.sql`:
-    a snapshot is dated at the day it was last read, not the first of its billing month.
+  - Date a snapshot at the day it was last read, not at the first of its billing month — the
+    convention the retired gold view used, and the reason the current month stays inside short
+    rolling windows.
   - Honest-NULL: a seat that spent nothing extra emits zero; a seat with no ceiling emits no
     utilisation row, the ratio having no denominator. The money is unaffected — it does not
     read the ceiling.
