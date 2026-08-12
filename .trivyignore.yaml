@@ -28,3 +28,52 @@ misconfigurations:
       base image declares none either, so the instruction would report on a
       process that has already finished. Revisit if this connector is ever run as
       a service rather than as a command.
+  # ── prod gitops: airbyte storage-init chown Jobs ──────────────────────────
+  # Root is the Job's purpose: it exists to chown PVC data that the Cinder CSI
+  # driver leaves without fsGroup support, before Airbyte first starts. It is
+  # a pre-install, run-to-completion busybox with RuntimeDefault seccomp, a
+  # read-only root filesystem, no privilege escalation, and every capability
+  # dropped except CHOWN/FOWNER/DAC_OVERRIDE (the chown itself). Revisit if
+  # the CSI driver gains fsGroup support and the Jobs can be deleted.
+  - id: KSV-0012 # runs as root user
+    paths: &storage_init
+      - "deploy/gitops/environments/prod/manifests/airbyte/storage-init.yaml"
+    statement: &storage_init_why >-
+      Pre-install chown Job for the Cinder fsGroup gap: running as root with CHOWN/FOWNER/DAC_OVERRIDE is the Job's entire purpose; everything else is locked down (read-only rootfs, RuntimeDefault seccomp, no privilege escalation, all other capabilities dropped).
+  - id: KSV-0105 # runAsUser 0
+    paths: *storage_init
+    statement: *storage_init_why
+  - id: KSV-0020 # UID <= 10000
+    paths: *storage_init
+    statement: *storage_init_why
+  - id: KSV-0021 # GID <= 10000
+    paths: *storage_init
+    statement: *storage_init_why
+  - id: KSV-0022 # specific capabilities added
+    paths: *storage_init
+    statement: *storage_init_why
+  - id: KSV-0106 # capabilities beyond NET_BIND_SERVICE
+    paths: *storage_init
+    statement: *storage_init_why
+
+  # ── prod gitops: airbyte workload-launcher RBAC ───────────────────────────
+  - id: KSV-0042 # delete pod logs
+    paths: &airbyte_rbac
+      - "deploy/gitops/environments/prod/manifests/airbyte/rbac.yaml"
+    statement: &airbyte_rbac_why >-
+      Mirrors the namespaced admin Role the upstream Airbyte platform chart grants its workload launcher: connector jobs are created, watched, exec'd/attached for debugging, and cleaned up (jobs/pods/logs plus the configmaps/secrets each job mounts) inside the airbyte namespace only. Tightening below what the launcher uses breaks sync scheduling; revisit against the chart's own RBAC on Airbyte upgrades.
+  - id: KSV-0048 # manage workloads and pods
+    paths: *airbyte_rbac
+    statement: *airbyte_rbac_why
+  - id: KSV-0049 # manage configmaps
+    paths: *airbyte_rbac
+    statement: *airbyte_rbac_why
+  - id: KSV-0053 # exec into pods
+    paths: *airbyte_rbac
+    statement: *airbyte_rbac_why
+  - id: KSV-0056 # manage networking (endpoints)
+    paths: *airbyte_rbac
+    statement: *airbyte_rbac_why
+  - id: KSV-0113 # manage namespace secrets
+    paths: *airbyte_rbac
+    statement: *airbyte_rbac_why
