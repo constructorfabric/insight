@@ -15,7 +15,7 @@ Connectors pull data from your tools — Jira issues, Slack messages, GitHub pul
 - [Prerequisites](#prerequisites)
 - [Contents](#contents)
 - [Anatomy of a connector Secret](#anatomy-of-a-connector-secret)
-- [The 19 available connectors](#the-19-available-connectors)
+- [The 22 available connectors](#the-22-available-connectors)
 - [Example Secret for every connector](#example-secret-for-every-connector)
   - [AI & coding assistants](#ai--coding-assistants)
   - [Source control & CI](#source-control--ci)
@@ -52,11 +52,11 @@ stringData:
   jira_api_token:    "ATATT-CHANGE_ME"
 ```
 
-## The 19 available connectors
+## The 22 available connectors
 
 Replace `CHANGE_ME` (and any other placeholder) values in whichever connector files you need, under `connectors/`:
 
-`jira`, `slack`, `github-v2`, `gitlab`, `m365`, `zoom`, `confluence`, `zendesk`, `bamboohr`, `ms-entra`, `outline`, `hubspot`, `cursor`, `chatgpt-team`, `claude-team`, `claude-enterprise`, `bitbucket-cloud`, `zulip-proxy`, `github-directory`.
+`jira`, `slack`, `github-v2`, `gitlab`, `m365`, `zoom`, `confluence`, `zendesk`, `bamboohr`, `ms-entra`, `outline`, `hubspot`, `cursor`, `chatgpt-team`, `claude-team`, `claude-enterprise`, `bitbucket-cloud`, `zulip-proxy`, `github-directory`, `github-nocode`, `gitlab-nocode`, `bitbucket-nocode`.
 
 Apply all of them at once, or one at a time:
 
@@ -201,6 +201,61 @@ type: Opaque
 stringData:
   github_token:         "ghp_CHANGE_ME"   # read:org (+ user:email for member emails)
   github_organizations: '["myorg"]'       # JSON array
+```
+
+```yaml
+# Declarative git connectors on the git-cli-proxy: commit-level data comes
+# from a bare clone served by the proxy instead of one vendor API call per
+# commit. All three need the proxy deployed (gitClIProxy.deploy: true) and
+# git_proxy_token equal to APP__gears__git_cli_proxy__config__proxy_token in
+# the umbrella-composed insight-git-cli-proxy-config Secret.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: insight-github-nocode-main
+  namespace: insight
+  labels: { app.kubernetes.io/part-of: insight }
+  annotations: { insight.cyberfabric.com/connector: github-nocode, insight.cyberfabric.com/source-id: github-nocode-main }
+type: Opaque
+stringData:
+  github_token:         "ghp_CHANGE_ME"   # repo, read:org
+  github_organizations: '["myorg"]'       # JSON array
+  git_proxy_url:        "http://insight-git-cli-proxy:8085"
+  git_proxy_token:      "CHANGE_ME"       # must match the proxy's own Secret
+```
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: insight-gitlab-nocode-main
+  namespace: insight
+  labels: { app.kubernetes.io/part-of: insight }
+  annotations: { insight.cyberfabric.com/connector: gitlab-nocode, insight.cyberfabric.com/source-id: gitlab-nocode-main }
+type: Opaque
+stringData:
+  gitlab_url:      "https://gitlab.example.com"
+  gitlab_token:    "CHANGE_ME"            # read_api + read_repository
+  gitlab_groups:   '["mygroup"]'          # JSON array of full group paths
+  git_proxy_url:   "http://insight-git-cli-proxy:8085"
+  git_proxy_token: "CHANGE_ME"
+```
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: insight-bitbucket-nocode-main
+  namespace: insight
+  labels: { app.kubernetes.io/part-of: insight }
+  annotations: { insight.cyberfabric.com/connector: bitbucket-nocode, insight.cyberfabric.com/source-id: bitbucket-nocode-main }
+type: Opaque
+stringData:
+  bitbucket_username:   "bot@example.com" # for API tokens; omit for workspace access tokens
+  bitbucket_token:      "CHANGE_ME"
+  bitbucket_workspaces: '["myworkspace"]' # JSON array
+  git_proxy_url:        "http://insight-git-cli-proxy:8085"
+  git_proxy_token:      "CHANGE_ME"
 ```
 
 ### Issue tracking & docs
