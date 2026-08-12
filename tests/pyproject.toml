@@ -25,7 +25,10 @@ description = "Deployed-stand test suite for Insight: shared library plus API an
 # manifest as DATA and imports none of its modules, so the seeder's lower 3.12
 # floor (it ships inside the 3.12 toolbox image) does not apply here. uv
 # provisions this interpreter everywhere, so the floor holds in every runner
-# rather than being a host-only aspiration.
+# rather than being a host-only aspiration. (Workflows' setup-python still
+# pins 3.12 — that interpreter only runs stdlib helper scripts, never this
+# suite; reconciling the pins is CI enablement's call, not a reason to lower
+# the floor.)
 requires-python = ">=3.13"
 dependencies = [
     "pytest>=8",
