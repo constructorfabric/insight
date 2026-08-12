@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airbyte-volume-db-airbyte-db-0
+  namespace: airbyte
+  labels:
+    app.kubernetes.io/name: airbyte-db
+    app.kubernetes.io/instance: airbyte
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: cinder
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airbyte-minio-pv-claim-airbyte-minio-0
+  namespace: airbyte
+  labels:
+    app.kubernetes.io/name: airbyte-minio
+    app.kubernetes.io/instance: airbyte
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: cinder
+  resources:
+    requests:
+      storage: 10Gi

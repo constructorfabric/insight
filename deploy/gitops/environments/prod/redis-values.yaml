@@ -1,0 +1,96 @@
+# Redis REPLICATION, not Redis Cluster. This is the topology the Insight
+# application actually supports, and the file it replaces (cluster-values.yaml)
+# stood up something it cannot talk to at all.
+#
+# The application's Redis client is built without cluster support:
+#   src/backend/Cargo.toml:83
+#     redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+# The Rust `redis` crate feature-gates cluster behind "cluster"/"cluster-async",
+# so ClusterClient is not compiled into the binary. The authenticator opens a
+# plain standalone connection:
+#   services/authenticator/src/session.rs:216
+#     let client = redis::Client::open(redis_url)
+# Pointed at a cluster, every command for a key whose slot the contacted node
+# does not own comes back as MOVED, which that client cannot follow. /auth/login
+# died on exactly that - `ZCOUNT asm:login_state_live` (session.rs:276) hashes to
+# slot 1273 - and returned HTTP 500 before the browser ever reached Keycloak.
+#
+# The product documents this: docs/components/backend/specs/DESIGN.md:1260 says
+# "Redis: Single instance; Sentinel for HA", its docker-compose reference runs a
+# single redis:7-alpine, and every deploy/gitops environment points at a
+# `redis-master` Service. One writable primary is the supported shape.
+#
+# Replication rather than a single pod: all three members hold the whole
+# keyspace, so the primary can be lost without losing sessions, and the operator
+# keeps a master-labelled Service pointing at whichever member is primary - so
+# the chart's single-endpoint DSN keeps working across a failover with no client
+# change. Sentinel is deliberately NOT deployed: it would add automatic failover,
+# but the client would have to be sentinel-aware to benefit, and it is not.
+# Prod-stand sizing for Redis. Merged by Helm over redis/replication-values.yaml
+# - topology, the ScheduleAnyway spread and the auth wiring all stay there.
+#
+# Note the nesting: resources sit under `redisReplication`, not at the root like
+# Redpanda's. A root-level `resources:` here would be a key the chart never
+# reads, render without error, and silently leave the defaults in place.
+#
+# Members spread across three workers, so keep each one modest and let the limit
+# carry bursts. maxMemoryPercentOfLimit in the base file is 75, so Redis derives
+# its maxmemory from the LIMIT below (2Gi -> ~1.5Gi), not the request - raising
+# the request alone would reserve scheduler capacity without giving Redis any
+# more room to store anything.
+redisReplication:
+  name: redis
+  clusterSize: 3
+  image: quay.io/opstree/redis
+  tag: v7.0.15
+  imagePullPolicy: IfNotPresent
+  # Same Secret name and key the cluster used, so scripts/deploy-insight.sh
+  # composes insight-db-creds from an unchanged source.
+  redisSecret:
+    secretName: redis-auth
+    secretKey: password
+  maxMemoryPercentOfLimit: 75
+  resources:
+    requests:
+      cpu: 300m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+storageSpec:
+  volumeClaimTemplate:
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      storageClassName: cinder
+      resources:
+        requests:
+          storage: 10Gi
+# This Cinder deployment does not honor fsGroup ownership changes on new
+# volumes, so Redis runs as root and its entrypoint fixes the data directory
+# itself. Same reason as MariaDB and the old cluster values.
+podSecurityContext:
+  runAsUser: 0
+  runAsGroup: 0
+  fsGroup: 0
+# Soft spreading, for the reason the cluster values recorded: a required spread
+# on three workers deadlocks against the operator's own master/replica
+# anti-affinity, and ClickHouse's 2 GiB request on one node is enough to make
+# the scheduler double up regardless. validate-redis.sh warns on a two-node
+# spread and only fails when a whole role collapses onto one node.
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app: redis
+redisExporter:
+  enabled: false
+externalService:
+  enabled: false

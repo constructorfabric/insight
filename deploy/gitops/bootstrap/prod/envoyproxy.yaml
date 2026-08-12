@@ -1,0 +1,55 @@
+# Infrastructure parameters for the Envoy proxy fleet the Gateway in
+# gateway.yaml provisions. Referenced from that Gateway via
+# spec.infrastructure.parametersRef, so it must live in the same namespace.
+#
+# This file is why the stand keeps its public address across the
+# ingress-nginx -> Envoy Gateway migration and across rebuilds:
+#
+#   - loadBalancerIP pins the OpenStack floating IP that the stand's hostname
+#     already points at. The OpenStack cloud
+#     controller re-associates an existing, currently-unattached floating IP
+#     with that address instead of allocating a new one - but it FAILS the
+#     Service if the IP is still associated elsewhere. So on a migration or
+#     rebuild, whatever held the IP last (originally the ingress-nginx
+#     controller Service) must be deleted before this Service is created.
+#
+#   - keep-floatingip makes teardown keep that floating IP in the OpenStack
+#     project when the Service is deleted (the Octavia load balancer itself is
+#     deleted; only the address survives). Without it, cleanup would release
+#     the IP back to the pool and the DNS record would dangle. The
+#     ingress-nginx Service this replaced carried the same annotation, which
+#     is what made the handover possible at all.
+#
+# The `__EDGE_LB_IP__` placeholder below is substituted at apply time by
+# `make bootstrap-envoy-gateway`, which reads the real floating IP from the
+# gitignored secrets.local.env (the address is not committed). Setting
+# EDGE_LB_IP=auto instead deletes the loadBalancerIP line altogether, which is
+# how a brand-new stand asks the cloud controller for a fresh floating IP
+# instead of naming one. Apply this through the Makefile, never with a bare
+# `kubectl apply -f` (the placeholder is not valid on its own).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: insight
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: LoadBalancer
+        loadBalancerIP: __EDGE_LB_IP__
+        annotations:
+          loadbalancer.openstack.org/keep-floatingip: "true"
+        # Envoy Gateway defaults to Local, which only routes through nodes
+        # actually running an envoy pod and depends on Octavia health-mons
+        # noticing which nodes those are. Cluster matches what ingress-nginx
+        # ran with here. Client IPs are lost either way - Cloudflare fronts
+        # this and the real client is in CF-Connecting-IP, not the TCP peer.
+        externalTrafficPolicy: Cluster
+      envoyDeployment:
+        replicas: 1
+        container:
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}

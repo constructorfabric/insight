@@ -6,6 +6,9 @@
 *.env.local
 secrets.local.*
 *-plain.yaml
+# …but the committed SHAPE templates are safe (placeholders only).
+!*.env.template
+!secrets.local.*.template
 
 # The sample secret store consumed by scripts/secret-fetch.sh. The
 # .template file is committed; the populated copy must never be

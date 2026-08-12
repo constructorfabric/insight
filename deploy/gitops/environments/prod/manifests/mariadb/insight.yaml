@@ -1,0 +1,54 @@
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: Database
+metadata:
+  name: insight
+  namespace: mariadb
+spec:
+  mariaDbRef:
+    name: mariadb
+  name: insight
+  characterSet: utf8mb4
+  collate: utf8mb4_unicode_ci
+  cleanupPolicy: Skip
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: User
+metadata:
+  name: insight
+  namespace: mariadb
+spec:
+  mariaDbRef:
+    name: mariadb
+  name: insight
+  host: "%"
+  passwordSecretKeyRef:
+    name: mariadb-insight-credentials
+    key: password
+  # The operator's default is 10, and this one account now backs FOUR pools:
+  # analytics, identity-resolution, the chart's migrate/init Jobs, and — since
+  # the 2026-08-06 IdP cutover — the bundled Keycloak, which reuses this user
+  # (keycloak.database.username in insight/values.yaml) and whose own pool
+  # defaults to 100. Ten is not enough for that, and running out does not look
+  # like a connection limit: identity-resolution simply crash-loops at startup
+  # with `1226 (42000): User 'insight' has exceeded the max_user_connections
+  # resource`, ten restarts deep, while every other service stays Ready.
+  # 100 of the server's 151, leaving headroom for root and the operator's agent.
+  maxUserConnections: 100
+  cleanupPolicy: Skip
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: Grant
+metadata:
+  name: insight
+  namespace: mariadb
+spec:
+  mariaDbRef:
+    name: mariadb
+  privileges:
+    - ALL PRIVILEGES
+  database: insight
+  table: "*"
+  username: insight
+  host: "%"
+  grantOption: false
+  cleanupPolicy: Skip

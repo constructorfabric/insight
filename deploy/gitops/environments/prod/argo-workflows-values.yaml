@@ -1,0 +1,87 @@
+# Argo Workflows profile for low-load evaluation.
+#
+# singleNamespace MUST stay false. With `true` the chart passes `--namespaced`
+# to the controller, which then watches ONLY its own namespace (argo) — while
+# every CronWorkflow and WorkflowTemplate the Insight chart installs lives in
+# the `insight` namespace. The symptom is silent and easy to misread as "nothing
+# has been triggered yet": the CronWorkflows exist, are unsuspended, carry a
+# valid schedule, and their `status` stays `{}` forever with zero Workflow
+# objects ever created. Both stands ran that way for days.
+singleNamespace: false
+crds:
+  install: true
+  keep: true
+workflow:
+  serviceAccount:
+    create: true
+    name: argo-workflow
+  rbac:
+    create: true
+# Prod-stand sizing for Argo Workflows. Merged by Helm over
+# argo-workflows/values.yaml, which keeps the RBAC, auth mode and namespace
+# wiring.
+#
+# The controller is the only piece that does sustained work here (it reconciles
+# every ingestion Workflow); the server is a UI/API front end and the executor
+# runs inside each workflow pod, so its request multiplies by concurrency and
+# stays deliberately small.
+controller:
+  # MUST match ingestion.reconcile.argoInstanceId in insight/values.yaml.
+  #
+  # The Insight chart stamps every CronWorkflow/WorkflowTemplate it installs with
+  # `workflows.argoproj.io/controller-instanceid: <argoInstanceId>`, and Argo's
+  # rule is exact-match: a controller with no instanceID processes only objects
+  # with NO such label, so a labelled CronWorkflow is invisible to it. That is
+  # the second reason nothing ever ran here (the first was singleNamespace) and
+  # it fails just as quietly — the controller logs `instanceID=""` at startup and
+  # then simply never mentions the objects again.
+  instanceID:
+    enabled: true
+    explicitID: argo-workflows-argo
+  # Deliberately NOT extended to `insight`, even though the workflows run there.
+  # This list only controls where the chart creates the workflow ServiceAccount
+  # and its Role/RoleBinding — and `insight` already has an `argo-workflow` SA +
+  # Role + RoleBinding from insight/argo-rbac.yaml (applied with kubectl, so
+  # Helm cannot adopt them: adding `insight` here makes the upgrade fail with
+  # "invalid ownership metadata"). The chart's `insight-reconcile` SA is
+  # likewise already bound there. What the controller needs to WATCH other
+  # namespaces is the ClusterRole/ClusterRoleBinding that singleNamespace:false
+  # renders above, not an entry in this list.
+  workflowNamespaces:
+    - argo
+  clusterWorkflowTemplates:
+    enabled: false
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+  metricsConfig:
+    enabled: false
+  telemetryConfig:
+    enabled: false
+server:
+  enabled: true
+  clusterWorkflowTemplates:
+    enabled: false
+  authModes:
+    - server
+  secure: false
+  serviceType: ClusterIP
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+executor:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi

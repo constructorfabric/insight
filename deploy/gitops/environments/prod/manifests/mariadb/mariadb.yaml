@@ -1,0 +1,126 @@
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: mariadb
+  namespace: mariadb
+spec:
+  image: mariadb:11.8.8
+  replicas: 3
+  port: 3306
+
+  # Repo-owned rather than operator-generated (generate: false), because the
+  # Insight chart puts this password through a charset check the operator's
+  # generator does not respect. _helpers.tpl rejects any of `@ : / ? # %` in
+  # every key of insight-db-creds — including mariadb-root-password, even though
+  # only the app DSNs actually interpolate one — and the operator's generated
+  # value is 16 mixed characters, so it fails roughly half the time. It failed
+  # here with a `:`. scripts/deploy-mariadb.sh creates this Secret with hex
+  # before applying this manifest and reuses it afterwards.
+  #
+  # generate: false only decides where the BOOTSTRAP password comes from. On a
+  # cluster that already ran, editing the Secret does not change the live server;
+  # rotate with ALTER USER on both root@% and root@localhost and update the
+  # Secret in the same breath, or the operator loses its own SQL access.
+  rootPasswordSecretKeyRef:
+    name: mariadb-root
+    key: password
+    generate: false
+
+  username: testuser
+  passwordSecretKeyRef:
+    name: mariadb-user
+    key: password
+    generate: true
+  database: testdb
+
+  storage:
+    size: 100Gi
+    storageClassName: cinder
+    pvcRetentionPolicy:
+      whenDeleted: Retain
+      whenScaled: Retain
+
+  galera:
+    enabled: true
+    config:
+      # A dedicated volume avoids Cinder/subPath ownership problems during the
+      # non-root Galera initialization Job.
+      reuseStorageVolume: false
+      volumeClaimTemplate:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+        storageClassName: cinder
+    recovery:
+      enabled: true
+
+  service:
+    type: ClusterIP
+  primaryService:
+    type: ClusterIP
+  secondaryService:
+    type: ClusterIP
+
+  affinity:
+    antiAffinityEnabled: true
+
+  # This Cinder deployment does not apply fsGroup ownership to new volumes.
+  # Start as root so the official MariaDB entrypoint can chown the data
+  # directory before dropping privileges to the mysql user.
+  podSecurityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+    runAsGroup: 0
+    fsGroup: 999
+    fsGroupChangePolicy: Always
+
+  podDisruptionBudget:
+    maxUnavailable: 1
+
+  updateStrategy:
+    type: ReplicasFirstPrimaryLast
+
+  # Rendered per stand from MARIADB_* in scripts/lib.sh (the evaluation profile)
+  # or stands/*.env. Apply through deploy-mariadb.sh, never `kubectl apply -f`.
+  resources:
+    requests:
+      cpu: 2
+      memory: 6Gi
+    limits:
+      cpu: 6
+      memory: 12Gi
+
+  myCnf: |
+    [mariadb]
+    bind-address=*
+    default_storage_engine=InnoDB
+    binlog_format=row
+    innodb_autoinc_lock_mode=2
+    # Rendered per stand (MARIADB_BUFFER_POOL). This has to move WITH the memory
+    # request above: InnoDB never uses a byte more than this, so raising the
+    # container's memory alone reserves capacity the database cannot touch.
+    innodb_buffer_pool_size=4G
+    max_allowed_packet=64M
+    # Required by the Insight analytics migration, which creates stored
+    # functions as the unprivileged `insight` user. MariaDB refuses that with
+    #   1419 (HY000): You do not have the SUPER privilege and binary logging is
+    #   enabled (you *might* want to use the less safe
+    #   log_bin_trust_function_creators variable)
+    # and the analytics Deployment then sits in Init:CrashLoopBackOff until
+    # helm --wait gives up with "Progress deadline exceeded". Galera raises this
+    # even with log_bin off, because wsrep replicates DDL by statement and the
+    # same determinism check applies.
+    #
+    # "Less safe" is about non-deterministic function bodies replicating
+    # inconsistently between nodes. The alternative is granting SUPER to the
+    # application user, which is worse on every axis. Migrations here are
+    # authored upstream and run once, so this is the narrower risk.
+    log_bin_trust_function_creators=1
+
+  metrics:
+    enabled: false
+
+  tls:
+    enabled: false

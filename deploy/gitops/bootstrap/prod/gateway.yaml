@@ -1,0 +1,110 @@
+# The cluster edge: one shared Gateway that replaced ingress-nginx. Routes
+# attach to it from the namespaces that own the backends - keycloak/httproute.yaml
+# (/kc) and insight/httproute.yaml (/) - so no manifest here ever names a
+# Service in another namespace and no ReferenceGrant is needed. The /kc-beats-/
+# behaviour that used to rest on ingress-nginx merging same-host Ingress rules
+# is a Gateway API spec guarantee now: across every HTTPRoute attached to a
+# listener, the longest PathPrefix match wins.
+#
+# This file is a TEMPLATE: insight-beta.cfabric.org is substituted per stand by
+# render_manifest from INSIGHT_HOST in stands/*.env. Apply it through
+# scripts/deploy-envoy-gateway.sh, never with a bare `kubectl apply -f` - the
+# placeholder is not a valid hostname and the Gateway would reject it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: insight
+  namespace: envoy-gateway-system
+  annotations:
+    # cert-manager's gateway-shim (cert-manager must run with
+    # config.enableGatewayAPI=true; deploy-cert-manager.sh sets it) reads this
+    # annotation, mints a Certificate for each HTTPS listener's hostname from
+    # the insight-ca ClusterIssuer, and writes it into the Secret named in
+    # certificateRefs below. The chain is self-signed and that is fine:
+    # Cloudflare terminates the public TLS and its "Full" origin-pull accepts
+    # a self-signed origin certificate, exactly as it accepted ingress-nginx's
+    # default certificate before the migration.
+    cert-manager.io/cluster-issuer: insight-ca
+spec:
+  gatewayClassName: envoy
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: insight
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: insight-beta.cfabric.org
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: insight-origin-tls # created by cert-manager, never by hand
+      allowedRoutes:
+        namespaces:
+          from: All # single-tenant cluster; tighten to a Selector if it stops being one
+    # The same port, deliberately without a hostname: this one catches requests
+    # whose Host the stand does not know - a visitor typing the floating IP, a
+    # scanner, a stale DNS name still pointing here. Without it those get a bare
+    # 404 from envoy, because a listener only serves the hostname it names and a
+    # route can narrow that but never widen it.
+    #
+    # Two HTTPS listeners on 443 are legal precisely because their hostnames
+    # differ (an absent hostname means "*"), and envoy picks the more specific
+    # match by SNI, so nothing here changes what the named host serves.
+    #
+    # It is INERT unless a route with no hostnames of its own attaches to it -
+    # today only envoy-gateway/maintenance.yaml does, and every application
+    # route names its hostname. certificateRefs points at the same origin
+    # certificate on purpose: cert-manager's gateway-shim mints certificates
+    # from listener hostnames, so a hostname-less listener has nothing to mint
+    # from and must borrow. A bare-IP visitor therefore gets a certificate whose
+    # SAN does not cover the IP and a browser warning - unavoidable, and
+    # irrelevant to the Cloudflare-fronted path that real users take.
+    - name: https-default
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: insight-origin-tls
+      allowedRoutes:
+        namespaces:
+          from: All
+    # Port 80 exists only to bounce stray direct-to-IP visitors to https. It is
+    # safe because Cloudflare's origin-pull uses 443 ("Full" mode - TLS
+    # terminates at Cloudflare AND again here); if the zone were ever switched
+    # to Flexible, Cloudflare would fetch over port 80 and this redirect would
+    # become an infinite loop. Keep Full.
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same # only the redirect route below; apps attach to https
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: redirect-http-to-https
+  namespace: envoy-gateway-system
+spec:
+  parentRefs:
+    - name: insight
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301

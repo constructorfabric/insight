@@ -1,0 +1,87 @@
+apiVersion: clickhouse-keeper.altinity.com/v1
+kind: ClickHouseKeeperInstallation
+metadata:
+  name: clickhouse-keeper
+  namespace: clickhouse
+spec:
+  configuration:
+    clusters:
+      - name: keeper
+        # One member, matching the single ClickHouse replica.
+        #
+        # Keeper only coordinates Replicated* engines and ON CLUSTER DDL, neither
+        # of which the Insight chart uses, so a three-member quorum was
+        # coordinating nothing. It is kept rather than removed because ClickHouse
+        # still resolves its `zookeeper` config at startup, the write test in
+        # validate-clickhouse.sh exercises a real ReplicatedMergeTree through it,
+        # and a Replicated table stays possible for anything else on the stand.
+        #
+        # A single member has no quorum, so it is a restart-tolerant but not
+        # fault-tolerant Keeper: fine for an evaluation stand, not for production.
+        # Raise together with KEEPER_REPLICAS in scripts/lib.sh.
+        layout:
+          replicasCount: 1
+    settings:
+      logger/level: information
+      logger/console: "true"
+      listen_host: 0.0.0.0
+      keeper_server/four_letter_word_white_list: "*"
+      prometheus/endpoint: /metrics
+      prometheus/port: "7000"
+      prometheus/metrics: "true"
+      prometheus/events: "true"
+      prometheus/asynchronous_metrics: "true"
+
+  defaults:
+    storageManagement:
+      reclaimPolicy: Retain
+    templates:
+      podTemplate: keeper
+      dataVolumeClaimTemplate: keeper-data
+
+  templates:
+    podTemplates:
+      - name: keeper
+        metadata:
+          labels:
+            app: clickhouse-keeper
+          annotations:
+            prometheus.io/port: "7000"
+            prometheus.io/scrape: "true"
+        spec:
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app: clickhouse-keeper
+                  topologyKey: kubernetes.io/hostname
+          containers:
+            - name: clickhouse-keeper
+              image: clickhouse/clickhouse-keeper:25.8.16.34
+              imagePullPolicy: IfNotPresent
+              # Rendered per stand from KEEPER_* - see clickhouse/clickhouse.yaml.
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1Gi
+                limits:
+                  cpu: 2
+                  memory: 2Gi
+              # Keeper needs no setuid path and no non-default syscalls.
+              securityContext:
+                allowPrivilegeEscalation: false
+                seccompProfile:
+                  type: RuntimeDefault
+          securityContext:
+            fsGroup: 101
+
+    volumeClaimTemplates:
+      - name: keeper-data
+        spec:
+          storageClassName: cinder
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 10Gi

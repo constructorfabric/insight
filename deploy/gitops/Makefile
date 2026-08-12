@@ -56,7 +56,19 @@ NAMESPACE        ?= $(NS_APP)
 CHART            ?= oci://ghcr.io/constructorfabric/charts/insight
 # Local umbrella chart source (this repo's working tree) for validation
 LOCAL_CHART      ?= ../../charts/insight
+# Chart version resolution — first hit wins:
+#   1. CLI/env override: make deploy INSIGHT_VERSION=…
+#   2. per-env inventory `chartVersion:` — pins the environment to one chart
+#      version so a routine `make deploy` can't silently pick up whatever
+#      .insight-version currently says. Bump it deliberately per env.
+#   3. .insight-version — repo-global trunk pointer (environments without a
+#      pin, e.g. local, follow it).
+ENV_CHART_PIN    := $(shell yq -r '.chartVersion // ""' $(INVENTORY) 2>/dev/null)
+ifneq ($(strip $(ENV_CHART_PIN)),)
+INSIGHT_VERSION  ?= $(ENV_CHART_PIN)
+else
 INSIGHT_VERSION  ?= $(shell cat .insight-version 2>/dev/null)
+endif
 VALUES           ?= environments/$(ENV)/values.yaml
 # Covers rollout waits plus the post-upgrade clickhouse-migrate hook; the
 # gold build inside that hook spills to disk under memory pressure, which

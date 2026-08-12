@@ -1,0 +1,107 @@
+##
+## `prod` — the InsightCfabric production-like stand.
+##
+## OpenStack Magnum Kubernetes 1.35 (Cilium), 3 masters + 3 workers at
+## 16 vCPU / 32 GB, published at insight-beta.cfabric.org behind Cloudflare
+## (SSL mode "Full"; the origin certificate is a self-signed in-cluster CA).
+##
+## TOPOLOGY DEVIATION from the two-namespace layout this inventory schema
+## assumes: this stand runs ONE NAMESPACE PER SERVICE (clickhouse, mariadb,
+## redis, redpanda, airbyte, argo, cert-manager, envoy-gateway-system) with
+## operator-managed datastores (Altinity ClickHouse, mariadb-operator,
+## OT Redis) instead of the system/* charts. The `bootstrap:`/`system:`
+## toggles below therefore stay false — they drive the TOP-LEVEL Makefile,
+## whose chart-based targets do not fit this topology. The environment's own
+## Makefile (environments/prod/Makefile) carries the equivalent
+## bootstrap-*/system-* targets for the operator path; values.yaml points the
+## release at the per-namespace Services.
+##
+
+# Repo convention (README prerequisite #4): the context for env <env> is
+# named insight-<env>. Both stand kubeconfigs ship the context as `default` —
+# rename it once per machine:
+#   kubectl config rename-context default insight-prod
+# A context name still identifies nothing by itself, so the environment
+# Makefile additionally guards every mutating target on `apiServer` below.
+kubeContext: insight-prod
+protected: true # production-like: destructive make targets must refuse
+
+# Raw cluster IPs are NOT committed. The wrong-cluster guard's expected API
+# server URL and the Envoy Gateway's pinned floating IP both live in the
+# gitignored secrets.local.env (APISERVER / EDGE_LB_IP) — see
+# secrets.local.env.template. Only the public hostname stays here.
+edge:
+  host: insight-beta.cfabric.org
+
+# Public edge notes: Cloudflare-proxied; zone SSL mode must stay "Full" (origin
+# cert is the self-signed insight-ca chain — "Full (strict)" rejects it,
+# "Flexible" loops). The floating IP is pinned on the Envoy Gateway Service,
+# allocated by the OpenStack cloud controller and held across teardowns by the
+# keep-floatingip annotation.
+
+# Pins `make deploy`/`make diff` for THIS env to one published umbrella chart —
+# the repo-global .insight-version no longer applies here (same mechanism as
+# the reference insight-gitops repo). This stand validates connectors against
+# recent charts, so bump deliberately per release; CLI INSIGHT_VERSION=… still
+# overrides for one-offs.
+chartVersion: "0.5.127"
+
+namespaces:
+  services: insight
+  # `infra` in the schema sense does not exist on this stand — see the
+  # topology deviation note above. Left pointing at the app namespace so no
+  # tooling accidentally creates a parallel insight-infra namespace.
+  infra: insight
+
+release: insight
+
+# All false: these drive the top-level Makefile's chart-based targets, which
+# do not fit this stand's topology. The env Makefile's bootstrap-* targets
+# (storage class, Envoy Gateway + shared Gateway, cert-manager + CA chain)
+# are the managers.
+bootstrap:
+  namespaces: false
+  envoyGateway: false # env Makefile: bootstrap-envoy-gateway (shared Gateway
+  # envoy-gateway-system/insight; floating IP under `edge` above)
+  certManager: false # env Makefile: bootstrap-cert-manager (insight-ca chain)
+  sealedSecrets: false # top-level Makefile stays out; env Makefile:
+  # bootstrap-sealed-secrets (controller 2.17.4 in kube-system)
+
+# All false for the same reason: the env Makefile's system-* targets manage
+# the operator-based services, one namespace each.
+system:
+  mariadb: false # env Makefile: system-mariadb (operator Galera, ns `mariadb`)
+  clickhouse: false # env Makefile: system-clickhouse (Altinity operator, ns `clickhouse`)
+  redis: false # env Makefile: system-redis (OT operator replication, ns `redis`)
+  redpanda: false # env Makefile: system-redpanda (redpanda chart, ns `redpanda`)
+  redpandaConsole: false
+  airbyte: false # env Makefile: system-airbyte (auth enabled, ns `airbyte`)
+  argoWorkflows: false # env Makefile: system-argo (argo-workflows chart, ns `argo`)
+  loki: false
+  alloy: false
+  grafana: false
+
+secrets:
+  # The stand's credential inventory. `enabled: true` means a committed
+  # SealedSecret exists under sealed-secrets/<namespace>/ and `make secrets`
+  # applies it; `false` marks a secret that is expected later but not on the
+  # cluster yet. To rotate or add one, seal the value with kubeseal against
+  # this cluster's controller and commit the manifest.
+  services:
+    - {name: insight-db-creds, enabled: true} # composed from the datastore namespaces
+    - {name: insight-oidc, enabled: true} # generated once, reused
+    - {name: insight-keycloak-admin, enabled: true} # generated once, reused
+    - {name: insight-keycloak-config, enabled: true} # recomposed every deploy
+    - {name: github-oauth, enabled: true} # customer-managed OAuth App credential
+    - {name: insight-authenticator-signing-keys, enabled: true} # ES256; NEVER regenerate
+    - {name: insight-github-directory-main, enabled: true} # connector credential
+    - {name: insight-github-v2-main, enabled: false,} # connector credential — not on the
+    # cluster right now (staging blocked on #2381); flip + `make seal` once created
+  # Datastore-namespace credentials the CRs/charts reference. Same seal
+  # contract; each entry names its own namespace (one namespace per service).
+  datastores:
+    - {namespace: clickhouse, name: clickhouse-default-credentials, enabled: true}
+    - {namespace: clickhouse, name: clickhouse-insight-credentials, enabled: true}
+    - {namespace: mariadb, name: mariadb-root, enabled: true}
+    - {namespace: mariadb, name: mariadb-insight-credentials, enabled: true}
+    - {namespace: redis, name: redis-auth, enabled: true}

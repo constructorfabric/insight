@@ -1,0 +1,111 @@
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: clickhouse
+  namespace: clickhouse
+spec:
+  defaults:
+    storageManagement:
+      reclaimPolicy: Retain
+    templates:
+      podTemplate: clickhouse
+      dataVolumeClaimTemplate: clickhouse-data
+
+  configuration:
+    users:
+      default/password:
+        valueFrom:
+          secretKeyRef:
+            name: clickhouse-default-credentials
+            key: password
+      insight/password:
+        valueFrom:
+          secretKeyRef:
+            name: clickhouse-insight-credentials
+            key: password
+      insight/networks/ip:
+        - 10.0.0.0/8
+      insight/profile: default
+      insight/quota: default
+
+    zookeeper:
+      keeper:
+        name: clickhouse-keeper
+        serviceType: replicas
+      session_timeout_ms: 30000
+      operation_timeout_ms: 10000
+    clusters:
+      - name: clickhouse
+        layout:
+          shardsCount: 1
+          # ONE replica, sized for the only consumer this stand has.
+          #
+          # The Insight chart cannot use more: no template emits ON CLUSTER, it
+          # exposes no cluster-name value, and every table it creates is
+          # ReplacingMergeTree/MergeTree/View rather than Replicated*, so nothing
+          # syncs between replicas. Pointed at the three-replica load-balanced
+          # Service it scattered 317 DDL statements across three independent
+          # servers and failed its migration; see the comment on clickhouse.host
+          # in insight/values.yaml.
+          #
+          # Extra replicas were therefore not redundancy, only three divergent
+          # copies of a schema. Dropping to one frees ~4 GiB and ~0.5 CPU of
+          # requests on the three 4-vCPU workers.
+          #
+          # Raise this only together with CLICKHOUSE_REPLICAS in scripts/lib.sh
+          # (deploy and validate size their waits and checks from it), and only
+          # once the chart issues cluster-wide DDL — otherwise Insight breaks the
+          # way it did before.
+          replicasCount: 1
+
+  templates:
+    podTemplates:
+      - name: clickhouse
+        metadata:
+          labels:
+            app: clickhouse
+        spec:
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      app: clickhouse
+                  topologyKey: kubernetes.io/hostname
+          containers:
+            - name: clickhouse
+              image: altinity/clickhouse-server:25.8.16.10002.altinitystable
+              imagePullPolicy: IfNotPresent
+              # Rendered per stand from CLICKHOUSE_* in scripts/lib.sh (the
+              # evaluation profile) or stands/*.env. Apply through
+              # deploy-clickhouse.sh, never `kubectl apply -f` - an
+              # unsubstituted placeholder is valid YAML and would reach the
+              # API server as a literal quantity.
+              resources:
+                requests:
+                  cpu: 4
+                  memory: 6Gi
+                limits:
+                  cpu: 10
+                  memory: 20Gi
+              volumeMounts:
+                - name: clickhouse-data
+                  mountPath: /var/lib/clickhouse
+              # The server needs no setuid path and no non-default syscalls;
+              # user/group stay whatever the image entrypoint sets up.
+              securityContext:
+                allowPrivilegeEscalation: false
+                seccompProfile:
+                  type: RuntimeDefault
+          securityContext:
+            fsGroup: 101
+
+    volumeClaimTemplates:
+      - name: clickhouse-data
+        spec:
+          storageClassName: cinder
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 100Gi

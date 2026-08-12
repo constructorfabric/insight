@@ -1,0 +1,66 @@
+# Three-broker Redpanda evaluation cluster for three equal Kubernetes workers.
+
+tls:
+  enabled: false
+auth:
+  sasl:
+    enabled: false
+external:
+  enabled: false
+  service:
+    enabled: false
+statefulset:
+  replicas: 3
+  podAntiAffinity:
+    type: hard
+    topologyKey: kubernetes.io/hostname
+  initContainers:
+    setDataDirOwnership:
+      enabled: true
+# Prod-stand sizing for Redpanda. Merged by Helm over redpanda/values.yaml,
+# which keeps every "why" comment and the topology (3 brokers, hard
+# anti-affinity, one per worker); only the numbers move here.
+#
+# Three 16-vCPU / 32 GB workers, one broker each. Requests are a first cut sized
+# to fit alongside MariaDB and Redis on the same node, NOT measured against load
+# - there is none yet. Revisit with real throughput before treating them as
+# anything but a starting point.
+#
+# These requests are load-bearing in a way most resource blocks are not: the
+# chart derives Redpanda's seastar flags from them, not from the limits. With
+# the values below it renders `--smp=3` (from the CPU request) and
+# `--memory=7372M` (from the 8Gi memory request, less overhead) — verified with
+# `helm template ... | grep -oE '--(memory|smp)[ =][^ ]*'`, which is worth
+# re-running after any change here. So the request is what Redpanda actually
+# sizes itself to; the limit is only the ceiling the kernel enforces, which is
+# why raising it above the request is safe rather than an invitation to OOM.
+resources:
+  requests:
+    cpu: 3
+    memory: 8Gi
+  limits:
+    cpu: 6
+    memory: 12Gi
+storage:
+  persistentVolume:
+    enabled: true
+    storageClass: cinder
+    size: 50Gi
+tuning:
+  tune_aio_events: false
+console:
+  enabled: true
+  service:
+    targetPort: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+monitoring:
+  enabled: false
+logging:
+  usageStats:
+    enabled: false

@@ -1,0 +1,65 @@
+##
+## In-cluster CA for the Insight chart's authn-tls Certificate.
+##
+## The Insight chart's authenticator runs a TLS-discovery sidecar
+## (`authenticator.tlsDiscovery.enabled`) that serves the JWKS over https on
+## :8443, and Analytics plus Identity Resolution verify the gateway JWT by
+## fetching that JWKS and pinning the issuer's ca.crt. Chart 0.5.16 wires all of
+## that unconditionally -- `templates/secrets.yaml` hardcodes
+## `gateway_issuer: https://insight-authenticator.insight.svc.cluster.local:8443`
+## and both consumers mount `insight-authenticator-authn-tls-cert` as a
+## non-optional Secret volume -- so turning `tlsDiscovery` off does not remove
+## the dependency, it only strands analytics and identity-resolution in
+## ContainerCreating. cert-manager and a ClusterIssuer are therefore hard
+## prerequisites, not optional hardening (insight deploy/HELM_DEPLOY.md).
+##
+## Nothing here has anything to do with the public ingress certificate: TLS
+## terminates at Cloudflare (CN=cfabric.org, Google Trust Services) and again at
+## ingress-nginx, and `gateway.ingress.tls.enabled` stays false. This CA is
+## internal-only, which is why self-signed is fine.
+##
+## Deployed by scripts/deploy-cert-manager.sh. The namespace below is fixed:
+## the deploy script refuses a CERT_MANAGER_NAMESPACE that does not match it.
+##
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: insight-selfsigned
+spec:
+  # Bootstrap only -- it exists to sign the root CA below and nothing else.
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: insight-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: insight-test-ca
+  secretName: insight-ca-key-pair
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  # 10-year root for an evaluation stand; renewBefore keeps cert-manager from
+  # treating it as permanently expiring. Leaf certs rotate on their own schedule.
+  duration: 87600h
+  renewBefore: 720h
+  issuerRef:
+    name: insight-selfsigned
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  # This is the name that goes into insight/values.yaml as
+  # authenticator.tlsDiscovery.issuerRef.name. The Insight chart's default is
+  # `local-ca`, which only exists in the upstream repo's local k3s sandbox;
+  # validate-cert-manager.sh fails if values.yaml and this name drift apart.
+  name: insight-ca
+spec:
+  ca:
+    # A ClusterIssuer reads its CA key pair from the cert-manager release
+    # namespace, never from the namespace of the Certificate it issues.
+    secretName: insight-ca-key-pair

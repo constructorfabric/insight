@@ -1,0 +1,123 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: airbyte-db-storage-init
+  namespace: airbyte
+  labels:
+    app.kubernetes.io/name: airbyte-storage-init
+    app.kubernetes.io/instance: airbyte
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: airbyte-storage-init
+        app.kubernetes.io/instance: airbyte
+    # Root is the point: this Job exists to chown the PVC that the Cinder CSI
+    # driver leaves without fsGroup support. Everything else is locked down
+    # (no priv-esc, all caps dropped but CHOWN/FOWNER, RuntimeDefault seccomp).
+    spec: # nosemgrep: yaml.kubernetes.security.run-as-non-root.run-as-non-root
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      restartPolicy: OnFailure
+      containers:
+        - name: initialize
+          image: busybox:1.36
+          command:
+            - sh
+            - -ec
+            - chown -R 70:70 /data && chmod 700 /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - FOWNER
+                # Without DAC_OVERRIDE root cannot traverse the data dirs once
+                # they are owner-restricted (mode 700, non-root owner), and the
+                # recursive chown dies on the first re-run.
+                - DAC_OVERRIDE
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: airbyte-volume-db-airbyte-db-0
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: airbyte-minio-storage-init
+  namespace: airbyte
+  labels:
+    app.kubernetes.io/name: airbyte-storage-init
+    app.kubernetes.io/instance: airbyte
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: airbyte-storage-init
+        app.kubernetes.io/instance: airbyte
+    # Root is the point: this Job exists to chown the PVC that the Cinder CSI
+    # driver leaves without fsGroup support. Everything else is locked down
+    # (no priv-esc, all caps dropped but CHOWN/FOWNER, RuntimeDefault seccomp).
+    spec: # nosemgrep: yaml.kubernetes.security.run-as-non-root.run-as-non-root
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      restartPolicy: OnFailure
+      containers:
+        - name: initialize
+          image: busybox:1.36
+          command:
+            - sh
+            - -ec
+            - chown -R 1000:1000 /data && chmod 700 /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - FOWNER
+                # Without DAC_OVERRIDE root cannot traverse the data dirs once
+                # they are owner-restricted (mode 700, non-root owner), and the
+                # recursive chown dies on the first re-run.
+                - DAC_OVERRIDE
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: airbyte-minio-pv-claim-airbyte-minio-0

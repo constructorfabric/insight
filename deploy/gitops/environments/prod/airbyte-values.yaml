@@ -1,0 +1,128 @@
+# Airbyte Community profile for a small three-worker Kubernetes cluster.
+#
+# The official chart includes a single PostgreSQL instance and a single MinIO
+# instance. Both use the cluster's default StorageClass, which is configured as
+# Cinder by scripts/deploy-airbyte.sh. For production, overlay this file with
+# external HA PostgreSQL and external object-storage settings.
+
+# Prod-stand sizing for Airbyte. Merged by Helm over airbyte/values.yaml, which
+# keeps the storage-init workarounds, the PVCs and the auth/RBAC wiring.
+#
+# Airbyte is eight static services plus a pod per running connector job. Only
+# the three that actually do work are raised - server, worker and
+# workload-launcher - because every 100m added to a static service is 100m
+# reserved on a worker whether or not a sync is running.
+#
+# global.jobs is the per-connector-job request and multiplies by concurrency, so
+# it moves the least: it is the one number here that can exhaust a node on its
+# own if several syncs start at once.
+global:
+  edition: community
+  airbyteUrl: http://localhost:18000
+  # MUST stay true. This is not about protecting the UI — it is what makes the
+  # Airbyte API usable at all.
+  #
+  # charts/server/templates/deployment.yaml only sets API_AUTHORIZATION_ENABLED
+  # when edition is pro/enterprise OR (edition == community AND
+  # global.auth.enabled). Without that variable the server never mounts the
+  # authorization endpoints, so POST /api/v1/applications/token — the token mint
+  # the ingestion reconcile loop uses — answers 404 and every connector
+  # operation fails. The unauthenticated public API at /v1/* still answers,
+  # which makes the server look healthy and hides the missing half.
+  #
+  # Symptom when this was false: `reconcile` logged
+  #   ab_get_token: applications/token failed: ... 404 / Object not found
+  # for every connector and exited 2, while /api/v1/health returned 200.
+  #
+  # Consequences of true, both intended: the Airbyte UI now requires the
+  # instance-admin password (chart-generated, in the airbyte-auth-secrets
+  # Secret, key instance-admin-password), and a fresh instance needs the
+  # one-time setup call that deploy-airbyte.sh makes after the release is up.
+  auth:
+    enabled: true
+  jobs:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1
+        memory: 2Gi
+serviceAccount:
+  create: false
+  name: airbyte-admin
+server:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 3Gi
+worker:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
+workload-launcher:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
+workload-api-server:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+temporal:
+  resources:
+    requests:
+      cpu: 150m
+      memory: 768Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
+cron:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 512Mi
+connector-builder-server:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+# Authentication is disabled for this localhost-only evaluation deployment.
+keycloak:
+  enabled: false
+keycloak-setup:
+  enabled: false
+postgresql:
+  enabled: true
+  postgresqlUsername: airbyte
+  postgresqlDatabase: db-airbyte
+minio:
+  storage:
+    volumeClaimValue: 10Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 250m
+      memory: 1Gi

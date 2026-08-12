@@ -1,0 +1,50 @@
+# ServiceAccount for the ingestion workflows, in the Insight namespace.
+#
+# The Insight chart pins every WorkflowTemplate and CronWorkflow it ships to
+# `serviceAccountName: argo-workflow` (dbt-run, data-quality-test,
+# ingestion-pipeline, airbyte-sync, tt-enrich-jira-run) and lists that account as
+# a subject of its own insight-airbyte-auth-reader RoleBinding, but it does not
+# create it. The Argo Workflows release creates an `argo-workflow` account too,
+# in the Argo namespace only — a workflow pod runs in the namespace of its
+# Workflow, so that copy is invisible here. Without this file every dbt transform
+# and data-quality check fails with `serviceaccount "argo-workflow" not found`
+# while the app pods stay healthy, so nothing surfaces until a scheduled run.
+#
+# The Role is the executor's, not the workload's: Argo 3.4+ has each step report
+# its outcome by writing a workflowtaskresult through the pod's own
+# ServiceAccount, so a step without these two verbs dies with exit 64 and
+# `workflowtaskresults.argoproj.io is forbidden` before the user container ever
+# starts. The chart grants exactly this to its own insight-reconcile account; the
+# same grant has to exist for this one.
+#
+# Applied by scripts/deploy-insight.sh outside the Helm release, so `helm
+# uninstall` cannot take the account away from workflows that are still queued.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argo-workflow
+  namespace: insight
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argo-workflow
+  namespace: insight
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: [workflowtaskresults]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argo-workflow
+  namespace: insight
+subjects:
+  - kind: ServiceAccount
+    name: argo-workflow
+    namespace: insight
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argo-workflow

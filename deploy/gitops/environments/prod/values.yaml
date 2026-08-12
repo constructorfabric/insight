@@ -1,0 +1,185 @@
+##
+## Chart values for the `prod` environment — the InsightCfabric stand
+## (public host insight-beta.cfabric.org, GitHub broker login, ADR-0003).
+##
+## Snapshot of insight-deployment's insight/values.yaml rendered for this
+## stand's hostname, merged with its stands/prod/insight-values.yaml sizing
+## overlay (16-vCPU workers). The authoritative comments explaining WHY each
+## key is set live in those two files; this copy exists so the environment is
+## reproducible from the gitops tree alone. Chart pin: inventory.chartVersion.
+##
+credentials:
+  deploymentMode: helm
+  autoGenerate: true
+
+keycloak:
+  deploy: true
+  hostname: https://insight-beta.cfabric.org/kc
+  admin:
+    existingSecret: insight-keycloak-admin
+  database:
+    host: mariadb-primary.mariadb.svc.cluster.local
+    port: 3306
+    name: keycloak
+    username: insight
+    passwordSecret:
+      name: insight-db-creds
+      key: mariadb-password
+  route:
+    enabled: true
+    host: insight-beta.cfabric.org
+    parentRef:
+      name: insight
+      namespace: envoy-gateway-system
+      sectionName: https
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 2Gi
+keycloakConfig:
+  enabled: true
+  url: http://insight-keycloak:8085/kc
+  allowInsecureUrl: true
+  existingSecret: insight-keycloak-config
+
+global:
+  tenantDefaultId: 3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36
+
+clickhouse:
+  host: chi-clickhouse-clickhouse-0-0.clickhouse.svc.cluster.local
+  port: 8123
+  database: insight
+  username: insight
+
+mariadb:
+  host: mariadb-primary.mariadb.svc.cluster.local
+  port: 3306
+  database: insight
+  username: insight
+
+redis:
+  host: redis-master.redis.svc.cluster.local
+  port: 6379
+
+redpanda:
+  brokers: redpanda.redpanda.svc.cluster.local:9093
+
+ingestion:
+  templates:
+    enabled: true
+  reconcile:
+    tenantId: 3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36
+    destinationName: clickhouse-bronze
+    argoInstanceId: argo-workflows-argo
+  airbyteSync:
+    idleThresholdSeconds: 3600
+
+airbyte:
+  namespace: airbyte
+  apiUrl: ''
+
+analytics:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 300m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
+
+frontend:
+  replicaCount: 1
+  route:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+gateway:
+  replicaCount: 1
+  route:
+    enabled: true
+    host: insight-beta.cfabric.org
+    parentRef:
+      name: insight
+      namespace: envoy-gateway-system
+      sectionName: https
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 512Mi
+
+authenticator:
+  replicaCount: 1
+  # View-as (`/auth/login?__override=<email>`, #1941) is dev/demo-only per the
+  # chart: it mints a session for the named person with no role check, no
+  # allowlist, and no audit. This stand has real GitHub logins and a real
+  # roster, so it stays OFF. If demo impersonation is ever needed, build it
+  # with explicit authorization and audit logging instead of flipping this.
+  overrideEnabled: false
+  csrfOrigins:
+    - https://insight-beta.cfabric.org
+  tlsDiscovery:
+    enabled: true
+    issuerRef:
+      name: insight-ca
+      kind: ClusterIssuer
+  oidc:
+    issuerUrl: https://insight-beta.cfabric.org/kc/realms/insight-broker
+    clientId: insight-authenticator
+    clientSecret: ''
+    redirectUri: https://insight-beta.cfabric.org/auth/callback
+    scopes:
+      - openid
+    sourceType: github
+    externalIdClaim: idp_sub
+    defaultTenantId: 3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 512Mi
+
+identityResolution:
+  deploy: true
+  databaseName: identity
+  seed:
+    enabled: true
+    schedule: 30 6 * * *
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  sync:
+    enabled: true
+    schedule: 45 6 * * *
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  resources:
+    requests:
+      cpu: 300m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 2Gi

@@ -1,0 +1,235 @@
+# The insight-broker realm, applied as configuration-as-code by the chart's
+# keycloak-config-cli hook Job (keycloakConfig.* in insight/values.yaml) on
+# every deploy — ADR-0003 / EPIC insight#2193. Mirrors the canonical shape in
+# the app repo (deploy/gitops/environments/local/keycloak/realms/
+# insight-broker.yaml) plus this stand's GitHub identity provider, which the
+# upstream file does not carry yet (Phase 2, insight#2163 open).
+#
+# Applied to the EXISTING operator-managed Keycloak in the keycloak namespace
+# (keycloakConfig.url points at its in-cluster Service) — the chart's bundled
+# keycloak.deploy stays false because /kc on the shared Gateway is already
+# owned by that server. The legacy `insight` realm (password users, the old
+# `insight` client) is left untouched on the same server as a rollback path:
+# repoint authenticator.oidc.* at it to restore password login.
+#
+# Rules inherited from the canonical file: credential fields hold env
+# placeholders only, resolved by the config Job from the composed
+# insight/insight-keycloak-config Secret (deploy-insight.sh builds it); no
+# placeholder syntax in comments — config-cli scans comments too and an
+# unresolvable placeholder fails the import. Import is drift-reverting: edits
+# made in the admin console to THIS realm are undone on the next deploy.
+realm: insight-broker
+enabled: true
+
+# TLS terminates at Cloudflare and the Envoy Gateway; the pod sees plain HTTP
+# with X-Forwarded-Proto (same reason as the legacy realm).
+sslRequired: external
+
+clientScopes:
+  # The claim allow-list: tokens carry exactly email, single-string tenant_id,
+  # and idp_sub (plus protocol-level sub). tenant_id is ALWAYS the pinned
+  # per-registration tenant stamped by each IdP's hardcoded-attribute mapper
+  # from the environment tenant pin; what an IdP asserts about tenancy is
+  # never consulted. idp_sub carries the upstream directory id (GitHub's
+  # numeric user id here) for the login-bootstrap person lookup.
+  - name: insight
+    description: Canonical Insight claim allow-list (email + single-string tenant_id)
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+      display.on.consent.screen: "false"
+    protocolMappers:
+      # email is a built-in UserModel property — property mapper, not attribute.
+      - name: email
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-property-mapper
+        consentRequired: false
+        config:
+          user.attribute: email
+          claim.name: email
+          jsonType.label: String
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+      - name: tenant_id
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-attribute-mapper
+        consentRequired: false
+        config:
+          user.attribute: tenant_id
+          claim.name: tenant_id
+          jsonType.label: String
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+      # Upstream directory id passthrough (login-bootstrap external id).
+      - name: idp_sub
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-attribute-mapper
+        consentRequired: false
+        config:
+          user.attribute: idp_sub
+          claim.name: idp_sub
+          jsonType.label: String
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+
+clients:
+  # Authenticator client: full-scope off, exactly [basic, insight] — `basic`
+  # carries sub/session claims in access tokens on KC 24+, no identity claims.
+  # The secret is the SAME value as the legacy realm's client secret, read
+  # from keycloak/insight-oidc — one credential, whichever realm the
+  # authenticator points at.
+  - clientId: insight-authenticator
+    protocol: openid-connect
+    publicClient: false
+    secret: $(env:INSIGHT_AUTHENTICATOR_CLIENT_SECRET)
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    fullScopeAllowed: false
+    defaultClientScopes:
+      - basic
+      - insight
+    optionalClientScopes: []
+    redirectUris:
+      - https://insight-beta.cfabric.org/auth/callback
+    webOrigins: []
+
+# GitHub login, brokered (this realm's only IdP — there are no realm users,
+# so the GitHub button is the only working path on the login page). The OAuth
+# App is registered by hand at github.com -> Settings -> Developer settings ->
+# OAuth Apps with the authorization callback URL
+#   https://<this stand's host>/kc/realms/insight-broker/broker/github/endpoint
+# and its credentials live only in the customer-managed keycloak/github-oauth
+# Secret, composed into insight/insight-keycloak-config by deploy-insight.sh.
+# An OAuth App carries ONE host-specific callback, so each stand needs its own
+# app; deploy-insight.sh prints the exact URL for the selected stand when the
+# Secret is missing.
+# trustEmail: GitHub only hands over verified emails. Whoever authenticates
+# still has to resolve to a person by (source_type=github, idp_sub=GitHub
+# numeric user id); everyone else is denied (login_denied_unknown_person).
+identityProviders:
+  - alias: github
+    providerId: github
+    enabled: true
+    trustEmail: true
+    # The custom flow below, not the built-in `first broker login`: the
+    # built-in one starts with the Review Profile step, and KC 26's default
+    # user profile requires firstName/lastName — fields GitHub's OAuth profile
+    # does not carry — so every first login stalled on an update-profile form
+    # asking for names nothing in Insight ever reads (the claim contract is
+    # email + tenant_id + idp_sub only). Upstream never hit this because the
+    # canonical realm ships no identity provider at all (Phase 2, #2163).
+    firstBrokerLoginFlowAlias: insight-first-broker-login
+    config:
+      clientId: $(env:GITHUB_CLIENT_ID)
+      clientSecret: $(env:GITHUB_CLIENT_SECRET)
+      defaultScope: "read:user user:email"
+
+identityProviderMappers:
+  # Environment tenant pin (never claim-derived): stamps the user attribute
+  # the insight scope's tenant_id mapper reads. INSIGHT_TENANT_ID is injected
+  # by the config Job from global.tenantDefaultId.
+  - name: github-tenant
+    identityProviderAlias: github
+    identityProviderMapper: hardcoded-attribute-idp-mapper
+    config:
+      syncMode: FORCE
+      attribute: tenant_id
+      attribute.value: $(env:INSIGHT_TENANT_ID)
+  # GitHub's stable numeric user id -> idp_sub, the external id the
+  # authenticator sends to the login-bootstrap person lookup
+  # (externalIdClaim: idp_sub, sourceType: github in insight/values.yaml).
+  # WHICH GitHub field becomes idp_sub is per-stand, because it has to match
+  # whatever the identity projection stored as the (source_type=github,
+  # value_type='id') binding — the authenticator looks the person up by that
+  # exact value.
+  #
+  #   login  — what the github-directory connector emits (a lowercased login,
+  #            ADR-0002). Use this on a stand whose persons came from the
+  #            connector.
+  #   id     — GitHub's stable numeric user id. Use this where the projection
+  #            was seeded by hand with numeric ids.
+  #
+  # The two disagree upstream: the connector's model comments call its login row
+  # "the row the login lookup matches", while this mapper defaulted to the
+  # numeric id. Until that is settled in the product, the stand picks the side
+  # its own data is on. Caveat for `login`: the projection lowercases, GitHub
+  # does not — a mixed-case login will not match.
+  #
+  # This file is packed VERBATIM into the realm ConfigMap (no rendering), so
+  # the choice is committed here: this stand's persons come from the
+  # github-directory connector, hence `login`.
+  - name: github-idp-sub
+    identityProviderAlias: github
+    identityProviderMapper: github-user-attribute-mapper
+    config:
+      syncMode: FORCE
+      jsonField: login
+      userAttribute: idp_sub
+
+# ─── Browser login flow: GitHub, and nothing else ───────────────────────────
+# This realm has no local users, so Keycloak's built-in `browser` flow ends at a
+# username/password form that can never succeed - and, because the form is a
+# real execution in that flow, it stays reachable (a cancelled GitHub login, a
+# "back to login" link, a crafted execution= parameter) even when the redirector
+# hides it by default.
+#
+# So the realm binds its own two-step flow instead of copying the built-in one:
+#
+#   auth-cookie                    ALTERNATIVE  - an existing SSO session wins
+#   identity-provider-redirector   ALTERNATIVE  - everything else goes to GitHub
+#
+# There is deliberately no forms subflow, no Organization step, no conditional
+# 2FA, no WebAuthn, no recovery codes. The password path is not hidden here, it
+# does not exist. Everything those steps would guard is GitHub's problem now.
+#
+# defaultProvider must match an alias in identityProviders above. Adding local
+# users later means putting the forms subflow back, not just clearing this.
+authenticationFlows:
+  - alias: insight-browser
+    description: Cookie, then straight to the github identity provider
+    providerId: basic-flow
+    topLevel: true
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: auth-cookie
+        requirement: ALTERNATIVE
+        priority: 10
+      - authenticator: identity-provider-redirector
+        requirement: ALTERNATIVE
+        priority: 20
+        authenticatorConfig: insight-browser-github
+
+  # First broker login without the Review Profile step — same philosophy as
+  # insight-browser above: the form does not exist here, it is not merely
+  # hidden. create-user-if-unique builds the federated user from what GitHub
+  # supplied (names stay empty; nothing reads them), auto-link is the fallback
+  # for an email-colliding existing user — safe because trustEmail is on and
+  # GitHub only hands over verified emails. Referenced from the github IdP's
+  # firstBrokerLoginFlowAlias; runs only on a user's FIRST login, so users
+  # federated before this flow existed are not re-processed (delete the
+  # federated user to make one re-enter it).
+  - alias: insight-first-broker-login
+    description: Create the federated user; no profile review form
+    providerId: basic-flow
+    topLevel: true
+    builtIn: false
+    authenticationExecutions:
+      - authenticator: idp-create-user-if-unique
+        requirement: ALTERNATIVE
+        priority: 10
+      - authenticator: idp-auto-link
+        requirement: ALTERNATIVE
+        priority: 20
+
+authenticatorConfig:
+  - alias: insight-browser-github
+    config:
+      defaultProvider: github
+
+# Bind it. Without this the realm keeps using the built-in `browser` flow and
+# everything above is inert - the flow exists but nothing routes through it.
+browserFlow: insight-browser
