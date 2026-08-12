@@ -179,10 +179,16 @@ only, never bronze, so a stream returning nothing cannot be observed at its sour
 every connector declares `freshness` thresholds on its bronze sources — Claude Team's are
 tuned per stream — no workflow, chart template or
 script runs `dbt source freshness`, so a stalled stream raises nothing on that path either.
-Visibility is therefore expressed as a silver invariant: activity in `class_ai_dev_usage`
-implies a `class_ai_overage` row for the same billing month, bounded to the current month
-because `overage_spend_limits` snapshots the month in progress and is never backfilled.
-Scheduling freshness is a platform-wide gap, tracked separately.
+Visibility is therefore expressed as two silver invariants. The first: activity in
+`class_ai_dev_usage` implies a `class_ai_overage` row for the same billing month, bounded to
+the current month because `overage_spend_limits` snapshots the month in progress and is never
+backfilled. That one only sees a seat which also produced activity, so a stream whose seats
+are idle goes quiet unnoticed — the second closes it by comparing a source against its own
+past: a source that reported seats last billing month still reports them in the current one.
+
+Both are `severity: warn`, both name the 403 in their remediation, and neither separates an
+unauthorised stream from a source decommissioned mid-month. Scheduling freshness is a
+platform-wide gap, tracked separately.
 
 ## 3. Technical Architecture
 
@@ -603,7 +609,7 @@ unit — the same path `ai.cost` already serves. Role-based cohorts arrive with 
 
 | Layer | Check |
 |---|---|
-| Silver | `not_null` on money, currency and `_version`; `accepted_values` on `billing_model`; no `unclassified` row reaching a person-grain model; `/check-dbt-conventions` passes for engine, `order_by`, `unique_key`; activity in `class_ai_dev_usage` implies a `class_ai_overage` row for the same billing month (`assert_ai_overage_covers_active_seats`) |
+| Silver | `not_null` on money, currency and `_version`; `accepted_values` on `billing_model`; no `unclassified` row reaching a person-grain model; `/check-dbt-conventions` passes for engine, `order_by`, `unique_key`; activity in `class_ai_dev_usage` implies a `class_ai_overage` row for the same billing month (`assert_ai_overage_covers_active_seats`); a source that reported seats last billing month still reports them this one (`assert_ai_overage_stream_not_silent`) |
 | Price card | no overlapping validity intervals for one resolution key; every `(model, token_type)` seen in usage has a rate in force; no `origin = 'derived'` row with `insight_tenant_id IS NULL` |
 | Evidence | standard-column probe healthy; `evidence_granularity` declared for every measure; `measure_key` in `schema.yml` `accepted_values` |
 | Gold | token cost is zero only when tokens are zero; a seat with no ceiling emits no utilisation row; every read of `class_ai_cost` and `class_ai_overage` keeps `FINAL`, and a retroactive feeder replacement resolves to the latest `_version` |

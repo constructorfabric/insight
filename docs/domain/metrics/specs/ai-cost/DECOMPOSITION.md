@@ -142,12 +142,22 @@ incremental window against roughly 30-day vendor revisions.
 - **Depends On**: None.
 
 - **Scope**:
-  - `connectors/ai/claude-team/connector.yaml` currently maps HTTP 403 — the session key
-    lacking `billing:view` — to `action: IGNORE`. Replace the silent skip with a data-quality
-    signal while keeping the sync itself green: an authorisation failure must not fail
-    unrelated streams, but must not be invisible either.
-  - Test: revoking the permission produces the signal; restoring it clears the signal and the
-    rows return.
+  - The signal is expressed in silver, not in the connector. Data-quality checks read silver
+    and gold and never bronze, so a stream that returns nothing cannot be observed at its
+    source; and the declarative manifest can only ignore, retry or fail a 403, where failing
+    would take unrelated streams down with it. `action: IGNORE` therefore stays, and its
+    consequence is caught one layer up.
+  - `assert_ai_overage_covers_active_seats` — activity in `class_ai_dev_usage` for a billing
+    month implies a `class_ai_overage` row for the same month. Catches a stream that stops
+    reporting seats which are demonstrably in use.
+  - `assert_ai_overage_stream_not_silent` — a source that reported seats in the previous
+    billing month still reports them in the current one. Catches what the first check
+    structurally cannot see: a stream gone silent while its seats happen to be idle.
+  - Both name the 403 in their `remediation`, so the signal carries its likely cause and the
+    operator is pointed at the proxy session key rather than at the data.
+  - Stated limits: both are `severity: warn` and scoped to the current billing month; neither
+    separates an unauthorised stream from a source decommissioned mid-month, which is why the
+    remediation says so.
 
 - **Out of scope**: changing any other stream's error handling.
 
