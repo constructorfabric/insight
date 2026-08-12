@@ -22,16 +22,22 @@ type: DeclarativeSource
 # `none` under value_type: string stores the literal text "None" as a value.
 
 definitions:
+  # The CDK resolves backoff per requester, not per response filter: the first
+  # strategy returning a value wins for every retryable response. X-RateLimit-Reset
+  # is stamped on GitHub responses of any status, so reading it here would put a
+  # transient 5xx to sleep until the hourly window resets. Retry-After covers the
+  # throttles that carry it; everything else backs off exponentially.
+  backoff_strategies: &backoff_strategies
+    - type: WaitTimeFromHeader
+      header: Retry-After
+      max_waiting_time_in_seconds: 600
+    - type: ExponentialBackoffStrategy
+      factor: 2
+
   rest_error_handler: &rest_error_handler
     type: DefaultErrorHandler
     max_retries: 8
-    backoff_strategies:
-      - type: WaitTimeFromHeader
-        header: Retry-After
-        max_waiting_time_in_seconds: 600
-      - type: WaitUntilTimeFromHeader
-        header: X-RateLimit-Reset
-        max_waiting_time_in_seconds: 3600
+    backoff_strategies: *backoff_strategies
     response_filters:
       # ORDER MATTERS. GitHub reports its secondary rate limits as 403, not
       # 429, so the throttle predicates must run before any 403 handling —
@@ -65,13 +71,7 @@ definitions:
   graphql_error_handler: &graphql_error_handler
     type: DefaultErrorHandler
     max_retries: 5
-    backoff_strategies:
-      - type: WaitTimeFromHeader
-        header: Retry-After
-        max_waiting_time_in_seconds: 600
-      - type: WaitUntilTimeFromHeader
-        header: X-RateLimit-Reset
-        max_waiting_time_in_seconds: 3600
+    backoff_strategies: *backoff_strategies
     response_filters:
       - type: HttpResponseFilter
         action: RATE_LIMITED
@@ -94,13 +94,7 @@ definitions:
   graphql_error_handler_repo_scoped: &graphql_error_handler_repo_scoped
     type: DefaultErrorHandler
     max_retries: 5
-    backoff_strategies:
-      - type: WaitTimeFromHeader
-        header: Retry-After
-        max_waiting_time_in_seconds: 600
-      - type: WaitUntilTimeFromHeader
-        header: X-RateLimit-Reset
-        max_waiting_time_in_seconds: 3600
+    backoff_strategies: *backoff_strategies
     response_filters:
       - type: HttpResponseFilter
         action: RATE_LIMITED
@@ -127,13 +121,7 @@ definitions:
   rest_error_handler_repo_scoped: &rest_error_handler_repo_scoped
     type: DefaultErrorHandler
     max_retries: 8
-    backoff_strategies:
-      - type: WaitTimeFromHeader
-        header: Retry-After
-        max_waiting_time_in_seconds: 600
-      - type: WaitUntilTimeFromHeader
-        header: X-RateLimit-Reset
-        max_waiting_time_in_seconds: 3600
+    backoff_strategies: *backoff_strategies
     response_filters:
       - type: HttpResponseFilter
         action: RATE_LIMITED
