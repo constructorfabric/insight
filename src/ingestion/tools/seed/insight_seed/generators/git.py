@@ -108,13 +108,15 @@ def seed_class_git_commits(
         "source_id",
         "tenant_id",
         "author_email",
-        "message",
         "date",
         "is_merge_commit",
         "file_path",
         "lines_added",
         "lines_removed",
         "data_source",
+        # Appended after the long-standing columns: the link-parity tests read
+        # this table positionally, so a mid-tuple insertion moves their fields.
+        "message",
         "_version",
     ]
     rows: list[tuple[object, ...]] = []
@@ -149,13 +151,13 @@ def seed_class_git_commits(
                         SOURCE_ID,
                         tenant_uuid,
                         p.email,
-                        message,
                         d,
                         is_merge,
                         "src/main.rs",
                         added,
                         removed,
                         "insight_github",
+                        message,
                         version,
                     )
                 )
