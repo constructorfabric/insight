@@ -12,12 +12,52 @@ metadata:
     app.kubernetes.io/managed-by: gitops
 automountServiceAccountToken: false
 ---
-# RoleBinding, not ClusterRoleBinding: roleRef names cluster-scoped `admin`, but the
-# binding itself is namespaced, so the grant stops at this namespace's edge.
+# Enumerated instead of binding the built-in `admin` ClusterRole (Trivy
+# KSV-0111): exactly the kinds the umbrella chart manages in this namespace,
+# plus read-only diagnostics. A new chart kind must be added here — the deploy
+# fails closed with a helm "forbidden" naming the missing resource.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-deployer-core
+  namespace: insight
+  labels:
+    app.kubernetes.io/name: ci-deployer
+    app.kubernetes.io/component: ci-credential
+    app.kubernetes.io/managed-by: gitops
+rules:
+  # helm release storage + chart-rendered config/credential objects.
+  - apiGroups: [""]
+    resources: [configmaps, secrets, services, serviceaccounts]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # `helm --wait` and rollout status read the ladder under a Deployment.
+  - apiGroups: ["apps"]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+  # Chart hooks, the seed Job, and sync Jobs minted from the chart's CronJob.
+  - apiGroups: ["batch"]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # The chart renders its own Role/RoleBinding; escalation prevention holds —
+  # this SA can only create grants it itself already holds.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: [roles, rolebindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Diagnostics: pod logs on failure; events for scheduling errors.
+  - apiGroups: [""]
+    resources: [pods, pods/log, events]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: ci-deployer-admin
+  name: ci-deployer-core
   namespace: insight
   labels:
     app.kubernetes.io/name: ci-deployer
@@ -25,8 +65,8 @@ metadata:
     app.kubernetes.io/managed-by: gitops
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: admin
+  kind: Role
+  name: ci-deployer-core
 subjects:
   - kind: ServiceAccount
     name: ci-deployer
