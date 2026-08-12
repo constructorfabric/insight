@@ -286,6 +286,53 @@ describe("MetricTimeseriesView", () => {
     expect(screen.getByText("Commits & Lines added")).toBeInTheDocument();
   });
 
+  it("lets a table size itself while holding a chart to a fixed box", async () => {
+    // Both presentations shared one fixed height, which only the chart needs —
+    // it has nothing of its own to be. A table does, and short ones sat above
+    // a slab of empty card. The figure survives as a ceiling so a long table
+    // scrolls rather than pushing the rest of the page down.
+    const user = userEvent.setup();
+    const { container } = render(
+      <MetricTimeseriesView
+        id="sized"
+        entityId={ENTITY_ID}
+        range={RANGE}
+        metricKeys={["git.commits", "git.lines_added"]}
+        groupBy={{ default: "repository" }}
+      />
+    );
+    const body = () => container.querySelector('[data-slot="card-content"]')!;
+    expect(body().className).toContain("h-96");
+    expect(body().className).not.toContain("max-h-96");
+
+    await user.click(screen.getByRole("button", { name: "Table view" }));
+    expect(body().className).toContain("max-h-96");
+  });
+
+  it("names a grouped table by its grouping, with how many groups there are", async () => {
+    // The metric selector is chart-only and the plain heading needs a single
+    // metric, so a grouped multi-metric table used to render an empty header —
+    // the largest block on the screen was the only unlabelled one. The count
+    // belongs with it: such a table is routinely wider than the viewport, and
+    // three visible groups beside a grand total covering eleven is a reader
+    // looking at numbers that do not add up with no way to see why.
+    const user = userEvent.setup();
+    render(
+      <MetricTimeseriesView
+        id="by-repo"
+        entityId={ENTITY_ID}
+        range={RANGE}
+        metricKeys={["git.commits", "git.lines_added"]}
+        groupBy={{ default: "repository" }}
+      />
+    );
+    await user.click(screen.getByRole("button", { name: "Table view" }));
+    const heading = screen.getByRole("heading", { name: /By repository/ });
+    expect(heading).toHaveTextContent("By repository");
+    expect(heading).toHaveTextContent("2");
+    expect(screen.queryByLabelText("Metric")).not.toBeInTheDocument();
+  });
+
   it("uses visible group controls and supports selecting multiple filters", async () => {
     const user = userEvent.setup();
     const options = timeseriesByKey();

@@ -1,5 +1,11 @@
 import { useMemo, useState } from "react";
-import { Database, ListFilter, X } from "lucide-react";
+import {
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Database,
+  ListFilter,
+  X,
+} from "lucide-react";
 
 import { evidenceSelection } from "@/api/metric-drilldown-client";
 import type { DateRange } from "@/api/period-to-date-range";
@@ -240,6 +246,17 @@ export function MetricTimeseriesView({
   const [selectedMetricKey, setSelectedMetricKey] = useState(
     metricKeys[0] ?? ""
   );
+  // Reading a table that only shows a third of itself through a nested
+  // scroller is worse than a tall page, so a capped table can be let out to
+  // its full height. Deliberately NOT persisted, unlike the presentation: a
+  // card remembered at 3000px would greet the next visit as a wall.
+  const [expanded, setExpanded] = useState(false);
+  // Reported by the table, which is the only thing that knows: whether the
+  // rows overrun the box depends on how tall a row is, and that depends on
+  // whether the header is one level or two — so the same number of buckets
+  // overflows in one grouping and not in another. A control that is present
+  // but inert is worse than absent, so it waits for this.
+  const [overflows, setOverflows] = useState(false);
   const dimensionOptions = useMemo(
     () =>
       groupBy
@@ -332,6 +349,18 @@ export function MetricTimeseriesView({
   const selectedMetric =
     model.metrics.find((metric) => metric.metric_key === selectedMetricKey) ??
     model.metrics[0];
+  // A chart reports nothing, so the flag has to be cleared on the way out of
+  // the table — otherwise the control would linger over a chart with no rows
+  // to let out. Adjusted during render rather than in an effect: an effect
+  // would set state after painting the stale frame, and React flags the
+  // cascade; this is the documented shape for "a fact this state depended on
+  // has changed", and the zone rail resets the same way.
+  const [overflowOf, setOverflowOf] = useState(presentation);
+  if (overflowOf !== presentation) {
+    setOverflowOf(presentation);
+    setOverflows(false);
+  }
+
   const shouldCombineMetrics =
     presentation === "chart" &&
     shouldCombineTimeseriesMetrics(model, chart?.multiMetric ?? "selectable");
@@ -500,6 +529,24 @@ export function MetricTimeseriesView({
                   ))}
                 </SelectContent>
               </Select>
+            ) : presentation === "table" && model.dimensions.length > 0 ? (
+              // A grouped table used to land here with NOTHING in the header:
+              // the picker above is chart-only, and the single-metric heading
+              // below needs one metric. So the largest block on the screen was
+              // the only unlabelled one, and a reader had to infer what it was
+              // from the column headings.
+              //
+              // What it is, is the grouping — the metrics are already named on
+              // the columns. The count comes with it because the table is
+              // usually wider than the screen: a reader seeing three groups and
+              // a grand total covering eleven has no way to know the other
+              // eight exist, and the visible totals simply do not add up to it.
+              <h3 className="px-2 text-sm font-semibold">
+                By {selectedGroupBy}
+                <span className="ps-1.5 font-normal text-muted-foreground">
+                  · {model.columns.length}
+                </span>
+              </h3>
             ) : model.metrics.length === 1 ? (
               <h3 className="px-2 text-sm font-semibold">
                 {selectedMetric.label}
@@ -541,6 +588,26 @@ export function MetricTimeseriesView({
             range={range}
             disabled={empty || data.isFetching || data.isError}
           />
+          {/* Only where it does something: a table that fits has nothing to
+              let out, and once it IS out it no longer overflows — so the flag
+              alone would remove the way back. */}
+          {presentation === "table" && (overflows || expanded) ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              aria-label={expanded ? "Scroll the table" : "Show every row"}
+              title={expanded ? "Scroll the table" : "Show every row"}
+              aria-pressed={expanded}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? (
+                <ChevronsDownUp className="size-4" />
+              ) : (
+                <ChevronsUpDown className="size-4" />
+              )}
+            </Button>
+          ) : null}
           <TimeseriesPresentationToggle
             presentation={presentation}
             onChange={setPresentation}
@@ -548,7 +615,19 @@ export function MetricTimeseriesView({
         </div>
       </div>
       <CardContent
-        className="relative flex h-96 min-h-0 flex-col px-0"
+        className={cn(
+          "relative flex min-h-0 flex-col px-0",
+          // A chart needs a box to draw into, so its height is fixed. A table
+          // does not: it has its own, and holding it to the chart's left a
+          // short one sitting above a slab of empty card. It keeps the same
+          // figure as a ceiling instead — beyond that it scrolls, which is
+          // what a table with a year of weekly rows should do anyway.
+          presentation === "chart"
+            ? "h-96"
+            : expanded
+              ? undefined
+              : "max-h-96"
+        )}
         aria-busy={data.isFetching}
       >
         {presentation === "chart" ? (
@@ -569,6 +648,7 @@ export function MetricTimeseriesView({
           selectedMetricKey={selectedMetric?.metric_key ?? ""}
           multiMetric={shouldCombineMetrics ? "combined" : "selectable"}
           table={table}
+          onVerticalOverflow={setOverflows}
           onEvidence={openTimeseriesEvidence}
         />
       </CardContent>
