@@ -213,8 +213,14 @@ scope widens to match — symmetrically, never on one side only.
   the window under derivation carries one tier. It would make derived rates exact per tier at
   the cost of sparser derivation — a tier with little traffic would get no rate at all — and
   it would diverge deliberately from the reference implementation, which groups by
-  `(model, service_tier, token_type)`. Not decided here: the mechanism cannot be built or
-  checked against data while the connector it reads is absent from the repository.
+  `(model, service_tier, token_type)`.
+  Whatever the grouping, one constraint carries over from the reference: a rate re-derived from
+  usage must not be written back over an existing one. A denominator summed from usage can
+  include traffic the vendor does not bill, so re-derivation is a detector, not a source — the
+  reference derives per full key for exactly that purpose and still refuses to overwrite. Any
+  per-tier top-up therefore needs a filtered denominator before it may write anything.
+  Not decided here: the mechanism cannot be built or checked against data while the connector
+  it reads is absent from the repository.
 
 ## Traceability
 

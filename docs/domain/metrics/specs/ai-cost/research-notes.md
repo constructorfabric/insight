@@ -183,6 +183,18 @@ Two algorithms exist in `data_collector`; only the second should be ported:
   `code_execution` is excluded from both sides. Not ported as-is: Insight computes no
   web-search charge, so its own reconciliation narrows to `cost_type = 'tokens'` on both
   sides until one exists (ADR-0003, Reconciliation scope).
+- **Where this lives now.** The file references above hold at the pinned revision. The
+  reference has since moved top-up, reconciliation and the price-drift work into
+  `apps/claude-platform/src/cost-accuracy.ts` (with migrations 041/042), leaving
+  `cost-report-sync.ts` to fetch and delegate. Grep the newer file when reading their
+  current main.
+- **A separate price-drift detector exists there too**, and its design carries a warning worth
+  inheriting: it re-derives the price of every `(model, token_type, context_window,
+  service_tier)` over a recent window and reports a deviation beyond tolerance, but it never
+  writes a derived price back. A denominator summed from usage can include traffic the vendor
+  does not bill, which makes a naive re-derivation confidently wrong rather than merely
+  imprecise. Top-up may add a missing combination; nothing may silently replace an existing
+  rate.
 
 ### Documented limitations to inherit
 
@@ -478,6 +490,13 @@ assigned and active". The single observed `false` row is consistent with both.
 **The reference implementation cannot settle it either.** `data_collector` persists the field
 (`claude_spending.is_enabled INTEGER NOT NULL DEFAULT 1`, written at
 `apps/claude/src/usage-sync.ts:153`) and never reads, filters or reports on it.
+
+**A third reading, reported.** The author of the reference implementation reads the field as
+*whether a limit is set at all*. That is consistent with the shape a disabled seat takes here —
+no allowance alongside it — and it would make the field equivalent to
+`credit_limit_cents IS NOT NULL`, which is the gate D2 already chose. It is a reading offered by
+someone who stores the field and never reads it, not vendor documentation, so it corroborates
+the decision rather than settling the question; `disabled_reason` is what will settle it.
 
 **Consequence.** Do not use `is_enabled` as a seat-state filter. Under the enablement reading
 a seat can be assigned, active and simply barred from overspending, and excluding it would
