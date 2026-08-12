@@ -18,8 +18,11 @@ name: E2E — Compose stand
 #
 #   api-smoke    tests/stand/api — 267 HTTP contract tests, plus the harness's
 #                own 17 (tests/stand/meta) and the coverage gate. No browser.
-#   ui-journeys  tests/stand/ui  — 15 browser journeys, run inside the
-#                published ui-tests image.
+#   ui-journeys  tests/stand/ui  — the browser journeys. Run from the checkout
+#                on PR, queue and dispatch builds so the diff's own test code
+#                is what executes; run inside the published ui-tests image on
+#                the nightly, where main and `:latest` agree, so the shipped
+#                runner stays proven too.
 #
 # Neither is required on its own; `Stand E2E` below is the one stable context
 # for branch protection. The stand goes with any change it covers: the lanes
@@ -319,6 +322,17 @@ jobs:
   # ─── ui-journeys ──────────────────────────────────────────────────────────
   # No `needs` on api-smoke and none from it: each is an independently
   # reportable check, so a red API contract does not hide a broken login.
+  #
+  # Two run modes, split by what the event is entitled to test. PR, queue and
+  # dispatch runs execute the journeys FROM THE CHECKOUT, host-side — the
+  # published ui-tests image bakes the suite in and `:latest` only moves on a
+  # main push, so image mode on a PR runs main's old test code against the
+  # PR's stand and a red lane stops meaning anything. The nightly keeps image
+  # mode: it runs on main, where `:latest` matches the checkout, so it is the
+  # one place the published runner itself is still proven daily. Host-side
+  # satisfies the same cookie constraint as the image's netns join — the
+  # stand publishes the gateway on the runner's own localhost, and localhost
+  # is the one plain-http origin a browser stores a `__Host-` cookie from.
   ui-journeys:
     name: ui-journeys
     needs: [changes, resolve-target]
@@ -350,15 +364,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pulled, never built — building it here would mean testing an image no
-      # developer will ever pull. The one exception is the bootstrap: `:latest`
-      # is tagged only on a main push, so before this workflow's first merge the
-      # tag does not exist and the pull is guaranteed to fail. The fallback
-      # builds from the same Dockerfile build-images.yml uses, so the debut run
-      # exercises the real journeys instead of dying on a missing tag. Once main
-      # has published the image the fallback is dead code — if it ever fires
-      # again, the publish pipeline is broken and that is worth the notice.
+      # Nightly image mode only. Pulled, never built — building it here would
+      # mean testing an image no developer will ever pull. The one exception
+      # is the bootstrap: `:latest` is tagged only on a main push, so before
+      # this workflow's first merge the tag does not exist and the pull is
+      # guaranteed to fail. The fallback builds from the same Dockerfile
+      # build-images.yml uses, so the debut run exercises the real journeys
+      # instead of dying on a missing tag. Once main has published the image
+      # the fallback is dead code — if it ever fires again, the publish
+      # pipeline is broken and that is worth the notice.
       - name: Pull the ui-tests image
+        if: github.event_name == 'schedule'
         run: |
           set -uo pipefail
           docker pull "$UI_TESTS_IMAGE" && exit 0
@@ -390,16 +406,39 @@ jobs:
           if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
           ./dev-compose.sh test-stand up "${flags[@]}"
 
-      # `--image` runs the suite inside the pulled image, joined to the
-      # gateway's network namespace so the browser reaches the app at
-      # http://localhost:8080 — the only origin over plain http from which a
-      # `__Host-`-prefixed session cookie is stored at all. Paths are
-      # image-side (/tests/stand/...) because the suite is baked into it.
+      # The suite's own Chromium, resolved by the locked test environment so
+      # the host run and the ui-tests image cannot drift apart on browser
+      # version. `--with-deps` installs the runner's system libraries.
+      - name: Install the suite's browser
+        if: github.event_name != 'schedule'
+        run: |
+          uv sync --project tests
+          uv run --project tests --frozen playwright install --with-deps chromium
+
+      # Host-side, from the checkout, so the lane tests the test code in the
+      # diff. `--ignore` rather than a path argument for the same reason as
+      # api-smoke's: the verb always passes tests/stand and unions paths.
       #
       # retain-on-failure for trace and video: a green run then carries no
       # session credentials off the runner at all, which is a smaller problem
       # than redacting one.
-      - name: Run the browser journeys
+      - name: Run the browser journeys (repo suite)
+        if: github.event_name != 'schedule'
+        run: |
+          ./dev-compose.sh test-stand test \
+            --ignore=tests/stand/api --ignore=tests/stand/meta \
+            --browser chromium \
+            --tracing=retain-on-failure \
+            --screenshot=only-on-failure \
+            --video=retain-on-failure
+
+      # `--image` runs the suite inside the pulled image, joined to the
+      # gateway's network namespace so the browser reaches the app at
+      # http://localhost:8080. Paths are image-side (/tests/stand/...)
+      # because the suite is baked into it — which is exactly why this mode
+      # is nightly-only: on main the baked suite and the checkout agree.
+      - name: Run the browser journeys (published image)
+        if: github.event_name == 'schedule'
         run: |
           ./dev-compose.sh test-stand test --image "$UI_TESTS_IMAGE" \
             /tests/stand/ui \
@@ -413,12 +452,14 @@ jobs:
       # carries the `__Host-sid` cookie and every Authorization header, twice
       # over (raw headers and a parsed HAR `cookies` array). The script fails
       # closed — a trace it cannot rewrite and verify is deleted, not uploaded.
-      # The suite runs in a container that has no USER directive, so it writes as
-      # root: both the trace files and the per-test directories holding them land
-      # on the runner owned by root. Unlinking or replacing a file needs write
-      # permission on its DIRECTORY, so the redaction step — running as `runner` —
-      # could neither rewrite nor delete a trace. It would fail, and every step
-      # below is `always()`, so the untouched traces would be published anyway.
+      # In image mode the suite runs in a container with no USER directive, so
+      # it writes as root: both the trace files and the per-test directories
+      # holding them land on the runner owned by root. Unlinking or replacing a
+      # file needs write permission on its DIRECTORY, so the redaction step —
+      # running as `runner` — could neither rewrite nor delete a trace. It
+      # would fail, and every step below is `always()`, so the untouched traces
+      # would be published anyway. A host-side run writes as `runner` already;
+      # the chown is then a no-op.
       - name: Take ownership of the captured artifacts
         if: always()
         run: |
