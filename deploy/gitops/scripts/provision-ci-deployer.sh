@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Thin wrapper: the RBAC objects and mutation logic live in the gitops
-# Makefile. Procedure: docs/components/deployment/specs/sop/credentials-runbook.md.
+# Makefile. Procedure: deploy/gitops/environments/test-stand/credentials-runbook.md.
 
 set -euo pipefail
 

@@ -1,6 +1,6 @@
 # CI deploy credential RBAC for test-stand, applied/verified/removed by the
 # provision-ci/verify-ci-credential/revoke-ci Makefile targets. Procedure:
-# docs/components/deployment/specs/sop/credentials-runbook.md.
+# deploy/gitops/environments/test-stand/credentials-runbook.md.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

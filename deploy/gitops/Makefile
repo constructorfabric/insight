@@ -815,7 +815,7 @@ system-status: vpn-up kube-ctx
 	@kubectl -n $(NS_INFRA) get pods -o wide 2>/dev/null || true
 
 # The namespace-scoped ServiceAccount credential CI deploys with. Procedure:
-# docs/components/deployment/specs/sop/credentials-runbook.md.
+# environments/test-stand/credentials-runbook.md.
 CI_DEPLOYER_MANIFEST     := environments/$(ENV)/ci-deployer-rbac.yaml
 CI_DEPLOYER_SA           := ci-deployer
 CI_DEPLOYER_TOKEN_SECRET := ci-deployer-token

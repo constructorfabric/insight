@@ -24,11 +24,11 @@ The split is the whole point of D5: **admin kubeconfigs stay human-only.** CI ge
 a credential that is namespace-scoped and destroyable, and nothing else.
 
 Provisioning is three `make` targets in
-[`deploy/gitops/Makefile`](../../../../../deploy/gitops/Makefile) —
+[`deploy/gitops/Makefile`](../../Makefile) —
 `provision-ci`, `verify-ci-credential`, `revoke-ci` — acting on the committed,
 static RBAC manifest
-[`deploy/gitops/environments/test-stand/ci-deployer-rbac.yaml`](../../../../../deploy/gitops/environments/test-stand/ci-deployer-rbac.yaml).
-[`deploy/gitops/scripts/provision-ci-deployer.sh`](../../../../../deploy/gitops/scripts/provision-ci-deployer.sh)
+[`deploy/gitops/environments/test-stand/ci-deployer-rbac.yaml`](ci-deployer-rbac.yaml).
+[`deploy/gitops/scripts/provision-ci-deployer.sh`](../../scripts/provision-ci-deployer.sh)
 is a thin CLI wrapper over the same targets, kept only because this runbook
 names it as the entrypoint; `make` directly works identically.
 

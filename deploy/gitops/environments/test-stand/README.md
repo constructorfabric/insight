@@ -64,6 +64,10 @@ Two consequences worth stating plainly:
   by name. That is why `inventory.yaml` lists all of them with
   `enabled: false` — see the long comment there for what each one would break
   if it were re-materialised.
+* **The CI deploy credential is the exception, and it has its own runbook.**
+  Provisioning, verifying, storing, rotating and revoking the credential CI
+  uses to deploy this chart is [`credentials-runbook.md`](credentials-runbook.md),
+  beside this file.
 * **A change merged here reaches a published stand at merge speed.** There is
   no staging step between this file and the cluster. Review accordingly.
 

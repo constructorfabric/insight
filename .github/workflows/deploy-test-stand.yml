@@ -197,7 +197,7 @@ jobs:
           if [ -n "$missing" ]; then
             echo "::error::the insight-test-stand environment is missing:$missing"
             echo ""
-            echo "What each one is (full procedure: docs/components/deployment/specs/sop/credentials-runbook.md):"
+            echo "What each one is (full procedure: deploy/gitops/environments/test-stand/credentials-runbook.md):"
             echo "  TEST_STAND_KUBECONFIG          base64 of the kubeconfig for the namespace-scoped"
             echo "                                 'ci-deployer' ServiceAccount, as produced by"
             echo "                                 deploy/gitops/scripts/provision-ci-deployer.sh."
