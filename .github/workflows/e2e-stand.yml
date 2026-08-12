@@ -364,38 +364,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Nightly image mode only. Pulled, never built — building it here would
-      # mean testing an image no developer will ever pull. The one exception
-      # is the bootstrap: `:latest` is tagged only on a main push, so before
-      # this workflow's first merge the tag does not exist and the pull is
-      # guaranteed to fail. The fallback builds from the same Dockerfile
-      # build-images.yml uses, so the debut run exercises the real journeys
-      # instead of dying on a missing tag. Once main has published the image
-      # the fallback is dead code — if it ever fires again, the publish
-      # pipeline is broken and that is worth the notice.
+      # Nightly image mode only. Pulled, never built: this lane exists to
+      # prove the runner build-images.yml actually published, and a lane that
+      # builds its own substitute would test the runner it just built rather
+      # than the one a developer pulls. The bootstrap fallback that once
+      # built the image here (for the first run before `:latest` existed) is
+      # gone with the bootstrap itself — a failed pull now fails the lane,
+      # loudly, whatever the cause.
       - name: Pull the ui-tests image
         if: github.event_name == 'schedule'
-        run: |
-          set -uo pipefail
-          docker pull "$UI_TESTS_IMAGE" && exit 0
-
-          # A failed pull is not evidence of the bootstrap case. An auth failure,
-          # a rate limit, a deleted package and an unpublished tag all land here,
-          # and only the last one may be answered by building locally — the rest
-          # would silently swap the published runner for one built from this PR,
-          # which is the single thing this job must not do. So the tag's absence
-          # is established separately, and anything else fails loudly.
-          if error=$(docker manifest inspect "$UI_TESTS_IMAGE" 2>&1 >/dev/null); then
-            echo "::error::$UI_TESTS_IMAGE exists in ghcr but could not be pulled — not the bootstrap case. Refusing to build a local substitute."
-            exit 1
-          fi
-          if ! grep -qiE 'manifest unknown|not found|no such manifest' <<<"$error"; then
-            echo "::error::could not determine whether $UI_TESTS_IMAGE is published: $error"
-            exit 1
-          fi
-
-          echo "::notice::$UI_TESTS_IMAGE is not published — building it locally from deploy/compose/ui-tests.Dockerfile (expected only before this workflow's first merge to main)"
-          docker build -f deploy/compose/ui-tests.Dockerfile -t "$UI_TESTS_IMAGE" .
+        run: docker pull "$UI_TESTS_IMAGE"
 
       - name: Bring the stand up
         env:
