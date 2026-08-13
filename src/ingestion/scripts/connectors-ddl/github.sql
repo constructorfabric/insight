@@ -135,6 +135,35 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_github.issue_timeline_events
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `event_id` Nullable(String),
+    `event_type` Nullable(String),
+    `event_at` Nullable(String),
+    `item_number` Nullable(Int64),
+    `repo_full_name` Nullable(String),
+    `actor_login` Nullable(String),
+    `target_login` Nullable(String),
+    `label_name` Nullable(String),
+    `state_reason` Nullable(String),
+    `field_name` Nullable(String),
+    `prev_value` Nullable(String),
+    `new_value` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_github.issues
 (
     `_airbyte_raw_id` String,
@@ -309,6 +338,32 @@ CREATE TABLE IF NOT EXISTS bronze_github.pull_request_reviews
     `commit_id` Nullable(String),
     `submitted_at` Nullable(String),
     `author_id` Nullable(Int64)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_github.pull_request_timeline_events
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `event_id` Nullable(String),
+    `event_type` Nullable(String),
+    `event_at` Nullable(String),
+    `item_number` Nullable(Int64),
+    `repo_full_name` Nullable(String),
+    `actor_login` Nullable(String),
+    `target_login` Nullable(String),
+    `label_name` Nullable(String),
+    `state_reason` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
