@@ -149,7 +149,9 @@ async fn brokered_login_pins_tenant_and_stamps_idp_sub() {
     //     a single string and the GitHub id as idp_sub. (KC 26 hides
     //     unmanaged user attributes from admin-API reads, so the token is
     //     the observable proof both identity-provider mappers stamped.)
-    let callback = common::kc::broker_callback_url(&http, &auth_base, "known").await;
+    //     The rig's own PKCE-free authorize request, so the code exchanges.
+    let redirect_uri = format!("{auth_base}/auth/callback");
+    let callback = common::kc::broker_direct_callback_url(&redirect_uri, "known").await;
     let code = reqwest::Url::parse(&callback)
         .unwrap()
         .query_pairs()
@@ -157,8 +159,7 @@ async fn brokered_login_pins_tenant_and_stamps_idp_sub() {
         .expect("the brokered callback must carry a code")
         .1
         .into_owned();
-    let id_claims =
-        common::kc::exchange_code_for_id_claims(&code, &format!("{auth_base}/auth/callback")).await;
+    let id_claims = common::kc::exchange_code_for_id_claims(&code, &redirect_uri).await;
     assert_eq!(
         id_claims["tenant_id"],
         serde_json::json!(pin),

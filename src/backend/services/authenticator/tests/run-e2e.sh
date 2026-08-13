@@ -291,10 +291,6 @@ echo "==> run the login loop"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
   cargo test -p authenticator --test e2e_login_loop -- --ignored --nocapture
 
-echo "==> run the GitHub-brokered login loop (#2163 scenario 8)"
-AUTH_BASE="http://localhost:$AUTH_PORT" E2E_GITHUB_TENANT_PIN="$GITHUB_TENANT_PIN" \
-  cargo test -p authenticator --test e2e_broker -- --ignored --nocapture
-
 echo "==> run the refresh rotation-with-grace loop (step 10.1)"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
   cargo test -p authenticator --test e2e_refresh -- --ignored --nocapture
@@ -341,5 +337,11 @@ AUTH_BASE="http://localhost:$AUTH_PORT" \
   TOKEN_ENDPOINT="http://localhost:$TOKEN_PORT/internal/token" \
   SVC_KEY="$SVC_KEYS_DIR/testclient.key.pem" \
   cargo test -p authenticator --test e2e_service_token -- --ignored --nocapture
+
+echo "==> run the GitHub-brokered login loop (#2163 scenario 8)"
+# Last: its stack pieces (github stub, broker registration) are additive, so
+# a broker-leg failure must not rob the earlier suites of their run.
+AUTH_BASE="http://localhost:$AUTH_PORT" E2E_GITHUB_TENANT_PIN="$GITHUB_TENANT_PIN" \
+  cargo test -p authenticator --test e2e_broker -- --ignored --nocapture
 
 echo "==> PASS (endpoint-coverage ledger: $E2E_COVERAGE_LEDGER)"

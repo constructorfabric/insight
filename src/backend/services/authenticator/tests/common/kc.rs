@@ -134,8 +134,7 @@ pub async fn broker_login_github(
 }
 
 /// The brokered hop chain up to (not including) the authenticator callback:
-/// returns the callback URL so the caller can either follow it or exchange
-/// the code straight at the IdP (the claim-contract assertions).
+/// returns the callback URL for the caller to follow.
 pub async fn broker_callback_url(http: &super::Client, auth_base: &str, stub_user: &str) -> String {
     let login = http
         .get(format!("{auth_base}/auth/login"))
@@ -152,9 +151,40 @@ pub async fn broker_callback_url(http: &super::Client, auth_base: &str, stub_use
         .unwrap()
         .to_owned();
 
+    walk_broker_hops(
+        &authorize_url,
+        &format!("{auth_base}/auth/callback"),
+        stub_user,
+    )
+    .await
+}
+
+/// A brokered login outside the authenticator: the rig issues its own
+/// authorize request — no PKCE, unlike `/auth/login`'s — so the returned
+/// callback's code can be exchanged directly at the token endpoint (the
+/// claim-contract seam; a code minted for the authenticator's PKCE
+/// challenge cannot).
+pub async fn broker_direct_callback_url(redirect_uri: &str, stub_user: &str) -> String {
+    let authorize = reqwest::Url::parse_with_params(
+        &format!("{}/realms/{}/protocol/openid-connect/auth", base(), realm()),
+        &[
+            ("client_id", "insight-authenticator"),
+            ("response_type", "code"),
+            ("scope", "openid profile email"),
+            ("state", "claim-contract"),
+            ("nonce", "claim-contract"),
+            ("redirect_uri", redirect_uri),
+        ],
+    )
+    .unwrap()
+    .to_string();
+
+    walk_broker_hops(&authorize, redirect_uri, stub_user).await
+}
+
+async fn walk_broker_hops(authorize_url: &str, callback_prefix: &str, stub_user: &str) -> String {
     let plain = self::http();
     let mut cookies: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let callback_prefix = format!("{auth_base}/auth/callback");
     let mut url = format!("{authorize_url}&kc_idp_hint=github");
 
     for _ in 0..12 {
@@ -165,7 +195,7 @@ pub async fn broker_callback_url(http: &super::Client, auth_base: &str, stub_use
         if url.contains("/login/oauth/authorize") {
             url = format!("{url}&e2e_user={stub_user}");
         }
-        if url.starts_with(&callback_prefix) {
+        if url.starts_with(callback_prefix) {
             return url;
         }
 
