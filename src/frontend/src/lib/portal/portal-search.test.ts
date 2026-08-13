@@ -1,6 +1,11 @@
+import { retainSearchParams } from "@tanstack/react-router";
 import { describe, expect, it } from "vitest";
 
-import { validatePortalSearch } from "./portal-search";
+import {
+  PORTAL_SEARCH_KEYS,
+  applySearchPatch,
+  validatePortalSearch,
+} from "./portal-search";
 
 /**
  * Search params are user-editable text and arrive from links other people
@@ -70,5 +75,48 @@ describe("validatePortalSearch", () => {
         validatePortalSearch({ from: "2026-13-45", to: "2026-13-46" }),
       ).not.toHaveProperty("from");
     });
+  });
+});
+
+describe("applySearchPatch", () => {
+  /** The real middleware the portal routes install, over the patched result. */
+  function afterRetain(
+    prev: Record<string, unknown>,
+    patched: Record<string, unknown>
+  ): Record<string, unknown> {
+    const middleware = retainSearchParams(PORTAL_SEARCH_KEYS);
+    return middleware({
+      search: prev as never,
+      next: (() => patched) as never,
+    }) as unknown as Record<string, unknown>;
+  }
+
+  it("survives retention when a key is cleared", () => {
+    // Choosing a preset clears the custom range. Deleting the keys handed them
+    // back: the middleware restores whatever is absent, so the range stayed in
+    // force and the preset did nothing.
+    const prev = { period: "month", from: "2026-05-01", to: "2026-05-08" };
+    const patched = applySearchPatch(prev, {
+      period: "quarter",
+      from: undefined,
+      to: undefined,
+    });
+
+    expect("from" in patched).toBe(true);
+    const kept = afterRetain(prev, patched);
+    expect(kept.period).toBe("quarter");
+    expect(kept.from).toBeUndefined();
+    expect(kept.to).toBeUndefined();
+    expect(validatePortalSearch(kept)).toEqual({ period: "quarter" });
+  });
+
+  it("clears a key given an empty string or false, and leaves omitted keys alone", () => {
+    const patched = applySearchPatch(
+      { zone: "directions", slice: "division", direct: true },
+      { slice: "", direct: false }
+    );
+    expect(patched.zone).toBe("directions");
+    expect(patched.slice).toBeUndefined();
+    expect(patched.direct).toBeUndefined();
   });
 });

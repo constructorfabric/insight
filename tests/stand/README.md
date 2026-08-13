@@ -50,17 +50,23 @@ uv run --project tests playwright install chromium   # first time only, for ui/
 uv run --project tests pytest tests/stand
 ```
 
-To run the suite the way CI does — inside the published `ui-tests` image,
-against the gateway's own network namespace — pass `--image`:
-
-```bash
-./dev-compose.sh test-stand test --image ghcr.io/constructorfabric/insight-ui-tests:latest
-```
-
-That mode never builds the image; pull it first. See `dev-compose.sh`'s
+This host-side run is also exactly what CI's `ui-journeys` lane does. The
+verb still accepts `--image <ref>` to run a suite baked into a container
+joined to the gateway's network namespace, but no such image is published
+anymore — the lane ran from a published `ui-tests` image once, and the mode
+remains only as a mechanism. See `dev-compose.sh`'s
 `cmd_test_stand_help` for the full verb reference, including
 `--auth`/`--base-url`/`--stand-manifest` overrides for pointing the suite at
 a stand other than the one it just brought up.
+
+## CI required gate
+
+`.github/workflows/e2e-stand.yml` starts on every pull request so its stable
+`Stand E2E` context always reports. Its cheap `changes` job decides whether
+the diff can affect this suite: relevant changes run both `api-smoke` and
+`ui-journeys`, and the umbrella fails unless both succeed; irrelevant changes
+skip both lanes and the umbrella reports success. Branch protection should
+therefore require `Stand E2E`, not either conditional lane directly.
 
 ## Reading PROFILE.md before writing a test
 

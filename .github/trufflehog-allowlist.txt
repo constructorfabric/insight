@@ -5,10 +5,12 @@
 
 96923d309cc0326b  Atlassian          docs/connectors/support/jsm.md  # example account id quoted from vendor documentation
 b92efd223e8930c0  CloudflareApiToken STORAGE_TECHNOLOGY_EVALUATION.md  # prose fragment in a document
+cf6ede857587d567  Gitlab             .github/workflows/ghcr-cleanup.yml  # GHCR image name, not a token
 1c236cb81bf7da61  Gitlab             docs/CONNECTORS_REFERENCE.md  # code identifier / constant name
 bd0c5f545b463920  Gitlab             docs/components/deployment/gitops/SPEC.md  # code identifier / constant name
 bd093b6d7b23051a  Gitlab             docs/components/deployment/specs/PRD.md  # code identifier / constant name
 f805794a8092a445  Gitlab             docs/connectors/gitlab.md  # code identifier / constant name
+9a6a2ad8f26d96a0  Gitlab             src/ingestion/connectors/git/gitlab-nocode/descriptor.yaml  # connector name, not a token
 4ccd2051f51a85a9  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__commits.sql  # code identifier / constant name
 c71d7d6ef85cd006  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__file_changes.sql  # code identifier / constant name
 8cb922ab03ac1970  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__pull_requests.sql  # code identifier / constant name

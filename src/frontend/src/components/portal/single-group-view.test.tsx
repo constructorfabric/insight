@@ -18,8 +18,18 @@ const mocks = vi.hoisted(() => ({
   isPending: false,
   isError: false,
   cohort: [] as string[],
+  definitions: [] as unknown[],
+  definitionsPending: false,
+  definitionsError: false,
 }));
 
+vi.mock("@/queries/metric-definitions", () => ({
+  useMetricDefinitionsResponse: () => ({
+    data: mocks.definitionsError ? undefined : { metrics: mocks.definitions },
+    isPending: mocks.definitionsPending,
+    isError: mocks.definitionsError,
+  }),
+}));
 vi.mock("@/queries/metric-results", () => ({
   useMetricCollection: () => ({
     byKey: mocks.byKey,
@@ -80,11 +90,27 @@ function draw() {
   return render(<SingleGroupView personId={ME} groupId="collaboration" />);
 }
 
+/** A listing entry for a metric this installation reads. */
+function wired(key: string) {
+  return {
+    metric_key: key,
+    is_enabled: true,
+    schema_status: "ok",
+    origin: "builtin",
+    last_observed_date: "2026-03-20",
+  };
+}
+
 beforeEach(() => {
   mocks.byKey = new Map();
   mocks.isPending = false;
   mocks.isError = false;
   mocks.cohort = [];
+  // The section's sources are connected unless a test says otherwise: an
+  // empty section is then about the person, which is the ordinary case.
+  mocks.definitions = HEADLINE.map(([k]) => wired(k));
+  mocks.definitionsPending = false;
+  mocks.definitionsError = false;
 });
 
 describe("SingleGroupView", () => {
@@ -98,6 +124,43 @@ describe("SingleGroupView", () => {
     draw();
     expect(screen.getByText(/Nothing recorded here/)).toBeInTheDocument();
     expect(screen.queryByTestId("composition")).not.toBeInTheDocument();
+  });
+
+  it("says nothing feeds a section rather than blaming the person for it", () => {
+    // The two empties are opposite findings. A section this person did none
+    // of is worth asking them about; one nothing feeds is about the install
+    // and is nobody's performance. Told the second in the first's words, a
+    // reader goes looking for missing work that was never being measured.
+    mocks.byKey = normalizeMetricResults(
+      HEADLINE.map(([k, l]) => metric(k, l, null))
+    );
+    mocks.definitions = [];
+    draw();
+    expect(screen.getByText(/No data reaches us for this section/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing recorded here/)).not.toBeInTheDocument();
+  });
+
+  it("claims neither absence when the listing that decides could not be read", () => {
+    // With no listing every section looks unreachable, so falling through
+    // would announce that nothing is measured here for anyone on the strength
+    // of a request that never arrived.
+    mocks.byKey = normalizeMetricResults(
+      HEADLINE.map(([k, l]) => metric(k, l, null))
+    );
+    mocks.definitionsError = true;
+    draw();
+    expect(screen.getByText(/Nothing to show here/)).toBeInTheDocument();
+    expect(screen.queryByText(/No data reaches us/)).not.toBeInTheDocument();
+  });
+
+  it("waits for the listing rather than showing one sentence and swapping it", () => {
+    mocks.byKey = normalizeMetricResults(
+      HEADLINE.map(([k, l]) => metric(k, l, null))
+    );
+    mocks.definitionsPending = true;
+    draw();
+    expect(screen.queryByText(/Nothing recorded here/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No data reaches us/)).not.toBeInTheDocument();
   });
 
   it("gives a detail block only to the headline metrics that read", () => {

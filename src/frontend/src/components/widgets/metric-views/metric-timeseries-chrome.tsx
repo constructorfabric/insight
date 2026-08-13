@@ -126,6 +126,7 @@ export function TimeseriesBody({
   selectedMetricKey,
   multiMetric,
   table,
+  onVerticalOverflow,
   onEvidence,
 }: {
   isPending: boolean;
@@ -138,6 +139,7 @@ export function TimeseriesBody({
   selectedMetricKey: string;
   multiMetric: MetricTimeseriesChartConfig["multiMetric"];
   table?: MetricTimeseriesTableConfig;
+  onVerticalOverflow?: (overflows: boolean) => void;
   onEvidence?: (
     metricKey: string,
     columnKey: string,
@@ -169,6 +171,7 @@ export function TimeseriesBody({
         <MetricTimeseriesTable
           model={model}
           config={table}
+          onVerticalOverflow={onVerticalOverflow}
           onEvidence={onEvidence}
         />
       ) : (

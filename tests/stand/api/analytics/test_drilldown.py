@@ -1,7 +1,7 @@
 """`/v1/metric-drilldown` and its export — the evidence behind a metric value.
 
-    POST /v1/metric-drilldown         200 · 400 empty-entity · 403 hidden person
-    POST /v1/metric-drilldown/export  200 CSV/XLSX · 400 empty-entity
+    POST /v1/metric-drilldown         200 · 400 bad selection/cursor · 403 hidden · 404 unknown
+    POST /v1/metric-drilldown/export  200 CSV/XLSX · 400 bad selection · 403 hidden · 404 unknown
 
 The 415 half is in `test_request_contracts.py`, swept over every body route.
 
@@ -20,14 +20,29 @@ only support an inequality.
 
 Exports cover one metric per evidence presentation rather than the whole
 catalogue: a presentation is all an export can differ by. `EXPORT_SHAPES` names
-them, and the metrics not in it are deliberately not exported here.
+them, and the metrics not in it are deliberately not exported here. On top of
+the shape sweep, `git.commits` is exported once more cell for cell: the seed
+plants hostile commit titles (formula prefixes, an embedded tab and newline),
+and the parity case asserts the export's actual neutralization contract
+against the page the same selection returns.
+
+The refusal catalogue (#1603 scenario 6) closes the file: every way a request
+can be unservable — tampered pagination cursors included — is refused with a
+reason a caller can tell from the others, and never with a partial page. The
+export route must refuse an out-of-scope person exactly as the paged read does
+(#1603 scenario 13), because a file download is the one response a caller
+walks away with.
 """
 
 from __future__ import annotations
 
+import base64
 import csv
+import datetime as dt
 import io
+import json
 import math
+import uuid
 import warnings
 import zipfile
 from collections.abc import Mapping, Sequence
@@ -40,6 +55,7 @@ from insight_stand import ApiClient, ApiResponse, Manifest, PersonaSession, anal
 from insight_stand.api import JsonValue
 
 from ..schemas import (
+    PROBLEM_CONTENT_TYPE,
     MetricDefinitionListResponse,
     MetricResultsResponse,
     PeriodView,
@@ -47,6 +63,7 @@ from ..schemas import (
 )
 from ..schemas.analytics import (
     MetricDrilldownCapability,
+    MetricDrilldownColumnType,
     MetricDrilldownResponse,
 )
 from .drilldown_matrix import EXPORT_SHAPES, MATRIX, Expectation, Tier
@@ -76,6 +93,17 @@ _ABS_TOL = 1e-9
 #: cheapest rejection that is unambiguously the HANDLER's — it needs no seeded
 #: metric to reach, and no lookup can turn it into a 404 on the way.
 _EMPTY_ENTITY_ID = ""
+
+#: Together these send 150 values built from 50 distinct ones — past the
+#: service's declared per-filter cap (`MAX_FILTER_VALUES` in the drilldown
+#: domain's `dto.rs`) as sent, yet far under it once deduplicated, so only a
+#: cap checked before dedup can refuse the request.
+_FILTER_DISTINCT_VALUES = 50
+_FILTER_VALUE_REPEATS = 3
+
+#: A dimension no metric declares: `normalize_key` accepts the spelling, so the
+#: refusal is attributable to the declaration check and nothing earlier.
+_UNDECLARED_DIMENSION = "undeclared_dimension"
 
 
 @dataclass(frozen=True)
@@ -299,6 +327,137 @@ def _xlsx_rows(content: bytes) -> int:
     return len(
         worksheet.findall(".//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row")
     )
+
+
+_SSML = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+#: The CSV neutralization contract, read from `csv_safe_cell` in
+#: `src/backend/services/analytics/src/domain/metric_drilldown/export.rs`: a
+#: cell whose FIRST byte could start a spreadsheet formula (`=` `+` `-` `@`) or
+#: shift the cell's content on paste (tab, CR, LF, space) is prefixed with a
+#: single quote. Embedded occurrences are untouched — RFC 4180 quoting keeps
+#: them inside the cell instead.
+_CSV_NEUTRALIZED_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n", " ")
+
+#: What the seed plants on a handful of the dev lead's commit titles
+#: (`HOSTILE_COMMIT_MESSAGES` in `src/ingestion/tools/seed/insight_seed/
+#: generators/git.py`), named here only to prove the selection under test
+#: actually contains each hostile class — never as an expectation of content.
+_HOSTILE_PREFIXES = ("=", "+", "-", "@")
+_HOSTILE_EMBEDDED = ("\t", "\n")
+
+
+def _assert_csv_cell_matches(text: str, value: object, where: str) -> None:
+    """One exported CSV cell against the paged value it must carry."""
+    if value is None:
+        assert text == "", f"{where}: null must export as an empty cell, got {text!r}"
+    elif isinstance(value, bool):
+        assert text == str(value).lower(), f"{where}: {text!r} is not {value}"
+    elif isinstance(value, str):
+        expected = f"'{value}" if value.startswith(_CSV_NEUTRALIZED_PREFIXES) else value
+        assert text == expected, (
+            f"{where}: exported {text!r}, expected {expected!r} — content must arrive intact, "
+            "neutralized exactly per the export's own prefix rule"
+        )
+    else:
+        assert isinstance(value, int | float), f"{where}: unexpected paged value {value!r}"
+        # A negative number starts with `-`, so it is neutralized like text.
+        bare = text.removeprefix("'")
+        assert bare and _close(float(bare), float(value)), (
+            f"{where}: exported {text!r} does not carry the paged number {value!r}"
+        )
+
+
+def _shared_strings(workbook: zipfile.ZipFile) -> list[str]:
+    if "xl/sharedStrings.xml" not in workbook.namelist():
+        return []
+    root = ElementTree.fromstring(workbook.read("xl/sharedStrings.xml"))
+    return [
+        "".join(node.text or "" for node in item.iter(f"{_SSML}t"))
+        for item in root.findall(f"{_SSML}si")
+    ]
+
+
+def _xlsx_column_index(reference: str) -> int:
+    index = 0
+    for character in reference:
+        if character.isdigit():
+            break
+        index = index * 26 + (ord(character) - ord("A") + 1)
+    return index - 1
+
+
+def _xlsx_cell_matrix(content: bytes, width: int) -> list[list[str | float | bool | None]]:
+    """Every worksheet cell decoded, with the inertness contract asserted.
+
+    A formula cell would carry an `f` element (and a cached result typed
+    `str`); asserting neither exists in ANY cell is what "stored as data, not
+    as a formula" means at the file level. Text arrives as a shared or inline
+    string, blanks as valueless cells, numbers and dates as numeric `v`.
+    """
+    with zipfile.ZipFile(io.BytesIO(content)) as workbook:
+        strings = _shared_strings(workbook)
+        sheet = ElementTree.fromstring(workbook.read("xl/worksheets/sheet1.xml"))
+    matrix: list[list[str | float | bool | None]] = []
+    for row in sheet.iter(f"{_SSML}row"):
+        cells: list[str | float | bool | None] = [None] * width
+        for cell in row.findall(f"{_SSML}c"):
+            reference = cell.get("r", "")
+            where = f"cell {reference or '<unaddressed>'}"
+            assert cell.find(f"{_SSML}f") is None, f"{where}: exported as a formula"
+            kind = cell.get("t", "n")
+            assert kind != "str", f"{where}: typed as a formula's cached string result"
+            index = _xlsx_column_index(reference)
+            assert 0 <= index < width, f"{where}: outside the {width} exported columns"
+            value_node = cell.find(f"{_SSML}v")
+            if kind == "s":
+                assert value_node is not None and value_node.text is not None, (
+                    f"{where}: shared string without an index"
+                )
+                cells[index] = strings[int(value_node.text)]
+            elif kind == "inlineStr":
+                cells[index] = "".join(node.text or "" for node in cell.iter(f"{_SSML}t"))
+            elif kind == "b":
+                cells[index] = value_node is not None and value_node.text == "1"
+            elif value_node is None or value_node.text is None:
+                cells[index] = None
+            else:
+                cells[index] = float(value_node.text)
+        matrix.append(cells)
+    return matrix
+
+
+#: `ExcelDateTime` serial numbers count days from this epoch (the 1900 date
+#: system with its historical two-day offset), so a date cell decodes without
+#: any expectation about which calendar day it holds.
+_XLSX_EPOCH = dt.date(1899, 12, 30)
+
+
+def _assert_xlsx_cell_matches(
+    cell: str | float | bool | None,
+    value: object,
+    column_type: MetricDrilldownColumnType,
+    where: str,
+) -> None:
+    """One decoded XLSX cell against the paged value it must carry."""
+    if value is None:
+        assert cell is None, f"{where}: null arrived as {cell!r}"
+    elif column_type is MetricDrilldownColumnType.date and isinstance(value, str):
+        assert isinstance(cell, float), f"{where}: date arrived as {cell!r}, not a serial"
+        day = _XLSX_EPOCH + dt.timedelta(days=cell)
+        assert day.isoformat() == value, f"{where}: serial {cell!r} decodes to {day}, not {value!r}"
+    elif isinstance(value, bool):
+        assert cell is value, f"{where}: boolean arrived as {cell!r}"
+    elif isinstance(value, str):
+        assert cell == value, (
+            f"{where}: exported {cell!r}, expected {value!r} — XLSX applies no prefix, "
+            "so the string must arrive byte-identical"
+        )
+    else:
+        assert isinstance(value, int | float), f"{where}: unexpected paged value {value!r}"
+        assert isinstance(cell, float) and _close(cell, float(value)), (
+            f"{where}: exported {cell!r} does not carry the paged number {value!r}"
+        )
 
 
 def _numbers(rows: Sequence[Mapping[str, object]], column: str, metric_key: str) -> list[float]:
@@ -643,6 +802,79 @@ def test_drilldown_export_carries_every_row(
 
 
 @pytest.mark.requires_seed("dev_lead")
+@pytest.mark.versatility
+def test_export_cells_match_the_page_and_hostile_values_stay_inert(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """#1603 scenario 11 — export cell parity and escaping.
+
+    The count sweep above proves nothing about content, and content is where
+    an export can betray its reader: a commit title is attacker-shaped free
+    text, and a spreadsheet will happily execute one that starts with `=`. The
+    seed plants clearly synthetic titles covering each formula prefix plus an
+    embedded tab and newline, so the `git.commits` selection is the one whose
+    export has something to get wrong.
+
+    Both formats are compared cell for cell against the page the same
+    selection returns — both sides of every comparison come from the service.
+    The escaping asserted is the backend's actual contract (`csv_safe_cell`):
+    a CSV cell's first byte in the prefix set earns a leading single quote,
+    everything else round-trips byte-identical, and RFC 4180 quoting keeps
+    embedded tabs and newlines inside their cell, so the row count is the
+    page's. XLSX applies no prefix at all: every value arrives byte-identical
+    as a shared or inline string, and no cell is a formula.
+    """
+    walk = _walk(api, stand_manifest, GIT_COMMITS, limit=_PAGE_LIMIT, page_budget=_PAGE_BUDGET)
+    assert walk.complete, "the hostile selection must be small enough to walk whole"
+    keys = walk.column_keys
+    assert "title" in keys, f"no title column in {keys} — nowhere for a hostile value to surface"
+
+    titles = [row["title"] for row in walk.rows if isinstance(row["title"], str)]
+    for prefix in _HOSTILE_PREFIXES:
+        assert any(title.startswith(prefix) for title in titles), (
+            f"no evidence title begins with {prefix!r} — the stand predates the hostile-title "
+            "seed, so this test would prove nothing; re-seed it"
+        )
+    for embedded in _HOSTILE_EMBEDDED:
+        assert any(embedded in title for title in titles), (
+            f"no evidence title embeds {embedded!r} — the stand predates the hostile-title "
+            "seed, so this test would prove nothing; re-seed it"
+        )
+
+    request = _request_for(stand_manifest, GIT_COMMITS)
+
+    csv_response = _export(api, request, "csv")
+    assert csv_response.status_code == 200, f"csv: {csv_response.text[:300]}"
+    csv_rows = list(csv.reader(io.StringIO(csv_response.content.decode("utf-8-sig"))))
+    assert csv_rows[0] == [column.label for column in walk.first.columns]
+    assert len(csv_rows) == len(walk.rows) + 1, (
+        f"CSV parsed to {len(csv_rows) - 1} rows against {len(walk.rows)} paged rows — "
+        "an embedded newline escaped its cell"
+    )
+    for row_index, (page_row, csv_row) in enumerate(zip(walk.rows, csv_rows[1:], strict=True)):
+        assert len(csv_row) == len(keys), (
+            f"CSV row {row_index} has {len(csv_row)} cells for {len(keys)} columns — "
+            "an embedded delimiter escaped its cell"
+        )
+        for key, text in zip(keys, csv_row, strict=True):
+            _assert_csv_cell_matches(text, page_row[key], f"CSV row {row_index} column {key!r}")
+
+    xlsx_response = _export(api, request, "xlsx")
+    assert xlsx_response.status_code == 200, f"xlsx: {xlsx_response.text[:300]}"
+    matrix = _xlsx_cell_matrix(xlsx_response.content, len(keys))
+    assert len(matrix) == len(walk.rows) + 1
+    assert matrix[0] == [column.label for column in walk.first.columns]
+    for row_index, (page_row, sheet_row) in enumerate(zip(walk.rows, matrix[1:], strict=True)):
+        for column_index, column in enumerate(walk.first.columns):
+            _assert_xlsx_cell_matches(
+                sheet_row[column_index],
+                page_row[column.key],
+                column.type,
+                f"XLSX row {row_index} column {column.key!r}",
+            )
+
+
+@pytest.mark.requires_seed("dev_lead")
 @pytest.mark.xfail(
     strict=False,
     reason="constructorfabric/insight#2361 — intermittent 500 under suite load: the "
@@ -817,3 +1049,306 @@ def test_drilldown_400_for_a_key_that_is_not_a_person_id(
     assert response.status_code == 400, (
         f"{path} answered {response.status_code} to a {label}: {response.text[:300]}"
     )
+
+
+def _refusal(response: ApiResponse, status: int, *needles: str) -> ProblemDocument:
+    """The response as the bare problem document it must be, and nothing else.
+
+    `ProblemDocument` forbids extra fields, so a body that carried rows or a
+    `next_cursor` alongside the error — a partial response — fails the parse
+    instead of passing as a refusal. The needles are each class's own words in
+    the document, which is what makes one refusal distinguishable from the
+    next; a needle-less call asserts only the envelope.
+    """
+    assert response.status_code == status, (
+        f"expected {status}, got {response.status_code}: {response.text[:300]}"
+    )
+    document = response.parse(ProblemDocument)
+    assert document.status == status
+    for needle in needles:
+        assert needle in response.text, (
+            f"refused, but not for the asserted reason {needle!r}: {response.text[:300]}"
+        )
+    return document
+
+
+def _send(api: ApiClient, path: str, request: dict[str, JsonValue]) -> ApiResponse:
+    """`request` as-is to the paged route, reshaped by `_export` for the other."""
+    if path == DRILLDOWN_EXPORT:
+        return _export(api, request, "csv")
+    return api.post(path, json_body=request)
+
+
+@pytest.fixture(scope="session")
+def issued_cursor(lead_session: PersonaSession, stand_manifest: Manifest) -> str:
+    """A pagination cursor the service genuinely issued, for tampering with.
+
+    Each tampering case flips exactly one envelope field of a real cursor, so
+    its refusal is attributable to that field rather than to a cursor the
+    service would never have produced. Session-scoped: one issued cursor
+    serves every case, and issuing one costs a full drilldown request.
+    """
+    response = lead_session.client.post(DRILLDOWN, json_body=_seeded_request(stand_manifest))
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+    cursor = response.parse(MetricDrilldownResponse).next_cursor
+    assert cursor is not None, (
+        "the seeded git.commits selection fit one page at limit=1, so no cursor was issued "
+        "and the tampering cases have nothing genuine to start from"
+    )
+    return cursor
+
+
+def _tampered(cursor: str, **overrides: JsonValue) -> str:
+    """A genuinely issued cursor, re-encoded with named envelope fields replaced.
+
+    Both halves mirror the service's `cursor.rs`: a url-safe unpadded base64
+    JSON envelope. Asserting the field exists before overriding keeps a
+    backend rename from silently turning a tamper into an ignored extra field
+    — the test would then refuse for the wrong reason and still pass.
+    """
+    envelope = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+    assert isinstance(envelope, dict), f"cursor envelope is not an object: {envelope!r}"
+    for field in overrides:
+        assert field in envelope, f"cursor envelope has no {field!r}: {sorted(envelope)}"
+    envelope.update(overrides)
+    return base64.urlsafe_b64encode(json.dumps(envelope).encode()).decode().rstrip("=")
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.parametrize(
+    ("label", "cursor"),
+    [
+        ("not base64", "@@not-a-cursor@@"),
+        ("base64 of non-JSON", base64.urlsafe_b64encode(b"not json").decode().rstrip("=")),
+        ("JSON without the envelope fields", base64.urlsafe_b64encode(b"{}").decode().rstrip("=")),
+    ],
+)
+@pytest.mark.reliability
+def test_drilldown_refuses_a_malformed_cursor(
+    api: ApiClient, stand_manifest: Manifest, label: str, cursor: str
+) -> None:
+    """#1603 scenario 6 — a cursor that never was one is refused as malformed.
+
+    All three spellings — undecodable, decodable to non-JSON, JSON missing the
+    envelope's fields — are one class: nothing here was ever issued. The reason
+    is the class's own words, so a caller can tell a corrupted cursor from one
+    that outlived its snapshot, which asks for a restart rather than a bug
+    report.
+    """
+    response = api.post(DRILLDOWN, json_body=_seeded_request(stand_manifest, cursor=cursor))
+    _refusal(response, 400, "cursor is malformed")
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
+def test_drilldown_refuses_a_wrong_version_cursor(
+    api: ApiClient, stand_manifest: Manifest, issued_cursor: str
+) -> None:
+    """#1603 scenario 6 — a genuine cursor with its version flipped is refused.
+
+    The version field is the envelope's compatibility escape hatch. Flipping it
+    on an otherwise genuine cursor pins that the service reads the field rather
+    than accepting whatever decodes — and the reason names the version, not
+    malformedness, so a cursor from a different deployment generation is
+    distinguishable from corruption.
+    """
+    response = api.post(
+        DRILLDOWN,
+        json_body=_seeded_request(stand_manifest, cursor=_tampered(issued_cursor, version=2)),
+    )
+    _refusal(response, 400, "cursor version is unsupported")
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
+def test_drilldown_refuses_a_cursor_replayed_against_another_selection(
+    api: ApiClient, stand_manifest: Manifest, issued_cursor: str
+) -> None:
+    """#1603 scenario 6 — a cursor is bound to the selection that issued it.
+
+    The replay keeps the metric — so the evidence relation and its snapshot
+    stay valid — and drops the filter and display dimension the cursor was
+    issued under, leaving the selection fingerprint as the only check that can
+    fire. That is the point: accepting the cursor would resume a filtered walk
+    inside an unfiltered one and quietly skip every row the old page ordering
+    had already passed.
+
+    A replay against a different METRIC is refused too, but lands as
+    `EVIDENCE_SNAPSHOT_EXPIRED` whenever the two evidence relations differ,
+    because the snapshot check runs before the fingerprint comparison — this
+    case keeps the metric so the fingerprint refusal itself is pinned.
+    """
+    request = _request_for(stand_manifest, GIT_COMMITS, limit=1, cursor=issued_cursor)
+    response = api.post(DRILLDOWN, json_body=request)
+    _refusal(response, 400, "cursor does not match the metric selection")
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
+def test_drilldown_refuses_a_cursor_from_an_expired_snapshot(
+    api: ApiClient, stand_manifest: Manifest, issued_cursor: str
+) -> None:
+    """#1603 scenario 6 — a snapshot no longer the table's is a failed precondition.
+
+    `snapshot_id` is the evidence table's UUID, so a genuine cursor with a
+    random one swapped in is exactly what a caller holds after the evidence
+    was rebuilt mid-walk. The documented refusal is the precondition violation
+    `EVIDENCE_SNAPSHOT_EXPIRED`, not an invalid argument: the cursor was
+    well-formed and honestly held, the world moved on. Its reason code is what
+    tells a client "restart the walk" apart from "your cursor is garbage".
+    """
+    tampered = _tampered(issued_cursor, snapshot_id=str(uuid.uuid4()))
+    response = api.post(DRILLDOWN, json_body=_seeded_request(stand_manifest, cursor=tampered))
+    _refusal(response, 400, "EVIDENCE_SNAPSHOT_EXPIRED")
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.parametrize("path", [DRILLDOWN, DRILLDOWN_EXPORT], ids=["drilldown", "export"])
+@pytest.mark.reliability
+def test_drilldown_refuses_an_undeclared_filter_dimension(
+    api: ApiClient, stand_manifest: Manifest, path: str
+) -> None:
+    """#1603 scenario 6 — a filter on a dimension the metric never declared.
+
+    Passing it through instead would make the filter a probe into the evidence
+    relation's real columns. The refusal names the `filters.dimension` field,
+    which is what separates it from the same words said about a display
+    dimension.
+    """
+    request = _request_for(
+        stand_manifest,
+        GIT_COMMITS,
+        filters=[{"dimension": _UNDECLARED_DIMENSION, "values": ["anything"]}],
+    )
+    response = _send(api, path, request)
+    _refusal(response, 400, "filters.dimension", "is not declared by the metric")
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.parametrize("path", [DRILLDOWN, DRILLDOWN_EXPORT], ids=["drilldown", "export"])
+@pytest.mark.reliability
+def test_drilldown_refuses_a_duplicated_filter_dimension(
+    api: ApiClient, stand_manifest: Manifest, path: str
+) -> None:
+    """#1603 scenario 6 — the same dimension filtered twice is refused, not merged.
+
+    Two filters on one dimension have no single meaning — intersection empties
+    the page, union widens it — and either silent choice would be read as a
+    statement about the data. Both value lists are individually valid, so the
+    refusal is attributable to the duplication alone.
+    """
+    request = _request_for(
+        stand_manifest,
+        GIT_COMMITS,
+        filters=[
+            {"dimension": "source", "values": ["github"]},
+            {"dimension": "source", "values": ["gitlab"]},
+        ],
+    )
+    response = _send(api, path, request)
+    _refusal(response, 400, "duplicate dimension filter")
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.parametrize("path", [DRILLDOWN, DRILLDOWN_EXPORT], ids=["drilldown", "export"])
+@pytest.mark.reliability
+def test_drilldown_refuses_a_filter_over_the_declared_value_cap(
+    api: ApiClient, stand_manifest: Manifest, path: str
+) -> None:
+    """#1603 scenario 6 — a value list past the per-filter cap is refused up front.
+
+    The cap is checked before values are deduplicated, so the refusal is about
+    the request's size as sent — a caller cannot smuggle an oversized list past
+    it with repeats, and the query never compiles an IN-list this long. The
+    list is deliberately repeats of a few distinct values: it would dedup to
+    well under the cap, so a 400 here pins the before-dedup ordering rather
+    than passing for either.
+    """
+    values: list[JsonValue] = [
+        f"value_{index:03d}" for index in range(_FILTER_DISTINCT_VALUES)
+    ] * _FILTER_VALUE_REPEATS
+    request = _request_for(
+        stand_manifest,
+        GIT_COMMITS,
+        filters=[{"dimension": "source", "values": values}],
+    )
+    response = _send(api, path, request)
+    _refusal(response, 400, "filters.values", "between 1 and 100 values are required")
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.parametrize("path", [DRILLDOWN, DRILLDOWN_EXPORT], ids=["drilldown", "export"])
+@pytest.mark.reliability
+def test_drilldown_refuses_an_undeclared_display_dimension(
+    api: ApiClient, stand_manifest: Manifest, path: str
+) -> None:
+    """#1603 scenario 6 — a display dimension the metric never declared.
+
+    A projected column reaches the response (and the export file), so an
+    unchecked one would be a column probe with the answer written into the
+    page. The refusal names `display_dimensions`, distinguishing it from the
+    filter-side twin of the same message.
+    """
+    request = _request_for(stand_manifest, GIT_COMMITS, display_dimensions=[_UNDECLARED_DIMENSION])
+    response = _send(api, path, request)
+    _refusal(response, 400, "display_dimensions", "is not declared by the metric")
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.parametrize("path", [DRILLDOWN, DRILLDOWN_EXPORT], ids=["drilldown", "export"])
+@pytest.mark.reliability
+def test_drilldown_refuses_an_unknown_metric_key(
+    api: ApiClient, stand_manifest: Manifest, path: str
+) -> None:
+    """#1603 scenario 6 — a well-formed key that names no metric is a 400.
+
+    The same classification `/v1/metric-results` uses: the catalogue loader
+    refuses a key it does not carry as an `UNAVAILABLE` field violation before
+    the drilldown validation's own not-found fallback can fire, so on the wire
+    an unknown key is a 400 on both operations. The key is shaped to pass
+    `normalize_metric_key`, so the refusal is the catalogue's and not a
+    spelling rejection dressed as one.
+    """
+    request = _request_for(stand_manifest, "stand.does_not_exist")
+    response = _send(api, path, request)
+    _refusal(response, 400, "unknown or unavailable metric key")
+
+
+@pytest.mark.requires_seed("dev_lead", "sales_ic")
+@pytest.mark.security
+def test_drilldown_export_refuses_an_out_of_scope_person_identically(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """#1603 scenario 13 — both export formats refuse exactly as the paged read.
+
+    Same outsider and selection as
+    `test_git_commit_drilldown_refuses_a_person_out_of_scope`. An export that
+    answered differently — a softer status, an empty file, or a filename via
+    content-disposition — would make the export path the cheap way around the
+    visibility gate, and a file is the one response a caller walks away with.
+    Identical means identical: status, problem class, reason and context are
+    compared field-for-field, and the body must parse as a bare problem
+    document — zero evidence bytes, no file offered.
+    """
+    outsider = stand_manifest.fixture("sales_ic")
+    request = _seeded_request(stand_manifest, entity_id=outsider.uuid)
+
+    paged = api.post(DRILLDOWN, json_body=request)
+    paged_document = _refusal(paged, 403)
+
+    for file_format in ("csv", "xlsx"):
+        response = _export(api, request, file_format)
+        document = _refusal(response, 403)
+        assert response.content_type.startswith(PROBLEM_CONTENT_TYPE), (
+            f"{file_format}: a refusal served as {response.content_type!r}, not a problem document"
+        )
+        assert response.headers.get("content-disposition") is None, (
+            f"{file_format}: a refusal must not offer a file, got "
+            f"{response.headers.get('content-disposition')!r}"
+        )
+        assert (document.type, document.title, document.detail, document.context) == (
+            paged_document.type,
+            paged_document.title,
+            paged_document.detail,
+            paged_document.context,
+        ), f"{file_format}: the export's refusal differs from the paged read's"

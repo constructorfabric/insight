@@ -36,6 +36,7 @@ import {
   PEOPLE_ITEMS,
   PLANNED_GROUP_LABEL,
   partitionByReadiness,
+  resolveZoneItem,
   ZONE_SECTIONS,
   zoneById,
   type Direction,
@@ -89,6 +90,7 @@ export function ContextPane() {
   const { activeZone } = useActiveZone();
   const zone = zoneById(activeZone);
   const title = zone?.label ?? "Insight";
+  const active = resolveZoneItem(activeZone, usePortalItem());
 
   return (
     <Sidebar collapsible={drawer ? "offcanvas" : "none"} className="border-e">
@@ -111,13 +113,13 @@ export function ContextPane() {
         {activeZone === "directions" ? (
           <DirectionsNav />
         ) : activeZone === "people" ? (
-          <PeopleNav />
+          <PeopleNav active={active} />
         ) : activeZone === "manage" ? (
-          <ItemsNav items={MANAGE_ITEMS} groupLabel="Manage" />
+          <ItemsNav items={MANAGE_ITEMS} groupLabel="Manage" active={active} />
         ) : activeZone === "person" ? (
           <PersonSectionsNav />
         ) : (
-          <ThemeNav zoneId={activeZone} />
+          <ThemeNav zoneId={activeZone} active={active} />
         )}
       </SidebarContent>
       {isPhone ? (
@@ -227,9 +229,8 @@ function MobileZoneNav() {
 
 /* ── Theme zones (Overview / AI & Cost / Scorecard / Reports) ────────── */
 
-function ThemeNav({ zoneId }: { zoneId: string }) {
+function ThemeNav({ zoneId, active }: { zoneId: string; active: string | null }) {
   const groups = ZONE_SECTIONS[zoneId] ?? [];
-  const active = usePortalItem();
   const showPlanned = usePortalShowPlanned();
   // Everything not yet real is pulled out of its original group and collected
   // under one demoted "Planned" group at the bottom, so the working menu reads
@@ -271,11 +272,12 @@ function ThemeNav({ zoneId }: { zoneId: string }) {
 function ItemsNav({
   items,
   groupLabel,
+  active,
 }: {
   items: readonly PaneItem[];
   groupLabel: string;
+  active: string | null;
 }) {
-  const active = usePortalItem();
   const showPlanned = usePortalShowPlanned();
   const { live, planned } = partitionByReadiness(items, showPlanned);
   return (
@@ -451,8 +453,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
 
 /* ── People / Person zones ───────────────────────────────────────────── */
 
-function PeopleNav() {
-  const active = usePortalItem();
+function PeopleNav({ active }: { active: string | null }) {
   return (
     <>
       <SidebarGroup>
@@ -523,23 +524,43 @@ function PersonSectionsNav() {
                     dismiss();
                   }}
                   title={
-                    standing?.hasData === false
-                      ? "No data this period"
-                      : standing?.phrase
+                    // Nothing to say until the standings arrive. Both flags
+                    // read false while the queries are in flight, so left to
+                    // fall through, the tooltip announced the strongest of the
+                    // three — that nothing feeds this section — on an answer
+                    // the hook had not given. The mark is hidden for that
+                    // reason already; the words have to follow it.
+                    standing == null || standing.isPending
+                      ? undefined
+                      : standing.hasData
+                        ? standing.phrase
+                        : standing.peersHaveData
+                          ? "No data this period"
+                          : "No data reaches us for this section"
                   }
                 >
                   <Layers />
                   <span className="min-w-0 flex-1 truncate">{g.title}</span>
                   {/* The mark that answers "which section is worth opening",
-                      beside the thing you click. Grey means the section has
-                      nothing this period — worth knowing before you open it. */}
+                      beside the thing you click.
+
+                      Three marks, not two, because empty means two different
+                      things. A grey dot is a section that reads fine and holds
+                      nothing for this person this period — a fact about them.
+                      A hollow ring is one nothing feeds — a fact about the
+                      install, and not worth opening at all until that changes.
+                      Drawn identically, the second sent readers looking for a
+                      person's missing work when the connector was the whole
+                      story. */}
                   {standing && !standing.isPending ? (
                     <span
                       className={cn(
                         "size-1.5 shrink-0 rounded-full",
                         standing.hasData
                           ? STATUS_BG_CLASS[standing.status]
-                          : "bg-muted-foreground/30",
+                          : standing.peersHaveData
+                            ? "bg-muted-foreground/30"
+                            : "border border-muted-foreground/40",
                       )}
                       aria-hidden
                     />

@@ -549,7 +549,11 @@ services:
       insight:
         aliases: [insight-front]
     environment:
-      CSP_REMOTE: ${CSP_REMOTE:-}
+      # Must be DEFINED even when empty: the stock nginx entrypoint's envsubst
+      # only substitutes environment variables that exist, and an unsubstituted
+      # ${SENTRY_CONNECT_SRC} in the CSP template is an nginx [emerg]. The
+      # published image's own entrypoint substitutes it unconditionally.
+      SENTRY_CONNECT_SRC: ${SENTRY_CONNECT_SRC:-}
     volumes:
       # Host-built dist/ — produced by dev-compose.sh build (build-frontend)
       # or by running `pnpm build` in src/frontend.
@@ -557,7 +561,9 @@ services:
       - ./src/frontend/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ./src/frontend/nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      # 8080, not the stock image's 80: the mounted default.conf.template is
+      # the published image's and declares `listen 8080`.
+      - "${FRONTEND_PORT:-3000}:8080"
 
   insight-front-ghcr:
     !!merge <<: *restart-policy
