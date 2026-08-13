@@ -1590,17 +1590,17 @@ test_stand_write_env() {
 #   collab  <- class_collab_{chat,email,meeting}_activity, focus_metrics (collab.py)
 #   ai      <- class_ai_{assistant,dev}_usage                            (ai.py)
 #   ai_cost <- class_ai_overage                                          (ai.py)
+#   wiki    <- class_wiki_{pages,activity,engagement}                    (wiki.py)
 #
-# `wiki_metric_observations` is absent ON PURPOSE: its evidence model reads
-# class_wiki_* and there is no wiki generator, so requiring it would hang every
-# run. The crm, support, hr and people generators have no observation table of
-# their own — they feed other surfaces — so they cannot be gated on here.
+# The crm, support, hr and people generators have no observation table of their
+# own — they feed other surfaces — so they cannot be gated on here.
 TEST_STAND_READY_TABLES=(
   task_metric_observations
   git_metric_observations
   collab_metric_observations
   ai_metric_observations
   ai_cost_metric_observations
+  wiki_metric_observations
 )
 
 test_stand_ch_query() {

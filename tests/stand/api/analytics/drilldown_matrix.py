@@ -188,6 +188,12 @@ MATRIX: Sequence[Expectation] = (
     Expectation("wiki.pages_edited", "wiki", Tier.EXACT_SUM),
 )
 
+#: A metric the stand serves but has no evidence for: its measure reads
+#: `class_collab_document_activity`, which no generator writes, so the drilldown
+#: answers 200 with no rows. Named once because two tests need the same
+#: property, and it holds only as long as that relation stays unseeded.
+EMPTY_EVIDENCE_METRIC = "collab.files_engaged"
+
 #: One metric per distinct evidence presentation, plus the capable-but-empty
 #: case. A presentation is all an export can differ by — the column set and the
 #: header labels are everything it serializes — and every other metric in the
@@ -201,4 +207,5 @@ EXPORT_SHAPES: Sequence[str] = (
     "git.merge_rate",
     "collab.messages_sent",
     "wiki.pages_created",
+    EMPTY_EVIDENCE_METRIC,
 )

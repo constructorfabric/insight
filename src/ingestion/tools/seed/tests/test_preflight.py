@@ -150,7 +150,7 @@ class SilverResetGuardTests(unittest.TestCase):
         for schema, table in RESET_TARGETS:
             with self.subTest(target=f"{schema}.{table}"):
                 self.assertIn(f"`{schema}`.`{table}`", scan)
-        self.assertNotIn("class_wiki_activity", scan)
+        self.assertNotIn("class_collab_document_activity", scan)
 
     def test_every_registered_target_is_actually_truncated_by_a_generator(self) -> None:
         """The registry is what preflight scans, so a target that no generator
