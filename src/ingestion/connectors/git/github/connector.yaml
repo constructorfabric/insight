@@ -57,7 +57,7 @@ definitions:
         action: FAIL
         http_codes: [401]
         failure_type: config_error
-        error_message: GitHub rejected the token; check github_token scopes (repo, read:org)
+        error_message: GitHub rejected the token; check github_token scopes (repo, read:org, read:project)
       - type: HttpResponseFilter
         action: RETRY
         http_codes: [500, 502, 503, 504]
@@ -83,7 +83,7 @@ definitions:
         action: FAIL
         http_codes: [401]
         failure_type: config_error
-        error_message: GitHub rejected the token; check github_token scopes (repo, read:org)
+        error_message: GitHub rejected the token; check github_token scopes (repo, read:org, read:project)
       # Any other GraphQL error still arrives as HTTP 200, and a query-level
       # one omits `data` entirely; without this the extractor finds nothing and
       # the paginator throws an unreadable interpolation error. Fail with what
@@ -111,7 +111,7 @@ definitions:
         action: FAIL
         http_codes: [401]
         failure_type: config_error
-        error_message: GitHub rejected the token; check github_token scopes (repo, read:org)
+        error_message: GitHub rejected the token; check github_token scopes (repo, read:org, read:project)
       - type: HttpResponseFilter
         action: IGNORE
         predicate: "{{ (response.get('errors') or []) | selectattr('type', 'in', ['NOT_FOUND', 'FORBIDDEN']) | list | length > 0 }}"
@@ -152,7 +152,7 @@ definitions:
         action: FAIL
         http_codes: [401]
         failure_type: config_error
-        error_message: GitHub rejected the token; check github_token scopes (repo, read:org)
+        error_message: GitHub rejected the token; check github_token scopes (repo, read:org, read:project)
       - type: HttpResponseFilter
         action: RETRY
         http_codes: [500, 502, 503, 504]
@@ -160,7 +160,7 @@ definitions:
 
   rest_requester: &rest_requester
     type: HttpRequester
-    url_base: "{{ config.get('github_api_base_url', 'https://api.github.com') }}"
+    url_base: https://api.github.com
     http_method: GET
     authenticator:
       type: BearerAuthenticator
@@ -350,8 +350,14 @@ definitions:
 
 check:
   type: CheckStream
+  # branches is the cheapest proxy-backed stream, and it is checked so a wrong
+  # git_proxy_url or git_proxy_token fails setup instead of the first sync: the
+  # proxy answers an unauthenticated call with 401, which the CDK maps to a
+  # config error. On a repository the proxy has not cloned yet this waits out
+  # the clone, so a first check can be slow.
   stream_names:
     - repositories
+    - branches
 
 streams:
   # ── Repository roster (GitHub API) ──────────────────────────────────────
@@ -2086,10 +2092,11 @@ spec:
       github_token:
         type: string
         description: >-
-          GitHub personal access token or App installation token. Needs `repo`
-          and `read:org` (classic) or equivalent fine-grained permissions. The
-          same token is forwarded to the proxy for the clone and never stored
-          there.
+          GitHub personal access token or App installation token. Needs `repo`,
+          `read:org` and `read:project` (classic) or equivalent fine-grained
+          permissions; `read:project` is what the projects_v2 stream reads and
+          is not implied by the other two. The same token is forwarded to the
+          proxy for the clone and never stored there.
         title: GitHub Token
         airbyte_secret: true
         order: 2
@@ -2122,14 +2129,6 @@ spec:
         title: Start Date
         format: date
         order: 6
-      github_api_base_url:
-        type: string
-        description: >-
-          GitHub REST API base URL. Override for GitHub Enterprise Server
-          (e.g. https://ghe.example.com/api/v3).
-        title: API Base URL
-        default: "https://api.github.com"
-        order: 7
     additionalProperties: true
 
 metadata:

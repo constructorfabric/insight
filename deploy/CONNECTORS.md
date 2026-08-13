@@ -200,7 +200,7 @@ metadata:
   annotations: { insight.cyberfabric.com/connector: github, insight.cyberfabric.com/source-id: github-main }
 type: Opaque
 stringData:
-  github_token:         "ghp_CHANGE_ME"   # repo, read:org
+  github_token:         "ghp_CHANGE_ME"   # repo, read:org, read:project
   github_organizations: '["myorg"]'       # JSON array
   github_start_date:    "2026-01-01"
   git_proxy_url:        "http://insight-git-cli-proxy:8085"
