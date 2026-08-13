@@ -23,10 +23,25 @@ CHART = Path(__file__).resolve().parents[1]
 RELEASE = "insight"
 
 
-def render(**overrides: str) -> list[dict]:
-    args = ["helm", "template", RELEASE, str(CHART), "--set", "existingSecret=cfg"]
+# The chart refuses to render an allow-list that names no namespace, so every
+# render that is not about that refusal has to name one.
+ALLOWED_NAMESPACE = {
+    "networkPolicy__allowedNamespaceLabels[0]__key": "kubernetes.io/metadata.name",
+    "networkPolicy__allowedNamespaceLabels[0]__values[0]": "airbyte",
+}
+SECRET = {"existingSecret": "cfg"}
+BASE = {**SECRET, **ALLOWED_NAMESPACE}
+
+
+def helm_args(overrides: dict[str, str]) -> list[str]:
+    args = ["helm", "template", RELEASE, str(CHART)]
     for key, value in overrides.items():
         args += ["--set", f"{key.replace('__', '.')}={value}"]
+    return args
+
+
+def render(**overrides: str) -> list[dict]:
+    args = helm_args({**BASE, **overrides})
     out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
     return [doc for doc in yaml.safe_load_all(out) if doc]
 
@@ -167,10 +182,20 @@ def test_token_never_reaches_the_configmap():
     )
 
 
-def test_ingress_is_denied_until_a_namespace_is_allowed():
+def test_an_allow_list_naming_no_namespace_refuses_to_render():
+    """It would render a policy that denies every caller — an install that looks
+    healthy and times out every sync."""
+    done = subprocess.run(helm_args(SECRET), capture_output=True, text=True, check=False)
+    assert done.returncode != 0, f"render should have failed, got:\n{done.stdout}"
+    assert "allowedNamespaceLabels names no namespace" in done.stderr
+
+
+def test_ingress_stays_closed_to_everything_unnamed():
     policy = one(render(), "NetworkPolicy")
     assert policy["spec"]["policyTypes"] == ["Ingress"]
-    assert not policy["spec"].get("ingress"), "an unconfigured allow-list must deny, not open, this API"
+    rules = policy["spec"]["ingress"]
+    assert len(rules) == 1, "only the named namespace reaches this API"
+    assert "podSelector" not in rules[0]["from"][0], "the rule selects a namespace, not the whole cluster"
 
 
 def test_allowed_namespaces_become_ingress_rules():
@@ -223,15 +248,13 @@ def test_probes_target_the_public_health_path():
 
 def test_missing_secret_fails_the_render():
     with pytest.raises(subprocess.CalledProcessError) as excinfo:
-        subprocess.run(["helm", "template", RELEASE, str(CHART)], capture_output=True, text=True, check=True)
+        subprocess.run(helm_args(ALLOWED_NAMESPACE), capture_output=True, text=True, check=True)
     assert "existingSecret is required" in excinfo.value.stderr
 
 
 def render_fails(**overrides: str) -> str:
     """The stderr of a render that must be refused."""
-    args = ["helm", "template", RELEASE, str(CHART), "--set", "existingSecret=cfg"]
-    for key, value in overrides.items():
-        args += ["--set", f"{key.replace('__', '.')}={value}"]
+    args = helm_args({**BASE, **overrides})
     done = subprocess.run(args, capture_output=True, text=True, check=False)
     assert done.returncode != 0, f"render should have failed, got:\n{done.stdout}"
     return done.stderr

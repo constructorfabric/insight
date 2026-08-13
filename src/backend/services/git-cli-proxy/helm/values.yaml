@@ -83,7 +83,9 @@ networkPolicy:
   # Disabling this exposes git credentials-bearing endpoints to the whole
   # cluster — only do it on a cluster without NetworkPolicy support.
   enabled: true
-  # Namespaces allowed to reach the service, matched by label.
+  # Namespaces allowed to reach the service, matched by label. Naming none
+  # refuses to render: a policy with no rule denies every caller, which looks
+  # like a healthy install and fails every sync.
   allowedNamespaceLabels:
     - key: kubernetes.io/metadata.name
       values: []

@@ -38,6 +38,10 @@ jobs:
       - name: Install test deps
         run: pip install pytest pyyaml
       - name: helm lint
-        run: helm lint src/backend/services/git-cli-proxy/helm --set existingSecret=cfg
+        run: |
+          helm lint src/backend/services/git-cli-proxy/helm \
+            --set existingSecret=cfg \
+            --set 'networkPolicy.allowedNamespaceLabels[0].key=kubernetes.io/metadata.name' \
+            --set 'networkPolicy.allowedNamespaceLabels[0].values[0]=airbyte'
       - name: Render contract
         run: pytest src/backend/services/git-cli-proxy/helm/tests/ -q

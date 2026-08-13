@@ -528,17 +528,18 @@ gitCliProxy:
     heavyOpsConcurrency: 4
     caCertPath: ""
   caCertSecret: ""
-  # Bearer token the proxy requires on every /v1 request. REQUIRED when
-  # deploy=true and never generated: the connectors must present the same
-  # value in their Airbyte source config, so a generated one could not be
-  # re-derived there and would rotate on every GitOps reconcile.
+  # Bearer token the proxy requires on every /v1 request. Empty = generated on
+  # first install and reused on every upgrade; reconcile hands it to the
+  # connectors, so an operator never needs to see or copy it. Set it only to
+  # pin a specific value.
   proxyToken: ""
   # Composed by templates/secrets.yaml (carries the bearer token).
   existingSecret: "insight-git-cli-proxy-config"
   networkPolicy:
     enabled: true
-    # Namespaces whose pods may call the proxy. Empty denies all ingress —
-    # set this to the namespace running Airbyte connector jobs.
+    # Namespaces whose pods may call the proxy: the one running Airbyte
+    # connector jobs. Required when deploy=true — the subchart refuses to
+    # render an allow-list that would deny every caller.
     allowedNamespaceLabels:
       - key: kubernetes.io/metadata.name
         values: []
