@@ -181,7 +181,8 @@ export interface MetricResultsResponse {
 }
 
 export async function queryMetricResults(
-  body: MetricResultsRequest
+  body: MetricResultsRequest,
+  signal?: AbortSignal
 ): Promise<MetricResultsResponse> {
   // Refuse a request the backend is guaranteed to reject (400 invalid_argument,
   // "entity.ids must not be empty"). Callers are expected to keep the query
@@ -196,6 +197,7 @@ export async function queryMetricResults(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   if (!res.ok) {
     const errorBody = await res.json().catch(() => null);
