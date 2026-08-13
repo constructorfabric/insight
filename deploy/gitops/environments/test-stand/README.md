@@ -159,11 +159,14 @@ coordinates, image, IdP source type **and the dev-lead address** from the
 cluster:
 
 ```bash
-./src/ingestion/tools/seed/seed-stand.sh -n insight --context insight-test-stand --days 365
+./src/ingestion/tools/seed/seed-stand.sh -n insight --context insight-test-stand --days 730
 ```
 
-`--days 365`, not more — the analytics API rejects a window ≥ 400 days
-(INFRA.md incident §3). **No `--email`, and that's the point:** the address is
+`--days 730` is what CI seeds, and matching it matters: the 400-day limit the
+analytics API enforces is a cap on a single request's period, not on the seeded
+window, and a suite asking about "the seeded range" clamps itself to the
+queryable tail. Seeding a narrower window instead disarms that clamp — see
+INFRA.md, "730-day seed window". **No `--email`, and that's the point:** the address is
 read out of the applied realm (the `insight-keycloak-config-realms` ConfigMap,
 the user whose `id` is the roster's dev-lead UUID), so the realm is the source
 of truth and the seed follows it. The script prints where it came from —
@@ -297,16 +300,20 @@ invocations to before. One deploy procedure; step 3 above is the command CI runs
 **What CI does:** the deploy is a reusable workflow called from the
 chart-publishing workflow after publish, on `main` only, with the chart version
 from the publish job's output. Credentials come from the `insight-test-stand`
-GitHub environment (main-only); the CI credential is a namespace-scoped SA, admin
-kubeconfigs stay human-only. Runs coalesce (never cancel a live upgrade); four
-named stages (deploy, seed, smoke, suite), each a prefix of the last, so the
-suite never runs after a failed smoke and smoke never after a failed seed. On
-failure it prints only the dead stage + edge probe codes — no `describe`/env
-dumps/cluster log artifacts (public logs). The one exception is the suite's
-Playwright traces and screenshots, and they are uploaded only after the
-redaction script has rewritten and re-verified each file; anything it cannot
-prove clean it deletes instead. A red run belongs to the author of the merge
-that produced it: fix forward, or revert.
+GitHub environment; the CI credential is a namespace-scoped SA, admin
+kubeconfigs stay human-only. Runs coalesce (never cancel a live upgrade). The
+`stages` input is a four-name prefix chain (deploy, seed, smoke, suite), so the
+suite never runs after a failed smoke and smoke never after a failed seed; the
+workflow numbers five, because the edge probe between deploy and seed can fail
+the run on its own. On failure it prints only the dead stage + edge probe codes
+— no `describe`/env dumps/cluster log artifacts (public logs). The exceptions
+are the suite's Playwright traces, which the redaction script rewrites and
+re-verifies before upload (deleting anything it cannot prove clean), and its
+screenshots, which ride along unrewritten: that script opens `*.zip` and
+nothing else, and a screenshot is a page render carrying seeded persona data
+but no header and no cookie. No video is captured, for the same reason. A red
+run belongs to the author of the merge that produced it: fix forward, or
+revert.
 
 ## Known gaps
 

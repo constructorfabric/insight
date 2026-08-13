@@ -54,13 +54,20 @@ jobs:
   suite:
     name: stand suite
     runs-on: ubuntu-latest
+    # This environment has to admit the ref being dispatched. An allow-list of
+    # exactly `main` would make this workflow — whose whole purpose is running a
+    # branch's tests — fail before its first step.
     environment: insight-test-stand
-    timeout-minutes: 90
+    # Above the sum of the step ceilings: re-seed (110) + browser (10) +
+    # suite (60). A job ceiling under that kills the run before a step's own
+    # limit can fire, which is how a slow re-seed leaves a Job in the cluster.
+    timeout-minutes: 190
     env:
       STAND_NAMESPACE: insight
       INVENTORY_FILE: deploy/gitops/environments/test-stand/inventory.yaml
-      # This repo is public: every cluster/seeder/pytest byte goes through
-      # $REDACT before the console; raw copies stay in $RUNNER_TEMP.
+      # This repo is public. Cluster and pytest output goes through $REDACT on
+      # its way to the console — the pipes below, not a blanket property of the
+      # job: a step that echoes something new has to add its own.
       REDACT: .github/workflows/scripts/redact-stand-log.py
 
     steps:
@@ -70,9 +77,36 @@ jobs:
 
       - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
 
+      # Only the re-seed path needs helm — seed-stand.sh reads the release's
+      # values to resolve the seeder image — but it is pinned here rather than
+      # taken from the runner image for the same reason the deploy pins it.
+      - name: Set up Helm
+        if: ${{ inputs.reseed }}
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: '3.14.0'
+
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           cache-suffix: stand-suite-dispatch
+
+      # The seeder shells out to these; a missing one should say so here rather
+      # than half way through a re-seed.
+      - name: Check the tools this workflow and the seeder shell out to
+        env:
+          RESEED: ${{ inputs.reseed }}
+        run: |
+          set -euo pipefail
+          tools="kubectl jq python3"
+          if [ "$RESEED" = "true" ]; then tools="$tools helm yq envsubst"; fi
+          missing=""
+          for tool in $tools; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::the runner image no longer carries:$missing — install it in this job"
+            exit 1
+          fi
 
       - name: Confirm the environment is wired up
         env:

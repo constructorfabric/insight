@@ -54,7 +54,7 @@ jobs:
     name: deploy → seed → smoke → suite
     runs-on: ubuntu-latest
     # `environment:` cannot sit on a job that `uses:` a reusable workflow, so
-    # it is declared here; its main-only branch policy still evaluates.
+    # it is declared here rather than on the caller.
     environment: insight-test-stand
     # Above the sum of the step ceilings: deploy (14) + edge (3) + seed, which
     # runs seed + identity projection + gold rebuild (110) + smoke (5) +
@@ -71,8 +71,10 @@ jobs:
       ROUTE_NAMES: insight-gateway insight-keycloak
       REQUESTED_CHART_VERSION: ${{ inputs.chart_version }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      # This repo is public: every cluster/seeder/pytest byte goes through
-      # $REDACT before the console; raw copies stay in $RUNNER_TEMP.
+      # This repo is public. Cluster, seeder and pytest output goes through
+      # $REDACT on its way to the console — at the pipes below, not as a blanket
+      # property of the job: a step that echoes something new has to add its
+      # own. Raw copies stay in $RUNNER_TEMP.
       REDACT: .github/workflows/scripts/redact-stand-log.py
 
     steps:
@@ -142,8 +144,8 @@ jobs:
                    "stand is that branch's idea of the deploy, not main's."
             else
               echo "::error::this workflow deploys main and only main (ref was '$REF_NAME', event '$EVENT')."
-              echo "A workflow_call arrives from build-images.yml after a publish, which only"
-              echo "happens on main, so a call from anywhere else means the caller's guard broke."
+              echo "A workflow_call arrives from deploy-test-stand-on-publish.yml, which fires"
+              echo "on a main build, so a call from anywhere else means the caller's guard broke."
               exit 1
             fi
           fi
@@ -376,7 +378,7 @@ jobs:
             exit 1
           fi
 
-      # Before the 65-minute seed on purpose: an unreachable stand must fail
+      # Before the long seed on purpose: an unreachable stand must fail
       # fast, not surface later as a misleading smoke failure.
       - name: 'Stage 2/5 — black-box the public edge (DNS, TLS, route, auth)'
         id: edge
@@ -415,10 +417,14 @@ jobs:
             exit 1
           fi
 
-      # seed-stand.sh now runs three Jobs in sequence — the seed itself, the
-      # identity projection (persons-seed + persons-sync), and the gold rebuild.
-      # 110 min sits above the sum of their own activeDeadlineSeconds, so each
-      # Job's deadline fires first and leaves no orphan Job.
+      # seed-stand.sh runs FOUR Jobs in sequence — the seed itself, persons-seed
+      # and persons-sync for the identity projection, and the gold rebuild —
+      # each with its own hour-long activeDeadlineSeconds. This ceiling is well
+      # under that sum on purpose: four Jobs each taking their full hour is a
+      # wedged stand, not a slow one, and 110 min is already far above a healthy
+      # run. It fires first in that case, so a timed-out seed CAN leave a Job
+      # running in the cluster — the run says which one, and it is reaped by
+      # ttlSecondsAfterFinished once it ends.
       - name: 'Stage 3/5 — seed the stand'
         id: seed
         if: steps.stages.outputs.run_seed == 'true'
@@ -542,13 +548,15 @@ jobs:
             --browser chromium \
             --tracing=retain-on-failure \
             --screenshot=only-on-failure \
-            --video=retain-on-failure \
             2>&1 | python3 "$REDACT"
 
       # BETWEEN capture and upload, and always — a failed run is exactly when a
       # trace exists. A Playwright trace replays a real signed-in session: it
       # carries the session cookie and every Authorization header. The script
-      # fails closed — a trace it cannot rewrite and verify is deleted.
+      # fails closed — a trace it cannot rewrite and verify is deleted. It
+      # opens `*.zip` and nothing else, which is why no video is captured
+      # above: an unopened recording of a signed-in session is the one artifact
+      # nothing here could vouch for.
       - name: Strip credentials from traces
         id: redact_traces
         if: always() && (steps.suite.outcome == 'success' || steps.suite.outcome == 'failure')
@@ -556,7 +564,9 @@ jobs:
 
       - name: Upload traces and screenshots
         # Gated on redaction having SUCCEEDED, not merely run: a non-zero exit
-        # means at least one artifact was not proven clean.
+        # means at least one trace was not proven clean. Screenshots ride along
+        # unrewritten — they are page renders, carrying seeded persona data but
+        # no header and no cookie.
         if: always() && steps.redact_traces.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -564,7 +574,6 @@ jobs:
           path: |
             test-results/**/*.zip
             test-results/**/*.png
-            test-results/**/*.webm
           # A green run keeps none of them, by the capture policy above.
           if-no-files-found: ignore
           retention-days: 7
