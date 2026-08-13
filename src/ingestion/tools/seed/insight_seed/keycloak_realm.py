@@ -35,7 +35,19 @@ from .profiles import (
 )
 
 REALM_NAME = "insight"
-DEV_PASSWORD = "insight-dev"
+# Every seeded user's login credential. An internet-reachable stand MUST set
+# INSIGHT_SEED_PERSONA_PASSWORD here, and TEST_STAND_PERSONA_PASSWORD in CI.
+_ENV_PASSWORD = os.environ.get("INSIGHT_SEED_PERSONA_PASSWORD")
+if _ENV_PASSWORD is not None and len(_ENV_PASSWORD) < 16:
+    # A short/common value would also poison the manifest's substring scrub
+    # (_FORBIDDEN_LITERALS) and fail every seed at its final write.
+    raise ValueError(
+        "INSIGHT_SEED_PERSONA_PASSWORD must be at least 16 characters; "
+        "unset it entirely to use the local-stand default"
+    )
+DEV_PASSWORD = (
+    _ENV_PASSWORD or "insight-dev"
+)  # RULE-DEFAULTS-OK: documented constant for local/compose stands whose Keycloak is not reachable from outside
 
 # The 4 team org units, plus `executive` for the CEO and `operations` for the
 # admin operator. Every user is placed in the group matching their org unit, so

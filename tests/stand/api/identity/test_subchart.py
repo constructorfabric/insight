@@ -69,6 +69,7 @@ def test_subchart_is_200_with_a_session(lead_session: PersonaSession) -> None:
 
 
 @pytest.mark.security
+@pytest.mark.stand_smoke
 def test_the_session_belongs_to_the_persona_who_logged_in(lead_session: PersonaSession) -> None:
     """A session that authenticates as somebody else is worse than none.
 
@@ -78,6 +79,12 @@ def test_the_session_belongs_to_the_persona_who_logged_in(lead_session: PersonaS
     on that node — is the whole chain confirming it landed on the intended
     human: Keycloak authenticated them, the authenticator mapped the token to a
     person, and identity found that person in the seeded roster.
+
+    Marked `stand_smoke`: this is the post-deploy gate's "a seeded persona can
+    actually log in" check. `lead_session` drives the real OIDC chain against
+    Keycloak to obtain the session in the first place, so a login that cannot
+    complete fails here at fixture setup, before this test's own assertion
+    ever runs.
     """
     nodes = [node for root in _forest(lead_session).roots for node in walk(root)]
     mine = [node for node in nodes if node.email == lead_session.email]

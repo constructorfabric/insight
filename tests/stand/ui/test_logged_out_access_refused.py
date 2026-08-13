@@ -19,6 +19,8 @@ existed.
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 import pytest
 from insight_stand import SESSION_COOKIE_NAME, Manifest
 from playwright.sync_api import Browser, expect
@@ -55,9 +57,14 @@ def test_an_anonymous_browser_is_sent_to_the_idp(
 
         expect(KeycloakLoginPage(page).username_field()).to_be_visible()
 
-        assert not page.url.startswith(base_url), (
-            f"an anonymous visit to {route} stayed on {page.url} — the product view "
-            "was served without a session"
+        # Asserted on the PATH, not the origin: this IdP can be published on
+        # the app's own hostname (this stand serves it at /kc), so asserting
+        # the browser left base_url fails there. `/protocol/openid-connect/auth`
+        # is Keycloak's own URL layout, not something OIDC itself mandates.
+        path = urlsplit(page.url).path
+        assert "/protocol/openid-connect/auth" in path, (
+            f"an anonymous visit to {route} left the browser at {page.url}, which is not an "
+            "OIDC authorization endpoint — the product view was served without a session"
         )
         assert [c["name"] for c in context.cookies(base_url)] == [], (
             f"an anonymous visit to {route} left cookies on {base_url}: {context.cookies(base_url)}"
