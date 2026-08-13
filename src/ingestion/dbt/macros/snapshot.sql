@@ -48,6 +48,27 @@ WITH source_data AS (
 
 {% if is_incremental() %}
 
+{#- The adapter's INSERT maps SELECT output to the persisted table's columns
+    POSITIONALLY. A `s.*` projection follows the source's physical column
+    order, so a source rebuilt with a different layout (e.g. an Airbyte
+    connector migration) silently lands values in unrelated columns. Project
+    explicitly in the persisted target's own order, and refuse to write when
+    the column sets have drifted apart. -#}
+{%- set target_columns = adapter.get_columns_in_relation(this) -%}
+{%- set source_names = adapter.get_columns_in_relation(source_ref) | map(attribute='name') | list -%}
+{%- set generated_names = ['_row_hash', '_tracked_at'] -%}
+{%- set target_names = target_columns | map(attribute='name') | list -%}
+{%- set missing_in_source = target_names | reject('in', source_names) | reject('in', generated_names) | list -%}
+{%- set missing_in_target = source_names | reject('in', target_names) | list -%}
+{%- if missing_in_source or missing_in_target -%}
+    {{ exceptions.raise_compiler_error(
+        'snapshot(): column drift between ' ~ source_ref ~ ' and persisted ' ~ this ~ '. ' ~
+        'Missing in source: [' ~ missing_in_source | join(', ') ~ ']. ' ~
+        'New in source: [' ~ missing_in_target | join(', ') ~ ']. ' ~
+        'Migrate or rebuild the snapshot table before appending — a blind append would corrupt it.'
+    ) }}
+{%- endif %}
+
 , latest AS (
     SELECT
         {{ unique_key_col }},
@@ -57,8 +78,15 @@ WITH source_data AS (
 )
 
 SELECT
-    s.*,
-    now() AS _tracked_at
+    {%- for col in target_columns %}
+    {% if col.name == '_tracked_at' -%}
+        now() AS _tracked_at
+    {%- elif col.name == '_row_hash' -%}
+        s._row_hash
+    {%- else -%}
+        s.{{ adapter.quote(col.name) }}
+    {%- endif %}{{ ',' if not loop.last }}
+    {%- endfor %}
 FROM source_data s
 LEFT JOIN latest l ON s.{{ unique_key_col }} = l.{{ unique_key_col }}
 WHERE l.{{ unique_key_col }} IS NULL
