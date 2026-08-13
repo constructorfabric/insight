@@ -383,7 +383,12 @@ export function MetricTimeseriesTable({
       </TableBody>
       {/* The top edge is what says the rows continue underneath; without it
           the pinned block reads as the end of the table. */}
-      <TableFooter className="sticky bottom-0 z-20 shadow-[inset_0_1px_0_0_var(--border)]">
+      {/* Opaque, overriding the default half-transparent tint: the value cells
+          carry no background of their own, so rows travelled under the totals
+          and the row the footer covers showed through sliced along its middle.
+          A frosted variant keeps that sliver visible by design — the totals
+          need the row behind them gone, not softened. */}
+      <TableFooter className="sticky bottom-0 z-20 bg-muted shadow-[inset_0_1px_0_0_var(--border)]">
         <TableRow>
           <TableCell className="sticky left-0 z-10 w-28 max-w-28 min-w-28 bg-muted px-2 py-1 font-semibold after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border">
             Total
