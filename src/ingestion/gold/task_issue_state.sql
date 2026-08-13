@@ -28,6 +28,20 @@
 -- a stale version would skew the pivot.
 
 WITH
+-- Issues deleted at the source (or sitting in the project trash) leave every
+-- task metric: this table is the root of the gold task chain, so the filter
+-- propagates to spans, worklog flow and evidence. archived / access_lost /
+-- unobserved issues stay in — the entity still exists, its data is merely
+-- stale, and excluding it would silently shrink history. Issues with no
+-- availability row (source without a census) default to present.
+unavailable_issues AS (
+    SELECT
+        insight_source_id,
+        entity_id                                                            AS issue_id
+    FROM {{ ref('class_task_availability') }} FINAL
+    WHERE entity_kind = 'issue'
+      AND availability IN ('deleted', 'trashed')
+),
 task_users AS (
     SELECT
         tenant_id,
@@ -101,6 +115,9 @@ FROM issue_pivot AS p
 INNER JOIN task_users AS u
     ON u.insight_source_id = p.insight_source_id
     AND u.user_id = p.assignee_account_id
+LEFT ANTI JOIN unavailable_issues AS ui
+    ON ui.insight_source_id = p.insight_source_id
+    AND ui.issue_id = p.issue_id
 LEFT JOIN issue_close AS c
     ON c.insight_source_id = p.insight_source_id AND c.issue_id = p.issue_id
 LEFT JOIN {{ ref('class_task_statuses') }} AS cur FINAL

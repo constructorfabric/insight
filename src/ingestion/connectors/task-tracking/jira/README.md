@@ -4,6 +4,9 @@ Extracts projects, users, issues, issue history (changelog), comments, worklogs,
 
 ## Specification
 
+- [Deletion & visibility mechanism](specs/DELETION-AND-VISIBILITY.md) — how
+  deleted Jira entities are detected, distinguished from lost access, and
+  recorded as history events.
 
 ## Prerequisites
 
@@ -73,6 +76,8 @@ kubectl apply -f src/ingestion/secrets/connectors/jira.yaml
 | `jira_comments` | `GET /rest/api/3/issue/{key}/comment` | Substream of `jira_issue` | — | Offset |
 | `jira_worklogs` | `GET /rest/api/3/issue/{key}/worklog` | Substream of `jira_issue` | — | Offset |
 | `jira_sprints` | `GET /rest/agile/1.0/board/{board_id}/sprint` | Substream of boards | — | Offset |
+| `jira_project_visibility` | `GET /rest/api/3/project/search?status=<live\|archived\|deleted>` | Full refresh | — | Offset |
+| `jira_issue_census` | `GET /rest/api/3/search/jql` (`fields=id`) | Full refresh | — | Cursor (`nextPageToken`) |
 
 The `jira_boards` stream (`GET /rest/agile/1.0/board`) is the substream parent for `jira_sprints` and materializes its own Bronze table.
 
@@ -92,6 +97,7 @@ The `jira_boards` stream (`GET /rest/agile/1.0/board`) is the substream parent f
 - **Rate limits**: Atlassian caps per-user and per-IP API calls. The connector honours `Retry-After` on HTTP 429 and 503 (both used by Atlassian for throttling) with backoff.
 - **Project scope**: projects are auto-discovered each sync via `/rest/api/3/project/search` (every project visible to the API token) and scanned per project (`project = "<KEY>"` JQL — Jira Cloud rejects unbounded queries). An incremental gate on `insight.lastIssueUpdateTime` (with a 3-day lookback) skips projects with no issue changes since the previous sync, so idle projects cost zero requests. New projects are picked up automatically on the next scheduled sync.
 - **Custom fields**: all custom fields are preserved in `jira_issue.custom_fields_json` for downstream dbt extraction.
+- **Deletions & lost access**: incremental sync cannot observe entities disappearing. The `jira_project_visibility` + `jira_issue_census` full-refresh streams re-observe the visible surface every sync; dbt classifies absences as `deleted` / `archived` / `trashed` / `access_lost` / `unobserved` and records each transition as a permanent history event. See [specs/DELETION-AND-VISIBILITY.md](specs/DELETION-AND-VISIBILITY.md).
 
 ## Related
 

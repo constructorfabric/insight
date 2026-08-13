@@ -136,6 +136,25 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_census
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `id` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `jira_id` Nullable(Decimal(38, 9)),
+    `project_key` Nullable(String),
+    `collected_at` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_keys
 (
     `_airbyte_raw_id` String,
@@ -206,6 +225,38 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_priorities
 ENGINE = MergeTree
 ORDER BY _airbyte_raw_id
 SETTINGS index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_project_visibility
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `expand` Nullable(String),
+    `self` Nullable(String),
+    `id` Nullable(String),
+    `key` Nullable(String),
+    `name` Nullable(String),
+    `avatarUrls` Nullable(String),
+    `projectCategory` Nullable(String),
+    `projectTypeKey` Nullable(String),
+    `simplified` Nullable(Bool),
+    `style` Nullable(String),
+    `isPrivate` Nullable(Bool),
+    `properties` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `project_id` Nullable(Decimal(38, 9)),
+    `project_key` Nullable(String),
+    `project_status` Nullable(String),
+    `is_private` Nullable(Bool),
+    `collected_at` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_projects

@@ -46,6 +46,18 @@ in_progress_per_day AS (
     WHERE i.status_category = 'in_progress'
     GROUP BY s.tenant_id, s.entity_id, day
 ),
+-- in_progress_per_day inherits the availability filter through its
+-- task_issue_state join; worklogs aggregate per person without touching
+-- issues, so worklogs logged on since-deleted issues need their own filter.
+unavailable_issues AS (
+    SELECT
+        insight_source_id,
+        id_readable
+    FROM {{ ref('class_task_availability') }} FINAL
+    WHERE entity_kind = 'issue'
+      AND availability IN ('deleted', 'trashed')
+      AND id_readable IS NOT NULL
+),
 worklog_per_day AS (
     SELECT
         u.tenant_id                                                          AS tenant_id,
@@ -55,6 +67,9 @@ worklog_per_day AS (
     FROM {{ ref('class_task_worklogs') }} AS w FINAL
     INNER JOIN task_users AS u
         ON u.insight_source_id = w.insight_source_id AND u.user_id = w.author_id
+    LEFT ANTI JOIN unavailable_issues AS ui
+        ON ui.insight_source_id = w.insight_source_id
+        AND ui.id_readable = w.id_readable
     WHERE w.work_date IS NOT NULL
     GROUP BY u.tenant_id, u.email, toDate(w.work_date)
 )

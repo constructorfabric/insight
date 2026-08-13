@@ -37,6 +37,23 @@ models:
         tests:
           - not_null
 
+  - name: class_task_availability
+    description: "Current availability per task-tracker entity (issue): present / deleted / archived / trashed / access_lost / unobserved, classified from the source's census streams. Gold task models exclude deleted/trashed entities through it. Full transition history lives in the per-connector availability snapshot/history models. See connectors/task-tracking/jira/specs/DELETION-AND-VISIBILITY.md."
+    columns:
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: entity_kind
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['issue']
+      - name: availability
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['present', 'deleted', 'archived', 'trashed', 'access_lost', 'unobserved']
+
   - name: class_task_comments
     description: "Unified issue comments from all task-tracker sources."
     columns:

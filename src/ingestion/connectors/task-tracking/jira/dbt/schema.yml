@@ -23,12 +23,21 @@ sources:
       - name: jira_worklogs
       - name: jira_sprints
       - name: jira_boards
+      # Lightweight substream parent (issue key + updated). Also read by the
+      # availability classifier (id↔key mapping + issue re-fetch generation
+      # for comment deletion detection).
+      - name: jira_issue_keys
       # Normalized lookup streams — populated globally per source instance.
       # `jira_issue` references these by ID only; display names come from JOIN.
       - name: jira_statuses
       - name: jira_priorities
       - name: jira_issuetypes
       - name: jira_resolutions
+      # Deletion/visibility censuses (specs/DELETION-AND-VISIBILITY.md):
+      # full-refresh streams; after RMT promotion each row's
+      # _airbyte_extracted_at is the entity's last-seen timestamp.
+      - name: jira_project_visibility
+      - name: jira_issue_census
 
   # Staging tables written by the Rust `jira-enrich` binary (not by dbt). DDL is
   # managed by the `create_task_field_history_staging` macro in `on-run-start`.
@@ -67,3 +76,17 @@ models:
     description: "Thin view over the Rust-written staging.jira__task_field_history, so dbt can union it into silver.class_task_field_history."
   - name: jira__identity_inputs
     description: "Identity-resolution inputs from the Jira user profile history (email, display_name, id binding). Unioned into silver.identity_inputs via the silver:identity_inputs tag."
+  - name: jira__project_visibility_state
+    description: "Current visibility per ever-seen project: is_visible + project_status derived from the jira_project_visibility census (absent from the latest generation = not visible). Input to the SCD2 snapshot."
+  - name: jira__project_visibility_snapshot
+    description: "Append-only SCD2 over project visibility — a version per is_visible/project_status flip. Permanent record of when the account gained or lost sight of a project."
+  - name: jira__project_visibility_history
+    description: "Per-field change events (is_visible, project_status: old → new @ ts) derived from the visibility snapshot."
+  - name: jira__issue_availability_state
+    description: "Current availability per ever-seen issue (present / deleted / archived / trashed / access_lost / unobserved), classified from the jira_issue_census absence against the project visibility roster. See specs/DELETION-AND-VISIBILITY.md."
+  - name: jira__issue_availability_snapshot
+    description: "Append-only SCD2 over issue availability — a version per state flip. Deletion is recorded here as an event in the issue's history, never as a physical delete."
+  - name: jira__issue_availability_history
+    description: "Per-issue availability transition events (availability: old → new @ detection time) derived from the availability snapshot."
+  - name: jira__task_availability
+    description: "Per-source staging projection of issue availability. Unioned into silver.class_task_availability; gold task models filter deleted/trashed issues through it."
