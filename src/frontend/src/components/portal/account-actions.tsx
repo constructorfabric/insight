@@ -73,7 +73,15 @@ export function AccountActions({
   };
   const boundId = binding.person_id ?? null;
 
-  const close = () => setAction({ kind: "closed" });
+  const close = () => {
+    setAction({ kind: "closed" });
+    // A dialog's error belongs to the attempt made in THAT dialog; without a
+    // reset the next dialog opens already wearing the previous failure.
+    bind.reset();
+    merge.reset();
+    detach.reset();
+    exclude.reset();
+  };
   const done = (result: CorrectionResponse) => {
     setOutcome(result);
     close();
@@ -275,10 +283,26 @@ function MergeDialog({
       confirmLabel={t("identities.actions.merge_confirm")}
       destructive
       isPending={isPending}
+      // The preview IS the consent: a merge confirmed before the list loads
+      // (or over a failed load rendering as "0 accounts move") would move
+      // accounts the operator never saw named.
+      confirmDisabled={owned.data == null}
       error={error}
       onConfirm={onConfirm}
     >
-      {owned.isLoading ? (
+      {owned.isError ? (
+        <div className="flex items-center gap-2 text-sm text-destructive">
+          <span>{t("identities.dialogs.merge_preview_failed")}</span>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={() => void owned.refetch()}
+          >
+            {t("common.actions.retry")}
+          </Button>
+        </div>
+      ) : owned.data == null ? (
         <p className="text-sm text-muted-foreground">
           {t("identities.dialogs.merge_preview_loading")}
         </p>

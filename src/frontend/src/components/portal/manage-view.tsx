@@ -56,10 +56,26 @@ export function ManageView({ item }: { item: string | null }) {
  * pasted URLs land here directly (the nav hides the item, the URL does not),
  * so a non-admin gets an explicit refusal rather than a broken or empty
  * screen — and never a flash of the console while the check is in flight.
+ * A FAILED check is a third state: still no console (fail closed), but the
+ * copy says "could not verify" with a retry — telling a real admin to go ask
+ * for a role they already hold would send them chasing a grant that fixes
+ * nothing.
  */
 function IdentitiesGate() {
-  const { isAdmin, isPending } = useIsAdmin();
+  const { isAdmin, isPending, isError, retry } = useIsAdmin();
   if (isPending) return <CenteredSpinner />;
+  if (isError) {
+    return (
+      <div className="mx-auto w-full max-w-md p-8">
+        <ComingSoon
+          variant="card"
+          state="error"
+          label="Could not verify the administrator role"
+          onRetry={retry}
+        />
+      </div>
+    );
+  }
   if (!isAdmin) {
     return (
       <div className="mx-auto w-full max-w-md p-8" role="alert">

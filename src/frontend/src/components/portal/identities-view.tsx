@@ -14,6 +14,7 @@
 import { useTranslation } from "react-i18next";
 
 import type { AttentionItem, ResolutionRates } from "@/api/identity-client";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +35,7 @@ import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import { PartyPopper, UserSearch } from "lucide-react";
+import { PartyPopper, TriangleAlert, UserSearch } from "lucide-react";
 
 /** Queue groups in working order: conflicts first, then the unknowns. */
 const KIND_ORDER = ["contested", "binding_conflict", "no_evidence"] as const;
@@ -65,7 +66,7 @@ export function IdentitiesView() {
     );
   }
 
-  const { items, rates } = attention.data;
+  const { items, rates, truncated } = attention.data;
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
       <header>
@@ -76,6 +77,12 @@ export function IdentitiesView() {
           {t("identities.subtitle")}
         </p>
       </header>
+      {truncated ? (
+        <Alert variant="destructive" role="status">
+          <TriangleAlert />
+          <AlertDescription>{t("identities.queue.truncated")}</AlertDescription>
+        </Alert>
+      ) : null}
       <RatesStrip rates={rates} />
       {items.length === 0 ? <AllResolved /> : <Queue items={items} />}
     </div>
@@ -162,7 +169,10 @@ function DetailPane({
   const ref = parseAccountKey(acct);
   if (!ref) return <DetailPlaceholder />;
   const queueItem = items.find((i) => itemKey(i) === acct);
-  return <AccountDetail accountRef={ref} queueItem={queueItem} />;
+  // Keyed by the account: the panel holds per-account state (a verb's outcome
+  // alert, an open dialog), and a cached binding renders the next selection
+  // synchronously — an unkeyed panel would carry that state across accounts.
+  return <AccountDetail key={acct} accountRef={ref} queueItem={queueItem} />;
 }
 
 function QueueGroup({

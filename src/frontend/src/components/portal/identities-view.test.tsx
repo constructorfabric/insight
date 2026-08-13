@@ -76,6 +76,22 @@ describe("IdentitiesView", () => {
     expect(screen.getByText("60")).toBeInTheDocument();
   });
 
+  it("says so when the server truncated the evidence — partial counts must not read as tenant-wide", () => {
+    attention.q.data = { items: [], rates: RATES, truncated: true };
+    render(<IdentitiesView />);
+
+    expect(screen.getByText(/cover only part of the observed accounts/i)).toBeInTheDocument();
+  });
+
+  it("shows no truncation warning on a complete read, including from an older backend", () => {
+    attention.q.data = { items: [], rates: RATES };
+    render(<IdentitiesView />);
+
+    expect(
+      screen.queryByText(/cover only part of the observed accounts/i),
+    ).not.toBeInTheDocument();
+  });
+
   it("groups by kind with honest counts, and an unknown kind still shows", () => {
     attention.q.data = {
       items: [

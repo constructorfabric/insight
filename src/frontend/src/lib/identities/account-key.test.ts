@@ -27,6 +27,7 @@ describe("account key", () => {
     ["two parts", "github:x"],
     ["four parts", "github:x:y:z"],
     ["an empty part", "github::y"],
+    ["a truncated percent-escape", "github:x:dev%2"],
   ])("reads a key that is %s as no selection", (_name, key) => {
     expect(parseAccountKey(key)).toBeNull();
   });

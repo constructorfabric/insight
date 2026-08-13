@@ -18,6 +18,7 @@ import type { AccountBinding, CorrectionResponse } from "@/api/identity-client";
 const hooks = vi.hoisted(() => {
   const verb = () => ({
     mutate: vi.fn(),
+    reset: vi.fn(),
     isPending: false,
     isError: false,
     error: null as unknown,
@@ -32,6 +33,8 @@ const hooks = vi.hoisted(() => {
         | { person_id: string; accounts: unknown[] }
         | undefined,
       isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
     },
     search: { data: undefined, isFetching: false, isError: false },
   };
@@ -70,11 +73,14 @@ function binding(over: Partial<AccountBinding> = {}): AccountBinding {
 beforeEach(() => {
   for (const verb of [hooks.bind, hooks.merge, hooks.detach, hooks.exclude]) {
     verb.mutate.mockClear();
+    verb.reset.mockClear();
     verb.isError = false;
     verb.error = null;
   }
   hooks.personAccounts.data = undefined;
   hooks.personAccounts.isLoading = false;
+  hooks.personAccounts.isError = false;
+  hooks.personAccounts.refetch.mockClear();
 });
 
 describe("AccountActions", () => {
@@ -145,6 +151,42 @@ describe("AccountActions", () => {
     );
   });
 
+  it("locks merge confirm until the preview names what moves", async () => {
+    hooks.personAccounts.isLoading = true;
+    render(
+      <AccountActions accountRef={REF} binding={binding()} candidates={[BOB, CAROL]} />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Merge…" }));
+    const dialog = screen.getByRole("dialog");
+
+    // The preview IS the consent — confirming a list the operator never saw
+    // would move accounts sight-unseen.
+    expect(
+      within(dialog).getByRole("button", { name: "Merge persons" }),
+    ).toBeDisabled();
+    expect(hooks.merge.mutate).not.toHaveBeenCalled();
+  });
+
+  it("a failed preview blocks merge and offers a retry, not a zero-account lie", async () => {
+    hooks.personAccounts.isError = true;
+    render(
+      <AccountActions accountRef={REF} binding={binding()} candidates={[BOB, CAROL]} />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Merge…" }));
+    const dialog = screen.getByRole("dialog");
+
+    expect(within(dialog).queryByText(/0 accounts move/i)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/could not count/i)).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Merge persons" }),
+    ).toBeDisabled();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect(hooks.personAccounts.refetch).toHaveBeenCalledOnce();
+  });
+
   it("renders the server's outcome verbatim, refusals included", async () => {
     const refusal: CorrectionResponse = {
       applied: 0,
@@ -166,6 +208,20 @@ describe("AccountActions", () => {
 
     expect(screen.getByText(/1 refused/i)).toBeInTheDocument();
     expect(screen.getByText(/0 applied/i)).toBeInTheDocument();
+  });
+
+  it("cancelling a dialog resets the verbs, so the next one opens clean", async () => {
+    render(<AccountActions accountRef={REF} binding={binding()} candidates={[]} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /exclude \(bot/i }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }),
+    );
+
+    // A dialog's error belongs to the attempt made in that dialog; without
+    // the reset the next dialog would open already wearing the old failure.
+    expect(hooks.exclude.reset).toHaveBeenCalled();
+    expect(hooks.bind.reset).toHaveBeenCalled();
   });
 
   it("a failed verb keeps the dialog open with the server's reason", async () => {

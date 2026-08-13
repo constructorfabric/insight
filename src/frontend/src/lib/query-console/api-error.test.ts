@@ -28,6 +28,25 @@ describe("apiErrorReason", () => {
     expect(apiErrorReason(err, FALLBACK)).toBe("search terms are required");
   });
 
+  it("surfaces context.reason when there are no field violations — the 403 shape", () => {
+    const err = new IdentityApiError(403, {
+      context: { reason: "admin role required for this operation" },
+    });
+    expect(apiErrorReason(err, FALLBACK)).toBe(
+      "admin role required for this operation",
+    );
+  });
+
+  it("prefers the field violation when a body carries both", () => {
+    const err = new IdentityApiError(400, {
+      context: {
+        reason: "less specific",
+        field_violations: [{ field: "q", description: "more specific" }],
+      },
+    });
+    expect(apiErrorReason(err, FALLBACK)).toBe("more specific");
+  });
+
   it("falls back when the error is not an AnalyticsApiError", () => {
     expect(apiErrorReason(new Error("unexpected failure"), FALLBACK)).toBe(
       FALLBACK
@@ -45,6 +64,8 @@ describe("apiErrorReason", () => {
       { context: { field_violations: [] } },
       { context: { field_violations: [{ field: "x" }] } },
       { context: { field_violations: [{ description: 42 }] } },
+      { context: { reason: 42 } },
+      { context: { reason: "  " } },
     ]) {
       expect(apiErrorReason(new AnalyticsApiError(400, body), FALLBACK)).toBe(
         FALLBACK

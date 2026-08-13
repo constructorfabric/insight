@@ -31,7 +31,7 @@ export function PortalLayout() {
   // the admin role opens regardless of reports. The rules live in
   // `landingDecision` (pure, table-tested); this effect only applies them.
   const { isManager, isPending } = useViewerIsManager();
-  const { isAdmin, isPending: adminPending } = useIsAdmin();
+  const { isAdmin, isPending: adminPending, isError: adminError } = useIsAdmin();
   const zone = usePortalZone();
   const landed = useRef(false);
   useEffect(() => {
@@ -40,14 +40,18 @@ export function PortalLayout() {
       zone,
       mgrPending: isPending,
       isManager,
-      adminPending,
+      // An errored check is "unknown", not "no": the landing decision is
+      // one-shot, so resetting on it would permanently rewrite a URL an
+      // admin deliberately opened. Waiting costs nothing — the me query
+      // retries itself until an answer lands.
+      adminPending: adminPending || adminError,
       isAdmin,
     });
     if (decision.kind === "wait") return;
     landed.current = true;
     if (decision.kind === "pin-overview") replaceZone("overview");
     if (decision.kind === "reset") replaceZone(null);
-  }, [isPending, isManager, adminPending, isAdmin, zone, replaceZone]);
+  }, [isPending, isManager, adminPending, adminError, isAdmin, zone, replaceZone]);
 
   return (
     <SidebarProvider className="h-svh overflow-hidden">

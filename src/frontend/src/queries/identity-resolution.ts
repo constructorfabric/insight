@@ -74,6 +74,11 @@ export function useAccountBinding(
  *  after any verb refreshes the queue, the rates and the open account. */
 const RESOLUTION_KEY = ["identity", "resolution"] as const;
 
+/** The picker's search cache lives outside {@link RESOLUTION_KEY} but a verb
+ *  changes its answers too: a merge absorbs a person the cache would keep
+ *  offering, and binding to them recreates the split the operator just fixed. */
+const PERSON_SEARCH_KEY = ["identity", "persons", "search"] as const;
+
 type Verb<TArgs> = UseMutationResult<CorrectionResponse, unknown, TArgs>;
 
 function useCorrection<TArgs>(
@@ -85,7 +90,10 @@ function useCorrection<TArgs>(
     // Invalidate-only, the house style: the journal is the truth and a verb
     // may land as `already_decided`/`refused`, so guessing the new state
     // client-side would lie exactly when it matters.
-    onSuccess: () => void client.invalidateQueries({ queryKey: RESOLUTION_KEY }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: RESOLUTION_KEY });
+      void client.invalidateQueries({ queryKey: PERSON_SEARCH_KEY });
+    },
   });
 }
 

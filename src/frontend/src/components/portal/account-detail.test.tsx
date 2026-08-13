@@ -3,15 +3,15 @@
  * The detail panel. What matters: a bound person known to the queue renders
  * as a recognisable card while an unknown one stays an honest bare id; the
  * history names the verb (and unknown reasons pass through — the vocabulary
- * is open); a stale shared link (404) says so instead of erroring; and an
- * unbound account is a stated fact, not an empty gap.
+ * is open); a stale shared link (200 with an empty journal, off the queue —
+ * the read never 404s) says so and offers no verbs; and an unbound account
+ * is a stated fact, not an empty gap.
  */
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import type { AccountBinding, AttentionItem } from "@/api/identity-client";
-import { IdentityApiError } from "@/api/identity-client";
 
 const binding = vi.hoisted(() => ({
   q: {
@@ -105,14 +105,15 @@ describe("AccountDetail", () => {
           author_person_id: "x",
           by_operator: true,
           reason: "operator-merge",
-          recorded_at: "2026-08-01T10:15:00Z",
+          // Zone-less on purpose — the real wire never carries a `Z`.
+          recorded_at: "2026-08-01T10:15:00.000000",
         },
         {
           person_id: BOB.person_id,
           author_person_id: "y",
           by_operator: false,
           reason: "seed-backfill",
-          recorded_at: "2026-07-01T10:15:00Z",
+          recorded_at: "2026-07-01T10:15:00.000000",
         },
       ],
     });
@@ -124,18 +125,36 @@ describe("AccountDetail", () => {
     expect(screen.getByText(/1 Aug 2026/)).toBeInTheDocument();
   });
 
-  it("reads a 404 as a stale link, with no retry offered", () => {
-    binding.q.isError = true;
-    binding.q.error = new IdentityApiError(404, { title: "account not found" });
+  it("reads an off-queue empty journal as a stale link, offering no verbs", () => {
+    binding.q.data = bound({ person_id: null, history: [] });
     render(<AccountDetail accountRef={REF} queueItem={undefined} />);
 
     expect(screen.getByText(/link may be stale/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("account-actions")).not.toBeInTheDocument();
   });
 
-  it("offers a retry on any other failure", () => {
+  it("keeps an off-queue account with history actionable — decided is not stale", () => {
+    binding.q.data = bound({
+      person_id: null,
+      history: [
+        {
+          person_id: BOB.person_id,
+          author_person_id: "x",
+          by_operator: true,
+          reason: "operator-exclude",
+          recorded_at: "2026-08-01T10:15:00.000000",
+        },
+      ],
+    });
+    render(<AccountDetail accountRef={REF} queueItem={undefined} />);
+
+    expect(screen.queryByText(/link may be stale/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId("account-actions")).toBeInTheDocument();
+  });
+
+  it("offers a retry on a failed read", () => {
     binding.q.isError = true;
-    binding.q.error = new IdentityApiError(500, {});
+    binding.q.error = new Error("identity is down");
     render(<AccountDetail accountRef={REF} queueItem={undefined} />);
 
     expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();

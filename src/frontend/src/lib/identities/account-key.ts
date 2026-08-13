@@ -26,8 +26,14 @@ export function parseAccountKey(key: string | undefined): AccountRef | null {
   if (!key) return null;
   const parts = key.split(SEPARATOR);
   if (parts.length !== 3 || parts.some((p) => p === "")) return null;
-  const [source, source_id, account_id] = parts.map(decodeURIComponent);
-  return { source, source_id, account_id };
+  try {
+    const [source, source_id, account_id] = parts.map(decodeURIComponent);
+    return { source, source_id, account_id };
+  } catch {
+    // A truncated %-escape (a link cut mid-character) throws URIError; that is
+    // still a malformed key, not a render crash.
+    return null;
+  }
 }
 
 export function itemKey(item: AttentionItem): string {

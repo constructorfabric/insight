@@ -121,6 +121,10 @@ export interface ResolutionRates {
 export interface AttentionResponse {
   items: AttentionItem[];
   rates: ResolutionRates;
+  /** The server's evidence read hit its safety cap: the queue and the rates
+   *  describe only a prefix of the tenant's accounts. Optional so a client
+   *  deployed ahead of the backend keeps working; absent reads as complete. */
+  truncated?: boolean;
 }
 
 /**
@@ -168,9 +172,10 @@ export interface AccountBinding {
 
 /**
  * One account's current binding and its full decision trail
- * (`GET /resolution/accounts/{source}/{source_id}/{account_id}`). 404 means
- * the account was never observed AND never decided — the state a stale shared
- * link lands on.
+ * (`GET /resolution/accounts/{source}/{source_id}/{account_id}`). The read
+ * never 404s: an account nobody ever observed or decided answers 200 with
+ * `person_id: null` and an empty history — the state a stale shared link
+ * lands on.
  */
 export async function getAccountBinding(ref: {
   source: string;

@@ -5,7 +5,10 @@
  * append-only, so this trail is complete by construction).
  *
  * The panel answers a shared `?acct=` link even when the account is no longer
- * in the queue; a 404 is the stale-link state and says so instead of erroring.
+ * in the queue. The binding read never 404s: an account nobody ever observed
+ * or decided answers 200 with an empty journal, so "not in the queue, no
+ * binding, no history" is the stale-link state — it says so instead of
+ * offering verbs whose bind would pre-register a typo as a real account.
  * Person ids in the history arrive bare (there is no id→name read for
  * arbitrary persons yet); when an id matches a hydrated candidate we show the
  * card, otherwise the id itself — honest over pretty.
@@ -24,9 +27,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import type { AccountRef } from "@/lib/identities/account-key";
-import { formatDate } from "@/lib/format";
+import { formatUtcInstant } from "@/lib/format";
 import { useAccountBinding } from "@/queries/identity-resolution";
-import { IdentityApiError } from "@/api/identity-client";
 
 /** Known verb codes → i18n keys; anything else renders as-is (open vocabulary). */
 const VERB_KEYS: Record<string, string> = {
@@ -50,24 +52,34 @@ export function AccountDetail({
 
   if (binding.isLoading) return <PanelShell><CenteredSpinner className="min-h-40" /></PanelShell>;
   if (binding.isError) {
-    const notFound =
-      binding.error instanceof IdentityApiError && binding.error.status === 404;
     return (
       <PanelShell>
         <ComingSoon
           variant="card"
-          state={notFound ? "empty" : "error"}
-          label={
-            notFound
-              ? t("identities.detail.not_found")
-              : t("identities.detail.load_failed")
-          }
-          onRetry={notFound ? undefined : () => void binding.refetch()}
+          state="error"
+          label={t("identities.detail.load_failed")}
+          onRetry={() => void binding.refetch()}
         />
       </PanelShell>
     );
   }
   if (!binding.data) return null;
+
+  const neverSeen =
+    queueItem == null &&
+    binding.data.person_id == null &&
+    binding.data.history.length === 0;
+  if (neverSeen) {
+    return (
+      <PanelShell>
+        <ComingSoon
+          variant="card"
+          state="empty"
+          label={t("identities.detail.not_found")}
+        />
+      </PanelShell>
+    );
+  }
 
   const candidates = queueItem?.candidates ?? [];
   const boundCard = candidates.find(
@@ -148,7 +160,7 @@ function HistoryRow({
           {verbKey ? t(verbKey) : (entry.reason ?? t("identities.history.automatic"))}
         </Badge>
         <span className="ms-auto text-xs text-muted-foreground">
-          {formatDate(entry.recorded_at, "d MMM yyyy, HH:mm")}
+          {formatUtcInstant(entry.recorded_at, "d MMM yyyy, HH:mm")}
         </span>
       </div>
       <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">

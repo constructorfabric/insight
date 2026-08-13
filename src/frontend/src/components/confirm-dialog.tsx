@@ -31,6 +31,7 @@ export function ConfirmDialog({
   confirmLabel,
   destructive = false,
   isPending,
+  confirmDisabled = false,
   error,
   onConfirm,
 }: {
@@ -42,6 +43,9 @@ export function ConfirmDialog({
   confirmLabel: string;
   destructive?: boolean;
   isPending: boolean;
+  /** The caller's body is not ready to be confirmed — a preview still
+   *  loading or failed. Cancel stays available; only confirm locks. */
+  confirmDisabled?: boolean;
   error?: string | null;
   onConfirm: () => void;
 }) {
@@ -75,7 +79,7 @@ export function ConfirmDialog({
             type="button"
             variant={destructive ? "destructive" : "default"}
             onClick={onConfirm}
-            disabled={isPending}
+            disabled={isPending || confirmDisabled}
           >
             {confirmLabel}
           </Button>

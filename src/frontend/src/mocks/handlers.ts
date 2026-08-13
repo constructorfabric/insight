@@ -385,16 +385,23 @@ export const handlers = [
     HttpResponse.json({ metrics: [] }),
   ),
   // One account's binding + decision trail. dev-42 carries a small history so
-  // the panel has something to show; any other account answers 404, which is
-  // exactly what a stale shared link should land on.
+  // the panel has something to show; any other account answers 200 with no
+  // binding and no history — the real endpoint has no 404: an account nobody
+  // ever observed or decided reads as an empty journal, and THAT is what a
+  // stale shared link lands on. Timestamps are zone-less UTC on the wire
+  // (.NET parity) — a `Z` here would train the panel on a shape production
+  // never sends.
   http.get(
     "/api/identity/v1/resolution/accounts/:source/:sourceId/:accountId",
     ({ params }) => {
       if (params.accountId !== "dev-42") {
-        return HttpResponse.json(
-          { title: "account not found" },
-          { status: 404 },
-        );
+        return HttpResponse.json({
+          source: params.source,
+          source_id: params.sourceId,
+          account_id: params.accountId,
+          person_id: null,
+          history: [],
+        });
       }
       const [bob, carol] = PEOPLE;
       return HttpResponse.json({
@@ -408,14 +415,14 @@ export const handlers = [
             author_person_id: carol?.person_id,
             by_operator: true,
             reason: "operator-bind",
-            recorded_at: "2026-08-01T10:15:00Z",
+            recorded_at: "2026-08-01T10:15:00.000000",
           },
           {
             person_id: carol?.person_id,
             author_person_id: "00000000-0000-0000-0000-000000000000",
             by_operator: false,
             reason: null,
-            recorded_at: "2026-07-15T08:00:00Z",
+            recorded_at: "2026-07-15T08:00:00.000000",
           },
         ],
       });
@@ -538,6 +545,7 @@ export const handlers = [
         },
       ],
       rates: { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 },
+      truncated: false,
     });
   }),
   http.post(

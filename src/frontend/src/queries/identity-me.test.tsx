@@ -87,6 +87,31 @@ describe("useIsAdmin", () => {
     expect(result.current.isAdmin).toBe(false);
   });
 
+  it("names a failed check as an error, distinct from a confirmed non-admin", async () => {
+    getMe.mockRejectedValueOnce(new Error("identity is down"));
+    getMe.mockResolvedValueOnce(me([{ role_id: ADMIN_ROLE_ID, name: "admin" }]));
+
+    const { result } = renderHook(() => useIsAdmin(), harness());
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.isAdmin).toBe(false);
+
+    // retry() re-asks and the gate opens once the answer lands — an errored
+    // check must never be terminal for the session.
+    result.current.retry();
+    await waitFor(() => expect(result.current.isAdmin).toBe(true));
+    expect(result.current.isError).toBe(false);
+  });
+
+  it("reports no error for a confirmed non-admin", async () => {
+    getMe.mockResolvedValueOnce(me([]));
+
+    const { result } = renderHook(() => useIsAdmin(), harness());
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(result.current.isError).toBe(false);
+  });
+
   it("never asks without a session, and stays closed", async () => {
     session.value = null;
 
