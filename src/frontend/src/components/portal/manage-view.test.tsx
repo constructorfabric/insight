@@ -25,6 +25,13 @@ vi.mock("@/queries/metric-definitions", () => ({
   useMetricDefinitions: () => mocks.q,
 }));
 
+const adminGate = vi.hoisted(() => ({
+  value: { isAdmin: false, isPending: false },
+}));
+vi.mock("@/queries/identity-me", () => ({
+  useIsAdmin: () => adminGate.value,
+}));
+
 import { ManageView } from "./manage-view";
 
 function def(over: Partial<MetricDefinition>): MetricDefinition {
@@ -134,7 +141,37 @@ describe("Manage · Data health", () => {
 
 describe("Manage · unwired items", () => {
   it("renders an honest placeholder instead of a fake admin screen", () => {
-    render(<ManageView item="identities" />);
+    render(<ManageView item="taxonomy" />);
     expect(screen.getByText(/not wired yet/i)).toBeInTheDocument();
+  });
+});
+
+describe("identities gate", () => {
+  it("refuses a non-admin explicitly — a pasted URL must not look broken", () => {
+    adminGate.value = { isAdmin: false, isPending: false };
+    render(<ManageView item="identities" />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/admin surface/i);
+    expect(
+      screen.queryByText(/under construction/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("never flashes the console while the role check is in flight", () => {
+    adminGate.value = { isAdmin: false, isPending: true };
+    render(<ManageView item="identities" />);
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/under construction/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens for an admin", () => {
+    adminGate.value = { isAdmin: true, isPending: false };
+    render(<ManageView item="identities" />);
+
+    expect(screen.getByText(/under construction/i)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

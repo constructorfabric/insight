@@ -15,6 +15,7 @@ import type {
   MetricDefinitionSchemaStatus,
   MetricDefinition,
 } from "@/api/metric-definitions-client";
+import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
 import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -37,12 +38,46 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
 export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
   if (item === "data-health") return <DataHealth />;
+  if (item === "identities") return <IdentitiesGate />;
   return (
     <div className="mx-auto w-full max-w-md p-8">
       <ComingSoon
         variant="card"
         state="empty"
         label="Admin surface — not wired yet"
+      />
+    </div>
+  );
+}
+
+/**
+ * The role gate in front of the identity-resolution console. Bookmarks and
+ * pasted URLs land here directly (the nav hides the item, the URL does not),
+ * so a non-admin gets an explicit refusal rather than a broken or empty
+ * screen — and never a flash of the console while the check is in flight.
+ */
+function IdentitiesGate() {
+  const { isAdmin, isPending } = useIsAdmin();
+  if (isPending) return <CenteredSpinner />;
+  if (!isAdmin) {
+    return (
+      <div className="mx-auto w-full max-w-md p-8" role="alert">
+        <div className="rounded-lg border p-6 text-center">
+          <p className="text-sm font-semibold">Identities is an admin surface</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Managing identity resolution needs the administrator role. Ask an
+            existing administrator to grant it if this is part of your job.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="mx-auto w-full max-w-md p-8">
+      <ComingSoon
+        variant="card"
+        state="empty"
+        label="Identity resolution console — under construction"
       />
     </div>
   );

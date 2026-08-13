@@ -33,81 +33,6 @@ function mockSessionTiming(): { expires_at: number; refresh_at: number } {
   return { expires_at: now + 600, refresh_at: now + 510 };
 }
 
-export const handlers = [
-  http.get("/auth/me", () =>
-    HttpResponse.json({ ...MOCK_SESSION, ...mockSessionTiming() }),
-  ),
-  http.post("/auth/refresh", () => HttpResponse.json(mockSessionTiming())),
-  http.post("/auth/logout", () => HttpResponse.json({ rp_logout_url: null })),
-  http.post("/api/analytics/v1/metric-results", async ({ request }) => {
-    const body = (await request
-      .json()
-      .catch(() => null)) as MetricResultsRequest | null;
-    if (
-      !body ||
-      !Array.isArray(body.entity?.ids) ||
-      !Array.isArray(body.metrics)
-    ) {
-      return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
-    }
-    // Mirror the real endpoint since the identity cutover: entity ids are
-    // person UUIDs and an email is a 400. Without this the mock would happily
-    // answer a stale email fixture and hide the very regression it exists to
-    // catch.
-    if (!body.entity.ids.every((id) => typeof id === "string" && isPersonId(id))) {
-      return HttpResponse.json(
-        { error: "invalid_argument", field: "entity.ids" },
-        { status: 400 },
-      );
-    }
-    return HttpResponse.json(buildMetricResultsResponse(body));
-  }),
-  http.post(
-    "/api/identity/v1/profiles",
-    async ({ request }) => {
-      const body = (await request.json().catch(() => null)) as
-        | { value_type?: string; value?: string }
-        | null;
-      const value = (body?.value ?? "").trim();
-      // The service resolves `person_id` (the SPA's key) and `email` (legacy
-      // URL migration only); anything else is a client error.
-      if (body?.value_type !== "email" && body?.value_type !== "person_id") {
-        return HttpResponse.json(
-          { type: "urn:insight:error:invalid_argument" },
-          { status: 400 },
-        );
-      }
-      // A malformed person_id is a 400, not a 404 — matching the service, where
-      // "does not parse" and "resolves to nobody" are different answers.
-      if (body.value_type === "person_id" && !isPersonId(value)) {
-        return HttpResponse.json(
-          { type: "urn:insight:error:invalid_argument" },
-          { status: 400 },
-        );
-      }
-      const personId =
-        body.value_type === "email"
-          ? PEOPLE_BY_EMAIL[value.toLowerCase()]?.person_id
-          : value.toLowerCase();
-      if (!personId) {
-        return HttpResponse.json(
-          { type: "urn:insight:error:person_not_found" },
-          { status: 404 },
-        );
-      }
-      const tree = buildIdentityTree(personId);
-      if (!tree) {
-        return HttpResponse.json(
-          { type: "urn:insight:error:person_not_found" },
-          { status: 404 },
-        );
-      }
-      return HttpResponse.json(tree);
-    },
-  ),
-  ...savedQueryHandlers(),
-  ...customMetricHandlers(),
-];
 
 // ── Saved queries (`/v1/queries`) ────────────────────────────
 // A tiny in-memory store so the console's CRUD + run round-trip in mock,
@@ -403,3 +328,99 @@ function customMetricHandlers() {
     }),
   ];
 }
+
+
+// Assembled last: the sections above declare module-level stores/consts the
+// handler factories close over, and the factories are CALLED right here —
+// an earlier array literal hits the temporal dead zone (seen live as
+// `Cannot access 'QUERIES_BASE' before initialization`).
+export const handlers = [
+  http.get("/auth/me", () =>
+    HttpResponse.json({ ...MOCK_SESSION, ...mockSessionTiming() }),
+  ),
+  http.post("/auth/refresh", () => HttpResponse.json(mockSessionTiming())),
+  http.post("/auth/logout", () => HttpResponse.json({ rp_logout_url: null })),
+  http.post("/api/analytics/v1/metric-results", async ({ request }) => {
+    const body = (await request
+      .json()
+      .catch(() => null)) as MetricResultsRequest | null;
+    if (
+      !body ||
+      !Array.isArray(body.entity?.ids) ||
+      !Array.isArray(body.metrics)
+    ) {
+      return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+    }
+    // Mirror the real endpoint since the identity cutover: entity ids are
+    // person UUIDs and an email is a 400. Without this the mock would happily
+    // answer a stale email fixture and hide the very regression it exists to
+    // catch.
+    if (!body.entity.ids.every((id) => typeof id === "string" && isPersonId(id))) {
+      return HttpResponse.json(
+        { error: "invalid_argument", field: "entity.ids" },
+        { status: 400 },
+      );
+    }
+    return HttpResponse.json(buildMetricResultsResponse(body));
+  }),
+  // The demo viewer is an identity admin, so mock mode exercises the admin
+  // surfaces (Manage → Identities). The role id is the backend's seeded
+  // `roles_repo::ADMIN_ROLE_ID` migration constant.
+  http.get("/api/identity/v1/me", () =>
+    HttpResponse.json({
+      person_id: defaultPerson?.person_id ?? "00000000-0000-0000-0000-0000000000bb",
+      insight_tenant_id: "00000000-0000-4000-8000-00000000c0de",
+      roles: [
+        {
+          role_id: "a4d11000-0000-4000-8000-000000000001",
+          name: "admin",
+        },
+      ],
+    }),
+  ),
+  http.post(
+    "/api/identity/v1/profiles",
+    async ({ request }) => {
+      const body = (await request.json().catch(() => null)) as
+        | { value_type?: string; value?: string }
+        | null;
+      const value = (body?.value ?? "").trim();
+      // The service resolves `person_id` (the SPA's key) and `email` (legacy
+      // URL migration only); anything else is a client error.
+      if (body?.value_type !== "email" && body?.value_type !== "person_id") {
+        return HttpResponse.json(
+          { type: "urn:insight:error:invalid_argument" },
+          { status: 400 },
+        );
+      }
+      // A malformed person_id is a 400, not a 404 — matching the service, where
+      // "does not parse" and "resolves to nobody" are different answers.
+      if (body.value_type === "person_id" && !isPersonId(value)) {
+        return HttpResponse.json(
+          { type: "urn:insight:error:invalid_argument" },
+          { status: 400 },
+        );
+      }
+      const personId =
+        body.value_type === "email"
+          ? PEOPLE_BY_EMAIL[value.toLowerCase()]?.person_id
+          : value.toLowerCase();
+      if (!personId) {
+        return HttpResponse.json(
+          { type: "urn:insight:error:person_not_found" },
+          { status: 404 },
+        );
+      }
+      const tree = buildIdentityTree(personId);
+      if (!tree) {
+        return HttpResponse.json(
+          { type: "urn:insight:error:person_not_found" },
+          { status: 404 },
+        );
+      }
+      return HttpResponse.json(tree);
+    },
+  ),
+  ...savedQueryHandlers(),
+  ...customMetricHandlers(),
+];
