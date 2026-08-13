@@ -55,7 +55,14 @@ export async function downloadMatrixXlsx(
 
   sheet.addRow(matrix.columns);
   for (const row of matrix.rows) {
-    sheet.addRow(row.map((cell) => cell ?? null));
+    // A non-finite number reaches the sheet as a raw value and can make the
+    // workbook unreadable, so it is dropped — the same answer the CSV writer
+    // already gives it.
+    sheet.addRow(
+      row.map((cell) =>
+        typeof cell === "number" && !Number.isFinite(cell) ? null : cell ?? null,
+      ),
+    );
   }
 
   const header = sheet.getRow(1);

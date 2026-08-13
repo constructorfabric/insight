@@ -60,6 +60,22 @@ describe("downloadMatrixXlsx", () => {
     expect(sheet?.getRow(1).font?.bold).toBe(true);
   });
 
+  it("drops a non-finite number rather than writing it into a cell", async () => {
+    // ExcelJS writes a number straight through, and Infinity in a cell can
+    // make the workbook unreadable. The CSV writer already refuses it.
+    await downloadMatrixXlsx("report.xlsx", "Report", {
+      columns: ["Person", "Ratio"],
+      rows: [["Jane Doe", Number.POSITIVE_INFINITY], ["Sam Smith", Number.NaN]],
+    });
+    const workbook = new Workbook();
+    await workbook.xlsx.load(
+      await (mocked.mock.calls[0]?.[0] as Blob).arrayBuffer(),
+    );
+    const sheet = workbook.getWorksheet("Report");
+    expect(sheet?.getRow(2).getCell(2).value).toBeNull();
+    expect(sheet?.getRow(3).getCell(2).value).toBeNull();
+  });
+
   it("keeps the sheet name inside the length a workbook allows", async () => {
     await downloadMatrixXlsx("r.xlsx", "x".repeat(60), matrix);
     const workbook = new Workbook();

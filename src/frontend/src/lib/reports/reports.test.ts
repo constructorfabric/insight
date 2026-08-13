@@ -384,8 +384,15 @@ describe("unavailableReason", () => {
     expect(unavailableReason(enabled, "year", ratio)).toMatch(/monthly or finer/);
   });
 
-  it("says nothing about a metric the probe has not answered for yet", () => {
-    expect(unavailableReason(enabled, "quarter", new Map())).toBeNull();
+  it("refuses a metric the probe has not answered for, where it would be added", () => {
+    // Silence is not permission: the probe may still be in flight, and an
+    // unknown computation summed into a quarter is exactly the wrong number
+    // this path exists to prevent. Finer buckets are unaffected — nothing is
+    // added there.
+    expect(unavailableReason(enabled, "quarter", new Map())).toMatch(
+      /Still checking/,
+    );
+    expect(unavailableReason(enabled, "month", new Map())).toBeNull();
   });
 });
 

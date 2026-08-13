@@ -24,7 +24,12 @@ export function unavailableReason(
   if (!needsRollup(granularity)) return null;
 
   const computation = computationByKey.get(metric.metric_key);
-  if (computation == null) return null;
+  // Unknown is not the same as additive. The probe may still be in flight, and
+  // treating silence as permission is how a ratio ends up summed into a
+  // quarter — the one thing this whole path exists to prevent.
+  if (computation == null) {
+    return "Still checking whether this can be totalled over a period";
+  }
   const reason = NOT_ADDITIVE_REASON[computation];
   return reason == null
     ? null

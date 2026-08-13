@@ -165,6 +165,28 @@ describe("ReportBuilderView", () => {
     );
   });
 
+  it("withdraws the file when the scope becomes a different roster of the same size", async () => {
+    // Counting people would call these the same report. They are not, and the
+    // file carries the names of whoever was in scope when it was built.
+    const user = userEvent.setup();
+    const { rerender } = render(<ReportBuilderView />);
+    await user.click(box("Commits"));
+    await user.click(screen.getByRole("button", { name: "Build report" }));
+    await screen.findByRole("dialog");
+    await closeDialog(user);
+    await screen.findByRole("button", { name: /rows ·/ });
+
+    mocks.scope = {
+      ...mocks.scope,
+      pivot: { ...person, person_id: "P2", display_name: "Sam Smith" },
+      roster: [{ person_id: "P2" }],
+    };
+    rerender(<ReportBuilderView />);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /rows ·/ })).toBeNull(),
+    );
+  });
+
   it("downloads nothing when the run fails, and says so", async () => {
     mocks.run.mockRejectedValueOnce(new Error("network"));
     const user = userEvent.setup();

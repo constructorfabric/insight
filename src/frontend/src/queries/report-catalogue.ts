@@ -57,11 +57,14 @@ export function useMetricComputations(): {
   // unavailable", and that rejection is all-or-nothing: one such key fails the
   // whole batch and empties the picker. `reachableMetricKeys` is the existing
   // answer to what this installation actually serves.
-  const keys = [...reachableMetricKeys(definitions.data?.metrics ?? [])];
+  const keys = [...reachableMetricKeys(definitions.data?.metrics ?? [])].sort();
   const day = new Date().toISOString().slice(0, 10);
 
   const query = useQuery({
-    queryKey: ["metric-computations", keys.length, personId],
+    // Keyed by the metrics themselves: one swapped for another leaves the
+    // count unchanged, and the cached answer would then describe a set that no
+    // longer exists.
+    queryKey: ["metric-computations", keys.join(" "), personId],
     queryFn: () => probeComputations(keys, personId ?? "", day),
     enabled: keys.length > 0 && Boolean(personId),
     staleTime: 30 * 60 * 1000,

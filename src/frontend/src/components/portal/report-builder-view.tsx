@@ -131,7 +131,11 @@ export function ReportBuilderView() {
     granularity,
     dateRange.from,
     dateRange.to,
-    people.length,
+    // The people themselves, not how many: two different rosters of equal size
+    // would otherwise look like the same report, and a table built for one
+    // scope would stay downloadable under another.
+    ...people.map((person) => person.entityId),
+    "|",
     ...selectedMetrics.map((metric) => metric.metric_key),
   ].join(" ");
   if (table && builtFor !== recipe) {
