@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowDown,
@@ -27,17 +27,12 @@ import {
 } from "@/components/ui/table";
 import {
   cellText,
-  evidenceRowKey,
+  evidenceRowKeys,
   summaryLine,
   type EvidenceSort,
 } from "@/lib/metrics/evidence-rows";
 import { cn } from "@/lib/utils";
 
-/**
- * Spare width goes to the title, which carries a commit subject or an issue
- * summary; the columns holding a number or a date are sized to their content
- * and do not grow, since a wider column shows no more of a six-digit figure.
- */
 function columnLayout(column: MetricEvidenceColumn) {
   if (column.key === "ref") return { basisRem: 9, grow: 0 };
   if (column.key === "title") return { basisRem: 24, grow: 4 };
@@ -122,11 +117,16 @@ export function MetricEvidenceTable({
 }) {
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const rowKeys = useMemo(() => evidenceRowKeys(rows), [rows]);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => viewport,
     estimateSize: () => 44,
     overscan: 8,
+    // The measured height of an expanded row is cached under this key. Left to
+    // default it is the index, and a re-sort then leaves a tall measurement on
+    // whichever row inherits the position.
+    getItemKey: useCallback((index: number) => rowKeys[index] ?? index, [rowKeys]),
   });
   const virtualRows = virtualizer.getVirtualItems();
   const virtualBodyHeight = virtualizer.getTotalSize();
@@ -222,9 +222,6 @@ export function MetricEvidenceTable({
                       state && "text-foreground"
                     )}
                   >
-                    {/* A number needs a narrow column but often a wide label,
-                        so its heading wraps instead of claiming the width the
-                        title has better use for. */}
                     <span
                       className={cn(
                         "min-w-0",
@@ -250,7 +247,7 @@ export function MetricEvidenceTable({
           {virtualRows.map((virtualRow) => {
             const row = rows[virtualRow.index];
             if (!row) return null;
-            const key = evidenceRowKey(row);
+            const key = rowKeys[virtualRow.index]!;
             const isOpen = expanded.has(key);
             return (
               <TableRow
@@ -259,14 +256,9 @@ export function MetricEvidenceTable({
                 data-index={virtualRow.index}
                 ref={virtualizer.measureElement}
                 aria-rowindex={virtualRow.index + 2}
-                // The chevron is the control a keyboard and a screen reader
-                // use; the row carries the same toggle so that clicking the
-                // text that is visibly cut does what it looks like it should.
+                aria-expanded={isOpen}
                 onClick={() => toggleRow(key)}
-                className={cn(
-                  "absolute top-0 left-0 flex w-full cursor-pointer flex-wrap",
-                  isOpen ? "bg-muted/30" : "hover:bg-muted/20"
-                )}
+                className="absolute top-0 left-0 flex w-full cursor-pointer flex-wrap hover:bg-muted/20"
                 style={{
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
@@ -295,7 +287,7 @@ export function MetricEvidenceTable({
                   const layout = columnLayout(column);
                   const value = row.values[column.key];
                   const text = cellText(value, column.type);
-                  const { line } = summaryLine(text);
+                  const line = summaryLine(text);
                   return (
                     <TableCell
                       role="cell"
@@ -307,9 +299,6 @@ export function MetricEvidenceTable({
                       style={{
                         flex: `${layout.grow} 0 ${layout.basisRem}rem`,
                       }}
-                      // The line the cell shows, not the whole field: the rest
-                      // belongs to the expanded row, and a thousand characters
-                      // in a native tooltip is unreadable.
                       title={line}
                     >
                       {column.key === "ref" && value != null ? (
@@ -326,7 +315,11 @@ export function MetricEvidenceTable({
                 {isOpen ? (
                   <TableCell
                     role="cell"
-                    className="w-full basis-full border-t bg-muted/40 px-3 py-3"
+                    aria-colspan={columns.length + 1}
+                    // Selecting the text fires a click on the row, which would
+                    // close the panel the reader is trying to read.
+                    onClick={(event) => event.stopPropagation()}
+                    className="w-full basis-full cursor-auto border-t bg-muted/40 px-3 py-3"
                   >
                     <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[10rem_1fr]">
                       {columns.map((column) => {

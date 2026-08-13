@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { MetricEvidenceColumn } from "@/api/metric-drilldown-client";
 import {
   cellText,
-  evidenceRowKey,
+  evidenceRowKeys,
   nextSort,
   summaryLine,
   visibleEvidenceRows,
@@ -131,48 +131,57 @@ describe("visibleEvidenceRows", () => {
 
 describe("summaryLine", () => {
   it("passes a single-line value through untouched", () => {
-    expect(summaryLine("Add the parser")).toEqual({
-      line: "Add the parser",
-      hasMore: false,
-    });
+    expect(summaryLine("Add the parser")).toBe("Add the parser");
   });
 
-  it("keeps the subject and reports that a body follows", () => {
-    expect(summaryLine("Add the parser\n\nIt handles nested groups.")).toEqual({
-      line: "Add the parser",
-      hasMore: true,
-    });
+  it("keeps the subject and drops the body", () => {
+    expect(summaryLine("Add the parser\n\nIt handles nested groups.")).toBe(
+      "Add the parser"
+    );
   });
 
-  it("does not count a trailing newline as a body", () => {
-    expect(summaryLine("Add the parser\n")).toEqual({
-      line: "Add the parser",
-      hasMore: false,
-    });
-    expect(summaryLine("Add the parser\n\n  \n")).toEqual({
-      line: "Add the parser",
-      hasMore: false,
-    });
+  it("skips leading blank lines rather than showing an empty cell", () => {
+    expect(summaryLine("\n\nOnly a body here")).toBe("Only a body here");
+    expect(summaryLine("  \nAdd the parser")).toBe("Add the parser");
+  });
+
+  it("returns the text itself when every line is blank", () => {
+    expect(summaryLine("  ")).toBe("  ");
   });
 });
 
-describe("evidenceRowKey", () => {
-  it("identifies a row by its ref", () => {
-    expect(evidenceRowKey({ values: { ref: "abc", value: 1 } })).toBe("abc");
+describe("evidenceRowKeys", () => {
+  it("gives a row the same key wherever it sits in the order", () => {
+    const rows = [
+      { values: { ref: "1", repository: "one", value: 1 } },
+      { values: { ref: "2", repository: "two", value: 2 } },
+    ];
+    const [first] = evidenceRowKeys(rows);
+    const reversed = evidenceRowKeys([...rows].reverse());
+    expect(reversed[1]).toBe(first);
   });
 
-  it("falls back to the values when there is no usable ref", () => {
-    const noRef = evidenceRowKey({ values: { value: 1 } });
-    const emptyRef = evidenceRowKey({ values: { ref: "", value: 1 } });
-    expect(noRef).toContain("1");
-    expect(emptyRef).toContain("1");
+  it("separates two rows sharing a ref across repositories", () => {
+    const keys = evidenceRowKeys([
+      { values: { ref: "42", repository: "one" } },
+      { values: { ref: "42", repository: "two" } },
+    ]);
+    expect(keys[0]).not.toBe(keys[1]);
   });
 
-  it("tells two rows apart, and keeps one row stable", () => {
-    const first = { values: { date: "2026-07-01", value: 1 } };
-    const second = { values: { date: "2026-07-02", value: 1 } };
-    expect(evidenceRowKey(first)).not.toBe(evidenceRowKey(second));
-    expect(evidenceRowKey(first)).toBe(evidenceRowKey({ ...first }));
+  it("separates rows that match to the last field", () => {
+    const keys = evidenceRowKeys([
+      { values: { value: 1 } },
+      { values: { value: 1 } },
+      { values: { value: 1 } },
+    ]);
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  it("does not depend on the order the fields arrived in", () => {
+    const [ordered] = evidenceRowKeys([{ values: { a: 1, b: 2 } }]);
+    const [reordered] = evidenceRowKeys([{ values: { b: 2, a: 1 } }]);
+    expect(ordered).toBe(reordered);
   });
 });
 

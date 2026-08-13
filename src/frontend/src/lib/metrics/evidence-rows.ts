@@ -24,32 +24,31 @@ export function cellText(
   return String(value);
 }
 
-/**
- * The first line of a cell's text, and whether anything followed it.
- *
- * A git commit arrives as its whole message — a subject, a blank line, then a
- * body that runs to dozens of lines. A single-line cell collapses all of it
- * into one run of words and cuts it a few words in, so the cell shows the
- * subject and the detail panel takes the rest. A value whose only remainder is
- * a trailing newline has no body to show.
- */
-export function summaryLine(text: string): { line: string; hasMore: boolean } {
-  const newline = text.indexOf("\n");
-  if (newline === -1) return { line: text, hasMore: false };
-  return {
-    line: text.slice(0, newline),
-    hasMore: text.slice(newline + 1).trim() !== "",
-  };
+/** The first non-blank line, so a leading newline is not read as a blank cell. */
+export function summaryLine(text: string): string {
+  return text.split("\n").find((line) => line.trim() !== "") ?? text;
 }
 
 /**
- * Identifies a row across re-sorts, so an expanded record stays the one the
- * reader opened rather than whichever record now sits at that position.
+ * A key per row that survives re-sorting.
+ *
+ * Not `ref`: it is a PR or issue number, unique only within a repository, so
+ * two rows can share one. Evidence exposes no id of its own, leaving the whole
+ * value set as the identity — and rows whose values match to the last field get
+ * an occurrence suffix, since a duplicate key would join their expansion.
  */
-export function evidenceRowKey(row: MetricEvidenceRow): string {
-  const ref = row.values.ref;
-  if (typeof ref === "string" && ref !== "") return ref;
-  return JSON.stringify(row.values);
+export function evidenceRowKeys(rows: readonly MetricEvidenceRow[]): string[] {
+  const seen = new Map<string, number>();
+  return rows.map((row) => {
+    const signature = JSON.stringify(
+      Object.keys(row.values)
+        .sort()
+        .map((key) => [key, row.values[key]])
+    );
+    const occurrence = seen.get(signature) ?? 0;
+    seen.set(signature, occurrence + 1);
+    return occurrence === 0 ? signature : `${signature}#${occurrence}`;
+  });
 }
 
 function matchesSearch(

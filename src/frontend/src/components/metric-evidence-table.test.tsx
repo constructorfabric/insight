@@ -6,6 +6,7 @@ import { MetricEvidenceTable } from "@/components/metric-evidence-table";
 
 const mocks = vi.hoisted(() => ({
   toastError: vi.fn(),
+  measureElement: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-virtual", () => ({
@@ -16,7 +17,7 @@ vi.mock("@tanstack/react-virtual", () => ({
         start: index * 44,
       })),
     getTotalSize: () => count * 44,
-    measureElement: () => undefined,
+    measureElement: mocks.measureElement,
   }),
 }));
 
@@ -56,6 +57,7 @@ function renderTable(
 describe("MetricEvidenceTable", () => {
   beforeEach(() => {
     mocks.toastError.mockReset();
+    mocks.measureElement.mockReset();
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -68,7 +70,6 @@ describe("MetricEvidenceTable", () => {
     const table = screen.getByRole("table");
     expect(table).toHaveAttribute("aria-rowcount", "2");
     expect(screen.getAllByRole("rowgroup")).toHaveLength(2);
-    // Three data columns plus the leading expander column.
     expect(screen.getAllByRole("columnheader")).toHaveLength(4);
     expect(screen.getAllByRole("row")[1]).toHaveAttribute("aria-rowindex", "2");
     expect(screen.getAllByRole("cell")).toHaveLength(8);
@@ -76,6 +77,18 @@ describe("MetricEvidenceTable", () => {
     expect(screen.getByText("Yes")).toBeInTheDocument();
     expect(screen.getByText("No")).toBeInTheDocument();
     expect(screen.getAllByText("—")).toHaveLength(2);
+  });
+
+  it("hands every row to the virtualizer to measure", () => {
+    // An expanded row is as tall as its message, so without measurement the
+    // rows below it overlap. jsdom lays nothing out; the call is the only
+    // observable half of that contract.
+    renderTable();
+
+    const measured = mocks.measureElement.mock.calls
+      .map(([element]) => (element as HTMLElement | null)?.dataset.index)
+      .filter((index) => index != null);
+    expect(new Set(measured)).toEqual(new Set(["0", "1"]));
   });
 
   it("announces which column is sorted and which way", () => {
@@ -125,8 +138,68 @@ describe("MetricEvidenceTable", () => {
       await user.click(toggle!);
       expect(toggle).toHaveAttribute("aria-expanded", "true");
       const detail = screen.getByText(/It handles nested groups/);
-      expect(detail).toHaveTextContent("Add the parser");
+      // textContent keeps the newlines that toHaveTextContent would normalize
+      // away; the class is the only observable half of "they survive layout".
+      expect(detail.textContent).toBe(message);
       expect(detail).toHaveClass("whitespace-pre-wrap");
+    });
+
+    it("opens one of two identical rows that carry no ref, not both", async () => {
+      const user = userEvent.setup();
+      const twins = [
+        { values: { value: 4, active: "Same" } },
+        { values: { value: 4, active: "Same" } },
+      ];
+      renderTable({ rows: twins });
+
+      await user.click(
+        screen.getAllByRole("button", { name: "Show full record" })[0]!
+      );
+      expect(
+        screen.getAllByRole("button", { name: "Hide full record" })
+      ).toHaveLength(1);
+    });
+
+    it("opens one of two rows that share a ref across repositories", async () => {
+      const user = userEvent.setup();
+      renderTable({
+        rows: [
+          { values: { ref: "42", value: 1, active: "one" } },
+          { values: { ref: "42", value: 2, active: "two" } },
+        ],
+      });
+
+      await user.click(
+        screen.getAllByRole("button", { name: "Show full record" })[0]!
+      );
+      expect(
+        screen.getAllByRole("button", { name: "Hide full record" })
+      ).toHaveLength(1);
+    });
+
+    it("stays open when the reader clicks the text inside it", async () => {
+      const user = userEvent.setup();
+      renderTable({ rows: longRows });
+
+      await user.click(
+        screen.getAllByRole("button", { name: "Show full record" })[0]!
+      );
+      await user.click(screen.getByText(/It handles nested groups/));
+      expect(screen.getByText(/It handles nested groups/)).toBeInTheDocument();
+    });
+
+    it("renders a missing, boolean or object field in the panel too", async () => {
+      const user = userEvent.setup();
+      renderTable();
+
+      await user.click(
+        screen.getAllByRole("button", { name: "Show full record" })[1]!
+      );
+      const panel = screen
+        .getAllByRole("button", { name: "Hide full record" })[0]!
+        .closest("tr")!;
+      expect(panel).toHaveTextContent("No");
+      expect(panel.querySelectorAll("dd")[0]).toHaveTextContent("—");
     });
 
     it("opens from a click on the row, where the cut text actually is", async () => {
