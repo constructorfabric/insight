@@ -43,6 +43,7 @@ AUTH3_PORT="${AUTH3_PORT:-8087}"
 TOKEN3_PORT="${TOKEN3_PORT:-8097}"
 KC_PORT="${KC_PORT:-8084}"
 IDENTITY_PORT="${IDENTITY_PORT:-8092}"
+GITHUB_STUB_PORT="${GITHUB_STUB_PORT:-8098}"
 REDIS_CT=authenticator-e2e-redis
 KC_CT=authenticator-e2e-keycloak
 # Same image the compose stack pins for its realm (docker-compose.yml).
@@ -61,6 +62,10 @@ SEED_DIR="$ROOT_DIR/src/ingestion/tools/seed"
 # resolves people by email (idp.external_id_claim=email), so this only has to
 # be named, and it is the value the compose stack uses.
 KC_TENANT_ID=00000000-df51-5b42-9538-d2b56b7ee953
+# The GitHub registration's hardcoded tenant pin (kc-realm-overlay.py) —
+# deliberately NOT the roster tenant above, so the broker suite proves the
+# token tenant comes from the pin, not from any default.
+GITHUB_TENANT_PIN=11111111-2222-4333-8444-555555555555
 pids=()
 
 cleanup() {
@@ -123,7 +128,9 @@ python3 "$HERE/kc-realm-overlay.py" \
   --out-dir "$KC_IMPORT_DIR" \
   --second-realm "$KC_REALM_B" \
   --backchannel-url "http://host.docker.internal:$AUTH_PORT/auth/oidc/back-channel-logout" \
-  --access-token-lifespan 15
+  --access-token-lifespan 15 \
+  --github-stub-base "http://host.docker.internal:$GITHUB_STUB_PORT" \
+  --github-tenant-pin "$GITHUB_TENANT_PIN"
 rm -f "$KC_IMPORT_DIR/realm-insight.generated.json"
 
 echo "==> Keycloak :$KC_PORT (realms $KC_REALM + $KC_REALM_B, --import-realm)"
@@ -170,6 +177,12 @@ echo "==> identity stub :$IDENTITY_PORT (resolves any email/external-id to a per
 python3 "$HERE/identity-stub.py" "127.0.0.1:$IDENTITY_PORT" >/tmp/authenticator-e2e-identity.log 2>&1 &
 pids+=($!)
 wait_ready identity-stub "http://localhost:$IDENTITY_PORT/internal/persons/by-external-id?source_type=faketest&external_id=probe"
+
+echo "==> github stub :$GITHUB_STUB_PORT (rig-local GitHub for the broker leg)"
+# 0.0.0.0: the Keycloak container dials in via host.docker.internal.
+python3 "$HERE/github-stub.py" "0.0.0.0:$GITHUB_STUB_PORT" >/tmp/authenticator-e2e-github.log 2>&1 &
+pids+=($!)
+wait_ready github-stub "http://localhost:$GITHUB_STUB_PORT/healthz"
 
 echo "==> authenticator :$AUTH_PORT"
 # The config's own bind addrs are the default 8083/8093; rewrite them like the
@@ -277,6 +290,10 @@ export E2E_USER_PASSWORD=insight-dev
 echo "==> run the login loop"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
   cargo test -p authenticator --test e2e_login_loop -- --ignored --nocapture
+
+echo "==> run the GitHub-brokered login loop (#2163 scenario 8)"
+AUTH_BASE="http://localhost:$AUTH_PORT" E2E_GITHUB_TENANT_PIN="$GITHUB_TENANT_PIN" \
+  cargo test -p authenticator --test e2e_broker -- --ignored --nocapture
 
 echo "==> run the refresh rotation-with-grace loop (step 10.1)"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \

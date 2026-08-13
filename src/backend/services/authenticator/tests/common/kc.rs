@@ -117,6 +117,255 @@ pub async fn login(http: &super::Client, auth_base: &str, user: &str) -> String 
     session_cookie(&cb).expect("callback must set __Host-sid")
 }
 
+/// GitHub-brokered login: `/auth/login` -> the authorize URL with
+/// `kc_idp_hint=github` -> the GitHub stub authorizes as `stub_user`
+/// (github-stub.py: `known` | `unknown`) -> Keycloak's broker callback,
+/// first-broker-login form included when Keycloak serves one -> the
+/// authenticator callback response, returned unread so the caller asserts
+/// the outcome: a session cookie for a resolvable person, the refusal
+/// redirect otherwise.
+pub async fn broker_login_github(
+    http: &super::Client,
+    auth_base: &str,
+    stub_user: &str,
+) -> reqwest::Response {
+    let callback = broker_callback_url(http, auth_base, stub_user).await;
+    http.get(&callback).send().await.unwrap()
+}
+
+/// The brokered hop chain up to (not including) the authenticator callback:
+/// returns the callback URL so the caller can either follow it or exchange
+/// the code straight at the IdP (the claim-contract assertions).
+pub async fn broker_callback_url(http: &super::Client, auth_base: &str, stub_user: &str) -> String {
+    let login = http
+        .get(format!("{auth_base}/auth/login"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        login.status(),
+        302,
+        "GET /auth/login must redirect to the IdP"
+    );
+    let authorize_url = login.headers()[reqwest::header::LOCATION]
+        .to_str()
+        .unwrap()
+        .to_owned();
+
+    let plain = self::http();
+    let mut cookies: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let callback_prefix = format!("{auth_base}/auth/callback");
+    let mut url = format!("{authorize_url}&kc_idp_hint=github");
+
+    for _ in 0..12 {
+        // The stub's authorize URL is built with the container-side host;
+        // the test process follows it at loopback. `e2e_user` picks the
+        // GitHub identity the stub authorizes as.
+        url = url.replace("host.docker.internal", "127.0.0.1");
+        if url.contains("/login/oauth/authorize") {
+            url = format!("{url}&e2e_user={stub_user}");
+        }
+        if url.starts_with(&callback_prefix) {
+            return url;
+        }
+
+        let resp = plain
+            .get(&url)
+            .header(reqwest::header::COOKIE, cookie_header(&cookies))
+            .send()
+            .await
+            .unwrap();
+        collect_cookies(&resp, &mut cookies);
+
+        url = if resp.status().is_redirection() {
+            next_location(&resp, &url)
+        } else if resp.status() == 200 {
+            // First-broker-login review-profile: re-post the form as served,
+            // filling the names a GitHub profile may not carry.
+            let base = url.clone();
+            let page = resp.text().await.unwrap();
+            let submitted = plain
+                .post(absolute(&form_action(&page), &base))
+                .header(reqwest::header::COOKIE, cookie_header(&cookies))
+                .form(&profile_form(&page))
+                .send()
+                .await
+                .unwrap();
+            collect_cookies(&submitted, &mut cookies);
+            assert!(
+                submitted.status().is_redirection(),
+                "the first-broker-login POST must redirect; page said: {}",
+                submitted
+                    .text()
+                    .await
+                    .unwrap_or_default()
+                    .chars()
+                    .take(500)
+                    .collect::<String>()
+            );
+            next_location(&submitted, &base)
+        } else {
+            panic!("unexpected {} while brokering at {url}", resp.status());
+        };
+    }
+    panic!("brokered login never reached the authenticator callback");
+}
+
+/// The realm user representation for `email`, via the admin API.
+pub async fn find_user(email: &str) -> serde_json::Value {
+    let http = http();
+    let token = admin_token(&http).await;
+    user_representation(&http, &token, email).await
+}
+
+/// Exchange an authorization code at the realm's token endpoint (the
+/// authenticator's own dev client) and return the `id_token` claims. The
+/// signature is not verified — the claims, not the signature, are what the
+/// caller asserts.
+pub async fn exchange_code_for_id_claims(code: &str, redirect_uri: &str) -> serde_json::Value {
+    use base64::Engine;
+
+    let http = http();
+    let secret = env("E2E_IDP_CLIENT_SECRET", "insight-authenticator-dev-secret");
+    let resp = http
+        .post(format!(
+            "{}/realms/{}/protocol/openid-connect/token",
+            base(),
+            realm()
+        ))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", redirect_uri),
+            ("client_id", "insight-authenticator"),
+            ("client_secret", secret.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "the code exchange must succeed");
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    let id_token = body["id_token"]
+        .as_str()
+        .expect("an id_token in the response");
+    let payload = id_token.split('.').nth(1).expect("a JWT payload segment");
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .expect("base64url JWT payload");
+    serde_json::from_slice(&bytes).expect("JSON JWT claims")
+}
+
+/// The user's federated-identity links, via the admin API — the broker
+/// suite's proof of which upstream identity the realm user is linked to.
+pub async fn federated_identity(email: &str) -> serde_json::Value {
+    let http = http();
+    let token = admin_token(&http).await;
+    let user = user_representation(&http, &token, email).await;
+    let id = user["id"].as_str().unwrap();
+    let resp = http
+        .get(format!(
+            "{}/admin/realms/{}/users/{id}/federated-identity",
+            base(),
+            realm()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "the federated-identity lookup must succeed"
+    );
+    resp.json().await.unwrap()
+}
+
+fn cookie_header(cookies: &std::collections::HashMap<String, String>) -> String {
+    cookies
+        .iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn collect_cookies(
+    resp: &reqwest::Response,
+    cookies: &mut std::collections::HashMap<String, String>,
+) {
+    for hv in resp.headers().get_all(reqwest::header::SET_COOKIE) {
+        let Ok(raw) = hv.to_str() else { continue };
+        let Some(pair) = raw.split(';').next() else {
+            continue;
+        };
+        let Some((name, value)) = pair.split_once('=') else {
+            continue;
+        };
+        cookies.insert(name.trim().to_owned(), value.trim().to_owned());
+    }
+}
+
+fn next_location(resp: &reqwest::Response, base: &str) -> String {
+    let loc = resp.headers()[reqwest::header::LOCATION].to_str().unwrap();
+    absolute(loc, base)
+}
+
+fn absolute(url: &str, base: &str) -> String {
+    reqwest::Url::parse(base)
+        .unwrap()
+        .join(url)
+        .unwrap()
+        .to_string()
+}
+
+/// Every input field the page's form carries, with `firstName`/`lastName`
+/// filled in when empty — the two the review-profile step demands and a
+/// GitHub profile may not provide.
+fn profile_form(page: &str) -> Vec<(String, String)> {
+    let mut fields: Vec<(String, String)> = vec![];
+    for tag in page.split("<input").skip(1) {
+        let tag = &tag[..tag.find('>').unwrap_or(tag.len())];
+        let Some(name) = attr(tag, "name") else {
+            continue;
+        };
+        let value = attr(tag, "value").unwrap_or_default();
+        fields.push((name, value));
+    }
+
+    for required in ["firstName", "lastName"] {
+        match fields.iter_mut().find(|(name, _)| name == required) {
+            Some(field) if field.1.is_empty() => "Broker".clone_into(&mut field.1),
+            Some(_) => {}
+            None => fields.push((required.to_owned(), "Broker".to_owned())),
+        }
+    }
+    fields
+}
+
+fn attr(tag: &str, key: &str) -> Option<String> {
+    let pattern = format!("{key}=\"");
+    let at = tag.find(&pattern)? + pattern.len();
+    Some(tag[at..at + tag[at..].find('"')?].replace("&amp;", "&"))
+}
+
+/// The POST target of the page's only form (the review-profile page serves
+/// exactly one). Keycloak escapes `&` in the attribute value.
+fn form_action(page: &str) -> String {
+    let from = page.find("<form").unwrap_or(0);
+    let action_at = page[from..]
+        .find("action=\"")
+        .expect("the page must contain a form action")
+        + from
+        + "action=\"".len();
+    let action = &page[action_at
+        ..action_at
+            + page[action_at..]
+                .find('"')
+                .expect("unterminated action attribute")];
+    action.replace("&amp;", "&")
+}
+
 /// The `__Host-sid` value from a response's `Set-Cookie` headers.
 pub fn session_cookie(resp: &reqwest::Response) -> Option<String> {
     for hv in resp.headers().get_all(reqwest::header::SET_COOKIE) {

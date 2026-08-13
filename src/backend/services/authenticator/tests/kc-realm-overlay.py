@@ -13,7 +13,12 @@ The rig needs the same realm plus what only the e2e suites care about:
   or admin disable must never reach a sibling's live session;
 - a second, user-less realm (`--second-realm`) as the second issuer of the
   host-keyed map (`e2e_hostmap`). User-less because Keycloak's user ids are
-  globally unique across realms, so importing the roster twice collides.
+  globally unique across realms, so importing the roster twice collides;
+- the GitHub identity-provider registration in the documented shape
+  (deploy/gitops/README.md, "Enabling GitHub sign-in") — trustEmail, the
+  hardcoded tenant pin, the GitHub-id -> `idp_sub` mapper — aimed at the
+  rig's GitHub stub (`--github-stub-base`/`--github-tenant-pin`, together
+  or not at all; only the primary realm carries it).
 
 Passwords and tenant ids are read off the input realm rather than restated,
 so this script cannot drift from the generator.
@@ -51,6 +56,44 @@ TEST_USERS = [
 ]
 
 
+# The pair the GitHub stub validates (tests/github-stub.py).
+GITHUB_CLIENT_ID = "github-e2e-client"
+GITHUB_CLIENT_SECRET = "github-e2e-secret"
+
+
+def _github_identity_provider(stub_base: str, tenant_pin: str) -> tuple[dict, list[dict]]:
+    provider = {
+        "alias": "github",
+        "providerId": "github",
+        "enabled": True,
+        "trustEmail": True,
+        "config": {
+            "clientId": GITHUB_CLIENT_ID,
+            "clientSecret": GITHUB_CLIENT_SECRET,
+            "defaultScope": "user:email",
+            # The provider's GitHub-Enterprise seam: authorize/token hang off
+            # baseUrl, /user and /user/emails off apiUrl — all the stub here.
+            "baseUrl": stub_base,
+            "apiUrl": stub_base,
+        },
+    }
+    mappers = [
+        {
+            "name": "tenant-pin",
+            "identityProviderAlias": "github",
+            "identityProviderMapper": "hardcoded-attribute-idp-mapper",
+            "config": {"attribute": "tenant_id", "attribute.value": tenant_pin},
+        },
+        {
+            "name": "github-id-to-idp-sub",
+            "identityProviderAlias": "github",
+            "identityProviderMapper": "github-user-attribute-mapper",
+            "config": {"jsonField": "id", "userAttribute": "idp_sub"},
+        },
+    ]
+    return provider, mappers
+
+
 def _test_user(email: str, password: str, tenant_id: str) -> dict:
     local = email.split("@", 1)[0]
     return {
@@ -72,7 +115,11 @@ def main() -> None:
     parser.add_argument("--second-realm", required=True, help="Name of the user-less second realm")
     parser.add_argument("--backchannel-url", required=True, help="insight-authenticator back-channel logout URL")
     parser.add_argument("--access-token-lifespan", type=int, required=True, help="Realm access-token lifespan, seconds")
+    parser.add_argument("--github-stub-base", help="GitHub stub base URL as the Keycloak container reaches it")
+    parser.add_argument("--github-tenant-pin", help="Hardcoded tenant_id the GitHub registration stamps")
     args = parser.parse_args()
+    if bool(args.github_stub_base) != bool(args.github_tenant_pin):
+        parser.error("--github-stub-base and --github-tenant-pin come together or not at all")
 
     realm = json.loads(Path(args.realm).read_text())
 
@@ -91,6 +138,32 @@ def main() -> None:
     second = copy.deepcopy(realm)
     second["realm"] = args.second_realm
     second["users"] = []
+
+    # After the deepcopy: the host-keyed second realm stays broker-free.
+    if args.github_stub_base:
+        provider, mappers = _github_identity_provider(args.github_stub_base, args.github_tenant_pin)
+        realm.setdefault("identityProviders", []).append(provider)
+        realm.setdefault("identityProviderMappers", []).extend(mappers)
+        # The canonical broker realm's idp_sub passthrough (the generated
+        # roster realm has no brokered users, so it does not carry one):
+        # KC 26 hides unmanaged user attributes from admin-API reads, so the
+        # token claim is the only observable proof the GitHub mapper stamped.
+        client.setdefault("protocolMappers", []).append(
+            {
+                "name": "idp_sub",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-usermodel-attribute-mapper",
+                "consentRequired": False,
+                "config": {
+                    "user.attribute": "idp_sub",
+                    "claim.name": "idp_sub",
+                    "jsonType.label": "String",
+                    "id.token.claim": "true",
+                    "access.token.claim": "true",
+                    "userinfo.token.claim": "true",
+                },
+            }
+        )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
