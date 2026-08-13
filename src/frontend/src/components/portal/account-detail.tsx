@@ -17,6 +17,7 @@ import type {
   BindingHistoryEntry,
   PersonSummary,
 } from "@/api/identity-client";
+import { AccountActions } from "@/components/portal/account-actions";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -101,16 +102,11 @@ export function AccountDetail({
               </p>
             )}
           </section>
-          {candidates.length > 0 ? (
-            <section>
-              <SectionLabel>{t("identities.detail.candidates")}</SectionLabel>
-              <div className="flex flex-col gap-2">
-                {candidates.map((candidate) => (
-                  <PersonCell key={candidate.person_id} person={candidate} />
-                ))}
-              </div>
-            </section>
-          ) : null}
+          <AccountActions
+            accountRef={accountRef}
+            binding={binding.data}
+            candidates={candidates}
+          />
           <section>
             <SectionLabel>{t("identities.detail.history")}</SectionLabel>
             {binding.data.history.length === 0 ? (

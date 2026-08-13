@@ -1,13 +1,16 @@
 import { AnalyticsApiError } from "@/api/analytics-client";
+import { IdentityApiError } from "@/api/identity-client";
 
 /**
  * Pull the first field-violation description out of a canonical-error body so
  * the console can show the server's own reason — the single-SELECT gate's
  * rejection or a missing-named-parameter `400` — instead of a generic message.
- * Returns the fallback when the body carries no such reason.
+ * Returns the fallback when the body carries no such reason. Both backend
+ * services speak the same problem+json envelope, so one extractor serves both
+ * error classes.
  */
 export function apiErrorReason(error: unknown, fallback: string): string {
-  if (error instanceof AnalyticsApiError) {
+  if (error instanceof AnalyticsApiError || error instanceof IdentityApiError) {
     const reason = firstFieldViolation(error.body);
     if (reason) return reason;
   }

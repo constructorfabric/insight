@@ -293,7 +293,7 @@ export function manageItemsFor(isAdmin: boolean): readonly PaneItem[] {
 
 export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "metric-catalog", label: "Metric catalog", icon: LayoutGrid },
-  { id: "identities", label: "Identities", icon: Fingerprint, readiness: "unbuilt", adminOnly: true },
+  { id: "identities", label: "Identities", icon: Fingerprint, adminOnly: true },
   { id: "taxonomy", label: "Roles & taxonomy", icon: Boxes, readiness: "unbuilt" },
   { id: "exclusions", label: "Data exclusions", icon: Filter, readiness: "unbuilt" },
   { id: "snapshots", label: "Org snapshots", icon: Clock, readiness: "unbuilt" },

@@ -58,7 +58,8 @@
       "expand": "Expand",
       "try_again": "Try again",
       "reload": "Reload",
-      "retry": "Retry"
+      "retry": "Retry",
+      "cancel": "Cancel"
     },
     "ui_components": {
       "sidebar": {
@@ -440,6 +441,48 @@
       "automatic": "Automatic",
       "to": "to",
       "by_operator": "by an operator"
+    },
+    "actions": {
+      "bind": "Bind",
+      "confirm": "Confirm",
+      "merge": "Merge…",
+      "merge_confirm": "Merge persons",
+      "detach": "Detach into a new person",
+      "detach_confirm": "Detach",
+      "exclude": "Exclude (bot / CI)",
+      "exclude_confirm": "Exclude",
+      "assign_other": "Assign to someone else"
+    },
+    "dialogs": {
+      "bind_title": "Bind this account?",
+      "confirm_title": "Confirm the current binding?",
+      "bind_description": "The account will belong to {{name}} from here on.",
+      "merge_title": "Merge two persons?",
+      "merge_description": "Every account of the currently bound person moves to {{name}}. Merging back is another merge — nothing is lost, but metrics re-attribute.",
+      "merge_preview_loading": "Counting the accounts that would move…",
+      "merge_preview_one": "{{count}} account moves:",
+      "merge_preview_other": "{{count}} accounts move:",
+      "merge_preview_more": "…and {{count}} more.",
+      "detach_title": "Detach into a new person?",
+      "detach_description": "The account gets a freshly minted person of its own.",
+      "exclude_title": "Exclude this account?",
+      "exclude_description": "Bots, CI and service accounts are excluded from every person metric. Reversible by binding the account to a person later.",
+      "failed": "The correction was not applied. Try again."
+    },
+    "outcomes": {
+      "applied_one": "{{count}} applied",
+      "applied_other": "{{count}} applied",
+      "already_decided_one": "{{count}} already decided",
+      "already_decided_other": "{{count}} already decided",
+      "refused_one": "{{count}} refused",
+      "refused_other": "{{count}} refused",
+      "new_person": "New person:"
+    },
+    "picker": {
+      "placeholder": "Search people by name, email or handle…",
+      "no_matches": "Nobody matches those terms.",
+      "truncated": "More people matched than shown — narrow the terms.",
+      "failed": "Search failed. Try again."
     }
   }
 }

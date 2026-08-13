@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AnalyticsApiError } from "@/api/analytics-client";
+import { IdentityApiError } from "@/api/identity-client";
 
 import { apiErrorReason } from "./api-error";
 
@@ -16,6 +17,15 @@ describe("apiErrorReason", () => {
       },
     });
     expect(apiErrorReason(err, FALLBACK)).toBe("not a single SELECT");
+  });
+
+  it("unwraps an IdentityApiError the same way — both services speak problem+json", () => {
+    const err = new IdentityApiError(400, {
+      context: {
+        field_violations: [{ field: "q", description: "search terms are required" }],
+      },
+    });
+    expect(apiErrorReason(err, FALLBACK)).toBe("search terms are required");
   });
 
   it("falls back when the error is not an AnalyticsApiError", () => {

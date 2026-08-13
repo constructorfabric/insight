@@ -4,7 +4,17 @@ vi.mock("@/api/fetch-with-auth", () => ({ fetchWithAuth: vi.fn() }));
 
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 
-import { getAccountBinding, getAttention, getMe, getPerson, IdentityApiError } from "./identity-client";
+import {
+  bindAccount,
+  detachAccount,
+  getAccountBinding,
+  getAttention,
+  getMe,
+  getPerson,
+  IdentityApiError,
+  mergePersons,
+  searchPersons,
+} from "./identity-client";
 
 const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
 
@@ -250,5 +260,82 @@ describe("getAccountBinding", () => {
     await expect(
       getAccountBinding({ source: "github", source_id: "s", account_id: "a" }),
     ).rejects.toMatchObject({ body: { error: "malformed_binding" } });
+  });
+});
+
+describe("correction verbs", () => {
+  const ACCOUNT = {
+    source: "github",
+    source_id: "01900000-0000-7000-8000-00000000aa01",
+    id: "dev-42",
+  };
+  const OK = {
+    applied: 1,
+    already_decided: 0,
+    items: [{ ...ACCOUNT, account_id: "dev-42", outcome: "applied" }],
+  };
+
+  it("bind wraps the single account into the bulk wire shape", async () => {
+    mockFetch.mockResolvedValueOnce(response(OK));
+
+    await bindAccount({ account: ACCOUNT, person_id: "p-1" });
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/identity/v1/resolution/bind");
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      bindings: [{ account: ACCOUNT, person_id: "p-1" }],
+      comment: "",
+    });
+  });
+
+  it("merge names source and target explicitly", async () => {
+    mockFetch.mockResolvedValueOnce(response(OK));
+
+    await mergePersons({ source_person_id: "p-1", target_person_id: "p-2" });
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/identity/v1/resolution/merge");
+    expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({
+      source_person_id: "p-1",
+      target_person_id: "p-2",
+    });
+  });
+
+  it("detach returns the freshly minted person", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ ...OK, new_person_id: "p-new" }),
+    );
+
+    const outcome = await detachAccount({ account: ACCOUNT });
+
+    expect(outcome.new_person_id).toBe("p-new");
+  });
+
+  it("a refusal body without items is malformed, not silently empty", async () => {
+    mockFetch.mockResolvedValueOnce(response({ applied: 0 } as never));
+
+    await expect(bindAccount({ account: ACCOUNT, person_id: "p-1" })).rejects.toMatchObject({
+      body: { error: "malformed_correction" },
+    });
+  });
+});
+
+describe("searchPersons", () => {
+  it("URI-encodes the terms", async () => {
+    mockFetch.mockResolvedValueOnce(response({ items: [], truncated: false }));
+
+    await searchPersons("iva example.com");
+
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      "/api/identity/v1/persons?q=iva%20example.com",
+    );
+  });
+
+  it("rejects a malformed body rather than reading it as no matches", async () => {
+    mockFetch.mockResolvedValueOnce(response({ truncated: false } as never));
+
+    await expect(searchPersons("x y")).rejects.toMatchObject({
+      body: { error: "malformed_search" },
+    });
   });
 });

@@ -26,6 +26,13 @@ vi.mock("@/queries/identity-resolution", () => ({
   useAccountBinding: () => binding.q,
 }));
 
+// The verbs have their own test file; here the panel's reads are under test.
+vi.mock("@/components/portal/account-actions", () => ({
+  AccountActions: ({ candidates }: { candidates: unknown[] }) => (
+    <div data-testid="account-actions" data-candidates={candidates.length} />
+  ),
+}));
+
 import { AccountDetail } from "./account-detail";
 
 const REF = {
@@ -67,7 +74,11 @@ describe("AccountDetail", () => {
     render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
 
     expect(screen.getByText(/currently bound to/i)).toBeInTheDocument();
-    expect(screen.getAllByText("Bob Park").length).toBeGreaterThan(0);
+    expect(screen.getByText("Bob Park")).toBeInTheDocument();
+    expect(screen.getByTestId("account-actions")).toHaveAttribute(
+      "data-candidates",
+      "1",
+    );
   });
 
   it("keeps an unknown bound person an honest bare id", () => {

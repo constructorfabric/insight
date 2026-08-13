@@ -421,6 +421,79 @@ export const handlers = [
       });
     },
   ),
+  // Person search for the picker: multi-term AND over the seeded roster.
+  http.get("/api/identity/v1/persons", ({ request }) => {
+    const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+    if (!q) {
+      return HttpResponse.json(
+        { type: "urn:insight:error:invalid_argument" },
+        { status: 400 },
+      );
+    }
+    const terms = q.toLowerCase().split(/\s+/);
+    const items = PEOPLE.filter((p) =>
+      terms.every((term) =>
+        [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(term)),
+      ),
+    )
+      .slice(0, 20)
+      .map((p) => ({
+        person_id: p.person_id,
+        email: p.email,
+        username: null,
+        display_name: p.name,
+        job_title: p.role,
+        status: "active",
+      }));
+    return HttpResponse.json({ items, truncated: false, next_cursor: null });
+  }),
+  // A merge preview's substance: two synthetic accounts for anyone.
+  http.get(
+    "/api/identity/v1/resolution/persons/:personId/accounts",
+    ({ params }) =>
+      HttpResponse.json({
+        person_id: params.personId,
+        accounts: [
+          {
+            source: "github",
+            source_id: "01900000-0000-7000-8000-00000000aa01",
+            account_id: "gh-main",
+            email: "main@example.com",
+            username: "gh-main",
+            bound_by_operator: false,
+          },
+          {
+            source: "gitlab",
+            source_id: "01900000-0000-7000-8000-00000000aa02",
+            account_id: "gl-alt",
+            email: null,
+            username: "gl-alt",
+            bound_by_operator: true,
+          },
+        ],
+      }),
+  ),
+  // The four correction verbs: happy-path outcomes, no state kept — the queue
+  // mock is static, so the demo shows the flow rather than a simulation.
+  ...["bind", "merge", "detach", "exclude"].map((verb) =>
+    http.post(`/api/identity/v1/resolution/${verb}`, () =>
+      HttpResponse.json({
+        applied: 1,
+        already_decided: 0,
+        items: [
+          {
+            source: "github",
+            source_id: "01900000-0000-7000-8000-00000000aa01",
+            account_id: "dev-42",
+            outcome: "applied",
+          },
+        ],
+        ...(verb === "detach"
+          ? { new_person_id: "01900000-0000-7000-8000-00000000dead" }
+          : {}),
+      }),
+    ),
+  ),
   // The review queue, exercising all three kinds. Candidates reuse the seeded
   // roster so names/emails stay consistent with every other mock surface.
   http.get("/api/identity/v1/resolution/attention", () => {
