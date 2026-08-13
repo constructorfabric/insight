@@ -23,7 +23,7 @@ SELECT
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at
-FROM {{ source('bronze_github', 'pull_request_reviews') }}
+FROM {{ source('bronze_github', 'pull_request_reviews') }} FINAL
 {% if is_incremental() %}
 WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}

@@ -59,7 +59,7 @@ SELECT
         pr._airbyte_extracted_at,
         COALESCE(ds._airbyte_extracted_at, pr._airbyte_extracted_at)
     ) AS _airbyte_extracted_at
-FROM {{ source('bronze_github', 'pull_requests') }} AS pr
+FROM {{ source('bronze_github', 'pull_requests') }} AS pr FINAL
 LEFT JOIN diff_stats AS ds
     ON ds.tenant_id = pr.tenant_id
     AND ds.source_id = pr.source_id

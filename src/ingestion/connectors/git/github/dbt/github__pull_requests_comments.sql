@@ -37,7 +37,7 @@ SELECT
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     c._airbyte_extracted_at AS _airbyte_extracted_at
-FROM {{ source('bronze_github', 'pull_request_comments') }} AS c
+FROM {{ source('bronze_github', 'pull_request_comments') }} AS c FINAL
 INNER JOIN pull_request_numbers AS p
     ON p.tenant_id = c.tenant_id
     AND p.source_id = c.source_id
@@ -68,7 +68,7 @@ SELECT
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at
-FROM {{ source('bronze_github', 'pull_request_review_comments') }}
+FROM {{ source('bronze_github', 'pull_request_review_comments') }} FINAL
 {% if is_incremental() %}
 WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}
