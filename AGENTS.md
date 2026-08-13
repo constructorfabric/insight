@@ -56,12 +56,19 @@ When uncertain whether information came from a real environment, omit it and use
 
 ## Comments
 
-- No comments unless code cannot express the **why**.
-- Allowed, one line, tagged:
+- No comments unless they express a constraint the code cannot.
+- Prefer code over prose: name things clearly, extract functions, use types, make invalid states unrepresentable.
+- Allowed comments are brief and tagged:
   - `SAFETY:` — non-obvious safety/security/correctness reasoning.
-  - `INVARIANT:` — cross-function/system fact a future edit could break.
+  - `INVARIANT:` — a fact a future edit could silently break.
   - `WORKAROUND:` — external/platform/dependency behavior being worked around.
-  - Tool/linter/compiler suppressions — require a brief adjacent justification.
-- No headers, issue/PR references, phase notes, discussion history, or comments explaining obvious code/layout.
-- Non-obvious semantics belong in tests, types, or docs—not comments.
+  - Tool/linter/compiler suppressions — brief adjacent justification.
+- Do not comment:
+  - implementation history or how the code got here;
+  - what the code already says;
+  - alternatives considered or roads not taken;
+  - issue/PR context, phase notes, headers, or discussion history.
+- Non-obvious semantics belong in types, tests, or docs when possible.
 - Doc comments only for genuinely public/external APIs; keep them brief.
+- Comments should normally be one or two lines. If a comment needs a paragraph, improve the code or move the rationale to documentation.
+- If deleting a comment does not materially reduce safety, correctness, or maintainability, delete it when it is within the scope of the current work.

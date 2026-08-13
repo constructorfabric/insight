@@ -44,7 +44,7 @@ dev = [
     # The tests are pytest-style; the image-validation step in build-images.yml
     # installs pytest transiently on top of the built image to run them, so the
     # published image itself still ships without it.
-    "pytest>=8,<9",
+    "pytest>=8,<10",
 ]
 
 # The entry points every runner uses. Both images install this package, so the
