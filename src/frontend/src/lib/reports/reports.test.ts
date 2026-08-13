@@ -6,6 +6,7 @@ import {
   MAX_VALUES_PER_REQUEST,
   planRequests,
 } from "@/lib/reports/batching";
+import { unavailableReason } from "@/lib/reports/availability";
 import { byFamily } from "@/lib/reports/families";
 import { buildReportTable } from "@/lib/reports/report-table";
 import {
@@ -15,7 +16,10 @@ import {
   needsRollup,
   rollUp,
 } from "@/lib/reports/rollup";
-import type { ReportPerson } from "@/lib/reports/roster-columns";
+import {
+  collectReportPeople,
+  type ReportPerson,
+} from "@/lib/reports/roster-columns";
 import type { MetricResult } from "@/api/metric-results-client";
 
 const months = (...pairs: Array<[string, number | null]>) =>
@@ -328,5 +332,130 @@ describe("bucketSpan", () => {
       from: "2026-06-01",
       to: "2026-06-01",
     });
+  });
+});
+
+describe("unavailableReason", () => {
+  const enabled = {
+    metric_key: "git.commits",
+    schema_status: "ok" as const,
+    last_observed_date: "2026-05-01",
+    origin: "builtin" as const,
+  };
+  const sums = new Map([["git.commits", "sum" as const]]);
+
+  it("lets a working, observed metric through at any granularity", () => {
+    for (const g of ["day", "week", "month", "quarter", "year"] as const) {
+      expect(unavailableReason(enabled, g, sums)).toBeNull();
+    }
+  });
+
+  it("names a broken metric before anything else", () => {
+    expect(
+      unavailableReason({ ...enabled, schema_status: "error" }, "month", sums),
+    ).toMatch(/not computing/);
+  });
+
+  it("names a metric nothing has ever reached", () => {
+    expect(
+      unavailableReason({ ...enabled, last_observed_date: null }, "month", sums),
+    ).toMatch(/No data reaches us/);
+  });
+
+  it("takes a custom metric at its word about freshness", () => {
+    // The validator stamps freshness from materialised relations only, so a
+    // custom metric's absent date says nothing about whether it serves data.
+    expect(
+      unavailableReason(
+        { ...enabled, last_observed_date: null, origin: "custom" },
+        "month",
+        sums,
+      ),
+    ).toBeNull();
+  });
+
+  it("refuses a non-additive metric only where buckets are added up", () => {
+    const ratio = new Map([["git.commits", "ratio" as const]]);
+    expect(unavailableReason(enabled, "month", ratio)).toBeNull();
+    expect(unavailableReason(enabled, "quarter", ratio)).toMatch(
+      /numerator over its own denominator/,
+    );
+    // The refusal says how to include it rather than only saying no.
+    expect(unavailableReason(enabled, "year", ratio)).toMatch(/monthly or finer/);
+  });
+
+  it("says nothing about a metric the probe has not answered for yet", () => {
+    expect(unavailableReason(enabled, "quarter", new Map())).toBeNull();
+  });
+});
+
+describe("collectReportPeople", () => {
+  const node = (over: Record<string, unknown> = {}) =>
+    ({
+      person_id: "P1",
+      email: "jane.doe@example.com",
+      display_name: "Jane Doe",
+      division: "Platform",
+      department: "Core",
+      job_title: "Engineer",
+      status: "Active",
+      supervisor_name: "Sam Smith",
+      supervisor_email: "sam.smith@example.com",
+      subordinates: [],
+      ...over,
+    }) as never;
+
+  it("keys people by the normalised id the metrics use", () => {
+    const people = collectReportPeople(node());
+    expect([...people.keys()]).toEqual(["p1"]);
+    expect(people.get("p1")?.managerEmail).toBe("sam.smith@example.com");
+  });
+
+  it("walks the whole subtree, not just the root", () => {
+    const people = collectReportPeople(
+      node({ subordinates: [node({ person_id: "P2", display_name: "Sam" })] }),
+    );
+    expect([...people.keys()].sort()).toEqual(["p1", "p2"]);
+  });
+
+  it("leaves a missing attribute empty rather than undefined in a cell", () => {
+    const people = collectReportPeople(
+      node({ division: undefined, supervisor_name: null }),
+    );
+    expect(people.get("p1")?.division).toBe("");
+    expect(people.get("p1")?.managerName).toBe("");
+  });
+
+  it("holds nothing when the viewer has no tree", () => {
+    expect(collectReportPeople(null).size).toBe(0);
+  });
+});
+
+describe("bucketsInRange", () => {
+  it("steps a day at a time", () => {
+    expect(bucketsInRange("2026-05-01", "2026-05-04", "day")).toEqual([
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+    ]);
+  });
+
+  it("steps a week at a time", () => {
+    expect(bucketsInRange("2026-05-04", "2026-05-25", "week")).toEqual([
+      "2026-05-04",
+      "2026-05-11",
+      "2026-05-18",
+      "2026-05-25",
+    ]);
+  });
+
+  it("gives every month of a year its own bucket", () => {
+    expect(bucketsInRange("2026-01-01", "2026-12-31", "year")).toEqual(["2026"]);
+    expect(bucketsInRange("2026-01-01", "2026-03-31", "month")).toEqual([
+      "2026-01",
+      "2026-02",
+      "2026-03",
+    ]);
   });
 });

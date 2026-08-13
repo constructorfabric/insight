@@ -22,7 +22,7 @@ import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
  * A list of metric keys held in the client would drift the first time a metric
  * is added, and would do so silently.
  */
-async function probeComputations(
+export async function probeComputations(
   metricKeys: string[],
   personId: string,
   day: string,
