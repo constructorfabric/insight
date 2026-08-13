@@ -15,6 +15,13 @@ on:
         required: false
         default: all
         type: string
+    # required:false on both — the preflight step owns the missing-credential
+    # error, with a message that says what each one is and where it comes from.
+    secrets:
+      TEST_STAND_KUBECONFIG:
+        required: false
+      TEST_STAND_PERSONA_PASSWORD:
+        required: false
   workflow_dispatch:
     inputs:
       stages:
