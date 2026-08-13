@@ -1908,8 +1908,7 @@ streams:
   # ── Deployment statuses (GitHub API) ────────────────────────────────────
   # A deployment record has no outcome; this child fetches success/failure
   # for every deployment created inside the sliding window — the one cost
-  # term that scales with deploy frequency, bounded by
-  # github_deploy_window_days.
+  # term that scales with deploy frequency.
   - type: DeclarativeStream
     name: deployment_statuses
     primary_key:

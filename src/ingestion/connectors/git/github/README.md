@@ -50,12 +50,11 @@ here is a separate migration.
 - GraphQL errors arrive as HTTP 200: rate-limit-typed errors back off,
   anything else fails with GitHub's own message.
 
-## Known NULL columns (v1)
+## Known NULL columns
 
-`pull_requests.additions/deletions/changed_files/merged_by` are detail-only
-(`GET /pulls/{n}`) and are not fetched — PR size derives from the proxy's
-file_changes. Inline code-review comments (`/pulls/comments`) are not synced;
-conversation comments and reviews are.
+`pull_requests.merged_by` is on the detail response (`GET /pulls/{n}`) only and
+is not fetched. Pull-request size is not on the pull-request row either: it
+comes from `pull_request_diff_stats`, which reads the GraphQL list node.
 
 ## Cost shape
 
