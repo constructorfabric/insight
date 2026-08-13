@@ -66,7 +66,7 @@ from ..schemas.analytics import (
     MetricDrilldownColumnType,
     MetricDrilldownResponse,
 )
-from .drilldown_matrix import EXPORT_SHAPES, MATRIX, Expectation, Tier
+from .drilldown_matrix import EMPTY_EVIDENCE_METRIC, EXPORT_SHAPES, MATRIX, Expectation, Tier
 
 DRILLDOWN = analytics_path("/v1/metric-drilldown")
 DRILLDOWN_EXPORT = analytics_path("/v1/metric-drilldown/export")
@@ -975,14 +975,14 @@ def test_supported_metric_with_no_evidence_returns_an_empty_page(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:
     request = _seeded_request(stand_manifest)
-    request["metric_key"] = "wiki.pages_created"
+    request["metric_key"] = EMPTY_EVIDENCE_METRIC
     request["filters"] = []
     request["display_dimensions"] = []
 
     response = api.post(DRILLDOWN, json_body=request)
     assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
     result = response.parse(MetricDrilldownResponse)
-    assert result.selection.metric_key == "wiki.pages_created"
+    assert result.selection.metric_key == EMPTY_EVIDENCE_METRIC
     assert result.rows == []
     assert result.next_cursor is None
 
