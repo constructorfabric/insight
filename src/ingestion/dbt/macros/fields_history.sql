@@ -80,3 +80,77 @@ WHERE version_num = 1
 {% endfor %}
 
 {% endmacro %}
+
+
+{% macro fields_history_raw(snapshot_ref, entity_id_col, exclude_keys=[]) %}
+{#
+  Field-level change log over every key of the snapshot's `raw_data` payload,
+  without naming the fields. One row per changed field per version transition.
+
+  Args:
+    snapshot_ref:  ref() to the snapshot incremental model
+    entity_id_col: column name for the entity identifier
+    exclude_keys:  keys to leave untracked
+
+  Output columns:
+    entity_id, tenant_id, source_id, field_name, old_value, new_value, updated_at
+
+  Pair this with snapshot(check_raw_data_all=true) and the same exclude_keys: a
+  field only carries a correct change timestamp if the snapshot versions on it.
+#}
+
+WITH versioned AS (
+    SELECT
+        unique_key,
+        {{ entity_id_col }} AS entity_id,
+        tenant_id,
+        source_id,
+        _tracked_at AS updated_at,
+        {{ raw_data_fields(exclude_keys) }} AS fields,
+        ROW_NUMBER() OVER (
+            PARTITION BY unique_key ORDER BY _tracked_at
+        ) AS version_num
+    FROM {{ snapshot_ref }}
+),
+
+transitions AS (
+    SELECT
+        curr.entity_id AS entity_id,
+        curr.tenant_id AS tenant_id,
+        curr.source_id AS source_id,
+        curr.updated_at AS updated_at,
+        curr.fields AS curr_fields,
+        prev.fields AS prev_fields
+    FROM versioned curr
+    INNER JOIN versioned prev
+        ON curr.unique_key = prev.unique_key
+        AND curr.version_num = prev.version_num + 1
+
+    UNION ALL
+
+    -- The first version has nothing to diff against; an empty map makes every
+    -- non-empty field read as a change from '', matching fields_history.
+    SELECT
+        entity_id,
+        tenant_id,
+        source_id,
+        updated_at,
+        fields AS curr_fields,
+        CAST(map(), 'Map(String, String)') AS prev_fields
+    FROM versioned
+    WHERE version_num = 1
+)
+
+SELECT
+    entity_id,
+    tenant_id,
+    source_id,
+    field_name,
+    prev_fields[field_name] AS old_value,
+    curr_fields[field_name] AS new_value,
+    updated_at
+FROM transitions
+ARRAY JOIN arrayDistinct(arrayConcat(mapKeys(curr_fields), mapKeys(prev_fields))) AS field_name
+WHERE curr_fields[field_name] != prev_fields[field_name]
+
+{% endmacro %}

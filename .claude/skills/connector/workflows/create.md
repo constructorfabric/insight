@@ -36,7 +36,6 @@ Ask the user (skip questions where context already provides the answer):
 Builder-UI-compatible references (OK to copy):
 - `src/ingestion/connectors/collaboration/zoom/connector.yaml`
 - `src/ingestion/connectors/collaboration/m365/connector.yaml`
-- `src/ingestion/connectors/hr-directory/bamboohr/connector.yaml`
 
 **Do NOT copy from**:
 - `src/ingestion/connectors/task-tracking/jira/connector.yaml` — uses whole-object `$ref` (`#/definitions/auth`, `#/definitions/paginator`, `#/streams/N`) which the Builder strict validator rejects. It loads via the CDK runtime but cannot be opened in the Builder UI without full expansion.

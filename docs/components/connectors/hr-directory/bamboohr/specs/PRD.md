@@ -35,7 +35,6 @@
 - [13. Open Questions](#13-open-questions)
   - [OQ-BHR-1: Current-state records — historical org change tracking](#oq-bhr-1-current-state-records--historical-org-change-tracking)
   - [OQ-BHR-2: Leave type normalisation across HR systems](#oq-bhr-2-leave-type-normalisation-across-hr-systems)
-  - [OQ-BHR-3: Custom field inclusion in employee report](#oq-bhr-3-custom-field-inclusion-in-employee-report)
   - [OQ-BHR-4: Tabular data endpoints](#oq-bhr-4-tabular-data-endpoints)
 
 <!-- /toc -->
@@ -129,7 +128,7 @@ Receives extracted records and writes them to Bronze tables.
 
 ### 4.1 In Scope
 
-- Extraction of employee directory data via custom reports (insights-relevant fields only — identity, org hierarchy, job, location, dates, employment type).
+- Extraction of employee directory data via custom reports (every standard and customer-defined field, without per-field configuration, less the §4.2 exclusions; identity, org hierarchy, job, location, dates and employment type are promoted to Bronze columns, the rest retained in the raw payload).
 - Extraction of time-off (leave) requests with date-range filtering.
 - Extraction of field metadata (standard + custom field definitions) for schema discovery.
 - Full refresh sync on all streams (no incremental — BambooHR is current-state only).
@@ -144,9 +143,9 @@ Receives extracted records and writes them to Bronze tables.
 - BambooHR OAuth 2.0 authentication (API key is sufficient for read-only extraction).
 - Write operations (employee creation, update, time-off approval).
 - Department hierarchy as a separate stream (department data is inline in employee records; hierarchy construction is a Silver concern).
-- Custom field value extraction as a separate stream (custom fields are per-deployment; the `meta_fields` stream enables discovery).
+- Custom field value extraction as a separate stream (custom field values arrive with the employee record; the `meta_fields` stream carries their definitions).
 - Tabular data endpoints (job info history, compensation history) — deferred to future iteration.
-- Fields without analytics value (phone numbers, social profiles, photos, address details, sensitive demographics).
+- Fields without analytics value (phone numbers, social profiles, photos, address details, sensitive demographics), plus government identifiers and compensation amounts. Discovery is otherwise exhaustive, so this exclusion is enforced in the connector as a fixed list of standard BambooHR field aliases rather than by omitting them from a collection list. Customer-defined fields are not classifiable from field metadata and are collected in full.
 
 ---
 
@@ -158,9 +157,9 @@ Receives extracted records and writes them to Bronze tables.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bhr-collect-employees`
 
-The system **MUST** extract employee records from BambooHR, collecting only fields with clear analytics/insight value: employee identity (ID, name, email, employee number), org hierarchy (department, division, supervisor), location (office, country, city), employment dates (hire, termination), employment classification (status, type, pay type, hours per week), and a last-modified timestamp.
+The system **MUST** extract employee records from BambooHR, collecting every field the account defines — standard and customer-defined alike — with no per-field configuration, except the categories §4.2 puts out of scope, which **MUST NOT** be requested or stored whatever permission the API credential holds. Fields carrying clear analytics value are promoted to Bronze columns: employee identity (ID, name, email, employee number), org hierarchy (department, division, supervisor), location (office, country, city), employment dates (hire, termination), employment classification (status, type), and a last-modified timestamp. Every collected field, promoted or not, **MUST** be preserved in the raw payload.
 
-**Rationale**: Employee data is the foundation for identity resolution, org hierarchy, and all person-level analytics in the Insight platform.
+**Rationale**: Employee data is the foundation for identity resolution, org hierarchy, and all person-level analytics in the Insight platform. A customer-defined field that requires an operator to discover and enumerate it is invisible until someone does, and the enumeration has to be kept in step with the change-tracking configuration or attribute changes are dated wrongly.
 
 **Actors**: `cpt-insightspec-actor-bhr-orchestrator`, `cpt-insightspec-actor-bhr-destination`
 
@@ -273,7 +272,7 @@ Re-running the connector with the same cursor state **MUST** produce identical B
 
 ### 7.1 Public API Surface
 
-Not applicable. The BambooHR connector is a declarative manifest (YAML) executed by the Airbyte Declarative Connector framework. It does not expose a public API.
+Not applicable. The BambooHR connector is an Airbyte source executed as a container. It does not expose a public API.
 
 ### 7.2 External Integration Contracts
 
@@ -351,7 +350,7 @@ Not applicable. The BambooHR connector is a declarative manifest (YAML) executed
 | Dependency | Type | Purpose |
 |-----------|------|---------|
 | BambooHR REST API v1 | External | Source system API |
-| Airbyte Declarative Connector framework (CDK v6.44+) | Runtime | Connector execution engine |
+| Airbyte Python CDK | Runtime | Connector execution engine |
 | ClickHouse destination connector | Runtime | Bronze table writes |
 | Identity Manager | Downstream | Consumes `workEmail` for person resolution |
 
@@ -392,13 +391,6 @@ BambooHR returns only current-state records. When a person moves departments, th
 
 - Should the connector extract leave type metadata (policy names, categories) to assist Silver normalisation?
 - Or is raw leave type sufficient for Bronze?
-
-### OQ-BHR-3: Custom field inclusion in employee report
-
-The custom report endpoint accepts an arbitrary field list. Currently the connector requests a fixed set of standard fields.
-
-- Should custom field IDs be configurable via the source connection specification?
-- Or should the connector always request all available fields (discovered via `GET /meta/fields`)?
 
 ### OQ-BHR-4: Tabular data endpoints
 
