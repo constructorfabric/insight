@@ -66,6 +66,7 @@ from ..schemas.analytics import (
     MetricDrilldownColumnType,
     MetricDrilldownResponse,
 )
+from . import query_window
 from .drilldown_matrix import EXPORT_SHAPES, MATRIX, Expectation, Tier
 
 DRILLDOWN = analytics_path("/v1/metric-drilldown")
@@ -154,7 +155,7 @@ def _request_for(
     filters: Sequence[JsonValue] = (),
     display_dimensions: Sequence[str] = (),
 ) -> dict[str, JsonValue]:
-    start, _, end = manifest.data_window.partition("..")
+    start, end = query_window(manifest)
     request: dict[str, JsonValue] = {
         "metric_key": metric_key,
         "entity": {
@@ -286,7 +287,7 @@ def _period_value(
     person with no observations in the period has no value at all, and that is
     what an empty evidence page has to agree with.
     """
-    start, _, end = manifest.data_window.partition("..")
+    start, end = query_window(manifest)
     person_id = manifest.fixture("dev_lead").uuid
     response = api.post(
         METRIC_RESULTS,

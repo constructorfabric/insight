@@ -447,14 +447,17 @@ jobs:
             echo "::warning::seeding with an explicit --email from secrets.TEST_STAND_SEED_EMAIL — the dev-lead address is NOT being read from the realm this deploy applied. Unset that secret unless this stand's realm is provisioned outside deploy/gitops."
           fi
 
-          # 365, not more: the API refuses any period ≥ 400 days.
+          # Two years, matching the compose stand. Wider than any one request
+          # the API will answer — it refuses a period of 400 days or more — so
+          # a suite asking about "the seeded period" clamps to the queryable
+          # tail (tests/stand/api/analytics/query_window).
           kube_context="$(yq -r '.kubeContext' "$INVENTORY_FILE")"
           seed_rc=0
           ./src/ingestion/tools/seed/seed-stand.sh \
             -n "$STAND_NAMESPACE" \
             --context "$kube_context" \
             "${email_args[@]}" \
-            --days 365 \
+            --days 730 \
             "${force_args[@]}" \
             > "$RUNNER_TEMP/seed.log" 2>&1 || seed_rc=$?
 
