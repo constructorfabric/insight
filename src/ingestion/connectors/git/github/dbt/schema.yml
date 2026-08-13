@@ -19,8 +19,17 @@ sources:
       - name: pull_request_comments
       - name: pull_request_review_comments
       - name: pull_request_commits
+      - name: pull_request_diff_stats
+      - name: issues
+      - name: projects_v2
+      - name: workflow_runs
+      - name: deployments
+      - name: deployment_statuses
 
 models:
+  - name: github__bronze_promoted
+    description: "Promotes every GitHub bronze table to ReplacingMergeTree keyed on unique_key"
+
   - name: github__repositories
     description: "GitHub repositories -> staging, feeds class_git_repositories"
 

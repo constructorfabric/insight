@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('github__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
@@ -11,9 +12,9 @@ SELECT
     tenant_id,
     source_id,
     unique_key,
-    COALESCE(repo_owner, '') AS project_key,
-    COALESCE(repo_name, '') AS repo_slug,
-    COALESCE(pull_request_id, 0) AS pr_id,
+    splitByChar('/', COALESCE(repo_full_name, ''))[1] AS project_key,
+    splitByChar('/', COALESCE(repo_full_name, ''))[2] AS repo_slug,
+    COALESCE(pull_number, 0) AS pr_id,
     COALESCE(author_login, '') AS reviewer_name,
     toString(COALESCE(author_id, 0)) AS reviewer_uuid,
     COALESCE(state, '') AS status,

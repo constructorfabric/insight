@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('github__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
@@ -7,16 +8,18 @@
     tags=['github', 'silver:class_git_repository_branches']
 ) }}
 
+-- The proxy keys every row by the repository's https clone URL, whose last two
+-- path segments are the owner and the repo name.
 SELECT
     tenant_id,
     source_id,
     unique_key,
-    COALESCE(repo_owner, '') AS project_key,
-    COALESCE(repo_name, '') AS repo_slug,
+    arrayElement(splitByChar('/', COALESCE(repository, '')), -2) AS project_key,
+    replaceRegexpOne(arrayElement(splitByChar('/', COALESCE(repository, '')), -1), '\.git$', '') AS repo_slug,
     COALESCE(name, '') AS branch_name,
-    if(name = default_branch_name, 1, 0) AS is_default,
-    COALESCE(JSONExtractString(commit, 'sha'), '') AS last_commit_hash,
-    parseDateTimeBestEffortOrNull(pushed_at) AS last_commit_date,
+    if(COALESCE(is_default, false), 1, 0) AS is_default,
+    COALESCE(head_sha, '') AS last_commit_hash,
+    parseDateTimeBestEffortOrNull(head_committed_date) AS last_commit_date,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at

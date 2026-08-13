@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('github__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
@@ -7,14 +8,16 @@
     tags=['github', 'silver:class_git_commits']
 ) }}
 
+-- branch is '' by construction: the proxy walks a repository once rather than
+-- once per branch, so a commit carries no branch name. Matches gitlab.
 SELECT
     tenant_id,
     source_id,
     unique_key,
-    COALESCE(repo_owner, '') AS project_key,
-    COALESCE(repo_name, '') AS repo_slug,
+    arrayElement(splitByChar('/', COALESCE(repository, '')), -2) AS project_key,
+    replaceRegexpOne(arrayElement(splitByChar('/', COALESCE(repository, '')), -1), '\.git$', '') AS repo_slug,
     COALESCE(sha, '') AS commit_hash,
-    COALESCE(branch_name, '') AS branch,
+    '' AS branch,
     COALESCE(author_name, '') AS author_name,
     COALESCE(author_email, '') AS author_email,
     COALESCE(committer_name, '') AS committer_name,
@@ -24,11 +27,7 @@ SELECT
     toNullable(COALESCE(changed_files, 0)) AS files_changed,
     toNullable(COALESCE(additions, 0)) AS lines_added,
     toNullable(COALESCE(deletions, 0)) AS lines_removed,
-    -- parent_hashes arrives as a JSON-array string (Airbyte serializes the
-    -- connector's array field into the Nullable(String) bronze column), so
-    -- count elements with JSONLength — plain length() would count characters
-    -- and flag every commit with a parent (e.g. `["sha"]`) as a merge.
-    if(JSONLength(COALESCE(parent_hashes, '')) > 1, 1, 0) AS is_merge_commit,
+    if(COALESCE(is_merge, false), 1, 0) AS is_merge_commit,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at

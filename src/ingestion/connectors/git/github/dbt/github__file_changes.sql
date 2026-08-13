@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('github__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
@@ -11,8 +12,8 @@ SELECT
     tenant_id,
     source_id,
     unique_key,
-    COALESCE(repo_owner, '') AS project_key,
-    COALESCE(repo_name, '') AS repo_slug,
+    arrayElement(splitByChar('/', COALESCE(repository, '')), -2) AS project_key,
+    replaceRegexpOne(arrayElement(splitByChar('/', COALESCE(repository, '')), -1), '\.git$', '') AS repo_slug,
     COALESCE(sha, '') AS commit_hash,
     COALESCE(filename, '') AS file_path,
     -- File extension: last segment after the final '.', empty when none.
@@ -33,7 +34,8 @@ SELECT
     COALESCE(status, '') AS change_type,
     toNullable(COALESCE(additions, 0)) AS lines_added,
     toNullable(COALESCE(deletions, 0)) AS lines_removed,
-    COALESCE(source_type, '') AS source_type,
+    -- The proxy walks commits, so every file change is reached through one.
+    'commit' AS source_type,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at

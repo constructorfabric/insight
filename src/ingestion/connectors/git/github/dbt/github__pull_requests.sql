@@ -1,3 +1,4 @@
+-- depends_on: {{ ref('github__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
@@ -7,32 +8,66 @@
     tags=['github', 'silver:class_git_pull_requests']
 ) }}
 
+-- Diff totals and the author email come from the GraphQL list node, which is
+-- one request per page of pull requests; the REST list carries neither.
+WITH diff_stats AS (
+    SELECT
+        tenant_id,
+        source_id,
+        repo_full_name,
+        pull_number,
+        additions,
+        deletions,
+        changed_files,
+        author_email,
+        _airbyte_extracted_at
+    FROM {{ source('bronze_github', 'pull_request_diff_stats') }} FINAL
+)
 SELECT
-    tenant_id,
-    source_id,
-    unique_key,
-    COALESCE(repo_owner, '') AS project_key,
-    COALESCE(repo_name, '') AS repo_slug,
-    COALESCE(database_id, 0) AS pr_id,
-    COALESCE(number, 0) AS pr_number,
-    COALESCE(title, '') AS title,
-    COALESCE(body, '') AS description,
-    COALESCE(state, '') AS state,
-    COALESCE(author_login, '') AS author_name,
-    COALESCE(author_email, '') AS author_email,
-    COALESCE(head_ref, '') AS source_branch,
-    COALESCE(base_ref, '') AS destination_branch,
-    parseDateTimeBestEffortOrNull(created_at) AS created_on,
-    parseDateTimeBestEffortOrNull(updated_at) AS updated_on,
-    parseDateTimeBestEffortOrNull(closed_at) AS closed_on,
-    COALESCE(merge_commit_sha, '') AS merge_commit_hash,
-    toNullable(COALESCE(changed_files, 0)) AS files_changed,
-    toNullable(COALESCE(additions, 0)) AS lines_added,
-    toNullable(COALESCE(deletions, 0)) AS lines_removed,
+    pr.tenant_id AS tenant_id,
+    pr.source_id AS source_id,
+    pr.unique_key AS unique_key,
+    splitByChar('/', COALESCE(pr.repo_full_name, ''))[1] AS project_key,
+    splitByChar('/', COALESCE(pr.repo_full_name, ''))[2] AS repo_slug,
+    COALESCE(pr.number, 0) AS pr_id,
+    COALESCE(pr.number, 0) AS pr_number,
+    COALESCE(pr.title, '') AS title,
+    COALESCE(pr.body, '') AS description,
+    -- REST reports a merged pull request as closed, so merged_at decides first.
+    multiIf(
+        COALESCE(pr.merged_at, '') != '', 'MERGED',
+        pr.state = 'open', 'OPEN',
+        pr.state = 'closed', 'CLOSED',
+        upper(COALESCE(pr.state, ''))
+    ) AS state,
+    COALESCE(pr.author_login, '') AS author_name,
+    COALESCE(ds.author_email, '') AS author_email,
+    COALESCE(pr.head_ref, '') AS source_branch,
+    COALESCE(pr.base_ref, '') AS destination_branch,
+    parseDateTimeBestEffortOrNull(pr.created_at) AS created_on,
+    parseDateTimeBestEffortOrNull(pr.updated_at) AS updated_on,
+    parseDateTimeBestEffortOrNull(COALESCE(pr.closed_at, pr.merged_at)) AS closed_on,
+    COALESCE(pr.merge_commit_sha, '') AS merge_commit_hash,
+    toNullable(toInt64(COALESCE(ds.changed_files, 0))) AS files_changed,
+    toNullable(toInt64(COALESCE(ds.additions, 0))) AS lines_added,
+    toNullable(toInt64(COALESCE(ds.deletions, 0))) AS lines_removed,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    _airbyte_extracted_at
-FROM {{ source('bronze_github', 'pull_requests') }}
+    -- Diff stats are their own stream: a late arrival must re-trigger the pull
+    -- request row, which is not re-fetched on its own.
+    greatest(
+        pr._airbyte_extracted_at,
+        COALESCE(ds._airbyte_extracted_at, pr._airbyte_extracted_at)
+    ) AS _airbyte_extracted_at
+FROM {{ source('bronze_github', 'pull_requests') }} AS pr
+LEFT JOIN diff_stats AS ds
+    ON ds.tenant_id = pr.tenant_id
+    AND ds.source_id = pr.source_id
+    AND ds.repo_full_name = pr.repo_full_name
+    AND ds.pull_number = pr.number
 {% if is_incremental() %}
-WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+WHERE greatest(
+    pr._airbyte_extracted_at,
+    COALESCE(ds._airbyte_extracted_at, pr._airbyte_extracted_at)
+) > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}
