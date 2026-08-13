@@ -1,5 +1,5 @@
 schemas:
-  bronze_github.file_changes:
+  bronze_github.pull_request_diff_stats:
     $schema: http://json-schema.org/draft-07/schema#
     type: object
     additionalProperties: false
@@ -11,9 +11,10 @@ schemas:
       tenant_id: {type: string}
       source_id: {type: string}
       unique_key: {type: string}
-      repository: {type: string}
-      sha: {type: string}
-      filename: {type: string}
-      status: {type: string}
+      repo_full_name: {type: string}
+      pull_number: {type: integer}
       additions: {type: integer}
       deletions: {type: integer}
+      changed_files: {type: integer}
+      updated_at: {type: string}
+      author_email: {type: string}
