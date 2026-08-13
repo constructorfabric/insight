@@ -84,11 +84,16 @@
           },
           "rates": {
             "$ref": "#/components/schemas/ResolutionRatesResponse"
+          },
+          "truncated": {
+            "description": "The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide.",
+            "type": "boolean"
           }
         },
         "required": [
           "items",
-          "rates"
+          "rates",
+          "truncated"
         ],
         "type": "object"
       },

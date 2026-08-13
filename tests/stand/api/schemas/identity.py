@@ -488,6 +488,7 @@ class AttentionResponse(BaseModel):
     )
     items: list[QueueItemResponse]
     rates: ResolutionRatesResponse
+    truncated: bool = Field(..., description='The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide.')
 
 
 class CorrectionResponse(BaseModel):

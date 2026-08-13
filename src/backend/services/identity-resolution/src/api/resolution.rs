@@ -25,7 +25,9 @@ use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::SourceAccountKey;
 use crate::infra::db::{ops_repo, persons_repo, resolution_repo};
-use crate::infra::identity_evidence::{AccountEvidence, ClickHouseEvidenceReader};
+use crate::infra::identity_evidence::{
+    AccountEvidence, ClickHouseEvidenceReader, EvidenceSnapshot,
+};
 
 /// How many accounts one bulk call may carry — a prepared matching table is
 /// pasted by a human, not streamed.
@@ -151,6 +153,7 @@ pub async fn bind(
             ));
         }
 
+        reject_excluded_person(item.person_id, "person_id")?;
         require_known_person(&state.db, tenant, item.person_id).await?;
         targets.push(Target {
             account,
@@ -191,6 +194,8 @@ pub async fn merge(
             "source and target are the same person",
         ));
     }
+    reject_excluded_person(req.source_person_id, "source_person_id")?;
+    reject_excluded_person(req.target_person_id, "target_person_id")?;
     require_known_person(&state.db, tenant, req.source_person_id).await?;
     require_known_person(&state.db, tenant, req.target_person_id).await?;
 
@@ -570,6 +575,21 @@ async fn require_known_person(
         .create())
 }
 
+/// The excluded person is a sentinel, not a person: its first exclusion writes
+/// it into the journal, after which `person_exists` would vouch for it. As a
+/// bind target it becomes an exclude that skips `require_known_account`; as a
+/// merge side it moves every excluded account of the tenant in one call. Only
+/// the exclude verb may name it.
+fn reject_excluded_person(person_id: Uuid, field: &str) -> Result<(), CanonicalError> {
+    if person_id == EXCLUDED_PERSON {
+        return Err(invalid(
+            field,
+            "the reserved excluded person cannot take part in a correction; use the exclude verb",
+        ));
+    }
+    Ok(())
+}
+
 fn reject_empty(is_empty: bool, field: &str) -> Result<(), CanonicalError> {
     if is_empty {
         return Err(invalid(field, "must not be empty"));
@@ -662,6 +682,10 @@ pub struct ResolutionRatesResponse {
 pub struct AttentionResponse {
     pub items: Vec<QueueItemResponse>,
     pub rates: ResolutionRatesResponse,
+    /// The evidence read hit its safety cap: the queue and the rates describe
+    /// only the first accounts of the tenant, not all of them. Consumers must
+    /// not present these numbers as tenant-wide.
+    pub truncated: bool,
 }
 impl toolkit::api::api_dto::ResponseApiDto for AttentionResponse {}
 
@@ -675,7 +699,7 @@ pub async fn attention(
     require_admin(&state.db, &ctx).await?;
     let tenant = ctx.subject_tenant_id();
 
-    let review = build_review(&state, tenant).await?;
+    let (review, truncated) = build_review(&state, tenant).await?;
 
     let limit = params.limit.map_or(DEFAULT_QUEUE_LIMIT, |l| {
         usize::try_from(l).unwrap_or(1).clamp(1, MAX_QUEUE_LIMIT)
@@ -708,6 +732,7 @@ pub async fn attention(
             no_evidence: review.rates.no_evidence,
             excluded: review.rates.excluded,
         },
+        truncated,
     }))
 }
 
@@ -813,7 +838,7 @@ pub async fn person_accounts(
         .map_err(|e| internal(&e, "failed to read current bindings"))?;
     let evidence = read_evidence(&state).await?;
     let by_account: HashMap<&SourceAccountKey, &AccountEvidence> =
-        evidence.iter().map(|e| (&e.account, e)).collect();
+        evidence.accounts.iter().map(|e| (&e.account, e)).collect();
 
     let entries = accounts
         .iter()
@@ -849,15 +874,23 @@ fn kind_label(kind: ItemKind) -> &'static str {
     }
 }
 
-/// Join folded evidence with current bindings into the review.
-async fn build_review(state: &AppState, tenant: Uuid) -> Result<Review, CanonicalError> {
+/// Join folded evidence with current bindings into the review, keeping the
+/// read's own honesty flag: `truncated` means the rates cover a prefix of the
+/// tenant, not all of it.
+async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), CanonicalError> {
     let evidence = read_evidence(state).await?;
-    let accounts: Vec<SourceAccountKey> = evidence.iter().map(|e| e.account.clone()).collect();
+    let truncated = evidence.truncated;
+    let accounts: Vec<SourceAccountKey> = evidence
+        .accounts
+        .iter()
+        .map(|e| e.account.clone())
+        .collect();
     let bindings = resolution_repo::current_bindings(&state.db, tenant, &accounts)
         .await
         .map_err(|e| internal(&e, "failed to read current bindings"))?;
 
     let observed = evidence
+        .accounts
         .into_iter()
         .map(|e| EvidenceAccount {
             account: e.account,
@@ -867,7 +900,7 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<Review, Canonica
         })
         .collect();
 
-    Ok(review_queue::build(observed, &bindings))
+    Ok((review_queue::build(observed, &bindings), truncated))
 }
 
 /// One hydration read for a queue page: every distinct candidate id, fetched
@@ -898,7 +931,7 @@ fn evidence_reader(state: &AppState) -> ClickHouseEvidenceReader {
     )
 }
 
-async fn read_evidence(state: &AppState) -> Result<Vec<AccountEvidence>, CanonicalError> {
+async fn read_evidence(state: &AppState) -> Result<EvidenceSnapshot, CanonicalError> {
     evidence_reader(state)
         .accounts()
         .await
