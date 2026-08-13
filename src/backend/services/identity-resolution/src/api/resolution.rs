@@ -20,7 +20,7 @@ use uuid::Uuid;
 use super::AppState;
 use super::error::CorrectionError;
 use super::gate::require_admin;
-use crate::domain::person_card::PersonCard;
+use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::SourceAccountKey;
@@ -626,6 +626,9 @@ pub struct QueueItemResponse {
 pub struct PersonSummaryResponse {
     pub person_id: Uuid,
     pub email: Option<String>,
+    /// Source-native handle (e.g. a git login) — often the only recognisable
+    /// field of an identity no HR system has observed yet.
+    pub username: Option<String>,
     pub display_name: Option<String>,
     pub job_title: Option<String>,
     pub status: Option<String>,
@@ -636,6 +639,7 @@ impl From<PersonCard> for PersonSummaryResponse {
         Self {
             person_id: card.person_id,
             email: card.email,
+            username: card.username,
             display_name: card.display_name,
             job_title: card.job_title,
             status: card.status,
@@ -688,16 +692,9 @@ pub async fn attention(
             account_id: i.account.account_id,
             email: i.email,
             username: i.username,
-            candidates: i
-                .candidates
-                .iter()
-                .map(|id| {
-                    cards
-                        .get(id)
-                        .cloned()
-                        .unwrap_or_else(|| PersonCard::empty(*id))
-                        .into()
-                })
+            candidates: person_card::in_requested_order(&i.candidates, &cards)
+                .into_iter()
+                .map(PersonSummaryResponse::from)
                 .collect(),
         })
         .collect();

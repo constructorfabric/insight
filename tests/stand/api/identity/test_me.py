@@ -22,12 +22,9 @@ import pytest
 from insight_stand import ADMIN_ROLE, ApiClient, PersonaSession, identity_path
 
 from ..schemas import MeResponse
+from .test_admin import _admin_role_id
 
 ME = identity_path("/v1/me")
-
-#: The seeded `admin` role id — a stable constant mirrored by
-#: `roles_repo::ADMIN_ROLE_ID` and the `007_roles.sql` seed row.
-ADMIN_ROLE_ID = "a4d11000-0000-4000-8000-000000000001"
 
 
 def _me(client: ApiClient) -> MeResponse:
@@ -61,8 +58,9 @@ def test_the_admin_operator_sees_their_admin_role_under_its_fixed_id(
         f"/v1/me answered about {me.person_id}, but the session belongs to "
         f"{admin_operator_session.person.uuid} — the caller must come from the JWT"
     )
+    admin_role_id = _admin_role_id(admin_operator_session.client)
     roles = {(str(role.role_id), role.name) for role in me.roles}
-    assert (ADMIN_ROLE_ID, "admin") in roles, f"admin grant missing from {roles}"
+    assert (admin_role_id, "admin") in roles, f"admin grant missing from {roles}"
 
 
 @pytest.mark.reliability

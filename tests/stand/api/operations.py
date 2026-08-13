@@ -138,8 +138,8 @@ IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     _i("GET", "/v1/visibility"),
     _i("POST", "/v1/visibility"),
     _i("DELETE", f"/v1/visibility/{SOME_ID}"),
-    # `.authenticated()`, not admin-gated — and the substring test below does not
-    # catch it, which is correct: `/visible-persons` is not `/visibility`.
+    # `.authenticated()`, not admin-gated — deliberately absent from
+    # `_ADMIN_GATED_SUFFIXES` below.
     _i("POST", "/v1/visible-persons"),
 )
 

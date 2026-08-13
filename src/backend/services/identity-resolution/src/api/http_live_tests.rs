@@ -429,16 +429,16 @@ async fn grant_admin(f: &Fixture, person: Uuid) -> anyhow::Result<Uuid> {
     Ok(grant)
 }
 
-fn role_names(payload: &Value) -> Vec<String> {
-    payload["roles"]
+fn role_names(payload: &Value) -> anyhow::Result<Vec<String>> {
+    // Fails on a missing/renamed field instead of defaulting to empty, so an
+    // "expects no roles" assertion cannot pass vacuously on shape drift.
+    let roles = payload["roles"]
         .as_array()
-        .map(|roles| {
-            roles
-                .iter()
-                .filter_map(|r| r["name"].as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default()
+        .ok_or_else(|| anyhow::anyhow!("no `roles` array in {payload}"))?;
+    Ok(roles
+        .iter()
+        .filter_map(|r| r["name"].as_str().map(str::to_owned))
+        .collect())
 }
 
 #[tokio::test]
@@ -454,7 +454,7 @@ async fn me_names_the_caller_and_their_active_admin_role() -> TestResult {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["person_id"], caller.to_string());
     assert_eq!(body["insight_tenant_id"], f.tenant.to_string());
-    assert_eq!(role_names(&body), vec!["admin".to_owned()]);
+    assert_eq!(role_names(&body)?, vec!["admin".to_owned()]);
     assert_eq!(
         body["roles"][0]["role_id"],
         roles_repo::ADMIN_ROLE_ID.to_string()
@@ -472,7 +472,7 @@ async fn me_with_no_grants_is_an_empty_list_not_an_error() -> TestResult {
     let (status, body) = get(app(&f, caller), "/v1/me").await?;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(role_names(&body), Vec::<String>::new());
+    assert_eq!(role_names(&body)?, Vec::<String>::new());
     Ok(())
 }
 
@@ -488,7 +488,7 @@ async fn me_omits_a_revoked_grant() -> TestResult {
     let (status, body) = get(app(&f, caller), "/v1/me").await?;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(role_names(&body), Vec::<String>::new());
+    assert_eq!(role_names(&body)?, Vec::<String>::new());
     Ok(())
 }
 
@@ -503,7 +503,7 @@ async fn me_omits_a_grant_from_another_tenant() -> TestResult {
     let (status, body) = get(app(&f, caller), "/v1/me").await?;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(role_names(&body), Vec::<String>::new());
+    assert_eq!(role_names(&body)?, Vec::<String>::new());
     Ok(())
 }
 
@@ -521,16 +521,15 @@ async fn me_without_a_caller_is_unauthenticated() -> TestResult {
 
 // ── GET /v1/persons ─────────────────────────────────────────
 
-fn found_ids(payload: &Value) -> Vec<String> {
-    payload["items"]
+fn found_ids(payload: &Value) -> anyhow::Result<Vec<String>> {
+    // Same shape-drift guard as `role_names`.
+    let items = payload["items"]
         .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|i| i["person_id"].as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default()
+        .ok_or_else(|| anyhow::anyhow!("no `items` array in {payload}"))?;
+    Ok(items
+        .iter()
+        .filter_map(|i| i["person_id"].as_str().map(str::to_owned))
+        .collect())
 }
 
 async fn admin_operator(f: &Fixture) -> anyhow::Result<Uuid> {
@@ -578,7 +577,7 @@ async fn a_person_is_found_by_a_current_email_fragment() -> TestResult {
     let (status, body) = get(app(&f, operator), &format!("/v1/persons?q=find-{marker}")).await?;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(found_ids(&body), vec![person.to_string()]);
+    assert_eq!(found_ids(&body)?, vec![person.to_string()]);
     assert_eq!(
         body["items"][0]["email"],
         format!("find-{marker}@http-live.test")
@@ -611,7 +610,7 @@ async fn a_superseded_email_no_longer_finds_its_old_owner() -> TestResult {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        found_ids(&body),
+        found_ids(&body)?,
         vec![new_owner.to_string()],
         "the old owner's claim is superseded by their own fresher email"
     );
@@ -636,7 +635,7 @@ async fn a_still_current_email_two_persons_claim_returns_both() -> TestResult {
     let (status, body) = get(app(&f, operator), &format!("/v1/persons?q=shared-{marker}")).await?;
 
     assert_eq!(status, StatusCode::OK);
-    let mut ids = found_ids(&body);
+    let mut ids = found_ids(&body)?;
     ids.sort();
     let mut expected = vec![first.to_string(), second.to_string()];
     expected.sort();
@@ -658,7 +657,7 @@ async fn every_term_must_match_though_not_the_same_value() -> TestResult {
     let by_both = format!("/v1/persons?q=multi-{marker}%20findable");
     let (status, body) = get(app(&f, operator), &by_both).await?;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(found_ids(&body), vec![person.to_string()]);
+    assert_eq!(found_ids(&body)?, vec![person.to_string()]);
     assert_eq!(
         body["items"][0]["display_name"],
         format!("Terman Findable {marker}")
@@ -667,7 +666,7 @@ async fn every_term_must_match_though_not_the_same_value() -> TestResult {
     let with_a_miss = format!("/v1/persons?q=multi-{marker}%20nosuchterm");
     let (status, body) = get(app(&f, operator), &with_a_miss).await?;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(found_ids(&body), Vec::<String>::new());
+    assert_eq!(found_ids(&body)?, Vec::<String>::new());
     Ok(())
 }
 
@@ -695,7 +694,7 @@ async fn named_persons_sort_before_email_only_ones() -> TestResult {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        found_ids(&body),
+        found_ids(&body)?,
         vec![named.to_string(), email_only.to_string()],
         "named first, even though the email-only person's email sorts earlier"
     );
@@ -721,11 +720,11 @@ async fn a_cut_page_says_so_instead_of_posing_as_the_answer() -> TestResult {
     .await?;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(found_ids(&body).len(), 2, "the page honours the limit");
+    assert_eq!(found_ids(&body)?.len(), 2, "the page honours the limit");
     assert_eq!(body["truncated"], true, "the cut is announced");
 
     let (_, full) = get(app(&f, operator), &format!("/v1/persons?q=cut-{marker}")).await?;
-    assert_eq!(found_ids(&full).len(), 3);
+    assert_eq!(found_ids(&full)?.len(), 3);
     assert_eq!(full["truncated"], false);
     Ok(())
 }

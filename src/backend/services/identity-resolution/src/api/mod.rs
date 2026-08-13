@@ -151,9 +151,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param(
             "q",
             true,
-            "Search terms, at most 8; every whitespace-separated term must match \
-             one of the person's current observed values (case-insensitive \
-             substring)",
+            "Search terms, at most 8 (200 characters total); every \
+             whitespace-separated term must match one of the person's current \
+             identity values — email, username, display/first/last name or \
+             employee id (case-insensitive substring). Titles and statuses are \
+             displayed on the card but not searched.",
         )
         .query_param_typed(
             "limit",

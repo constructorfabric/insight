@@ -233,6 +233,7 @@ class PersonSummaryResponse(BaseModel):
     job_title: str | None = None
     person_id: UUID
     status: str | None = None
+    username: str | None = Field(None, description='Source-native handle (e.g. a git login) — often the only recognisable\nfield of an identity no HR system has observed yet.')
 
 
 class PersonsSeedOperationResponse(BaseModel):

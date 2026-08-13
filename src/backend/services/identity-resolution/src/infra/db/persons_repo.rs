@@ -412,9 +412,13 @@ fn like_pattern(term: &str) -> String {
 
 /// Hydrate person cards for MANY persons in one query — the shared id→display
 /// read behind every operator response that embeds cards (queue candidates,
-/// person search). Fetches the card-attribute observations and collapses them
-/// per person; an id the journal holds no card attributes for is simply absent
-/// from the map, and the caller renders it via [`PersonCard::empty`].
+/// person search). Only the CURRENT observation per person × source × value
+/// type leaves the database (the same `rn = 1` window the resolvers use): the
+/// journal is append-only, and shipping a person's full re-observation history
+/// to collapse it in Rust would grow every response with tenant age. The Rust
+/// collapse then picks the latest across sources. An id the journal holds no
+/// card attributes for is simply absent from the map, and the caller renders
+/// it via [`PersonCard::empty`].
 ///
 /// # Errors
 ///
@@ -428,12 +432,38 @@ pub async fn person_cards(
         return Ok(HashMap::new());
     }
 
-    let rows = persons::Entity::find()
-        .filter(persons::Column::InsightTenantId.eq(tenant_id.as_bytes().to_vec()))
-        .filter(persons::Column::PersonId.is_in(person_ids.iter().map(|id| id.as_bytes().to_vec())))
-        .filter(persons::Column::ValueType.is_in(CARD_VALUE_TYPES))
-        .all(db)
-        .await?;
+    let id_placeholders = vec!["?"; person_ids.len()].join(", ");
+    let type_list = CARD_VALUE_TYPES
+        .iter()
+        .map(|t| format!("'{t}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        r"
+        SELECT id, value_type, insight_source_type, insight_source_id,
+               insight_tenant_id, value_id, value_full_text, value,
+               value_effective, value_hash, person_id, author_person_id,
+               reason, created_at
+        FROM (
+            SELECT p.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY person_id, insight_source_type, insight_source_id, value_type
+                       ORDER BY created_at DESC, id DESC
+                   ) AS rn
+            FROM persons p
+            WHERE insight_tenant_id = ?
+              AND person_id IN ({id_placeholders})
+              AND value_type IN ({type_list})
+        ) current_rows
+        WHERE rn = 1
+    "
+    );
+
+    let mut values: Vec<sea_orm::Value> = vec![tenant_id.as_bytes().to_vec().into()];
+    values.extend(person_ids.iter().map(|id| id.as_bytes().to_vec().into()));
+
+    let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
+    let rows = persons::Entity::find().from_raw_sql(stmt).all(db).await?;
 
     Ok(person_card::assemble_cards(rows))
 }

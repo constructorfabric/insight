@@ -13,8 +13,9 @@ use crate::infra::db::entities::persons;
 /// The observation attributes a card is assembled from. The repo fetch filters
 /// on this list so hydrating a page of candidates reads card rows only, not
 /// every binding observation the journal holds for those persons.
-pub const CARD_VALUE_TYPES: [&str; 6] = [
+pub const CARD_VALUE_TYPES: [&str; 7] = [
     "email",
+    "username",
     "display_name",
     "first_name",
     "last_name",
@@ -26,6 +27,9 @@ pub const CARD_VALUE_TYPES: [&str; 6] = [
 pub struct PersonCard {
     pub person_id: Uuid,
     pub email: Option<String>,
+    /// Source-native handle (e.g. a git login) — often the only recognisable
+    /// field of an identity no HR system has observed yet.
+    pub username: Option<String>,
     pub display_name: Option<String>,
     pub job_title: Option<String>,
     pub status: Option<String>,
@@ -40,6 +44,7 @@ impl PersonCard {
         Self {
             person_id,
             email: None,
+            username: None,
             display_name: None,
             job_title: None,
             status: None,
@@ -79,10 +84,26 @@ fn card(person_id: Uuid, observations: Vec<persons::Model>) -> PersonCard {
     PersonCard {
         person_id,
         email: get("email"),
+        username: get("username"),
         display_name,
         job_title: get("job_title"),
         status: get("status"),
     }
+}
+
+/// Cards for `ids` in the callers' order — a person the map has no card for
+/// still appears, as the id alone. The one place the "absent card is not a
+/// dropped person" rule lives; both the queue and the search render through it.
+#[must_use]
+pub fn in_requested_order(ids: &[Uuid], cards: &HashMap<Uuid, PersonCard>) -> Vec<PersonCard> {
+    ids.iter()
+        .map(|id| {
+            cards
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| PersonCard::empty(*id))
+        })
+        .collect()
 }
 
 fn compose_name(first: Option<String>, last: Option<String>) -> Option<String> {

@@ -629,6 +629,13 @@
               "string",
               "null"
             ]
+          },
+          "username": {
+            "description": "Source-native handle (e.g. a git login) — often the only recognisable\nfield of an identity no HR system has observed yet.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1772,7 +1779,7 @@
         "operationId": "identity_resolution.persons.search",
         "parameters": [
           {
-            "description": "Search terms, at most 8; every whitespace-separated term must match one of the person's current observed values (case-insensitive substring)",
+            "description": "Search terms, at most 8 (200 characters total); every whitespace-separated term must match one of the person's current identity values — email, username, display/first/last name or employee id (case-insensitive substring). Titles and statuses are displayed on the card but not searched.",
             "in": "query",
             "name": "q",
             "required": true,

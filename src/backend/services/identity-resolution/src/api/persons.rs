@@ -22,16 +22,19 @@ use toolkit_security::SecurityContext;
 use utoipa::ToSchema;
 
 use super::AppState;
-use super::error::CorrectionError;
+use super::error::PersonSearchError;
 use super::gate::require_admin;
 use super::resolution::PersonSummaryResponse;
-use crate::domain::person_card::PersonCard;
+use crate::domain::person_card;
 use crate::infra::db::persons_repo;
 
 const DEFAULT_LIMIT: u64 = 20;
 const MAX_LIMIT: u64 = 100;
 /// A picker query is a human typing, not a batch filter.
 const MAX_TERMS: usize = 8;
+/// Generous for anything a human pastes into a picker, and a hard ceiling on
+/// what each LIKE probe of the journal scan has to compare against.
+const MAX_QUERY_CHARS: usize = 200;
 
 #[derive(Debug, Deserialize)]
 pub struct SearchParams {
@@ -78,14 +81,8 @@ pub async fn search_persons(
     let cards = persons_repo::person_cards(&state.db, tenant, &ids)
         .await
         .map_err(|e| read_err(&e))?;
-    let mut items: Vec<PersonSummaryResponse> = ids
-        .iter()
-        .map(|id| {
-            cards
-                .get(id)
-                .cloned()
-                .unwrap_or_else(|| PersonCard::empty(*id))
-        })
+    let mut items: Vec<PersonSummaryResponse> = person_card::in_requested_order(&ids, &cards)
+        .into_iter()
         .map(PersonSummaryResponse::from)
         .collect();
     sort_for_display(&mut items);
@@ -97,13 +94,18 @@ pub async fn search_persons(
     }))
 }
 
-/// Split `q` into terms: non-empty, whitespace-separated, capped.
+/// Split `q` into terms: non-empty, whitespace-separated, capped in count and
+/// total length.
 fn search_terms(q: Option<&str>) -> Result<Vec<String>, CanonicalError> {
-    let terms: Vec<String> = q
-        .unwrap_or_default()
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect();
+    let q = q.unwrap_or_default();
+    if q.chars().count() > MAX_QUERY_CHARS {
+        return Err(invalid(
+            "q",
+            &format!("at most {MAX_QUERY_CHARS} characters are accepted"),
+        ));
+    }
+
+    let terms: Vec<String> = q.split_whitespace().map(str::to_owned).collect();
 
     if terms.is_empty() {
         return Err(invalid("q", "search terms are required"));
@@ -117,20 +119,25 @@ fn search_terms(q: Option<&str>) -> Result<Vec<String>, CanonicalError> {
     Ok(terms)
 }
 
-/// Named first, alphabetically; card-less ids (bindings-only persons) last.
+/// Named first, then email-only, then username-only; persons the journal
+/// knows by nothing but an id come last. Alphabetical (case-folded) within
+/// each band.
 fn sort_for_display(items: &mut [PersonSummaryResponse]) {
     items.sort_by_cached_key(|i| {
         (
             i.display_name.is_none(),
             i.display_name.as_deref().map(str::to_lowercase),
-            i.email.clone(),
+            i.email.is_none(),
+            i.email.as_deref().map(str::to_lowercase),
+            i.username.is_none(),
+            i.username.as_deref().map(str::to_lowercase),
             i.person_id,
         )
     });
 }
 
 fn invalid(field: &str, message: &str) -> CanonicalError {
-    CorrectionError::invalid_argument()
+    PersonSearchError::invalid_argument()
         .with_field_violation(field, message, "INVALID")
         .create()
 }
@@ -155,6 +162,10 @@ mod tests {
         assert!(
             search_terms(Some("a b c d e f g h i")).is_err(),
             "over the term cap refused"
+        );
+        assert!(
+            search_terms(Some(&"x".repeat(201))).is_err(),
+            "over the length cap refused"
         );
         Ok(())
     }
