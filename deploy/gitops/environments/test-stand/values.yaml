@@ -157,6 +157,12 @@ keycloak:
     # and the prefix is part of the advertised issuer above — strip it and
     # discovery breaks in a way that looks like a TLS problem.
     enabled: true
+    # Publish only this realm's OIDC surface; unlisted realms — master and
+    # its admin-cli token endpoint included — stay cluster-internal. Inert
+    # until the stand picks up a chart with the realm-scoped route (#2457),
+    # which fails the render when this list is empty.
+    realms:
+      - insight
     host: insight-test.cfabric.org
     parentRef:
       name: insight
