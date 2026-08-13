@@ -310,11 +310,14 @@ that produced it: fix forward, or revert.
 
 ## Known gaps
 
-- **The persona password is a published constant** on a seed-generated realm
-  (every user carries the seeder's `DEV_PASSWORD`). Nothing in CI is blocked by
-  it, but it's not the "no well-known passwords on a public stand" posture —
-  closing it means the realm generator taking a password instead of embedding
-  one (a seeder change).
+- **The persona password is only as strong as what the realm was generated
+  with.** The generator takes `INSIGHT_SEED_PERSONA_PASSWORD` (16 characters
+  minimum) and falls back to a constant documented for local stands when it is
+  unset, so a realm generated without it gives every seeded persona a value
+  published in this repository — not the "no well-known passwords on a public
+  stand" posture. `TEST_STAND_PERSONA_PASSWORD` cannot fix that after the fact:
+  it has to *match* what the realm carries, so the two move together (see
+  `credentials-runbook.md`).
 - **Realm ownership sits outside this repo** — the ConfigMap is written by the
   bring-up; the deploy only reads it, so a login failure can have a cause no
   file here shows. The seed now reads that same object for the dev-lead address,

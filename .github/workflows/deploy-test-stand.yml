@@ -136,14 +136,10 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # A dispatch may come from another branch; the environment's
-          # deployment-branch policy is what decides whether it may.
           if [ "$REF_NAME" != "main" ]; then
             if [ "$EVENT" = "workflow_dispatch" ]; then
-              echo "::warning::dispatched from '$REF_NAME', not main. Allowed because the" \
-                   "insight-test-stand environment's deployment-branch policy already" \
-                   "decided this ref may deploy — but what lands on the stand is that" \
-                   "branch's idea of the deploy, not main's."
+              echo "::warning::dispatched from '$REF_NAME', not main — what lands on the" \
+                   "stand is that branch's idea of the deploy, not main's."
             else
               echo "::error::this workflow deploys main and only main (ref was '$REF_NAME', event '$EVENT')."
               echo "A workflow_call arrives from build-images.yml after a publish, which only"

@@ -466,16 +466,17 @@ next seed follows it. If the environment carries an explicit
 cluster action — but changing it *alone* re-opens the drift, because the realm
 still names whoever it named. Move both, or delete the secret and let the realm
 be the one writer. The persona password is a third case, and it is worth being
-precise about why. On a stand
-whose realm is generated from the seed roster, the IdP's copy of that password
-is a constant in the realm generator (`insight_seed.keycloak_realm`), shared by
-every user it emits: changing the GitHub secret alone changes nothing on the
-stand and breaks the gate on the next merge. Moving that value means changing
-the generator, regenerating and re-applying the realm, and setting the secret —
-in that order, in one sitting. Until the generator learns to take a password
-instead of embedding one, treat this secret as *masking* a published constant in
-a public log rather than as a rotatable credential, and see the stand
-environment's README ("Known gaps") for the follow-up that fixes it properly.
+precise about why. On a stand whose realm is generated from the seed roster,
+the IdP's copy of that password is whatever the generator
+(`insight_seed.keycloak_realm`) was given in `INSIGHT_SEED_PERSONA_PASSWORD`,
+shared by every user it emits — and a constant documented for local stands when
+it was given nothing. So changing the GitHub secret alone changes nothing on the
+stand and breaks the gate on the next merge. Rotating means setting the
+generator's input, regenerating and re-applying the realm, and setting the
+secret — in that order, in one sitting. A realm generated without that input
+carries a value published in this repository, and the secret masks it in a
+public log rather than making it private; the stand environment's README
+("Known gaps") states what that costs.
 
 ---
 
