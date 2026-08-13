@@ -25,6 +25,7 @@ c71d7d6ef85cd006  Gitlab             src/ingestion/connectors/git/gitlab/dbt/git
 5804c17e4c07e9bb  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/merge_requests.py  # code identifier / constant name
 cd968567652ff20b  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/project_incremental.py  # code identifier / constant name
 d1c1dd2c5248b565  Gitlab             src/ingestion/connectors/git/gitlab/tests/test_source.py  # code identifier / constant name
+079c134aaca8eb24  Gitlab             src/ingestion/scripts/connectors-ddl/gitlab-nocode.sql  # connector name in a DDL snapshot, not a token
 5976017fb71ea0e2  HubSpotApiKey      docs/architecture/CONNECTOR_AUTOMATION.md  # synthetic UUID fixture
 fdd801f84b096f9b  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
 93192185cb9d3fc6  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
