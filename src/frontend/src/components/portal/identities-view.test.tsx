@@ -76,6 +76,32 @@ describe("IdentitiesView", () => {
     expect(screen.getByText("60")).toBeInTheDocument();
   });
 
+  // An emptied backlog is exactly when a colleague opens the link they were
+  // sent, so the celebration must not take the detail panel down with it.
+  // `role="status"` is the panel's own loading state (the binding query is
+  // mocked pending here) — its presence means AccountDetail mounted.
+  it("answers a shared ?acct= link even after the backlog is worked to zero", () => {
+    attention.q.data = { items: [], rates: RATES };
+    portalRouter.set({
+      zone: "manage",
+      item: "identities",
+      acct: "github:01900000-0000-7000-8000-00000000aa01:dev-42",
+    });
+    render(<IdentitiesView />);
+
+    expect(screen.getByText(/everything is resolved/i)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("keeps a bare empty queue a plain celebration — no panel, no placeholder", () => {
+    attention.q.data = { items: [], rates: RATES };
+    render(<IdentitiesView />);
+
+    expect(screen.getByText(/everything is resolved/i)).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText(/pick an account from the queue/i)).not.toBeInTheDocument();
+  });
+
   it("says so when the server truncated the evidence — partial counts must not read as tenant-wide", () => {
     attention.q.data = { items: [], rates: RATES, truncated: true };
     render(<IdentitiesView />);

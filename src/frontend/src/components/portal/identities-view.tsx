@@ -9,7 +9,8 @@
  * never just the visible page.
  *
  * Selection lives in `?acct=` so an operator can hand a colleague a link to
- * the exact account under discussion.
+ * the exact account under discussion — and that link answers whatever the
+ * queue looks like by then, an emptied backlog included.
  */
 import { useTranslation } from "react-i18next";
 
@@ -84,7 +85,7 @@ export function IdentitiesView() {
         </Alert>
       ) : null}
       <RatesStrip rates={rates} />
-      {items.length === 0 ? <AllResolved /> : <Queue items={items} />}
+      <Queue items={items} />
     </div>
   );
 }
@@ -141,18 +142,28 @@ function Queue({ items }: { items: AttentionItem[] }) {
   const other = items.filter((i) => !known.has(i.kind));
   if (other.length > 0) groups.push({ kind: "other", items: other });
 
+  // The worked-to-zero queue is the goal state — but a shared `?acct=` link
+  // has to answer even then, and the backlog reaching zero is exactly when a
+  // colleague opens the link they were sent. So the celebration replaces the
+  // GROUP LIST, never the grid the detail panel lives in.
+  if (items.length === 0 && !acct) return <AllResolved />;
+
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
       <div className="flex min-w-0 flex-col gap-4">
-        {groups.map((group) => (
-          <QueueGroup
-            key={group.kind}
-            kind={group.kind}
-            items={group.items}
-            selectedKey={acct}
-            onSelect={(key) => setAcct(key === acct ? null : key)}
-          />
-        ))}
+        {items.length === 0 ? (
+          <AllResolved />
+        ) : (
+          groups.map((group) => (
+            <QueueGroup
+              key={group.kind}
+              kind={group.kind}
+              items={group.items}
+              selectedKey={acct}
+              onSelect={(key) => setAcct(key === acct ? null : key)}
+            />
+          ))
+        )}
       </div>
       <DetailPane acct={acct} items={items} />
     </div>
