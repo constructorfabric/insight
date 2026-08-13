@@ -386,6 +386,8 @@ streams:
           archived: {type: [boolean, "null"]}
           fork: {type: [boolean, "null"]}
           private: {type: [boolean, "null"]}
+          has_issues: {type: [boolean, "null"]}
+          has_wiki: {type: [boolean, "null"]}
           language: {type: [string, "null"]}
           size: {type: [integer, "null"]}
           clone_url: {type: [string, "null"]}
@@ -2110,10 +2112,10 @@ streams:
                       __typename
                       ... on ReadyForReviewEvent { id createdAt actor { login } }
                       ... on ConvertToDraftEvent { id createdAt actor { login } }
-                      ... on ReviewRequestedEvent { id createdAt actor { login } requestedReviewer { ... on User { login } } }
-                      ... on ReviewRequestRemovedEvent { id createdAt actor { login } requestedReviewer { ... on User { login } } }
-                      ... on AssignedEvent { id createdAt actor { login } assignee { ... on User { login } } }
-                      ... on UnassignedEvent { id createdAt actor { login } assignee { ... on User { login } } }
+                      ... on ReviewRequestedEvent { id createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } }
+                      ... on ReviewRequestRemovedEvent { id createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } }
+                      ... on AssignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
+                      ... on UnassignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
                       ... on LabeledEvent { id createdAt actor { login } label { name } }
                       ... on UnlabeledEvent { id createdAt actor { login } label { name } }
                       ... on ClosedEvent { id createdAt actor { login } stateReason }
@@ -2185,7 +2187,7 @@ streams:
           - type: AddedFieldDefinition
             path: [target_login]
             value: >-
-              {{ (record.get('assignee') or {}).get('login') or (record.get('requestedReviewer') or {}).get('login') or '' }}
+              {{ (record.get('assignee') or {}).get('login') or (record.get('requestedReviewer') or {}).get('login') or (record.get('requestedReviewer') or {}).get('slug') or '' }}
             value_type: string
           - type: AddedFieldDefinition
             path: [label_name]
@@ -2262,8 +2264,8 @@ streams:
                     pageInfo { hasNextPage endCursor }
                     nodes {
                       __typename
-                      ... on AssignedEvent { id createdAt actor { login } assignee { ... on User { login } } }
-                      ... on UnassignedEvent { id createdAt actor { login } assignee { ... on User { login } } }
+                      ... on AssignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
+                      ... on UnassignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
                       ... on LabeledEvent { id createdAt actor { login } label { name } }
                       ... on UnlabeledEvent { id createdAt actor { login } label { name } }
                       ... on ClosedEvent { id createdAt actor { login } stateReason }

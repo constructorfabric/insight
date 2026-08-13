@@ -18,6 +18,8 @@ models:
         tests:
           - accepted_values:
               values: ['issue', 'pull_request']
+      - name: actor_name
+        description: "The actor's login; GitHub's Actor exposes no stable id, so no uuid column is claimed"
       - name: delta_action
         description: "Whether the event sets a single value or adds/removes one of many"
         tests:

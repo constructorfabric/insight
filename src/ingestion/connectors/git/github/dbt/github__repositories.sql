@@ -8,13 +8,11 @@
     tags=['github', 'silver:class_git_repositories']
 ) }}
 
--- has_issues / has_wiki are not collected and no consumer reads them, so the
--- contract columns stay at 0 rather than widening the stream for nothing.
 SELECT
     tenant_id,
     source_id,
     unique_key,
-    COALESCE(org, '') AS project_key,
+    splitByChar('/', COALESCE(full_name, ''))[1] AS project_key,
     COALESCE(name, '') AS repo_slug,
     COALESCE(full_name, '') AS repo_uuid,
     COALESCE(name, '') AS name,
@@ -25,8 +23,8 @@ SELECT
     parseDateTimeBestEffortOrNull(COALESCE(pushed_at, updated_at)) AS updated_on,
     COALESCE(size, 0) AS size,
     COALESCE(language, '') AS language,
-    0 AS has_issues,
-    0 AS has_wiki,
+    if(COALESCE(has_issues, false), 1, 0) AS has_issues,
+    if(COALESCE(has_wiki, false), 1, 0) AS has_wiki,
     '' AS metadata,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,

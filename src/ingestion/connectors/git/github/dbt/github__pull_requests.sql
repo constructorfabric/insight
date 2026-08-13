@@ -20,7 +20,8 @@ WITH diff_stats AS (
         deletions,
         changed_files,
         author_email,
-        _airbyte_extracted_at
+        _airbyte_extracted_at,
+        1 AS matched
     FROM {{ source('bronze_github', 'pull_request_diff_stats') }} FINAL
 )
 SELECT
@@ -48,9 +49,12 @@ SELECT
     parseDateTimeBestEffortOrNull(pr.updated_at) AS updated_on,
     parseDateTimeBestEffortOrNull(COALESCE(pr.closed_at, pr.merged_at)) AS closed_on,
     COALESCE(pr.merge_commit_sha, '') AS merge_commit_hash,
-    toNullable(toInt64(COALESCE(ds.changed_files, 0))) AS files_changed,
-    toNullable(toInt64(COALESCE(ds.additions, 0))) AS lines_added,
-    toNullable(toInt64(COALESCE(ds.deletions, 0))) AS lines_removed,
+    -- An unmatched join partner and a genuinely empty pull request both read
+    -- as 0 through COALESCE; only the marker separates "not collected yet"
+    -- from "changed nothing", and the class columns are nullable to say so.
+    if(ds.matched = 1, toNullable(toInt64(COALESCE(ds.changed_files, 0))), NULL) AS files_changed,
+    if(ds.matched = 1, toNullable(toInt64(COALESCE(ds.additions, 0))), NULL) AS lines_added,
+    if(ds.matched = 1, toNullable(toInt64(COALESCE(ds.deletions, 0))), NULL) AS lines_removed,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     -- Diff stats are their own stream: a late arrival must re-trigger the pull

@@ -11,6 +11,9 @@
 -- GitHub names each change after the thing that changed rather than the field
 -- it changed, so the event type is what carries the semantics; this maps the
 -- vendor vocabulary onto the class's (field_id, delta_action, value) triple.
+-- FINAL: the event is immutable but the names projected onto it are not — a
+-- window re-fetch after a login or label rename re-emits the same key with
+-- different values.
 -- Only the two field-style events carry a previous value — everything else
 -- reports the new state alone.
 WITH pull_request_events AS (
@@ -32,7 +35,7 @@ WITH pull_request_events AS (
         '' AS new_value,
         state_reason,
         _airbyte_extracted_at
-    FROM {{ source('bronze_github', 'pull_request_timeline_events') }}
+    FROM {{ source('bronze_github', 'pull_request_timeline_events') }} FINAL
     {% if is_incremental() %}
     WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
     {% endif %}
@@ -56,7 +59,7 @@ issue_events AS (
         new_value,
         state_reason,
         _airbyte_extracted_at
-    FROM {{ source('bronze_github', 'issue_timeline_events') }}
+    FROM {{ source('bronze_github', 'issue_timeline_events') }} FINAL
     {% if is_incremental() %}
     WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
     {% endif %}
@@ -77,7 +80,6 @@ SELECT
     COALESCE(event_id, '') AS event_id,
     parseDateTimeBestEffortOrNull(event_at) AS event_at,
     COALESCE(actor_login, '') AS actor_name,
-    COALESCE(actor_login, '') AS actor_uuid,
     multiIf(
         event_type IN ('ClosedEvent', 'ReopenedEvent', 'MergedEvent'), 'state',
         event_type IN ('ReadyForReviewEvent', 'ConvertToDraftEvent'), 'draft',

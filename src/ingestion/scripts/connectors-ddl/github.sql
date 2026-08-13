@@ -423,6 +423,8 @@ CREATE TABLE IF NOT EXISTS bronze_github.repositories
     `archived` Nullable(Bool),
     `fork` Nullable(Bool),
     `private` Nullable(Bool),
+    `has_issues` Nullable(Bool),
+    `has_wiki` Nullable(Bool),
     `language` Nullable(String),
     `size` Nullable(Int64),
     `clone_url` Nullable(String),

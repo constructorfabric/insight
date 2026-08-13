@@ -414,7 +414,6 @@ CREATE TABLE IF NOT EXISTS silver.class_git_item_events
     `event_id` String,
     `event_at` Nullable(DateTime),
     `actor_name` String,
-    `actor_uuid` String,
     `field_id` String,
     `delta_action` String,
     `delta_value_id` String,
