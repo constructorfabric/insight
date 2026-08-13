@@ -99,46 +99,48 @@ WHERE version_num = 1
   field only carries a correct change timestamp if the snapshot versions on it.
 #}
 
-WITH versioned AS (
+{#-
+  Shaped as spillable GROUP BY aggregation, not window functions: aggregation
+  state spills to disk under max_bytes_before_external_group_by, window sort
+  state cannot spill and holds the whole exploded relation in memory.
+-#}
+WITH entity_versions AS (
     SELECT
         unique_key,
-        {{ entity_id_col }} AS entity_id,
-        tenant_id,
-        source_id,
-        _tracked_at AS updated_at,
-        {{ raw_data_fields(exclude_keys) }} AS fields,
-        ROW_NUMBER() OVER (
-            PARTITION BY unique_key ORDER BY _tracked_at
-        ) AS version_num
+        arraySort(groupArray(_tracked_at)) AS version_times
     FROM {{ snapshot_ref }}
+    GROUP BY unique_key
 ),
 
-transitions AS (
+-- One (entity, field) group with the value at every version carrying the key.
+-- Exploding pairs before grouping keeps the wide `raw_data` payload out of the
+-- ARRAY JOIN output: replicating it once per key is what costs gigabytes.
+field_values AS (
     SELECT
-        curr.entity_id AS entity_id,
-        curr.tenant_id AS tenant_id,
-        curr.source_id AS source_id,
-        curr.updated_at AS updated_at,
-        curr.fields AS curr_fields,
-        prev.fields AS prev_fields
-    FROM versioned curr
-    INNER JOIN versioned prev
-        ON curr.unique_key = prev.unique_key
-        AND curr.version_num = prev.version_num + 1
+        unique_key,
+        any({{ entity_id_col }}) AS entity_id,
+        any(tenant_id) AS tenant_id,
+        any(source_id) AS source_id,
+        pair.1 AS field_name,
+        CAST(groupArray((_tracked_at, pair.2)), 'Map(DateTime, String)') AS value_at
+    FROM {{ snapshot_ref }}
+    ARRAY JOIN CAST({{ raw_data_fields(exclude_keys) }}, 'Array(Tuple(String, String))') AS pair
+    GROUP BY unique_key, field_name
+),
 
-    UNION ALL
-
-    -- The first version has nothing to diff against; an empty map makes every
-    -- non-empty field read as a change from '', matching fields_history.
+-- INVARIANT: an absent key reads as '' — the timeline spans every version of
+-- the entity, so a version that stops carrying the key diffs as a change to ''
+-- and the first version diffs against '', both matching fields_history.
+timelines AS (
     SELECT
-        entity_id,
-        tenant_id,
-        source_id,
-        updated_at,
-        fields AS curr_fields,
-        CAST(map(), 'Map(String, String)') AS prev_fields
-    FROM versioned
-    WHERE version_num = 1
+        f.entity_id AS entity_id,
+        f.tenant_id AS tenant_id,
+        f.source_id AS source_id,
+        f.field_name AS field_name,
+        e.version_times AS times,
+        arrayMap(t -> f.value_at[t], e.version_times) AS vals
+    FROM field_values f
+    INNER JOIN entity_versions e ON f.unique_key = e.unique_key
 )
 
 SELECT
@@ -146,11 +148,11 @@ SELECT
     tenant_id,
     source_id,
     field_name,
-    prev_fields[field_name] AS old_value,
-    curr_fields[field_name] AS new_value,
-    updated_at
-FROM transitions
-ARRAY JOIN arrayDistinct(arrayConcat(mapKeys(curr_fields), mapKeys(prev_fields))) AS field_name
-WHERE curr_fields[field_name] != prev_fields[field_name]
+    change.1 AS old_value,
+    change.2 AS new_value,
+    change.3 AS updated_at
+FROM timelines
+ARRAY JOIN arrayFilter(c -> c.1 != c.2,
+    arrayMap(i -> (if(i = 1, '', vals[i - 1]), vals[i], times[i]), arrayEnumerate(vals))) AS change
 
 {% endmacro %}
