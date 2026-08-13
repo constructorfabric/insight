@@ -589,7 +589,10 @@ streams:
         path: /v1/file-changes
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
-          page_size: "500"
+          # Worst-case page is page_size x max_patch_bytes, and the whole page
+          # is buffered before a record is emitted. 100 keeps that under
+          # 100 MB; the extra requests land on the proxy, not the vendor quota.
+          page_size: "100"
           include_patch: "true"
           max_patch_bytes: "1048576"
       record_selector:
