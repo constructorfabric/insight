@@ -28,6 +28,14 @@ const attention = vi.hoisted(() => ({
 }));
 vi.mock("@/queries/identity-resolution", () => ({
   useAttention: () => attention.q,
+  // The panel under a selection; its own behaviour is account-detail.test's.
+  useAccountBinding: () => ({
+    data: undefined,
+    isLoading: true,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
 }));
 
 import { portalRouter } from "@/test/portal-router";

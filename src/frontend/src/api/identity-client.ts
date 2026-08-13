@@ -146,6 +146,57 @@ export async function getAttention(limit = 200): Promise<AttentionResponse> {
   return attention;
 }
 
+/** One decision recorded for an account, newest first on the wire. */
+export interface BindingHistoryEntry {
+  person_id: string;
+  author_person_id: string;
+  /** True when a human recorded it; false = automation (seed/resolver). */
+  by_operator: boolean;
+  /** Verb code (`operator-bind`, …) or an automation reason. Open vocabulary. */
+  reason?: string | null;
+  recorded_at: string;
+}
+
+export interface AccountBinding {
+  source: string;
+  source_id: string;
+  account_id: string;
+  /** Absent = the account is currently bound to nobody. */
+  person_id?: string | null;
+  history: BindingHistoryEntry[];
+}
+
+/**
+ * One account's current binding and its full decision trail
+ * (`GET /resolution/accounts/{source}/{source_id}/{account_id}`). 404 means
+ * the account was never observed AND never decided — the state a stale shared
+ * link lands on.
+ */
+export async function getAccountBinding(ref: {
+  source: string;
+  source_id: string;
+  account_id: string;
+}): Promise<AccountBinding> {
+  const path = [ref.source, ref.source_id, ref.account_id]
+    .map(encodeURIComponent)
+    .join("/");
+  const res = await fetchWithAuth(`${BASE}/resolution/accounts/${path}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let binding: AccountBinding;
+  try {
+    binding = (await res.json()) as AccountBinding;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(binding.history)) {
+    throw new IdentityApiError(res.status, { error: "malformed_binding" });
+  }
+  return binding;
+}
+
 export class IdentityApiError extends Error {
   status: number;
   body: unknown;

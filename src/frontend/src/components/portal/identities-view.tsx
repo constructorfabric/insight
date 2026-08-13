@@ -28,7 +28,8 @@ import {
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
-import { itemKey } from "@/lib/identities/account-key";
+import { itemKey, parseAccountKey } from "@/lib/identities/account-key";
+import { AccountDetail } from "@/components/portal/account-detail";
 import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
@@ -146,9 +147,22 @@ function Queue({ items }: { items: AttentionItem[] }) {
           />
         ))}
       </div>
-      <DetailPlaceholder hasSelection={Boolean(acct)} />
+      <DetailPane acct={acct} items={items} />
     </div>
   );
+}
+
+function DetailPane({
+  acct,
+  items,
+}: {
+  acct: string | undefined;
+  items: AttentionItem[];
+}) {
+  const ref = parseAccountKey(acct);
+  if (!ref) return <DetailPlaceholder />;
+  const queueItem = items.find((i) => itemKey(i) === acct);
+  return <AccountDetail accountRef={ref} queueItem={queueItem} />;
 }
 
 function QueueGroup({
@@ -211,8 +225,7 @@ function QueueGroup({
   );
 }
 
-/** Phase 1 stops at selection; the detail panel arrives with the next phase. */
-function DetailPlaceholder({ hasSelection }: { hasSelection: boolean }) {
+function DetailPlaceholder() {
   const { t } = useTranslation();
   return (
     <Empty className="h-fit rounded-lg border lg:sticky lg:top-4">
@@ -220,11 +233,7 @@ function DetailPlaceholder({ hasSelection }: { hasSelection: boolean }) {
         <EmptyMedia variant="icon">
           <UserSearch />
         </EmptyMedia>
-        <EmptyTitle>
-          {hasSelection
-            ? t("identities.detail.coming_soon")
-            : t("identities.detail.no_selection")}
-        </EmptyTitle>
+        <EmptyTitle>{t("identities.detail.no_selection")}</EmptyTitle>
         <EmptyDescription>
           {t("identities.detail.no_selection_description")}
         </EmptyDescription>

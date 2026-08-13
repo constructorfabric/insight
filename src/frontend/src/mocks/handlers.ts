@@ -384,6 +384,43 @@ export const handlers = [
   http.get("/api/analytics/v1/metric-definitions", () =>
     HttpResponse.json({ metrics: [] }),
   ),
+  // One account's binding + decision trail. dev-42 carries a small history so
+  // the panel has something to show; any other account answers 404, which is
+  // exactly what a stale shared link should land on.
+  http.get(
+    "/api/identity/v1/resolution/accounts/:source/:sourceId/:accountId",
+    ({ params }) => {
+      if (params.accountId !== "dev-42") {
+        return HttpResponse.json(
+          { title: "account not found" },
+          { status: 404 },
+        );
+      }
+      const [bob, carol] = PEOPLE;
+      return HttpResponse.json({
+        source: params.source,
+        source_id: params.sourceId,
+        account_id: params.accountId,
+        person_id: bob?.person_id,
+        history: [
+          {
+            person_id: bob?.person_id,
+            author_person_id: carol?.person_id,
+            by_operator: true,
+            reason: "operator-bind",
+            recorded_at: "2026-08-01T10:15:00Z",
+          },
+          {
+            person_id: carol?.person_id,
+            author_person_id: "00000000-0000-0000-0000-000000000000",
+            by_operator: false,
+            reason: null,
+            recorded_at: "2026-07-15T08:00:00Z",
+          },
+        ],
+      });
+    },
+  ),
   // The review queue, exercising all three kinds. Candidates reuse the seeded
   // roster so names/emails stay consistent with every other mock surface.
   http.get("/api/identity/v1/resolution/attention", () => {

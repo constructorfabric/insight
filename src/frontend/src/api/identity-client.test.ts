@@ -4,7 +4,7 @@ vi.mock("@/api/fetch-with-auth", () => ({ fetchWithAuth: vi.fn() }));
 
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 
-import { getAttention, getMe, getPerson, IdentityApiError } from "./identity-client";
+import { getAccountBinding, getAttention, getMe, getPerson, IdentityApiError } from "./identity-client";
 
 const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
 
@@ -228,5 +228,27 @@ describe("getAttention", () => {
     );
 
     await expect(getAttention()).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe("getAccountBinding", () => {
+  it("URI-encodes every path segment — an account_id with slashes cannot escape", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ source: "github", source_id: "s", account_id: "a/b c", history: [] }),
+    );
+
+    await getAccountBinding({ source: "github", source_id: "s", account_id: "a/b c" });
+
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      "/api/identity/v1/resolution/accounts/github/s/a%2Fb%20c",
+    );
+  });
+
+  it("rejects a body without a history array", async () => {
+    mockFetch.mockResolvedValueOnce(response({ source: "github" } as never));
+
+    await expect(
+      getAccountBinding({ source: "github", source_id: "s", account_id: "a" }),
+    ).rejects.toMatchObject({ body: { error: "malformed_binding" } });
   });
 });

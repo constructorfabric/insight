@@ -421,10 +421,25 @@
     "detail": {
       "no_selection": "No account selected",
       "no_selection_description": "Pick an account from the queue to see its evidence and history.",
-      "coming_soon": "Account detail is on its way"
+      "not_found": "This account is unknown — the link may be stale.",
+      "load_failed": "Unable to load the account",
+      "current_binding": "Currently bound to",
+      "unbound": "Nobody — the account is unresolved.",
+      "candidates": "Candidates",
+      "history": "Decision history",
+      "no_history": "No decisions recorded yet."
     },
     "person": {
       "terminated": "terminated"
+    },
+    "history": {
+      "bind": "Bound",
+      "merge": "Merged",
+      "detach": "Detached",
+      "exclude": "Excluded",
+      "automatic": "Automatic",
+      "to": "to",
+      "by_operator": "by an operator"
     }
   }
 }

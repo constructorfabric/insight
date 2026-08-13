@@ -7,7 +7,13 @@
  */
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
-import { getAttention, type AttentionResponse } from "@/api/identity-client";
+import {
+  getAccountBinding,
+  getAttention,
+  type AccountBinding,
+  type AttentionResponse,
+} from "@/api/identity-client";
+import type { AccountRef } from "@/lib/identities/account-key";
 import { useAuth } from "@/auth/use-auth";
 import { sessionAuthorizationScope } from "@/auth/session-scope";
 
@@ -22,5 +28,29 @@ export function useAttention(): UseQueryResult<AttentionResponse> {
     queryFn: () => getAttention(),
     staleTime: ATTENTION_STALE_TIME,
     enabled: sessionScope != null,
+  });
+}
+
+export function useAccountBinding(
+  ref: AccountRef | null,
+): UseQueryResult<AccountBinding> {
+  const { session } = useAuth();
+  const sessionScope = sessionAuthorizationScope(session);
+  return useQuery({
+    queryKey: [
+      "identity",
+      "resolution",
+      "account",
+      sessionScope,
+      ref?.source,
+      ref?.source_id,
+      ref?.account_id,
+    ],
+    queryFn: () => {
+      if (!ref) throw new Error("account ref is missing");
+      return getAccountBinding(ref);
+    },
+    staleTime: ATTENTION_STALE_TIME,
+    enabled: sessionScope != null && ref != null,
   });
 }
