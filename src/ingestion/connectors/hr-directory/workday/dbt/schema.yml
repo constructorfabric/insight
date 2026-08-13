@@ -10,12 +10,7 @@ sources:
 models:
   - name: workday__to_class_people
     description: >
-      Workday Workers -> class_people (Silver Step 1).
-      Full-refresh RaaS source. Identity key: email (Work_Email).
-      Maps Workday Worker_Status to normalised status (active/on_leave/terminated)
-      and Worker_Type to employment_type (full_time/contractor).
-      SCD Type 2 fields (valid_from/valid_to) are set as current-state snapshot
-      (valid_from = Last_Functionally_Updated, valid_to = NULL).
+      Workday Workers -> class_people (Silver Step 1). Full-refresh RaaS source. Identity key: email (Work_Email). Maps Workday Worker_Status to normalised status (active/on_leave/terminated, else unknown — the vocabulary is contract-normative, so an unrecognised value is never `active`) and Worker_Type to employment_type (full_time/contractor). Current-state snapshot: entity-level `unique_key` (one row per worker) and `valid_from` = Last_Functionally_Updated. No `valid_to` — this model holds no version history; that lives in workday__workers_snapshot / workday__workers_fields_history. Reads bronze with FINAL because bronze is append-only RMT (see ADR-0001).
     columns:
       - name: tenant_id
         description: "Tenant isolation identifier"
@@ -42,11 +37,12 @@ models:
       - name: last_name
         description: "Last name"
       - name: status
-        description: "Normalised: active, on_leave, terminated"
+        description: >
+          Normalised from Worker_Status: active, on_leave, terminated, or unknown when the source value is outside the contract vocabulary. Never defaults to active — that silently inflates headcount.
         tests:
           - accepted_values:
               arguments:
-                values: ['active', 'on_leave', 'terminated']
+                values: ['active', 'on_leave', 'terminated', 'unknown']
       - name: employment_type
         description: "Normalised: full_time (Employee), contractor (Contingent Worker)"
         tests:
@@ -67,9 +63,7 @@ models:
 
   - name: workday__hr_events
     description: >
-      Workday leave_requests → class_hr_events (Silver Step 2 staging).
-      One row per time-off request. Joins to workers to resolve email.
-      Unlike BambooHR, RaaS report columns are flat — no JSON extraction needed.
+      Workday leave_requests → class_hr_events (Silver Step 2 staging). One row per time-off request. Joins to workers to resolve email. Unlike BambooHR, RaaS report columns are flat — no JSON extraction needed.
     columns:
       - name: insight_tenant_id
         tests:
@@ -124,9 +118,7 @@ models:
 
   - name: workday__working_hours
     description: >
-      Workday active workers → class_hr_working_hours (Silver Step 2 staging).
-      One row per active worker with their scheduled working hours.
-      Scheduled_Weekly_Hours is Workday-delivered; defaults to 40h/week when empty.
+      Workday active workers → class_hr_working_hours (Silver Step 2 staging). One row per active worker with their scheduled working hours. Scheduled_Weekly_Hours is Workday-delivered; defaults to 40h/week when empty.
     columns:
       - name: insight_tenant_id
         tests:
@@ -171,10 +163,7 @@ models:
 
   - name: workday__workers_snapshot
     description: >
-      SCD2 append-only snapshot of Workday workers.
-      Tracks changes in standard report columns and custom report columns
-      from raw_data. Custom columns list is passed via dbt var
-      workday_custom_fields.
+      SCD2 append-only snapshot of Workday workers. Tracks changes in standard report columns and custom report columns from raw_data. Custom columns list is passed via dbt var workday_custom_fields.
     columns:
       - name: unique_key
         tests:
@@ -186,9 +175,7 @@ models:
 
   - name: workday__workers_fields_history
     description: >
-      Field-level change log for Workday workers.
-      One row per changed field per version transition.
-      Includes both standard and custom report columns (from raw_data).
+      Field-level change log for Workday workers. One row per changed field per version transition. Includes both standard and custom report columns (from raw_data).
     columns:
       - name: entity_id
         description: "Workday Employee ID"

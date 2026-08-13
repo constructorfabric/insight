@@ -18,6 +18,17 @@
     dedup_version_col: version column for "latest wins" dedup (default
       `_version`). Pass `none` for versionless RMT sources (full-refresh
       `class_people`, `class_hr_working_hours`) where any row per key is fine.
+
+  IMPORTANT — "any row per key is fine" holds only when `unique_key` is the
+  ENTITY key and the staging views emit one row per entity. The versionless
+  branch is a bare `LIMIT 1 BY unique_key` with no `ORDER BY`, so which row wins
+  is undefined (empirically it picks the STALE row at `max_threads=1`). If
+  staging can emit several rows per entity — e.g. an un-deduped read of an
+  append-only bronze table holding multiple unmerged snapshots — the staging
+  model MUST dedup its own source (`FINAL` on RMT bronze), or attributes will
+  vary between runs. Never encode the version into `unique_key` to work around
+  this: that keeps every version as a separate permanently-current row. See
+  ADR-0001 and ADR-0004.
 -#}
 {% macro union_by_tag(tag_name, dedup_version_col='_version') %}
   {%- if execute -%}

@@ -518,9 +518,8 @@ Existing code and specs that conflict with the adopted conventions. To be update
 
 | File | Violation | Convention |
 |------|-----------|------------|
-| `src/ingestion/connectors/hr-directory/bamboohr/dbt/to_class_people.sql:16` | `CAST(NULL AS Nullable(DateTime))` for `valid_to` | ClickHouse Nullable avoidance (section 6); use sentinel value (e.g., `'1970-01-01'`) instead of `Nullable` |
-| `src/ingestion/connectors/hr-directory/bamboohr/dbt/to_class_people.sql:12` | bare `tenant_id` | `insight_tenant_id` (section 3.1) |
-| `src/ingestion/connectors/hr-directory/bamboohr/dbt/to_class_people.sql:15` | `valid_from` / `valid_to` | `effective_from` / `effective_to` (section 4.2) |
+| `src/ingestion/connectors/hr-directory/bamboohr/dbt/bamboohr__to_class_people.sql` | bare `tenant_id` | `insight_tenant_id` (section 3.1) |
+| `src/ingestion/connectors/hr-directory/bamboohr/dbt/bamboohr__to_class_people.sql` | `valid_from` | `effective_from` (section 4.2) |
 | `src/ingestion/connectors/ai/claude-admin/dbt/claude_admin__ai_api_usage.sql` | `insight_source_id` without `insight_source_type` | Source tracking fields must co-occur (section 3.2) |
 | `src/ingestion/connectors/ai/claude-admin/dbt/claude_admin__ai_api_usage.sql` | bare `tenant_id` | `insight_tenant_id` (section 3.1) |
 

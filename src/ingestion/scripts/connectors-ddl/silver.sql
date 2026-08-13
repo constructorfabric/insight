@@ -632,7 +632,6 @@ CREATE TABLE IF NOT EXISTS silver.class_people
     `workspace_id` String,
     `person_id` Nullable(UUID),
     `valid_from` Nullable(DateTime),
-    `valid_to` Nullable(DateTime),
     `source` String,
     `source_person_id` Nullable(String),
     `employee_number` Nullable(String),
