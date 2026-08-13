@@ -276,7 +276,8 @@ export function MetricEvidenceDialog({
                     visible: visibleRows.length,
                     loaded: rows.length,
                     filtered: search.trim() !== "",
-                    loadingMore: narrowed && isFetchingNextPage,
+                    partial:
+                      narrowed && (canLoadMore || query.isFetchNextPageError),
                   })}
                 </p>
               </div>
@@ -301,12 +302,40 @@ export function MetricEvidenceDialog({
             </div>
           ) : visibleRows.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3">
-              <p className="text-sm text-muted-foreground">
-                No records match this search
-              </p>
-              <Button variant="outline" onClick={() => setSearch("")}>
-                Clear search
-              </Button>
+              {query.isFetchNextPageError ? (
+                // Only the pages that loaded were searched, so "no match"
+                // would be a claim about records nobody has seen.
+                <>
+                  <p role="alert" className="text-sm text-muted-foreground">
+                    Nothing matched the records loaded so far, and the rest
+                    could not be loaded
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => void fetchNextPage()}
+                    >
+                      Retry
+                    </Button>
+                    <Button variant="ghost" onClick={() => setSearch("")}>
+                      Clear search
+                    </Button>
+                  </div>
+                </>
+              ) : canLoadMore ? (
+                <p className="text-sm text-muted-foreground">
+                  Nothing matched yet — still loading the rest
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    No records match this search
+                  </p>
+                  <Button variant="outline" onClick={() => setSearch("")}>
+                    Clear search
+                  </Button>
+                </>
+              )}
             </div>
           ) : (
             <MetricEvidenceTable
@@ -328,25 +357,26 @@ export function MetricEvidenceDialog({
 }
 
 /**
- * Both counts are of what has been paged in so far, so a run still loading
- * says as much rather than letting a partial total read as the answer.
+ * Both counts are of what has been paged in, so whenever pages are still
+ * outstanding — loading, or left behind by a failure — the total says as much
+ * rather than reading as the answer.
  */
 function recordCount({
   visible,
   loaded,
   filtered,
-  loadingMore,
+  partial,
 }: {
   visible: number;
   loaded: number;
   filtered: boolean;
-  loadingMore: boolean;
+  partial: boolean;
 }): string {
   const noun = visible === 1 && !filtered ? "record" : "records";
   const count = filtered
     ? `${formatMetricNumber(visible, "integer")} of ${formatMetricNumber(loaded, "integer")}`
     : formatMetricNumber(visible, "integer");
-  return `${count} ${noun}${loadingMore ? " so far" : ""}`;
+  return `${count} ${noun}${partial ? " so far" : ""}`;
 }
 
 function errorMessage(error: unknown, fallback: string): string {

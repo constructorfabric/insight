@@ -405,6 +405,60 @@ describe("MetricEvidenceDialog", () => {
       act(() => onSortChange(key));
     }
 
+    it("does not call a search empty while pages are still coming", async () => {
+      const user = userEvent.setup();
+      renderDialog({ fetchNextPage: vi.fn(), hasNextPage: true });
+
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "nothing"
+      );
+      expect(
+        screen.getByText("Nothing matched yet — still loading the rest")
+      ).toBeInTheDocument();
+      expect(screen.getByText("0 of 3 records so far")).toBeInTheDocument();
+      expect(
+        screen.queryByText("No records match this search")
+      ).not.toBeInTheDocument();
+    });
+
+    it("says the rest could not be loaded rather than claiming no match", async () => {
+      const user = userEvent.setup();
+      const fetchNextPage = vi.fn();
+      renderDialog({
+        fetchNextPage,
+        hasNextPage: true,
+        isFetchNextPageError: true,
+      });
+
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "nothing"
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "the rest could not be loaded"
+      );
+      expect(screen.getByText("0 of 3 records so far")).toBeInTheDocument();
+
+      fetchNextPage.mockClear();
+      await user.click(screen.getByRole("button", { name: "Retry" }));
+      expect(fetchNextPage).toHaveBeenCalled();
+    });
+
+    it("calls a search empty once every page is in", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "nothing"
+      );
+      expect(
+        screen.getByText("No records match this search")
+      ).toBeInTheDocument();
+      expect(screen.getByText("0 of 3 records")).toBeInTheDocument();
+    });
+
     it("cycles a column through ascending, descending and back", () => {
       renderDialog();
 
