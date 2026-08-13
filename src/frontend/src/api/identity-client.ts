@@ -42,6 +42,50 @@ interface ProfileResponse {
   ids?: unknown[];
 }
 
+/** One active role assignment of the caller, as `GET /me` reports it. */
+export interface MeRole {
+  role_id: string;
+  name: string;
+}
+
+/**
+ * Wire shape of `GET /me` — who the gateway JWT identifies, with their active
+ * identity roles. `roles` comes from the identity service's `person_roles`
+ * table (the same rows every admin endpoint's gate checks) — NOT from the
+ * login token's realm roles, which no identity endpoint reads. An empty list
+ * IS the "not an admin" answer; the endpoint never 403s.
+ */
+export interface MeResponse {
+  person_id: string;
+  insight_tenant_id: string;
+  roles: MeRole[];
+}
+
+/**
+ * The caller's identity and active roles. Live on every call: granting or
+ * revoking a role is visible on the next fetch, no re-login needed.
+ */
+export async function getMe(): Promise<MeResponse> {
+  const res = await fetchWithAuth(`${BASE}/me`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let me: MeResponse;
+  try {
+    me = (await res.json()) as MeResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  // A malformed answer must read as "roles unknown", never as "no roles" —
+  // the admin gate downstream fails closed either way, but an error is
+  // diagnosable where a silent [] is not.
+  if (!me.person_id?.trim() || !Array.isArray(me.roles)) {
+    throw new IdentityApiError(res.status, { error: "malformed_me" });
+  }
+  return me;
+}
+
 export class IdentityApiError extends Error {
   status: number;
   body: unknown;

@@ -4,7 +4,7 @@ vi.mock("@/api/fetch-with-auth", () => ({ fetchWithAuth: vi.fn() }));
 
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 
-import { getPerson, IdentityApiError } from "./identity-client";
+import { getMe, getPerson, IdentityApiError } from "./identity-client";
 
 const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
 
@@ -137,4 +137,51 @@ describe("getPerson", () => {
     });
   });
 
+});
+
+describe("getMe", () => {
+  it("GETs /me and returns the caller with their roles verbatim", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({
+        person_id: "019e27bc-dec0-7626-81a9-c5524662a6a9",
+        insight_tenant_id: "t-1",
+        roles: [
+          { role_id: "a4d11000-0000-4000-8000-000000000001", name: "admin" },
+        ],
+      }),
+    );
+
+    const me = await getMe();
+
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/identity/v1/me");
+    expect(me.roles).toEqual([
+      { role_id: "a4d11000-0000-4000-8000-000000000001", name: "admin" },
+    ]);
+  });
+
+  it("keeps an empty roles list as a valid 'not an admin' answer", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ person_id: "p-1", insight_tenant_id: "t-1", roles: [] }),
+    );
+
+    await expect(getMe()).resolves.toMatchObject({ roles: [] });
+  });
+
+  it("throws on an HTTP failure instead of pretending to an empty grant", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ title: "unauthenticated" }, { ok: false, status: 401 }),
+    );
+
+    await expect(getMe()).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("rejects a malformed body rather than reading it as 'no roles'", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ person_id: "p-1", insight_tenant_id: "t-1" } as never),
+    );
+
+    await expect(getMe()).rejects.toMatchObject({
+      body: { error: "malformed_me" },
+    });
+  });
 });
