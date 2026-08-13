@@ -23,3 +23,6 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/deploy-test-stand.yml
+    # A reusable workflow sees no caller secrets unless they are handed over;
+    # without this, its preflight fails on "missing" credentials that exist.
+    secrets: inherit
