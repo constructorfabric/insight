@@ -177,6 +177,18 @@ describe("MetricEvidenceTable", () => {
       ).toHaveLength(1);
     });
 
+    it("scrolls a long record inside itself rather than growing past the dialog", async () => {
+      const user = userEvent.setup();
+      renderTable({ rows: longRows });
+
+      await user.click(
+        screen.getAllByRole("button", { name: "Show full record" })[0]!
+      );
+      // jsdom lays nothing out, so the cap is only observable as the class.
+      const panel = screen.getByText(/It handles nested groups/).closest("dl");
+      expect(panel).toHaveClass("max-h-96", "overflow-y-auto");
+    });
+
     it("stays open when the reader clicks the text inside it", async () => {
       const user = userEvent.setup();
       renderTable({ rows: longRows });

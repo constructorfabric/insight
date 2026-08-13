@@ -321,7 +321,10 @@ export function MetricEvidenceTable({
                     onClick={(event) => event.stopPropagation()}
                     className="w-full basis-full cursor-auto border-t bg-muted/40 px-3 py-3"
                   >
-                    <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[10rem_1fr]">
+                    {/* Capped so a long message scrolls here rather than
+                        filling the table with one record. Not a vh: that is
+                        the window, which can exceed the table's own height. */}
+                    <dl className="grid max-h-96 gap-x-6 gap-y-2 overflow-y-auto overscroll-contain sm:grid-cols-[10rem_1fr]">
                       {columns.map((column) => {
                         const text = cellText(row.values[column.key], column.type);
                         return (
