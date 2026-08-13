@@ -11,12 +11,14 @@
 -- The conversation-comment endpoint is repo-wide and answers for plain issues
 -- as well, so only the numbers that name a pull request are kept.
 WITH pull_request_numbers AS (
-    SELECT DISTINCT
+    SELECT
         tenant_id,
         source_id,
         repo_full_name,
-        number
+        number,
+        max(_airbyte_extracted_at) AS pull_request_extracted_at
     FROM {{ source('bronze_github', 'pull_requests') }} FINAL
+    GROUP BY tenant_id, source_id, repo_full_name, number
 )
 SELECT
     c.tenant_id AS tenant_id,
@@ -36,7 +38,11 @@ SELECT
     0 AS line_number,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    c._airbyte_extracted_at AS _airbyte_extracted_at
+    -- A repository the token cannot see is skipped, not failed, so a comment
+    -- can land before its pull request does. Watermarking on the later of the
+    -- two lets the row through once the pull request arrives; keyed on the
+    -- comment alone it would sit below the mark forever.
+    greatest(c._airbyte_extracted_at, p.pull_request_extracted_at) AS _airbyte_extracted_at
 FROM {{ source('bronze_github', 'pull_request_comments') }} AS c FINAL
 INNER JOIN pull_request_numbers AS p
     ON p.tenant_id = c.tenant_id
@@ -44,7 +50,8 @@ INNER JOIN pull_request_numbers AS p
     AND p.repo_full_name = c.repo_full_name
     AND p.number = c.issue_number
 {% if is_incremental() %}
-WHERE c._airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+WHERE greatest(c._airbyte_extracted_at, p.pull_request_extracted_at)
+    > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}
 
 UNION ALL

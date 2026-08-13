@@ -15,7 +15,7 @@ SELECT
     source_id,
     unique_key,
     arrayElement(splitByChar('/', COALESCE(repository, '')), -2) AS project_key,
-    replaceRegexpOne(arrayElement(splitByChar('/', COALESCE(repository, '')), -1), '\.git$', '') AS repo_slug,
+    replaceRegexpOne(arrayElement(splitByChar('/', COALESCE(repository, '')), -1), '\\.git$', '') AS repo_slug,
     COALESCE(sha, '') AS commit_hash,
     '' AS branch,
     COALESCE(author_name, '') AS author_name,

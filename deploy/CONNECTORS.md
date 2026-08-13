@@ -188,9 +188,8 @@ stringData:
 ```yaml
 # Declarative GitHub connector on the git-cli-proxy: commit-level data comes
 # from a bare clone served by the proxy instead of one vendor API call per
-# commit. Needs the proxy deployed (gitClIProxy.deploy: true) and
-# git_proxy_token equal to APP__gears__git_cli_proxy__config__proxy_token in
-# the umbrella-composed insight-git-cli-proxy-config Secret.
+# commit. Needs a reachable git-cli-proxy deployment, with git_proxy_token
+# equal to the proxy's own configured token.
 apiVersion: v1
 kind: Secret
 metadata:

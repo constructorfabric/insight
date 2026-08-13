@@ -15,7 +15,7 @@ SELECT
     source_id,
     unique_key,
     arrayElement(splitByChar('/', COALESCE(repository, '')), -2) AS project_key,
-    replaceRegexpOne(arrayElement(splitByChar('/', COALESCE(repository, '')), -1), '\.git$', '') AS repo_slug,
+    replaceRegexpOne(arrayElement(splitByChar('/', COALESCE(repository, '')), -1), '\\.git$', '') AS repo_slug,
     COALESCE(name, '') AS branch_name,
     if(COALESCE(is_default, false), 1, 0) AS is_default,
     COALESCE(head_sha, '') AS last_commit_hash,

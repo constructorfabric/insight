@@ -13,7 +13,7 @@ SELECT
     source_id,
     unique_key,
     arrayElement(splitByChar('/', COALESCE(repository, '')), -2) AS project_key,
-    replaceRegexpOne(arrayElement(splitByChar('/', COALESCE(repository, '')), -1), '\.git$', '') AS repo_slug,
+    replaceRegexpOne(arrayElement(splitByChar('/', COALESCE(repository, '')), -1), '\\.git$', '') AS repo_slug,
     COALESCE(sha, '') AS commit_hash,
     COALESCE(filename, '') AS file_path,
     -- File extension: last segment after the final '.', empty when none.

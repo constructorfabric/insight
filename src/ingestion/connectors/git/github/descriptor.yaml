@@ -9,10 +9,13 @@ workflow: sync
 dbt_select: "tag:github+"
 
 secret:
-  # Fields the deployment Secret must carry beyond the spec's `required` list
-  # (generate-connectors-config.sh unions both when building the fake config).
+  # The pre-flight Secret validator reads this list and nothing else, so it
+  # carries every field the spec requires, not only the ones beyond it.
   required_fields:
     - github_token
+    - github_organizations
+    - github_start_date
+    - git_proxy_url
     - git_proxy_token
 
 connection:

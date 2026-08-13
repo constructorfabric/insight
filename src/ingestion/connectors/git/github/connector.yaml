@@ -2312,6 +2312,9 @@ streams:
             partition_field: issue_number
             extra_fields:
               - [repo_full_name]
+            # Without this the parent cursor never persists and every issue
+            # ever opened is re-walked, one call each, on every sync.
+            incremental_dependency: true
             stream:
               type: DeclarativeStream
               name: issues_window
@@ -2462,6 +2465,20 @@ streams:
           - [newValue]
           - [previousStatus]
           - [status]
+    # Formal cursor: no request option is injected and nothing is filtered, so
+    # every enumerated issue's timeline is always emitted in full. It exists to
+    # make the stream stateful, which is what lets incremental_dependency carry
+    # the issues_window cursor as parent_state.
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: event_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
 concurrency_level:
   type: ConcurrencyLevel
   # Never 1: the concurrent CDK self-deadlocks at a single worker once a sync

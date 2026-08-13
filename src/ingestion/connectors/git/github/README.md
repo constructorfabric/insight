@@ -75,5 +75,7 @@ no `updatedAfter` argument, so the stream is a newest-first data feed like
 
 ## Silver Targets
 
-Not wired yet — bronze-only until the silver dbt models land (they must match
-the CDK connectors' column types exactly or `union_by_tag` fails).
+The nine staging models under `dbt/` feed the `class_git_*` classes, plus
+`class_git_item_events` for the lifecycle streams. Issues, projects, CI and
+deployments stay bronze-only. Column types must match the other git connectors
+exactly: the classes union positionally.
