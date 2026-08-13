@@ -65,7 +65,7 @@ export function useZoneNav(): {
       // a lingering `?zone=` there would only contradict it.
       search: (prev: Record<string, unknown>) => ({
         ...prev,
-        ...(activeZone !== zone.id ? { item: undefined } : {}),
+        ...(activeZone !== zone.id ? { item: undefined, acct: undefined } : {}),
         zone: entity ? undefined : zone.id,
       }),
     });

@@ -378,6 +378,58 @@ export const handlers = [
       ],
     }),
   ),
+  // Minimal, honest empty catalog: without this handler the request falls
+  // through to the network, and in a proxy-configured dev run the resulting
+  // 401 bounces the whole mock session to the real IdP.
+  http.get("/api/analytics/v1/metric-definitions", () =>
+    HttpResponse.json({ metrics: [] }),
+  ),
+  // The review queue, exercising all three kinds. Candidates reuse the seeded
+  // roster so names/emails stay consistent with every other mock surface.
+  http.get("/api/identity/v1/resolution/attention", () => {
+    const [bob, carol, alice] = PEOPLE;
+    const card = (p: (typeof PEOPLE)[number], extra?: object) => ({
+      person_id: p.person_id,
+      email: p.email,
+      username: null,
+      display_name: p.name,
+      job_title: p.role ?? null,
+      status: "active",
+      ...extra,
+    });
+    return HttpResponse.json({
+      items: [
+        {
+          kind: "contested",
+          source: "github",
+          source_id: "01900000-0000-7000-8000-00000000aa01",
+          account_id: "dev-42",
+          email: "dev42@example.com",
+          username: "dev42",
+          candidates: [card(bob), card(carol)],
+        },
+        {
+          kind: "binding_conflict",
+          source: "gitlab",
+          source_id: "01900000-0000-7000-8000-00000000aa02",
+          account_id: "a.kim",
+          email: alice?.email ?? "alice.kim@example.com",
+          username: null,
+          candidates: [card(alice)],
+        },
+        {
+          kind: "no_evidence",
+          source: "github",
+          source_id: "01900000-0000-7000-8000-00000000aa01",
+          account_id: "ci-bot-7",
+          email: null,
+          username: "ci-bot-7",
+          candidates: [],
+        },
+      ],
+      rates: { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 },
+    });
+  }),
   http.post(
     "/api/identity/v1/profiles",
     async ({ request }) => {

@@ -32,6 +32,11 @@ vi.mock("@/queries/identity-me", () => ({
   useIsAdmin: () => adminGate.value,
 }));
 
+// The console itself has its own test file; here only the gate is under test.
+vi.mock("@/components/portal/identities-view", () => ({
+  IdentitiesView: () => <div data-testid="identities-view" />,
+}));
+
 import { ManageView } from "./manage-view";
 
 function def(over: Partial<MetricDefinition>): MetricDefinition {
@@ -171,7 +176,7 @@ describe("identities gate", () => {
     adminGate.value = { isAdmin: true, isPending: false };
     render(<ManageView item="identities" />);
 
-    expect(screen.getByText(/under construction/i)).toBeInTheDocument();
+    expect(screen.getByTestId("identities-view")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

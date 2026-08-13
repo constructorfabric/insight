@@ -15,6 +15,7 @@ import type {
   MetricDefinitionSchemaStatus,
   MetricDefinition,
 } from "@/api/metric-definitions-client";
+import { IdentitiesView } from "@/components/portal/identities-view";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
 import { TEXT_FIGURE } from "@/lib/type-scale";
@@ -72,15 +73,7 @@ function IdentitiesGate() {
       </div>
     );
   }
-  return (
-    <div className="mx-auto w-full max-w-md p-8">
-      <ComingSoon
-        variant="card"
-        state="empty"
-        label="Identity resolution console — under construction"
-      />
-    </div>
-  );
+  return <IdentitiesView />;
 }
 
 /** Flatten the prefix-grouped query result into one key-sorted list. */

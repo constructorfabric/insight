@@ -86,6 +86,66 @@ export async function getMe(): Promise<MeResponse> {
   return me;
 }
 
+/** A person as operator surfaces display them — the wire `PersonSummaryResponse`. */
+export interface PersonSummary {
+  person_id: string;
+  email?: string | null;
+  username?: string | null;
+  display_name?: string | null;
+  job_title?: string | null;
+  status?: string | null;
+}
+
+/** One account awaiting an operator decision. */
+export interface AttentionItem {
+  /** `contested` | `binding_conflict` | `no_evidence` — open vocabulary. */
+  kind: string;
+  source: string;
+  source_id: string;
+  account_id: string;
+  email?: string | null;
+  username?: string | null;
+  /** Hydrated person cards, not bare ids. */
+  candidates: PersonSummary[];
+}
+
+/** Counts over EVERY observed account, regardless of the item cap. */
+export interface ResolutionRates {
+  observed: number;
+  bound: number;
+  pending: number;
+  no_evidence: number;
+  excluded: number;
+}
+
+export interface AttentionResponse {
+  items: AttentionItem[];
+  rates: ResolutionRates;
+}
+
+/**
+ * The operator review queue (`GET /resolution/attention`) — accounts the
+ * resolver could not decide, with the tenant-wide match rate. Admin-gated
+ * server-side; the caller is expected to sit behind `useIsAdmin`.
+ */
+export async function getAttention(limit = 200): Promise<AttentionResponse> {
+  const res = await fetchWithAuth(`${BASE}/resolution/attention?limit=${limit}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let attention: AttentionResponse;
+  try {
+    attention = (await res.json()) as AttentionResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(attention.items) || attention.rates == null) {
+    throw new IdentityApiError(res.status, { error: "malformed_attention" });
+  }
+  return attention;
+}
+
 export class IdentityApiError extends Error {
   status: number;
   body: unknown;

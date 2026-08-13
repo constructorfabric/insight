@@ -396,5 +396,35 @@
       "entity_column": "entity_id",
       "value_column": "value"
     }
+  },
+  "identities": {
+    "title": "Identities",
+    "subtitle": "Accounts the resolver could not decide — review and resolve them.",
+    "rates": {
+      "observed": "Observed",
+      "bound": "Resolved",
+      "pending": "Pending review",
+      "no_evidence": "No evidence",
+      "excluded": "Excluded"
+    },
+    "kind": {
+      "contested": "Contested — more than one person claims the account",
+      "binding_conflict": "Binding conflicts — evidence disagrees with the current binding",
+      "no_evidence": "No evidence — nothing links the account to anyone",
+      "other": "Needs review"
+    },
+    "queue": {
+      "load_failed": "Unable to load the review queue",
+      "empty_title": "Everything is resolved",
+      "empty_description": "Every observed account is bound to a person. New conflicts will appear here."
+    },
+    "detail": {
+      "no_selection": "No account selected",
+      "no_selection_description": "Pick an account from the queue to see its evidence and history.",
+      "coming_soon": "Account detail is on its way"
+    },
+    "person": {
+      "terminated": "terminated"
+    }
   }
 }

@@ -4,7 +4,7 @@ vi.mock("@/api/fetch-with-auth", () => ({ fetchWithAuth: vi.fn() }));
 
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 
-import { getMe, getPerson, IdentityApiError } from "./identity-client";
+import { getAttention, getMe, getPerson, IdentityApiError } from "./identity-client";
 
 const mockFetch = fetchWithAuth as unknown as ReturnType<typeof vi.fn>;
 
@@ -183,5 +183,50 @@ describe("getMe", () => {
     await expect(getMe()).rejects.toMatchObject({
       body: { error: "malformed_me" },
     });
+  });
+});
+
+describe("getAttention", () => {
+  it("GETs the review queue with its limit and returns items + rates", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({
+        items: [
+          {
+            kind: "contested",
+            source: "github",
+            source_id: "01900000-0000-7000-8000-00000000aa01",
+            account_id: "dev-42",
+            email: "dev42@example.com",
+            username: null,
+            candidates: [],
+          },
+        ],
+        rates: { observed: 1, bound: 0, pending: 1, no_evidence: 0, excluded: 0 },
+      }),
+    );
+
+    const queue = await getAttention(50);
+
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      "/api/identity/v1/resolution/attention?limit=50",
+    );
+    expect(queue.items).toHaveLength(1);
+    expect(queue.rates.pending).toBe(1);
+  });
+
+  it("rejects a malformed body rather than reading it as an empty queue", async () => {
+    mockFetch.mockResolvedValueOnce(response({ rates: null } as never));
+
+    await expect(getAttention()).rejects.toMatchObject({
+      body: { error: "malformed_attention" },
+    });
+  });
+
+  it("throws on an HTTP failure (a revoked role must not look like zero work)", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ title: "forbidden" }, { ok: false, status: 403 }),
+    );
+
+    await expect(getAttention()).rejects.toMatchObject({ status: 403 });
   });
 });
