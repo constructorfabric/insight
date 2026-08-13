@@ -40,6 +40,8 @@ function renderTable(
   const props = {
     rows,
     columns,
+    sort: null,
+    onSortChange: vi.fn(),
     fetchNextPage: vi.fn().mockResolvedValue(undefined),
     hasNextPage: false,
     isFetchingNextPage: false,
@@ -72,6 +74,23 @@ describe("MetricEvidenceTable", () => {
     expect(screen.getByText("Yes")).toBeInTheDocument();
     expect(screen.getByText("No")).toBeInTheDocument();
     expect(screen.getAllByText("—")).toHaveLength(2);
+  });
+
+  it("announces which column is sorted and which way", () => {
+    renderTable({ sort: { key: "value", direction: "desc" } });
+
+    const [ref, value] = screen.getAllByRole("columnheader");
+    expect(value).toHaveAttribute("aria-sort", "descending");
+    expect(ref).toHaveAttribute("aria-sort", "none");
+  });
+
+  it("asks for a sort when a header is clicked", async () => {
+    const user = userEvent.setup();
+    const onSortChange = vi.fn();
+    renderTable({ onSortChange });
+
+    await user.click(screen.getByRole("button", { name: "Value" }));
+    expect(onSortChange).toHaveBeenCalledWith("value");
   });
 
   it("copies references and reports clipboard failures", async () => {
