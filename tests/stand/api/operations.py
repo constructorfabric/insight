@@ -32,6 +32,10 @@ from insight_stand import analytics_path, identity_path
 # resolved — they only have to be well-formed enough to route.
 SOME_ID: Final[str] = "01900000-0000-7000-8000-000000000000"
 
+#: Stand-in for a source-native `{account_id}` path segment — an arbitrary
+#: string, not a UUID, so it needs its own recognisable value.
+SOME_ACCOUNT_ID: Final[str] = "stand-in-account"
+
 #: Stand-in for `{metric_key}`, which is a dotted `family.name` string rather
 #: than a UUID. Kept a DOTTED key on purpose: the literal `export`/`import`
 #: segments of the sibling routes must not collide with it, so the template
@@ -45,6 +49,7 @@ SOME_METRIC_KEY: Final[str] = "scratch.probe"
 _PARAMETERS: Final[dict[str, str]] = {
     SOME_ID: "{id}",
     SOME_METRIC_KEY: "{metric_key}",
+    SOME_ACCOUNT_ID: "{account_id}",
 }
 
 
@@ -116,13 +121,23 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("DELETE", f"/v1/metrics/{SOME_METRIC_KEY}"),
 )
 
-#: identity-resolution — 19 operations. `/health` and `/healthz` are the host
+#: identity-resolution — 26 operations. `/health` and `/healthz` are the host
 #: router's, not the product API, and are deliberately absent: the real probes
 #: address the pod directly rather than passing the gateway.
 IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     _i("POST", "/v1/profiles"),
     _i("GET", "/v1/me"),
     _i("GET", "/v1/persons"),
+    # The operator correction surface. `source` stays the literal `github` in
+    # the accounts read: it is a connector type, not an id, and the tests
+    # address the same literal — a stand-in would fold a segment nothing varies.
+    _i("GET", "/v1/resolution/attention"),
+    _i("GET", f"/v1/resolution/accounts/github/{SOME_ID}/{SOME_ACCOUNT_ID}"),
+    _i("GET", f"/v1/resolution/persons/{SOME_ID}/accounts"),
+    _i("POST", "/v1/resolution/bind"),
+    _i("POST", "/v1/resolution/merge"),
+    _i("POST", "/v1/resolution/detach"),
+    _i("POST", "/v1/resolution/exclude"),
     _i("GET", "/v1/subchart"),
     _i("GET", f"/v1/subchart/{SOME_ID}"),
     _i("GET", "/v1/persons-seed"),
@@ -150,6 +165,13 @@ ALL_OPERATIONS: Final[tuple[Operation, ...]] = ANALYTICS_OPERATIONS + IDENTITY_O
 #: `/visible-persons` is one hyphen away from a false match today).
 _ADMIN_GATED_SUFFIXES: Final[tuple[str, ...]] = (
     "/v1/persons",
+    "/v1/resolution/attention",
+    f"/v1/resolution/accounts/github/{SOME_ID}/{SOME_ACCOUNT_ID}",
+    f"/v1/resolution/persons/{SOME_ID}/accounts",
+    "/v1/resolution/bind",
+    "/v1/resolution/merge",
+    "/v1/resolution/detach",
+    "/v1/resolution/exclude",
     "/v1/persons-seed",
     f"/v1/persons-seed/{SOME_ID}",
     "/v1/persons-sync",
@@ -162,7 +184,7 @@ _ADMIN_GATED_SUFFIXES: Final[tuple[str, ...]] = (
     f"/v1/visibility/{SOME_ID}",
 )
 
-#: The 14 identity operations behind `require_admin`, which resolves the caller
+#: The 21 identity operations behind `require_admin`, which resolves the caller
 #: from the gateway JWT and requires an active `admin` row in `person_roles` —
 #: it never reads the `insight-admin` REALM role. The seed grants that row to
 #: exactly one persona, the admin operator; every other persona is refused.
