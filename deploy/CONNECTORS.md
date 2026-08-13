@@ -15,7 +15,7 @@ Connectors pull data from your tools — Jira issues, Slack messages, GitHub pul
 - [Prerequisites](#prerequisites)
 - [Contents](#contents)
 - [Anatomy of a connector Secret](#anatomy-of-a-connector-secret)
-- [The 20 available connectors](#the-20-available-connectors)
+- [The 19 available connectors](#the-19-available-connectors)
 - [Example Secret for every connector](#example-secret-for-every-connector)
   - [AI & coding assistants](#ai--coding-assistants)
   - [Source control & CI](#source-control--ci)
@@ -52,16 +52,16 @@ stringData:
   jira_api_token:    "ATATT-CHANGE_ME"
 ```
 
-## The 20 available connectors
+## The 19 available connectors
 
 Replace `CHANGE_ME` (and any other placeholder) values in whichever connector files you need, under `connectors/`:
 
-`jira`, `slack`, `github-v2`, `gitlab`, `m365`, `zoom`, `confluence`, `zendesk`, `bamboohr`, `ms-entra`, `outline`, `hubspot`, `cursor`, `chatgpt-team`, `claude-team`, `claude-enterprise`, `bitbucket-cloud`, `zulip-proxy`, `github-directory`, `github-nocode`.
+`jira`, `slack`, `github`, `gitlab`, `m365`, `zoom`, `confluence`, `zendesk`, `bamboohr`, `ms-entra`, `outline`, `hubspot`, `cursor`, `chatgpt-team`, `claude-team`, `claude-enterprise`, `bitbucket-cloud`, `zulip-proxy`, `github-directory`.
 
 Apply all of them at once, or one at a time:
 
 ```sh
-kubectl -n insight apply -f connectors/      # all 20 connectors at once
+kubectl -n insight apply -f connectors/      # all 19 connectors at once
 # or one at a time:
 kubectl -n insight apply -f connectors/jira.yaml
 ```
@@ -141,24 +141,6 @@ stringData:
 ### Source control & CI
 
 ```yaml
-# ⚠ CDK connector; supersedes `github`
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-github-v2-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: github-v2, insight.cyberfabric.com/source-id: github-v2-main }
-type: Opaque
-stringData:
-  github_token:         "CHANGE_ME"
-  github_organizations: "org-a,org-b"
-  github_start_date:    "2026-01-01"
-  github_skip_archived: "true"
-  github_skip_forks:    "true"
-```
-
-```yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -212,10 +194,10 @@ stringData:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: insight-github-nocode-main
+  name: insight-github-main
   namespace: insight
   labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: github-nocode, insight.cyberfabric.com/source-id: github-nocode-main }
+  annotations: { insight.cyberfabric.com/connector: github, insight.cyberfabric.com/source-id: github-main }
 type: Opaque
 stringData:
   github_token:         "ghp_CHANGE_ME"   # repo, read:org

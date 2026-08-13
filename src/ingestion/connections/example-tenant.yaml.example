@@ -6,7 +6,7 @@
 # <tenant> argument:
 #
 #   cp example-tenant.yaml.example acme.yaml
-#   ./tools/declarative-connector/source.sh check git/github-nocode acme
+#   ./tools/declarative-connector/source.sh check git/github acme
 #
 # Contains ONLY tenant_id — every credential comes from the connector Secret
 # in secrets/connectors/<connector>.yaml, and insight_source_id from that

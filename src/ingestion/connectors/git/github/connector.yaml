@@ -232,7 +232,7 @@ definitions:
       value_type: string
     - type: AddedFieldDefinition
       path: [data_source]
-      value: insight_github_nocode
+      value: insight_github
       value_type: string
     - type: AddedFieldDefinition
       path: [collected_at]
@@ -1127,6 +1127,7 @@ streams:
           deletions: {type: [integer, "null"]}
           changed_files: {type: [integer, "null"]}
           updated_at: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1143,7 +1144,7 @@ streams:
               repository(owner: $owner, name: $name) {
                 pullRequests(first: 100, after: $cursor, states: [OPEN, CLOSED, MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
                   pageInfo { hasNextPage endCursor }
-                  nodes { number updatedAt additions deletions changedFiles }
+                  nodes { number updatedAt additions deletions changedFiles author { ... on User { email } } }
                 }
               }
             }
@@ -1210,6 +1211,11 @@ streams:
             path: [updated_at]
             value: "{{ record.get('updatedAt') or '' }}"
             value_type: string
+          # Empty unless the author publishes an email on their profile.
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: "{{ (record.get('author') or {}).get('email') or '' }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -1220,12 +1226,12 @@ streams:
           - [number]
           - [changedFiles]
           - [updatedAt]
+          - [author]
 
   # ── Issue & PR conversation comments (GitHub API) ───────────────────────
   # ONE repo-level endpoint covers both: PR conversation comments are issue
   # comments in GitHub's model. Server-side `since` makes it O(changed).
-  # Inline code-review comments (/pulls/comments) are a later clone-stream if
-  # inline-comment metrics are ever wanted.
+  # Inline code-review comments come from `pull_request_review_comments`.
   - type: DeclarativeStream
     name: pull_request_comments
     primary_key:
@@ -1310,7 +1316,7 @@ streams:
           - type: AddedFieldDefinition
             path: [issue_number]
             value: "{{ (record.get('issue_url') or '').split('/') | last }}"
-            value_type: string
+            value_type: integer
           - type: AddedFieldDefinition
             path: [author_login]
             value: "{{ (record.get('user') or {}).get('login') or '' }}"
@@ -1330,6 +1336,125 @@ streams:
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
           - [user]
+          - [issue_url]
+
+  # ── Inline code-review comments (GitHub API) ────────────────────────────
+  # Repo-level, so one partition per repo rather than one call per PR. These
+  # are the only comments carrying a file path and line, which is what the
+  # silver comment contract's is_inline branch needs.
+  - type: DeclarativeStream
+    name: pull_request_review_comments
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          pull_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          author_login: {type: [string, "null"]}
+          author_association: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+          body: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
+          path: {type: [string, "null"]}
+          line: {type: [integer, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_partition.repo_full_name }}/pulls/comments"
+        request_parameters:
+          sort: updated
+          direction: asc
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: full_name
+            partition_field: repo_full_name
+            stream: *repositories_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: since
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_partition.repo_full_name }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [pull_number]
+            value: "{{ (record.get('pull_request_url') or '').split('/') | last }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [author_login]
+            value: "{{ (record.get('user') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [body]
+            value: "{{ (record.get('body') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('user') or {}).get('id') }}"
+          # An outdated comment loses `line`; `original_line` keeps the
+          # position it was written against.
+          - type: AddedFieldDefinition
+            path: [line]
+            value: "{{ record.get('line') or record.get('original_line') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:review_comment:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
+          - [pull_request_url]
+          - [original_line]
 
   # ── Issues (GitHub API) ─────────────────────────────────────────────────
   # The endpoint returns PRs too; the record filter drops them (a PR carries

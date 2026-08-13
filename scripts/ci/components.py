@@ -145,13 +145,6 @@ COMPONENTS = [
         "paths": ["src/ingestion/connectors/git/gitlab"],
     },
     {
-        "name": "github-v2",
-        "lang": "python",
-        "root": "src/ingestion/connectors/git/github-v2",
-        "cov_package": "source_github_v2",
-        "paths": ["src/ingestion/connectors/git/github-v2"],
-    },
-    {
         "name": "bitbucket-cloud",
         "lang": "python",
         "root": "src/ingestion/connectors/git/bitbucket-cloud",
@@ -220,7 +213,7 @@ COMPONENTS = [
         "triggered_by": ["connector-tests-harness"],
         "paths": [
             "src/ingestion/connectors/task-tracking/jira",
-            "src/ingestion/connectors/git/github-nocode",
+            "src/ingestion/connectors/git/github",
         ],
     },
     # `src/frontend/helm` falls under this path but has no measured lines, so it

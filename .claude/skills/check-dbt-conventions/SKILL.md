@@ -77,8 +77,7 @@ For every `<connector>__bronze_promoted.sql` under `src/ingestion/connectors/*/d
 - All other connector models that read bronze must declare `-- depends_on: {{ ref('<connector>__bronze_promoted') }}`
 
 **Every connector MUST have a `<connector>__bronze_promoted.sql`** — a missing one is a FAIL.
-Known exceptions: legacy `git/github` (superseded by `github-v2`) is intentionally
-not promoted; `claude-admin` is a tracked follow-up (its bronze lacks a `unique_key`
+Known exceptions: `claude-admin` is a tracked follow-up (its bronze lacks a `unique_key`
 column, so promotion is blocked until the connector emits one — flag, don't double-report).
 
 ### Check 5 — Airbyte sync mode in connect.sh

@@ -1,4 +1,4 @@
-# github-nocode
+# github
 
 Declarative GitHub connector on the git-cli-proxy: commit-level extraction
 (commits, per-file changes, branches) is served from a bare blobless clone by
@@ -6,8 +6,9 @@ the proxy instead of one vendor API call per commit; everything git cannot
 carry (PRs, reviews, comments, issues, projects, CI, deployments) stays on
 api.github.com.
 
-Coexists with `git/github-v2` (CDK) under its own `data_source`
-(`insight_github_nocode`); nothing is replaced or deleted by this connector.
+Supersedes the retired `github-v2` CDK connector: same `data_source`
+(`insight_github`), same bronze namespace (`bronze_github`), same silver
+staging models.
 
 ## Streams
 
@@ -22,6 +23,7 @@ Coexists with `git/github-v2` (CDK) under its own `data_source`
 | pull_request_commits | `/pulls/{n}/commits` | windowed PR parent, full refresh per PR |
 | pull_request_diff_stats | GraphQL `repository.pullRequests` nodes | updated_at, newest-first data feed |
 | pull_request_comments | `/repos/{r}/issues/comments` | updated_at, server-side `since` |
+| pull_request_review_comments | `/repos/{r}/pulls/comments` | updated_at, server-side `since` |
 | issues | `/repos/{r}/issues` | updated_at, server-side `since`; PRs filtered out |
 | projects_v2 | GraphQL `organization.projectsV2` | full refresh |
 | workflow_runs | `/repos/{r}/actions/runs` | created_at, weekly step windows |

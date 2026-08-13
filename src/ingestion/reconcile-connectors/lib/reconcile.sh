@@ -1023,7 +1023,7 @@ reconcile_refresh_catalog() {
 # Decision #5: state_export → delete → create_source → create_connection
 # → state_import. If <connection_id> empty, the function looks up the
 # connection bound to <source_id> first. <connector_name> is the
-# descriptor slug (e.g. `github-v2`) and drives the connection's
+# descriptor slug (e.g. `bitbucket-cloud`) and drives the connection's
 # bronze_<connector> namespace; passed explicitly because parsing it
 # out of source_name breaks for slugs containing `-`.
 # ---------------------------------------------------------------------------

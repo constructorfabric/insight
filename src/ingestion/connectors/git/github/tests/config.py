@@ -1,4 +1,4 @@
-"""github-nocode connector test config builder."""
+"""github connector test config builder."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ GH_URL = "https://api.github.com"
 PROXY_URL = "http://git-cli-proxy.example:8085"
 
 
-class GithubNocodeConfigBuilder(ConfigBuilder):
+class GithubConfigBuilder(ConfigBuilder):
     def __init__(self) -> None:
         super().__init__()
         self._config.update(

@@ -1,4 +1,4 @@
-"""Mock-server tests for github-nocode.
+"""Mock-server tests for github.
 
 GitHub-specific hazards under test: secondary rate limits arriving as 403
 (must retry, not skip), per-repository 403/404 skipping on repo-scoped
@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 
 import freezegun
-from config import GH_URL, PROXY_URL, GithubNocodeConfigBuilder
+from config import GH_URL, PROXY_URL, GithubConfigBuilder
 
 from connector_tests import (
     ANY_QUERY_PARAMS,
@@ -29,7 +29,7 @@ from connector_tests import (
 )
 from connector_tests.source import load_manifest
 
-_CONNECTOR = "git/github-nocode"
+_CONNECTOR = "git/github"
 _REPOS_URL = f"{GH_URL}/orgs/acme/repos"
 _FROZEN = "2026-07-01T00:00:00Z"
 
@@ -76,7 +76,7 @@ def _repos_page() -> HttpResponse:
 
 @freezegun.freeze_time(_FROZEN)
 def test_repositories_full_refresh_and_stamping(http_mocker: HttpMocker) -> None:
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
 
     output = read_stream(_CONNECTOR, "repositories", config)
@@ -94,7 +94,7 @@ def test_repositories_full_refresh_and_stamping(http_mocker: HttpMocker) -> None
 def test_secondary_rate_limit_403_retries_then_succeeds(http_mocker: HttpMocker) -> None:
     """GitHub reports secondary limits as 403; the predicate must classify it
     as a throttle (retry) rather than a denial (skip)."""
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     http_mocker.get(
         HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
         [
@@ -115,7 +115,7 @@ def test_secondary_rate_limit_403_retries_then_succeeds(http_mocker: HttpMocker)
 
 @freezegun.freeze_time(_FROZEN)
 def test_proxy_429_then_success(http_mocker: HttpMocker) -> None:
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.get(
         HttpRequest(f"{PROXY_URL}/v1/commits", query_params=ANY_QUERY_PARAMS),
@@ -159,7 +159,7 @@ def test_proxy_429_then_success(http_mocker: HttpMocker) -> None:
 def test_pull_requests_trim_body_and_hoist_author(http_mocker: HttpMocker) -> None:
     """The silver PR model consumes body as description; it is trimmed to
     2048 chars, and a deleted author surfaces as '' — never "None"."""
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.get(
         HttpRequest(f"{GH_URL}/repos/acme/app/pulls", query_params=ANY_QUERY_PARAMS),
@@ -204,7 +204,7 @@ def test_data_feed_stops_at_start_date_but_boundary_page_tail_emits(http_mocker:
     fetch would fail the test) — but the boundary page's old tail still
     emits. A record_filter must never be added to "fix" the tail: the stop
     condition sees post-filter records, so it would unbound pagination."""
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
 
     def _pr(num: int, updated: str) -> dict:
@@ -237,7 +237,7 @@ def test_data_feed_stops_at_start_date_but_boundary_page_tail_emits(http_mocker:
 def test_pull_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> None:
     """PR<->commit membership is vendor-only; the commit payload belongs to
     the proxy streams, so bronze keeps the sha and the PR identity alone."""
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.get(
         HttpRequest(f"{GH_URL}/repos/acme/app/pulls", query_params=ANY_QUERY_PARAMS),
@@ -306,7 +306,7 @@ def _diff_stats_body(cursor: str | None = None) -> dict:
 def test_pull_request_diff_stats_come_from_the_list_node(http_mocker: HttpMocker) -> None:
     """REST carries additions/deletions on the PR detail response only; the
     GraphQL list node carries them, so a page of PRs costs one request."""
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.post(
         HttpRequest(f"{GH_URL}/graphql", body=_diff_stats_body()),
@@ -324,6 +324,7 @@ def test_pull_request_diff_stats_come_from_the_list_node(http_mocker: HttpMocker
                                         "additions": 120,
                                         "deletions": 7,
                                         "changedFiles": 3,
+                                        "author": {"email": "alice@example.com"},
                                     }
                                 ],
                             }
@@ -343,16 +344,75 @@ def test_pull_request_diff_stats_come_from_the_list_node(http_mocker: HttpMocker
     assert rec["pull_number"] == 31
     assert rec["repo_full_name"] == "acme/app"
     assert rec["unique_key"].endswith(":acme/app:31")
+    assert rec["author_email"] == "alice@example.com"
     assert "changedFiles" not in rec and "updatedAt" not in rec
+    assert "author" not in rec
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "pull_request_diff_stats", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_review_comments_carry_path_and_line(http_mocker: HttpMocker) -> None:
+    """These are the only comments the silver contract can mark is_inline, so
+    the file path and line must survive; an outdated comment has a null `line`
+    and falls back to the position it was written against."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/pulls/comments", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                [
+                    {
+                        "id": 500,
+                        "pull_request_url": f"{GH_URL}/repos/acme/app/pulls/31",
+                        "user": {"login": "alice", "id": 7},
+                        "author_association": "MEMBER",
+                        "body": "b" * 3000,
+                        "path": "src/main.rs",
+                        "line": 42,
+                        "created_at": "2026-06-10T00:00:00Z",
+                        "updated_at": "2026-06-20T00:00:00Z",
+                    },
+                    {
+                        "id": 501,
+                        "pull_request_url": f"{GH_URL}/repos/acme/app/pulls/31",
+                        "user": {"login": "bob", "id": 8},
+                        "author_association": "MEMBER",
+                        "body": "outdated",
+                        "path": "src/main.rs",
+                        "line": None,
+                        "original_line": 17,
+                        "created_at": "2026-06-11T00:00:00Z",
+                        "updated_at": "2026-06-21T00:00:00Z",
+                    },
+                ]
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_review_comments", config)
+
+    assert not output.errors
+    fresh, outdated = (r.record.data for r in output.records)
+    assert fresh["pull_number"] == 31
+    assert fresh["repo_full_name"] == "acme/app"
+    assert (fresh["path"], fresh["line"]) == ("src/main.rs", 42)
+    assert fresh["author_login"] == "alice"
+    assert len(fresh["body"]) == 2048
+    assert fresh["unique_key"].endswith(":acme/app:review_comment:500")
+    assert outdated["line"] == 17
+    assert "user" not in fresh and "pull_request_url" not in fresh
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "pull_request_review_comments", strict=True)
 
 
 @freezegun.freeze_time(_FROZEN)
 def test_graphql_not_found_skips_the_repository(http_mocker: HttpMocker) -> None:
     """An inaccessible repository is an HTTP 200 whose data is null and whose
     error type is NOT_FOUND — a skip, not a query error that fails the sync."""
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.post(
         HttpRequest(f"{GH_URL}/graphql", body=_diff_stats_body()),
@@ -376,7 +436,7 @@ def test_graphql_not_found_skips_the_repository(http_mocker: HttpMocker) -> None
 @freezegun.freeze_time(_FROZEN)
 def test_issues_filters_out_pull_requests(http_mocker: HttpMocker) -> None:
     """/issues returns PRs too; the record filter must drop them."""
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.get(
         HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
@@ -404,7 +464,7 @@ def test_issues_filters_out_pull_requests(http_mocker: HttpMocker) -> None:
 
 @freezegun.freeze_time(_FROZEN)
 def test_workflow_runs_key_carries_run_attempt(http_mocker: HttpMocker) -> None:
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.get(
         HttpRequest(f"{GH_URL}/repos/acme/app/actions/runs", query_params=ANY_QUERY_PARAMS),
@@ -432,7 +492,7 @@ def test_workflow_runs_key_carries_run_attempt(http_mocker: HttpMocker) -> None:
 def test_graphql_error_in_a_200_fails_loudly(http_mocker: HttpMocker) -> None:
     """A GraphQL error arrives as HTTP 200 without `data`; the stream must
     fail with GitHub's message, not report zero projects."""
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     http_mocker.post(
         HttpRequest(f"{GH_URL}/graphql", body=_graphql_body("projects_v2", {"org": "acme"})),
         HttpResponse(
@@ -449,7 +509,7 @@ def test_graphql_error_in_a_200_fails_loudly(http_mocker: HttpMocker) -> None:
 
 @freezegun.freeze_time(_FROZEN)
 def test_projects_v2_graphql_pagination_cursor_in_body(http_mocker: HttpMocker) -> None:
-    config = GithubNocodeConfigBuilder().build()
+    config = GithubConfigBuilder().build()
     node = {"id": "PVT_1", "number": 1, "title": "Roadmap", "shortDescription": None, "public": True, "closed": False, "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-06-01T00:00:00Z"}
     body = {"data": {"organization": {"projectsV2": {"pageInfo": {"hasNextPage": False, "endCursor": "c1"}, "nodes": [node]}}}}
     http_mocker.post(
