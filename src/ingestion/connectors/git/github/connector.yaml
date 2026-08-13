@@ -2057,6 +2057,409 @@ streams:
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
           - [creator]
+
+  # ── Pull request timeline events (GitHub GraphQL) ───────────────────────
+  # One call per pull request in the sliding window rather than one per page:
+  # most timeline types carry no reference back to their item (ClosedEvent has
+  # `closable`, AssignedEvent `assignable`, and IssueFieldChangedEvent nothing
+  # at all), so the item can only come from the partition.
+  - type: DeclarativeStream
+    name: pull_request_timeline_events
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          event_id: {type: [string, "null"]}
+          event_type: {type: [string, "null"]}
+          event_at: {type: [string, "null"]}
+          item_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          actor_login: {type: [string, "null"]}
+          target_login: {type: [string, "null"]}
+          label_name: {type: [string, "null"]}
+          state_reason: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *graphql_error_handler_repo_scoped
+        path: /graphql
+        http_method: POST
+        request_body_json:
+          query: |
+            query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) {
+                  timelineItems(first: 100, after: $cursor, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, MERGED_EVENT]) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      __typename
+                      ... on ReadyForReviewEvent { id createdAt actor { login } }
+                      ... on ConvertToDraftEvent { id createdAt actor { login } }
+                      ... on ReviewRequestedEvent { id createdAt actor { login } requestedReviewer { ... on User { login } } }
+                      ... on ReviewRequestRemovedEvent { id createdAt actor { login } requestedReviewer { ... on User { login } } }
+                      ... on AssignedEvent { id createdAt actor { login } assignee { ... on User { login } } }
+                      ... on UnassignedEvent { id createdAt actor { login } assignee { ... on User { login } } }
+                      ... on LabeledEvent { id createdAt actor { login } label { name } }
+                      ... on UnlabeledEvent { id createdAt actor { login } label { name } }
+                      ... on ClosedEvent { id createdAt actor { login } stateReason }
+                      ... on ReopenedEvent { id createdAt actor { login } }
+                      ... on MergedEvent { id createdAt actor { login } }
+                    }
+                  }
+                }
+              }
+            }
+          variables:
+            owner: "{{ stream_slice.extra_fields['repo_full_name'].split('/')[0] }}"
+            name: "{{ stream_slice.extra_fields['repo_full_name'].split('/')[1] }}"
+            number: "{{ stream_partition.pull_number }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, repository, pullRequest, timelineItems, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ ((((response.get('data') or {}).get('repository') or {}).get('pullRequest') or {}).get('timelineItems') or {}).get('pageInfo', {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('repository') or {}).get('pullRequest') or {}).get('timelineItems') or {}).get('pageInfo', {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: number
+            partition_field: pull_number
+            extra_fields:
+              - [repo_full_name]
+            stream: *pull_requests_window
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [item_number]
+            value: "{{ stream_partition.pull_number }}"
+          - type: AddedFieldDefinition
+            path: [event_type]
+            value: "{{ record.get('__typename') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [event_id]
+            value: "{{ record.get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [event_at]
+            value: "{{ record.get('createdAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [actor_login]
+            value: "{{ (record.get('actor') or {}).get('login') or '' }}"
+            value_type: string
+          # Assignment and review-request events name a second person; the
+          # field differs by event type and only one is ever present.
+          - type: AddedFieldDefinition
+            path: [target_login]
+            value: >-
+              {{ (record.get('assignee') or {}).get('login') or (record.get('requestedReviewer') or {}).get('login') or '' }}
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [label_name]
+            value: "{{ (record.get('label') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [state_reason]
+            value: "{{ record.get('stateReason') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:pull_request:{{ stream_partition.pull_number }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the camelCase and nested originals stay out of bronze.
+        field_pointers:
+          - [__typename]
+          - [id]
+          - [createdAt]
+          - [actor]
+          - [assignee]
+          - [requestedReviewer]
+          - [label]
+          - [stateReason]
+
+  # ── Issue timeline events (GitHub GraphQL) ──────────────────────────────
+  # Same per-item shape as the pull-request stream, but a different item-type
+  # set: inline fragments may only name types in the connection's own union,
+  # so the two cannot share one query. Carries the board-status and native
+  # issue-field changes, which are the only history GitHub keeps for either.
+  - type: DeclarativeStream
+    name: issue_timeline_events
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          event_id: {type: [string, "null"]}
+          event_type: {type: [string, "null"]}
+          event_at: {type: [string, "null"]}
+          item_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          actor_login: {type: [string, "null"]}
+          target_login: {type: [string, "null"]}
+          label_name: {type: [string, "null"]}
+          state_reason: {type: [string, "null"]}
+          field_name: {type: [string, "null"]}
+          prev_value: {type: [string, "null"]}
+          new_value: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *graphql_error_handler_repo_scoped
+        path: /graphql
+        http_method: POST
+        request_body_json:
+          query: |
+            query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+              repository(owner: $owner, name: $name) {
+                issue(number: $number) {
+                  timelineItems(first: 100, after: $cursor, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, ISSUE_TYPE_CHANGED_EVENT, ISSUE_FIELD_CHANGED_EVENT, PROJECT_V2_ITEM_STATUS_CHANGED_EVENT]) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      __typename
+                      ... on AssignedEvent { id createdAt actor { login } assignee { ... on User { login } } }
+                      ... on UnassignedEvent { id createdAt actor { login } assignee { ... on User { login } } }
+                      ... on LabeledEvent { id createdAt actor { login } label { name } }
+                      ... on UnlabeledEvent { id createdAt actor { login } label { name } }
+                      ... on ClosedEvent { id createdAt actor { login } stateReason }
+                      ... on ReopenedEvent { id createdAt actor { login } }
+                      ... on IssueTypeChangedEvent { id createdAt actor { login } issueType { name } prevIssueType { name } }
+                      ... on IssueFieldChangedEvent {
+                        id createdAt actor { login } previousValue newValue
+                        issueField {
+                          ... on IssueFieldSingleSelect { name }
+                          ... on IssueFieldMultiSelect { name }
+                          ... on IssueFieldDate { name }
+                          ... on IssueFieldNumber { name }
+                          ... on IssueFieldText { name }
+                        }
+                      }
+                      ... on ProjectV2ItemStatusChangedEvent { id createdAt actor { login } previousStatus status }
+                    }
+                  }
+                }
+              }
+            }
+          variables:
+            owner: "{{ stream_slice.extra_fields['repo_full_name'].split('/')[0] }}"
+            name: "{{ stream_slice.extra_fields['repo_full_name'].split('/')[1] }}"
+            number: "{{ stream_partition.issue_number }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, repository, issue, timelineItems, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ ((((response.get('data') or {}).get('repository') or {}).get('issue') or {}).get('timelineItems') or {}).get('pageInfo', {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('repository') or {}).get('issue') or {}).get('timelineItems') or {}).get('pageInfo', {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: number
+            partition_field: issue_number
+            extra_fields:
+              - [repo_full_name]
+            stream:
+              type: DeclarativeStream
+              name: issues_window
+              primary_key:
+                - number
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    number: {type: [integer, "null"]}
+                    repo_full_name: {type: [string, "null"]}
+                    updated_at: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *rest_requester
+                  error_handler: *rest_error_handler_repo_scoped
+                  path: "/repos/{{ stream_partition.repo_full_name }}/issues"
+                  request_parameters:
+                    state: all
+                    sort: updated
+                    direction: asc
+                    per_page: "100"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+                  # The endpoint answers for pull requests too; they carry a
+                  # `pull_request` key and have their own timeline stream.
+                  record_filter:
+                    type: RecordFilter
+                    condition: "{{ 'pull_request' not in record }}"
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ headers['link']['next']['url'] }}"
+                    stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+                  page_token_option:
+                    type: RequestPath
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: full_name
+                      partition_field: repo_full_name
+                      stream: *repositories_all_parent
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: updated_at
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                lookback_window: P1D
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['github_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
+                start_time_option:
+                  type: RequestOption
+                  field_name: since
+                  inject_into: request_parameter
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [repo_full_name]
+                      value: "{{ stream_partition.repo_full_name }}"
+                      value_type: string
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [item_number]
+            value: "{{ stream_partition.issue_number }}"
+          - type: AddedFieldDefinition
+            path: [event_type]
+            value: "{{ record.get('__typename') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [event_id]
+            value: "{{ record.get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [event_at]
+            value: "{{ record.get('createdAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [actor_login]
+            value: "{{ (record.get('actor') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [target_login]
+            value: "{{ (record.get('assignee') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [label_name]
+            value: "{{ (record.get('label') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [state_reason]
+            value: "{{ record.get('stateReason') or '' }}"
+            value_type: string
+          # The changed field's own name for a native issue-field edit; the
+          # type and board-status events name their own field in the mapping.
+          - type: AddedFieldDefinition
+            path: [field_name]
+            value: "{{ (record.get('issueField') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [prev_value]
+            value: >-
+              {{ record.get('previousValue') or record.get('previousStatus') or (record.get('prevIssueType') or {}).get('name') or '' }}
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [new_value]
+            value: >-
+              {{ record.get('newValue') or record.get('status') or (record.get('issueType') or {}).get('name') or '' }}
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:issue:{{ stream_partition.issue_number }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the camelCase and nested originals stay out of bronze.
+        field_pointers:
+          - [__typename]
+          - [id]
+          - [createdAt]
+          - [actor]
+          - [assignee]
+          - [label]
+          - [stateReason]
+          - [issueField]
+          - [issueType]
+          - [prevIssueType]
+          - [previousValue]
+          - [newValue]
+          - [previousStatus]
+          - [status]
 concurrency_level:
   type: ConcurrencyLevel
   # Never 1: the concurrent CDK self-deadlocks at a single worker once a sync
@@ -2140,6 +2543,7 @@ metadata:
     pull_requests: false
     pull_request_reviews: false
     pull_request_comments: false
+    pull_request_review_comments: false
     pull_request_commits: false
     pull_request_diff_stats: false
     issues: false
@@ -2147,3 +2551,5 @@ metadata:
     workflow_runs: false
     deployments: false
     deployment_statuses: false
+    pull_request_timeline_events: false
+    issue_timeline_events: false

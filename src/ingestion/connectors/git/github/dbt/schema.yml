@@ -25,10 +25,15 @@ sources:
       - name: workflow_runs
       - name: deployments
       - name: deployment_statuses
+      - name: pull_request_timeline_events
+      - name: issue_timeline_events
 
 models:
   - name: github__bronze_promoted
     description: "Promotes every GitHub bronze table to ReplacingMergeTree keyed on unique_key"
+
+  - name: github__item_events
+    description: "GitHub issue and pull-request lifecycle events -> staging, feeds class_git_item_events"
 
   - name: github__repositories
     description: "GitHub repositories -> staging, feeds class_git_repositories"

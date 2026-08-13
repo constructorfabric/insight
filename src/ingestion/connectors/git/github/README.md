@@ -29,6 +29,8 @@ staging models.
 | workflow_runs | `/repos/{r}/actions/runs` | created_at, weekly step windows |
 | deployments | `/repos/{r}/deployments` | created_at, newest-first data feed |
 | deployment_statuses | `/deployments/{id}/statuses` | windowed deployments parent |
+| pull_request_timeline_events | GraphQL `pullRequest.timelineItems` | windowed PR parent, per PR |
+| issue_timeline_events | GraphQL `issue.timelineItems` | updated_at issues parent, per issue |
 
 **org_members is deliberately absent**: the deployed `git/github-directory`
 connector already syncs the org roster for identity resolution. Folding it in

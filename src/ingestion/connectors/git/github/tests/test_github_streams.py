@@ -408,6 +408,209 @@ def test_review_comments_carry_path_and_line(http_mocker: HttpMocker) -> None:
     assert_records_conform(output.records, _CONNECTOR, "pull_request_review_comments", strict=True)
 
 
+def _pr_timeline_body(cursor: str | None = None) -> dict:
+    return _graphql_body(
+        "pull_request_timeline_events", {"owner": "acme", "name": "app", "number": 31}, cursor
+    )
+
+
+def _issue_timeline_body(cursor: str | None = None) -> dict:
+    return _graphql_body(
+        "issue_timeline_events", {"owner": "acme", "name": "app", "number": 7}, cursor
+    )
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_pr_timeline_flattens_every_event_type(http_mocker: HttpMocker) -> None:
+    """Each timeline type names its second person under a different key, and
+    none of them reference the item they belong to — so the pull request comes
+    from the partition and the payload is flattened to one generic shape."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/pulls", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                [
+                    {
+                        "id": 900,
+                        "number": 31,
+                        "state": "open",
+                        "draft": False,
+                        "title": "t",
+                        "body": "b",
+                        "user": {"login": "alice"},
+                        "head": {"ref": "feat", "sha": "e" * 40},
+                        "base": {"ref": "main"},
+                        "author_association": "MEMBER",
+                        "created_at": "2026-06-10T00:00:00Z",
+                        "updated_at": "2026-06-20T00:00:00Z",
+                    }
+                ]
+            ),
+            status_code=200,
+        ),
+    )
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_pr_timeline_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "timelineItems": {
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                    "nodes": [
+                                        {
+                                            "__typename": "ReviewRequestedEvent",
+                                            "id": "RR_1",
+                                            "createdAt": "2026-06-11T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                            "requestedReviewer": {"login": "bob"},
+                                        },
+                                        {
+                                            "__typename": "AssignedEvent",
+                                            "id": "AS_1",
+                                            "createdAt": "2026-06-12T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                            "assignee": {"login": "carol"},
+                                        },
+                                        {
+                                            "__typename": "LabeledEvent",
+                                            "id": "LA_1",
+                                            "createdAt": "2026-06-13T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                            "label": {"name": "bug"},
+                                        },
+                                        {
+                                            "__typename": "ClosedEvent",
+                                            "id": "CL_1",
+                                            "createdAt": "2026-06-14T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                            "stateReason": "COMPLETED",
+                                        },
+                                        {
+                                            "__typename": "MergedEvent",
+                                            "id": "ME_1",
+                                            "createdAt": "2026-06-15T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                        },
+                                    ],
+                                }
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_timeline_events", config)
+
+    assert not output.errors
+    by_type = {r.record.data["event_type"]: r.record.data for r in output.records}
+    assert by_type["ReviewRequestedEvent"]["target_login"] == "bob"
+    assert by_type["AssignedEvent"]["target_login"] == "carol"
+    assert by_type["LabeledEvent"]["label_name"] == "bug"
+    assert by_type["ClosedEvent"]["state_reason"] == "COMPLETED"
+    assert by_type["MergedEvent"]["target_login"] == ""
+    for rec in by_type.values():
+        assert rec["item_number"] == 31
+        assert rec["repo_full_name"] == "acme/app"
+        assert "__typename" not in rec and "createdAt" not in rec
+    assert by_type["MergedEvent"]["unique_key"].endswith(":pull_request:31:ME_1")
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "pull_request_timeline_events", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issue_timeline_carries_board_and_field_changes(http_mocker: HttpMocker) -> None:
+    """Board status and native issue fields are the only GitHub history for
+    either, and both sides of the change are kept; the issues parent drops the
+    pull requests its endpoint also answers for."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                [
+                    {"number": 7, "updated_at": "2026-06-20T00:00:00Z"},
+                    {
+                        "number": 31,
+                        "updated_at": "2026-06-20T00:00:00Z",
+                        "pull_request": {"url": "https://api.github.com/pulls/31"},
+                    },
+                ]
+            ),
+            status_code=200,
+        ),
+    )
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_timeline_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "issue": {
+                                "timelineItems": {
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                    "nodes": [
+                                        {
+                                            "__typename": "ProjectV2ItemStatusChangedEvent",
+                                            "id": "PS_1",
+                                            "createdAt": "2026-06-11T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                            "previousStatus": "Todo",
+                                            "status": "In Progress",
+                                        },
+                                        {
+                                            "__typename": "IssueFieldChangedEvent",
+                                            "id": "IF_1",
+                                            "createdAt": "2026-06-12T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                            "issueField": {"name": "Estimate"},
+                                            "previousValue": "3",
+                                            "newValue": "5",
+                                        },
+                                        {
+                                            "__typename": "IssueTypeChangedEvent",
+                                            "id": "IT_1",
+                                            "createdAt": "2026-06-13T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                            "issueType": {"name": "Bug"},
+                                            "prevIssueType": {"name": "Task"},
+                                        },
+                                    ],
+                                }
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_timeline_events", config)
+
+    assert not output.errors
+    by_type = {r.record.data["event_type"]: r.record.data for r in output.records}
+    board = by_type["ProjectV2ItemStatusChangedEvent"]
+    assert (board["prev_value"], board["new_value"]) == ("Todo", "In Progress")
+    field = by_type["IssueFieldChangedEvent"]
+    assert (field["field_name"], field["prev_value"], field["new_value"]) == ("Estimate", "3", "5")
+    kind = by_type["IssueTypeChangedEvent"]
+    assert (kind["prev_value"], kind["new_value"]) == ("Task", "Bug")
+    assert all(r["item_number"] == 7 for r in by_type.values())
+    assert board["unique_key"].endswith(":issue:7:PS_1")
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "issue_timeline_events", strict=True)
+
+
 @freezegun.freeze_time(_FROZEN)
 def test_graphql_not_found_skips_the_repository(http_mocker: HttpMocker) -> None:
     """An inaccessible repository is an HTTP 200 whose data is null and whose
