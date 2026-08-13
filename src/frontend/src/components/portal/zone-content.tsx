@@ -5,7 +5,7 @@ import { OverviewView } from "@/components/portal/overview-view";
 import { ManageView } from "@/components/portal/manage-view";
 import { PeopleView } from "@/components/portal/people-view";
 import { PersonView } from "@/components/portal/person-view";
-import { zoneById } from "@/lib/portal/nav-model";
+import { resolveZoneItem, zoneById } from "@/lib/portal/nav-model";
 import {
   usePortalDir,
   usePortalItem,
@@ -26,7 +26,9 @@ export function ZoneContent() {
   const { activeZone, activePerson } = useActiveZone();
   const dir = usePortalDir();
   const lens = usePortalLens();
-  const item = usePortalItem();
+  // Resolved here, not per view: the pane highlights the same value, so the
+  // menu and the content can never name different things.
+  const item = resolveZoneItem(activeZone, usePortalItem());
 
   switch (activeZone) {
     case "person":

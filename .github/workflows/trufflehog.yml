@@ -163,6 +163,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: TruffleHog scan (GitHub API — comments, wikis, unreachable objects)
         # Deliberately unauthenticated. `GITHUB_TOKEN` cannot be used here: the GitHub source
         # calls `GET /user` to identify the token owner, and an installation token gets

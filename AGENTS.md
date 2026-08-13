@@ -53,3 +53,17 @@ Before creating or modifying any GitHub-visible content, verify that it contains
 4. Statements that imply access to or examination of live data
 
 When uncertain whether information came from a real environment, omit it and use a generic hypothetical formulation instead.
+
+## Comments earn their place
+
+Write a comment only when it names a constraint the code cannot express and that a reader would otherwise undo. Prefer a name to a sentence: extract a function, name the constant, make the invalid state unrepresentable in the type. Reaching for prose is usually a sign that something wanted a name.
+
+Three kinds do not belong in the source:
+
+1. **How it got here.** "This used to loop", "an earlier version used X", "Y was tried and does not work". The commit message and `git blame` carry it, and it ages worst of all — a note about a defect that no longer exists outlives the defect.
+2. **A restatement of the code.** If the line above says what the line below does, delete the line above.
+3. **The case for a road not taken.** Why this approach and not another belongs in the pull request, where it is read once and reviewed.
+
+Keep the ones a reader cannot derive and would otherwise break: a platform quirk, a dependency that must stay out of a list, a rule that forces an unusual shape, a unit or an invariant no type can hold.
+
+A comment that survives all of that should be one or two lines. If it needs a paragraph, the code underneath probably needs the work instead.

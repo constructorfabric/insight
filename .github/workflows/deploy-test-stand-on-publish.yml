@@ -23,3 +23,8 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/deploy-test-stand.yml
+    # TEST_STAND_SEED_EMAIL is withheld on purpose: on this path the dev-lead
+    # address must come from the realm this deploy applies, never an override.
+    secrets:
+      TEST_STAND_KUBECONFIG: ${{ secrets.TEST_STAND_KUBECONFIG }}
+      TEST_STAND_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD }}
