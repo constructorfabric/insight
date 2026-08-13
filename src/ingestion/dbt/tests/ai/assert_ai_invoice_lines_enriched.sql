@@ -25,4 +25,4 @@ SELECT
     invoice_net_cents
 FROM {{ ref('class_ai_invoice') }} FINAL
 WHERE chain_status != 'ok'
-  AND period_month >= toStartOfMonth(today()) - INTERVAL 3 MONTH
+  AND period_month >= toStartOfMonth(today()) - INTERVAL 2 MONTH

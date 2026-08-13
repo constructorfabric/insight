@@ -44,6 +44,41 @@ WITH latest_per_line AS (
     ORDER BY _airbyte_extracted_at DESC
     LIMIT 1 BY unique_key
 
+),
+
+enriched_wrappers AS (
+
+    -- How far the wrapper can identify an invoice: what it reported before the
+    -- chain ran. The payment intent is what separates two invoices raised in the
+    -- same second; the amount stands in where the vendor reported no intent.
+    SELECT DISTINCT
+        tenant_id,
+        source_id,
+        invoice_created_ts,
+        ifNull(invoice_payment_intent, '') AS wrapper_intent,
+        invoice_total
+    FROM latest_per_line
+    WHERE chain_status = 'ok'
+
+),
+
+superseded AS (
+
+    -- A failed row keys on the wrapper, a successful one on Stripe's ids, so a
+    -- recovered invoice adds its lines instead of replacing the gap it left.
+    -- Drop that gap once the same invoice has lines: keeping it would double the
+    -- invoice-level money and hold the coverage check red after a recovery.
+    SELECT lines.*
+    FROM latest_per_line AS lines
+    LEFT JOIN enriched_wrappers AS enriched
+           ON enriched.tenant_id = lines.tenant_id
+          AND enriched.source_id = lines.source_id
+          AND enriched.invoice_created_ts = lines.invoice_created_ts
+          AND enriched.wrapper_intent = ifNull(lines.invoice_payment_intent, '')
+          AND enriched.invoice_total = lines.invoice_total
+    WHERE lines.chain_status = 'ok'
+       OR enriched.invoice_created_ts IS NULL
+
 )
 
 SELECT
@@ -80,7 +115,7 @@ SELECT
     data_source,
     CAST(_airbyte_extracted_at AS Nullable(DateTime64(3))) AS collected_at,
     toUnixTimestamp64Milli(_airbyte_extracted_at)          AS _version
-FROM latest_per_line
+FROM superseded
 {% if is_incremental() %}
   -- A finalised invoice's lines are immutable, so only rows read since the last
   -- build can carry anything new. The empty-table guard mirrors the sibling

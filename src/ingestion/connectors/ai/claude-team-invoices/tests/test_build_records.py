@@ -20,6 +20,8 @@ from source_claude_team_invoices.stripe_chain import (
 from tests.test_stripe_chain import EXTRA_USAGE_LINE, SUBSCRIPTION_LINE
 
 GOOD_URL = "https://invoice.stripe.com/i/acct_1ABC/live_TOKEN?s=ap"
+FAILING_TOKEN = "live_FAILS"
+FAILING_URL = f"https://invoice.stripe.com/i/acct_1ABC/{FAILING_TOKEN}?s=ap"
 EPHEMERAL_KEY = "ek_live_super_secret_value"
 
 
@@ -29,9 +31,9 @@ def invoice(url=GOOD_URL, **over):
         "status": "paid",
         "created_ts": 1756771200,
         "currency": "usd",
-        "total": 1595000,
-        "total_excluding_tax": 1550000,
-        "num_seats": 18,
+        "total": 3300,
+        "total_excluding_tax": 3000,
+        "num_seats": 3,
         "payment_intent": "pi_1",
     }
     base.update(over)
@@ -51,9 +53,9 @@ def test_an_enriched_invoice_yields_one_record_per_line():
     records = list(build_records([invoice()], lines_ok))
     assert len(records) == 2
     assert {r["chain_status"] for r in records} == {CHAIN_OK}
-    assert [r["seat_unit_amount"] for r in records] == [12500, None]
+    assert [r["seat_unit_amount"] for r in records] == [1000, None]
     # Invoice-level facts ride along on every line.
-    assert all(r["invoice_total_excluding_tax"] == 1550000 for r in records)
+    assert all(r["invoice_total_excluding_tax"] == 3000 for r in records)
 
 
 def test_an_unparsable_url_keeps_the_money_and_marks_the_gap():
@@ -62,7 +64,7 @@ def test_an_unparsable_url_keeps_the_money_and_marks_the_gap():
     records = list(build_records([invoice(url="https://elsewhere.example/i/a/b"), invoice()], lines_ok))
     row = next(r for r in records if r["chain_status"] == CHAIN_UNPARSABLE)
     assert row["chain_status"] == CHAIN_UNPARSABLE
-    assert row["invoice_total_excluding_tax"] == 1550000, "the ledger survives"
+    assert row["invoice_total_excluding_tax"] == 3000, "the ledger survives"
     assert row["seat_unit_amount"] is None and row["line_id"] is None
 
 
@@ -80,7 +82,7 @@ def test_a_failed_chain_does_not_stop_the_run(caplog):
         records = list(build_records(invoices, flaky))
 
     assert [r["chain_status"] for r in records] == [CHAIN_FAILED, CHAIN_OK, CHAIN_OK]
-    assert records[0]["invoice_total_excluding_tax"] == 1550000
+    assert records[0]["invoice_total_excluding_tax"] == 3000
     assert "stripe chain failed" in caplog.text
 
 
@@ -111,16 +113,28 @@ def test_the_drift_guard_is_a_majority_not_a_single_failure():
         list(build_records([invoice(url="bad")], lines_ok))
 
 
-def test_no_record_carries_the_ephemeral_key():
-    """The key authorises two hops and must not reach a row, at any status."""
+def test_neither_a_record_nor_a_log_line_carries_the_ephemeral_key(caplog):
+    """The key authorises the line calls and must escape by neither route.
+
+    The key is put where each route would pick it up: in line fields, which only
+    the projection keeps out of a row, and in the failure message of the hop that
+    carries it in its own URL, which only a type-and-status log keeps out of the
+    log. A stub that never puts it in scope would assert nothing.
+    """
 
     def lines_with_key(acct, token):
-        # Shaped like a real line set; the key is deliberately in scope.
-        assert EPHEMERAL_KEY
-        return "in_1ABC", [SUBSCRIPTION_LINE]
+        if token == FAILING_TOKEN:
+            raise RuntimeError(f"401 for https://invoicedata.stripe.com/hosted_invoice_page/{acct}/{EPHEMERAL_KEY}")
+        leaky = dict(
+            SUBSCRIPTION_LINE, ephemeral_key=EPHEMERAL_KEY, request_headers={"Authorization": f"Bearer {EPHEMERAL_KEY}"}
+        )
+        return "in_1ABC", [leaky]
 
-    records = list(build_records([invoice(), invoice(), invoice(url="bad")], lines_with_key))
-    blob = repr(records)
+    with caplog.at_level(logging.WARNING):
+        records = list(build_records([invoice(), invoice(url=FAILING_URL), invoice(url="bad")], lines_with_key))
+
+    assert any(r["chain_status"] == CHAIN_FAILED for r in records), "the failing hop was exercised"
+    blob = repr(records) + caplog.text
     assert EPHEMERAL_KEY not in blob
     assert "ek_" not in blob
 
@@ -129,8 +143,19 @@ def test_key_parts_identify_a_line_by_stripe_ids_and_a_gap_by_the_wrapper():
     records = list(build_records([invoice(url="bad"), invoice()], lines_ok))
     fallback = next(r for r in records if r["chain_status"] == CHAIN_UNPARSABLE)
     enriched = next(r for r in records if r["chain_status"] == CHAIN_OK)
-    assert unique_key_parts(enriched) == ("in_1ABC", "il_premium")
-    assert unique_key_parts(fallback) == (CHAIN_UNPARSABLE, 1756771200, "pi_1")
+    assert unique_key_parts(enriched) == ("in_1ABC", "il_standard")
+    assert unique_key_parts(fallback) == (CHAIN_UNPARSABLE, 1756771200, "pi_1", 3300, None)
+
+
+def test_two_gaps_of_one_batch_stay_two_rows():
+    """Creation timestamps collide across a batch; the amount separates them."""
+
+    def lines_fail(acct, token):
+        raise RuntimeError("a hop answered badly")
+
+    same_second = [invoice(payment_intent=None, total=3300), invoice(payment_intent=None, total=4400)]
+    keys = {unique_key_parts(r) for r in build_records(same_second, lines_fail)}
+    assert len(keys) == 2, "two invoices sharing a second must not collapse into one key"
 
 
 def test_two_lines_of_one_invoice_get_different_keys():

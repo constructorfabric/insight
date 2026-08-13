@@ -93,7 +93,10 @@ def seat_unit_amount(line: Mapping[str, Any]) -> int | None:
     if classify_line(line) != CATEGORY_SUBSCRIPTIONS or is_proration(line):
         return None
     amount = line.get("hosted_invoice_unit_amount")
-    return int(amount) if isinstance(amount, int) else None
+    # `bool` is an `int` in Python, and a boolean here would price a seat at 1.
+    if isinstance(amount, bool) or not isinstance(amount, int):
+        return None
+    return int(amount)
 
 
 def shape_line(line: Mapping[str, Any], invoice_key: str) -> dict[str, Any]:
@@ -227,7 +230,14 @@ def build_records(
             invoice_id, lines = fetch_lines(ref.acct, ref.token)
         except Exception as error:  # noqa: BLE001 - one invoice must not end the run
             # A gap in pricing, not a reason to lose the invoice or fail the sync.
-            logger.warning("stripe chain failed for the invoice created at %s: %s", invoice.get("created_ts"), error)
+            # The type and status only: a request error stringifies its URL, and
+            # the hosted-invoice hop carries the token in that URL.
+            logger.warning(
+                "stripe chain failed for the invoice created at %s: %s (HTTP %s)",
+                invoice.get("created_ts"),
+                type(error).__name__,
+                getattr(getattr(error, "response", None), "status_code", "n/a"),
+            )
             yield dict(common, chain_status=CHAIN_FAILED, **_EMPTY_LINE)
             continue
 
@@ -242,8 +252,17 @@ def unique_key_parts(record: Mapping[str, Any]) -> tuple[Any, ...]:
     """The natural key of a record, which differs by how far its chain got.
 
     An enriched line is identified by Stripe's own ids. A row that carries only
-    an invoice has neither, so it falls back to what the wrapper gave us.
+    an invoice has neither, so it falls back to what the wrapper gave us. The
+    amount and due date join the fallback key because a payment intent is absent
+    on some invoices, and creation timestamps collide across a batch issued at
+    once — two invoices sharing one key would leave only one row.
     """
     if record.get("chain_status") == CHAIN_OK:
         return (record.get("invoice_id"), record.get("line_id") or "")
-    return (record.get("chain_status"), record.get("invoice_created_ts"), record.get("invoice_payment_intent") or "")
+    return (
+        record.get("chain_status"),
+        record.get("invoice_created_ts"),
+        record.get("invoice_payment_intent") or "",
+        record.get("invoice_total"),
+        record.get("invoice_due_date_ts"),
+    )

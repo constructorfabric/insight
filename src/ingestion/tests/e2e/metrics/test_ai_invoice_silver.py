@@ -144,10 +144,7 @@ BRONZE_ROWS = [
 
 @pytest.fixture
 def invoice_silver(
-    ch_migrations_applied: SessionConfig,
-    ch_seeder: CHSeeder,
-    dbt_runner: DbtRunner,
-    worker_ctx: WorkerContext,
+    ch_migrations_applied: SessionConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner, worker_ctx: WorkerContext
 ) -> list[dict]:
     """Seed bronze, build the connector's models, read the class back."""
     schema_file = Path(__file__).parent / "schemas" / f"{TABLE}.yaml"
@@ -228,3 +225,61 @@ def test_a_failed_chain_keeps_the_invoice_and_no_line(invoice_silver):
 def test_a_line_is_dated_by_the_period_it_charges_for(invoice_silver):
     """The invoice is raised on 2026-07-31; its lines charge for August."""
     assert _by_line(invoice_silver, "il_premium")["period_month"] == "2026-08-01"
+
+
+# A recovery: the first sync failed on one invoice, the second reached its lines.
+# Both readings sit in bronze, keyed differently — the gap by the wrapper, the
+# lines by Stripe's ids — so the class has to decide which survives.
+RECOVERED_ROWS = [
+    _row(
+        _airbyte_extracted_at="2026-09-02T00:00:00Z",
+        unique_key=f"{TENANT}-{SOURCE}-failed-{RAISED_AT}-pi_recovered",
+        chain_status="failed",
+        invoice_id=None,
+        invoice_payment_intent="pi_recovered",
+        line_id=None,
+        category=None,
+        is_proration=None,
+        currency=None,
+        period_start_ts=None,
+    ),
+    _row(
+        _airbyte_extracted_at="2026-09-03T00:00:00Z",
+        collected_at="2026-09-03T00:00:00Z",
+        unique_key=f"{TENANT}-{SOURCE}-in_RECOVERED-il_late",
+        invoice_id="in_RECOVERED",
+        invoice_payment_intent="pi_recovered",
+        line_id="il_late",
+        description="3 x Example plan - Standard",
+        amount=3000,
+        quantity=3,
+        unit_amount=1000,
+        seat_unit_amount=1000,
+        tier_label="Standard",
+    ),
+]
+
+
+@pytest.fixture
+def recovered_invoice_silver(
+    ch_migrations_applied: SessionConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner, worker_ctx: WorkerContext
+) -> list[dict]:
+    schema_file = Path(__file__).parent / "schemas" / f"{TABLE}.yaml"
+    schemas = yaml.safe_load(schema_file.read_text(encoding="utf-8"))["schemas"]
+
+    ch_seeder.seed_bronze({TABLE: RECOVERED_ROWS}, schemas)
+    dbt_runner.build(SELECTOR, worker_ctx=worker_ctx)
+
+    rows = clickhouse.query(
+        ch_migrations_applied,
+        "SELECT chain_status, invoice_id, line_id, invoice_net_cents "
+        "FROM silver.class_ai_invoice FINAL "
+        f"WHERE source_id = '{SOURCE}' ORDER BY chain_status",
+    )
+    return [dict(zip(["chain_status", "invoice_id", "line_id", "invoice_net_cents"], row)) for row in rows]
+
+
+def test_a_recovered_invoice_leaves_no_gap_behind(recovered_invoice_silver):
+    """Otherwise the invoice's money is counted twice and coverage stays red."""
+    assert [r["chain_status"] for r in recovered_invoice_silver] == ["ok"]
+    assert recovered_invoice_silver[0]["line_id"] == "il_late"

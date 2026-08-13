@@ -18,12 +18,11 @@ Same reasoning as github-copilot ADR-0001.
 | 1 | `GET {proxy}/api/stripe/{org}/invoices` | the wrapper's rows: `total`, `total_excluding_tax`, `currency`, `status`, `num_seats`, `hosted_invoice_url` — no invoice id, no lines |
 | 2 | parse `https://invoice.stripe.com/i/{acct}/{token}?s=ap` | the account and token identifiers |
 | 3 | `GET invoicedata.stripe.com/hosted_invoice_page/{acct}/{token}` | `invoice_id` and a short-lived `ephemeral_key` |
-| 4 | `GET api.stripe.com/v1/invoices/{id}/hosted` | the invoice with its lines embedded |
-| 5 | `GET api.stripe.com/v1/invoices/{id}/lines?limit=100` | the full line set, when step 4 reports more |
+| 4 | `GET api.stripe.com/v1/invoices/{id}/lines?limit=100`, paginated on `has_more` | the full line set |
 
-Steps 3 to 5 pin `Stripe-Version: 2026-06-24.dahlia` and pass
-`Stripe-Account: {acct}`. The ephemeral key is short-lived, authorises the last
-two hops only, and is never written to a record, a state message or a log line.
+Steps 3 and 4 pin `Stripe-Version: 2026-06-24.dahlia` and pass
+`Stripe-Account: {acct}`. The ephemeral key is short-lived, authorises the line
+calls, and is never written to a record, a state message or a log line.
 
 Follow a URL inside the run that fetched it. Stripe expires a hosted invoice URL
 30 days after the due date, and claude.ai re-issues a fresh one on every list

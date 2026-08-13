@@ -77,7 +77,13 @@ class SourceClaudeTeamInvoices(AbstractSource):
             )
         if response.status_code != 200:
             return False, f"invoice list returned HTTP {response.status_code}"
-        if "invoices" not in (response.json() or {}):
+        try:
+            listing = response.json()
+        except ValueError:
+            return False, "invoice list answered 200 with a body that is not JSON"
+        if not isinstance(listing, dict):
+            return False, f"invoice list answered a {type(listing).__name__}, not an object"
+        if "invoices" not in listing:
             return False, "invoice list did not carry an `invoices` field"
 
         try:
