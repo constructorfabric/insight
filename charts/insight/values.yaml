@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.13.09.42-9a34f08" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.13.13.18-487013f" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.13.09.42-9a34f08" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.13.13.18-487013f" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)

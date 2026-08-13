@@ -47,13 +47,14 @@ describe("partitionByReadiness", () => {
 describe("nav classification invariants", () => {
   it("hiding planned work still leaves every zone the portal can render", () => {
     const { live } = partitionByReadiness(ZONES, false);
-    // The five zones with real views must survive the strictest filter.
+    // Every zone with a real view must survive the strictest filter.
     expect(live.map((z) => z.id)).toEqual([
       "overview",
       "directions",
       "person",
       "people",
       "aicost",
+      "reports",
       "manage",
     ]);
   });
