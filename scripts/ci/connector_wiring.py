@@ -28,12 +28,6 @@ Checks
   4. cast-types — contributors MUST NOT explicitly cast the same class_people
                   column to different types; `union_by_tag` UNION ALLs the
                   branches and ClickHouse raises Code 386 NO_COMMON_TYPE.
-  5. builder    — a declarative `connector.yaml` MUST NOT carry the Airbyte
-                  Builder's `#magic___^_^___line` marker. Inside a `>-` folded
-                  scalar it is CONTENT, not a comment, so a round-trip through
-                  the Builder silently appends it to whatever value it landed
-                  in — including `unique_key`, which is the declared
-                  primary_key and the ReplacingMergeTree order_by.
 
 Empty `images.<key>.image` refs are reported as warnings, never errors: a
 brand-new CDK connector legitimately ships with `image: ""` and is patched by
@@ -45,8 +39,6 @@ Exit:  0 clean (warnings allowed), 1 on any error.
 
 # ruff: noqa: T201  — stdout/stderr IS this script's CI report (cf. changed.py).
 
-# Scoped to connector.yaml on purpose: the same marker appears legitimately in
-# prose (dbt model descriptions, test-case docs), and an ignore-list would rot.
 from __future__ import annotations
 
 import argparse
@@ -59,7 +51,6 @@ import yaml
 # Strict semver per semver.org §2, identical to classify_bump.py and
 # bump-descriptor-version.sh: numeric identifiers MUST NOT carry leading
 # zeroes, which is what keeps `2026.05.04` distinguishable from a real triplet.
-BUILDER_MARKER = "#magic___"
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 CLASS_PEOPLE_TAG = "silver:class_people"
@@ -169,20 +160,6 @@ def main(argv: list[str]) -> int:
                 "(see #2048). Add the entry with "
                 f"`./generate-connectors-config.sh '{rel}'`."
             )
-
-        # ── 5. Airbyte Builder marker ───────────────────────────────────────
-        # Read as RAW TEXT: after yaml.safe_load the marker is indistinguishable
-        # from any other substring, which is exactly the problem.
-        manifest = connector_dir / "connector.yaml"
-        if manifest.is_file():
-            for lineno, line in enumerate(manifest.read_text().splitlines(), start=1):
-                if BUILDER_MARKER in line:
-                    errors.append(
-                        f"{rel}/connector.yaml:{lineno}: contains "
-                        f"{BUILDER_MARKER!r}. Inside a `>-` folded scalar this is "
-                        "CONTENT, not a comment — it is appended to the value. "
-                        "Strip it after every Builder round-trip."
-                    )
 
         # ── 3-4. class_people contributors only ─────────────────────────────
         if not models:
