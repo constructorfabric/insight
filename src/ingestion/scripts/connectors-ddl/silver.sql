@@ -430,7 +430,6 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
-
 CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests
 (
     `tenant_id` Nullable(String),
