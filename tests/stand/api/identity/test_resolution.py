@@ -3,8 +3,8 @@
     GET  /v1/resolution/attention                         200 rates arithmetic · 403 realm admin
     GET  /v1/resolution/accounts/{source}/{sid}/{aid}     200 binding + history (round trip)
     GET  /v1/resolution/persons/{id}/accounts             200 for a seeded person
-    POST /v1/resolution/bind                              200 applied → already_decided (round trip)
-    POST /v1/resolution/merge                             400 source == target (validation, no write)
+    POST /v1/resolution/bind                              200 applied → already_decided (round trip) · 400 excluded sentinel
+    POST /v1/resolution/merge                             400 source == target · excluded sentinel (validation, no write)
     POST /v1/resolution/detach                            404 unseen account (no write)
     POST /v1/resolution/exclude                           200 applied (the round trip's cleanup)
 
@@ -37,6 +37,12 @@ from ..schemas import (
 )
 
 ATTENTION = identity_path("/v1/resolution/attention")
+
+#: The reserved excluded-person sentinel (`Uuid::from_u128(u128::MAX)` in the
+#: service). Once any account was ever excluded it exists in the journal, so
+#: only an explicit guard keeps it out of bind/merge — these tests pin that
+#: guard.
+EXCLUDED_PERSON = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
 #: A connector-instance id for accounts that exist only in this module. Fixed,
 #: not random: the coverage template folds `{id}` per path segment either way,
@@ -82,11 +88,21 @@ def test_the_queue_answers_with_coherent_tenant_wide_rates(
 
     queue = response.parse(AttentionResponse)
     rates = queue.rates
+    # The floor first: 0 == 0+0+0+0 partitions perfectly, so without it a
+    # fold that silently reads zero rows (a broken join, a missing relation
+    # mapped to an empty answer) would pass the arithmetic below. The seed
+    # this test requires materializes identity evidence for the roster, so a
+    # seeded stand always has observed accounts.
+    assert rates.observed > 0, f"a seeded stand reports zero observed accounts: {rates}"
     assert rates.observed == rates.bound + rates.pending + rates.no_evidence + rates.excluded, (
         f"resolution states do not partition the observed set: {rates}"
     )
     assert len(queue.items) <= rates.pending + rates.no_evidence, (
         "more queue items than undecided accounts"
+    )
+    assert queue.truncated is False, (
+        "the seeded roster is far below the evidence cap — a truncated answer "
+        "means the read is broken, not that the stand is big"
     )
 
 
@@ -95,6 +111,10 @@ def test_the_queue_answers_with_coherent_tenant_wide_rates(
 def test_a_seeded_person_lists_their_accounts(
     admin_operator_session: PersonaSession, stand_manifest: Manifest
 ) -> None:
+    """The route echoes the requested id, so the id check alone proves
+    nothing; the list itself must be non-empty. Every roster persona gets a
+    login-bootstrap identity row from the seed, so a seeded person with zero
+    accounts means the query read the wrong place, not an empty stand."""
     lead = stand_manifest.fixture("dev_lead")
     response = admin_operator_session.client.get(
         identity_path(f"/v1/resolution/persons/{lead.uuid}/accounts")
@@ -103,6 +123,10 @@ def test_a_seeded_person_lists_their_accounts(
 
     owned = response.parse(PersonAccountsResponse)
     assert str(owned.person_id) == lead.uuid
+    assert owned.accounts, (
+        f"a seeded person lists no accounts — the seed guarantees {lead.email} "
+        "at least their login-bootstrap identity row"
+    )
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead")
@@ -131,28 +155,32 @@ def test_bind_confirm_and_exclude_round_trip(
     first = bind.parse(CorrectionResponse)
     assert first.applied == 1 and first.items[0].outcome == "applied", first
 
-    again = client.post(
-        identity_path("/v1/resolution/bind"),
-        json_body={"bindings": [{"account": account, "person_id": lead.uuid}]},
-    )
-    assert again.status_code == 200, f"rebind: {again.status_code} {again.text[:300]}"
-    second = again.parse(CorrectionResponse)
-    assert second.already_decided == 1 and second.items[0].outcome == "already_decided", second
+    # From here the scratch account is bound to a REAL seeded persona, and no
+    # sweep can see a leaked binding (the journal has no scratch listing) —
+    # so the exclude must run even when an assertion in between fails.
+    try:
+        again = client.post(
+            identity_path("/v1/resolution/bind"),
+            json_body={"bindings": [{"account": account, "person_id": lead.uuid}]},
+        )
+        assert again.status_code == 200, f"rebind: {again.status_code} {again.text[:300]}"
+        second = again.parse(CorrectionResponse)
+        assert second.already_decided == 1 and second.items[0].outcome == "already_decided", second
 
-    read = client.get(_account_path(account_id))
-    assert read.status_code == 200, f"read: {read.status_code} {read.text[:300]}"
-    binding = read.parse(AccountBindingResponse)
-    assert str(binding.person_id) == lead.uuid
-    assert any(entry.by_operator for entry in binding.history), (
-        f"no operator-authored entry in {binding.history}"
-    )
-
-    exclude = client.post(
-        identity_path("/v1/resolution/exclude"),
-        json_body={"account": account, "comment": "stand scratch cleanup"},
-    )
-    assert exclude.status_code == 200, f"exclude: {exclude.status_code} {exclude.text[:300]}"
-    assert exclude.parse(CorrectionResponse).applied == 1
+        read = client.get(_account_path(account_id))
+        assert read.status_code == 200, f"read: {read.status_code} {read.text[:300]}"
+        binding = read.parse(AccountBindingResponse)
+        assert str(binding.person_id) == lead.uuid
+        assert any(entry.by_operator for entry in binding.history), (
+            f"no operator-authored entry in {binding.history}"
+        )
+    finally:
+        exclude = client.post(
+            identity_path("/v1/resolution/exclude"),
+            json_body={"account": account, "comment": "stand scratch cleanup"},
+        )
+        assert exclude.status_code == 200, f"exclude: {exclude.status_code} {exclude.text[:300]}"
+        assert exclude.parse(CorrectionResponse).applied == 1
 
     owned = client.get(
         identity_path(f"/v1/resolution/persons/{lead.uuid}/accounts")
@@ -173,6 +201,50 @@ def test_merge_refuses_a_person_merged_into_themselves(
     response = admin_operator_session.client.post(
         identity_path("/v1/resolution/merge"),
         json_body={"source_person_id": lead.uuid, "target_person_id": lead.uuid},
+    )
+    assert response.status_code == 400, f"{response.status_code} {response.text[:300]}"
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.security
+def test_the_excluded_sentinel_is_not_a_bind_target(
+    admin_operator_session: PersonaSession,
+) -> None:
+    """Binding to the sentinel would be an exclude that skips the
+    known-account check (bind deliberately pre-registers unseen accounts).
+    Pure validation: refused before any existence lookup, so no write."""
+    response = admin_operator_session.client.post(
+        identity_path("/v1/resolution/bind"),
+        json_body={
+            "bindings": [
+                {
+                    "account": {
+                        "source": "github",
+                        "source_id": SCRATCH_SOURCE_ID,
+                        "id": "never-observed-account",
+                    },
+                    "person_id": EXCLUDED_PERSON,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 400, f"{response.status_code} {response.text[:300]}"
+
+
+@pytest.mark.requires_seed("admin_operator", "dev_lead")
+@pytest.mark.security
+@pytest.mark.parametrize("side", ["source_person_id", "target_person_id"])
+def test_the_excluded_sentinel_is_not_a_merge_side(
+    admin_operator_session: PersonaSession, stand_manifest: Manifest, side: str
+) -> None:
+    """A merge naming the sentinel moves EVERY excluded account of the tenant
+    at once (as source), or mass-excludes a person's accounts while the
+    journal records a merge (as target). Refused as validation, no write."""
+    lead = stand_manifest.fixture("dev_lead")
+    body = {"source_person_id": lead.uuid, "target_person_id": lead.uuid}
+    body[side] = EXCLUDED_PERSON
+    response = admin_operator_session.client.post(
+        identity_path("/v1/resolution/merge"), json_body=body
     )
     assert response.status_code == 400, f"{response.status_code} {response.text[:300]}"
 
