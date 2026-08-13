@@ -24,6 +24,34 @@ export function cellText(
   return String(value);
 }
 
+/**
+ * The first line of a cell's text, and whether anything followed it.
+ *
+ * A git commit arrives as its whole message — a subject, a blank line, then a
+ * body that runs to dozens of lines. A single-line cell collapses all of it
+ * into one run of words and cuts it a few words in, so the cell shows the
+ * subject and the detail panel takes the rest. A value whose only remainder is
+ * a trailing newline has no body to show.
+ */
+export function summaryLine(text: string): { line: string; hasMore: boolean } {
+  const newline = text.indexOf("\n");
+  if (newline === -1) return { line: text, hasMore: false };
+  return {
+    line: text.slice(0, newline),
+    hasMore: text.slice(newline + 1).trim() !== "",
+  };
+}
+
+/**
+ * Identifies a row across re-sorts, so an expanded record stays the one the
+ * reader opened rather than whichever record now sits at that position.
+ */
+export function evidenceRowKey(row: MetricEvidenceRow): string {
+  const ref = row.values.ref;
+  if (typeof ref === "string" && ref !== "") return ref;
+  return JSON.stringify(row.values);
+}
+
 function matchesSearch(
   row: MetricEvidenceRow,
   columns: readonly MetricEvidenceColumn[],

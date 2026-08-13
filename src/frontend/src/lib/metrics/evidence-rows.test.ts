@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { MetricEvidenceColumn } from "@/api/metric-drilldown-client";
 import {
   cellText,
+  evidenceRowKey,
   nextSort,
+  summaryLine,
   visibleEvidenceRows,
 } from "@/lib/metrics/evidence-rows";
 
@@ -124,6 +126,53 @@ describe("visibleEvidenceRows", () => {
       sort: { key: "value", direction: "desc" },
     });
     expect(out.map((row) => row.values.ref)).toEqual(["c3", "a1"]);
+  });
+});
+
+describe("summaryLine", () => {
+  it("passes a single-line value through untouched", () => {
+    expect(summaryLine("Add the parser")).toEqual({
+      line: "Add the parser",
+      hasMore: false,
+    });
+  });
+
+  it("keeps the subject and reports that a body follows", () => {
+    expect(summaryLine("Add the parser\n\nIt handles nested groups.")).toEqual({
+      line: "Add the parser",
+      hasMore: true,
+    });
+  });
+
+  it("does not count a trailing newline as a body", () => {
+    expect(summaryLine("Add the parser\n")).toEqual({
+      line: "Add the parser",
+      hasMore: false,
+    });
+    expect(summaryLine("Add the parser\n\n  \n")).toEqual({
+      line: "Add the parser",
+      hasMore: false,
+    });
+  });
+});
+
+describe("evidenceRowKey", () => {
+  it("identifies a row by its ref", () => {
+    expect(evidenceRowKey({ values: { ref: "abc", value: 1 } })).toBe("abc");
+  });
+
+  it("falls back to the values when there is no usable ref", () => {
+    const noRef = evidenceRowKey({ values: { value: 1 } });
+    const emptyRef = evidenceRowKey({ values: { ref: "", value: 1 } });
+    expect(noRef).toContain("1");
+    expect(emptyRef).toContain("1");
+  });
+
+  it("tells two rows apart, and keeps one row stable", () => {
+    const first = { values: { date: "2026-07-01", value: 1 } };
+    const second = { values: { date: "2026-07-02", value: 1 } };
+    expect(evidenceRowKey(first)).not.toBe(evidenceRowKey(second));
+    expect(evidenceRowKey(first)).toBe(evidenceRowKey({ ...first }));
   });
 });
 

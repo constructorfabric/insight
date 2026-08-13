@@ -16,6 +16,7 @@ vi.mock("@tanstack/react-virtual", () => ({
         start: index * 44,
       })),
     getTotalSize: () => count * 44,
+    measureElement: () => undefined,
   }),
 }));
 
@@ -67,9 +68,10 @@ describe("MetricEvidenceTable", () => {
     const table = screen.getByRole("table");
     expect(table).toHaveAttribute("aria-rowcount", "2");
     expect(screen.getAllByRole("rowgroup")).toHaveLength(2);
-    expect(screen.getAllByRole("columnheader")).toHaveLength(3);
+    // Three data columns plus the leading expander column.
+    expect(screen.getAllByRole("columnheader")).toHaveLength(4);
     expect(screen.getAllByRole("row")[1]).toHaveAttribute("aria-rowindex", "2");
-    expect(screen.getAllByRole("cell")).toHaveLength(6);
+    expect(screen.getAllByRole("cell")).toHaveLength(8);
     expect(screen.getByText("1.2")).toBeInTheDocument();
     expect(screen.getByText("Yes")).toBeInTheDocument();
     expect(screen.getByText("No")).toBeInTheDocument();
@@ -79,9 +81,14 @@ describe("MetricEvidenceTable", () => {
   it("announces which column is sorted and which way", () => {
     renderTable({ sort: { key: "value", direction: "desc" } });
 
-    const [ref, value] = screen.getAllByRole("columnheader");
-    expect(value).toHaveAttribute("aria-sort", "descending");
-    expect(ref).toHaveAttribute("aria-sort", "none");
+    expect(screen.getByRole("columnheader", { name: "Value" })).toHaveAttribute(
+      "aria-sort",
+      "descending"
+    );
+    expect(screen.getByRole("columnheader", { name: "Ref" })).toHaveAttribute(
+      "aria-sort",
+      "none"
+    );
   });
 
   it("asks for a sort when a header is clicked", async () => {
@@ -91,6 +98,69 @@ describe("MetricEvidenceTable", () => {
 
     await user.click(screen.getByRole("button", { name: "Value" }));
     expect(onSortChange).toHaveBeenCalledWith("value");
+  });
+
+  describe("the full record", () => {
+    const message = "Add the parser\n\nIt handles nested groups.";
+    const longRows = [
+      { values: { ref: "abc123", value: 1, active: message } },
+      { values: { ref: "def456", value: 2, active: "Short" } },
+    ];
+
+    it("shows only the first line in the cell", () => {
+      renderTable({ rows: longRows });
+      expect(screen.getByText("Add the parser")).toBeInTheDocument();
+      expect(
+        screen.queryByText(/It handles nested groups/)
+      ).not.toBeInTheDocument();
+    });
+
+    it("reveals the rest, newlines and all, when the row is expanded", async () => {
+      const user = userEvent.setup();
+      renderTable({ rows: longRows });
+      const [toggle] = screen.getAllByRole("button", {
+        name: "Show full record",
+      });
+
+      await user.click(toggle!);
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      const detail = screen.getByText(/It handles nested groups/);
+      expect(detail).toHaveTextContent("Add the parser");
+      expect(detail).toHaveClass("whitespace-pre-wrap");
+    });
+
+    it("closes again on a second press", async () => {
+      const user = userEvent.setup();
+      renderTable({ rows: longRows });
+      const [toggle] = screen.getAllByRole("button", {
+        name: "Show full record",
+      });
+
+      await user.click(toggle!);
+      await user.click(
+        screen.getByRole("button", { name: "Hide full record" })
+      );
+      expect(
+        screen.queryByText(/It handles nested groups/)
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps a record open across a re-sort rather than following its position", async () => {
+      const user = userEvent.setup();
+      const { rerender, props } = renderTable({ rows: longRows });
+
+      await user.click(
+        screen.getAllByRole("button", { name: "Show full record" })[0]!
+      );
+      rerender(
+        <MetricEvidenceTable {...props} rows={[...longRows].reverse()} />
+      );
+
+      expect(screen.getByText(/It handles nested groups/)).toBeInTheDocument();
+      expect(
+        screen.getAllByRole("button", { name: "Hide full record" })
+      ).toHaveLength(1);
+    });
   });
 
   it("copies references and reports clipboard failures", async () => {
