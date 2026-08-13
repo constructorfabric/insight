@@ -78,7 +78,7 @@ export const ZONES: readonly Zone[] = [
   { id: "aicost", label: "AI & Cost", icon: DollarSign, kind: "theme" },
   // Pure scaffolds: no view, no data path. Our backlog, not a tenant gap.
   { id: "scorecard", label: "Scorecard", icon: BarChart3, kind: "theme", readiness: "unbuilt" },
-  { id: "reports", label: "Reports", icon: FileText, kind: "theme", readiness: "unbuilt" },
+  { id: "reports", label: "Reports", icon: FileText, kind: "theme" },
   { id: "manage", label: "Manage", icon: Settings2, kind: "manage" },
 ];
 
@@ -260,7 +260,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
     {
       label: "Custom",
       items: [
-        { id: "report-builder", label: "Report builder", icon: LayoutGrid, readiness: "unbuilt" },
+        { id: "report-builder", label: "Report builder", icon: LayoutGrid },
         { id: "dashboards", label: "Saved dashboards", icon: Layers, readiness: "unbuilt" },
         { id: "new-report", label: "New report", icon: Plus, readiness: "unbuilt" },
       ],
