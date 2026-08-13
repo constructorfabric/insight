@@ -27,6 +27,9 @@ from playwright.sync_api import Page, expect
 from .flows import sign_in
 from .pages.person_view import PersonView
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 #: A chat metric rather than a file or meeting one: the label is the server's,
 #: and this is the one the group's card leads with.
 MESSAGES_SENT = "Messages Sent"

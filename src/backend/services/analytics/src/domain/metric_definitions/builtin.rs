@@ -99,6 +99,14 @@ pub struct MetricSeed {
     /// None = the full label is already compact enough.
     #[serde(default)]
     pub short_label: Option<String>,
+    /// The single topic this metric belongs to within its family, so a surface
+    /// listing a family can partition it into topics. Required for builtins —
+    /// exactly one per metric, which is the partition a source key cannot give.
+    pub subject: String,
+    /// Cross-cutting labels a surface can filter or search by; many per metric,
+    /// unlike the singular `subject`.
+    #[serde(default)]
+    pub tags: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -308,6 +316,53 @@ mod tests {
                 assert!(
                     dimensions.contains(dimension.as_str()),
                     "{} references undeclared dimension {dimension}",
+                    metric.metric_key
+                );
+            }
+        }
+    }
+
+    // Width of metric_definitions.subject and metric_definition_tags.tag. A
+    // longer authored value would pass shape checks but fail or truncate at
+    // reconcile time, so the bound is enforced here at build time.
+    const METADATA_MAX_LEN: usize = 64;
+
+    #[test]
+    fn every_metric_declares_a_shaped_subject() {
+        for metric in builtin_metrics() {
+            assert!(
+                is_snake_case(&metric.subject),
+                "{} declares an unshaped subject {:?}",
+                metric.metric_key,
+                metric.subject
+            );
+            assert!(
+                metric.subject.len() <= METADATA_MAX_LEN,
+                "{} subject {:?} exceeds {METADATA_MAX_LEN} chars",
+                metric.metric_key,
+                metric.subject
+            );
+        }
+    }
+
+    #[test]
+    fn metric_tags_are_shaped_and_unique_per_metric() {
+        for metric in builtin_metrics() {
+            let mut seen = BTreeSet::new();
+            for tag in &metric.tags {
+                assert!(
+                    is_snake_case(tag),
+                    "{} declares an unshaped tag {tag:?}",
+                    metric.metric_key
+                );
+                assert!(
+                    tag.len() <= METADATA_MAX_LEN,
+                    "{} tag {tag:?} exceeds {METADATA_MAX_LEN} chars",
+                    metric.metric_key
+                );
+                assert!(
+                    seen.insert(tag.as_str()),
+                    "{} declares duplicate tag {tag:?}",
                     metric.metric_key
                 );
             }

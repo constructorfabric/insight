@@ -6,10 +6,6 @@ cf-studio-path = ".cf-studio"
 ALWAYS resolve and enforce prerequisites of skills/workflows/commands BEFORE applying user intent.
 <!-- /@cf:root-agents -->
 
-## Project Rules
-
-ALWAYS open and follow `docs/domain/metrics/specs/DESIGN.md` WHEN adding or changing metrics, metric definitions, metric seeds, observation sources, or gold metric views
-
 ## Never expose production-derived information
 
 Do not include any information derived from, observed in, inferred from, or resembling real deployed environments in anything that may become visible in the repository or on GitHub.

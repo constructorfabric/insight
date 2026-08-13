@@ -1,6 +1,6 @@
 //! Create `metric_threshold` — per-scope thresholds with v1 lock-bounded escalation.
 //!
-//! Refs #519. Schema source: `docs/domain/metric-catalog/specs/DESIGN.md` §3.7
+//! Refs #519.
 //! (`cpt-metric-cat-dbtable-metric-threshold`).
 //!
 //! Notes that drive non-obvious choices:

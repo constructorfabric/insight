@@ -3,6 +3,12 @@ status: proposed
 date: 2026-07-06
 ---
 
+> [!WARNING]
+> **Under review — audited against the implementation and found inaccurate in places.**
+> Read it against the code, not as authority. The specific claims the code contradicts
+> are listed in the repository [README](../../../../README.md#backend-specs--under-review). Where this
+> document and the committed `openapi.json` disagree, the contract is right.
+
 # DESIGN -- Gateway (nginx edge)
 
 - [ ] `p3` - **ID**: `cpt-insightspec-design-gateway`
@@ -101,7 +107,7 @@ graph LR
     GW -->|/| SPA[insight-front static server]
 ```
 
-- The ingress controller's only jobs are TLS termination and host routing to one backend: the gateway Service. It can be swapped (ingress-nginx to traefik / Gateway API) at any time as a pure ops track -- no auth annotations, path rules, or header logic live at the ingress.
+- The edge's only jobs are TLS termination and host routing to one backend: the gateway Service. Today the edge is Envoy Gateway, reached via a Gateway API `HTTPRoute`; the implementation can be swapped again at any time as a pure ops track -- no auth annotations, path rules, or header logic live at the edge.
 - The gateway owns security headers (HSTS on every response) -- they ride with the component all traffic crosses.
 - One hostname, one entry: `__Host-sid` pins the cookie to a single host, so the SPA is routed through the gateway too (`location /` to the insight-front static server). One origin, one TLS cert, one place where a path exists or does not.
 - `/internal/*` never routes (generated 404) -- nothing external can name the authenticator.
@@ -502,7 +508,7 @@ One OpenResty Deployment behind the single ingress backend, per the edge chain f
 **Decision**: The gateway is a separate Deployment behind whatever terminates TLS; the ingress routes one host to one backend and does nothing else. The SPA rides through the gateway.
 
 **Why**:
-- ingress-nginx is retired upstream; swapping the ingress controller must be a pure ops track with zero impact on auth -- so nothing auth- or path-related may live at the ingress.
+- ingress-nginx's upstream retirement forced exactly such a swap: the edge is now Envoy Gateway (a Gateway API `HTTPRoute` routes the host to the gateway Service), and it landed as a pure ops track with zero auth impact -- because nothing auth- or path-related lives at the edge. Keeping the edge that thin is what makes the next swap equally free.
 - Security headers belong to the component all traffic crosses, not to whichever ingress happens to be installed.
 - `__Host-sid` requires one hostname; routing the SPA through the gateway gives one origin, one cert, one entry point.
 
@@ -528,6 +534,5 @@ One OpenResty Deployment behind the single ingress backend, per the edge chain f
 ## 5. Traceability
 
 - **Sibling**: [Authenticator PRD](../authenticator/PRD.md), [Authenticator DESIGN](../authenticator/DESIGN.md) -- session lifecycle, exchange contract (`cpt-insightspec-contract-auth-authz-exchange`), JWT claim contract, JWKS
-- **Parent**: [Backend PRD](../specs/PRD.md), [Backend DESIGN](../specs/DESIGN.md)
 - **Decision document**: the nginx + authorization analysis (workspace-level) that mandated this architecture
 - **ADRs**: [ADR-0001](specs/ADR/0001-access-by-lua-over-auth-request.md) (`cpt-insightspec-adr-gw-0001-access-by-lua-over-auth-request`) -- access-phase Lua over `auth_request` for the exchange (`DD-GW-03`), spike-validated. Remaining decisions captured inline in section 4 until extracted alongside implementation.

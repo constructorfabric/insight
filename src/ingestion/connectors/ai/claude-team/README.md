@@ -9,9 +9,6 @@ Proxy source code, Dockerfile, and deployment docs:
 
 ## Specification
 
-- **PRD**: [../../../../../docs/components/connectors/ai/claude-team/specs/PRD.md](../../../../../docs/components/connectors/ai/claude-team/specs/PRD.md)
-- **DESIGN**: [../../../../../docs/components/connectors/ai/claude-team/specs/DESIGN.md](../../../../../docs/components/connectors/ai/claude-team/specs/DESIGN.md)
-- **FEATURE**: [../../../../../docs/components/connectors/ai/claude-team/specs/FEATURE.md](../../../../../docs/components/connectors/ai/claude-team/specs/FEATURE.md)
 
 ## Prerequisites
 
@@ -102,5 +99,5 @@ Silver transformations are out of scope for this MVP (Phase 6+). `dbt_select` in
 
 ## Related
 
-- `claude-admin` — Anthropic Admin API connector for organization metadata, token usage, cost reports, Claude Code usage via the programmatic API. Complementary to this connector: `claude-admin` covers the API-facing side; `claude-team` covers the claude.ai web UI side (Team plan roster + Code metrics for web-UI users).
+- `claude-team` covers the claude.ai web UI side (Team plan roster + Code metrics for web-UI users).
 - `claude-enterprise` — Anthropic Enterprise Analytics API for DAU/WAU/MAU summaries and engagement analytics.

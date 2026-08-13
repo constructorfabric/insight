@@ -178,21 +178,33 @@ streams:
           - type: AddedFieldDefinition
             path: [member_id]
             value: "{{ (record.get('node') or {}).get('databaseId') }}"
+          # `or ''`, never `or none`: these carry `value_type: string`, so a
+          # Jinja `none` renders as the four-character text "None" and is stored
+          # as a value rather than as absence — an "e-mail" every memberless-
+          # e-mail account shares, which identity then groups into one person.
+          #
+          # `''` rather than a real NULL on purpose. `fields_history` compares
+          # versions with `curr != prev`, which is NULL-unsafe in ClickHouse:
+          # across a NULL boundary the comparison yields NULL and NO history row
+          # is emitted, in EITHER direction. A field that later gains a value
+          # would never be observed. The empty string compares normally, and the
+          # downstream filters (`new_value != ''`, `WHERE {{ f }} != ''`) already
+          # treat it as absence. Same shape as `login_normalized` above.
           - type: AddedFieldDefinition
             path: [name]
-            value: "{{ (record.get('node') or {}).get('name') or none }}"
+            value: "{{ (record.get('node') or {}).get('name') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [email]
-            value: "{{ (record.get('node') or {}).get('email') or none }}"
+            value: "{{ (record.get('node') or {}).get('email') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [company]
-            value: "{{ (record.get('node') or {}).get('company') or none }}"
+            value: "{{ (record.get('node') or {}).get('company') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [role]
-            value: "{{ record.get('role') or none }}"
+            value: "{{ record.get('role') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [created_at]

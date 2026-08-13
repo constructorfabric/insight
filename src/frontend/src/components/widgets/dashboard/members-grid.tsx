@@ -54,6 +54,7 @@ import {
   type PeerStatusWithNeutral,
 } from "@/lib/peers";
 import { applyFocusStatus, STATUS_TEXT_CLASS } from "@/lib/status";
+import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import { evidenceSelection } from "@/api/metric-drilldown-client";
 import { useMetricEvidenceOptional } from "@/components/metric-evidence-context";
@@ -505,7 +506,7 @@ function MemberRow({
             ) : null}
           </div>
           {showIssues && counts.bottom > 0 && worstLabel ? (
-            <p className="truncate text-[11px] leading-tight text-muted-foreground">
+            <p className="truncate text-xs leading-tight text-muted-foreground">
               worst: {worstLabel}
             </p>
           ) : null}
@@ -631,7 +632,7 @@ function GridCell({
           <p className="text-xs text-muted-foreground">{memberName}</p>
           <p
             className={cn(
-              "mt-2 text-2xl font-semibold tabular-nums",
+              "mt-2", TEXT_FIGURE, "",
               PEER_TEXT[focused]
             )}
           >

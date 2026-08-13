@@ -12,10 +12,11 @@ Manages the full lifecycle of Insight Connectors: creation, testing, schema gene
 
 ## References
 
-Before executing any workflow, read the connector specification:
-- **DESIGN**: `docs/domain/connector/specs/DESIGN.md` — mandatory fields, manifest rules, package structure
-- **TESTS**: `docs/domain/connector/specs/feature-connector-mock-tests/FEATURE.md` — test ladder (L0 static → L1 mock → L2 live smoke), coverage matrix, harness
+Before executing any workflow, read:
 - **README**: `src/ingestion/README.md` — commands, project structure
+- **PATTERNS**: `.cf-studio/config/rules/patterns.md` — descriptor shape, mandatory fields, package structure
+
+The test ladder is L0 static → L1 mock → L2 live smoke; `workflows/test.md` carries the harness.
 
 ## Non-negotiable wiring invariants
 

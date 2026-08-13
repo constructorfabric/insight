@@ -1,0 +1,136 @@
+# CI deploy credential RBAC. Managed by the provision-ci / verify-ci-credential
+# / revoke-ci make targets; see credentials-runbook.md.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-deployer
+  namespace: insight
+  labels:
+    app.kubernetes.io/name: ci-deployer
+    app.kubernetes.io/component: ci-credential
+    app.kubernetes.io/managed-by: gitops
+automountServiceAccountToken: false
+---
+# Enumerated, not a bind to the built-in `admin` ClusterRole (Trivy KSV-0111):
+# the kinds the chart manages here + read-only diagnostics. A new chart kind
+# fails the deploy closed with a helm "forbidden" until it is added here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-deployer-core
+  namespace: insight
+  labels:
+    app.kubernetes.io/name: ci-deployer
+    app.kubernetes.io/component: ci-credential
+    app.kubernetes.io/managed-by: gitops
+rules:
+  # helm release storage + chart-rendered config/credential objects.
+  - apiGroups: [""]
+    resources: [configmaps, secrets, services, serviceaccounts]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # `helm --wait` and rollout status read the ladder under a Deployment.
+  - apiGroups: ["apps"]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+  # Chart hooks, the seed Job, and sync Jobs minted from the chart's CronJob.
+  - apiGroups: ["batch"]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # The chart renders its own Role/RoleBinding. Escalation prevention holds:
+  # this SA can only grant what it already holds.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: [roles, rolebindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Diagnostics: pod logs on failure; events for scheduling errors.
+  - apiGroups: [""]
+    resources: [pods, pods/log, events]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-deployer-core
+  namespace: insight
+  labels:
+    app.kubernetes.io/name: ci-deployer
+    app.kubernetes.io/component: ci-credential
+    app.kubernetes.io/managed-by: gitops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ci-deployer-core
+subjects:
+  - kind: ServiceAccount
+    name: ci-deployer
+    namespace: insight
+---
+# CRDs `admin` does not aggregate. A superset of the chart's reconcile Role,
+# so escalation prevention lets this SA create it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-deployer-crd-supplement
+  namespace: insight
+  labels:
+    app.kubernetes.io/name: ci-deployer
+    app.kubernetes.io/component: ci-credential
+    app.kubernetes.io/managed-by: gitops
+rules:
+  # gateways stay read-only: the parent Gateway is owned outside this repo.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: [httproutes, referencegrants]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: [gateways]
+    verbs: [get, list, watch]
+  - apiGroups: ["argoproj.io"]
+    resources: [workflows, workflowtemplates, cronworkflows, workfloweventbindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: ["argoproj.io"]
+    resources: [workflows/status, workflowtaskresults]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: ["onepassword.com"] # the chart's reconcile Role grants read on these
+    resources: [onepassworditems]
+    verbs: [get, list, watch]
+  - apiGroups: ["cert-manager.io"] # a subchart renders a Certificate
+    resources: [certificates, certificaterequests, issuers]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-deployer-crd-supplement
+  namespace: insight
+  labels:
+    app.kubernetes.io/name: ci-deployer
+    app.kubernetes.io/component: ci-credential
+    app.kubernetes.io/managed-by: gitops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ci-deployer-crd-supplement
+subjects:
+  - kind: ServiceAccount
+    name: ci-deployer
+    namespace: insight
+---
+# Legacy (non-expiring) SA token: a GitHub environment secret is a static string
+# with no refresh path. The token controller fills .data.token after apply.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ci-deployer-token
+  namespace: insight
+  labels:
+    app.kubernetes.io/name: ci-deployer
+    app.kubernetes.io/component: ci-credential
+    app.kubernetes.io/managed-by: gitops
+  annotations:
+    kubernetes.io/service-account.name: ci-deployer
+type: kubernetes.io/service-account-token

@@ -26,10 +26,15 @@ service:
   type: ClusterIP
   port: 80
 
-ingress:
-  className: nginx
-  # The single preview host. One host serves every experiment (one Entra
-  # redirect URI, same-origin session cookie); only the path varies.
+route:
+  # The shared Gateway the per-experiment HTTPRoute attaches to.
+  parentRef:
+    name: insight
+    namespace: insight-infra
+    # Target listener on the Gateway (e.g. https). Empty = all listeners.
+    sectionName: ""
+  # REQUIRED. The single preview host. One host serves every experiment (one
+  # Entra redirect URI, same-origin session cookie); only the path varies.
   host: ""
   # Path prefix experiments live under. `/exp/<experiment>` is prefix-stripped
   # to `/` before reaching the FE pod, so the image serves under any prefix.

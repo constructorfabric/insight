@@ -59,7 +59,7 @@ export function MetricsConsoleScreen() {
     <>
       <header className="sticky top-0 z-20 flex flex-wrap items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur-sm">
         <SidebarTrigger />
-        <h1 className="text-xl font-semibold tracking-tight">
+        <h1 className="text-lg font-semibold tracking-tight">
           {t("metrics_console.title")}
         </h1>
         <Button

@@ -118,8 +118,8 @@ Build-time (Vite, `.env.local`):
 | `VITE_API_PROXY_TARGET` | Dev-only `/api` proxy target (e.g. `http://localhost:8080`). |
 | `VITE_API_BASE` | Override analytics API base URL (default `/api/analytics/v1`). |
 | `VITE_IDENTITY_BASE` | Override identity API base URL (default `/api/identity/v1`). |
-| `VITE_SENTRY_DSN` | Sentry DSN. Unset means Sentry never initializes. |
-| `VITE_APP_RELEASE` | Release attached to events and sourcemaps. Defaults to `local-<git sha>`; CI passes the image tag. |
+| `VITE_SENTRY_DSN` | Sentry DSN for local runs only; a deployed stand uses `sentry.dsn`. Unset means Sentry never initializes. |
+| `VITE_APP_RELEASE` | Release attached to events. Defaults to `local-<git sha>`; CI passes the image tag. |
 
 ## Error Reporting and Tracing
 
@@ -139,46 +139,23 @@ What leaves the browser:
 Events carry the hostname as their `environment` (`local` on localhost) — one
 image serves every stand, so nothing else tells them apart.
 
-Two settings must agree:
+The image carries no DSN. A deployed stand takes two chart values, and they
+must agree:
 
-1. `VITE_SENTRY_DSN` at build time — a `--build-arg` for the image, or the
-   `FRONTEND_SENTRY_DSN` repository secret in CI.
-2. `sentry.connectSrc` in the deployed chart values, set to the same origin.
-   The container's CSP is rendered from it at start; without it the browser
-   blocks every event and nothing arrives.
+1. `sentry.dsn` — rendered into a ConfigMap that mounts over `/config.js`,
+   which the SPA reads before it boots.
+2. `sentry.connectSrc`, set to the same origin. The container's CSP is
+   rendered from it at start; without it the browser blocks every event and
+   nothing arrives.
+
+Locally there is no chart, so `VITE_SENTRY_DSN` stands in for the first and
+the CSP does not apply.
 
 The SDK attaches no cookies, IP or headers to events. Session Replay is not
 enabled.
 
-### Sourcemaps
-
-Without uploaded sourcemaps a Sentry stack trace names the minified bundle, not
-your code. The image build uploads them, then deletes them from `dist/` so nginx
-never serves them.
-
-The credentials arrive as one BuildKit secret — a dotenv file mounted at
-`/run/secrets/sentry_env` and sourced only for `pnpm run build`:
-
-```dotenv
-SENTRY_AUTH_TOKEN=sntrys_exampletoken
-SENTRY_URL=https://sentry.example.com
-SENTRY_ORG=example-org
-SENTRY_PROJECT=example-project
-```
-
-The token needs the `project:releases` and `org:read` scopes.
-
-Store it as the `SENTRY_BUILD_ENV` repository secret. A secret rather than build
-args because this job builds PR-authored source and `ARG` values persist in
-builder history.
-
-Without the secret the file is absent and the build skips the upload. A failed
-upload — expired token, Sentry unreachable — logs and continues, so image builds
-do not depend on Sentry being up.
-
-`@sentry/cli` fetches its binary in a postinstall, so `package.json` allowlists
-it under `pnpm.onlyBuiltDependencies`. Everything else stays blocked: pnpm 10
-denies lifecycle scripts by default.
+The build emits no sourcemaps and uploads none, so a stack trace names the
+minified bundle rather than your code.
 
 ## Routes
 

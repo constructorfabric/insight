@@ -26,7 +26,8 @@ redirect URI matches, so one configuration serves both.
 
 from __future__ import annotations
 
-from playwright.sync_api import expect
+import pytest
+from playwright.sync_api import BrowserContext, expect
 
 # Playwright's own defaults are already generous where it matters — 30s for
 # actions and navigation — so they are left alone. `expect()` is the exception:
@@ -34,3 +35,18 @@ from playwright.sync_api import expect
 # and raising it is what lets the journeys use web-first assertions instead of
 # sleeping or retrying.
 expect.set_options(timeout=15_000)
+
+
+@pytest.fixture
+def context(context: BrowserContext) -> BrowserContext:
+    """Every journey drives the legacy dashboard shell, stated explicitly.
+
+    The portal became opt-out (an ABSENT `insight.portal` key renders it), so
+    a fresh browser context stopped meaning "the shell these journeys were
+    written against" and every selector started timing out inside the portal.
+    The suite's tested surface stays the legacy shell until portal journeys
+    exist; the init script runs before any app code on every page, which is
+    the one moment the flag is guaranteed to precede the first read.
+    """
+    context.add_init_script("window.localStorage.setItem('insight.portal', 'false')")
+    return context

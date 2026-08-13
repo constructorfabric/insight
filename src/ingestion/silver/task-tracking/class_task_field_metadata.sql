@@ -1,5 +1,4 @@
 -- depends_on: {{ ref('jira__task_field_metadata') }}
--- depends_on: {{ ref('youtrack__task_field_metadata') }}
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',

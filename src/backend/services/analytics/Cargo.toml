@@ -83,3 +83,6 @@ tower = { version = "0.5", features = ["util"] }
 # `clickhouse::test::Mock` for exercising ClickHouse read paths (the
 # contract-version sweep) against an in-process server in unit tests.
 clickhouse = { workspace = true, features = ["test-util"] }
+# Paused-time `#[tokio::test]` for the semaphore acquire-timeout refusals —
+# the 2 s acquire window elapses instantly instead of being slept through.
+tokio = { workspace = true, features = ["test-util"] }

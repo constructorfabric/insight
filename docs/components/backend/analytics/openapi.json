@@ -203,6 +203,20 @@
           "source_key": {
             "type": "string"
           },
+          "subject": {
+            "description": "The single topic this metric groups under within its family; a\nlowercase snake-case slug. Optional for custom metrics.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tags": {
+            "description": "Cross-cutting filter labels; lowercase snake-case slugs, unique per\nmetric. Optional — defaults to empty.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "transform": {
             "oneOf": [
               {
@@ -280,6 +294,13 @@
           },
           "metric_key": {
             "type": "string"
+          },
+          "subject": {
+            "description": "Grouping subject, so the management list can partition custom metrics\nby topic like the definitions listing; absent when none is declared.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -458,7 +479,7 @@
             "type": "string"
           },
           "last_observed_date": {
-            "description": "Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`.",
+            "description": "Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`. Not maintained for `custom`\nmetrics (see `origin`).",
             "format": "date",
             "type": [
               "string",
@@ -467,6 +488,10 @@
           },
           "metric_key": {
             "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/MetricOrigin",
+            "description": "`builtin` metrics read managed observation relations; `custom` metrics\nexecute inline SQL at query time. The validator stamps `schema_status`\nand `last_observed_date` from materialized relations only, so for\n`custom` those fields stay `unchecked` / absent regardless of data —\nreaders must not interpret them as \"never measured\" for custom metrics."
           },
           "schema_error_code": {
             "oneOf": [
@@ -489,6 +514,20 @@
               "null"
             ]
           },
+          "subject": {
+            "description": "The single topic this metric belongs to within its family, so a surface\nlisting a family can partition it into topics rather than only sorting\nby name. Exactly one per metric; absent only for metrics that declare\nnone.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tags": {
+            "description": "Cross-cutting labels a surface can filter or search by; many per metric,\nunlike the singular `subject`. Empty when the metric declares none.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "unit": {
             "type": [
               "string",
@@ -502,7 +541,9 @@
           "format",
           "direction",
           "dimensions",
+          "tags",
           "is_enabled",
+          "origin",
           "schema_status"
         ],
         "type": "object"
@@ -862,6 +903,13 @@
           "value",
           "numerator",
           "denominator"
+        ],
+        "type": "string"
+      },
+      "MetricOrigin": {
+        "enum": [
+          "builtin",
+          "custom"
         ],
         "type": "string"
       },

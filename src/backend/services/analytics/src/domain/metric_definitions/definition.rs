@@ -66,6 +66,23 @@ impl EvidenceGranularity {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MetricOrigin {
+    Builtin,
+    Custom,
+}
+
+impl MetricOrigin {
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "builtin" => Some(Self::Builtin),
+            "custom" => Some(Self::Custom),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
@@ -514,6 +531,13 @@ mod tests {
             );
         }
         assert_eq!(EvidenceGranularity::from_db("unknown"), None);
+        for (value, origin) in [
+            ("builtin", MetricOrigin::Builtin),
+            ("custom", MetricOrigin::Custom),
+        ] {
+            assert_eq!(MetricOrigin::from_db(value), Some(origin));
+        }
+        assert_eq!(MetricOrigin::from_db("unknown"), None);
         let relation = ObservationRelation::parse("ai_metric_observations")
             .unwrap_or_else(|| panic!("builtin relation name must parse"));
         let (_, table) = relation.table_ref();

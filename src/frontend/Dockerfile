@@ -12,16 +12,9 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 
 COPY . .
 
-ARG VITE_SENTRY_DSN
 ARG VITE_APP_RELEASE
-# Secret contents are not part of the layer cache key; this is.
-ARG SENTRY_UPLOAD
 
-RUN --mount=type=secret,id=sentry_env \
-    if [ -f /run/secrets/sentry_env ]; then \
-      set -a; . /run/secrets/sentry_env; set +a; \
-    fi; \
-    pnpm run build
+RUN pnpm run build
 
 # Runtime base: keep this on a currently-maintained nginx line. The 1.27 tag
 # stopped getting Alpine package refreshes, so the published image accumulated

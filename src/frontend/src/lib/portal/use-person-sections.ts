@@ -1,5 +1,6 @@
 import { GROUPS, type GroupId } from "@/lib/insight/groups";
 import { groupHasData } from "@/lib/insight/group-data";
+import { partState, reachableMetricKeys } from "@/lib/insight/coverage";
 import { injectCohortPeer } from "@/lib/insight/within-team-peer";
 import {
   gradeSectionStanding,
@@ -12,6 +13,7 @@ import { derivePeerStanding } from "@/lib/metrics/peer-standing";
 import { usePersonCohort } from "@/lib/portal/use-person-cohort";
 import type { Status } from "@/lib/status";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
+import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
 import { useMetricCollectionSet } from "@/queries/metric-results";
 
 export interface SectionStanding {
@@ -23,6 +25,19 @@ export interface SectionStanding {
   phrase: string;
   /** False when no metric of the section has a value for this period. */
   hasData: boolean;
+  /**
+   * Whether anything feeding this section reaches the tenant. With `hasData`
+   * false it separates a section this person is absent from (it reaches us,
+   * they did none of it) from one nobody is measured in (nothing feeds it).
+   *
+   * Read from the tenant-wide definition listing, NOT from whether the
+   * comparison pool happens to hold readings. The pool is whoever the viewer
+   * can see, so a small pool with no user of a live system would report that
+   * system as missing — and the smaller the viewer's reach, the more often. It
+   * also made this page and the org-wide coverage screen answer the same
+   * question two ways, and they were free to disagree.
+   */
+  peersHaveData: boolean;
   isPending: boolean;
 }
 
@@ -54,6 +69,9 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
     dateRange,
   );
 
+  // Same query key as the availability gate, so this rides its cache.
+  const definitions = useMetricDefinitionsResponse();
+
   // The same cohort the screens compare against, so the nav mark and the
   // section it points at cannot disagree.
   const cohortIds = usePersonCohort(entityId);
@@ -67,6 +85,8 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
     cohortIds.length ? { type: "person" as const, ids: cohortIds } : CLOSED_ENTITY,
     dateRange,
   );
+
+  const reachable = reachableMetricKeys(definitions.data?.metrics ?? []);
 
   return GROUPS.map((def) => {
     const result = groupData.get(def.id);
@@ -97,7 +117,14 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
       status: gradeSectionStanding(counts),
       phrase: sectionStandingPhrase(counts),
       hasData: groupHasData(def, byKey, entityId),
-      isPending: result?.isPending ?? true,
+      peersHaveData:
+        partState(def, byKey, entityId, reachable) !== "no_data_reaches_us",
+      // The listing counts too. Without it `reachable` is empty, so every
+      // section reads as one nothing reaches — the page would tell a reader we
+      // see nothing about this person, then flip a moment later. The old pool
+      // inference read the same query whose pending state was already tracked,
+      // so this gap arrived with the new source.
+      isPending: definitions.isPending || (result?.isPending ?? true),
     };
   });
 }

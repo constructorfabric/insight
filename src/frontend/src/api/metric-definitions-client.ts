@@ -21,6 +21,8 @@ const BASE =
 
 export type MetricDefinitionSchemaStatus = "ok" | "error" | "unchecked";
 
+export type MetricDefinitionOrigin = "builtin" | "custom";
+
 export interface MetricDefinition {
   metric_key: string;
   label: string;
@@ -32,6 +34,14 @@ export interface MetricDefinition {
   direction: MetricDirection;
   dimensions: string[];
   is_enabled: boolean;
+  /**
+   * `builtin` reads managed observation relations; `custom` executes inline
+   * SQL at query time. The validator stamps `schema_status` and
+   * `last_observed_date` from materialized relations only, so for `custom`
+   * they stay "unchecked" / absent however much data the metric serves —
+   * reading their absence as "never measured" is wrong for those.
+   */
+  origin: MetricDefinitionOrigin;
   schema_status: MetricDefinitionSchemaStatus;
   /** Why schema_status is "error"; null otherwise. */
   schema_error_code: MetricSchemaErrorCode | null;

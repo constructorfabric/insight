@@ -14,16 +14,22 @@ def collect(cfg: SessionConfig, out_dir: str | Path) -> Path:
         SELECT
             d.metric_key,
             d.label,
+            d.subject,
             d.computation_type,
             d.peer_cohort_key,
-            GROUP_CONCAT(sd.dimension_key ORDER BY dd.display_order SEPARATOR ',')
+            GROUP_CONCAT(sd.dimension_key ORDER BY dd.display_order SEPARATOR ','),
+            (
+                SELECT GROUP_CONCAT(t.tag ORDER BY t.display_order SEPARATOR ',')
+                FROM metric_definition_tags t
+                WHERE t.metric_definition_id = d.id
+            )
         FROM metric_definitions d
         LEFT JOIN metric_definition_dimensions dd ON dd.metric_definition_id = d.id
         LEFT JOIN metric_source_dimensions sd ON sd.id = dd.source_dimension_id
         WHERE d.tenant_id IS NULL
           AND d.origin = 'builtin'
           AND d.is_enabled = TRUE
-        GROUP BY d.id, d.metric_key, d.label, d.computation_type, d.peer_cohort_key
+        GROUP BY d.id, d.metric_key, d.label, d.subject, d.computation_type, d.peer_cohort_key
         ORDER BY d.metric_key
         """,
     )
@@ -33,11 +39,13 @@ def collect(cfg: SessionConfig, out_dir: str | Path) -> Path:
         {
             "metric_key": metric_key,
             "label": label,
+            "subject": subject,
             "computation": computation,
             "peer_cohort_key": peer_cohort_key,
             "dimensions": dimensions.split(",") if dimensions else [],
+            "tags": tags.split(",") if tags else [],
         }
-        for metric_key, label, computation, peer_cohort_key, dimensions in rows
+        for metric_key, label, subject, computation, peer_cohort_key, dimensions, tags in rows
     ]
     output_dir = Path(out_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

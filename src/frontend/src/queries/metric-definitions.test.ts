@@ -37,6 +37,7 @@ function metric(metric_key: string): MetricDefinition {
     direction: "neutral",
     dimensions: [],
     is_enabled: true,
+    origin: "builtin" as const,
     schema_status: "ok",
     schema_error_code: null,
     last_observed_date: null,

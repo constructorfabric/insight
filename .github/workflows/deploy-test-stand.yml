@@ -1,0 +1,562 @@
+name: Deploy test stand
+
+on:
+  workflow_call:
+    inputs:
+      chart_version:
+        description: >-
+          Exact umbrella chart version to install, as published to oci://ghcr.io/constructorfabric/charts/insight — e.g. 0.5.101. Leave empty to install the registry's newest published version. Never from deploy/gitops/.insight-version: that file is committed at the END of publish-chart, so a checkout of the trigger SHA reads the PREVIOUS release.
+        required: false
+        default: ''
+        type: string
+      stages:
+        description: >-
+          Which stages to run, as a prefix of deploy -> seed -> smoke: `all`, `deploy+seed`, or `deploy`. A partial run is never a pass — the summary and the run title both say which stages were skipped.
+        required: false
+        default: all
+        type: string
+  workflow_dispatch:
+    inputs:
+      stages:
+        description: "Stages to run. A prefix only: you cannot smoke without seeding, or seed without deploying."
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - deploy+seed
+          - deploy
+      seed_force:
+        description: "Seed a tenant that already holds person rows the seeder did not write. Overrides a guard — read its refusal first."
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  # cancel-in-progress:false — an interrupted upgrade wedges the release in
+  # pending-upgrade. A caller must not reuse this group, or its job deadlocks.
+  group: test-stand-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test-stand:
+    name: deploy → seed → smoke
+    runs-on: ubuntu-latest
+    # `environment:` cannot sit on a job that `uses:` a reusable workflow, so
+    # it is declared here; its main-only branch policy still evaluates.
+    environment: insight-test-stand
+    # Above the sum of the step ceilings: deploy (14) + edge (3) + seed, which
+    # now runs seed + identity projection + gold rebuild (110) + smoke (5).
+    timeout-minutes: 150
+    env:
+      ENV_NAME: test-stand
+      VALUES_FILE: deploy/gitops/environments/test-stand/values.yaml
+      INVENTORY_FILE: deploy/gitops/environments/test-stand/inventory.yaml
+      CHART_REF: oci://ghcr.io/constructorfabric/charts/insight
+      STAND_NAMESPACE: insight
+      STAND_RELEASE: insight
+      # The routes the chart renders, from values gateway.route/keycloak.route.
+      ROUTE_NAMES: insight-gateway insight-keycloak
+      REQUESTED_CHART_VERSION: ${{ inputs.chart_version }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      # This repo is public: every cluster/seeder/pytest byte goes through
+      # $REDACT before the console; raw copies stay in $RUNNER_TEMP.
+      REDACT: .github/workflows/scripts/redact-stand-log.py
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+
+      # Before the guards below: the chart-version resolver needs helm.
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          # Pinned to match publish-chart, and below the helm 4.2.1 `--wait`
+          # regression deploy/gitops/scripts/doctor.sh refuses.
+          version: '3.14.0'
+
+      # `gh api`, not curl/urllib, for the fallback: a dynamic URL through a
+      # URL opener trips a Semgrep finding no suppression can silence.
+      - name: Resolve the chart version
+        id: chart
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$REQUESTED_CHART_VERSION"
+          origin="the caller (publish-chart output)"
+
+          if [ -z "$version" ]; then
+            if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && [ "$GITHUB_EVENT_NAME" != "workflow_run" ]; then
+              echo "::error::chart_version is empty on a $GITHUB_EVENT_NAME. Only a dispatch or the"
+              echo "post-publish workflow_run may omit it and take the registry's newest; any other"
+              echo "caller must pass an explicit version."
+              exit 1
+            fi
+
+            oci_chart="$(helm show chart "$CHART_REF" 2>/dev/null || true)"
+            version="$(printf '%s' "$oci_chart" | yq -r '.version // ""' 2>/dev/null || true)"
+            origin="the OCI registry ($CHART_REF, latest)"
+
+            if [ -z "$version" ]; then
+              version="$(
+                gh api "repos/$GITHUB_REPOSITORY/contents/deploy/gitops/.insight-version?ref=$DEFAULT_BRANCH" \
+                  --jq '.content' | base64 --decode | tr -d '[:space:]'
+              )"
+              origin=".insight-version on $DEFAULT_BRANCH (OCI resolution failed)"
+            fi
+            if [ -z "$version" ]; then
+              echo "::error::could not resolve a chart version from $CHART_REF or from"
+              echo "deploy/gitops/.insight-version on $DEFAULT_BRANCH of $GITHUB_REPOSITORY."
+              echo "If no chart has ever been published, publish one from $DEFAULT_BRANCH first."
+              exit 1
+            fi
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "CHART_VERSION=$version" >> "$GITHUB_ENV"
+          echo "chart version: $version (from $origin)"
+
+      - name: Refuse anything that is not main, and anything that is not a version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # A dispatch may come from another branch; the environment's
+          # deployment-branch policy is what decides whether it may.
+          if [ "$REF_NAME" != "main" ]; then
+            if [ "$EVENT" = "workflow_dispatch" ]; then
+              echo "::warning::dispatched from '$REF_NAME', not main. Allowed because the" \
+                   "insight-test-stand environment's deployment-branch policy already" \
+                   "decided this ref may deploy — but what lands on the stand is that" \
+                   "branch's idea of the deploy, not main's."
+            else
+              echo "::error::this workflow deploys main and only main (ref was '$REF_NAME', event '$EVENT')."
+              echo "A workflow_call arrives from build-images.yml after a publish, which only"
+              echo "happens on main, so a call from anywhere else means the caller's guard broke."
+              exit 1
+            fi
+          fi
+          if ! printf '%s' "$CHART_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+            echo "::error::chart_version '$CHART_VERSION' is not a semver. Refusing to pass it to make."
+            exit 1
+          fi
+          echo "deploying umbrella chart $CHART_VERSION to ENV=$ENV_NAME"
+
+      # `stages` is a PREFIX of deploy -> seed -> smoke, never independent
+      # flags: each stage reads a precondition the previous one wrote.
+      - name: Resolve which stages run
+        id: stages
+        env:
+          STAGES: ${{ inputs.stages }}
+        run: |
+          set -euo pipefail
+          case "${STAGES:-all}" in
+            all)          deploy=true seed=true  smoke=true  ;;
+            deploy+seed)  deploy=true seed=true  smoke=false ;;
+            deploy)       deploy=true seed=false smoke=false ;;
+            *)
+              echo "::error::stages '$STAGES' is not one of: all, deploy+seed, deploy"
+              exit 1 ;;
+          esac
+          {
+            echo "run_deploy=$deploy"
+            echo "run_seed=$seed"
+            echo "run_smoke=$smoke"
+          } >> "$GITHUB_OUTPUT"
+          echo "stages: ${STAGES:-all}  (deploy=$deploy seed=$seed smoke=$smoke)"
+          if [ "$smoke" != "true" ]; then
+            echo "::warning::partial run — stages='${STAGES:-all}'. The smoke gate did NOT run," \
+                 "so this run says the chart installs, not that the stand works."
+          fi
+
+      - name: Confirm the environment is wired up
+        env:
+          HAVE_KUBECONFIG: ${{ secrets.TEST_STAND_KUBECONFIG != '' }}
+          # An override on top of the realm, not a source — see INFRA.md,
+          # "TEST_STAND_SEED_EMAIL drift".
+          HAVE_SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL != '' }}
+          HAVE_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD != '' }}
+          HAVE_BASE_URL: ${{ vars.TEST_STAND_BASE_URL != '' }}
+          RUN_SMOKE: ${{ steps.stages.outputs.run_smoke }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ "$HAVE_KUBECONFIG" = "true" ] || missing="$missing secrets.TEST_STAND_KUBECONFIG"
+          [ "$HAVE_BASE_URL" = "true" ]   || missing="$missing vars.TEST_STAND_BASE_URL"
+
+          if [ "$RUN_SMOKE" != "true" ]; then
+            echo "smoke stage not selected — its credentials are not required for this run"
+          else
+            [ "$HAVE_PERSONA_PASSWORD" = "true" ] || missing="$missing secrets.TEST_STAND_PERSONA_PASSWORD"
+          fi
+
+          if [ -n "$missing" ]; then
+            echo "::error::the insight-test-stand environment is missing:$missing"
+            echo ""
+            echo "What each one is (full procedure: deploy/gitops/environments/test-stand/credentials-runbook.md):"
+            echo "  TEST_STAND_KUBECONFIG          base64 of the kubeconfig for the namespace-scoped"
+            echo "                                 'ci-deployer' ServiceAccount, as produced by"
+            echo "                                 deploy/gitops/scripts/provision-ci-deployer.sh."
+            echo "                                 Admin kubeconfigs stay with humans."
+            echo "  TEST_STAND_PERSONA_PASSWORD    the credential every seeded persona signs in"
+            echo "                                 with. The runbook says where its value comes from."
+            echo "  TEST_STAND_BASE_URL            the stand's public HTTPS origin, scheme and host,"
+            echo "                                 no trailing slash. A variable, not a secret: the"
+            echo "                                 smoke drives it as a browser would."
+            exit 1
+          fi
+
+          if [ "$HAVE_SEED_EMAIL" = "true" ]; then
+            echo "dev-lead address: OVERRIDDEN by secrets.TEST_STAND_SEED_EMAIL."
+            echo "  The seeder would otherwise read it out of the realm this deploy applies."
+            echo "  An override that names anybody but the realm's dev-lead reproduces exactly"
+            echo "  the drift this stopped being a required secret to prevent: unset it unless"
+            echo "  this stand's realm is provisioned outside deploy/gitops."
+          else
+            echo "dev-lead address: discovered by seed-stand.sh from the stand's realm ConfigMap."
+            echo "  Set secrets.TEST_STAND_SEED_EMAIL only to override that, for a stand whose"
+            echo "  realm the seeder cannot read."
+          fi
+
+      # Before anything touches the cluster: a broken lockfile or a missing
+      # binary must not surface after an upgrade has already landed.
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          cache-suffix: test-stand-smoke
+
+      - name: Check the tools this workflow and the seeder shell out to
+        run: |
+          set -euo pipefail
+          missing=""
+          for tool in helm kubectl yq jq envsubst python3; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::the runner image no longer carries:$missing — install it in this job"
+            exit 1
+          fi
+          helm version --short
+          kubectl version --client -o yaml | head -n 3
+
+      - name: Resolve the smoke suite's dependencies
+        run: |
+          set -euo pipefail
+          uv sync --project tests --frozen
+
+      - name: Write the stand kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.TEST_STAND_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          target="$RUNNER_TEMP/test-stand.kubeconfig"
+          # umask before the file exists, chmod after — never readable by
+          # another process, not even momentarily.
+          (
+            umask 077
+            printf '%s' "$KUBECONFIG_B64" | tr -d '[:space:]' | base64 -d > "$target"
+          )
+          chmod 600 "$target"
+          # Never `cat` — this only proves the file parses.
+          if ! KUBECONFIG="$target" kubectl config view --minify >/dev/null 2>&1; then
+            echo "::error::TEST_STAND_KUBECONFIG did not decode into a usable kubeconfig."
+            echo "It must be base64 of a complete kubeconfig with a current-context set —"
+            printf "%s\n" "'base64 -w0 < kubeconfig' on Linux, 'base64 < kubeconfig | tr -d \\n' on macOS."
+            exit 1
+          fi
+          echo "KUBECONFIG=$target" >> "$GITHUB_ENV"
+
+      # The upgrade step's `timeout-minutes` must stay above helm's own
+      # `--timeout 10m`: a step timeout SIGKILLs helm and wedges the release.
+      - name: 'Stage 1/4 — mask the OIDC client secret'
+        id: deploy_secret
+        run: |
+          set -euo pipefail
+          secret_name="$(yq -r '.oidcClientSecret.secret // ""' "$INVENTORY_FILE")"
+          secret_key="$(yq -r '.oidcClientSecret.key // ""' "$INVENTORY_FILE")"
+          if [ -n "$secret_name" ] && [ -n "$secret_key" ]; then
+            s="$(
+              kubectl -n "$STAND_NAMESPACE" get secret "$secret_name" \
+                -o "jsonpath={.data['$secret_key']}" 2>/dev/null | base64 --decode 2>/dev/null || true
+            )"
+            [ -n "$s" ] && echo "::add-mask::$s"
+          fi
+
+      - name: 'Stage 1/4 — refuse a version downgrade'
+        id: deploy_downgrade_guard
+        run: |
+          set -euo pipefail
+          # Compares the CHART field ("<name>-<version>"), never app_version:
+          # this chart's appVersion is a date+sha build stamp, not a semver.
+          chart_name="$(basename "$CHART_REF")"
+          if ! listed="$(helm ls -n "$STAND_NAMESPACE" --filter "^${STAND_RELEASE}\$" -o json 2>&1)"; then
+            echo "::error::could not list helm releases in namespace $STAND_NAMESPACE: $listed"
+            echo "This is a reachability problem, not a downgrade — 'make deploy' below would refuse it too,"
+            echo "via its vpn-up/kube-ctx prerequisites (deploy/gitops/Makefile)."
+            exit 1
+          fi
+          deployed_chart="$(printf '%s' "$listed" | jq -r '.[0].chart // ""')"
+          deployed_version="${deployed_chart#"${chart_name}-"}"
+          if [ -z "$deployed_chart" ]; then
+            verdict="first install — nothing to compare against"
+          elif [ "$deployed_version" = "$CHART_VERSION" ]; then
+            verdict="unchanged"
+          elif [ "$(printf '%s\n%s\n' "$deployed_version" "$CHART_VERSION" | sort -V | tail -n1)" = "$CHART_VERSION" ]; then
+            verdict="forward"
+          else
+            verdict="DOWNGRADE — refused"
+          fi
+          echo "deployed=${deployed_version:-none}  requested=$CHART_VERSION  verdict=$verdict"
+          if [ "$verdict" = "DOWNGRADE — refused" ]; then
+            echo "::error::refusing to install $CHART_VERSION over the currently deployed $deployed_version."
+            echo "This stand's recovery is always forward — the next merge, or a rebuild — never a reinstall"
+            echo "of an older chart. See INFRA.md, \"fork-downgrade wedge\"."
+            echo "To genuinely go backwards, wipe and recreate the stand (scripts/recreate-test-stand.sh)."
+            exit 1
+          fi
+
+      - name: 'Stage 1/4 — upgrade the release through the official gitops target'
+        id: deploy_upgrade
+        timeout-minutes: 14
+        run: |
+          set -euo pipefail
+          make -C deploy/gitops --no-print-directory deploy \
+            ENV="$ENV_NAME" \
+            CONFIRM=yes-deploy-test-stand \
+            INSIGHT_VERSION="$CHART_VERSION" \
+            TIMEOUT=10m \
+            2>&1 | python3 "$REDACT"
+
+      - name: 'Stage 1/4 — confirm the edge still routes'
+        id: deploy_routes
+        run: |
+          set -euo pipefail
+          # Every entry in .status.parents[], not just [0]: Accepted[0] with
+          # Refused[1] is still unreachable. `helm --wait` never checks this.
+          # shellcheck disable=SC2086 # ROUTE_NAMES is a deliberate word list
+          routes_json="$(kubectl -n "$STAND_NAMESPACE" get httproute $ROUTE_NAMES -o json)"
+          printf '%s' "$routes_json" | jq -r '
+            .items[] | .metadata.name as $n
+            | .status.parents[] | "\($n)  parentRef=\(.parentRef.name // "?")  accepted=\((.conditions[]? | select(.type=="Accepted") | .status) // "Unknown")"
+          '
+          not_accepted="$(
+            printf '%s' "$routes_json" | jq -r '
+              .items[] | .metadata.name as $n
+              | .status.parents[]
+              | select((.conditions[]? | select(.type=="Accepted") | .status) != "True")
+              | "\($n)  parentRef=\(.parentRef.name // "?")"
+            '
+          )"
+          if [ -n "$not_accepted" ]; then
+            echo "::error::an edge route has a parentRef that is not Accepted:"
+            printf '%s\n' "$not_accepted"
+            echo "The release is 'deployed' and its pods are Ready; the stand is still unreachable,"
+            echo "and the smoke below would fail at its first request with a much less useful"
+            echo "message. The route came out of this deploy, so start in the values file that"
+            echo "produced it — $VALUES_FILE, keys gateway.route and keycloak.route — and check the"
+            echo "parentRef they name against the Gateway the cluster actually has."
+            exit 1
+          fi
+
+      # Before the 65-minute seed on purpose: an unreachable stand must fail
+      # fast, not surface later as a misleading smoke failure.
+      - name: 'Stage 2/4 — black-box the public edge (DNS, TLS, route, auth)'
+        id: edge
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          issuer="$(yq -r '.authenticator.oidc.issuerUrl' "$VALUES_FILE")"
+          base="$(yq -r '.gateway.route.host' "$VALUES_FILE")"
+          [ -n "$issuer" ] && [ "$issuer" != "null" ] || { echo "::error::$VALUES_FILE has no authenticator.oidc.issuerUrl"; exit 1; }
+          [ -n "$base" ] && [ "$base" != "null" ] || { echo "::error::$VALUES_FILE has no gateway.route.host"; exit 1; }
+          base="https://$base"
+          echo "edge: $base   issuer: $issuer"
+          failed=0
+          probe() {
+            out="$(curl -sS -o /dev/null -w '%{http_code}' -m 20 "$1" 2>&1)" \
+              || { echo "::error::curl could not reach $1 (DNS/TLS/connect)"; failed=1; return; }
+            if [ "$out" = "$2" ]; then
+              echo "  $out  $1"
+            else
+              echo "::error::$1 answered $out, expected $2"; failed=1
+            fi
+          }
+          probe "$base/" 200
+          probe "$base/auth/me" 401
+          # Strict equality against the IdP's discovery doc, not on $base.
+          advertised="$(curl -sS -m 20 "$issuer/.well-known/openid-configuration" | jq -r '.issuer // ""')"
+          if [ "$advertised" = "$issuer" ]; then
+            echo "  issuer matches $VALUES_FILE"
+          else
+            echo "::error::the IdP advertises issuer '$advertised', not '$issuer' (authenticator.oidc.issuerUrl)."
+            failed=1
+          fi
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::the stand is not answering correctly at its public edge; the seed and smoke below are skipped."
+            echo "This uses no credential — read the cause operator-side: 'helm history $STAND_RELEASE -n $STAND_NAMESPACE'."
+            exit 1
+          fi
+
+      # seed-stand.sh now runs three Jobs in sequence — the seed itself, the
+      # identity projection (persons-seed + persons-sync), and the gold rebuild.
+      # 110 min sits above the sum of their own activeDeadlineSeconds, so each
+      # Job's deadline fires first and leaves no orphan Job.
+      - name: 'Stage 3/4 — seed the stand'
+        id: seed
+        if: steps.stages.outputs.run_seed == 'true'
+        timeout-minutes: 110
+        env:
+          SEED_EMAIL: ${{ secrets.TEST_STAND_SEED_EMAIL }}
+          # Unset on a workflow_call, so this branch is never taken there.
+          SEED_FORCE: ${{ inputs.seed_force }}
+        run: |
+          set -euo pipefail
+          # --force is dispatch-only: the silver step it guards CLEARS its
+          # tables, so forcing loses any foreign data on the tenant.
+          force_args=()
+          if [ "${SEED_FORCE:-false}" = "true" ]; then
+            force_args+=(--force)
+            echo "::warning::seeding with --force — the seeder's foreign-person-rows guard is overridden for this run."
+          fi
+
+          email_args=()
+          if [ -n "${SEED_EMAIL:-}" ]; then
+            email_args+=(--email "$SEED_EMAIL")
+            echo "::warning::seeding with an explicit --email from secrets.TEST_STAND_SEED_EMAIL — the dev-lead address is NOT being read from the realm this deploy applied. Unset that secret unless this stand's realm is provisioned outside deploy/gitops."
+          fi
+
+          # 365, not more: the API refuses any period ≥ 400 days.
+          kube_context="$(yq -r '.kubeContext' "$INVENTORY_FILE")"
+          seed_rc=0
+          ./src/ingestion/tools/seed/seed-stand.sh \
+            -n "$STAND_NAMESPACE" \
+            --context "$kube_context" \
+            "${email_args[@]}" \
+            --days 365 \
+            "${force_args[@]}" \
+            > "$RUNNER_TEMP/seed.log" 2>&1 || seed_rc=$?
+
+          # One sentinel line, written by insight_seed/manifest.py:write_manifest.
+          manifest_rc=0
+          grep -m1 '^SEED_MANIFEST_JSON: ' "$RUNNER_TEMP/seed.log" \
+            | cut -d' ' -f2- > "$RUNNER_TEMP/stand-manifest.json" || manifest_rc=$?
+
+          if [ "$seed_rc" -eq 0 ] && [ "$manifest_rc" -eq 0 ]; then
+            personas="$(jq '.personas | length' "$RUNNER_TEMP/stand-manifest.json")"
+            fixtures="$(jq '.fixtures | length' "$RUNNER_TEMP/stand-manifest.json")"
+            window="$(jq -r '.data_window' "$RUNNER_TEMP/stand-manifest.json")"
+            echo "==> seed complete: personas=$personas fixtures=$fixtures data_window=$window"
+            exit 0
+          fi
+
+          # Allowlist by shape: only seed-stand.sh's own `==>`/`ERROR:` lines
+          # reach the public log, never the pod log it follows.
+          echo "::error::the seed stage failed."
+          [ "$seed_rc" -eq 0 ] || echo "::error::seed-stand.sh exited $seed_rc."
+          [ "$manifest_rc" -eq 0 ] || echo "::error::no SEED_MANIFEST_JSON line in the seed log — the seeder did not reach the end of its run."
+          grep -E '^(==>|ERROR:)' "$RUNNER_TEMP/seed.log" | python3 "$REDACT" || true
+          echo "The full seed log (cluster and pod output) stays on the runner in \$RUNNER_TEMP;"
+          echo "it is not published. While the Job survives (an hour, backoffLimit 0), read it"
+          echo "operator-side: kubectl -n $STAND_NAMESPACE logs job/<name> — the name is in the"
+          echo "lines above."
+          exit 1
+
+      - name: 'Stage 4/4 — smoke the stand through its public URL'
+        id: smoke
+        if: steps.stages.outputs.run_smoke == 'true'
+        timeout-minutes: 5
+        env:
+          # The variable tests/stand/conftest.py reads for every lane.
+          INSIGHT_STAND_BASE_URL: ${{ vars.TEST_STAND_BASE_URL }}
+          INSIGHT_STAND_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD }}
+          # tests/lib/insight_stand/manifest.py falls back to this when no
+          # --stand-manifest flag is given.
+          INSIGHT_STAND_MANIFEST: ${{ runner.temp }}/stand-manifest.json
+        run: |
+          set -euo pipefail
+          # Explicit: the library default is relative to its own location.
+          export INSIGHT_STAND_ARTIFACT_DIR="$RUNNER_TEMP/stand-artifacts"
+          mkdir -p "$INSIGHT_STAND_ARTIFACT_DIR"
+          uv run --project tests --frozen \
+            pytest tests/stand -m stand_smoke --stand-manifest "$INSIGHT_STAND_MANIFEST" \
+            2>&1 | python3 "$REDACT"
+
+      - name: Summarise the run
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+          RUN_SEED: ${{ steps.stages.outputs.run_seed }}
+          RUN_SMOKE: ${{ steps.stages.outputs.run_smoke }}
+          STAGES: ${{ inputs.stages }}
+          # From what the steps DID, not what was requested.
+          DEPLOY_RESULT: >-
+            ${{ steps.deploy_secret.outcome || 'skipped' }} ${{ steps.deploy_downgrade_guard.outcome || 'skipped' }} ${{ steps.deploy_upgrade.outcome || 'skipped' }} ${{ steps.deploy_routes.outcome || 'skipped' }}
+          EDGE_RESULT: ${{ steps.edge.outcome || 'skipped' }}
+          SEED_RESULT: ${{ steps.seed.outcome || 'skipped' }}
+          GATE_RESULT: ${{ steps.smoke.outcome || 'skipped' }}
+        run: |
+          set -euo pipefail
+
+          # Worst-first: the case arms must stay in this order, or a
+          # half-failed stage renders as a pass.
+          render() {
+            local outcomes="$1"
+            case " $outcomes " in
+              *" failure "*)   echo "**failed**" ;;
+              *" cancelled "*) echo "cancelled" ;;
+              *" skipped "*)
+                case " $outcomes " in
+                  *" success "*) echo "**incomplete** — started, did not finish" ;;
+                  *)             echo "— not run" ;;
+                esac
+                ;;
+              *" success "*)   echo "passed" ;;
+              *)               echo "— not run" ;;
+            esac
+          }
+
+          {
+            echo "### Test stand — \`$CHART_VERSION\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| chart | \`insight-$CHART_VERSION\` |"
+            echo "| environment | \`$ENV_NAME\` (namespace \`$STAND_NAMESPACE\`, release \`$STAND_RELEASE\`) |"
+            echo "| requested | \`${STAGES:-all}\` |"
+            echo "| deploy | $(render "$DEPLOY_RESULT") |"
+            echo "| edge | $(render "$EDGE_RESULT") |"
+            echo "| seed | $(render "$SEED_RESULT") |"
+            echo "| smoke | $(render "$GATE_RESULT") |"
+            echo "| outcome | **$OUTCOME** |"
+            echo ""
+            if [ "$RUN_SMOKE" != "true" ]; then
+              echo "> **Partial run — this is a rehearsal, not a pass.** The smoke gate did not"
+              echo "> run, so nothing here claims a person can sign in or that any metric returns"
+              echo "> data. It says the chart installs$([ "$RUN_SEED" = "true" ] && echo ' and the stand seeds' || echo ''), and no more."
+              echo ""
+            fi
+            if [ "$OUTCOME" != "success" ]; then
+              echo "This is an after-merge alarm, not a merge gate: the chart under test did not"
+              echo "exist until the merge happened. **The author of the merge commit owns this run.**"
+              echo "Fix forward if the cause is small and obvious, revert if it is not."
+              echo ""
+              echo "A failed \`helm upgrade\` is left in place on purpose — the pods holding the"
+              echo "reason are still in namespace \`$STAND_NAMESPACE\` for an operator to read. CI"
+              echo "publishes no cluster output; \`helm history $STAND_RELEASE -n $STAND_NAMESPACE\`"
+              echo "carries the description helm wrote."
+              echo ""
+              echo "This stand is DISPOSABLE. Recovery is the next merge, or rebuilding it with"
+              echo "\`deploy/gitops/scripts/recreate-test-stand.sh\` and letting the current"
+              echo "published chart install onto it. It is never a rollback and never a downgrade:"
+              echo "reinstalling an older chart over a newer one is how this stand was wedged once"
+              echo "already, and it leaves the next merge deploying onto objects it cannot patch."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

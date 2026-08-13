@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.07.10.55-a89a41d" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.13.02.07-bf2b602" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.07.10.55-a89a41d" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.13.02.07-bf2b602" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -249,7 +249,7 @@ ingestion:
 # ClickHouse, MariaDB, Redis and Redpanda are NOT bundled by this chart.
 # They run as separate releases in `insight-infra` (gitops `make system-*`).
 # See CONTRIBUTING.md ("Deployment paths" → Kubernetes) and
-# docs/components/deployment/specs/DESIGN.md for the layered L0/L2/L3 model.
+# deploy/gitops/README.md for the layered L0/L2/L3 model.
 # The blocks below are pure WIRING — the host/port/creds the app services
 # and the pre-install init-DB Hook Jobs use to reach them:
 #   <dep>.host / .port     — connection target (host MUST be set)
@@ -335,14 +335,15 @@ gateway:
   resources:
     requests: {cpu: 25m, memory: 32Mi}
     limits: {cpu: 500m, memory: 128Mi}
-  # The gateway is the cluster ingress target; it routes "/" internally.
-  ingress:
+  # The gateway's route attaches to the shared Gateway; it routes "/" internally.
+  route:
     enabled: true
-    className: nginx
+    parentRef:
+      name: insight
+      namespace: insight-infra
+      # Target listener on the Gateway (e.g. https). Empty = all listeners.
+      sectionName: ""
     host: ""
-    tls:
-      enabled: false
-      secretName: ""
 # ─── Authenticator (OIDC login + Redis sessions + gateway-JWT mint) ─────────
 authenticator:
   replicaCount: 1
@@ -387,6 +388,11 @@ authenticator:
   # minted for that person instead of the authenticated one. Dev/demo
   # environments ONLY — MUST stay false anywhere real users log in.
   overrideEnabled: false
+  # Honor a post-login return into the `/exp/<name>` preview subtree (#1973):
+  # only when true is a login return under that prefix accepted. Dev/demo
+  # preview stands ONLY — a production stand leaves this false so it cannot
+  # host experimental frontends against its data.
+  experimentsEnabled: false
 # ─── keycloak ────────────────────────────────────────────────────────────────
 # The stack's Keycloak (identity broker, ADR-0003): start, MariaDB-backed,
 # admin from a Secret; realm content via keycloakConfig only.
@@ -399,7 +405,7 @@ keycloak:
   # Advertised issuer BASE (must end in /kc) — the URL browser AND
   # authenticator reach, e.g. https://<host>/kc.
   hostname: ""
-  # Admin console base. The ingress exposes only /kc/realms + /kc/resources;
+  # Admin console base. The route exposes only /kc/realms + /kc/resources;
   # the console rides a port-forward (empty = http://localhost:<port>/kc).
   adminHostname: ""
   # Bootstrap-admin Secret (keys username/password) and DB connection.
@@ -411,7 +417,7 @@ keycloak:
     name: "keycloak"
     username: ""
     passwordSecret: {name: "", key: ""}
-  ingress:
+  route:
     enabled: false
 # ─── keycloakConfig (broker realms as code — ADR-0003, EPIC #2193) ──────────
 # Hook Job applying the env's versioned realm YAML (pre-created ConfigMap from
@@ -592,11 +598,13 @@ frontend:
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 200m, memory: 128Mi}
-  ingress:
+  # Standalone installs only — the SPA is served through the gateway's "/"
+  # route; enabling both on one Gateway/host makes the routes collide.
+  route:
     enabled: false
-    className: nginx
-    host: ""
   sentry:
     # Sentry origin the SPA posts to, e.g. "https://sentry.example.com".
     # Empty leaves it out of the CSP, which blocks every event.
     connectSrc: ""
+    # DSN the SPA reads from /config.js at load. Empty disables reporting.
+    dsn: ""

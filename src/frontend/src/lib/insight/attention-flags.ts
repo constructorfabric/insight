@@ -1,4 +1,5 @@
 import { formatMetricValue } from "@/lib/format";
+import { dropRedundantMetrics } from "@/lib/insight/metric-containment";
 import { MIN_COHORT, quantile } from "@/lib/insight/within-team-peer";
 import {
   forEntity,
@@ -200,7 +201,46 @@ export function computeAttentionFlags({
     const cur = best.get(k);
     if (!cur || f.severity > cur.severity) best.set(k, f);
   }
-  return [...best.values()].sort((a, b) => b.severity - a.severity);
+  return thinPerPerson([...best.values()]).sort(
+    (a, b) => b.severity - a.severity,
+  );
+}
+
+/**
+ * Drop flags that restate another flag on the same person.
+ *
+ * Some metrics contain others — lines added contains code lines, files shared
+ * contains its internal and external splits — and one real change trips every
+ * metric of a containing set at once. Left alone, one fact arrives as several
+ * flags: the person appears several times over, and any count of "how many
+ * things are wrong" is really a count of how many ways we measured one thing.
+ *
+ * Thinned per person rather than globally: two people tripping the same pair of
+ * related metrics are two findings, not one.
+ *
+ * Of a contained pair the NARROWER metric survives — the containment helper's
+ * rule, and the right one: "lines added to code files" excludes documentation,
+ * tests and configuration, so it says something "all lines added" cannot.
+ *
+ * Strongest first before thinning, because of several RESTATING metrics the
+ * helper keeps the first it meets — so the flag that survives that case is the
+ * one worth surviving.
+ */
+function thinPerPerson(flags: AttentionFlag[]): AttentionFlag[] {
+  const byPerson = new Map<string, AttentionFlag[]>();
+  for (const f of flags) {
+    const list = byPerson.get(f.personId);
+    if (list) list.push(f);
+    else byPerson.set(f.personId, [f]);
+  }
+  return [...byPerson.values()].flatMap((list) =>
+    dropRedundantMetrics(
+      [...list]
+        .sort((a, b) => b.severity - a.severity)
+        // The containment map is keyed on `key`; flags carry `metricKey`.
+        .map((flag) => ({ key: flag.metricKey, flag })),
+    ).map((item) => item.flag),
+  );
 }
 
 /** "1 person" / "3 people" — a scope of one is a real case (a lead with one report). */
@@ -216,9 +256,18 @@ export function attentionSummary(
 ): string {
   if (flags.length === 0)
     return `All ${people(teamSize)} are within their usual range this period.`;
-  const byMetric = new Map<string, number>();
-  for (const f of flags) byMetric.set(f.metricLabel, (byMetric.get(f.metricLabel) ?? 0) + 1);
-  const top = [...byMetric.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2);
-  const themes = top.map(([label, n]) => `${label} (${n})`).join(", ");
-  return `${flaggedPeople} of ${people(teamSize)} need a look — most flags on ${themes}.`;
+  // Counted in PEOPLE, like the rest of the line. Counting flags here made one
+  // sentence hold two units — "3 of 16 people … most flags on Commits (5)" —
+  // and left a reader to work out that five flags can belong to two people.
+  const byMetric = new Map<string, Set<string>>();
+  for (const f of flags) {
+    const seen = byMetric.get(f.metricLabel) ?? new Set<string>();
+    seen.add(f.personId);
+    byMetric.set(f.metricLabel, seen);
+  }
+  const top = [...byMetric.entries()]
+    .sort((a, b) => b[1].size - a[1].size)
+    .slice(0, 2);
+  const themes = top.map(([label, who]) => `${label} (${people(who.size)})`).join(", ");
+  return `${flaggedPeople} of ${people(teamSize)} need a look — most often ${themes}.`;
 }

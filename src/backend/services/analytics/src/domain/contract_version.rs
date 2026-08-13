@@ -59,8 +59,7 @@ fn report(state: StampState, error: Option<&clickhouse::error::Error>) {
         StampState::Mismatch(stamped) => tracing::error!(
             pinned = PINNED_CONTRACT_VERSION,
             stamped,
-            "contract version stamp differs from the pinned contract surface; \
-             see docs/domain/presentation-layer/specs/CONTRACT-SURFACE.md"
+            "contract version stamp differs from the pinned contract surface"
         ),
         StampState::Unreadable => tracing::warn!(
             error = error.map(ToString::to_string),

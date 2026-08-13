@@ -13,7 +13,7 @@ exercised by no test, a SKIP_LIST entry rots, or a REQUIRED_EXTRA code is
 unproven/stale/redundant (see gate_violations). Ordinary per-status-code
 coverage is REPORTED, not enforced: each declared code is `✓` observed / `✗` unobserved /
 `·` excluded (5xx + UNIVERSAL_BOILERPLATE + BLOCKED[op], see below). Excluded-set
-hygiene is a non-blocking advisory. Rationale: docs/domain/bronze-to-api-e2e/specs.
+hygiene is a non-blocking advisory.
 
     python3 lib/api_coverage.py --observed .artifacts/observed_endpoints.json \
         --spec docs/components/backend/analytics/openapi.json

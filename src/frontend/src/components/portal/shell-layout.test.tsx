@@ -46,6 +46,11 @@ vi.mock("@/components/widgets/period-selector-bar", () => ({
 vi.mock("@/queries/ic-dashboard", () => ({
   useIcPerson: () => ({ data: null }),
 }));
+// The topbar asks the catalog which attributes a comparison may use; this
+// test is about the shell's layout, not about that answer.
+vi.mock("@/queries/metric-definitions", () => ({
+  useMetricDefinitionsResponse: () => ({ data: undefined }),
+}));
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
     period: "month",

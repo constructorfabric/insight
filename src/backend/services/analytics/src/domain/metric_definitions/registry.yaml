@@ -179,6 +179,7 @@ sources:
 metrics:
   - metric_key: ai.accepted_lines
     source_key: ai_usage
+    subject: code
     label: AI-added lines
     short_label: AI lines +
     description: Accepted added coding output
@@ -196,6 +197,7 @@ metrics:
       - tool
   - metric_key: ai.removed_lines
     source_key: ai_usage
+    subject: code
     label: AI-removed lines
     short_label: AI lines −
     description: Accepted deleted coding output
@@ -213,6 +215,7 @@ metrics:
       - tool
   - metric_key: ai.active_days
     source_key: ai_usage
+    subject: activity
     label: AI active days
     short_label: AI days
     description: Days with any AI activity across dev and assistant tools
@@ -229,6 +232,7 @@ metrics:
     dimensions: []
   - metric_key: ai.cost
     source_key: ai_usage
+    subject: cost
     label: AI usage cost
     description: AI usage priced at vendor token/usage rates
     explanation: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person.
@@ -244,6 +248,7 @@ metrics:
       - tool
   - metric_key: ai.accepted_edit_actions
     source_key: ai_usage
+    subject: code
     label: Accepted AI edits
     short_label: AI edits
     description: Accepted tool or edit suggestions
@@ -261,6 +266,9 @@ metrics:
       - tool
   - metric_key: ai.tool_acceptance_rate
     source_key: ai_usage
+    subject: code
+    tags:
+      - rate
     label: AI tool acceptance
     short_label: AI accept %
     description: Accepted divided by offered AI edits
@@ -280,6 +288,7 @@ metrics:
       - tool
   - metric_key: ai.assistant_messages
     source_key: ai_usage
+    subject: assistant
     label: AI assistant messages
     short_label: AI msgs
     description: Assistant messages
@@ -298,6 +307,7 @@ metrics:
       - surface
   - metric_key: ai.assistant_actions
     source_key: ai_usage
+    subject: assistant
     label: AI assistant actions
     short_label: AI actions
     description: Assistant actions
@@ -316,6 +326,7 @@ metrics:
       - surface
   - metric_key: ai.dev_conversations
     source_key: ai_usage
+    subject: assistant
     label: AI dev conversations
     short_label: AI dev chats
     description: Coding tool conversations where the source reports them
@@ -333,6 +344,7 @@ metrics:
       - tool
   - metric_key: ai.chat_assistant_conversations
     source_key: ai_usage
+    subject: assistant
     label: AI chat conversations
     short_label: AI chats
     description: Chat assistant conversations
@@ -351,6 +363,7 @@ metrics:
       - surface
   - metric_key: git.commits
     source_key: git
+    subject: commits
     label: Commits
     description: Authored commits
     explanation: Distinct authored commits across connected git sources, excluding merge commits.
@@ -369,6 +382,7 @@ metrics:
       - source
   - metric_key: git.code_lines
     source_key: git
+    subject: code_changes
     label: Code lines added
     short_label: Code lines
     description: Lines added to code files
@@ -390,6 +404,7 @@ metrics:
       - source
   - metric_key: git.lines_added
     source_key: git
+    subject: code_changes
     label: Lines added
     short_label: Lines +
     description: All lines added, by file category
@@ -412,6 +427,7 @@ metrics:
       - source
   - metric_key: git.lines_removed
     source_key: git
+    subject: code_changes
     label: Lines removed
     short_label: Lines −
     description: All lines removed, by file category
@@ -434,6 +450,7 @@ metrics:
       - source
   - metric_key: git.prs_created
     source_key: git
+    subject: pull_requests
     label: Pull requests created
     short_label: PRs opened
     description: Authored pull requests
@@ -454,6 +471,7 @@ metrics:
       - source
   - metric_key: git.prs_merged
     source_key: git
+    subject: pull_requests
     label: Pull requests merged
     short_label: PRs merged
     description: Authored pull requests merged
@@ -474,6 +492,9 @@ metrics:
       - source
   - metric_key: git.merge_rate
     source_key: git
+    subject: pull_requests
+    tags:
+      - rate
     label: PR merge rate
     short_label: Merge %
     description: Share of created pull requests that merged
@@ -496,6 +517,9 @@ metrics:
       - source
   - metric_key: git.commits_per_active_day
     source_key: git
+    subject: commits
+    tags:
+      - rate
     label: Commits per active day
     short_label: Commits/day
     description: Commit cadence on days with commits
@@ -514,6 +538,9 @@ metrics:
     dimensions: []
   - metric_key: git.commit_size
     source_key: git
+    subject: commits
+    tags:
+      - distribution
     label: Commit size
     description: Typical diff size per commit
     explanation: Median diff size of authored commits (lines added plus removed). Smaller commits are easier to review.
@@ -532,6 +559,9 @@ metrics:
       - source
   - metric_key: git.pr_size
     source_key: git
+    subject: pull_requests
+    tags:
+      - distribution
     label: PR size
     description: Typical diff size per pull request
     explanation: Median diff size of authored pull requests (lines added plus removed). Smaller requests are easier to review. Sources that do not report line counts contribute no values.
@@ -551,6 +581,10 @@ metrics:
       - source
   - metric_key: git.pr_cycle_time_h
     source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
     label: PR cycle time
     short_label: PR cycle
     description: Typical hours from open to merge
@@ -571,6 +605,7 @@ metrics:
       - source
   - metric_key: collab.messages_sent
     source_key: collab
+    subject: messaging
     label: Messages Sent
     short_label: Msgs
     description: Chat messages sent
@@ -588,6 +623,7 @@ metrics:
       - tool
   - metric_key: collab.channel_posts
     source_key: collab
+    subject: messaging
     label: Channel Posts
     short_label: Channel posts
     description: Messages posted to shared channels, including replies
@@ -605,6 +641,9 @@ metrics:
       - tool
   - metric_key: collab.dm_ratio
     source_key: collab
+    subject: messaging
+    tags:
+      - rate
     label: DM Ratio
     short_label: DM %
     description: Share of messages sent in direct or group chats
@@ -624,6 +663,9 @@ metrics:
       - tool
   - metric_key: collab.msgs_per_active_day
     source_key: collab
+    subject: messaging
+    tags:
+      - rate
     label: Messages per Active Day
     short_label: Msgs/day
     description: Chat messages divided by chat-active days
@@ -644,6 +686,7 @@ metrics:
       - tool
   - metric_key: collab.active_days
     source_key: collab
+    subject: activity
     label: Active Days
     description: Days with collaboration activity
     explanation: Distinct days on which a person took a deliberate collaboration action — sending a message, sending email, engaging or sharing a file, or attending a meeting. Passive activity such as receiving or reading email is excluded.
@@ -660,6 +703,7 @@ metrics:
       - tool
   - metric_key: collab.emails_sent
     source_key: collab
+    subject: email
     label: Emails Sent
     short_label: Emails sent
     description: Emails sent
@@ -677,6 +721,7 @@ metrics:
       - tool
   - metric_key: collab.emails_received
     source_key: collab
+    subject: email
     label: Emails Received
     short_label: Emails rcvd
     description: Emails received
@@ -694,6 +739,7 @@ metrics:
       - tool
   - metric_key: collab.emails_read
     source_key: collab
+    subject: email
     label: Emails Read
     short_label: Emails read
     description: Emails read
@@ -711,6 +757,7 @@ metrics:
       - tool
   - metric_key: collab.files_engaged
     source_key: collab
+    subject: documents
     label: Files Engaged
     description: Files viewed or edited
     explanation: Files a person viewed or edited.
@@ -727,6 +774,7 @@ metrics:
       - tool
   - metric_key: collab.files_shared_internal
     source_key: collab
+    subject: documents
     label: Files Shared (Internal)
     short_label: Files (int)
     description: Files shared inside the organization
@@ -744,6 +792,7 @@ metrics:
       - tool
   - metric_key: collab.files_shared_external
     source_key: collab
+    subject: documents
     label: Files Shared (External)
     short_label: Files (ext)
     description: Files shared outside the organization
@@ -761,6 +810,7 @@ metrics:
       - tool
   - metric_key: collab.files_shared
     source_key: collab
+    subject: documents
     label: Files Shared
     short_label: Files shared
     description: Files shared with any recipient
@@ -778,6 +828,9 @@ metrics:
       - scope
   - metric_key: collab.meeting_hours
     source_key: collab
+    subject: meetings
+    tags:
+      - duration
     label: Meeting Hours
     short_label: Mtg hrs
     description: Hours spent in meetings
@@ -795,6 +848,7 @@ metrics:
       - tool
   - metric_key: collab.meetings_count
     source_key: collab
+    subject: meetings
     label: Meetings Attended
     short_label: Mtgs
     description: Distinct meetings attended
@@ -812,6 +866,7 @@ metrics:
       - tool
   - metric_key: collab.meeting_free_days
     source_key: collab
+    subject: meetings
     label: Meeting-Free Days
     short_label: Mtg-free days
     description: Active days with no meeting time
@@ -828,6 +883,9 @@ metrics:
     dimensions: []
   - metric_key: collab.focus_time_pct
     source_key: collab
+    subject: focus
+    tags:
+      - rate
     label: Focus Time
     short_label: Focus %
     description: Share of the workday outside meetings
@@ -846,6 +904,7 @@ metrics:
     dimensions: []
   - metric_key: collab.breadth
     source_key: collab
+    subject: activity
     label: Collaboration Breadth
     short_label: Breadth
     description: Distinct collaboration modalities used
@@ -862,6 +921,7 @@ metrics:
     dimensions: []
   - metric_key: collab.meetings_organized
     source_key: collab
+    subject: meetings
     label: Meetings Organized
     short_label: Mtgs hosted
     description: Meetings organized
@@ -879,6 +939,7 @@ metrics:
       - tool
   - metric_key: collab.adhoc_meetings
     source_key: collab
+    subject: meetings
     label: Ad-hoc Meetings
     short_label: Ad-hoc mtgs
     description: Unscheduled meetings attended
@@ -896,6 +957,7 @@ metrics:
       - tool
   - metric_key: collab.scheduled_meetings
     source_key: collab
+    subject: meetings
     label: Scheduled Meetings
     short_label: Sched. mtgs
     description: Scheduled meetings attended
@@ -913,12 +975,12 @@ metrics:
       - tool
   - metric_key: tasks.closed
     source_key: task
+    subject: throughput
     label: Issues closed
     short_label: Issues
     description: Every issue closed in the tracker
     explanation: >-
-      All issues a person moved into a closed status during the period. Bugs are
-      part of this number and are listed separately by type.
+      All issues a person moved into a closed status during the period. Bugs are part of this number and are listed separately by type.
     unit: issues
     format: integer
     direction: higher_is_better
@@ -932,12 +994,12 @@ metrics:
       - type
   - metric_key: tasks.bugs_fixed
     source_key: task
+    subject: quality
     label: Bugs closed
     short_label: Bugs
     description: Bug-type issues closed
     explanation: >-
-      Issues of a bug type a person closed during the period. Part of issues
-      closed, not a separate total.
+      Issues of a bug type a person closed during the period. Part of issues closed, not a separate total.
     unit: issues
     format: integer
     direction: higher_is_better
@@ -950,12 +1012,12 @@ metrics:
     dimensions: []
   - metric_key: tasks.closed_non_bug
     source_key: task
+    subject: throughput
     label: Non-bug issues closed
     short_label: Non-bug
     description: Closed issues of a known non-bug type
     explanation: >-
-      Issues of a known non-bug type a person closed during the period. Issues
-      whose type cannot be determined are excluded rather than counted here.
+      Issues of a known non-bug type a person closed during the period. Issues whose type cannot be determined are excluded rather than counted here.
     unit: issues
     format: integer
     direction: higher_is_better
@@ -968,6 +1030,10 @@ metrics:
     dimensions: []
   - metric_key: tasks.dev_time
     source_key: task
+    subject: cycle_time
+    tags:
+      - duration
+      - distribution
     label: Development time
     short_label: Dev time
     description: Time an issue spends in active development
@@ -984,6 +1050,10 @@ metrics:
     dimensions: []
   - metric_key: tasks.resolution_time
     source_key: task
+    subject: cycle_time
+    tags:
+      - duration
+      - distribution
     label: Time to resolution
     short_label: Resolution
     description: Issue lifetime from creation to close
@@ -1000,6 +1070,10 @@ metrics:
     dimensions: []
   - metric_key: tasks.pickup_time
     source_key: task
+    subject: cycle_time
+    tags:
+      - duration
+      - distribution
     label: Pickup time
     short_label: Pickup
     description: Wait before work starts on an issue
@@ -1016,6 +1090,9 @@ metrics:
     dimensions: []
   - metric_key: tasks.flow_efficiency
     source_key: task
+    subject: cycle_time
+    tags:
+      - rate
     label: Flow efficiency
     short_label: Flow %
     description: Active development share of issue lifetime
@@ -1036,6 +1113,9 @@ metrics:
     dimensions: []
   - metric_key: tasks.reopen_rate
     source_key: task
+    subject: quality
+    tags:
+      - rate
     label: Reopen rate
     short_label: Reopen %
     description: Closed issues reopened shortly after
@@ -1054,6 +1134,9 @@ metrics:
     dimensions: []
   - metric_key: tasks.due_date_compliance
     source_key: task
+    subject: predictability
+    tags:
+      - rate
     label: Due date compliance
     short_label: Due date %
     description: On-time share of issues with a due date
@@ -1072,6 +1155,9 @@ metrics:
     dimensions: []
   - metric_key: tasks.on_time_delivery
     source_key: task
+    subject: predictability
+    tags:
+      - rate
     label: On-time delivery
     short_label: On-time %
     description: On-time share of all closed issues
@@ -1090,6 +1176,10 @@ metrics:
     dimensions: []
   - metric_key: tasks.avg_slip
     source_key: task
+    subject: predictability
+    tags:
+      - rate
+      - duration
     label: Average slip
     short_label: Avg slip
     description: How late overdue issues close
@@ -1109,6 +1199,9 @@ metrics:
     dimensions: []
   - metric_key: tasks.estimation_accuracy
     source_key: task
+    subject: predictability
+    tags:
+      - rate
     label: Estimation accuracy
     short_label: Estimate %
     description: How close estimates land to time spent
@@ -1132,6 +1225,9 @@ metrics:
     dimensions: []
   - metric_key: tasks.worklog_accuracy
     source_key: task
+    subject: predictability
+    tags:
+      - rate
     label: Worklog accuracy
     short_label: Worklog %
     description: Logged time versus tracked development
@@ -1152,13 +1248,14 @@ metrics:
     dimensions: []
   - metric_key: tasks.bugs_ratio
     source_key: task
+    subject: quality
+    tags:
+      - rate
     label: Bugs share of closed issues
     short_label: Bug share
     description: Bugs as a share of all closed issues
     explanation: >-
-      Bug-type issues as a share of all closed issues, issues of an
-      undetermined type included in the denominator. A share, so it cannot
-      exceed 100%.
+      Bug-type issues as a share of all closed issues, issues of an undetermined type included in the denominator. A share, so it cannot exceed 100%.
     format: percent
     direction: lower_is_better
     entity_type: person
@@ -1173,6 +1270,7 @@ metrics:
     dimensions: []
   - metric_key: tasks.stale_in_progress
     source_key: task
+    subject: throughput
     label: Stale in progress
     short_label: Stale WIP
     description: Open issues idle for over two weeks
@@ -1189,6 +1287,7 @@ metrics:
     dimensions: []
   - metric_key: wiki.pages_created
     source_key: wiki
+    subject: authoring
     label: Pages created
     short_label: New pages
     description: Wiki pages authored
@@ -1205,6 +1304,7 @@ metrics:
     dimensions: []
   - metric_key: wiki.edits
     source_key: wiki
+    subject: authoring
     label: Page edits
     short_label: Edits
     description: Wiki edit sessions
@@ -1221,6 +1321,7 @@ metrics:
     dimensions: []
   - metric_key: wiki.pages_edited
     source_key: wiki
+    subject: authoring
     label: Pages edited
     short_label: Pages edited
     description: Distinct wiki pages edited
@@ -1237,6 +1338,7 @@ metrics:
     dimensions: []
   - metric_key: wiki.comments
     source_key: wiki
+    subject: engagement
     label: Comments received
     short_label: Comments
     description: Comments on the person's wiki pages

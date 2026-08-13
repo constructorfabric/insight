@@ -1,6 +1,6 @@
 ---
 name: check-dbt-conventions
-description: "Audit dbt models and connector configurations against the data-flow conventions defined in docs/domain/ingestion-data-flow/specs/. Verifies engine=ReplacingMergeTree, order_by=['unique_key'], silver delete+insert, read-time dedup of every RMT read (FINAL/QUALIFY/LIMIT 1 BY/union_by_tag), unique_key formula, bronze→RMT promotion, ephemeral usage for Rust-owned tables, and Airbyte append-only sync mode. Reports deviations with file paths and line numbers."
+description: "Audit dbt models and connector configurations against the data-flow conventions in .cf-studio/config/rules/architecture.md. Verifies engine=ReplacingMergeTree, order_by=['unique_key'], silver delete+insert, read-time dedup of every RMT read (FINAL/QUALIFY/LIMIT 1 BY/union_by_tag), unique_key formula, bronze→RMT promotion, ephemeral usage for Rust-owned tables, and Airbyte append-only sync mode. Reports deviations with file paths and line numbers."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Glob, Grep
@@ -8,19 +8,15 @@ allowed-tools: Bash, Read, Glob, Grep
 
 # Check dbt Pipeline Conventions
 
-This skill audits the codebase against the four ADRs in `docs/domain/ingestion-data-flow/specs/ADR/` plus the DESIGN. It is **LLM-based correctness validation** — complements `cfs validate` which only checks artifact structure and code-marker presence (not engine config content).
+This skill audits the codebase against the dbt pipeline conventions. It is **LLM-based correctness validation** — complements `cfs validate` which only checks artifact structure and code-marker presence (not engine config content).
 
 ## Source of truth
 
-Before reporting anything, **read these specs THIS turn**:
+Before reporting anything, **read this THIS turn**:
 
-1. [docs/domain/ingestion-data-flow/specs/DESIGN.md](../../../docs/domain/ingestion-data-flow/specs/DESIGN.md) — the convention document
-2. [ADR-0001](../../../docs/domain/ingestion-data-flow/specs/ADR/0001-rmt-with-version-and-unique-key.md) — RMT(_version) + ORDER BY (unique_key)
-3. [ADR-0002](../../../docs/domain/ingestion-data-flow/specs/ADR/0002-promote-bronze-to-rmt.md) — bronze MT → RMT promotion
-4. [ADR-0003](../../../docs/domain/ingestion-data-flow/specs/ADR/0003-ephemeral-rust-passthrough.md) — ephemeral for Rust-written staging
-5. [ADR-0004](../../../docs/domain/ingestion-data-flow/specs/ADR/0004-unique-key-formula.md) — unique_key formula
+- [.cf-studio/config/rules/architecture.md](../../../.cf-studio/config/rules/architecture.md) — "dbt Pipeline Conventions (summary)" states the hard rules this skill enforces
 
-If specs change, this skill's checks update automatically — always derive the rules from the specs, not from this file.
+Where that file and the checks below disagree, the rules file wins — update the checks to match it.
 
 ## What to check
 
@@ -30,9 +26,9 @@ For every `.sql` file under `src/ingestion/silver/` (excluding `crm.disabled`):
 
 - `engine` must be `'ReplacingMergeTree(_version)'` OR `'ReplacingMergeTree'` (versionless, only for `materialized='table'`)
 - `order_by` must be `['unique_key']`
-- `materialized` must NOT be `'view'` (per DESIGN §2.1: views forbidden for silver)
+- `materialized` must NOT be `'view'` (views are forbidden for silver)
 - If `materialized='incremental'` → `incremental_strategy='delete+insert'` AND `unique_key='unique_key'`
-  (per ADR-0001 2026-06-03 amendment: silver is physically deduplicated so any
+  (silver is physically deduplicated so any
   consumer — gold views, the product — can read silver WITHOUT `FINAL`).
   `incremental_strategy='append'` in a silver model is now a FAIL.
 
@@ -48,7 +44,7 @@ For each file: read the `{{ config(...) }}` block. Report violations with file p
 For every `.sql` file under `src/ingestion/connectors/*/dbt/`:
 
 - If `materialized` is `incremental` or `table` → `engine='ReplacingMergeTree(_version)'` + `order_by=['unique_key']`
-- If `materialized` is `view` → confirm it's a thin pass-through (no GROUP BY / window) AND the bronze upstream has been promoted (per ADR-0002)
+- If `materialized` is `view` → confirm it's a thin pass-through (no GROUP BY / window) AND the bronze upstream has been promoted
 - If `materialized` is `ephemeral` → confirm it's a pass-through over a Rust-written staging table (currently only `jira__task_field_history.sql`)
 - The SELECT body MUST project a `unique_key` column (either propagated from bronze: `u.unique_key AS unique_key`, or computed: `CAST(concat(...) AS String) AS unique_key`)
 
@@ -97,7 +93,7 @@ column, so promotion is blocked until the connector emits one — flag, don't do
 
 ### Check 7 — Incremental by default for silver/staging
 
-Per `cpt-dataflow-principle-incremental-default` (DESIGN §2.1): every silver model and every dbt-owned staging model with append/event semantics MUST be `materialized='incremental'`. `materialized='table'` is allowed ONLY in three justified cases:
+Every silver model and every dbt-owned staging model with append/event semantics MUST be `materialized='incremental'`. `materialized='table'` is allowed ONLY in three justified cases:
 
 1. **Full-refresh source + current-state semantics**: small lookup/dimension tables whose upstream is a full-refresh API.
    - Allowed: `class_people`, `class_hr_working_hours`
@@ -122,7 +118,7 @@ Cross-reference each match against the allow-list and report PASS / FAIL.
 
 ### Check 8 — Read-time deduplication of every RMT read
 
-Per ADR-0001 (incl. the 2026-06-03 amendment): RMT only collapses duplicates on
+RMT only collapses duplicates on
 background merge (never guaranteed at query time), so **every read of an RMT
 relation must be deduplicated at read time** unless the producer is physically
 unique. A duplicate that slips through inflates metrics (e.g. the
@@ -171,7 +167,7 @@ When user invokes `/check-dbt-conventions`:
 
 ```
 === check-dbt-conventions ===
-Specs read: DESIGN.md, ADR-0001..ADR-0004 (this turn)
+Rules read: .cf-studio/config/rules/architecture.md (this turn)
 
 Check 1 — Silver engine + order_by — PASS (34 models, 0 violations)
 Check 2 — Connector staging engine/order_by/unique_key — FAIL (2 violations)

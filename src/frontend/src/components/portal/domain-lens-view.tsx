@@ -1,15 +1,7 @@
+import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
-import {
-  PolarAngleAxis,
-  PolarGrid,
-  PolarRadiusAxis,
-  Radar,
-  RadarChart,
-  ResponsiveContainer,
-} from "recharts";
-
 import { AttentionList } from "@/components/portal/attention-list";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
@@ -32,6 +24,8 @@ import {
   computeAttentionFlags,
 } from "@/lib/insight/attention-flags";
 import { GROUPS } from "@/lib/insight/groups";
+import type { PersonCoverage } from "@/lib/insight/coverage";
+import { useScopeCoverage } from "@/lib/portal/use-scope-coverage";
 import {
   availableSlices,
   cohortKey,
@@ -55,7 +49,6 @@ import {
   distribution,
   familyObserved,
   fmtCompact,
-  groupCoverage,
   medianAcross,
   perCapita,
   representative,
@@ -75,6 +68,8 @@ import type { TeamMember } from "@/types/insight";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { useMetricCollection } from "@/queries/metric-results";
 import { useMemberGridData } from "@/queries/member-grid";
+import { TEXT_FIGURE } from "@/lib/type-scale";
+import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
 
@@ -290,7 +285,14 @@ export function DomainLensView({
   if (gate) return gate;
 
   // Rule 6: nothing in this family was ever observed → the source isn't wired.
-  if (!familyObserved(grid.byKey, lensKeys, memberIds)) {
+  //
+  // Exempt: a lens that reads no metric of its own cannot be judged by whether
+  // its metrics were observed, and one whose SUBJECT is coverage must survive
+  // exactly the case this gate fires on. Telling a reader "no source is
+  // ingested" on the screen built to tell them which sources are not ingested
+  // would withhold the answer at the moment it is worth most.
+  const readsGrid = config.sections.some((s) => s.kind !== "coverage-levels");
+  if (readsGrid && !familyObserved(grid.byKey, lensKeys, memberIds)) {
     return (
       <Pending
         label={
@@ -304,7 +306,7 @@ export function DomainLensView({
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">{config.title}</h1>
+        <h1 className="text-lg font-semibold tracking-tight">{config.title}</h1>
         <p className="text-sm text-muted-foreground">
           {orgScope.count} members · {config.tagline ?? "trend & balance"}
         </p>
@@ -478,9 +480,254 @@ function Section({
           memberIds={memberIds}
         />
       );
-    case "coverage-radar":
-      return <CoverageRadarSection grid={grid} memberIds={memberIds} />;
+    case "coverage-levels":
+      return (
+        <CoverageLevelsSection
+          memberIds={memberIds}
+          nameByEntity={nameByEntity}
+          personIdByEntity={personIdByEntity}
+        />
+      );
   }
+}
+
+/* ── coverage (#2408): three cuts of one model, read top to bottom — the
+      verdict, then which parts are missing, then who is thinly seen. Little
+      prose on purpose: a screen that needs a paragraph to explain itself has
+      already failed the reader who only glanced at it. ──────────────────── */
+
+function CoverageBar({
+  filled,
+  total,
+  warn,
+}: {
+  filled: number;
+  total: number;
+  warn?: boolean;
+}) {
+  return (
+    <div className="h-2.5 min-w-px flex-1 overflow-hidden rounded-full bg-muted">
+      <div
+        className={`h-full rounded-full ${warn ? "bg-warning/80" : "bg-primary/60"}`}
+        style={{ width: `${total > 0 ? (filled / total) * 100 : 0}%` }}
+      />
+    </div>
+  );
+}
+
+function CoverageLevelsSection({
+  memberIds,
+  nameByEntity,
+  personIdByEntity,
+}: {
+  memberIds: readonly string[];
+  nameByEntity: Map<string, string>;
+  personIdByEntity: Map<string, string>;
+}) {
+  const [openLevel, setOpenLevel] = useState<number | null>(null);
+  const { distribution, parts, people, thin, isPending, isError } =
+    useScopeCoverage(memberIds);
+  if (isPending) return <Pending label="Reading coverage…" />;
+  // Before anything else. With a request failed nothing is known to reach the
+  // tenant, so every part would read "no data reaches us" and every person
+  // would sit at zero — a fault in our infrastructure printed as a verdict
+  // about named people. Saying we could not check is the only honest output.
+  if (isError) {
+    return <Pending label="Could not read coverage — the check did not complete, so nothing is claimed about anyone." />;
+  }
+  const counted = distribution.counted;
+  if (counted === 0) return null;
+
+  const partCount = GROUPS.length;
+  const levels = [...distribution.byLevel.entries()].sort((a, b) => b[0] - a[0]);
+  const missing = parts.filter((p) => p.unreachable);
+
+  return (
+    <section className="flex flex-col gap-6">
+      {/* 1 — the verdict, as a number rather than a sentence: it is meant to
+          be seen, not parsed. */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className={TEXT_FIGURE}>
+          {/* Same amber as the rows it is the sum of. The link between the
+              number and the block of bars is the one thing a reader has to
+              make unaided, and colour makes it without a caption. */}
+          <span className="text-warning">{thin}</span>
+          <span className="text-muted-foreground">/{counted}</span>
+        </span>
+        <p className="max-w-md text-sm text-muted-foreground">
+          people are seen in fewer than half of their work — everything else
+          this product says about them rests on that fraction.
+        </p>
+      </div>
+
+      {/* 2 — where it is missing. A part nothing reaches is NOT drawn as a bar
+          at zero, because that reads as people who did nothing, which is the
+          one thing it does not mean. */}
+      <div className="flex flex-col gap-2">
+        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+          By part of work
+        </p>
+        {parts.map((part) => (
+          <div key={part.id} className="flex items-center gap-3 text-sm">
+            <span className="w-36 shrink-0 truncate">{part.title}</span>
+            {part.unreachable ? (
+              <span className="flex-1 text-xs text-warning">
+                {/* No cause named. Absent observations, a disabled metric and
+                    a broken schema all land here, and only the first is a
+                    missing connector — sending someone to plumb a live one is
+                    the wrong direction to be wrong in. */}
+                nothing reaches us here
+              </span>
+            ) : (
+              <CoverageBar filled={part.seen} total={counted} />
+            )}
+            <span className="w-14 shrink-0 text-right text-muted-foreground tabular-nums">
+              {part.unreachable ? "—" : part.seen}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* 3 — who. Colour carries the finding, so the shape reads without the
+          labels: the amber block IS the number at the top. */}
+      <div className="flex flex-col gap-2">
+        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+          By person · parts we can see
+        </p>
+        {levels.map(([level, n], i) => {
+          const thinHere = level < partCount / 2;
+          // The rule sits where it applies. Without it the reader has to work
+          // out which rows the headline counted, and having to work it out is
+          // the same as not knowing it.
+          const boundary =
+            thinHere && !(levels[i - 1] && levels[i - 1]![0] < partCount / 2);
+          return (
+            <div key={level} className="flex flex-col gap-2">
+              {boundary && (
+                <div className="mt-1 flex items-center gap-3">
+                  <span className="w-36 shrink-0 text-xs text-warning">
+                    fewer than half
+                  </span>
+                  <span className="h-px flex-1 bg-warning/40" />
+                  <span className="w-14 shrink-0 text-right text-xs font-medium text-warning tabular-nums dark:text-warning">
+                    {thin}
+                  </span>
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={n === 0}
+                onClick={() => setOpenLevel(openLevel === level ? null : level)}
+                aria-expanded={openLevel === level}
+                aria-controls={`coverage-level-${level}`}
+                className="-mx-2 flex items-center gap-3 rounded-sm px-2 py-0.5 text-left text-sm enabled:hover:bg-muted/60 disabled:cursor-default"
+              >
+                <span className="w-36 shrink-0 text-muted-foreground tabular-nums">
+                  {level} of {partCount}
+                </span>
+                <CoverageBar filled={n} total={counted} warn={thinHere} />
+                <span className="w-14 shrink-0 text-right tabular-nums">
+                  {n}
+                </span>
+              </button>
+              {openLevel === level && (
+                <CoverageLevelPeople
+                  id={`coverage-level-${level}`}
+                  people={people.filter((p) => p.level === level)}
+                  nameByEntity={nameByEntity}
+                  personIdByEntity={personIdByEntity}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        A part counts when any of its metrics has a value for that person this
+        period — so this says what we can see, never how well anyone did.
+        {missing.length > 0 && (
+          <>
+            {" "}
+            Nobody here can reach the top of that scale, because{" "}
+            {missing.map((m) => m.title).join(", ")}{" "}
+            {missing.length === 1 ? "reaches" : "reach"} us for no one.
+          </>
+        )}{" "}
+        Counted over {counted} {counted === 1 ? "person" : "people"} you can
+        see in this scope.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * The people at one coverage level, and what is missing for each.
+ *
+ * The missing parts are the point, not the names. A level says how much we
+ * cannot see; this says which systems to go and look at — and separates the
+ * two kinds of absence, because they lead different places. "No connector"
+ * is somebody's job to fix. "Nothing recorded" is a person who does that work
+ * elsewhere, or does not do it, and no amount of plumbing changes it.
+ */
+function CoverageLevelPeople({
+  id,
+  people,
+  nameByEntity,
+  personIdByEntity,
+}: {
+  id: string;
+  people: readonly PersonCoverage[];
+  nameByEntity: Map<string, string>;
+  personIdByEntity: Map<string, string>;
+}) {
+  const titleById = new Map(GROUPS.map((g) => [g.id, g.title]));
+  const rows = [...people].sort((a, b) =>
+    (nameByEntity.get(a.entityId) ?? a.entityId).localeCompare(
+      nameByEntity.get(b.entityId) ?? b.entityId,
+    ),
+  );
+
+  return (
+    <ul id={id} className="mb-2 ml-36 flex flex-col gap-1 border-s ps-3">
+      {rows.map((p) => {
+        const unconnected: string[] = [];
+        const idle: string[] = [];
+        for (const [id, state] of p.states) {
+          const title = titleById.get(id) ?? id;
+          if (state === "no_data_reaches_us") unconnected.push(title);
+          else if (state === "nothing_recorded") idle.push(title);
+        }
+        const personId = personIdByEntity.get(p.entityId);
+        const name = nameByEntity.get(p.entityId) ?? p.entityId;
+        return (
+          <li key={p.entityId} className="flex flex-wrap items-baseline gap-x-2 text-xs">
+            {personId ? (
+              <Link
+                to="/ic/$person/personal"
+                params={{ person: personId }}
+                className="font-medium hover:underline"
+              >
+                {name}
+              </Link>
+            ) : (
+              <span className="font-medium">{name}</span>
+            )}
+            {unconnected.length > 0 && (
+              <span className="text-warning">
+                no connector: {unconnected.join(", ")}
+              </span>
+            )}
+            {idle.length > 0 && (
+              <span className="text-muted-foreground">
+                nothing recorded: {idle.join(", ")}
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 /* ── participation (rule 8 variant — "N of M are active") ────────────── */
@@ -552,7 +799,7 @@ function ParticipationSection({
                 direction="higher_is_better"
               />
             </div>
-            <div className="mt-1 text-2xl font-semibold tabular-nums">
+            <div className={cn("mt-1", TEXT_FIGURE)}>
               {active} of {memberIds.length}
             </div>
             <div className="text-xs text-muted-foreground">
@@ -615,7 +862,7 @@ function HeadlineSection({
                 />
                 <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
               </div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums">
+              <div className={cn("mt-1", TEXT_FIGURE)}>
                 {formatMetricValue(
                   c.isSum ? perCapita(c.r, memberIds) : c.now,
                   c.r.format,
@@ -677,7 +924,7 @@ function StatTilesSection({
                 />
                 <Delta now={t.median} prev={t.prev} direction={t.r.direction} />
               </div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums">
+              <div className={cn("mt-1", TEXT_FIGURE)}>
                 {formatMetricValue(t.median, t.r.format, t.r.unit)}
               </div>
               <div className="text-xs text-muted-foreground">
@@ -826,7 +1073,7 @@ function DistributionSection({
               />
             </BarChart>
           </ChartContainer>
-          <p className="mt-1 text-center text-[10px] text-muted-foreground">
+          <p className="mt-1 text-center text-xs text-muted-foreground">
             {spec.unitLabel}
           </p>
         </CardContent>
@@ -928,7 +1175,7 @@ function EventHistogramSection({
               />
             </BarChart>
           </ChartContainer>
-          <p className="mt-1 text-center text-[10px] text-muted-foreground">
+          <p className="mt-1 text-center text-xs text-muted-foreground">
             {r?.short_label ?? r?.label ?? spec.metric}
             {r?.unit ? ` (${r.unit})` : ""}
           </p>
@@ -995,7 +1242,7 @@ function ConcentrationSection({
               <div className="text-xs font-medium text-muted-foreground">
                 {c.label}
               </div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums">
+              <div className={cn("mt-1", TEXT_FIGURE)}>
                 {Math.round(c.share * 100)}%
               </div>
               <div className="text-xs text-muted-foreground">
@@ -1225,65 +1472,6 @@ function DirectionCardsSection({
           </button>
         ))}
       </div>
-    </section>
-  );
-}
-
-/* ── coverage-radar (Overview design O5: coverage = share of members with ≥1
-      OBSERVED metric per group — entityObserved, never zero-filled sums) ── */
-
-function CoverageRadarSection({
-  grid,
-  memberIds,
-}: {
-  grid: GridData;
-  memberIds: readonly string[];
-}) {
-  if (memberIds.length < MIN_COHORT) return null;
-  const data = GROUPS.map((g) => ({
-    domain: g.title,
-    coverage: Math.round(
-      (groupCoverage(grid.byKey, g.card.preview, memberIds) ?? 0) * 100
-    ),
-  }));
-  if (data.every((d) => d.coverage === 0)) return null;
-
-  return (
-    <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        Health radar
-      </p>
-      <Card>
-        <CardContent className="p-4">
-          <div className="h-72 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <RadarChart data={data} outerRadius="70%">
-                <PolarGrid />
-                <PolarAngleAxis dataKey="domain" tick={{ fontSize: 12 }} />
-                {/* Percent scale is absolute: full edge = 100% coverage, not
-                    the period's max — and the explicit axis gives recharts a
-                    radius scale (without one the polygon collapses to center). */}
-                <PolarRadiusAxis
-                  domain={[0, 100]}
-                  tick={false}
-                  axisLine={false}
-                />
-                <Radar
-                  dataKey="coverage"
-                  stroke="var(--primary)"
-                  fill="var(--primary)"
-                  fillOpacity={0.25}
-                  isAnimationActive={false}
-                />
-              </RadarChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Coverage — % of people in scope with any observed activity in each
-            domain this period.
-          </p>
-        </CardContent>
-      </Card>
     </section>
   );
 }

@@ -120,9 +120,15 @@ class GroupDialog:
         return self.timeseries_block().get_by_role("table")
 
     def open_bucket_evidence(self, metric: str) -> MetricEvidenceDialog:
-        """Evidence behind the table's first body row — one time bucket."""
+        """Evidence behind the table's first drillable cell — one time bucket.
+
+        The first cell that carries a button, not the first row's: a trailing
+        window's leading bucket is a partial week, and a bucket with no
+        activity renders "—" with no button at all — so which day the window
+        starts on would decide whether a first-row click ever lands.
+        """
         body = self.block_table().get_by_role("rowgroup").nth(1)
-        body.get_by_role("row").first.get_by_role("button").first.click()
+        body.get_by_role("button").first.click()
         return MetricEvidenceDialog(self.page, metric)
 
     def open_total_row_evidence(self, metric: str) -> MetricEvidenceDialog:
@@ -132,5 +138,5 @@ class GroupDialog:
         the selection, so it is the one cell whose period is the block's own.
         """
         footer = self.block_table().get_by_role("rowgroup").last
-        footer.get_by_role("row").first.get_by_role("button").first.click()
+        footer.get_by_role("button").first.click()
         return MetricEvidenceDialog(self.page, metric)

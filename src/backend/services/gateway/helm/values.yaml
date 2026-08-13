@@ -11,16 +11,18 @@ service:
   type: ClusterIP
   port: 8080
 
-# Cluster ingress -> gateway. The gateway is the single edge; the ingress routes
-# everything ("/") to it (path routing happens inside the gateway).
-ingress:
+# HTTPRoute on the shared Gateway -> gateway. The gateway is the single edge;
+# the route sends everything ("/") to it (path routing happens inside the
+# gateway). TLS terminates at the shared Gateway listener, not per-route.
+route:
   enabled: true
-  className: nginx
-  annotations: {}
+  parentRef:
+    name: insight
+    namespace: insight-infra
+    # Target listener on the Gateway (e.g. https). Empty = all listeners.
+    sectionName: ""
   host: "" # Leave empty for local (no host-based routing)
-  tls:
-    enabled: false
-    secretName: ""
+  annotations: {}
 
 # Gateway upstreams + route table. Every URL is a Helm template rendered with
 # `tpl` (configmap.yaml / deployment.yaml), so `{{ .Release.Name }}` resolves to

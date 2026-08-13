@@ -53,7 +53,6 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@rolldown/plugin-babel": "0.2.3",
-    "@sentry/vite-plugin": "5.4.0",
     "@storybook/addon-a11y": "10.4.6",
     "@storybook/addon-docs": "10.4.6",
     "@storybook/addon-themes": "10.4.6",

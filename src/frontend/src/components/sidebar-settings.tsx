@@ -41,7 +41,7 @@ export function SidebarSettings() {
         >
           <span className="flex items-center gap-2">
             <PanelsTopLeft className="size-4" />
-            <span>Portal (preview)</span>
+            <span>Portal</span>
           </span>
           <Switch
             checked={portal}
@@ -74,7 +74,7 @@ export function SidebarSettings() {
         </SidebarMenuItem>
       ) : null}
       <SidebarMenuItem className="flex flex-col items-stretch gap-1.5 p-1">
-        <span className="px-1 text-[10px] font-medium uppercase tracking-wider text-sidebar-foreground/60">
+        <span className="px-1 text-xs font-medium uppercase tracking-wider text-sidebar-foreground/60">
           {t("settings.focus_mode.label")}
         </span>
         <ToggleGroup

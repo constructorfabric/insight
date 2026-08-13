@@ -108,12 +108,4 @@ describe("sectionMetricKeys — Overview section kinds", () => {
     expect(keys).toContain("collab.messages_sent");
     expect(keys).toContain("wiki.pages_created");
   });
-  it("derives coverage-radar keys from every group's card preview", () => {
-    const keys = new Set(
-      sectionMetricKeys({ title: "t", sections: [{ kind: "coverage-radar" }] }),
-    );
-    for (const g of GROUPS) {
-      for (const k of g.card.preview) expect(keys.has(k), k).toBe(true);
-    }
-  });
 });

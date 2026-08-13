@@ -31,7 +31,6 @@ name: E2E — Bronze to API
 # as a pure-Python check (no Docker, no app boot). See
 # src/ingestion/tests/e2e/lib/{metric_coverage,collect_metric_definitions}.py.
 #
-# Specs: docs/domain/bronze-to-api-e2e/specs/
 # Code:  src/ingestion/tests/e2e/
 
 on:

@@ -62,9 +62,15 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     sections: [{ kind: "attention", metrics: ATTENTION_KEYS, max: 30 }],
   },
   health: {
-    title: "Overview · Health radar",
-    tagline: "domain coverage",
-    sections: [{ kind: "coverage-radar" }],
+    title: "Overview · What we can see",
+    tagline: "how much of the work reaches us, by part and by person",
+    // One model, three cuts: the verdict, the parts nothing reaches, and how
+    // thinly people are seen. The radar that used to live here computed
+    // coverage a second way — a different predicate (`entityObserved`, which
+    // refuses zero-filled sums) over a different key set (each group's card
+    // preview rather than all its metrics) — so the same screen carried two
+    // counts of one thing by two definitions.
+    sections: [{ kind: "coverage-levels" }],
   },
   contribution: {
     title: "Overview · Contribution breakdown",

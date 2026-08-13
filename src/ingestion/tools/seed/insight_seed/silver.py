@@ -109,14 +109,20 @@ def apply_create_bronze_placeholders() -> None:
     LOG.info("placeholders: %s applied", script.name)
 
 
-def apply_ch_migrations() -> None:
+# The persons-seed's input, selected by the UNION model's name: the
+# silver:identity_inputs tag marks only its staging feeders.
+IDENTITY_INPUTS_SELECT = "+identity_inputs"
+
+
+def apply_ch_migrations(dbt_select: str | None = None) -> None:
     """Apply gold-view migrations + build dbt-owned gold models.
 
     Runs the ingestion repo's apply-ch-migrations.sh — the exact script the
     k8s clickhouse-migrate Hook Job runs. It re-creates placeholders (no-op
     here), applies migrations/*.sql, repairs staging labels, and runs
-    `dbt run --select tag:gold`. Must run AFTER seeding so the materialized
-    gold model reflects seeded silver (see module docstring).
+    `dbt run --select tag:gold` (widened by `dbt_select` when given). Must
+    run AFTER seeding so the materialized gold model reflects seeded silver
+    (see module docstring).
     """
     script = _ingestion_scripts_dir() / "apply-ch-migrations.sh"
     if not script.is_file():
@@ -125,7 +131,15 @@ def apply_ch_migrations() -> None:
             "seed-sample container must mount /ingestion; on a host run, "
             "this package must sit inside the ingestion tree (src/ingestion/tools/seed)."
         )
-    subprocess.run(["bash", str(script)], env=_script_env(), check=True)
+
+    env = _script_env()
+    # Never inherited: the selector is exactly what the caller passes, or the
+    # script's own tag:gold default.
+    if dbt_select is None:
+        env.pop("DBT_GOLD_SELECT", None)
+    else:
+        env["DBT_GOLD_SELECT"] = dbt_select
+    subprocess.run(["bash", str(script)], env=env, check=True)
     LOG.info("migrations + gold: %s applied", script.name)
 
 
@@ -175,13 +189,24 @@ def run() -> None:
         LOG.info("ClickHouse version: %s", client.server_version)
         # 2. Seed silver rows into the created tables.
         generate_rows(client)
-        # 3. Real deploy mechanism: migrations + gold (incl. dbt gold build
-        #    over the now-seeded silver). Runs AFTER seeding so the gold
-        #    models reflect real rows.
-        apply_ch_migrations()
+        # 3. Real deploy mechanism: migrations + gold + identity inputs. Gold
+        #    builds unresolved here — the orchestrator runs the persons-seed/
+        #    sync pair and then the `gold` subcommand to rebuild it.
+        apply_ch_migrations(dbt_select=f"tag:gold {IDENTITY_INPUTS_SELECT}")
     finally:
         client.close()
     LOG.info("DONE: silver rows seeded + gold layer built via deploy scripts.")
+
+
+def run_gold() -> None:
+    """Rebuild the dbt gold models only — gold resolves entity ids at BUILD
+    time, so bindings from a persons-seed/sync land only on a rebuild."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    apply_ch_migrations()
+    LOG.info("DONE: gold models rebuilt over the current identity map.")
 
 
 if __name__ == "__main__":

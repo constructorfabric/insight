@@ -155,14 +155,21 @@ def scratch_metric_identity(tag: str) -> tuple[str, str]:
     return f"example.{slug}", slug
 
 
-def custom_metric_body(metric_key: str, source_key: str) -> dict[str, object]:
+def custom_metric_body(
+    metric_key: str,
+    source_key: str,
+    *,
+    subject: str | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, object]:
     """A minimal valid custom-metric graph: a sum over one measure.
 
     The create/import/update body. Callers mutate a copy for the rejection cases
     — a bad key, a non-single-select statement, or SQL that omits a contract
-    column.
+    column. `subject`/`tags` are omitted unless a caller asks for them, so the
+    default body stays the smallest valid graph.
     """
-    return {
+    body: dict[str, object] = {
         "metric_key": metric_key,
         "label": "Scratch probe metric",
         "entity_type": "person",
@@ -175,6 +182,11 @@ def custom_metric_body(metric_key: str, source_key: str) -> dict[str, object]:
         "dimensions": [],
         "inputs": [{"role": "value", "measure_key": "events"}],
     }
+    if subject is not None:
+        body["subject"] = subject
+    if tags is not None:
+        body["tags"] = tags
+    return body
 
 
 def create_custom_metric(client: ApiClient, tag: str) -> CustomMetric:

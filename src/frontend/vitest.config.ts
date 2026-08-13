@@ -92,18 +92,43 @@ export default defineConfig({
         // A component newly reached from a story can add to this list. The
         // symptom to match it to: "new dependencies optimized: …" followed by
         // "optimized dependencies changed. reloading" in the run output.
+        //
+        // Read the FIRST of those two lines, not the test that failed. The
+        // reload kills whichever import was in flight, so the failure is
+        // reported against a bystander — usually the slowest thing to load.
+        // Listing the bystander changes nothing; the dependency named by
+        // "new dependencies optimized" is the one to add.
+        //
+        // Every `@base-ui/react/*` entry point the source imports is listed,
+        // whether or not it has misbehaved yet, because none of them is
+        // reached until a story mounts. To check the set still matches:
+        //   grep -rhoE '"@base-ui/react/[a-z-]+"' src | sort -u
         optimizeDeps: {
           include: [
             "@base-ui/react/avatar",
+            "@base-ui/react/button",
+            "@base-ui/react/checkbox",
             "@base-ui/react/collapsible",
             "@base-ui/react/dialog",
             "@base-ui/react/input",
+            "@base-ui/react/menu",
+            "@base-ui/react/merge-props",
+            "@base-ui/react/popover",
             "@base-ui/react/preview-card",
+            "@base-ui/react/select",
             "@base-ui/react/separator",
             "@base-ui/react/switch",
+            "@base-ui/react/tabs",
+            "@base-ui/react/toggle",
+            "@base-ui/react/toggle-group",
             "@base-ui/react/tooltip",
+            "@base-ui/react/use-render",
             "@sentry/react",
             "@tanstack/react-virtual",
+            // `await import("exceljs")` inside the export path: the scan cannot
+            // see it, so it is discovered while the export story is running and
+            // takes the page down with it as vite reloads.
+            "exceljs",
             "react-day-picker",
             "react-error-boundary",
             "sonner",

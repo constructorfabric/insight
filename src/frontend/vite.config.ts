@@ -1,5 +1,4 @@
 import babel from "@rolldown/plugin-babel";
-import { sentryVitePlugin } from "@sentry/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
@@ -32,36 +31,19 @@ export default defineConfig(({ mode, command }) => {
     env.VITE_API_PROXY_TARGET ||
     (command === "serve" ? "http://localhost:8080" : undefined);
   const release = env.VITE_APP_RELEASE || localRelease();
-  // Without a release, sentry-cli is handed the string "undefined".
-  const uploadSourcemaps =
-    command === "build" &&
-    Boolean(
-      release && env.SENTRY_AUTH_TOKEN && env.SENTRY_ORG && env.SENTRY_PROJECT
-    );
   // Assigning undefined would store the literal string "undefined".
   if (release) process.env.VITE_APP_RELEASE = release;
   return {
+    // Relative asset base: one image serves at "/" AND under an /exp/<name>
+    // preview prefix. Correct resolution on nested routes comes from the
+    // runtime <base href> injected in index.html.
+    base: "./",
     plugins: [
       tanstackRouter({ target: "react", autoCodeSplitting: true }),
       react(),
       babel({ presets: [reactCompilerPreset()] }),
       tailwindcss(),
-      uploadSourcemaps &&
-        sentryVitePlugin({
-          // Unset for sentry.io; a self-hosted instance needs its base URL.
-          url: env.SENTRY_URL || undefined,
-          org: env.SENTRY_ORG,
-          project: env.SENTRY_PROJECT,
-          authToken: env.SENTRY_AUTH_TOKEN,
-          release: { name: release },
-          sourcemaps: { filesToDeleteAfterUpload: ["./dist/**/*.map"] },
-        }),
     ],
-    build: {
-      // "hidden": emit maps for the upload without a sourceMappingURL comment
-      // pointing browsers at files that are deleted once uploaded.
-      sourcemap: uploadSourcemaps ? "hidden" : false,
-    },
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

@@ -15,8 +15,8 @@ import { useShellLayout, type ShellLayout } from "@/lib/portal/use-shell-layout"
 import { useViewerIsManager } from "@/lib/portal/use-viewer-is-manager";
 
 /**
- * Portal shell (Phase 1 buildout), behind the `insight.portal` flag so the
- * default app is untouched. Composition (one SidebarProvider, all normal flow):
+ * Portal shell (Phase 1 buildout), rendered unless the reader opts out via
+ * `insight.portal`. Composition (one SidebarProvider, all normal flow):
  *   [ lens rail ] [ zone-contextual pane ] [ content ]
  * Every zone renders through `<ZoneContent/>` (Person / People / Directions /
  * Overview / … all portal-native); the route only carries the active person.

@@ -1,3 +1,9 @@
+> [!WARNING]
+> **Under review — audited against the implementation and found inaccurate in places.**
+> Several capabilities it calls planned are already shipped. Read it against the code,
+> not as authority; the specific claims are listed in the repository
+> [README](../../../../README.md#backend-specs--under-review).
+
 # PRD — Identity Resolution
 
 <!-- toc -->
@@ -139,7 +145,7 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 
 ### 3.1 Module-Specific Environment Constraints
 
-- **Storage**: Evidence and the analytics mirror reside in ClickHouse (`identity_inputs`; `identity.identity_persons` published by persons-sync; legacy `aliases`). The identity observation journal `persons`, its derived SCD2 cache `account_person_map`, and the `operations` admin journal reside in MariaDB and are owned by this domain (see DESIGN §3.7, [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md), [ADR-0003](ADR/0003-operator-decisions-as-persons-observations.md), and [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)). Future matcher tables (`match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) are design proposals only — not built.
+- **Storage**: Evidence and the analytics mirror reside in ClickHouse (`identity_inputs`; `identity.identity_persons` published by persons-sync; legacy `aliases`). The identity observation journal `persons`, its derived SCD2 cache `account_person_map`, and the `operations` admin journal reside in MariaDB and are owned by this domain (see DESIGN §3.7, [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md), [ADR-0003](ADR/0003-operator-decisions-as-persons-observations.md), and ADR-0006). Future matcher tables (`match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) are design proposals only — not built.
 - **Orchestration**: the persons-seed runs as a scheduled Kubernetes job (umbrella chart); Argo-orchestrated processing was the earlier plan and is not used by this domain today.
 - **Naming**: All tables and columns follow PR #55 glossary conventions (see Glossary and DESIGN §2.2).
 - **Temporal model**: Half-open intervals `[effective_from, effective_to)`. `BETWEEN` prohibited on temporal columns. Zero sentinel (`'1970-01-01'`) replaces NULL for ClickHouse compatibility.

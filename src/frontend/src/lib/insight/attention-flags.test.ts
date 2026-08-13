@@ -181,13 +181,87 @@ describe("attentionSummary", () => {
     );
   });
 
-  it("names the top metric themes with counts", () => {
+  it("names the top metric themes, counted in people", () => {
+    // The line already opens in people, so the theme has to be in people too:
+    // "most flags on Commits (5)" over "3 of 16 people" holds two units in one
+    // sentence, and leaves a reader to work out that five flags can belong to
+    // two people.
     const flags = computeAttentionFlags(
       params({ byKey: new Map([["t.metric", fixture([...BASE, ["x", 0]])]]) }),
     );
     expect(attentionSummary(flags, 1, 8)).toBe(
-      "1 of 8 people need a look — most flags on Commits (1).",
+      "1 of 8 people need a look — most often Commits (1 person).",
     );
+  });
+});
+
+describe("one fact is one flag", () => {
+  /** A metric with its own key and label, so containment can be exercised. */
+  function metric(
+    key: string,
+    label: string,
+    period: Array<[string, number | null]>,
+  ): NormalizedMetricResult {
+    return { ...fixture(period, { label }), metric_key: key };
+  }
+
+  it("keeps the more specific metric when a person trips both", () => {
+    // "All lines added" contains "lines added to code files"; a person whose
+    // output collapses trips both at once, and that is one fact. Reported
+    // twice it doubles their rows and doubles any count of what is wrong.
+    // The NARROWER one survives — it excludes documentation, tests and
+    // configuration, so it says something the wider metric cannot.
+    const flags = computeAttentionFlags(
+      params({
+        headlineKeys: ["git.lines_added", "git.code_lines"],
+        byKey: new Map([
+          ["git.lines_added", metric("git.lines_added", "Lines added", [...BASE, ["x", 0]])],
+          ["git.code_lines", metric("git.code_lines", "Code lines", [...BASE, ["x", 0]])],
+        ]),
+      }),
+    );
+    expect(flags.map((f) => f.metricKey)).toEqual(["git.code_lines"]);
+  });
+
+  it("keeps the same pair for two people as two findings", () => {
+    // Thinning is per person: two people tripping the same related metrics are
+    // two findings, not one.
+    const flags = computeAttentionFlags(
+      params({
+        headlineKeys: ["git.lines_added", "git.code_lines"],
+        memberIds: [...IDS, "y"],
+        byKey: new Map([
+          [
+            "git.lines_added",
+            metric("git.lines_added", "Lines added", [...BASE, ["x", 0], ["y", 0]]),
+          ],
+          [
+            "git.code_lines",
+            metric("git.code_lines", "Code lines", [...BASE, ["x", 0], ["y", 0]]),
+          ],
+        ]),
+      }),
+    );
+    expect(flags).toHaveLength(2);
+    expect(new Set(flags.map((f) => f.personId))).toEqual(
+      new Set(["person-x", "person-y"]),
+    );
+  });
+
+  it("leaves unrelated metrics alone", () => {
+    const flags = computeAttentionFlags(
+      params({
+        headlineKeys: ["git.lines_added", "collab.messages_sent"],
+        byKey: new Map([
+          ["git.lines_added", metric("git.lines_added", "Lines added", [...BASE, ["x", 0]])],
+          [
+            "collab.messages_sent",
+            metric("collab.messages_sent", "Messages sent", [...BASE, ["x", 0]]),
+          ],
+        ]),
+      }),
+    );
+    expect(flags).toHaveLength(2);
   });
 });
 

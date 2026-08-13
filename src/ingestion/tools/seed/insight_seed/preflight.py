@@ -38,7 +38,13 @@ from pathlib import Path
 import pymysql
 
 from . import config
-from .config import SEED_REASON_PREFIX, ClickHouse, EnvContractError, MariaDb
+from .config import (
+    PERSONS_SEED_LINK_REASON,
+    SEED_REASON_PREFIX,
+    ClickHouse,
+    EnvContractError,
+    MariaDb,
+)
 
 LOG = logging.getLogger("seed.preflight")
 
@@ -70,8 +76,9 @@ def table_missing_problem(database: str, table: str, *, needed_for: str) -> str:
 def foreign_rows_problem(count: int, tenant: str, database: str) -> str:
     return (
         f"tenant {tenant} already holds {count} `{database}.persons` row(s) this seeder "
-        f"did not write (their `reason` does not start with {SEED_REASON_PREFIX!r}), so "
-        "this stand carries identity data from somewhere else. Seed a tenant of your own, "
+        f"did not write (their `reason` does not start with {SEED_REASON_PREFIX!r} and is "
+        f"not the persons-seed's {PERSONS_SEED_LINK_REASON!r}), so this stand carries "
+        "identity data from somewhere else. Seed a tenant of your own, "
         f"or set {config.FORCE_ENV}=1 to add demo people to this one anyway."
     )
 
@@ -88,8 +95,9 @@ def _table_exists(cur: pymysql.cursors.Cursor, database: str, table: str) -> boo
 def _count_foreign_persons(cur: pymysql.cursors.Cursor, tenant: str) -> int:
     cur.execute(
         "SELECT COUNT(*) FROM persons "
-        "WHERE insight_tenant_id = %s AND (reason IS NULL OR reason NOT LIKE %s)",
-        (uuid_mod.UUID(tenant).bytes, f"{SEED_REASON_PREFIX}%"),
+        "WHERE insight_tenant_id = %s "
+        "AND (reason IS NULL OR (reason NOT LIKE %s AND reason != %s))",
+        (uuid_mod.UUID(tenant).bytes, f"{SEED_REASON_PREFIX}%", PERSONS_SEED_LINK_REASON),
     )
     row = cur.fetchone()
     return int(row[0]) if row else 0

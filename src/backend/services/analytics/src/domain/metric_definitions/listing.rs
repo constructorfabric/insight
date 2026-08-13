@@ -16,9 +16,9 @@ use serde::Serialize;
 use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
-use crate::domain::metric_definitions::definition::{MetricDirection, MetricFormat};
+use crate::domain::metric_definitions::definition::{MetricDirection, MetricFormat, MetricOrigin};
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
-use crate::domain::metric_definitions::repository::fetch_dimensions;
+use crate::domain::metric_definitions::repository::{fetch_dimensions, fetch_tags};
 use crate::domain::metric_drilldown::{MetricDrilldownCapability, load_capabilities};
 
 /// Response body for `GET /v1/metric-definitions`. Metrics are sorted by
@@ -37,20 +37,35 @@ pub struct MetricDefinitionView {
     /// Compact label for dense surfaces; absent when the full label is
     /// already compact enough.
     pub short_label: Option<String>,
+    /// The single topic this metric belongs to within its family, so a surface
+    /// listing a family can partition it into topics rather than only sorting
+    /// by name. Exactly one per metric; absent only for metrics that declare
+    /// none.
+    pub subject: Option<String>,
     pub description: Option<String>,
     pub explanation: Option<String>,
     pub unit: Option<String>,
     pub format: MetricFormat,
     pub direction: MetricDirection,
     pub dimensions: Vec<String>,
+    /// Cross-cutting labels a surface can filter or search by; many per metric,
+    /// unlike the singular `subject`. Empty when the metric declares none.
+    pub tags: Vec<String>,
     pub is_enabled: bool,
+    /// `builtin` metrics read managed observation relations; `custom` metrics
+    /// execute inline SQL at query time. The validator stamps `schema_status`
+    /// and `last_observed_date` from materialized relations only, so for
+    /// `custom` those fields stay `unchecked` / absent regardless of data —
+    /// readers must not interpret them as "never measured" for custom metrics.
+    pub origin: MetricOrigin,
     pub schema_status: SchemaStatus,
     /// Why `schema_status` is `error`; absent otherwise (the DB enforces the
     /// biconditional).
     pub schema_error_code: Option<MetricSchemaErrorCode>,
     /// Newest `metric_date` ever observed across the definition's input
     /// measures; absent when no observation has ever been seen. Freshness
-    /// signal, orthogonal to `schema_status`.
+    /// signal, orthogonal to `schema_status`. Not maintained for `custom`
+    /// metrics (see `origin`).
     pub last_observed_date: Option<chrono::NaiveDate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drilldown: Option<MetricDrilldownCapability>,
@@ -65,12 +80,14 @@ struct ListingRow {
     metric_key: String,
     label: String,
     short_label: Option<String>,
+    subject: Option<String>,
     description: Option<String>,
     explanation: Option<String>,
     unit: Option<String>,
     format: String,
     direction: String,
     is_enabled: bool,
+    origin: String,
     schema_status: String,
     schema_error_code: Option<String>,
     last_observed_date: Option<chrono::NaiveDate>,
@@ -103,8 +120,11 @@ pub async fn list_definition_views(
     let dimensions = fetch_dimensions(db, &definition_ids)
         .await
         .map_err(|error| db_error(&error))?;
+    let tags = fetch_tags(db, &definition_ids)
+        .await
+        .map_err(|error| db_error(&error))?;
 
-    let mut metrics = build_views(selected, dimensions)?;
+    let mut metrics = build_views(selected, dimensions, tags)?;
     for metric in &mut metrics {
         metric.drilldown = capabilities.remove(&metric.metric_key);
     }
@@ -134,6 +154,7 @@ fn select_rows(rows: Vec<ListingRow>) -> Vec<ListingRow> {
 fn build_views(
     selected: Vec<ListingRow>,
     mut dimensions: HashMap<Uuid, Vec<String>>,
+    mut tags: HashMap<Uuid, Vec<String>>,
 ) -> Result<Vec<MetricDefinitionView>, CanonicalError> {
     let mut metrics = Vec::with_capacity(selected.len());
     for row in selected {
@@ -141,6 +162,8 @@ fn build_views(
             .ok_or_else(|| config_error(&row.metric_key, "format", &row.format))?;
         let direction = MetricDirection::from_db(&row.direction)
             .ok_or_else(|| config_error(&row.metric_key, "direction", &row.direction))?;
+        let origin = MetricOrigin::from_db(&row.origin)
+            .ok_or_else(|| config_error(&row.metric_key, "origin", &row.origin))?;
         let schema_status = SchemaStatus::from_db(&row.schema_status)
             .ok_or_else(|| config_error(&row.metric_key, "schema_status", &row.schema_status))?;
         let schema_error_code = row
@@ -155,13 +178,16 @@ fn build_views(
             metric_key: row.metric_key,
             label: row.label,
             short_label: row.short_label,
+            subject: row.subject,
             description: row.description,
             explanation: row.explanation,
             unit: row.unit,
             format,
             direction,
             dimensions: dimensions.remove(&row.definition_id).unwrap_or_default(),
+            tags: tags.remove(&row.definition_id).unwrap_or_default(),
             is_enabled: row.is_enabled,
+            origin,
             schema_status,
             schema_error_code,
             last_observed_date: row.last_observed_date,
@@ -183,12 +209,14 @@ async fn fetch_listing_rows(
             d.metric_key AS metric_key, \
             d.label AS label, \
             d.short_label AS short_label, \
+            d.subject AS subject, \
             d.description AS description, \
             d.explanation AS explanation, \
             d.unit AS unit, \
             d.format AS format, \
             d.direction AS direction, \
             d.is_enabled AS is_enabled, \
+            d.origin AS origin, \
             d.schema_status AS schema_status, \
             d.schema_error_code AS schema_error_code, \
             d.last_observed_date AS last_observed_date \
@@ -227,12 +255,14 @@ mod tests {
             metric_key: metric_key.to_owned(),
             label: label.to_owned(),
             short_label: None,
+            subject: None,
             description: None,
             explanation: None,
             unit: None,
             format: "integer".to_owned(),
             direction: "higher_is_better".to_owned(),
             is_enabled: true,
+            origin: "builtin".to_owned(),
             schema_status: "unchecked".to_owned(),
             schema_error_code: None,
             last_observed_date: None,
@@ -264,12 +294,14 @@ mod tests {
     #[test]
     fn build_views_decodes_columns_and_attaches_dimensions() {
         let mut r = row("git.commits", None, "Commits");
+        r.subject = Some("commits".to_owned());
         r.schema_status = "error".to_owned();
         r.schema_error_code = Some("table_not_found".to_owned());
         let id = r.definition_id;
         let dims = HashMap::from([(id, vec!["repo".to_owned()])]);
+        let tags = HashMap::from([(id, vec!["rate".to_owned()])]);
 
-        let Ok(views) = build_views(vec![r], dims) else {
+        let Ok(views) = build_views(vec![r], dims, tags) else {
             panic!("canonical rows must map");
         };
         assert_eq!(views.len(), 1);
@@ -278,18 +310,44 @@ mod tests {
         };
         assert_eq!(view.format, MetricFormat::Integer);
         assert_eq!(view.direction, MetricDirection::HigherIsBetter);
+        assert_eq!(view.origin, MetricOrigin::Builtin);
         assert_eq!(view.schema_status, SchemaStatus::Error);
         assert_eq!(
             view.schema_error_code,
             Some(MetricSchemaErrorCode::TableNotFound)
         );
         assert_eq!(view.dimensions, vec!["repo".to_owned()]);
+        assert_eq!(view.subject.as_deref(), Some("commits"));
+        assert_eq!(view.tags, vec!["rate".to_owned()]);
+    }
+
+    #[test]
+    fn build_views_decodes_custom_origin() {
+        let mut r = row("team.velocity", None, "Velocity");
+        r.origin = "custom".to_owned();
+
+        let Ok(views) = build_views(vec![r], HashMap::new(), HashMap::new()) else {
+            panic!("canonical rows must map");
+        };
+        let Some(view) = views.first() else {
+            panic!("one view");
+        };
+        assert_eq!(view.origin, MetricOrigin::Custom);
+        assert_eq!(view.schema_status, SchemaStatus::Unchecked);
+        assert_eq!(view.schema_error_code, None);
+        assert_eq!(view.last_observed_date, None);
+        assert_eq!(view.subject, None);
+        assert!(view.tags.is_empty());
     }
 
     #[test]
     fn build_views_rejects_a_noncanonical_enum_value() {
         let mut r = row("git.commits", None, "Commits");
         r.format = "not-a-format".to_owned();
-        assert!(build_views(vec![r], HashMap::new()).is_err());
+        assert!(build_views(vec![r], HashMap::new(), HashMap::new()).is_err());
+
+        let mut r = row("git.commits", None, "Commits");
+        r.origin = "not-an-origin".to_owned();
+        assert!(build_views(vec![r], HashMap::new(), HashMap::new()).is_err());
     }
 }

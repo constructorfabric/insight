@@ -40,6 +40,38 @@ const FLAGS = Array.from({ length: 5 }, (_, i) =>
 );
 
 describe("AttentionList", () => {
+  it("gives no subject more rows than the cap, however many they trip", () => {
+    // A row is one finding and the list is ranked by severity, so without a
+    // cap the subject in the most trouble takes the most of the visible slice
+    // and pushes everyone else behind "+N more" — the list hides people better
+    // the worse things are.
+    const many = [
+      flag({ personId: pid("p0"), name: "Busy", metricLabel: "Commits", severity: 9 }),
+      flag({ personId: pid("p0"), name: "Busy", metricLabel: "PRs merged", severity: 8 }),
+      flag({ personId: pid("p0"), name: "Busy", metricLabel: "Code lines", severity: 7 }),
+      flag({ personId: pid("p1"), name: "Other", metricLabel: "Active days", severity: 6 }),
+    ];
+    render(<AttentionList flags={many} summary="s" />);
+    expect(screen.getAllByText("Busy")).toHaveLength(2);
+    // The one dropped is the weakest, and the other subject still shows.
+    expect(screen.queryByText("Code lines")).not.toBeInTheDocument();
+    expect(screen.getByText("Other")).toBeInTheDocument();
+  });
+
+  it("counts the capped rows in \"+N more\", not the raw findings", () => {
+    // The toggle has to promise what expanding will actually reveal.
+    const many = Array.from({ length: 4 }, (_, i) =>
+      flag({
+        personId: pid("p0"),
+        name: "Busy",
+        metricLabel: `Metric ${i}`,
+        severity: 9 - i,
+      }),
+    );
+    render(<AttentionList flags={many} summary="s" max={1} />);
+    expect(screen.getByRole("button", { name: "+1 more" })).toBeInTheDocument();
+  });
+
   it("renders the summary, people label and flag rows with reasons", () => {
     render(
       <AttentionList

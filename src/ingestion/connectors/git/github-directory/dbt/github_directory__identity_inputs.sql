@@ -2,7 +2,7 @@
     materialized='incremental',
     incremental_strategy='append',
     schema='staging',
-    tags=['github_directory', 'silver', 'silver:identity_inputs']
+    tags=['github-directory', 'silver', 'silver:identity_inputs']
 ) }}
 
 -- Identity-resolution inputs for the GitHub account roster; unioned into

@@ -65,7 +65,7 @@ Before going to prod:
     - Works regardless of `credentials.autoGenerate`: the chart auto-detects BYO via absence of the `app.kubernetes.io/managed-by=Helm` label on the existing Secret and skips its own Secret-template emission, so Helm never tries to take ownership of the customer-managed Secret. No manual labeling required.
     - **Dry-run note**: `helm install --dry-run` (default, client-side) skips the `lookup` function, so the BYO preview will incorrectly show the chart emitting `insight-db-creds`. Use `helm install --dry-run=server` (Helm ≥3.13) for an accurate BYO sanity-check — it exercises `lookup` against the real cluster.
 - [ ] Set OIDC via `apiGateway.oidc.existingSecret` (preferred) or all three of `issuer` + `clientId` + `redirectUri` together. Never inline secrets.
-- [ ] Enable ingress + TLS: `apiGateway.ingress`, `frontend.ingress`
+- [ ] Attach routes to the shared Gateway: `gateway.route`, `frontend.route` (TLS terminates at the Gateway listener)
 - [ ] Bump resources where needed (default `requests` are conservative)
 - [ ] Provision the L2 infra (ClickHouse / MariaDB / Redis / Redpanda) out-of-chart and fill `<dep>.host` / `.port` / `.passwordSecret`. App-service URLs follow automatically (resolved by helpers).
 - [ ] Set `global.imagePullSecrets` if pulling from a private registry
