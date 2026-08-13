@@ -36,6 +36,7 @@ import {
   PEOPLE_ITEMS,
   PLANNED_GROUP_LABEL,
   partitionByReadiness,
+  resolveZoneItem,
   ZONE_SECTIONS,
   zoneById,
   type Direction,
@@ -89,6 +90,7 @@ export function ContextPane() {
   const { activeZone } = useActiveZone();
   const zone = zoneById(activeZone);
   const title = zone?.label ?? "Insight";
+  const active = resolveZoneItem(activeZone, usePortalItem());
 
   return (
     <Sidebar collapsible={drawer ? "offcanvas" : "none"} className="border-e">
@@ -111,13 +113,13 @@ export function ContextPane() {
         {activeZone === "directions" ? (
           <DirectionsNav />
         ) : activeZone === "people" ? (
-          <PeopleNav />
+          <PeopleNav active={active} />
         ) : activeZone === "manage" ? (
-          <ItemsNav items={MANAGE_ITEMS} groupLabel="Manage" />
+          <ItemsNav items={MANAGE_ITEMS} groupLabel="Manage" active={active} />
         ) : activeZone === "person" ? (
           <PersonSectionsNav />
         ) : (
-          <ThemeNav zoneId={activeZone} />
+          <ThemeNav zoneId={activeZone} active={active} />
         )}
       </SidebarContent>
       {isPhone ? (
@@ -227,9 +229,8 @@ function MobileZoneNav() {
 
 /* ── Theme zones (Overview / AI & Cost / Scorecard / Reports) ────────── */
 
-function ThemeNav({ zoneId }: { zoneId: string }) {
+function ThemeNav({ zoneId, active }: { zoneId: string; active: string | null }) {
   const groups = ZONE_SECTIONS[zoneId] ?? [];
-  const active = usePortalItem();
   const showPlanned = usePortalShowPlanned();
   // Everything not yet real is pulled out of its original group and collected
   // under one demoted "Planned" group at the bottom, so the working menu reads
@@ -271,11 +272,12 @@ function ThemeNav({ zoneId }: { zoneId: string }) {
 function ItemsNav({
   items,
   groupLabel,
+  active,
 }: {
   items: readonly PaneItem[];
   groupLabel: string;
+  active: string | null;
 }) {
-  const active = usePortalItem();
   const showPlanned = usePortalShowPlanned();
   const { live, planned } = partitionByReadiness(items, showPlanned);
   return (
@@ -451,8 +453,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
 
 /* ── People / Person zones ───────────────────────────────────────────── */
 
-function PeopleNav() {
-  const active = usePortalItem();
+function PeopleNav({ active }: { active: string | null }) {
   return (
     <>
       <SidebarGroup>

@@ -51,6 +51,8 @@ import { ContextPane } from "./context-pane";
 
 const pane = () => render(<SidebarProvider><ContextPane /></SidebarProvider>);
 
+const buttonFor = (label: string) => screen.getByText(label).closest("button");
+
 beforeEach(() => {
   window.matchMedia ??= ((query: string) => ({
     matches: false,
@@ -117,6 +119,36 @@ describe("ContextPane", () => {
     pane();
     expect(screen.getByText("Catalog, identity & governance")).toBeInTheDocument();
     expect(screen.getByText(/Metric catalog/i)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["overview", "At a glance"],
+    ["aicost", "Overview"],
+    ["people", "People (roster)"],
+  ])("highlights the default item of %s when the URL names none", (zone, label) => {
+    mocks.zone = { activeZone: zone, activePerson: "boss@x" };
+    pane();
+    expect(buttonFor(label)).toHaveAttribute("data-active");
+  });
+
+  it("moves the highlight to the item the URL names", () => {
+    act(() => portalRouter.set({ item: "trend" }));
+    pane();
+    expect(buttonFor("Trend")).toHaveAttribute("data-active");
+    expect(buttonFor("At a glance")).not.toHaveAttribute("data-active");
+  });
+
+  it("ignores an item left behind by another zone", () => {
+    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+    act(() => portalRouter.set({ item: "trend" }));
+    pane();
+    expect(buttonFor("People (roster)")).toHaveAttribute("data-active");
+  });
+
+  it("highlights nothing in Manage, whose no-item view is no menu entry", () => {
+    mocks.zone = { activeZone: "manage", activePerson: "boss@x" };
+    pane();
+    expect(buttonFor("Metric catalog")).not.toHaveAttribute("data-active");
   });
 
   it("renders the person's sections nav in the Person zone", () => {
