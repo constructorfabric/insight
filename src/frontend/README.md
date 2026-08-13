@@ -57,6 +57,27 @@ A yellow warning strip renders at the top of the page whenever mocks are active 
 
 Seeded mock people: `bob.park@example.com`, `carol.chen@example.com`, `alice.kim@example.com`, `frank.moss@example.com` (see [src/mocks/registry.ts](src/mocks/registry.ts)).
 
+### Running against a deployed backend
+
+`pnpm dev` proxies `/api` and `/auth` to `VITE_API_PROXY_TARGET` (default: the compose gateway). Pointing that at a deployed stand gets you its data, but **not** its login: the stand registers its OIDC `redirect_uri` on its own origin, so the IdP posts the code back to the stand and the dev server never receives a session.
+
+Hand it a session instead:
+
+1. Sign in to the stand in a browser.
+2. Copy the `__Host-sid` value from DevTools → Application → Cookies (it is `HttpOnly`, so DevTools is the only way).
+3. In `.env.local`:
+
+```
+VITE_API_PROXY_TARGET=https://<stand-host>
+VITE_API_PROXY_SESSION=<the __Host-sid value>
+```
+
+The dev server holds the token and attaches it to every proxied request; the browser never stores it. `/auth/refresh` rotation is absorbed automatically, so the session stays alive as long as the SPA keeps refreshing it — no re-paste. Add `VITE_API_PROXY_INSECURE=true` for a self-signed upstream certificate.
+
+Once the token is expired or revoked the SPA takes a `401` and heads for `/auth/login`, which the dev server answers with a `503` explaining how to refresh it rather than bouncing you onto the stand.
+
+`VITE_API_PROXY_SESSION` is a live session on a real stand. `.env.local` is gitignored — keep it there.
+
 ## Scripts
 
 | Script | Description |
