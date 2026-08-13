@@ -23,9 +23,10 @@ name: E2E — Compose stand
 #                what executes.
 #
 # Neither is required on its own; `Stand E2E` below is the one stable context
-# for branch protection. The stand goes with any change it covers: the lanes
-# run on every pull_request whose diff matches the paths filter, once per
-# queue batch on merge_group, nightly, and on dispatch. Superseded PR runs
+# for branch protection. The workflow starts on every pull request so that
+# required context always reports; the cheap `changes` job decides whether the
+# two stand lanes need to run. Relevant changes run on the pull request, once
+# per queue batch on merge_group, nightly, and on dispatch. Superseded PR runs
 # are cancelled by the concurrency group. Wall-clock and flake history are in
 # .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
 #
@@ -38,25 +39,9 @@ name: E2E — Compose stand
 on:
   pull_request:
     branches: [main]
-    # Mirrors the `changes` job's regex below — keep the two lists in sync.
-    # This filter decides which PRs run the stand at all; the `changes` job
-    # re-checks the same diff (and is the only filter merge_group gets, since
-    # that event supports no `paths:` key). A PR outside these paths produces
-    # no run at all, so `Stand E2E` cannot be made a PR-level required check
-    # while this filter exists — a required check whose workflow never
-    # triggers reports as pending forever and blocks queue entry. It can
-    # still be required on merge_group.
-    paths:
-      - "tests/**"
-      - "deploy/compose/**"
-      - "src/ingestion/tools/seed/**"
-      - "docker-compose.yml"
-      - "dev-compose.sh"
-      - "src/backend/**"
-      - "src/frontend/**"
-      - "docs/components/backend/**/openapi.json"
-      - ".github/workflows/e2e-stand.yml"
-      - ".github/workflows/scripts/redact-playwright-trace.py"
+    # Deliberately NO `paths:` filter. This workflow emits the required
+    # `Stand E2E` check, and GitHub leaves a required check whose workflow never
+    # ran pending forever. Relevance is decided by the cheap `changes` job.
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit
   # merge_group, and a required check must report there or every queued PR
   # times out and is evicted.
@@ -90,9 +75,9 @@ jobs:
   # Stages 2 (CI stand) and 3 (E2E stand) are meant to add a target to
   # `resolve-target` below rather than copy this file.
   # ─── changes ──────────────────────────────────────────────────────────────
-  # The relevance filter for the events that support no `paths:` key —
-  # merge_group above all. Its regex mirrors the pull_request paths list at
-  # the top of the file; keep the two in sync.
+  # What an `on: paths:` filter would have done, moved into a job so the
+  # workflow always runs and the required umbrella below always reports. The
+  # same filter also covers events such as merge_group that support no paths.
   #
   # `src/backend/**` is in the list, and its absence was the reason making this
   # required would have gated nothing that matters: the endpoint contracts this
@@ -134,8 +119,19 @@ jobs:
             fi
             exit 0
           fi
-          changed="$(git diff --name-only "$BASE" "$HEAD")"
-          echo "$changed" | sed 's/^/  /'
+          # Match pull_request path-filter semantics: compare the branch from
+          # its merge base, not from the current base-branch tip. A two-dot diff
+          # would attribute unrelated commits that landed on main after this
+          # branch forked to the pull request and run the stand unnecessarily.
+          base_point="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || true)"
+          if [ -z "$base_point" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "no merge base between $BASE and $HEAD — running and building"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$base_point" "$HEAD")"
+          printf '  %s\n' "${changed//$'\n'/$'\n  '}"
           if echo "$changed" | grep -qE '^(tests/|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/|docs/components/backend/.*/openapi\.json|\.github/workflows/e2e-stand\.yml|\.github/workflows/scripts/redact-playwright-trace\.py)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
@@ -165,7 +161,7 @@ jobs:
           REQUESTED: ${{ inputs.target }}
         run: |
           set -euo pipefail
-          TARGET="${REQUESTED:-compose}"
+          TARGET="${REQUESTED:-compose}" # RULE-DEFAULTS-OK: compose is the workflow's only declared target.
           if [ "$TARGET" != "compose" ]; then
             echo "::error::unsupported target '$TARGET' — only 'compose' is implemented"
             exit 1
@@ -456,16 +452,12 @@ jobs:
           ./dev-compose.sh test-stand down
 
   # ─── the required check ───────────────────────────────────────────────────
-  # One stable context name for branch protection — requirable on merge_group
-  # only; the paths filter above means it cannot be required at PR level. It
-  # runs whenever the run wasn't cancelled, so it still reports when `changes`
-  # deemed the diff irrelevant and the lanes were skipped.
+  # One stable context name for branch protection on both pull_request and
+  # merge_group. It runs whenever the workflow was not cancelled, including
+  # when `changes` deemed the diff irrelevant and the lanes were skipped.
   #
-  # `skipped` is therefore a PASS here, unlike in e2e-bronze-to-api.yml's
-  # umbrella where it is a failure. The difference is what the skip means: there
-  # a skipped lane implies a red upstream build, here it means `changes` decided
-  # the diff cannot affect the stand. Treating those the same would either block
-  # every unrelated PR or let a broken build through.
+  # A skipped lane is a pass only when `changes` explicitly reported the diff
+  # irrelevant. If relevance is unknown or relevant, every lane must succeed.
   stand-suite:
     name: Stand E2E
     needs: [changes, api-smoke, ui-journeys]
@@ -475,16 +467,25 @@ jobs:
     steps:
       - name: Require both lanes to have passed, or to have been skipped as irrelevant
         env:
+          CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           API: ${{ needs.api-smoke.result }}
           UI: ${{ needs.ui-journeys.result }}
         run: |
           set -euo pipefail
-          echo "relevant=$RELEVANT api-smoke=$API ui-journeys=$UI"
+          echo "changes=$CHANGES relevant=$RELEVANT api-smoke=$API ui-journeys=$UI"
 
-          if [ "$RELEVANT" != "true" ]; then
+          if [ "$CHANGES" != "success" ]; then
+            echo "::error::the changes job did not succeed ($CHANGES) — stand relevance is unknown."
+            exit 1
+          fi
+          if [ "$RELEVANT" = "false" ]; then
             echo "nothing the stand covers changed — nothing to prove."
             exit 0
+          fi
+          if [ "$RELEVANT" != "true" ]; then
+            echo "::error::the changes job produced an invalid relevance value ('$RELEVANT')."
+            exit 1
           fi
           for lane in "api-smoke=$API" "ui-journeys=$UI"; do
             if [ "${lane#*=}" != "success" ]; then

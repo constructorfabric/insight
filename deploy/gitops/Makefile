@@ -33,6 +33,10 @@
 # to oci://ghcr.io/constructorfabric/charts/insight; INSIGHT_VERSION pins one
 # semver from .insight-version.
 
+# bash, not /bin/sh: `deploy-insight` needs `set -o pipefail` to read helm's
+# exit status through `tee`; dash lacks it and a failed upgrade reports SUCCESS.
+SHELL            := /bin/bash
+
 ENV              ?= local
 # Single source of truth for per-env cluster topology. Drives bootstrap,
 # system, seal, and deploy targets. Schema: see
@@ -59,6 +63,24 @@ VALUES           ?= environments/$(ENV)/values.yaml
 # trades speed for reliability — give it room before --atomic rolls back.
 TIMEOUT          ?= 30m
 RENDER_DIR       := .deploy
+
+# yq trap: `//` treats an explicit `false` as absent, so CREATE_NS/ATOMIC
+# carry no fallback and read a missing key back as the literal "null".
+CREATE_NS        ?= $(shell yq -r '.bootstrap.namespaces' $(INVENTORY) 2>/dev/null)
+ATOMIC           ?= $(shell yq -r '.deploy.atomic'        $(INVENTORY) 2>/dev/null)
+
+KEYCLOAK_REALMS  := $(shell yq -r '.keycloak.realms'      $(INVENTORY) 2>/dev/null)
+SEALED_ENABLED   := $(shell yq -r '[.secrets.services[]? | select(.enabled == true)] | length' $(INVENTORY) 2>/dev/null)
+OIDC_SECRET      := $(shell yq -r '.oidcClientSecret.secret // ""' $(INVENTORY) 2>/dev/null)
+OIDC_SECRET_KEY  := $(shell yq -r '.oidcClientSecret.key // "client-secret"' $(INVENTORY) 2>/dev/null)
+# Read from VALUES, not the inventory: the chart is told the mode there, and
+# two copies can disagree.
+CRED_MODE        := $(shell yq -r '.credentials.deploymentMode' $(VALUES) 2>/dev/null)
+
+HELM_NS_FLAG     := $(if $(filter false,$(CREATE_NS)),,--create-namespace)
+# `--atomic` rolls back to the PREVIOUS chart and deletes the pods holding the
+# failure's evidence — a downgrade here. `deploy.atomic: false` turns it off.
+HELM_ATOMIC_FLAG := $(if $(filter false,$(ATOMIC)),,--atomic)
 
 # Extra flags appended to helm invocations. Default empty.
 #
@@ -171,6 +193,7 @@ help:
 	@echo "  make sync                         git pull --ff-only origin main"
 	@echo "  make diff ENV=$(ENV)              Show poller commits + render diff"
 	@echo "  make deploy ENV=$(ENV)            L3 only — helm install/upgrade the umbrella (alias: deploy-app)"
+	@echo "  make print-confirm-token ENV=$(ENV)  Print the CONFIRM token 'make deploy' expects — the one source of truth"
 	@echo "  make apply-app-secrets ENV=$(ENV)   L3 prereq — apply sealed manifests + derive *-config Secrets from insight-db-creds"
 	@echo "  make system ENV=$(ENV)            L2 — install all services with inventory.system.<svc>: true"
 	@echo "  make system-mariadb ENV=$(ENV)            }"
@@ -184,6 +207,9 @@ help:
 	@echo "  make system-alloy ENV=$(ENV)              } L2 — observability (LGTM, bundled mode)."
 	@echo "  make system-grafana ENV=$(ENV)            }"
 	@echo "  make system-status ENV=$(ENV)             Show what's installed in insight-infra"
+	@echo "  make provision-ci ENV=$(ENV)      Provision the namespace-scoped CI deploy credential"
+	@echo "  make verify-ci-credential ENV=$(ENV)  Assert the CI credential's RBAC scope"
+	@echo "  make revoke-ci ENV=$(ENV)         Delete the CI deploy credential (SA + RBAC + token)"
 	@echo "  make rollback ENV=$(ENV)          Roll back the umbrella to previous revision"
 	@echo "  make status ENV=$(ENV)            kubectl rollout status + helm status"
 	@echo "  make tag                          Tag current commit as deploy-…"
@@ -218,16 +244,22 @@ sync:
 
 .PHONY: sync-clean
 sync-clean:
-	@if [ -n "$$(git status --porcelain)" ]; then \
-		echo "$(C_RED)ERROR$(C_RST): working tree has uncommitted changes"; \
-		git status --short; exit 1; fi
-	@git fetch --quiet origin
-	@LOCAL=$$(git rev-parse @); REMOTE=$$(git rev-parse @{u} 2>/dev/null || echo ""); \
-	if [ -z "$$REMOTE" ]; then \
+	@# Scoped to THIS directory: the guarantee is that what is about to be
+	@# deployed is committed, not that the whole repository is clean.
+	@if [ -n "$$(git status --porcelain -- .)" ]; then \
+		echo "$(C_RED)ERROR$(C_RST): deploy/gitops has uncommitted changes"; \
+		git status --short -- .; exit 1; fi
+	@# Fetch sits inside the upstream test: a detached CI HEAD has no upstream.
+	@if ! git rev-parse --abbrev-ref @{u} >/dev/null 2>&1; then \
 		echo "$(C_YEL)WARN$(C_RST): no upstream tracked; skipping HEAD-vs-remote check"; \
-	elif [ "$$LOCAL" != "$$REMOTE" ]; then \
-		echo "$(C_RED)ERROR$(C_RST): HEAD is not equal to origin/$$(git rev-parse --abbrev-ref @{u} | cut -d/ -f2-)"; \
-		echo "       run 'make sync' first"; exit 1; fi
+	else \
+		git fetch --quiet origin; \
+		LOCAL=$$(git rev-parse @); REMOTE=$$(git rev-parse @{u}); \
+		if [ "$$LOCAL" != "$$REMOTE" ]; then \
+			echo "$(C_RED)ERROR$(C_RST): HEAD is not equal to origin/$$(git rev-parse --abbrev-ref @{u} | cut -d/ -f2-)"; \
+			echo "       run 'make sync' first"; exit 1; \
+		fi; \
+	fi
 
 .PHONY: inventory-present
 inventory-present:
@@ -250,25 +282,39 @@ kube-ctx-required: inventory-present
 
 .PHONY: vpn-up
 vpn-up: kube-ctx-required
-	@kubectl --context $(KUBE_CTX) --request-timeout=5s cluster-info >/dev/null 2>&1 \
-		|| { echo "$(C_RED)ERROR$(C_RST): cannot reach cluster '$(KUBE_CTX)'; is the VPN up?"; exit 1; }
+	@# `auth can-i --list`, not `cluster-info`: cluster-info reads kube-system,
+	@# which a namespace-scoped credential is refused on a reachable cluster.
+	@kubectl --context $(KUBE_CTX) --request-timeout=5s auth can-i --list -n $(NS_APP) >/dev/null 2>&1 \
+		|| { echo "$(C_RED)ERROR$(C_RST): cannot reach cluster '$(KUBE_CTX)' as an authenticated principal;"; \
+		     echo "       is the VPN up, and is the kubeconfig's credential still valid? On a namespace-scoped"; \
+		     echo "       CI credential, re-issue it with scripts/provision-ci-deployer.sh."; exit 1; }
 
+# The actual current context is not printed on a mismatch: an arbitrary string
+# is not credential-shaped, so a public CI log's redactor would not catch it.
 .PHONY: kube-ctx
 kube-ctx: kube-ctx-required
 	@CUR=$$(kubectl config current-context 2>/dev/null || echo none); \
 	if [ "$$CUR" != "$(KUBE_CTX)" ]; then \
-		echo "$(C_RED)ERROR$(C_RST): current kube-context is '$$CUR', expected '$(KUBE_CTX)'"; \
-		echo "       run: kubectl config use-context $(KUBE_CTX)"; \
+		echo "$(C_RED)ERROR$(C_RST): the active kube-context is not '$(KUBE_CTX)' ($(INVENTORY)'s kubeContext)."; \
+		echo "       Either the credential in use points at the wrong cluster, or the inventory was"; \
+		echo "       changed without rotating it — run: kubectl config use-context $(KUBE_CTX)"; \
 		exit 1; fi
+
+# Single source of truth for the deploy CONFIRM token. `confirm` below and
+# `make -s print-confirm-token` consume it; nothing re-derives the format.
+CONFIRM_TOKEN := yes-deploy-$(ENV)
 
 .PHONY: confirm
 confirm: inventory-present
 	@if [ "$$(yq -r '.protected // false' $(INVENTORY))" = "true" ]; then \
-		EXPECTED="yes-deploy-$(ENV)"; \
-		if [ "$(CONFIRM)" != "$$EXPECTED" ]; then \
-			echo "$(C_RED)ERROR$(C_RST): deploy to '$(ENV)' requires CONFIRM=$$EXPECTED (per inventory.protected)"; \
+		if [ "$(CONFIRM)" != "$(CONFIRM_TOKEN)" ]; then \
+			echo "$(C_RED)ERROR$(C_RST): deploy to '$(ENV)' requires CONFIRM=$(CONFIRM_TOKEN) (per inventory.protected)"; \
 			exit 1; fi; \
 	fi
+
+.PHONY: print-confirm-token
+print-confirm-token:
+	@echo "$(CONFIRM_TOKEN)"
 
 .PHONY: chart-present
 chart-present:
@@ -276,7 +322,8 @@ chart-present:
 		|| { echo "$(C_RED)ERROR$(C_RST): INSIGHT_VERSION is empty; populate .insight-version"; exit 1; }
 	@helm show chart $(CHART) --version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) >/dev/null 2>&1 \
 		|| { echo "$(C_RED)ERROR$(C_RST): chart $(CHART):$(INSIGHT_VERSION) not found in registry"; \
-		     echo "       check .insight-version and that the chart was published by CI"; \
+		     echo "       publish-chart is what puts it there; if that job failed after pushing but"; \
+		     echo "       before committing the version bump, re-run it rather than deploying by hand."; \
 		     exit 1; }
 
 .PHONY: values-present
@@ -379,7 +426,11 @@ keycloak-realm: kube-ctx values-present
 # umbrella's keycloak-config-cli hook Job applies (ADR-0003). Chained into
 # deploy-insight; no-op unless keycloakConfig.enabled=true.
 keycloak-broker-realms: kube-ctx values-present
-	@if [ "$$(yq -r '.keycloakConfig.enabled // false' $(VALUES))" != "true" ]; then \
+	@# `external` means the realm ConfigMap is written outside this repository.
+	@# Keyed on ownership, not on keycloakConfig.enabled.
+	@if [ "$(KEYCLOAK_REALMS)" = "external" ]; then \
+	  echo "$(C_YEL)skip$(C_RST) keycloak-broker-realms (inventory.keycloak.realms=external — $(RELEASE)-keycloak-config-realms is owned outside this repo)"; exit 0; fi; \
+	if [ "$$(yq -r '.keycloakConfig.enabled // false' $(VALUES))" != "true" ]; then \
 	  echo "$(C_YEL)skip$(C_RST) keycloak-broker-realms (keycloakConfig.enabled != true)"; exit 0; fi; \
 	DIR=environments/$(ENV)/keycloak/realms; \
 	ls $$DIR/* >/dev/null 2>&1 \
@@ -396,30 +447,42 @@ deploy-app: deploy-insight
 # *-config Secrets that the chart references via `existingSecret`.
 # Derived Secrets are NOT sealed/committed — they're regenerated from
 # the already-sealed insight-db-creds on every deploy. Idempotent.
+#
+# Two independent skips: no enabled sealed Secret in the inventory, and
+# CRED_MODE=helm — composing over the chart can write a BLANK client secret.
 .PHONY: apply-app-secrets
 apply-app-secrets: vpn-up kube-ctx
-	@SEAL_DIR=environments/$(ENV)/sealed-secrets/insight; \
-	if [ ! -d "$$SEAL_DIR" ] || [ -z "$$(ls -A $$SEAL_DIR/*-sealedsecret.yaml 2>/dev/null)" ]; then \
-		echo "$(C_RED)ERROR$(C_RST): no L3 sealed manifests in $$SEAL_DIR/"; \
-		echo "       seal at minimum insight-db-creds before running deploy-app:"; \
-		echo "         make seal-secret ENV=$(ENV) NAMESPACE=$(NS_APP) NAME=insight-db-creds"; \
-		exit 1; \
-	fi; \
-	echo "applying L3 sealed manifests under $$SEAL_DIR/"; \
-	for f in $$SEAL_DIR/*-sealedsecret.yaml; do \
-		kubectl --context $(KUBE_CTX) apply -f "$$f"; \
-	done
-	@echo "waiting for sealed-secrets-controller to materialise insight-db-creds…"; \
-	for i in $$(seq 1 30); do \
-		if kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret insight-db-creds >/dev/null 2>&1; then \
-			break; \
+	@if [ "$(SEALED_ENABLED)" = "0" ]; then \
+		echo "$(C_YEL)skip$(C_RST) sealed manifests (inventory.secrets.services has no enabled entry — every Secret this release consumes is created outside this repo)"; \
+	else \
+		SEAL_DIR=environments/$(ENV)/sealed-secrets/insight; \
+		if [ ! -d "$$SEAL_DIR" ] || [ -z "$$(ls -A $$SEAL_DIR/*-sealedsecret.yaml 2>/dev/null)" ]; then \
+			echo "$(C_RED)ERROR$(C_RST): no L3 sealed manifests in $$SEAL_DIR/"; \
+			echo "       seal at minimum insight-db-creds before running deploy-app:"; \
+			echo "         make seal-secret ENV=$(ENV) NAMESPACE=$(NS_APP) NAME=insight-db-creds"; \
+			exit 1; \
 		fi; \
-		sleep 1; \
-	done; \
-	kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret insight-db-creds >/dev/null 2>&1 \
-		|| { echo "$(C_RED)ERROR$(C_RST): insight-db-creds never materialised (controller down? sealed manifest invalid?)"; exit 1; }
-	@ENV=$(ENV) NS_APP=$(NS_APP) RELEASE=$(RELEASE) \
-		bash scripts/compose-app-secrets.sh
+		echo "applying L3 sealed manifests under $$SEAL_DIR/"; \
+		for f in $$SEAL_DIR/*-sealedsecret.yaml; do \
+			kubectl --context $(KUBE_CTX) apply -f "$$f"; \
+		done; \
+		echo "waiting for sealed-secrets-controller to materialise insight-db-creds…"; \
+		for i in $$(seq 1 30); do \
+			if kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret insight-db-creds >/dev/null 2>&1; then \
+				break; \
+			fi; \
+			sleep 1; \
+		done; \
+		kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret insight-db-creds >/dev/null 2>&1 \
+			|| { echo "$(C_RED)ERROR$(C_RST): insight-db-creds never materialised (controller down? sealed manifest invalid?)"; exit 1; }; \
+	fi
+	@# Tested for `helm`, not against `gitops`: an unreadable values file reads
+	@# back EMPTY, and "empty is not gitops" would skip this step for ENV=local.
+	@if [ "$(CRED_MODE)" = "helm" ]; then \
+		echo "$(C_YEL)skip$(C_RST) compose-app-secrets (credentials.deploymentMode=helm — the chart renders the *-config Secrets)"; \
+	else \
+		ENV=$(ENV) NS_APP=$(NS_APP) RELEASE=$(RELEASE) bash scripts/compose-app-secrets.sh; \
+	fi
 
 .PHONY: local-chart-present
 local-chart-present:
@@ -443,17 +506,75 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 		-n $(NS_APP) -f $(VALUES) \
 		> $(RENDER_DIR)/last-render-$(ENV).yaml
 	@echo "$(C_GRN)rendered$(C_RST) $(CHART):$(INSIGHT_VERSION) → $(RENDER_DIR)/last-render-$(ENV).yaml"
-	@LOG=$(RENDER_DIR)/deploy-$(ENV)-$$(date -u +%Y%m%d-%H%M%S).log; \
+	@# A release whose only revision is a failed install cannot be upgraded, and
+	@# a `pending-*` one is refused rather than auto-recovered. See INFRA.md.
+	@set -o pipefail; \
+	STATUS=$$(helm list -n $(NS_APP) --failed --pending --uninstalling --filter '^$(RELEASE)$$' -o json $(HELM_EXTRA_FLAGS) 2>/dev/null | jq -r '.[0].status // ""'); \
+	case "$$STATUS" in \
+	  failed) \
+	    if ! helm history $(RELEASE) -n $(NS_APP) -o json $(HELM_EXTRA_FLAGS) 2>/dev/null | jq -e 'any(.[]; .status == "deployed" or .status == "superseded")' >/dev/null; then \
+	      echo "$(C_RED)ERROR$(C_RST): release '$(RELEASE)' has no deployed revision — its only history is a failed install."; \
+	      echo "       helm refuses to upgrade such a release ('has no deployed releases'), and will keep"; \
+	      echo "       refusing. Remove it and let this target install cleanly:"; \
+	      echo "         helm uninstall $(RELEASE) -n $(NS_APP)"; \
+	      exit 1; \
+	    fi ;; \
+	  pending-install|pending-upgrade|pending-rollback) \
+	    echo "$(C_RED)ERROR$(C_RST): release '$(RELEASE)' is '$$STATUS' — a previous helm was killed mid-flight."; \
+	    echo "       Another operation is in progress as far as helm is concerned, and this upgrade"; \
+	    echo "       would be refused. Check nothing is still running, then:"; \
+	    echo "         helm rollback $(RELEASE) -n $(NS_APP)   # to the last deployed revision, or"; \
+	    echo "         helm uninstall $(RELEASE) -n $(NS_APP)  # if the stand is disposable"; \
+	    exit 1 ;; \
+	esac
+	@# `--wait` is explicit, not inherited from `--atomic`: on helm 4 an omitted
+	@# `--wait` waits on hooks only. `--set-file`, not `--set-string`, which
+	@# splits on commas and backslashes and would truncate a generated secret.
+	@set -o pipefail; \
+	SET_ARGS=(); \
+	if [ -n "$(OIDC_SECRET)" ]; then \
+		OIDC_FILE=$$(mktemp); trap 'rm -f "$$OIDC_FILE"' EXIT INT TERM; \
+		kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret $(OIDC_SECRET) \
+			-o "jsonpath={.data['$(OIDC_SECRET_KEY)']}" | base64 --decode > "$$OIDC_FILE"; \
+		[ -s "$$OIDC_FILE" ] \
+			|| { echo "$(C_RED)ERROR$(C_RST): secret $(OIDC_SECRET) has no non-empty '$(OIDC_SECRET_KEY)' in $(NS_APP)."; \
+			     echo "       Refusing to deploy: the upgrade would succeed and leave the authenticator with a"; \
+			     echo "       blank client secret, which looks healthy and fails every login."; exit 1; }; \
+		SET_ARGS+=(--set-file authenticator.oidc.clientSecret="$$OIDC_FILE"); \
+	fi; \
+	LOG=$(RENDER_DIR)/deploy-$(ENV)-$$(date -u +%Y%m%d-%H%M%S).log; \
 	echo "$(C_GRN)applying$(C_RST) → log at $$LOG"; \
+	rc=0; \
 	helm upgrade --install $(RELEASE) $(CHART) \
-		--version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) $(HELM_UPGRADE_FLAGS) \
-		--namespace $(NS_APP) --create-namespace \
+		--version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) $(HELM_UPGRADE_FLAGS) "$${SET_ARGS[@]}" \
+		--namespace $(NS_APP) $(HELM_NS_FLAG) \
 		-f $(VALUES) \
-		--atomic --timeout $(TIMEOUT) \
+		--wait $(HELM_ATOMIC_FLAG) --timeout $(TIMEOUT) \
 		--history-max 10 \
-		2>&1 | tee $$LOG; \
-	NS_INFRA=$(NS_INFRA) KUBE_CTX=$(KUBE_CTX) \
-		bash scripts/push-deploy-log.sh $(ENV) $$LOG $(INSIGHT_VERSION) || true
+		2>&1 | tee $$LOG || rc=$$?; \
+	if [ "$$(yq -r '.system.loki // false' $(INVENTORY) 2>/dev/null)" = "true" ]; then \
+		NS_INFRA=$(NS_INFRA) KUBE_CTX=$(KUBE_CTX) \
+			bash scripts/push-deploy-log.sh $(ENV) $$LOG $(INSIGHT_VERSION) || true; \
+	fi; \
+	exit $$rc
+	@$(MAKE) --no-print-directory verify-release ENV=$(ENV) INSIGHT_VERSION=$(INSIGHT_VERSION)
+
+# A release can report `deployed` and still be running the wrong chart.
+.PHONY: verify-release
+verify-release: vpn-up kube-ctx
+	@# Status flags enumerated instead of `--all`, which helm 4 removed: on a v4
+	@# host `--all` exits `unknown flag` and reports every release as absent.
+	@LISTED=$$(helm list -n $(NS_APP) --deployed --failed --pending --uninstalling --filter '^$(RELEASE)$$' -o json $(HELM_EXTRA_FLAGS)); \
+	STATUS=$$(printf '%s' "$$LISTED" | jq -r '.[0].status // "absent"'); \
+	CHARTV=$$(printf '%s' "$$LISTED" | jq -r '.[0].chart // "absent"'); \
+	REV=$$(printf '%s' "$$LISTED" | jq -r '.[0].revision // "?"'); \
+	echo "release $(RELEASE): status=$$STATUS chart=$$CHARTV revision=$$REV"; \
+	[ "$$STATUS" = "deployed" ] \
+		|| { echo "$(C_RED)ERROR$(C_RST): release is '$$STATUS', not 'deployed' — left in that state on purpose."; exit 1; }; \
+	[ "$$CHARTV" = "insight-$(INSIGHT_VERSION)" ] \
+		|| { echo "$(C_RED)ERROR$(C_RST): the stand runs '$$CHARTV', not 'insight-$(INSIGHT_VERSION)'."; \
+		     echo "       helm reported success while installing something else — treat this as a problem"; \
+		     echo "       with the chart reference or the version input, not with the stand."; exit 1; }
 
 # Helper: chain a sub-target IF the matching inventory.<section>.<key>
 # is true; otherwise print a skip message. Use with $(call …) below.
@@ -692,6 +813,109 @@ system-status: vpn-up kube-ctx
 	@echo
 	@echo "=== Pods in $(NS_INFRA) ==="
 	@kubectl -n $(NS_INFRA) get pods -o wide 2>/dev/null || true
+
+# The namespace-scoped ServiceAccount credential CI deploys with. Procedure:
+# environments/test-stand/credentials-runbook.md.
+CI_DEPLOYER_MANIFEST     := environments/$(ENV)/ci-deployer-rbac.yaml
+CI_DEPLOYER_SA           := ci-deployer
+CI_DEPLOYER_TOKEN_SECRET := ci-deployer-token
+CI_DEPLOYER_TOKEN_WAIT_S ?= 60
+# Context-named after $(KUBE_CTX), not a fixed string: `KUBECONFIG=<out> make
+# deploy ENV=$(ENV)` then needs no KUBE_CTX override.
+CI_DEPLOYER_OUT          ?= $(HOME)/.kube/insight-$(ENV)-ci-deployer.kubeconfig
+CI_DEPLOYER_CA_FILE      ?=
+# The chart renders its airbyte-auth-reader Role/RoleBinding into this
+# namespace (airbyte.namespace in $(VALUES)), not the release namespace.
+AIRBYTE_NAMESPACE        := $(shell yq -r '.airbyte.namespace // ""' $(VALUES) 2>/dev/null)
+
+.PHONY: provision-ci
+provision-ci: vpn-up kube-ctx
+	@test -f $(CI_DEPLOYER_MANIFEST) \
+		|| { echo "$(C_RED)ERROR$(C_RST): no manifest at $(CI_DEPLOYER_MANIFEST)"; exit 1; }
+	kubectl --context $(KUBE_CTX) apply -f $(CI_DEPLOYER_MANIFEST)
+	@set -o pipefail; \
+	echo "waiting for the token controller to populate $(NS_APP)/$(CI_DEPLOYER_TOKEN_SECRET)…"; \
+	i=0; FILLED=""; \
+	while [ "$$i" -lt $(CI_DEPLOYER_TOKEN_WAIT_S) ]; do \
+		FILLED=$$(kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret $(CI_DEPLOYER_TOKEN_SECRET) -o go-template='{{if .data.token}}yes{{end}}' 2>/dev/null); \
+		[ -n "$$FILLED" ] && break; \
+		i=$$((i + 1)); sleep 1; \
+	done; \
+	[ -n "$$FILLED" ] || { echo "$(C_RED)ERROR$(C_RST): token controller never populated $(CI_DEPLOYER_TOKEN_SECRET) within $(CI_DEPLOYER_TOKEN_WAIT_S)s"; exit 1; }; \
+	OUT_DIR=$$(dirname "$(CI_DEPLOYER_OUT)"); \
+	[ -d "$$OUT_DIR" ] || { echo "$(C_RED)ERROR$(C_RST): parent directory of CI_DEPLOYER_OUT does not exist: $$OUT_DIR"; exit 1; }; \
+	OUT_ABS="$$OUT_DIR/$$(basename $(CI_DEPLOYER_OUT))"; \
+	if git -C "$$OUT_DIR" rev-parse --show-toplevel >/dev/null 2>&1 && ! git -C "$$OUT_DIR" check-ignore -q "$$OUT_ABS" 2>/dev/null; then \
+		echo "$(C_RED)ERROR$(C_RST): refusing to write a bearer token to '$$OUT_ABS' — inside a git work tree and not gitignored"; exit 1; \
+	fi; \
+	TOKEN=$$(kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret $(CI_DEPLOYER_TOKEN_SECRET) -o go-template='{{if .data.token}}{{.data.token | base64decode}}{{end}}' 2>/dev/null); \
+	[ -n "$$TOKEN" ] || { echo "$(C_RED)ERROR$(C_RST): token Secret $(CI_DEPLOYER_TOKEN_SECRET) carries no token"; exit 1; }; \
+	CLUSTER=$$(kubectl config view -o jsonpath="{.contexts[?(@.name==\"$(KUBE_CTX)\")].context.cluster}"); \
+	[ -n "$$CLUSTER" ] || { echo "$(C_RED)ERROR$(C_RST): context $(KUBE_CTX) not found in the active kubeconfig"; exit 1; }; \
+	CA_B64=$$(kubectl --context $(KUBE_CTX) -n $(NS_APP) get secret $(CI_DEPLOYER_TOKEN_SECRET) -o jsonpath='{.data.ca\.crt}' 2>/dev/null); \
+	[ -n "$$CA_B64" ] || [ -z "$(CI_DEPLOYER_CA_FILE)" ] || CA_B64=$$(base64 < "$(CI_DEPLOYER_CA_FILE)" | tr -d '\n'); \
+	[ -n "$$CA_B64" ] || CA_B64=$$(kubectl config view --raw -o jsonpath="{.clusters[?(@.name==\"$$CLUSTER\")].cluster.certificate-authority-data}"); \
+	[ -n "$$CA_B64" ] || { echo "$(C_RED)ERROR$(C_RST): could not resolve a cluster CA — set CI_DEPLOYER_CA_FILE=<pem>"; exit 1; }; \
+	SERVER=$$(kubectl config view -o jsonpath="{.clusters[?(@.name==\"$$CLUSTER\")].cluster.server}"); \
+	[ -n "$$SERVER" ] || { echo "$(C_RED)ERROR$(C_RST): could not resolve the API server for context $(KUBE_CTX)"; exit 1; }; \
+	OLD_UMASK=$$(umask); umask 077; \
+	printf '%s\n' \
+		"apiVersion: v1" "kind: Config" "current-context: $(KUBE_CTX)" \
+		"clusters:" "  - name: $(KUBE_CTX)" "    cluster:" \
+		"      server: $$SERVER" "      certificate-authority-data: $$CA_B64" \
+		"contexts:" "  - name: $(KUBE_CTX)" "    context:" \
+		"      cluster: $(KUBE_CTX)" "      namespace: $(NS_APP)" "      user: $(CI_DEPLOYER_SA)" \
+		"users:" "  - name: $(CI_DEPLOYER_SA)" "    user:" "      token: '$$TOKEN'" \
+		> "$$OUT_ABS"; \
+	umask "$$OLD_UMASK"; chmod 600 "$$OUT_ABS"; \
+	unset TOKEN; \
+	echo "$(C_GRN)wrote$(C_RST) $$OUT_ABS (mode 600, contents not printed)"
+	$(MAKE) --no-print-directory verify-ci-credential ENV=$(ENV)
+
+# The `no` rows pass --all-namespaces so a cluster-scoped request is actually
+# exercised; a namespaced one can pass on the RoleBinding alone and prove nothing.
+.PHONY: verify-ci-credential
+verify-ci-credential: vpn-up kube-ctx
+	@test -r "$(CI_DEPLOYER_OUT)" \
+		|| { echo "$(C_RED)ERROR$(C_RST): no kubeconfig at $(CI_DEPLOYER_OUT) — run 'make provision-ci ENV=$(ENV)' first"; exit 1; }
+	@test -n "$(AIRBYTE_NAMESPACE)" \
+		|| { echo "$(C_RED)ERROR$(C_RST): airbyte.namespace is empty in $(VALUES) — nothing to verify the airbyte supplement against"; exit 1; }
+	@FAILURES=0; \
+	check() { \
+		WANT=$$1; DESC=$$2; shift 2; \
+		GOT=$$(kubectl --kubeconfig "$(CI_DEPLOYER_OUT)" auth can-i "$$@" 2>/dev/null | head -1 | awk '{print $$1}'); \
+		[ -n "$$GOT" ] || GOT="(no answer)"; \
+		if [ "$$GOT" = "$$WANT" ]; then echo "$(C_GRN)OK$(C_RST)   $$DESC"; \
+		else echo "$(C_RED)FAIL$(C_RST) want $$WANT got $$GOT — $$DESC"; FAILURES=$$((FAILURES + 1)); fi; \
+	}; \
+	check yes "create jobs in $(NS_APP) (seed stage renders a Job)"          create jobs -n $(NS_APP); \
+	check yes "get pods/log in $(NS_APP) (seed + diagnostics)"               get pods/log -n $(NS_APP); \
+	check yes "create secrets in $(NS_APP) (helm release storage)"          create secrets -n $(NS_APP); \
+	check yes "update deployments in $(NS_APP) (helm upgrade, rollout)"     update deployments.apps -n $(NS_APP); \
+	check yes "create Roles in $(NS_APP) (chart renders its own RBAC)"      create roles.rbac.authorization.k8s.io -n $(NS_APP); \
+	check yes "create WorkflowTemplates in $(NS_APP)"                        create workflowtemplates.argoproj.io -n $(NS_APP); \
+	check yes "update HTTPRoutes in $(NS_APP) (chart renders the edge routes)" update httproutes.gateway.networking.k8s.io -n $(NS_APP); \
+	check yes "get Roles in $(AIRBYTE_NAMESPACE) (helm reads airbyte-auth-reader every upgrade)" get roles.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
+	check yes "update Roles in $(AIRBYTE_NAMESPACE) (its chart/version labels change every bump)" update roles.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
+	check yes "create Roles in $(AIRBYTE_NAMESPACE)"                         create roles.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
+	check yes "create RoleBindings in $(AIRBYTE_NAMESPACE) (the chart's airbyte-auth-reader)" create rolebindings.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
+	check no  "read pods in $(AIRBYTE_NAMESPACE) (the exception is RBAC-only)" get pods -n $(AIRBYTE_NAMESPACE); \
+	check no  "anything, anywhere (the blanket check)"                       '*' '*' --all-namespaces; \
+	check no  "list namespaces at cluster scope"                            list namespaces --all-namespaces; \
+	check no  "create namespaces (hence the --create-namespace limitation)" create namespaces --all-namespaces; \
+	check no  "read Secrets across all namespaces"                          get secrets --all-namespaces; \
+	check no  "list nodes"                                                  list nodes --all-namespaces; \
+	check no  "create ClusterRoleBindings"                                  create clusterrolebindings.rbac.authorization.k8s.io --all-namespaces; \
+	check no  "read pods in kube-system"                                    get pods -n kube-system; \
+	[ "$$FAILURES" -eq 0 ] || { echo "$(C_RED)ERROR$(C_RST): $$FAILURES scope assertion(s) failed — do not put this kubeconfig in a GitHub environment"; exit 1; }; \
+	echo "$(C_GRN)all scope assertions hold$(C_RST)"
+
+# Revocation is immediate: the API server re-validates the SA's UID per request.
+.PHONY: revoke-ci
+revoke-ci: vpn-up kube-ctx
+	kubectl --context $(KUBE_CTX) delete -f $(CI_DEPLOYER_MANIFEST) --ignore-not-found
+	@echo "$(C_GRN)OK$(C_RST) ci-deployer ServiceAccount, RBAC and token Secret removed from $(NS_APP)"
+	@echo "$(C_YEL)NOTE$(C_RST) a GitHub environment secret may still hold the dead kubeconfig; replace or delete it"
 
 .PHONY: rollback
 rollback: vpn-up kube-ctx

@@ -1,0 +1,25 @@
+# Fires after a main build finishes, OUTSIDE its concurrency slot: a slow
+# stand deploy must never queue the next merge's image build or chart
+# publish behind it (deploy-test-stand.yml has its own coalescing group).
+# The version is resolved from the OCI registry's newest published tag —
+# which IS the chart that run just published; the downgrade guard refuses
+# anything older than what is deployed.
+name: Deploy test stand after publish
+on:
+  workflow_run:
+    workflows: ["Build & Push Container Images"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # The whole run must be green: publish-chart sits at its end, so a red
+    # run either never published or published amid other failures — neither
+    # is a state to install.
+    if: github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy-test-stand.yml
