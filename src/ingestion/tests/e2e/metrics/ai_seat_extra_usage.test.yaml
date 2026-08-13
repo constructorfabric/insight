@@ -1,0 +1,158 @@
+spec_version: 1
+description: >
+  Metrics: ai.extra_usage_cost and ai.extra_usage_utilisation — Claude Team seat spend.
+  How they're computed (bronze → silver → gold):
+    • bronze: per-seat spend snapshot, used_credits and monthly_credit_limit ALREADY in cents
+    • silver: latest snapshot per seat per calendar month, stamped period_month from
+              the extraction time
+    • gold:   one evidence row per seat-month per measure, dated at the day the snapshot
+              was last read — NOT the first of the billing month, which would fall
+              outside short rolling windows.
+
+  used_credits IS the money: the vendor bills it only once a seat has exhausted the
+  usage included in its fee. It is NOT the excess over monthly_credit_limit, which is
+  an enforced ceiling on that same spend. Every seat below is under its ceiling, so a
+  model computing max(0, used − limit) would return 0 for all of them and every
+  ai.extra_usage_cost assertion here would fail.
+
+  ONE snapshot per seat, because that is all bronze can hold: the connector's
+  unique_key carries no month, and the promoted table is
+  ReplacingMergeTree(_airbyte_extracted_at) ORDER BY unique_key, so a merge keeps the
+  newest row per seat. Monthly history accrues in silver instead, one month at a time;
+  test_ai_seat_extra_usage_history.py drives the pipeline twice to cover that.
+
+  Department: 5 Engineering members, one snapshot each read Dec 10, inside the custom
+  window (Nov 01 .. Dec 12):
+
+    person   Dec used   ceiling/month   utilisation
+    alice         50¢          1000¢     5.0 %
+    bob          100¢          1000¢    10.0 %
+    carol        150¢          1000¢    15.0 %
+    dave         200¢          1000¢    20.0 %
+    erin         250¢          1000¢    25.0 %
+
+  Five ceilings, not four: the peer view suppresses its quartiles below five
+  contributing entities. frank holds a seat with no ceiling and is absent from the HR
+  feed, so he is present in ai.extra_usage_cost, absent from
+  ai.extra_usage_utilisation — honest-NULL, not a zero — without joining the cohort
+  the peer pools are drawn from. Cases: custom scope · dedup of a repeated snapshot ·
+  the no-ceiling seat · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_claude_team.claude_team_overage_spend:
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-alice, used_credits: 50,  monthly_credit_limit: 1000, seat_tier: unassigned }
+    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-bob,   used_credits: 100, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/carol, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-carol, used_credits: 150, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/dave,  _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-dave,  used_credits: 200, monthly_credit_limit: 1000 }
+    # ── erin (the requested IC member) ──────────────────────────────────────────
+    - { $ref: templates/claude_team_overage.yaml#/templates/erin,  _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-erin,  used_credits: 250, monthly_credit_limit: 1000 }
+    # Repeated sync of the same snapshot — the staging model keeps one row per
+    # (seat, month), so the window stays 2.50 and does not become 5.00.
+    - { $ref: templates/claude_team_overage.yaml#/templates/erin,  _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-erin,  used_credits: 250, monthly_credit_limit: 1000 }
+    # ── frank — NO ceiling: money yes, utilisation absent ────────────────────────
+    - { $ref: templates/claude_team_overage.yaml#/templates/frank, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-frank, used_credits: 300, monthly_credit_limit: null, seat_tier: unassigned, limit_type: null }
+
+cases:
+  # ── CUSTOM scope (Nov 01 .. Dec 12) — the December snapshot ──────────────────
+  - name: AI seat extra usage
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.extra_usage_cost
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [seat_tier] }
+          - metric_key: ai.extra_usage_utilisation
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [seat_tier] }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.extra_usage_cost
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 2.5 }
+      - metric: ai.extra_usage_cost
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 2.5, p25: 1, median: 1.5, p75: 2, min: 0.5, max: 2.5, n: 5 }
+      - metric: ai.extra_usage_cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-10' && double(p.value) == 2.5))"
+      - metric: ai.extra_usage_cost
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'seat_tier' && d.value == 'team_tier_1') && double(v.value) == 2.5)"
+      - metric: ai.extra_usage_utilisation
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 25.0 }
+      - metric: ai.extra_usage_utilisation
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 25.0, p25: 10.0, median: 15.0, p75: 20.0, min: 5.0, max: 25.0, n: 5 }
+      - metric: ai.extra_usage_utilisation
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-10' && double(p.value) == 25.0))"
+      - metric: ai.extra_usage_utilisation
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'seat_tier' && d.value == 'team_tier_1') && double(v.value) == 25.0)"
+
+  # ── A seat with no ceiling: money present, utilisation absent ────────────────
+  - name: AI seat with no ceiling
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [frank@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.extra_usage_cost
+            views:
+              - { view: period }
+          - metric_key: ai.extra_usage_utilisation
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.extra_usage_cost
+        view: period
+        find: { entity_id: frank@example.com }
+        equal: { value: 3.0 }
+      - metric: ai.extra_usage_utilisation
+        view: period
+        find: { entity_id: frank@example.com }
+        equal: { value: null }
+
+  # ── EMPTY window (no snapshot read in range) ─────────────────────────────────
+  - name: AI seat extra usage empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-06-01", to: "2026-06-30" }
+        metrics:
+          - metric_key: ai.extra_usage_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.extra_usage_cost
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: null }

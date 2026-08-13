@@ -96,7 +96,9 @@ CREATE TABLE IF NOT EXISTS bronze_claude_team.claude_team_overage_spend
     `currency` Nullable(String),
     `out_of_credits` Nullable(Bool),
     `used_credits_basis` Nullable(String),
-    `limit_type` Nullable(String)
+    `limit_type` Nullable(String),
+    `disabled_reason` Nullable(String),
+    `disabled_until` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

@@ -34,7 +34,23 @@ this file and the registry disagree.
 - Reads: cost_usd
 - Formula: sum(cost_usd)
 - Shape: currency, lower_is_better
-- Notes: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person.
+- Notes: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person. Overlaps ai.extra_usage_cost, which is the part of that same consumption the vendor actually billed on top of the seat fee — the two are served side by side and are never added, since adding them counts the billed part twice.
+
+## ai.extra_usage_cost — AI extra usage
+
+- Source: ai_cost (ai_cost_metric_observations)
+- Reads: extra_usage_usd
+- Formula: sum(extra_usage_usd)
+- Shape: currency, lower_is_better
+- Notes: What the vendor billed a person on top of their seat fee, once the usage included in that fee was exhausted, priced at API rates. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction. Distinct from ai.cost, which prices all consumption including what the seat fee already covered — the two are never summed. Attribution mode is direct — the vendor reports this amount per seat.
+
+## ai.extra_usage_utilisation — Extra-usage ceiling used
+
+- Source: ai_cost (ai_cost_metric_observations)
+- Reads: extra_usage_usd, extra_usage_limit_usd
+- Formula: 100 * (extra_usage_usd / extra_usage_limit_usd)
+- Shape: percent, lower_is_better
+- Notes: Extra usage measured against the ceiling an administrator set on it. At 100 per cent the vendor stops the seat, so this reads as proximity to being blocked, not as waste — room left under a ceiling was never purchased and costs nothing. A seat with no ceiling returns no value rather than a zero, the ratio having no denominator.
 
 ## ai.accepted_edit_actions — Accepted AI edits
 

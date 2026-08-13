@@ -6,6 +6,10 @@ cf-studio-path = ".cf-studio"
 ALWAYS resolve and enforce prerequisites of skills/workflows/commands BEFORE applying user intent.
 <!-- /@cf:root-agents -->
 
+## Project Rules
+
+NEVER put an identifier containing `_` in a Markdown heading a table of contents links to — the TOC generator drops the underscore while GitHub keeps it, so the anchor breaks (markdownlint MD051). Word the heading in prose and keep the identifier in the body.
+
 ## Never expose production-derived information
 
 Do not include any information derived from, observed in, inferred from, or resembling real deployed environments in anything that may become visible in the repository or on GitHub.

@@ -66,6 +66,29 @@ path = "docs/components/backend/analytics/DESIGN.md"
 name = "Analytics API Design"
 traceability = "DOCS-ONLY"
 
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/backend/analytics/specs/ADR/0003-price-card-per-person-token-cost.md"
+name = "ADR-0003: Price Card as the Source of Per-Person Token Cost"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/analytics/specs/ai-cost/PRD.md"
+name = "AI Development Cost PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/backend/analytics/specs/ai-cost/DESIGN.md"
+name = "AI Development Cost Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DECOMPOSITION"
+path = "docs/components/backend/analytics/specs/ai-cost/DECOMPOSITION.md"
+name = "AI Development Cost Decomposition"
+traceability = "DOCS-ONLY"
+
 [[systems]]
 name = "Identity Service"
 slug = "identity-svc"

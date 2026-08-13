@@ -202,6 +202,11 @@ streams:
           # 'seat_tier' = limit inherited from the plan tier default;
           # 'member' = per-member override.
           limit_type: { type: [string, "null"] }
+          # Sit alongside is_enabled and say why a seat is disabled and until
+          # when — the only vendor signal that separates "extra usage is
+          # switched off" from "the seat is not assigned".
+          disabled_reason: { type: [string, "null"] }
+          disabled_until: { type: [string, "null"] }
     retriever:
       type: SimpleRetriever
       requester:
