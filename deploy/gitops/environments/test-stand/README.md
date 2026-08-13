@@ -1,8 +1,8 @@
 # `test-stand` — the published test stand
 
 The gitops environment for **insight-test.cfabric.org**: the cluster CI upgrades
-to the umbrella chart it just published, then seeds and smoke-tests, on every
-merge to `main`
+to the umbrella chart it just published, then seeds it, smoke-tests it and runs
+the whole deployed-stand suite against it, on every merge to `main`
 ([#2244](https://github.com/constructorfabric/insight/issues/2244)). Its whole
 job is to answer one question automatically — *does the chart we just published
 install, hold data, and let a person log in and see that data?*
@@ -196,6 +196,20 @@ uv run --project tests --frozen pytest tests/stand -m stand_smoke -ra
 Nothing in the suite has a default — a missing value is reported by name before
 a single request is made.
 
+**8. The full suite** — the same three variables, every API contract and every
+browser journey. Drop the marker and add a browser:
+
+```bash
+uv run --project tests --frozen playwright install --with-deps chromium
+uv run --project tests --frozen pytest tests/stand -ra --browser chromium
+```
+
+The S2S tests skip here rather than fail: the chart gives the authenticator's
+token listener no ingress, so the seeder marks the `service_principals`
+capability absent on a cluster stand. That also means this run does not cover
+every catalogued operation — the endpoint-coverage gate stays with the compose
+lane, which can reach those listeners.
+
 ## Recovery
 
 **This stand is disposable; `make rollback` is not its recovery path.** A
@@ -284,10 +298,14 @@ invocations to before. One deploy procedure; step 3 above is the command CI runs
 chart-publishing workflow after publish, on `main` only, with the chart version
 from the publish job's output. Credentials come from the `insight-test-stand`
 GitHub environment (main-only); the CI credential is a namespace-scoped SA, admin
-kubeconfigs stay human-only. Runs coalesce (never cancel a live upgrade); three
-named stages (deploy, seed, smoke); smoke never runs after a failed seed. On
+kubeconfigs stay human-only. Runs coalesce (never cancel a live upgrade); four
+named stages (deploy, seed, smoke, suite), each a prefix of the last, so the
+suite never runs after a failed smoke and smoke never after a failed seed. On
 failure it prints only the dead stage + edge probe codes — no `describe`/env
-dumps/log artifacts (public logs). A red run belongs to the author of the merge
+dumps/cluster log artifacts (public logs). The one exception is the suite's
+Playwright traces and screenshots, and they are uploaded only after the
+redaction script has rewritten and re-verified each file; anything it cannot
+prove clean it deletes instead. A red run belongs to the author of the merge
 that produced it: fix forward, or revert.
 
 ## Known gaps
