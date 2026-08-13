@@ -1,5 +1,11 @@
 import { useMemo, useState } from "react";
-import { Database, ListFilter, X } from "lucide-react";
+import {
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Database,
+  ListFilter,
+  X,
+} from "lucide-react";
 
 import { evidenceSelection } from "@/api/metric-drilldown-client";
 import type { DateRange } from "@/api/period-to-date-range";
@@ -240,6 +246,10 @@ export function MetricTimeseriesView({
   const [selectedMetricKey, setSelectedMetricKey] = useState(
     metricKeys[0] ?? ""
   );
+  // Not persisted, unlike the presentation: a card remembered at full height
+  // would greet the next visit as a wall.
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
   const dimensionOptions = useMemo(
     () =>
       groupBy
@@ -332,6 +342,16 @@ export function MetricTimeseriesView({
   const selectedMetric =
     model.metrics.find((metric) => metric.metric_key === selectedMetricKey) ??
     model.metrics[0];
+  // Reset during render rather than in an effect, which the lint rule forbids.
+  // A chart reports no overflow, so both flags have to be cleared on the way
+  // out of the table.
+  const [overflowOf, setOverflowOf] = useState(presentation);
+  if (overflowOf !== presentation) {
+    setOverflowOf(presentation);
+    setOverflows(false);
+    setExpanded(false);
+  }
+
   const shouldCombineMetrics =
     presentation === "chart" &&
     shouldCombineTimeseriesMetrics(model, chart?.multiMetric ?? "selectable");
@@ -500,6 +520,17 @@ export function MetricTimeseriesView({
                   ))}
                 </SelectContent>
               </Select>
+            ) : presentation === "table" && model.dimensions.length > 0 ? (
+              // Named by its grouping, since the metrics are already on the
+              // columns. The count is load-bearing: such a table is usually
+              // wider than the screen, and the grand total below covers groups
+              // the reader cannot see.
+              <h3 className="px-2 text-sm font-semibold">
+                By {selectedGroupBy}
+                <span className="ps-1.5 font-normal text-muted-foreground">
+                  · {model.columns.length}
+                </span>
+              </h3>
             ) : model.metrics.length === 1 ? (
               <h3 className="px-2 text-sm font-semibold">
                 {selectedMetric.label}
@@ -541,6 +572,24 @@ export function MetricTimeseriesView({
             range={range}
             disabled={empty || data.isFetching || data.isError}
           />
+          {/* `expanded` keeps it: once out, it no longer overflows. */}
+          {presentation === "table" && (overflows || expanded) ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              aria-label={expanded ? "Scroll the table" : "Show every row"}
+              title={expanded ? "Scroll the table" : "Show every row"}
+              aria-pressed={expanded}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? (
+                <ChevronsDownUp className="size-4" />
+              ) : (
+                <ChevronsUpDown className="size-4" />
+              )}
+            </Button>
+          ) : null}
           <TimeseriesPresentationToggle
             presentation={presentation}
             onChange={setPresentation}
@@ -548,7 +597,15 @@ export function MetricTimeseriesView({
         </div>
       </div>
       <CardContent
-        className="relative flex h-96 min-h-0 flex-col px-0"
+        className={cn(
+          "relative flex min-h-0 flex-col px-0",
+          // A chart has no height of its own to fall back on; a table does.
+          presentation === "chart"
+            ? "h-96"
+            : expanded
+              ? undefined
+              : "max-h-96"
+        )}
         aria-busy={data.isFetching}
       >
         {presentation === "chart" ? (
@@ -569,6 +626,7 @@ export function MetricTimeseriesView({
           selectedMetricKey={selectedMetric?.metric_key ?? ""}
           multiMetric={shouldCombineMetrics ? "combined" : "selectable"}
           table={table}
+          onVerticalOverflow={setOverflows}
           onEvidence={openTimeseriesEvidence}
         />
       </CardContent>
