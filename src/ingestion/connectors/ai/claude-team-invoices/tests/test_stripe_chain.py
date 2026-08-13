@@ -6,7 +6,6 @@ change, and a prepaid extra-usage purchase.
 """
 
 import pytest
-
 from source_claude_team_invoices.stripe_chain import (
     CATEGORY_OVERUSAGE,
     CATEGORY_SUBSCRIPTIONS,
@@ -133,13 +132,7 @@ def test_bootstrap_returns_the_pair():
 
 
 @pytest.mark.parametrize(
-    "payload",
-    [
-        {},
-        {"invoice_id": "in_1ABC"},
-        {"ephemeral_key": "ek_x"},
-        {"invoice_id": "", "ephemeral_key": "ek_x"},
-    ],
+    "payload", [{}, {"invoice_id": "in_1ABC"}, {"ephemeral_key": "ek_x"}, {"invoice_id": "", "ephemeral_key": "ek_x"}]
 )
 def test_incomplete_bootstrap_fails_loudly(payload):
     with pytest.raises(StripeChainError):

@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
+from typing import Any
 
 logger = logging.getLogger("airbyte")
 
@@ -41,7 +42,7 @@ class HostedRef:
     token: str
 
 
-def parse_hosted_invoice_url(url: Optional[str]) -> Optional[HostedRef]:
+def parse_hosted_invoice_url(url: str | None) -> HostedRef | None:
     """Split a hosted invoice URL into its account and token.
 
     Returns None when the URL does not match. A single miss is one unenriched
@@ -82,7 +83,7 @@ def is_proration(line: Mapping[str, Any]) -> bool:
     return bool(details.get("proration"))
 
 
-def seat_unit_amount(line: Mapping[str, Any]) -> Optional[int]:
+def seat_unit_amount(line: Mapping[str, Any]) -> int | None:
     """The per-seat price on a line, in minor units, or None when it has none.
 
     Only a non-proration subscription line prices a seat. Everything else —
@@ -226,11 +227,7 @@ def build_records(
             invoice_id, lines = fetch_lines(ref.acct, ref.token)
         except Exception as error:  # noqa: BLE001 - one invoice must not end the run
             # A gap in pricing, not a reason to lose the invoice or fail the sync.
-            logger.warning(
-                "stripe chain failed for the invoice created at %s: %s",
-                invoice.get("created_ts"),
-                error,
-            )
+            logger.warning("stripe chain failed for the invoice created at %s: %s", invoice.get("created_ts"), error)
             yield dict(common, chain_status=CHAIN_FAILED, **_EMPTY_LINE)
             continue
 
@@ -249,8 +246,4 @@ def unique_key_parts(record: Mapping[str, Any]) -> tuple[Any, ...]:
     """
     if record.get("chain_status") == CHAIN_OK:
         return (record.get("invoice_id"), record.get("line_id") or "")
-    return (
-        record.get("chain_status"),
-        record.get("invoice_created_ts"),
-        record.get("invoice_payment_intent") or "",
-    )
+    return (record.get("chain_status"), record.get("invoice_created_ts"), record.get("invoice_payment_intent") or "")

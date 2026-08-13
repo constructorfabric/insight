@@ -29,18 +29,14 @@ socket.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, MutableMapping, Optional, Sequence
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from datetime import UTC, datetime
+from typing import Any
 
 import requests
 from airbyte_cdk.sources.streams import Stream
 
-from source_claude_team_invoices.stripe_chain import (
-    StripeChainError,
-    build_records,
-    read_bootstrap,
-    unique_key_parts,
-)
+from source_claude_team_invoices.stripe_chain import StripeChainError, build_records, read_bootstrap, unique_key_parts
 
 STRIPE_VERSION = "2026-06-24.dahlia"
 BOOTSTRAP_HOST = "https://invoicedata.stripe.com"
@@ -55,7 +51,7 @@ TIMEOUT = 30
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class InvoiceLines(Stream):
@@ -80,7 +76,7 @@ class InvoiceLines(Stream):
 
         return load_stream_schema(self.name)
 
-    def _get_json(self, url: str, headers: Optional[Mapping[str, str]] = None) -> Any:
+    def _get_json(self, url: str, headers: Mapping[str, str] | None = None) -> Any:
         response = self._session.get(url, headers=dict(headers or {}), timeout=TIMEOUT)
         response.raise_for_status()
         return response.json()
@@ -88,12 +84,9 @@ class InvoiceLines(Stream):
     def _walk_invoices(self) -> list[Mapping[str, Any]]:
         """Page the claude.ai wrapper until it stops offering a cursor."""
         invoices: list[Mapping[str, Any]] = []
-        cursor: Optional[str] = None
+        cursor: str | None = None
         for _ in range(MAX_PAGES):
-            url = (
-                f"{self._proxy_url}/api/stripe/{self._org_id}/invoices"
-                f"?limit={PER_PAGE}&page={cursor or ''}"
-            )
+            url = f"{self._proxy_url}/api/stripe/{self._org_id}/invoices?limit={PER_PAGE}&page={cursor or ''}"
             body = self._get_json(url, {"Authorization": f"Bearer {self._proxy_token}"})
             invoices.extend(body.get("invoices") or [])
             cursor = body.get("next_page")
@@ -111,14 +104,10 @@ class InvoiceLines(Stream):
         bootstrap = self._get_json(f"{BOOTSTRAP_HOST}/hosted_invoice_page/{acct}/{token}")
         invoice_id, ephemeral_key = read_bootstrap(bootstrap)
 
-        headers = {
-            "Authorization": f"Bearer {ephemeral_key}",
-            "Stripe-Version": STRIPE_VERSION,
-            "Stripe-Account": acct,
-        }
+        headers = {"Authorization": f"Bearer {ephemeral_key}", "Stripe-Version": STRIPE_VERSION, "Stripe-Account": acct}
         # Issued back to back: the key is short-lived, so nothing sleeps between hops.
         lines: list[Mapping[str, Any]] = []
-        starting_after: Optional[str] = None
+        starting_after: str | None = None
         for _ in range(MAX_LINE_PAGES):
             url = f"{STRIPE_API}/invoices/{invoice_id}/lines?limit=100"
             if starting_after:
@@ -139,9 +128,7 @@ class InvoiceLines(Stream):
         record["source_id"] = self._source_id
         record["data_source"] = "insight_claude_team"
         record["collected_at"] = _now_iso()
-        record["unique_key"] = "-".join(
-            [self._tenant_id, self._source_id, *(str(p) for p in unique_key_parts(record))]
-        )
+        record["unique_key"] = "-".join([self._tenant_id, self._source_id, *(str(p) for p in unique_key_parts(record))])
         return record
 
     def read_records(self, sync_mode: Any, **kwargs: Any) -> Iterable[MutableMapping[str, Any]]:

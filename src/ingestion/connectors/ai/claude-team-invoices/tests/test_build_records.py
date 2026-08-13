@@ -8,7 +8,6 @@ a network, a cluster or the CDK to verify.
 import logging
 
 import pytest
-
 from source_claude_team_invoices.stripe_chain import (
     CHAIN_FAILED,
     CHAIN_OK,
@@ -18,7 +17,6 @@ from source_claude_team_invoices.stripe_chain import (
     build_records,
     unique_key_parts,
 )
-
 from tests.test_stripe_chain import EXTRA_USAGE_LINE, SUBSCRIPTION_LINE
 
 GOOD_URL = "https://invoice.stripe.com/i/acct_1ABC/live_TOKEN?s=ap"

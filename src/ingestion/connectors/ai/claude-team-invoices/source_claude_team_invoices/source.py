@@ -13,8 +13,9 @@ persisted into a record or state — which a parent stream would do.
 import json
 import logging
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import Any
 
 import requests
 from airbyte_cdk.sources import AbstractSource
@@ -41,11 +42,7 @@ class SourceClaudeTeamInvoices(AbstractSource):
         spec_path = Path(__file__).parent / "spec.json"
         return ConnectorSpecification(**json.loads(spec_path.read_text(encoding="utf-8")))
 
-    def check_connection(
-        self,
-        logger: Any,
-        config: Mapping[str, Any],
-    ) -> Tuple[bool, Optional[Any]]:
+    def check_connection(self, logger: Any, config: Mapping[str, Any]) -> tuple[bool, Any | None]:
         """Validate the config against the two things that can independently fail.
 
         The proxy and the session key behind it are one failure domain; egress
@@ -96,7 +93,7 @@ class SourceClaudeTeamInvoices(AbstractSource):
 
         return True, None
 
-    def streams(self, config: Mapping[str, Any]) -> List[Stream]:
+    def streams(self, config: Mapping[str, Any]) -> list[Stream]:
         return [InvoiceLines(config)]
 
 
