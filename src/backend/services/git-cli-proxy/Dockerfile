@@ -92,7 +92,7 @@ RUN useradd -U -u 1000 -m appuser && \
     chown -R 1000:1000 /app
 USER 1000
 
-EXPOSE 8085
+EXPOSE 8084
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/app/git-cli-proxy", "--", "/app/git-cli-proxy", "-c", "/app/config/insight.yaml"]

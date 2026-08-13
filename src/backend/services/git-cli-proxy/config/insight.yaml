@@ -40,7 +40,7 @@ gears:
       # values via the env overrides listed in the header.
       #
       # Address the HTTP server binds.
-      bind_addr: "0.0.0.0:8085"
+      bind_addr: "0.0.0.0:8084"
       # Root of the repository cache (a PVC mount in K8s).
       data_dir: ""
       # Total cache budget, bytes. Keep 10-15% below the volume size.

@@ -17,7 +17,7 @@ image:
 
 service:
   type: ClusterIP
-  port: 8085
+  port: 8084
 
 resources:
   requests:
