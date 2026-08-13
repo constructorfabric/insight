@@ -151,23 +151,18 @@ def returned_fields(payload: Mapping[str, Any], rows: Sequence[Any]) -> set[str]
 
 def _report_omissions(requested: Sequence[str], answered: set[str]) -> None:
     """BambooHR silently drops requested fields the credential cannot read and
-    still answers 200, so a shrinking payload is indistinguishable from cleared
-    values downstream: the snapshot versions on the change and the field history
-    dates it as a clear.
-
-    Only the declared bronze columns are held to that standard. They are named by
-    alias and come back under it, so their absence is real and identity resolution
-    would carry the damage. The rest cannot be checked this way — field metadata
-    lists entries a custom report will not return, and a field asked for by
-    numeric id comes back under an indexed key — so an apparent gap there is far
-    more likely to be BambooHR's own naming than lost access.
+    still answers 200. The API key may legitimately hold access to only a subset
+    of the declared bronze columns, so an omission is not an error — the sync
+    proceeds and the columns are published as null. The warning names them so a
+    key that lost access it used to have is still diagnosable from the logs.
     """
     missing = [name for name in requested if name in BUSINESS_FIELDS and name not in answered]
     if missing:
-        raise RuntimeError(
-            f"BambooHR omitted {len(missing)} declared employee column(s) from the report: "
-            f"{', '.join(missing)}. The API key likely lost access to them; publishing them "
-            "as empty would clear the values downstream."
+        logger.warning(
+            "BambooHR omitted %d declared employee column(s) from the report: %s. "
+            "The API key has no access to them; they are published as null.",
+            len(missing),
+            ", ".join(missing),
         )
 
 
