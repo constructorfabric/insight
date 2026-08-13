@@ -129,6 +129,32 @@ describe("MetricEvidenceTable", () => {
       expect(detail).toHaveClass("whitespace-pre-wrap");
     });
 
+    it("opens from a click on the row, where the cut text actually is", async () => {
+      const user = userEvent.setup();
+      renderTable({ rows: longRows });
+
+      await user.click(screen.getByText("Add the parser"));
+      expect(screen.getByText(/It handles nested groups/)).toBeInTheDocument();
+    });
+
+    it("leaves the row alone when the copy button is pressed", async () => {
+      const user = userEvent.setup();
+      renderTable({ rows: longRows });
+
+      await user.click(screen.getByRole("button", { name: "Copy abc123" }));
+      expect(
+        screen.queryByText(/It handles nested groups/)
+      ).not.toBeInTheDocument();
+    });
+
+    it("shows only the visible line in the hover text, not the whole field", () => {
+      renderTable({ rows: longRows });
+      expect(screen.getByText("Add the parser").closest("td")).toHaveAttribute(
+        "title",
+        "Add the parser"
+      );
+    });
+
     it("closes again on a second press", async () => {
       const user = userEvent.setup();
       renderTable({ rows: longRows });

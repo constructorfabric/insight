@@ -81,7 +81,10 @@ function CopyValueButton({ value }: { value: string }) {
       className="shrink-0 text-muted-foreground hover:text-foreground"
       aria-label={copied ? "Copied" : `Copy ${value}`}
       title={copied ? "Copied" : "Copy ref"}
-      onClick={() => void copyValue()}
+      onClick={(event) => {
+        event.stopPropagation();
+        void copyValue();
+      }}
     >
       {copied ? <Check /> : <Copy />}
     </Button>
@@ -256,7 +259,14 @@ export function MetricEvidenceTable({
                 data-index={virtualRow.index}
                 ref={virtualizer.measureElement}
                 aria-rowindex={virtualRow.index + 2}
-                className="absolute top-0 left-0 flex w-full flex-wrap hover:bg-transparent"
+                // The chevron is the control a keyboard and a screen reader
+                // use; the row carries the same toggle so that clicking the
+                // text that is visibly cut does what it looks like it should.
+                onClick={() => toggleRow(key)}
+                className={cn(
+                  "absolute top-0 left-0 flex w-full cursor-pointer flex-wrap",
+                  isOpen ? "bg-muted/30" : "hover:bg-muted/20"
+                )}
                 style={{
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
@@ -273,7 +283,10 @@ export function MetricEvidenceTable({
                     aria-expanded={isOpen}
                     aria-label={isOpen ? "Hide full record" : "Show full record"}
                     className="text-muted-foreground"
-                    onClick={() => toggleRow(key)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      toggleRow(key);
+                    }}
                   >
                     {isOpen ? <ChevronDown /> : <ChevronRight />}
                   </Button>
@@ -294,7 +307,10 @@ export function MetricEvidenceTable({
                       style={{
                         flex: `${layout.grow} 0 ${layout.basisRem}rem`,
                       }}
-                      title={text}
+                      // The line the cell shows, not the whole field: the rest
+                      // belongs to the expanded row, and a thousand characters
+                      // in a native tooltip is unreadable.
+                      title={line}
                     >
                       {column.key === "ref" && value != null ? (
                         <div className="flex min-w-0 items-center gap-1">
