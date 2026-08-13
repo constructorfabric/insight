@@ -37,9 +37,13 @@ spec:
   rules:
     - matches:
         {{- range .Values.route.realms }}
+        {{- $realm := required "keycloak.route.realms entries must be non-empty (an empty entry would render the bare /kc/realms/ prefix)" . }}
+        {{- if eq $realm "master" }}
+        {{- fail "keycloak.route.realms must not include master — its admin surface stays cluster-internal" }}
+        {{- end }}
         - path:
             type: PathPrefix
-            value: /kc/realms/{{ . }}
+            value: {{ printf "/kc/realms/%s" $realm | quote }}
         {{- end }}
         - path:
             type: PathPrefix

@@ -160,6 +160,10 @@ jobs:
               - 'deploy/compose/ui-tests.Dockerfile'
             umbrella:
               - 'charts/insight/**'
+              # The keycloak subchart is a file:// dependency packed into the
+              # published umbrella, so a leaf-chart-only change must also make
+              # publish-chart eligible.
+              - 'src/backend/services/keycloak/helm/**'
 
       # Compute the canonical build tag once per workflow run so every
       # downstream job (backend builds + matrix connector builds + toolbox +

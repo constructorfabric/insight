@@ -169,6 +169,9 @@ keycloak:
     passwordSecret: {name: insight-db-creds, key: mariadb-password}
   route:
     enabled: true
+    # Only the listed realms' OIDC surface is published; master stays
+    # cluster-internal. Required when the route is enabled.
+    realms: [insight]
     parentRef:
       name: insight
       namespace: insight-infra

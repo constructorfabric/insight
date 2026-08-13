@@ -419,6 +419,11 @@ keycloak:
     passwordSecret: {name: "", key: ""}
   route:
     enabled: false
+    # Realms whose /kc/realms/<realm> OIDC surface is published. REQUIRED
+    # when route.enabled — an empty list fails the render rather than
+    # exposing a bare /kc/realms prefix (which would publish the master
+    # realm). List every realm the browser must reach.
+    realms: []
 # ─── keycloakConfig (broker realms as code — ADR-0003, EPIC #2193) ──────────
 # Hook Job applying the env's versioned realm YAML (pre-created ConfigMap from
 # the gitops `keycloak-broker-realms` target) with keycloak-config-cli on every
