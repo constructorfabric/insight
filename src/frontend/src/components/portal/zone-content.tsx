@@ -12,6 +12,7 @@ import {
   usePortalLens,
 } from "@/lib/portal/portal-nav";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
+import { ReportBuilderView } from "@/components/portal/report-builder-view";
 
 /**
  * Content for the non-entity portal zones. Overview rolls the org up; Directions
@@ -43,8 +44,13 @@ export function ZoneContent() {
       return <PeopleView person={activePerson} item={item} />;
     case "manage":
       return <ManageView item={item} />;
-    case "scorecard":
     case "reports":
+      return item === "report-builder" ? (
+        <ReportBuilderView />
+      ) : (
+        <ZoneScaffold zone={activeZone} />
+      );
+    case "scorecard":
       return <ZoneScaffold zone={activeZone} />;
     default:
       return <ZoneScaffold zone={activeZone} />;
