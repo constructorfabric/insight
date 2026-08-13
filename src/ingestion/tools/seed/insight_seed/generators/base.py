@@ -169,6 +169,7 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("bronze_bamboohr", "employees"),
     ("silver", "class_ai_assistant_usage"),
     ("silver", "class_ai_dev_usage"),
+    ("silver", "class_ai_overage"),
     ("silver", "class_collab_chat_activity"),
     ("silver", "class_collab_email_activity"),
     ("silver", "class_collab_meeting_activity"),
