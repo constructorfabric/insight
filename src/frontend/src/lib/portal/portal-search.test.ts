@@ -87,7 +87,9 @@ describe("applySearchPatch", () => {
     const middleware = retainSearchParams(PORTAL_SEARCH_KEYS);
     return middleware({
       search: prev as never,
-      next: (() => patched) as never,
+      // router-core now expects `{ search, meta }` back; empty meta means the
+      // patch removed and defaulted nothing, which is what applySearchPatch does.
+      next: (() => ({ search: patched, meta: {} })) as never,
     }) as unknown as Record<string, unknown>;
   }
 
