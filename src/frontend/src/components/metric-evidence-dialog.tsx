@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, FileSpreadsheet, FileText } from "lucide-react";
+import { Download, FileSpreadsheet, FileText, Search } from "lucide-react";
 
 import {
   downloadMetricDrilldown,
@@ -24,6 +24,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { formatMetricNumber } from "@/lib/format";
 import {
   Select,
   SelectContent,
@@ -32,6 +34,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  nextSort,
+  visibleEvidenceRows,
+  type EvidenceSort,
+} from "@/lib/metrics/evidence-rows";
 
 export function MetricEvidenceDialog({
   state,
@@ -70,7 +77,11 @@ export function MetricEvidenceDialog({
       failureCount < 1 &&
       (!(error instanceof AnalyticsApiError) || error.status >= 500),
   });
-  const rows = query.data?.pages.flatMap((page) => page.rows) ?? [];
+  const pages = query.data?.pages;
+  const rows = useMemo(
+    () => pages?.flatMap((page) => page.rows) ?? [],
+    [pages]
+  );
   const columns = useMemo(() => {
     const columns = query.data?.pages[0]?.columns ?? [];
     const order = new Map([
@@ -91,6 +102,44 @@ export function MetricEvidenceDialog({
   }, [query.data?.pages]);
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = query;
   const pageLimitReached = (query.data?.pages.length ?? 0) >= 50 && hasNextPage;
+  const canLoadMore = hasNextPage && !pageLimitReached;
+
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<EvidenceSort | null>(null);
+  const activeMetricKey = selection?.metric_key ?? null;
+  const [scopedTo, setScopedTo] = useState(activeMetricKey);
+  if (scopedTo !== activeMetricKey) {
+    setScopedTo(activeMetricKey);
+    setSearch("");
+    setSort(null);
+  }
+
+  const narrowed = search.trim() !== "" || sort != null;
+  const visibleRows = useMemo(
+    () => visibleEvidenceRows({ rows, columns, search, sort }),
+    [rows, columns, search, sort]
+  );
+
+  // Searching and sorting must answer for the whole result, not for whichever
+  // pages happened to be scrolled into view, so narrowing pulls the rest in.
+  // The table's own scroll-triggered paging cannot do it: a search that hides
+  // most rows also stops the scroll that would load more.
+  useEffect(() => {
+    if (
+      narrowed &&
+      canLoadMore &&
+      !isFetchingNextPage &&
+      !query.isFetchNextPageError
+    ) {
+      void fetchNextPage();
+    }
+  }, [
+    narrowed,
+    canLoadMore,
+    isFetchingNextPage,
+    query.isFetchNextPageError,
+    fetchNextPage,
+  ]);
 
   useEffect(
     () => () => {
@@ -206,6 +255,33 @@ export function MetricEvidenceDialog({
                 {exportFailure}
               </p>
             ) : null}
+            {query.isPending || (query.isError && !query.data) ? null : (
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative min-w-0 flex-1 sm:max-w-xs">
+                  <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Search records"
+                    aria-label="Search records"
+                    className="h-8 ps-8"
+                  />
+                </div>
+                <p
+                  aria-live="polite"
+                  className="text-sm text-muted-foreground tabular-nums"
+                >
+                  {recordCount({
+                    visible: visibleRows.length,
+                    loaded: rows.length,
+                    filtered: search.trim() !== "",
+                    partial:
+                      narrowed && (canLoadMore || query.isFetchNextPageError),
+                  })}
+                </p>
+              </div>
+            )}
           </DialogHeader>
           {query.isPending ? (
             <div className="flex flex-1 items-center justify-center">
@@ -224,10 +300,49 @@ export function MetricEvidenceDialog({
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
               No supporting data for this selection
             </div>
+          ) : visibleRows.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3">
+              {query.isFetchNextPageError ? (
+                // Only the pages that loaded were searched, so "no match"
+                // would be a claim about records nobody has seen.
+                <>
+                  <p role="alert" className="text-sm text-muted-foreground">
+                    Nothing matched the records loaded so far, and the rest
+                    could not be loaded
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => void fetchNextPage()}
+                    >
+                      Retry
+                    </Button>
+                    <Button variant="ghost" onClick={() => setSearch("")}>
+                      Clear search
+                    </Button>
+                  </div>
+                </>
+              ) : canLoadMore ? (
+                <p className="text-sm text-muted-foreground">
+                  Nothing matched yet — still loading the rest
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    No records match this search
+                  </p>
+                  <Button variant="outline" onClick={() => setSearch("")}>
+                    Clear search
+                  </Button>
+                </>
+              )}
+            </div>
           ) : (
             <MetricEvidenceTable
-              rows={rows}
+              rows={visibleRows}
               columns={columns}
+              sort={sort}
+              onSortChange={(key) => setSort((current) => nextSort(current, key))}
               fetchNextPage={fetchNextPage}
               hasNextPage={hasNextPage && !pageLimitReached}
               isFetchingNextPage={isFetchingNextPage}
@@ -239,6 +354,29 @@ export function MetricEvidenceDialog({
       ) : null}
     </Dialog>
   );
+}
+
+/**
+ * Both counts are of what has been paged in, so whenever pages are still
+ * outstanding — loading, or left behind by a failure — the total says as much
+ * rather than reading as the answer.
+ */
+function recordCount({
+  visible,
+  loaded,
+  filtered,
+  partial,
+}: {
+  visible: number;
+  loaded: number;
+  filtered: boolean;
+  partial: boolean;
+}): string {
+  const noun = visible === 1 && !filtered ? "record" : "records";
+  const count = filtered
+    ? `${formatMetricNumber(visible, "integer")} of ${formatMetricNumber(loaded, "integer")}`
+    : formatMetricNumber(visible, "integer");
+  return `${count} ${noun}${partial ? " so far" : ""}`;
 }
 
 function errorMessage(error: unknown, fallback: string): string {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, Copy } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronsUpDown, Copy } from "lucide-react";
 import { toast } from "sonner";
 
 import type {
@@ -17,18 +17,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatMetricNumber } from "@/lib/format";
+import { cellText, type EvidenceSort } from "@/lib/metrics/evidence-rows";
 import { cn } from "@/lib/utils";
-
-function cellText(value: unknown, type: MetricEvidenceColumn["type"]): string {
-  if (value == null) return "—";
-  if (type === "number" && typeof value === "number") {
-    return formatMetricNumber(value, "decimal");
-  }
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
 
 function columnLayout(column: MetricEvidenceColumn) {
   if (column.key === "ref") return { basisRem: 9, grow: 0 };
@@ -77,9 +67,19 @@ function CopyValueButton({ value }: { value: string }) {
   );
 }
 
+function SortIcon({ state }: { state: "asc" | "desc" | null }) {
+  if (state === "asc") return <ArrowUp className="size-3.5 shrink-0" />;
+  if (state === "desc") return <ArrowDown className="size-3.5 shrink-0" />;
+  return (
+    <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/sort:opacity-100" />
+  );
+}
+
 export function MetricEvidenceTable({
   rows,
   columns,
+  sort,
+  onSortChange,
   fetchNextPage,
   hasNextPage,
   isFetchingNextPage,
@@ -88,6 +88,8 @@ export function MetricEvidenceTable({
 }: {
   rows: MetricEvidenceRow[];
   columns: MetricEvidenceColumn[];
+  sort: EvidenceSort | null;
+  onSortChange: (key: string) => void;
   fetchNextPage: () => Promise<unknown>;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
@@ -150,21 +152,39 @@ export function MetricEvidenceTable({
           >
             {columns.map((column) => {
               const layout = columnLayout(column);
+              const state = sort?.key === column.key ? sort.direction : null;
+              const numeric = column.type === "number";
               return (
                 <TableHead
                   role="columnheader"
                   key={column.key}
+                  aria-sort={
+                    state === "asc"
+                      ? "ascending"
+                      : state === "desc"
+                        ? "descending"
+                        : "none"
+                  }
                   className={cn(
                     "flex h-10 min-w-0 items-center px-3 py-0",
-                    column.type === "number"
-                      ? "justify-end text-right"
-                      : "justify-start text-left"
+                    numeric ? "justify-end text-right" : "justify-start text-left"
                   )}
                   style={{
                     flex: `${layout.grow} 0 ${layout.basisRem}rem`,
                   }}
                 >
-                  {column.label}
+                  <button
+                    type="button"
+                    onClick={() => onSortChange(column.key)}
+                    className={cn(
+                      "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                      numeric && "flex-row-reverse",
+                      state && "text-foreground"
+                    )}
+                  >
+                    <span className="min-w-0 truncate">{column.label}</span>
+                    <SortIcon state={state} />
+                  </button>
                 </TableHead>
               );
             })}
