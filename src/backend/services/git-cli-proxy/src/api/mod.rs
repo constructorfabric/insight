@@ -252,6 +252,54 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(data::list_file_changes)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/v1/authors")
+        .operation_id("git_cli_proxy.authors.list")
+        .summary("Distinct commit authors, ascending by e-mail")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed(
+            "repo",
+            true,
+            "Clone URL of the repository (http/https)",
+            "string",
+        )
+        .query_param_typed(
+            "since",
+            false,
+            "Lower bound on committed_date; an author whose commits all predate it is omitted",
+            "string",
+        )
+        .query_param_typed(
+            "page_size",
+            false,
+            "1..=1000, default 1000; larger values are clamped",
+            "integer",
+        )
+        .query_param_typed(
+            "page_token",
+            false,
+            "Cursor from a previous page; pins the snapshot and never fetches",
+            "string",
+        )
+        .json_response_with_schema::<data::AuthorsPage>(
+            openapi,
+            StatusCode::OK,
+            "One page of authors",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_409(openapi)
+        .error_429(openapi)
+        .error_500(openapi)
+        .problem_response(
+            openapi,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Repository exceeds the configured per-repository size cap",
+        )
+        .handler(data::list_authors)
+        .register(router, openapi);
+
     OperationBuilder::get("/v1/branches")
         .operation_id("git_cli_proxy.branches.list")
         .summary("Branch heads, ascending by name")
