@@ -11,17 +11,32 @@
 -- only where a member publishes one, an e-mail. Neither side alone lets a
 -- commit reach a person, so this model collects the pairs that name both.
 --
--- Three independent sources, weakest last:
---   1. the commit's own account, as GitHub matched it — authoritative, and it
---      works for e-mails kept private, which is the case the roster misses
---   2. the profile e-mail on the pull-request author
---   3. the noreply address, which encodes the login it was issued to and so
+-- Four independent sources, weakest last:
+--   1. the commit author lookup, which resolves an e-mail GitHub could match
+--      to an account whether or not the person ever opened a pull request
+--   2. the commit's own account on a pull-request commit, as GitHub matched it
+--   3. the profile e-mail on the pull-request author
+--   4. the noreply address, which encodes the login it was issued to and so
 --      names its own account without any lookup
 --
 -- Several e-mails per account is normal and every one of them is kept: a person
 -- who changes address still owns what they committed under the old one.
 
-WITH commit_accounts AS (
+WITH resolved_authors AS (
+    SELECT
+        lower(trimBoth(COALESCE(author_login, ''))) AS login,
+        lower(trimBoth(COALESCE(author_email, ''))) AS email,
+        tenant_id,
+        source_id,
+        'bronze_github.commit_authors.author_email' AS observed_in,
+        max(parseDateTimeBestEffortOrNull(collected_at)) AS seen_at
+    FROM {{ source('bronze_github', 'commit_authors') }} FINAL
+    WHERE COALESCE(author_login, '') != ''
+      AND COALESCE(author_email, '') != ''
+    GROUP BY login, email, tenant_id, source_id, observed_in
+),
+
+commit_accounts AS (
     SELECT
         lower(trimBoth(COALESCE(author_login, ''))) AS login,
         lower(trimBoth(COALESCE(author_email, ''))) AS email,
@@ -80,6 +95,8 @@ noreply_commits AS (
 ),
 
 observations AS (
+    SELECT * FROM resolved_authors
+    UNION ALL
     SELECT * FROM commit_accounts
     UNION ALL
     SELECT * FROM committer_accounts

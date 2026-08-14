@@ -32,5 +32,6 @@
 {% do promote_bronze_to_rmt(table='bronze_github.deployment_statuses',         order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_github.pull_request_timeline_events', order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_github.issue_timeline_events',       order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_github.commit_authors',              order_by='unique_key') %}
 
 SELECT 1 AS promoted

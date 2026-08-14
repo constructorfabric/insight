@@ -770,6 +770,195 @@ streams:
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['name'] | replace(':', '%3A') }}
 
+  # ── Commit authors (git-cli-proxy + GitHub API) ─────────────────────────
+  # A commit names an e-mail and no account, so a commit reaches a person only
+  # once something claims that e-mail for one. The proxy enumerates the
+  # distinct authors of a repository from the clone it already holds, and this
+  # stream asks GitHub who each of them is — one call per AUTHOR, not per
+  # commit, which is the whole reason the proxy answers first.
+  #
+  # `/repos/{repo}/commits/{sha}` reports the account GitHub matched the
+  # commit's e-mail to, including addresses kept off the public profile. It
+  # reports `author: null` where it can match none — a CI or service identity —
+  # and those records are dropped rather than stored as an unresolved row.
+  - type: DeclarativeStream
+    name: commit_authors
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
+          author_login: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
+          author_type: {type: [string, "null"]}
+          sample_sha: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_slice.extra_fields['repo_full_name'] }}/commits/{{ stream_partition.commit_sha }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          # The response is one commit object, not a list.
+          type: DpathExtractor
+          field_path: []
+        record_filter:
+          type: RecordFilter
+          # No account matched the e-mail; there is no claim to make. Compared
+          # against '' rather than tested for truth: the interpolation renders a
+          # missing login as the STRING "None", which is not falsy.
+          condition: "{{ ((record.get('author') or {}).get('login') or '') != '' }}"
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: sample_sha
+            partition_field: commit_sha
+            extra_fields:
+              - [repo_full_name]
+              - [author_email]
+            stream:
+              type: DeclarativeStream
+              name: repository_authors
+              primary_key:
+                - author_email
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    author_email: {type: [string, "null"]}
+                    author_name: {type: [string, "null"]}
+                    sample_sha: {type: [string, "null"]}
+                    last_committed_date: {type: [string, "null"]}
+                    commit_count: {type: [integer, "null"]}
+                    repo_full_name: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *proxy_requester
+                  path: /v1/authors
+                  request_parameters:
+                    repo: "{{ stream_partition.repo_clone_url }}"
+                    page_size: "500"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: [items]
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ response['next_page_token'] }}"
+                    stop_condition: "{{ not response.get('next_page_token') }}"
+                  page_token_option:
+                    type: RequestOption
+                    field_name: page_token
+                    inject_into: request_parameter
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: clone_url
+                      partition_field: repo_clone_url
+                      extra_fields:
+                        - [full_name]
+                      incremental_dependency: true
+                      stream: *repositories_pushed_parent
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: last_committed_date
+                datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                  - "%Y-%m-%dT%H:%M:%SZ"
+                # An author already resolved keeps their claim, so a later sync
+                # only needs the ones who have committed since — which is what
+                # keeps this O(active authors) rather than O(authors).
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['github_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
+                start_time_option:
+                  type: RequestOption
+                  field_name: since
+                  inject_into: request_parameter
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [repo_full_name]
+                      value: "{{ stream_slice.extra_fields['full_name'] }}"
+                      value_type: string
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          # The e-mail the account was resolved FOR: the git ident the proxy
+          # enumerated, which is what the commit rows carry and therefore what
+          # a claim has to be keyed on.
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: "{{ stream_slice.extra_fields['author_email'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [sample_sha]
+            value: "{{ stream_partition.commit_sha }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_login]
+            value: "{{ (record.get('author') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('author') or {}).get('id') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [author_type]
+            value: "{{ (record.get('author') or {}).get('type') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:author:{{ stream_slice.extra_fields['author_email'] | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the commit payload itself belongs to the proxy streams.
+        field_pointers:
+          - [commit]
+          - [author]
+          - [committer]
+          - [parents]
+          - [files]
+          - [stats]
+          - [node_id]
+          - [sha]
+          - [url]
+          - [html_url]
+          - [comments_url]
+
   # ── Pull requests (GitHub API) ──────────────────────────────────────────
   # LIST endpoint only: /pulls has no `since`, so newest-first plus the
   # data-feed stop halts pagination at the stored per-repo state, and the

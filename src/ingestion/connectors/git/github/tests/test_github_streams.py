@@ -814,3 +814,96 @@ def test_projects_v2_graphql_pagination_cursor_in_body(http_mocker: HttpMocker) 
     assert rec["title"] == "Roadmap"
     assert rec["short_description"] == ""
     _no_literal_none(output.records)
+
+
+def _authors_page(*rows: dict) -> HttpResponse:
+    return HttpResponse(
+        body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200
+    )
+
+
+def _author(email: str, sha: str, name: str = "Dev") -> dict:
+    return {
+        "author_email": email,
+        "author_name": name,
+        "sample_sha": sha,
+        "last_committed_date": "2026-06-15T10:00:00+00:00",
+        "commit_count": 3,
+    }
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_commit_authors_resolve_a_proxy_author_to_an_account(http_mocker: HttpMocker) -> None:
+    """The proxy names the distinct authors; GitHub names the account behind
+    each one. One vendor call per author, keyed on the git e-mail so the claim
+    matches what the commit rows carry."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(_author("ada@example.com", "a" * 40)),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "sha": "a" * 40,
+                    "node_id": "C_1",
+                    "commit": {"author": {"name": "Ada", "email": "ada@example.com"}},
+                    "author": {"login": "ada", "id": 4242, "type": "User"},
+                    "committer": {"login": "ada", "id": 4242, "type": "User"},
+                    "parents": [],
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert rec["author_email"] == "ada@example.com", "keyed on the git ident, not the profile"
+    assert (rec["author_login"], rec["author_id"], rec["author_type"]) == ("ada", 4242, "User")
+    assert rec["repo_full_name"] == "acme/app"
+    assert rec["sample_sha"] == "a" * 40
+    assert rec["unique_key"].endswith(":acme/app:author:ada@example.com")
+    assert "commit" not in rec and "author" not in rec
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "commit_authors", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_commit_authors_drops_an_email_github_matches_to_nobody(
+    http_mocker: HttpMocker,
+) -> None:
+    """GitHub answers `author: null` for an e-mail verified on no account — a
+    CI or service identity. There is no account to claim the e-mail, so the
+    row is dropped rather than stored as an unresolved one."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(_author("ci@build.local", "b" * 40, name="CI")),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'b' * 40}", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "sha": "b" * 40,
+                    "commit": {"author": {"name": "CI", "email": "ci@build.local"}},
+                    "author": None,
+                    "committer": None,
+                    "parents": [],
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config)
+
+    assert not output.errors
+    assert len(output.records) == 0, "an unmatched e-mail claims no account"
