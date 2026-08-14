@@ -6,21 +6,13 @@ name: E2E — Compose stand
 # exercises the in-process ingestion rig and now carries one blocking gate
 # (metric coverage) — that workflow is untouched by this one.
 #
-# By default nothing here builds the product. `test-stand up` pulls the frontend
-# and the four backend services, each pinned to its own chart's appVersion;
-# compiling the backend cost ~26 min per job.
-#
-# Those appVersions name what MAIN released, so a lane that pins a tree the ref
-# changes reports green for code it never ran. `up` has a guard for exactly
-# that, but the guard needs origin/main and these lanes clone at depth 1, so it
-# is inert here and the decision is made in this file instead: `changes` answers
-# per tree, and each answer maps to its own flag —
-#
-#   src/backend/  changed -> up --build-backend   (~26 min, hence 75-min timeout)
-#   src/frontend/ changed -> up --build-frontend  (a pnpm build, timeout unchanged)
-#
-# Both flags together are what `up --build` means; the lanes pass them
-# separately so a SPA-only diff never pays for the compiler.
+# Nothing here builds by default: `test-stand up` pulls the frontend and the
+# four backend services at their charts' appVersions, which name main's build.
+# A ref that changes one of those trees has to build it or the lane reports on
+# code it never ran. `up` guards that, but the guard needs origin/main and these
+# lanes clone at depth 1 — so `changes` decides instead, per tree, and the lanes
+# pass --build-backend (~28 min, hence the wider timeout) and --build-frontend
+# (a pnpm build) independently.
 #
 # Two independently-reporting checks, split by what they need rather than by
 # what they cover:
@@ -98,9 +90,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
-      # One per buildable tree: whether the diff touches it, and so whether a
-      # pinned image would be main's build rather than the change under test.
-      # The lanes turn each into its own --build-* flag.
+      # One per buildable tree; the lanes turn each into its own --build-* flag.
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
     steps:
@@ -123,10 +113,8 @@ jobs:
           # would attribute unrelated commits that landed on main after this
           # branch forked to the pull request and run the stand unnecessarily.
           #
-          # No base at all — a schedule or a dispatch. There is no pull request
-          # whose relevance could be in question, so those runs are relevant by
-          # definition and only the build answers come from a comparison, taken
-          # against origin/main.
+          # No base means a schedule or a dispatch: nothing to filter, so it
+          # runs either way and the comparison only decides what to build.
           forced=false
           if [ -n "${BASE:-}" ]; then
             base_point="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || true)"
@@ -135,9 +123,8 @@ jobs:
             base_point="$(git rev-parse --verify --quiet origin/main || true)"
             echo "no base sha — running, and comparing against origin/main to decide what to build"
           fi
-          # Nothing to compare against. Run, and build BOTH trees: pinning on a
-          # comparison that could not be made is how a lane ends up reporting
-          # green for images this ref never built.
+          # No comparison point: build both rather than pin on a comparison that
+          # was never made.
           if [ -z "$base_point" ]; then
             echo "no comparison point — running the stand and building the product"
             emit true true true
@@ -195,10 +182,9 @@ jobs:
     needs: [changes, resolve-target]
     if: needs.resolve-target.outputs.target == 'compose'
     runs-on: ubuntu-latest
-    # Pull mode measured near 8m, so 45 leaves ~5x headroom for a cold runner
-    # and a slow registry while not letting a hung stand burn an hour and a
-    # half. A backend-building run was measured at 28m (26m of it the build),
-    # hence the wider ceiling on that path.
+    # Measured over 60 runs: pull-path jobs 3-6m, build-path jobs 25-34m. 45
+    # absorbs a cold runner and a slow registry; 75 keeps ~2x over the worst
+    # build, without letting a hung stand burn an hour and a half.
     timeout-minutes: ${{ needs.changes.outputs.backend == 'true' && 75 || 45 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -231,9 +217,8 @@ jobs:
           BUILD_FRONTEND: ${{ needs.changes.outputs.frontend }}
         run: |
           set -euo pipefail
-          # One output, one flag, per tree. `if` blocks rather than
-          # `[ … ] && flags+=(…)`: under set -e a false test as the last
-          # command of an && list ends the step.
+          # `if` blocks, not `[ … ] && flags+=(…)`: under set -e a false test as
+          # the last command of an && list ends the step.
           flags=()
           if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
           if [ "$BUILD_FRONTEND" = "true" ]; then flags+=(--build-frontend); fi
@@ -377,9 +362,8 @@ jobs:
           BUILD_FRONTEND: ${{ needs.changes.outputs.frontend }}
         run: |
           set -euo pipefail
-          # One output, one flag, per tree. `if` blocks rather than
-          # `[ … ] && flags+=(…)`: under set -e a false test as the last
-          # command of an && list ends the step.
+          # `if` blocks, not `[ … ] && flags+=(…)`: under set -e a false test as
+          # the last command of an && list ends the step.
           flags=()
           if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
           if [ "$BUILD_FRONTEND" = "true" ]; then flags+=(--build-frontend); fi
