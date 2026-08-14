@@ -28,6 +28,16 @@ pub struct AccountEvidence {
     pub is_closed: bool,
 }
 
+/// The whole evidence read, with the one fact about the read itself a consumer
+/// must not lose: whether the cap cut it short. Rates derived from a truncated
+/// read describe a prefix of the tenant, and only the caller can say so to the
+/// operator.
+#[derive(Debug)]
+pub struct EvidenceSnapshot {
+    pub accounts: Vec<AccountEvidence>,
+    pub truncated: bool,
+}
+
 /// One row per observed account: latest operation and latest non-empty values.
 /// DELETE rows carry an empty value by contract, so the value aggregates filter
 /// on UPSERT — while the operation aggregate keeps every event, which is what
@@ -101,15 +111,21 @@ impl ClickHouseEvidenceReader {
     /// # Errors
     ///
     /// Returns an error if the query fails or a stored source id is not a UUID.
-    pub async fn accounts(&self) -> anyhow::Result<Vec<AccountEvidence>> {
+    pub async fn accounts(&self) -> anyhow::Result<EvidenceSnapshot> {
         let sql = format!("{FOLD_SQL} LIMIT {MAX_EVIDENCE_ACCOUNTS}");
         let rows: Vec<FoldedRow> = match self.client.query(&sql).fetch_all().await {
             Ok(rows) => rows,
-            Err(e) if is_missing_relation(&e) => return Ok(Vec::new()),
+            Err(e) if is_missing_relation(&e) => {
+                return Ok(EvidenceSnapshot {
+                    accounts: Vec::new(),
+                    truncated: false,
+                });
+            }
             Err(e) => return Err(e.into()),
         };
 
-        if rows.len() == MAX_EVIDENCE_ACCOUNTS {
+        let truncated = rows.len() == MAX_EVIDENCE_ACCOUNTS;
+        if truncated {
             tracing::warn!(
                 cap = MAX_EVIDENCE_ACCOUNTS,
                 "review evidence: read cap reached; the queue and its rates \
@@ -133,7 +149,10 @@ impl ClickHouseEvidenceReader {
                 "review evidence: rows with an unreadable source id"
             );
         }
-        Ok(accounts)
+        Ok(EvidenceSnapshot {
+            accounts,
+            truncated,
+        })
     }
 }
 

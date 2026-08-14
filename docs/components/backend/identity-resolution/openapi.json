@@ -82,13 +82,23 @@
             },
             "type": "array"
           },
+          "items_truncated": {
+            "description": "`limit` cut the item list — more accounts await a decision than are\nlisted here. Distinct from `truncated`: the rates stay whole-tenant,\nonly this page is short.",
+            "type": "boolean"
+          },
           "rates": {
             "$ref": "#/components/schemas/ResolutionRatesResponse"
+          },
+          "truncated": {
+            "description": "The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide.",
+            "type": "boolean"
           }
         },
         "required": [
           "items",
-          "rates"
+          "rates",
+          "truncated",
+          "items_truncated"
         ],
         "type": "object"
       },
@@ -295,6 +305,48 @@
         ],
         "type": "object"
       },
+      "MeResponse": {
+        "description": "The caller as the gateway JWT identifies them, with their active roles.",
+        "properties": {
+          "insight_tenant_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "roles": {
+            "items": {
+              "$ref": "#/components/schemas/MeRoleResponse"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "person_id",
+          "insight_tenant_id",
+          "roles"
+        ],
+        "type": "object"
+      },
+      "MeRoleResponse": {
+        "description": "One active role assignment of the caller.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "role_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role_id",
+          "name"
+        ],
+        "type": "object"
+      },
       "MergeRequest": {
         "properties": {
           "comment": {
@@ -370,6 +422,32 @@
         "required": [
           "person_id",
           "accounts"
+        ],
+        "type": "object"
+      },
+      "PersonListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PersonSummaryResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "Wire parity with the other listings: declared, always `null`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "description": "More persons matched than `limit` allowed — the page is a cut, not the\nanswer, and the UI should ask for narrower terms. Without this flag a\ntruncated page reads as \"the person does not exist\".",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "truncated"
         ],
         "type": "object"
       },
@@ -528,6 +606,50 @@
           "valid_from",
           "author_person_id",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "PersonSummaryResponse": {
+        "description": "A person as operator surfaces display them: enough to recognise and pick,\nnothing more. Every field but the id may be null — a person the journal\nknows only through bindings still appears, as the id alone.",
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "job_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "person_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "description": "Source-native handle (e.g. a git login) — often the only recognisable\nfield of an identity no HR system has observed yet.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "person_id"
         ],
         "type": "object"
       },
@@ -880,10 +1002,9 @@
             "type": "string"
           },
           "candidates": {
-            "description": "Persons this account could belong to, if any are known.",
+            "description": "Persons this account could belong to, if any are known — hydrated into\ncards so the operator UI never has to resolve bare ids itself.",
             "items": {
-              "format": "uuid",
-              "type": "string"
+              "$ref": "#/components/schemas/PersonSummaryResponse"
             },
             "type": "array"
           },
@@ -1230,6 +1351,99 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/me": {
+      "get": {
+        "operationId": "identity_resolution.me.get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            },
+            "description": "Who the gateway JWT identifies, with their active identity roles"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "The caller's identity and active roles"
+      }
+    },
     "/v1/person-roles": {
       "get": {
         "operationId": "identity_resolution.person_roles.list",
@@ -1568,6 +1782,119 @@
           }
         ],
         "summary": "Revoke a role assignment (admin)"
+      }
+    },
+    "/v1/persons": {
+      "get": {
+        "operationId": "identity_resolution.persons.search",
+        "parameters": [
+          {
+            "description": "Search terms, at most 8 (200 characters total); every whitespace-separated term must match one of the person's current identity values — email, username, display/first/last name or employee id (case-insensitive substring). Titles and statuses are displayed on the card but not searched.",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Cap on returned persons (1..=100, default 20)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonListResponse"
+                }
+              }
+            },
+            "description": "Matching persons, named-first"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Search persons by their current observed values (admin)"
       }
     },
     "/v1/persons-seed": {
@@ -2235,7 +2562,7 @@
         "operationId": "identity_resolution.resolution.attention",
         "parameters": [
           {
-            "description": "Cap on returned items (1..=1000, default 100). The rates always cover every observed account, whatever the cap.",
+            "description": "Cap on returned items (1..=1000, default 100); `items_truncated` says whether it cut the list. The rates cover every observed account whatever the cap — unless `truncated` is set, which means the evidence read itself hit its safety ceiling and both the rates and the queue describe only the accounts read before it.",
             "in": "query",
             "name": "limit",
             "required": false,

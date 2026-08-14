@@ -125,6 +125,19 @@ spec:
               value: {{ default "" .Values.ingestion.reconcile.argoInstanceId | quote }}
             - name: ARGO_SERVICE_ACCOUNT
               value: {{ printf "%s-reconcile" (include "insight.fullname" .) | quote }}
+            {{- if .Values.gitCliProxy.deploy }}
+            # Injected into the source config of every connector whose
+            # descriptor sets platform_config.git_proxy — the chart owns the
+            # address and the token, so no connector Secret carries either and
+            # a port change cannot desync them.
+            - name: GIT_PROXY_URL
+              value: {{ printf "http://%s-git-cli-proxy:%v" .Release.Name .Values.gitCliProxy.service.port | quote }}
+            - name: GIT_PROXY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "gitCliProxy.existingSecret is required" .Values.gitCliProxy.existingSecret | quote }}
+                  key: APP__gears__git_cli_proxy__config__proxy_token
+            {{- end }}
           resources:
             requests:
               cpu: {{ required "ingestion.reconcile.resources.requests.cpu is required" .Values.ingestion.reconcile.resources.requests.cpu | quote }}

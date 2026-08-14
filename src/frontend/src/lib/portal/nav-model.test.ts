@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MANAGE_ITEMS,
+  manageItemsFor,
   partitionByReadiness,
   resolveZoneItem,
   ZONE_DEFAULT_ITEM,
@@ -42,5 +44,23 @@ describe("resolveZoneItem", () => {
     expect(resolveZoneItem("manage", null)).toBeNull();
     expect(resolveZoneItem("manage", "trend")).toBeNull();
     expect(resolveZoneItem("manage", "data-health")).toBe("data-health");
+  });
+});
+
+/**
+ * The Manage pane per viewer: admin-only surfaces exist for admins alone.
+ * The non-admin list must stay a strict subset — dropping a shared item or
+ * reordering would silently reshape the pane every operator already knows.
+ */
+describe("manageItemsFor", () => {
+  it("gives an admin the full pane", () => {
+    expect(manageItemsFor(true)).toEqual(MANAGE_ITEMS);
+  });
+
+  it("drops exactly the admin-only surfaces for everyone else", () => {
+    const visible = manageItemsFor(false);
+
+    expect(visible.map((i) => i.id)).not.toContain("identities");
+    expect(visible).toEqual(MANAGE_ITEMS.filter((i) => !i.adminOnly));
   });
 });

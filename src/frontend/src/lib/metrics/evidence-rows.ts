@@ -24,6 +24,33 @@ export function cellText(
   return String(value);
 }
 
+/** The first non-blank line, so a leading newline is not read as a blank cell. */
+export function summaryLine(text: string): string {
+  return text.split("\n").find((line) => line.trim() !== "") ?? text;
+}
+
+/**
+ * A key per row that survives re-sorting.
+ *
+ * Not `ref`: it is a PR or issue number, unique only within a repository, so
+ * two rows can share one. Evidence exposes no id of its own, leaving the whole
+ * value set as the identity — and rows whose values match to the last field get
+ * an occurrence suffix, since a duplicate key would join their expansion.
+ */
+export function evidenceRowKeys(rows: readonly MetricEvidenceRow[]): string[] {
+  const seen = new Map<string, number>();
+  return rows.map((row) => {
+    const signature = JSON.stringify(
+      Object.keys(row.values)
+        .sort()
+        .map((key) => [key, row.values[key]])
+    );
+    const occurrence = seen.get(signature) ?? 0;
+    seen.set(signature, occurrence + 1);
+    return occurrence === 0 ? signature : `${signature}#${occurrence}`;
+  });
+}
+
 function matchesSearch(
   row: MetricEvidenceRow,
   columns: readonly MetricEvidenceColumn[],

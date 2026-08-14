@@ -1,0 +1,2576 @@
+version: 7.0.4
+
+type: DeclarativeSource
+
+# GitHub connector built on the git-cli-proxy (issue #2224).
+#
+# Two upstreams in ONE manifest: repository discovery and the PR/issue/CI
+# streams talk to api.github.com, while commit-level extraction talks to the
+# proxy, which serves it from a bare blobless clone instead of one API call
+# per commit.
+#
+# YAML anchors (not $ref) carry the shared requesters and the slim parent
+# streams: anchors resolve at parse time, so the Builder strict validator sees
+# plain inlined objects — the same shape github-directory ships with.
+#
+# org_members is deliberately ABSENT: the deployed github-directory connector
+# already syncs the org roster for identity resolution. Folding it in here is
+# a separate migration.
+#
+# Jinja rule inherited from the github-directory "None" incident: every
+# computed nullable string field coalesces with `or ''` — a rendered Jinja
+# `none` under value_type: string stores the literal text "None" as a value.
+
+definitions:
+  # The CDK resolves backoff per requester, not per response filter: the first
+  # strategy returning a value wins for every retryable response. X-RateLimit-Reset
+  # is stamped on GitHub responses of any status, so reading it here would put a
+  # transient 5xx to sleep until the hourly window resets. Retry-After covers the
+  # throttles that carry it; everything else backs off exponentially.
+  backoff_strategies: &backoff_strategies
+    - type: WaitTimeFromHeader
+      header: Retry-After
+      max_waiting_time_in_seconds: 600
+    - type: ExponentialBackoffStrategy
+      factor: 2
+
+  rest_error_handler: &rest_error_handler
+    type: DefaultErrorHandler
+    max_retries: 8
+    backoff_strategies: *backoff_strategies
+    response_filters:
+      # ORDER MATTERS. GitHub reports its secondary rate limits as 403, not
+      # 429, so the throttle predicates must run before any 403 handling —
+      # otherwise a throttle is mistaken for a denial and skipped or failed.
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [403, 429]
+        predicate: "{{ 'secondary rate limit' in ((response.get('message') or '') | lower) }}"
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [403, 429]
+        predicate: "{{ headers.get('x-ratelimit-remaining') == '0' }}"
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [429]
+      - type: HttpResponseFilter
+        action: FAIL
+        http_codes: [401]
+        failure_type: config_error
+        error_message: GitHub rejected the token; check github_token scopes (repo, read:org, read:project)
+      - type: HttpResponseFilter
+        action: RETRY
+        http_codes: [500, 502, 503, 504]
+        error_message: Transient GitHub error
+
+  # GraphQL errors arrive as HTTP 200 with an `errors` array, so the HTTP-code
+  # filters above never see them. Repo-scoped queries add one more case: an
+  # inaccessible repository is a 200 whose `data.repository` is null and whose
+  # error type is NOT_FOUND or FORBIDDEN — the same skip-not-fail class as a
+  # REST 403/404, and fatal to a whole sync if treated as a query error.
+  graphql_error_handler: &graphql_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: *backoff_strategies
+    response_filters:
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [429]
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
+      - type: HttpResponseFilter
+        action: FAIL
+        http_codes: [401]
+        failure_type: config_error
+        error_message: GitHub rejected the token; check github_token scopes (repo, read:org, read:project)
+      # Any other GraphQL error still arrives as HTTP 200, and a query-level
+      # one omits `data` entirely; without this the extractor finds nothing and
+      # the paginator throws an unreadable interpolation error. Fail with what
+      # GitHub actually said.
+      - type: HttpResponseFilter
+        action: FAIL
+        predicate: "{{ (response.get('errors') or []) | length > 0 }}"
+        error_message: "GitHub GraphQL error: {{ (response.get('errors') or []) | map(attribute='message') | join('; ') }}"
+      - type: HttpResponseFilter
+        action: RETRY
+        http_codes: [500, 502, 503, 504]
+
+  graphql_error_handler_repo_scoped: &graphql_error_handler_repo_scoped
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: *backoff_strategies
+    response_filters:
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [429]
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
+      - type: HttpResponseFilter
+        action: FAIL
+        http_codes: [401]
+        failure_type: config_error
+        error_message: GitHub rejected the token; check github_token scopes (repo, read:org, read:project)
+      - type: HttpResponseFilter
+        action: IGNORE
+        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'in', ['NOT_FOUND', 'FORBIDDEN']) | list | length > 0 }}"
+        error_message: Repository not visible to this token; other repositories continue.
+      - type: HttpResponseFilter
+        action: FAIL
+        predicate: "{{ (response.get('errors') or []) | length > 0 }}"
+        error_message: "GitHub GraphQL error: {{ (response.get('errors') or []) | map(attribute='message') | join('; ') }}"
+      - type: HttpResponseFilter
+        action: RETRY
+        http_codes: [500, 502, 503, 504]
+
+  # Same handler, plus per-repository denial tolerance for repo-scoped
+  # substreams: a fine-grained token can see the org listing yet 403/404 on
+  # individual repositories (or a feature — Actions, issues — is disabled).
+  # The partition is skipped; the sync continues. 410 is "issues disabled".
+  rest_error_handler_repo_scoped: &rest_error_handler_repo_scoped
+    type: DefaultErrorHandler
+    max_retries: 8
+    backoff_strategies: *backoff_strategies
+    response_filters:
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [403, 429]
+        predicate: "{{ 'secondary rate limit' in ((response.get('message') or '') | lower) }}"
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [403, 429]
+        predicate: "{{ headers.get('x-ratelimit-remaining') == '0' }}"
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        http_codes: [429]
+      - type: HttpResponseFilter
+        action: IGNORE
+        http_codes: [403, 404, 410]
+        error_message: Repository (or this feature on it) not accessible; other repositories continue.
+      - type: HttpResponseFilter
+        action: FAIL
+        http_codes: [401]
+        failure_type: config_error
+        error_message: GitHub rejected the token; check github_token scopes (repo, read:org, read:project)
+      - type: HttpResponseFilter
+        action: RETRY
+        http_codes: [500, 502, 503, 504]
+        error_message: Transient GitHub error
+
+  rest_requester: &rest_requester
+    type: HttpRequester
+    url_base: https://api.github.com
+    http_method: GET
+    authenticator:
+      type: BearerAuthenticator
+      api_token: "{{ config['github_token'] }}"
+    request_headers:
+      Accept: application/vnd.github+json
+      X-GitHub-Api-Version: "2022-11-28"
+    error_handler: *rest_error_handler
+
+  proxy_error_handler: &proxy_error_handler
+    type: DefaultErrorHandler
+    # Generous on purpose: a cold blobless clone of a large repository runs
+    # for many Retry-After cycles before the first page can be served.
+    max_retries: 100
+    backoff_strategies:
+      - type: WaitTimeFromHeader
+        header: Retry-After
+        max_waiting_time_in_seconds: 600
+    response_filters:
+      # The repository is being cloned or purged in the background: the proxy
+      # is working, the caller waits.
+      - type: HttpResponseFilter
+        http_codes: [429]
+        action: RETRY
+        error_message: Repository is being prepared by the proxy
+      # Both are permanent for THIS repository and harmless for the rest, so
+      # the partition is skipped rather than the whole stream failed. A rising
+      # git_proxy_rejections_total is the operator's alert.
+      - type: HttpResponseFilter
+        http_codes: [404, 413]
+        action: IGNORE
+        error_message: >-
+          Skipping this repository: gone at origin (404), or larger than
+          cache.maxRepoBytes (413). Other repositories continue.
+      # The pinned snapshot was superseded mid-walk. RETRY would replay the
+      # same dead page token and 409 again; rerunning the sync resumes each
+      # partition from its own stored cursor against a fresh snapshot.
+      - type: HttpResponseFilter
+        http_codes: [409]
+        action: FAIL
+        error_message: Proxy snapshot changed mid-walk; rerun the sync to resume from the stored cursor
+      - type: HttpResponseFilter
+        http_codes: [500, 502, 503, 504]
+        action: RETRY
+        error_message: Transient proxy error (the gateway can time out a worst-case page under contention)
+
+  proxy_requester: &proxy_requester
+    type: HttpRequester
+    url_base: "{{ config['git_proxy_url'] }}"
+    http_method: GET
+    authenticator:
+      type: BearerAuthenticator
+      api_token: "{{ config['git_proxy_token'] }}"
+    request_headers:
+      X-Tenant-Id: "{{ config['insight_tenant_id'] }}"
+      X-Source-Id: "{{ config['insight_source_id'] }}"
+      X-Git-Username: x-access-token
+      X-Git-Token: "{{ config['github_token'] }}"
+    error_handler: *proxy_error_handler
+
+  standard_fields: &standard_fields
+    - type: AddedFieldDefinition
+      path: [tenant_id]
+      value: "{{ config['insight_tenant_id'] }}"
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [source_id]
+      value: "{{ config['insight_source_id'] }}"
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [data_source]
+      value: insight_github
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [collected_at]
+      value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      value_type: string
+
+  # Slim repository roster the proxy streams and repo-scoped substreams
+  # partition over. Client-side incremental on pushed_at (the endpoint has no
+  # server-side filter; sort=pushed asc keeps the cursor monotonic), so with
+  # incremental_dependency only repositories pushed since the last sync are
+  # visited. The CDK auto-caches parents, so the aliased copies share one
+  # HTTP pass per sync.
+  repositories_pushed_parent: &repositories_pushed_parent
+    type: DeclarativeStream
+    name: repositories_pushed
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id: {type: [integer, "null"]}
+          full_name: {type: [string, "null"]}
+          clone_url: {type: [string, "null"]}
+          pushed_at: {type: [string, "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        path: "/orgs/{{ stream_partition.org }}/repos"
+        request_parameters:
+          type: all
+          sort: pushed
+          direction: asc
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+        record_filter:
+          type: RecordFilter
+          condition: "{{ not record.get('archived', false) }}"
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['github_organizations'] }}"
+        cursor_field: org
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: pushed_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+      is_client_side_incremental: true
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "1970-01-01"
+        datetime_format: "%Y-%m-%d"
+
+  # Full roster (no pushed_at gate): reviews/comments/issues/CI advance
+  # without pushes, so their parents must not be push-gated.
+  repositories_all_parent: &repositories_all_parent
+    type: DeclarativeStream
+    name: repositories_all
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id: {type: [integer, "null"]}
+          full_name: {type: [string, "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        path: "/orgs/{{ stream_partition.org }}/repos"
+        request_parameters:
+          type: all
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+        record_filter:
+          type: RecordFilter
+          condition: "{{ not record.get('archived', false) }}"
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['github_organizations'] }}"
+        cursor_field: org
+
+check:
+  type: CheckStream
+  # branches is the cheapest proxy-backed stream, and it is checked so a wrong
+  # git_proxy_url or git_proxy_token fails setup instead of the first sync: the
+  # proxy answers an unauthenticated call with 401, which the CDK maps to a
+  # config error. On a repository the proxy has not cloned yet this waits out
+  # the clone, so a first check can be slow.
+  stream_names:
+    - repositories
+    - branches
+
+streams:
+  # ── Repository roster (GitHub API) ──────────────────────────────────────
+  # Full refresh: metadata of push-quiet repositories must not freeze, so the
+  # roster is never gated on pushed_at (the proxy parents are — separately).
+  - type: DeclarativeStream
+    name: repositories
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          full_name: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          org: {type: [string, "null"]}
+          default_branch: {type: [string, "null"]}
+          archived: {type: [boolean, "null"]}
+          fork: {type: [boolean, "null"]}
+          private: {type: [boolean, "null"]}
+          has_issues: {type: [boolean, "null"]}
+          has_wiki: {type: [boolean, "null"]}
+          language: {type: [string, "null"]}
+          size: {type: [integer, "null"]}
+          clone_url: {type: [string, "null"]}
+          html_url: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+          pushed_at: {type: [string, "null"]}
+          description: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        path: "/orgs/{{ stream_partition.org }}/repos"
+        request_parameters:
+          type: all
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+        record_filter:
+          type: RecordFilter
+          condition: "{{ not record.get('archived', false) }}"
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['github_organizations'] }}"
+        cursor_field: org
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [org]
+            value: "{{ stream_partition.org }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
+
+  # ── commits (git-cli-proxy) ────────────────────────────────────────
+  - type: DeclarativeStream
+    name: commits
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          repository: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          message: {type: [string, "null"]}
+          authored_date: {type: [string, "null"]}
+          committed_date: {type: [string, "null"]}
+          author_name: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
+          committer_name: {type: [string, "null"]}
+          committer_email: {type: [string, "null"]}
+          parent_hashes: {type: [array, "null"], items: {type: string}}
+          is_merge: {type: [boolean, "null"]}
+          additions: {type: [integer, "null"]}
+          deletions: {type: [integer, "null"]}
+          changed_files: {type: [integer, "null"]}
+          is_in_default_branch: {type: [boolean, "null"]}
+          patch_id: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *proxy_requester
+        path: /v1/commits
+        request_parameters:
+          repo: "{{ stream_partition.repo_clone_url }}"
+          page_size: "500"
+
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [items]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response['next_page_token'] }}"
+          stop_condition: "{{ not response.get('next_page_token') }}"
+        page_token_option:
+          type: RequestOption
+          field_name: page_token
+          inject_into: request_parameter
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: clone_url
+            partition_field: repo_clone_url
+            # `incremental_dependency` keeps the sync proportional to
+            # activity: parent state persists only because this child is
+            # itself incremental.
+            incremental_dependency: true
+            stream: *repositories_pushed_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: committed_date
+      datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      # `git log --since` is a traversal cutoff: after a rebase the
+      # replacement commits can carry dates BELOW the stored cursor and would
+      # never be visited again. Re-enumerating one window each sync recovers
+      # them; bronze dedups the re-read rows.
+      lookback_window: "P1M"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: since
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repository]
+            value: "{{ stream_partition.repo_clone_url }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [message]
+            value: "{{ (record.get('message') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}
+
+  # ── file_changes (git-cli-proxy) ───────────────────────────────────
+  - type: DeclarativeStream
+    name: file_changes
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          repository: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          committed_date: {type: [string, "null"]}
+          filename: {type: [string, "null"]}
+          previous_filename: {type: [string, "null"]}
+          status: {type: [string, "null"]}
+          additions: {type: [integer, "null"]}
+          deletions: {type: [integer, "null"]}
+          changes: {type: [integer, "null"]}
+          is_binary: {type: [boolean, "null"]}
+          patch: {type: [string, "null"]}
+          patch_truncated: {type: [boolean, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *proxy_requester
+        path: /v1/file-changes
+        request_parameters:
+          repo: "{{ stream_partition.repo_clone_url }}"
+          # Worst-case page is page_size x max_patch_bytes, and the whole page
+          # is buffered before a record is emitted. 100 keeps that under
+          # 100 MB; the extra requests land on the proxy, not the vendor quota.
+          page_size: "100"
+          include_patch: "true"
+          max_patch_bytes: "1048576"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [items]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response['next_page_token'] }}"
+          stop_condition: "{{ not response.get('next_page_token') }}"
+        page_token_option:
+          type: RequestOption
+          field_name: page_token
+          inject_into: request_parameter
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: clone_url
+            partition_field: repo_clone_url
+            # `incremental_dependency` keeps the sync proportional to
+            # activity: parent state persists only because this child is
+            # itself incremental.
+            incremental_dependency: true
+            stream: *repositories_pushed_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: committed_date
+      datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+      # `git log --since` is a traversal cutoff: after a rebase the
+      # replacement commits can carry dates BELOW the stored cursor and would
+      # never be visited again. Re-enumerating one window each sync recovers
+      # them; bronze dedups the re-read rows.
+      lookback_window: "P1M"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: since
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repository]
+            value: "{{ stream_partition.repo_clone_url }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['sha'] | replace(':', '%3A') }}:{{ record['filename'] | replace(':', '%3A') }}
+
+  # ── branches (git-cli-proxy) ──────────────────────────────────
+  - type: DeclarativeStream
+    name: branches
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          repository: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          head_sha: {type: [string, "null"]}
+          head_committed_date: {type: [string, "null"]}
+          is_default: {type: [boolean, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *proxy_requester
+        path: /v1/branches
+        request_parameters:
+          repo: "{{ stream_partition.repo_clone_url }}"
+          page_size: "500"
+
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [items]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response['next_page_token'] }}"
+          stop_condition: "{{ not response.get('next_page_token') }}"
+        page_token_option:
+          type: RequestOption
+          field_name: page_token
+          inject_into: request_parameter
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: clone_url
+            partition_field: repo_clone_url
+            # Full-refresh child: parent state would not persist, so no
+            # incremental_dependency.
+            incremental_dependency: false
+            stream: *repositories_pushed_parent
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repository]
+            value: "{{ stream_partition.repo_clone_url }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['name'] | replace(':', '%3A') }}
+
+  # ── Pull requests (GitHub API) ──────────────────────────────────────────
+  # LIST endpoint only: /pulls has no `since`, so newest-first plus the
+  # data-feed stop halts pagination at the stored per-repo state, and the
+  # client-side filter drops the stale tail of the boundary page.
+  # additions/deletions/changed_files/merged_by are detail-only and stay
+  # NULL in v1 — PR size comes from the proxy's file_changes.
+  - type: DeclarativeStream
+    name: pull_requests
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          state: {type: [string, "null"]}
+          draft: {type: [boolean, "null"]}
+          title: {type: [string, "null"]}
+          author_login: {type: [string, "null"]}
+          author_association: {type: [string, "null"]}
+          head_sha: {type: [string, "null"]}
+          head_ref: {type: [string, "null"]}
+          base_ref: {type: [string, "null"]}
+          merge_commit_sha: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+          closed_at: {type: [string, "null"]}
+          merged_at: {type: [string, "null"]}
+          body: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_partition.repo_full_name }}/pulls"
+        request_parameters:
+          state: all
+          sort: updated
+          direction: desc
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: full_name
+            partition_field: repo_full_name
+            stream: *repositories_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+      # VERIFIED against the CDK: the data-feed stop halts pagination at the
+      # first record older than the slice start, but the boundary PAGE's tail
+      # still emits — up to one page of pre-start_date rows per partition
+      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+      # condition evaluates POST-filter records, so filtering the old tail
+      # away would keep pagination walking through all history instead.
+      is_data_feed: true
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_partition.repo_full_name }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_login]
+            value: "{{ (record.get('user') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [head_sha]
+            value: "{{ (record.get('head') or {}).get('sha') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [head_ref]
+            value: "{{ (record.get('head') or {}).get('ref') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [base_ref]
+            value: "{{ (record.get('base') or {}).get('ref') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [title]
+            value: "{{ (record.get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [body]
+            value: "{{ (record.get('body') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
+          - [head]
+          - [base]
+
+  # ── Pull request reviews (GitHub API) ───────────────────────────────────
+  # No repo-level reviews endpoint exists in REST, so this is one call per PR
+  # updated inside the sliding window.
+  - type: DeclarativeStream
+    name: pull_request_reviews
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          pull_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          author_login: {type: [string, "null"]}
+          author_association: {type: [string, "null"]}
+          state: {type: [string, "null"]}
+          commit_id: {type: [string, "null"]}
+          submitted_at: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_slice.extra_fields['repo_full_name'] }}/pulls/{{ stream_partition.pull_number }}/reviews"
+        request_parameters:
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: number
+            partition_field: pull_number
+            extra_fields:
+              - [repo_full_name]
+            stream: &pull_requests_window
+              type: DeclarativeStream
+              name: pull_requests_window
+              primary_key:
+                - number
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    number: {type: [integer, "null"]}
+                    repo_full_name: {type: [string, "null"]}
+                    updated_at: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *rest_requester
+                  error_handler: *rest_error_handler_repo_scoped
+                  path: "/repos/{{ stream_partition.repo_full_name }}/pulls"
+                  request_parameters:
+                    state: all
+                    sort: updated
+                    direction: desc
+                    per_page: "100"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ headers['link']['next']['url'] }}"
+                    stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+                  page_token_option:
+                    type: RequestPath
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: full_name
+                      partition_field: repo_full_name
+                      stream: *repositories_all_parent
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: updated_at
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                # Stateless sliding window: the child has no cursor of its
+                # own, so parent state would never persist. The data-feed
+                # stop is what bounds pagination at the window edge.
+                # VERIFIED against the CDK: the data-feed stop halts pagination at the
+                # first record older than the slice start, but the boundary PAGE's tail
+                # still emits — up to one page of pre-start_date rows per partition
+                # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+                # condition evaluates POST-filter records, so filtering the old tail
+                # away would keep pagination walking through all history instead.
+                is_data_feed: true
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                  datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [repo_full_name]
+                      value: "{{ stream_partition.repo_full_name }}"
+                      value_type: string
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [pull_number]
+            value: "{{ stream_partition.pull_number }}"
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_login]
+            value: "{{ (record.get('user') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('user') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pull_number }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
+
+  # ── Pull request commits (GitHub API) ───────────────────────────────────
+  # PR<->commit membership is vendor metadata: it does not exist in git, and a
+  # squash- or rebase-merged PR leaves its original commits unreachable from
+  # every ref the proxy clones. One light call per PR in the window — the
+  # commit payloads themselves stay on the proxy path, so this stream stores
+  # only the edge.
+  # VERIFIED CAVEAT: this endpoint returns at most 250 commits per PR.
+  - type: DeclarativeStream
+    name: pull_request_commits
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          pull_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_slice.extra_fields['repo_full_name'] }}/pulls/{{ stream_partition.pull_number }}/commits"
+        request_parameters:
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: number
+            partition_field: pull_number
+            extra_fields:
+              - [repo_full_name]
+            stream: *pull_requests_window
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [pull_number]
+            value: "{{ stream_partition.pull_number }}"
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pull_number }}:{{ record['sha'] }}
+      - type: RemoveFields
+        # The commit payload comes from the proxy; only the edge is stored.
+        field_pointers:
+          - [commit]
+          - [author]
+          - [committer]
+          - [parents]
+          - [node_id]
+          - [url]
+          - [html_url]
+          - [comments_url]
+
+  # ── Pull request diff totals (GitHub GraphQL) ───────────────────────────
+  # REST carries additions/deletions/changed_files on the PR DETAIL response
+  # only, which would cost one call per pull request. The GraphQL list node
+  # carries all three, so a page of 100 pull requests costs one request and
+  # the stream needs no per-PR fan-out at all.
+  # The connection has no updatedAfter argument (VERIFIED against the live
+  # schema), so this is a newest-first data feed like the REST pull_requests
+  # stream: ordering is UPDATED_AT DESC and the cursor stops the walk.
+  - type: DeclarativeStream
+    name: pull_request_diff_stats
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          pull_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          additions: {type: [integer, "null"]}
+          deletions: {type: [integer, "null"]}
+          changed_files: {type: [integer, "null"]}
+          updated_at: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *graphql_error_handler_repo_scoped
+        path: /graphql
+        http_method: POST
+        request_body_json:
+          query: |
+            query($owner: String!, $name: String!, $cursor: String) {
+              repository(owner: $owner, name: $name) {
+                pullRequests(first: 100, after: $cursor, states: [OPEN, CLOSED, MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes { number updatedAt additions deletions changedFiles author { ... on User { email } } }
+                }
+              }
+            }
+          variables:
+            owner: "{{ stream_partition.repo_full_name.split('/')[0] }}"
+            name: "{{ stream_partition.repo_full_name.split('/')[1] }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, repository, pullRequests, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          # `data.repository` is null when the token cannot see the repository,
+          # so every hop is guarded rather than subscripted.
+          cursor_value: "{{ ((((response.get('data') or {}).get('repository') or {}).get('pullRequests') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('repository') or {}).get('pullRequests') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: full_name
+            partition_field: repo_full_name
+            stream: *repositories_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      # VERIFIED against the CDK: the data-feed stop halts pagination at the
+      # first record older than the slice start, but the boundary PAGE's tail
+      # still emits — up to one page of pre-start_date rows per partition
+      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+      # condition evaluates POST-filter records, so filtering the old tail
+      # away would keep pagination walking through all history instead.
+      is_data_feed: true
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_partition.repo_full_name }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [pull_number]
+            value: "{{ record.get('number') }}"
+          - type: AddedFieldDefinition
+            path: [changed_files]
+            value: "{{ record.get('changedFiles') }}"
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ record.get('updatedAt') or '' }}"
+            value_type: string
+          # Empty unless the author publishes an email on their profile.
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: "{{ (record.get('author') or {}).get('email') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:{{ record['number'] }}
+      - type: RemoveFields
+        # Hoisted above; the camelCase originals stay out of bronze.
+        field_pointers:
+          - [number]
+          - [changedFiles]
+          - [updatedAt]
+          - [author]
+
+  # ── Issue & PR conversation comments (GitHub API) ───────────────────────
+  # ONE repo-level endpoint covers both: PR conversation comments are issue
+  # comments in GitHub's model. Server-side `since` makes it O(changed).
+  # Inline code-review comments come from `pull_request_review_comments`.
+  - type: DeclarativeStream
+    name: pull_request_comments
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          issue_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          author_login: {type: [string, "null"]}
+          author_association: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+          body: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_partition.repo_full_name }}/issues/comments"
+        request_parameters:
+          sort: updated
+          direction: asc
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: full_name
+            partition_field: repo_full_name
+            stream: *repositories_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: since
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_partition.repo_full_name }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [issue_number]
+            value: "{{ (record.get('issue_url') or '').split('/') | last }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [author_login]
+            value: "{{ (record.get('user') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [body]
+            value: "{{ (record.get('body') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('user') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:comment:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
+          - [issue_url]
+
+  # ── Inline code-review comments (GitHub API) ────────────────────────────
+  # Repo-level, so one partition per repo rather than one call per PR. These
+  # are the only comments carrying a file path and line, which is what the
+  # silver comment contract's is_inline branch needs.
+  - type: DeclarativeStream
+    name: pull_request_review_comments
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          pull_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          author_login: {type: [string, "null"]}
+          author_association: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+          body: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
+          path: {type: [string, "null"]}
+          line: {type: [integer, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_partition.repo_full_name }}/pulls/comments"
+        request_parameters:
+          sort: updated
+          direction: asc
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: full_name
+            partition_field: repo_full_name
+            stream: *repositories_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: since
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_partition.repo_full_name }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [pull_number]
+            value: "{{ (record.get('pull_request_url') or '').split('/') | last }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [author_login]
+            value: "{{ (record.get('user') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [body]
+            value: "{{ (record.get('body') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('user') or {}).get('id') }}"
+          # An outdated comment loses `line`; `original_line` keeps the
+          # position it was written against.
+          - type: AddedFieldDefinition
+            path: [line]
+            value: "{{ record.get('line') or record.get('original_line') }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:review_comment:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
+          - [pull_request_url]
+          - [original_line]
+
+  # ── Issues (GitHub API) ─────────────────────────────────────────────────
+  # The endpoint returns PRs too; the record filter drops them (a PR carries
+  # a `pull_request` key). Server-side `since` = updated-after.
+  - type: DeclarativeStream
+    name: issues
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          state: {type: [string, "null"]}
+          state_reason: {type: [string, "null"]}
+          title: {type: [string, "null"]}
+          author_login: {type: [string, "null"]}
+          assignee_logins: {type: [string, "null"]}
+          label_names: {type: [string, "null"]}
+          comments: {type: [integer, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+          closed_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_partition.repo_full_name }}/issues"
+        request_parameters:
+          state: all
+          sort: updated
+          direction: asc
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+        record_filter:
+          type: RecordFilter
+          condition: "{{ 'pull_request' not in record }}"
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: full_name
+            partition_field: repo_full_name
+            stream: *repositories_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+      start_time_option:
+        type: RequestOption
+        field_name: since
+        inject_into: request_parameter
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_partition.repo_full_name }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_login]
+            value: "{{ (record.get('user') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [assignee_logins]
+            value: "{{ ((record.get('assignees') or []) | map(attribute='login') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [label_names]
+            value: "{{ ((record.get('labels') or []) | map(attribute='name') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [title]
+            value: "{{ (record.get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:issue:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [user]
+          - [assignees]
+          - [labels]
+
+  # ── Projects V2 (GitHub GraphQL) ────────────────────────────────────────
+  # Projects V2 has no REST API. Cursor rides in the request body — the
+  # pattern github-directory ships with.
+  - type: DeclarativeStream
+    name: projects_v2
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [string, "null"]}
+          number: {type: [integer, "null"]}
+          org: {type: [string, "null"]}
+          title: {type: [string, "null"]}
+          short_description: {type: [string, "null"]}
+          public: {type: [boolean, "null"]}
+          closed: {type: [boolean, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        path: /graphql
+        http_method: POST
+        error_handler: *graphql_error_handler
+        request_body_json:
+          query: |
+            query($org: String!, $cursor: String) {
+              organization(login: $org) {
+                projectsV2(first: 100, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes { id number title shortDescription public closed createdAt updatedAt }
+                }
+              }
+            }
+          variables:
+            org: "{{ stream_partition.org }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, organization, projectsV2, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response['data']['organization']['projectsV2']['pageInfo']['endCursor'] }}"
+          stop_condition: "{{ not response['data']['organization']['projectsV2']['pageInfo']['hasNextPage'] }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['github_organizations'] }}"
+        cursor_field: org
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [org]
+            value: "{{ stream_partition.org }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ record.get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [number]
+            value: "{{ record.get('number') }}"
+          - type: AddedFieldDefinition
+            path: [short_description]
+            value: "{{ (record.get('shortDescription') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [public]
+            value: "{{ record.get('public') }}"
+          - type: AddedFieldDefinition
+            path: [closed]
+            value: "{{ record.get('closed') }}"
+          - type: AddedFieldDefinition
+            path: [created_at]
+            value: "{{ record.get('createdAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ record.get('updatedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [title]
+            value: "{{ (record.get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:project:{{ (record.get('id') or '') | replace(':', '%3A') }}
+
+  # ── Actions workflow runs (GitHub API) ──────────────────────────────────
+  # The `created` range goes in a plain request parameter: start_time_option
+  # cannot emit the `A..B` search syntax. VERIFIED CAVEAT: with `created` the
+  # endpoint caps at 1000 results per query — the weekly step keeps windows
+  # under it for repositories running up to ~1000 workflows a week. The
+  # list returns only the LATEST attempt; run_attempt in the key
+  # disambiguates re-runs observed across syncs.
+  - type: DeclarativeStream
+    name: workflow_runs
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          run_attempt: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          name: {type: [string, "null"]}
+          workflow_id: {type: [integer, "null"]}
+          event: {type: [string, "null"]}
+          status: {type: [string, "null"]}
+          conclusion: {type: [string, "null"]}
+          head_branch: {type: [string, "null"]}
+          head_sha: {type: [string, "null"]}
+          actor_login: {type: [string, "null"]}
+          run_started_at: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_partition.repo_full_name }}/actions/runs"
+        request_parameters:
+          per_page: "100"
+          created: "{{ stream_interval.start_time }}..{{ stream_interval.end_time }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [workflow_runs]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: PageIncrement
+          page_size: 100
+          start_from_page: 1
+        page_token_option:
+          type: RequestOption
+          field_name: page
+          inject_into: request_parameter
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: full_name
+            partition_field: repo_full_name
+            stream: *repositories_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: created_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+      step: "P1W"
+      cursor_granularity: PT1S
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        # CI history is high-volume and ages fast: GitHub retains runs for
+        # 90 days, so windows older than that are guaranteed empty.
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+        min_datetime: "{{ format_datetime(now_utc() - duration('P90D'), '%Y-%m-%d') }}"
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_partition.repo_full_name }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [actor_login]
+            value: "{{ (record.get('actor') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:run:{{ record['id'] }}:{{ record.get('run_attempt', 1) }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [actor]
+
+  # ── Deployments (GitHub API) ────────────────────────────────────────────
+  # No date filter and no outcome on this endpoint: newest-first + data-feed
+  # stop keeps it O(new); outcome comes from deployment_statuses below.
+  - type: DeclarativeStream
+    name: deployments
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          sha: {type: [string, "null"]}
+          ref: {type: [string, "null"]}
+          task: {type: [string, "null"]}
+          environment: {type: [string, "null"]}
+          description: {type: [string, "null"]}
+          creator_login: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_partition.repo_full_name }}/deployments"
+        request_parameters:
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: full_name
+            partition_field: repo_full_name
+            stream: *repositories_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: created_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+      # created_at is immutable: no lookback; the data-feed stop is what
+      # bounds newest-first pagination at the stored state.
+      # VERIFIED against the CDK: the data-feed stop halts pagination at the
+      # first record older than the slice start, but the boundary PAGE's tail
+      # still emits — up to one page of pre-start_date rows per partition
+      # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+      # condition evaluates POST-filter records, so filtering the old tail
+      # away would keep pagination walking through all history instead.
+      is_data_feed: true
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_partition.repo_full_name }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [creator_login]
+            value: "{{ (record.get('creator') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:deploy:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [creator]
+          - [payload]
+
+  # ── Deployment statuses (GitHub API) ────────────────────────────────────
+  # A deployment record has no outcome; this child fetches success/failure
+  # for every deployment created inside the sliding window — the one cost
+  # term that scales with deploy frequency.
+  - type: DeclarativeStream
+    name: deployment_statuses
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          id: {type: [integer, "null"]}
+          deployment_id: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          state: {type: [string, "null"]}
+          environment: {type: [string, "null"]}
+          creator_login: {type: [string, "null"]}
+          created_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_slice.extra_fields['repo_full_name'] }}/deployments/{{ stream_partition.deployment_id }}/statuses"
+        request_parameters:
+          per_page: "100"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ headers['link']['next']['url'] }}"
+          stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+        page_token_option:
+          type: RequestPath
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: deployment_id
+            extra_fields:
+              - [repo_full_name]
+            stream:
+              type: DeclarativeStream
+              name: deployments_window
+              primary_key:
+                - id
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    id: {type: [integer, "null"]}
+                    repo_full_name: {type: [string, "null"]}
+                    created_at: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *rest_requester
+                  error_handler: *rest_error_handler_repo_scoped
+                  path: "/repos/{{ stream_partition.repo_full_name }}/deployments"
+                  request_parameters:
+                    per_page: "100"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ headers['link']['next']['url'] }}"
+                    stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+                  page_token_option:
+                    type: RequestPath
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: full_name
+                      partition_field: repo_full_name
+                      stream: *repositories_all_parent
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: created_at
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                # Stateless sliding window; data-feed stop bounds the
+                # newest-first pagination at the window edge.
+                # VERIFIED against the CDK: the data-feed stop halts pagination at the
+                # first record older than the slice start, but the boundary PAGE's tail
+                # still emits — up to one page of pre-start_date rows per partition
+                # lands in bronze. Do NOT "fix" this with a record_filter: the stop
+                # condition evaluates POST-filter records, so filtering the old tail
+                # away would keep pagination walking through all history instead.
+                is_data_feed: true
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                  datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [repo_full_name]
+                      value: "{{ stream_partition.repo_full_name }}"
+                      value_type: string
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [deployment_id]
+            value: "{{ stream_partition.deployment_id }}"
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [creator_login]
+            value: "{{ (record.get('creator') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.deployment_id }}:status:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [creator]
+
+  # ── Pull request timeline events (GitHub GraphQL) ───────────────────────
+  # One call per pull request in the sliding window rather than one per page:
+  # most timeline types carry no reference back to their item (ClosedEvent has
+  # `closable`, AssignedEvent `assignable`, and IssueFieldChangedEvent nothing
+  # at all), so the item can only come from the partition.
+  - type: DeclarativeStream
+    name: pull_request_timeline_events
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          event_id: {type: [string, "null"]}
+          event_type: {type: [string, "null"]}
+          event_at: {type: [string, "null"]}
+          item_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          actor_login: {type: [string, "null"]}
+          target_login: {type: [string, "null"]}
+          label_name: {type: [string, "null"]}
+          state_reason: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *graphql_error_handler_repo_scoped
+        path: /graphql
+        http_method: POST
+        request_body_json:
+          query: |
+            query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) {
+                  timelineItems(first: 100, after: $cursor, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT, ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, MERGED_EVENT]) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      __typename
+                      ... on ReadyForReviewEvent { id createdAt actor { login } }
+                      ... on ConvertToDraftEvent { id createdAt actor { login } }
+                      ... on ReviewRequestedEvent { id createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } }
+                      ... on ReviewRequestRemovedEvent { id createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } }
+                      ... on AssignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
+                      ... on UnassignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
+                      ... on LabeledEvent { id createdAt actor { login } label { name } }
+                      ... on UnlabeledEvent { id createdAt actor { login } label { name } }
+                      ... on ClosedEvent { id createdAt actor { login } stateReason }
+                      ... on ReopenedEvent { id createdAt actor { login } }
+                      ... on MergedEvent { id createdAt actor { login } }
+                    }
+                  }
+                }
+              }
+            }
+          variables:
+            owner: "{{ stream_slice.extra_fields['repo_full_name'].split('/')[0] }}"
+            name: "{{ stream_slice.extra_fields['repo_full_name'].split('/')[1] }}"
+            number: "{{ stream_partition.pull_number }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, repository, pullRequest, timelineItems, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ ((((response.get('data') or {}).get('repository') or {}).get('pullRequest') or {}).get('timelineItems') or {}).get('pageInfo', {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('repository') or {}).get('pullRequest') or {}).get('timelineItems') or {}).get('pageInfo', {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: number
+            partition_field: pull_number
+            extra_fields:
+              - [repo_full_name]
+            stream: *pull_requests_window
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [item_number]
+            value: "{{ stream_partition.pull_number }}"
+          - type: AddedFieldDefinition
+            path: [event_type]
+            value: "{{ record.get('__typename') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [event_id]
+            value: "{{ record.get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [event_at]
+            value: "{{ record.get('createdAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [actor_login]
+            value: "{{ (record.get('actor') or {}).get('login') or '' }}"
+            value_type: string
+          # Assignment and review-request events name a second person; the
+          # field differs by event type and only one is ever present.
+          - type: AddedFieldDefinition
+            path: [target_login]
+            value: >-
+              {{ (record.get('assignee') or {}).get('login') or (record.get('requestedReviewer') or {}).get('login') or (record.get('requestedReviewer') or {}).get('slug') or '' }}
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [label_name]
+            value: "{{ (record.get('label') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [state_reason]
+            value: "{{ record.get('stateReason') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:pull_request:{{ stream_partition.pull_number }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the camelCase and nested originals stay out of bronze.
+        field_pointers:
+          - [__typename]
+          - [id]
+          - [createdAt]
+          - [actor]
+          - [assignee]
+          - [requestedReviewer]
+          - [label]
+          - [stateReason]
+
+  # ── Issue timeline events (GitHub GraphQL) ──────────────────────────────
+  # Same per-item shape as the pull-request stream, but a different item-type
+  # set: inline fragments may only name types in the connection's own union,
+  # so the two cannot share one query. Carries the board-status and native
+  # issue-field changes, which are the only history GitHub keeps for either.
+  - type: DeclarativeStream
+    name: issue_timeline_events
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          event_id: {type: [string, "null"]}
+          event_type: {type: [string, "null"]}
+          event_at: {type: [string, "null"]}
+          item_number: {type: [integer, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          actor_login: {type: [string, "null"]}
+          target_login: {type: [string, "null"]}
+          label_name: {type: [string, "null"]}
+          state_reason: {type: [string, "null"]}
+          field_name: {type: [string, "null"]}
+          prev_value: {type: [string, "null"]}
+          new_value: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *graphql_error_handler_repo_scoped
+        path: /graphql
+        http_method: POST
+        request_body_json:
+          query: |
+            query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+              repository(owner: $owner, name: $name) {
+                issue(number: $number) {
+                  timelineItems(first: 100, after: $cursor, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, ISSUE_TYPE_CHANGED_EVENT, ISSUE_FIELD_CHANGED_EVENT, PROJECT_V2_ITEM_STATUS_CHANGED_EVENT]) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      __typename
+                      ... on AssignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
+                      ... on UnassignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
+                      ... on LabeledEvent { id createdAt actor { login } label { name } }
+                      ... on UnlabeledEvent { id createdAt actor { login } label { name } }
+                      ... on ClosedEvent { id createdAt actor { login } stateReason }
+                      ... on ReopenedEvent { id createdAt actor { login } }
+                      ... on IssueTypeChangedEvent { id createdAt actor { login } issueType { name } prevIssueType { name } }
+                      ... on IssueFieldChangedEvent {
+                        id createdAt actor { login } previousValue newValue
+                        issueField {
+                          ... on IssueFieldSingleSelect { name }
+                          ... on IssueFieldMultiSelect { name }
+                          ... on IssueFieldDate { name }
+                          ... on IssueFieldNumber { name }
+                          ... on IssueFieldText { name }
+                        }
+                      }
+                      ... on ProjectV2ItemStatusChangedEvent { id createdAt actor { login } previousStatus status }
+                    }
+                  }
+                }
+              }
+            }
+          variables:
+            owner: "{{ stream_slice.extra_fields['repo_full_name'].split('/')[0] }}"
+            name: "{{ stream_slice.extra_fields['repo_full_name'].split('/')[1] }}"
+            number: "{{ stream_partition.issue_number }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, repository, issue, timelineItems, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ ((((response.get('data') or {}).get('repository') or {}).get('issue') or {}).get('timelineItems') or {}).get('pageInfo', {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('repository') or {}).get('issue') or {}).get('timelineItems') or {}).get('pageInfo', {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: number
+            partition_field: issue_number
+            extra_fields:
+              - [repo_full_name]
+            # Without this the parent cursor never persists and every issue
+            # ever opened is re-walked, one call each, on every sync.
+            incremental_dependency: true
+            stream:
+              type: DeclarativeStream
+              name: issues_window
+              primary_key:
+                - number
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    number: {type: [integer, "null"]}
+                    repo_full_name: {type: [string, "null"]}
+                    updated_at: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *rest_requester
+                  error_handler: *rest_error_handler_repo_scoped
+                  path: "/repos/{{ stream_partition.repo_full_name }}/issues"
+                  request_parameters:
+                    state: all
+                    sort: updated
+                    direction: asc
+                    per_page: "100"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+                  # The endpoint answers for pull requests too; they carry a
+                  # `pull_request` key and have their own timeline stream.
+                  record_filter:
+                    type: RecordFilter
+                    condition: "{{ 'pull_request' not in record }}"
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ headers['link']['next']['url'] }}"
+                    stop_condition: "{{ 'next' not in headers.get('link', {}) }}"
+                  page_token_option:
+                    type: RequestPath
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: full_name
+                      partition_field: repo_full_name
+                      stream: *repositories_all_parent
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: updated_at
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                lookback_window: P1D
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['github_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
+                start_time_option:
+                  type: RequestOption
+                  field_name: since
+                  inject_into: request_parameter
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [repo_full_name]
+                      value: "{{ stream_partition.repo_full_name }}"
+                      value_type: string
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [item_number]
+            value: "{{ stream_partition.issue_number }}"
+          - type: AddedFieldDefinition
+            path: [event_type]
+            value: "{{ record.get('__typename') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [event_id]
+            value: "{{ record.get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [event_at]
+            value: "{{ record.get('createdAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [actor_login]
+            value: "{{ (record.get('actor') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [target_login]
+            value: "{{ (record.get('assignee') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [label_name]
+            value: "{{ (record.get('label') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [state_reason]
+            value: "{{ record.get('stateReason') or '' }}"
+            value_type: string
+          # The changed field's own name for a native issue-field edit; the
+          # type and board-status events name their own field in the mapping.
+          - type: AddedFieldDefinition
+            path: [field_name]
+            value: "{{ (record.get('issueField') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [prev_value]
+            value: >-
+              {{ record.get('previousValue') or record.get('previousStatus') or (record.get('prevIssueType') or {}).get('name') or '' }}
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [new_value]
+            value: >-
+              {{ record.get('newValue') or record.get('status') or (record.get('issueType') or {}).get('name') or '' }}
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:issue:{{ stream_partition.issue_number }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the camelCase and nested originals stay out of bronze.
+        field_pointers:
+          - [__typename]
+          - [id]
+          - [createdAt]
+          - [actor]
+          - [assignee]
+          - [label]
+          - [stateReason]
+          - [issueField]
+          - [issueType]
+          - [prevIssueType]
+          - [previousValue]
+          - [newValue]
+          - [previousStatus]
+          - [status]
+    # Formal cursor: no request option is injected and nothing is filtered, so
+    # every enumerated issue's timeline is always emitted in full. It exists to
+    # make the stream stateful, which is what lets incremental_dependency carry
+    # the issues_window cursor as parent_state.
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: event_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+concurrency_level:
+  type: ConcurrencyLevel
+  # Never 1: the concurrent CDK self-deadlocks at a single worker once a sync
+  # generates ~10k partitions.
+  default_concurrency: 4
+
+spec:
+  type: Spec
+  connection_specification:
+    type: object
+    $schema: http://json-schema.org/draft-07/schema#
+    title: GitHub (git-cli-proxy) Spec
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - github_token
+      - github_organizations
+      - git_proxy_url
+      - git_proxy_token
+      - github_start_date
+    properties:
+      insight_tenant_id:
+        type: string
+        description: Insight tenant identifier stamped onto every emitted record.
+        title: Insight Tenant ID
+        order: 0
+      insight_source_id:
+        type: string
+        description: >-
+          Instance discriminator for multi-instance support (e.g. github-acme).
+        title: Insight Source ID
+        order: 1
+      github_token:
+        type: string
+        description: >-
+          GitHub personal access token or App installation token. Needs `repo`,
+          `read:org` and `read:project` (classic) or equivalent fine-grained
+          permissions; `read:project` is what the projects_v2 stream reads and
+          is not implied by the other two. The same token is forwarded to the
+          proxy for the clone and never stored there.
+        title: GitHub Token
+        airbyte_secret: true
+        order: 2
+      github_organizations:
+        type: array
+        items:
+          type: string
+        description: GitHub organization logins to sync.
+        title: Organizations
+        order: 3
+      git_proxy_url:
+        type: string
+        description: >-
+          Base URL of the git-cli-proxy service (cluster-internal, e.g.
+          http://insight-git-cli-proxy:8085). No default: a wrong or absent
+          value must fail the check, not fall back somewhere.
+        title: Git Proxy URL
+        order: 4
+      git_proxy_token:
+        type: string
+        description: Bearer token the git-cli-proxy requires on every /v1 request.
+        title: Git Proxy Token
+        airbyte_secret: true
+        order: 5
+      github_start_date:
+        type: string
+        description: >-
+          Earliest date for incremental sync (YYYY-MM-DD). Required: it bounds
+          the first-sync cost, so choosing it is a deployment decision.
+        title: Start Date
+        format: date
+        order: 6
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    repositories: false
+    commits: false
+    file_changes: false
+    branches: false
+    pull_requests: false
+    pull_request_reviews: false
+    pull_request_comments: false
+    pull_request_review_comments: false
+    pull_request_commits: false
+    pull_request_diff_stats: false
+    issues: false
+    projects_v2: false
+    workflow_runs: false
+    deployments: false
+    deployment_statuses: false
+    pull_request_timeline_events: false
+    issue_timeline_events: false

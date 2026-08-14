@@ -1,0 +1,47 @@
+# Helm render-contract for the git-cli-proxy chart.
+#
+# This is the first chart in the repo with a PersistentVolumeClaim, and its
+# correctness rests on facts a diff does not show: one writer for a
+# ReadWriteOnce volume, ingress closed until a namespace is allowed, and byte
+# budgets rendered as integers rather than the scientific notation Helm
+# produces for large YAML numbers. Pure `helm template` + assertions — no
+# cluster, no images.
+
+name: git-cli-proxy helm
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/backend/services/git-cli-proxy/helm/**"
+      - "charts/insight/**"
+      - ".github/workflows/git-cli-proxy-helm.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  helm-contract:
+    name: render contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          # This job never pushes; the default leaves the token in
+          # .git/config where every later step can read it.
+          persist-credentials: false
+      - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: pip install pytest pyyaml
+      - name: helm lint
+        run: |
+          helm lint src/backend/services/git-cli-proxy/helm \
+            --set existingSecret=cfg \
+            --set 'networkPolicy.allowedNamespaceLabels[0].key=kubernetes.io/metadata.name' \
+            --set 'networkPolicy.allowedNamespaceLabels[0].values[0]=airbyte'
+      - name: Render contract
+        run: pytest src/backend/services/git-cli-proxy/helm/tests/ -q

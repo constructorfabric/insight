@@ -134,6 +134,17 @@ class ItemResult(BaseModel):
     source_id: UUID
 
 
+class MeRoleResponse(BaseModel):
+    """
+    One active role assignment of the caller.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    name: str
+    role_id: UUID
+
+
 class MergeRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -206,6 +217,23 @@ class PersonRoleResponse(BaseModel):
     role_id: UUID
     valid_from: str
     valid_to: str | None = None
+
+
+class PersonSummaryResponse(BaseModel):
+    """
+    A person as operator surfaces display them: enough to recognise and pick,
+    nothing more. Every field but the id may be null — a person the journal
+    knows only through bindings still appears, as the id alone.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_name: str | None = None
+    email: str | None = None
+    job_title: str | None = None
+    person_id: UUID
+    status: str | None = None
+    username: str | None = Field(None, description='Source-native handle (e.g. a git login) — often the only recognisable\nfield of an identity no HR system has observed yet.')
 
 
 class PersonsSeedOperationResponse(BaseModel):
@@ -319,7 +347,7 @@ class QueueItemResponse(BaseModel):
         extra='forbid',
     )
     account_id: str
-    candidates: list[UUID] = Field(..., description='Persons this account could belong to, if any are known.')
+    candidates: list[PersonSummaryResponse] = Field(..., description='Persons this account could belong to, if any are known — hydrated into\ncards so the operator UI never has to resolve bare ids itself.')
     email: str | None = None
     kind: str = Field(..., description='`contested` | `binding_conflict` | `no_evidence`.')
     source: str
@@ -459,7 +487,9 @@ class AttentionResponse(BaseModel):
         extra='forbid',
     )
     items: list[QueueItemResponse]
+    items_truncated: bool = Field(..., description='`limit` cut the item list — more accounts await a decision than are\nlisted here. Distinct from `truncated`: the rates stay whole-tenant,\nonly this page is short.')
     rates: ResolutionRatesResponse
+    truncated: bool = Field(..., description='The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide.')
 
 
 class CorrectionResponse(BaseModel):
@@ -470,6 +500,27 @@ class CorrectionResponse(BaseModel):
     applied: int = Field(..., ge=0)
     items: list[ItemResult]
     new_person_id: UUID | None = Field(None, description='Set by `detach` when the account reached the new person; absent when\nthe write was refused, since no binding points at that id.')
+
+
+class MeResponse(BaseModel):
+    """
+    The caller as the gateway JWT identifies them, with their active roles.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    insight_tenant_id: UUID
+    person_id: UUID
+    roles: list[MeRoleResponse]
+
+
+class PersonListResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[PersonSummaryResponse]
+    next_cursor: str | None = Field(None, description='Wire parity with the other listings: declared, always `null`.')
+    truncated: bool = Field(..., description='More persons matched than `limit` allowed — the page is a cut, not the\nanswer, and the UI should ask for narrower terms. Without this flag a\ntruncated page reads as "the person does not exist".')
 
 
 class PersonRoleListResponse(BaseModel):

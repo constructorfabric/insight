@@ -166,3 +166,39 @@ jobs:
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat generated_models.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$rc" -ne 0 ]; then echo "::error::Generated schema models are stale, or a service that was listed as publishing no bodies now does. Regenerate: uv run --project tests --frozen python tests/generate_schemas.py"; fi
           exit "$rc"
+
+  # ─── git-cli-proxy — offline emit via the `openapi` subcommand ────────────
+  git-cli-proxy:
+    name: Git CLI Proxy OpenAPI spec drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src/backend -> target
+          key: git-cli-proxy-openapi
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Generate the OpenAPI doc offline and drift-check it
+        env:
+          GIT_CLI_PROXY_SPEC: docs/components/backend/git-cli-proxy/openapi.json
+        run: |
+          # `git-cli-proxy openapi` builds offline and prints the doc; a build
+          # failure here should abort loudly under the runner's default `set -e`.
+          (cd src/backend && cargo run --quiet -p git-cli-proxy --bin git-cli-proxy -- openapi) > git_cli_proxy.openapi.live.json
+          # Relax errexit from here: we capture the drift-check rc ourselves,
+          # write the committed-vs-generated diff to the step summary, and emit a
+          # friendly ::error:: before exiting non-zero.
+          set +e
+          python3 scripts/ci/openapi_spec.py check --file "$GIT_CLI_PROXY_SPEC" --live-file git_cli_proxy.openapi.live.json | tee git_cli_proxy_openapi_drift.txt
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat git_cli_proxy_openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::Git CLI Proxy OpenAPI spec drift — $GIT_CLI_PROXY_SPEC is stale. Regenerate: (cd src/backend && cargo run -p git-cli-proxy --bin git-cli-proxy -- openapi) > dump.json && python3 scripts/ci/openapi_spec.py update --file $GIT_CLI_PROXY_SPEC --live-file dump.json"; fi
+          exit "$rc"

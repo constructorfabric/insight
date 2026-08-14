@@ -3,6 +3,7 @@ members = [
     "libs/insight-clickhouse",
     "libs/authenticator-sdk",
     "services/analytics",
+    "services/git-cli-proxy",
     "services/identity-resolution",
     "services/authenticator",
     # Build-time CLI: compiles the gateway routes.yaml into nginx.conf
