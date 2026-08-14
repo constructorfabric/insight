@@ -1,9 +1,7 @@
-# Reusable Bitbucket Cloud bronze records for the git-domain regression fixture
-# (issue #1877). The connector lands an item/snapshot_complete envelope keyed by
-# generation_id; the staging models gate a generation as usable only when its
-# snapshot_complete marker is present, available, and its observed item count
-# matches the marker's snapshot_item_count. These templates let a test seed both
-# record kinds. Missing schema columns pad to null.
+# Reusable Bitbucket Cloud bronze records for the git-domain fixture. Commit and
+# file-change rows come from the git-cli-proxy and carry their own counts; the
+# pull request and its children come from the vendor API. Missing schema columns
+# pad to null.
 templates:
   base:
     _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
@@ -13,91 +11,70 @@ templates:
     tenant_id: "11111111-1111-1111-1111-111111111111"
     source_id: bitbucket-test
     data_source: insight_bitbucket_cloud
-    record_type: item
 
   commit:
     $ref: "#/templates/base"
-    repository_uuid: "{repo-1}"
-    workspace: acme
-    repo_slug: platform
-    hash: null
-    branch_name: null
+    repository: https://bitbucket.org/acme/platform.git
+    sha: null
+    message: change
+    authored_date: "2026-10-01T09:00:00Z"
+    committed_date: "2026-10-01T09:00:00Z"
     author_name: null
     author_email: null
     committer_name: null
     committer_email: null
-    message: change
-    date: "2026-10-01T09:00:00Z"
     parent_hashes: "[\"parent\"]"
+    is_merge: false
+    additions: 0
+    deletions: 0
+    changed_files: 0
+    is_in_default_branch: true
 
   file_change:
     $ref: "#/templates/base"
-    repository_uuid: "{repo-1}"
-    workspace: acme
-    repo_slug: platform
-    source_type: commit
+    repository: https://bitbucket.org/acme/platform.git
     sha: null
+    committed_date: "2026-10-01T09:00:00Z"
     filename: null
     status: modified
     additions: 0
     deletions: 0
-    committed_date: "2026-10-01T09:00:00Z"
-
-  file_change_marker:
-    $ref: "#/templates/file_change"
-    record_type: snapshot_complete
-    filename: null
-    snapshot_item_count: 0
-    snapshot_available: true
+    changes: 0
+    is_binary: false
 
   pull_request:
     $ref: "#/templates/base"
-    repository_uuid: "{repo-1}"
-    workspace: acme
-    repo_slug: platform
+    repo_full_name: acme/platform
     id: null
     title: change
     description: body
     state: MERGED
+    draft: false
     created_on: "2026-10-01T08:00:00Z"
     updated_on: "2026-10-01T13:00:00Z"
     author_display_name: null
+    author_uuid: "{author-1}"
     source_branch: feature
     destination_branch: main
-    source_commit_hash: null
-    destination_commit_hash: null
-    merge_commit_hash: null
+    source_commit_sha: null
+    destination_commit_sha: null
+    merge_commit_sha: null
+    participants: "[]"
 
   diffstat:
     $ref: "#/templates/base"
-    repository_uuid: "{repo-1}"
-    workspace: acme
-    repo_slug: platform
+    repo_full_name: acme/platform
     pr_id: null
+    file_path: null
+    status: modified
     lines_added: 0
     lines_removed: 0
-    pull_request_updated_on: "2026-10-01T13:00:00Z"
-    pull_request_source_commit_hash: null
-    pull_request_destination_commit_hash: null
-
-  diffstat_marker:
-    $ref: "#/templates/diffstat"
-    record_type: snapshot_complete
-    snapshot_item_count: 0
-    snapshot_available: true
 
   activity:
     $ref: "#/templates/base"
-    repository_uuid: "{repo-1}"
-    workspace: acme
-    repo_slug: platform
+    repo_full_name: acme/platform
     pr_id: null
-    activity_date: "2026-10-01T13:00:00Z"
+    kind: update
+    event_date: "2026-10-01T13:00:00Z"
     update_state: null
-    pull_request_updated_on: "2026-10-01T13:00:00Z"
-
-  activity_marker:
-    $ref: "#/templates/activity"
-    record_type: snapshot_complete
-    snapshot_item_count: 0
-    snapshot_available: true
+    actor_uuid: "{author-1}"

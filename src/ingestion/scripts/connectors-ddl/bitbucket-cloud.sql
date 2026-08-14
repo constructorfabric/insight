@@ -6,65 +6,19 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.branches
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
-    `entity_key` Nullable(String),
     `data_source` Nullable(String),
-    `collected_at` Nullable(String),
-    `record_type` Nullable(String),
-    `generation_id` Nullable(String),
-    `bucket_id` Nullable(Int64),
-    `snapshot_item_count` Nullable(Int64),
-    `snapshot_available` Nullable(Bool),
-    `repository_uuid` Nullable(String),
-    `workspace_uuid` Nullable(String),
-    `workspace` Nullable(String),
-    `repo_slug` Nullable(String),
+    `repository` Nullable(String),
     `name` Nullable(String),
-    `target_hash` Nullable(String),
-    `target_date` Nullable(String),
-    `mainbranch_name` Nullable(String),
-    `default_branch_name` Nullable(String),
-    `is_default` Nullable(Bool),
-    `updated_on` Nullable(String)
+    `head_sha` Nullable(String),
+    `head_committed_date` Nullable(String),
+    `is_default` Nullable(Bool)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
-;
-
-CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commit_branch_reachability
-(
-    `_airbyte_raw_id` String,
-    `_airbyte_extracted_at` DateTime64(3),
-    `_airbyte_meta` String,
-    `_airbyte_generation_id` UInt32,
-    `tenant_id` Nullable(String),
-    `source_id` Nullable(String),
-    `unique_key` Nullable(String),
-    `entity_key` Nullable(String),
-    `data_source` Nullable(String),
-    `collected_at` Nullable(String),
-    `record_type` Nullable(String),
-    `generation_id` Nullable(String),
-    `bucket_id` Nullable(Int64),
-    `snapshot_item_count` Nullable(Int64),
-    `snapshot_available` Nullable(Bool),
-    `repository_uuid` Nullable(String),
-    `workspace_uuid` Nullable(String),
-    `workspace` Nullable(String),
-    `repo_slug` Nullable(String),
-    `branch_name` Nullable(String),
-    `branch_head_sha` Nullable(String),
-    `default_branch_name` Nullable(String),
-    `commit_sha` Nullable(String),
-    `committed_at` Nullable(String),
-    `reachability_action` Nullable(String)
-)
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commits
@@ -73,43 +27,56 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commits
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
-    `entity_key` Nullable(String),
     `data_source` Nullable(String),
-    `collected_at` Nullable(String),
-    `record_type` Nullable(String),
-    `generation_id` Nullable(String),
-    `bucket_id` Nullable(Int64),
-    `snapshot_item_count` Nullable(Int64),
-    `snapshot_available` Nullable(Bool),
-    `repository_uuid` Nullable(String),
-    `workspace_uuid` Nullable(String),
-    `hash` Nullable(String),
+    `repository` Nullable(String),
+    `sha` Nullable(String),
     `message` Nullable(String),
-    `date` Nullable(String),
-    `author_raw` Nullable(String),
+    `authored_date` Nullable(String),
+    `committed_date` Nullable(String),
     `author_name` Nullable(String),
     `author_email` Nullable(String),
-    `author_display_name` Nullable(String),
-    `author_uuid` Nullable(String),
-    `author_account_id` Nullable(String),
-    `committer_raw` Nullable(String),
     `committer_name` Nullable(String),
     `committer_email` Nullable(String),
-    `committer_display_name` Nullable(String),
-    `committer_uuid` Nullable(String),
-    `committer_account_id` Nullable(String),
     `parent_hashes` Nullable(String),
-    `workspace` Nullable(String),
-    `repo_slug` Nullable(String),
-    `branch_name` Nullable(String),
-    `head_sha` Nullable(String)
+    `is_merge` Nullable(Bool),
+    `additions` Nullable(Int64),
+    `deletions` Nullable(Int64),
+    `changed_files` Nullable(Int64),
+    `is_in_default_branch` Nullable(Bool),
+    `patch_id` Nullable(String)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.deployments
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `uuid` Nullable(String),
+    `repo_full_name` Nullable(String),
+    `state_name` Nullable(String),
+    `state_status` Nullable(String),
+    `environment_uuid` Nullable(String),
+    `deployable_commit_sha` Nullable(String),
+    `deployable_pipeline_uuid` Nullable(String),
+    `created_on` Nullable(String),
+    `last_update_time` Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.file_changes
@@ -118,35 +85,55 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.file_changes
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
-    `entity_key` Nullable(String),
     `data_source` Nullable(String),
-    `collected_at` Nullable(String),
-    `record_type` Nullable(String),
-    `generation_id` Nullable(String),
-    `bucket_id` Nullable(Int64),
-    `snapshot_item_count` Nullable(Int64),
-    `snapshot_available` Nullable(Bool),
-    `repository_uuid` Nullable(String),
-    `workspace_uuid` Nullable(String),
-    `source_type` Nullable(String),
+    `repository` Nullable(String),
     `sha` Nullable(String),
-    `is_snapshot_marker` Nullable(Bool),
-    `marker_type` Nullable(String),
+    `committed_date` Nullable(String),
     `filename` Nullable(String),
+    `previous_filename` Nullable(String),
     `status` Nullable(String),
     `additions` Nullable(Int64),
     `deletions` Nullable(Int64),
-    `previous_filename` Nullable(String),
-    `committed_date` Nullable(String),
-    `workspace` Nullable(String),
-    `repo_slug` Nullable(String)
+    `changes` Nullable(Int64),
+    `is_binary` Nullable(Bool),
+    `patch` Nullable(String),
+    `patch_truncated` Nullable(Bool)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pipelines
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `uuid` Nullable(String),
+    `build_number` Nullable(Int64),
+    `repo_full_name` Nullable(String),
+    `state_name` Nullable(String),
+    `result_name` Nullable(String),
+    `target_ref` Nullable(String),
+    `target_commit_sha` Nullable(String),
+    `trigger_name` Nullable(String),
+    `creator_uuid` Nullable(String),
+    `duration_in_seconds` Nullable(Int64),
+    `created_on` Nullable(String),
+    `completed_on` Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_activity
@@ -155,35 +142,24 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_activity
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
-    `entity_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(String),
-    `record_type` Nullable(String),
-    `generation_id` Nullable(String),
-    `bucket_id` Nullable(Int64),
-    `snapshot_item_count` Nullable(Int64),
-    `snapshot_available` Nullable(Bool),
-    `repository_uuid` Nullable(String),
-    `workspace_uuid` Nullable(String),
     `pr_id` Nullable(Int64),
-    `event_type` Nullable(String),
-    `activity_date` Nullable(String),
-    `update_state` Nullable(String),
-    `actor_display_name` Nullable(String),
+    `repo_full_name` Nullable(String),
+    `kind` Nullable(String),
+    `event_date` Nullable(String),
     `actor_uuid` Nullable(String),
-    `actor_account_id` Nullable(String),
-    `pull_request_updated_on` Nullable(String),
-    `pull_request_source_commit_hash` Nullable(String),
-    `pull_request_destination_commit_hash` Nullable(String),
-    `workspace` Nullable(String),
-    `repo_slug` Nullable(String)
+    `actor_display_name` Nullable(String),
+    `update_state` Nullable(String),
+    `update_source_commit` Nullable(String),
+    `comment_id` Nullable(Int64)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_comments
@@ -192,42 +168,28 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_comments
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
-    `entity_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(String),
-    `record_type` Nullable(String),
-    `generation_id` Nullable(String),
-    `bucket_id` Nullable(Int64),
-    `snapshot_item_count` Nullable(Int64),
-    `snapshot_available` Nullable(Bool),
-    `repository_uuid` Nullable(String),
-    `workspace_uuid` Nullable(String),
-    `comment_id` Nullable(Int64),
+    `id` Nullable(Int64),
     `pr_id` Nullable(Int64),
-    `body` Nullable(String),
+    `repo_full_name` Nullable(String),
+    `author_uuid` Nullable(String),
+    `author_display_name` Nullable(String),
+    `deleted` Nullable(Bool),
+    `parent_id` Nullable(Int64),
+    `inline_path` Nullable(String),
     `created_on` Nullable(String),
     `updated_on` Nullable(String),
-    `author_display_name` Nullable(String),
-    `author_uuid` Nullable(String),
-    `author_account_id` Nullable(String),
-    `is_inline` Nullable(Bool),
-    `inline_path` Nullable(String),
-    `inline_from` Nullable(Int64),
+    `body` Nullable(String),
     `inline_to` Nullable(Int64),
-    `parent_comment_id` Nullable(Int64),
-    `is_deleted` Nullable(Bool),
-    `pull_request_updated_on` Nullable(String),
-    `pull_request_source_commit_hash` Nullable(String),
-    `pull_request_destination_commit_hash` Nullable(String),
-    `workspace` Nullable(String),
-    `repo_slug` Nullable(String)
+    `inline_from` Nullable(Int64)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_commits
@@ -236,33 +198,18 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_commits
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
-    `entity_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(String),
-    `record_type` Nullable(String),
-    `generation_id` Nullable(String),
-    `bucket_id` Nullable(Int64),
-    `snapshot_item_count` Nullable(Int64),
-    `snapshot_available` Nullable(Bool),
-    `repository_uuid` Nullable(String),
-    `workspace_uuid` Nullable(String),
+    `sha` Nullable(String),
     `pr_id` Nullable(Int64),
-    `hash` Nullable(String),
-    `commit_order` Nullable(Int64),
-    `author_uuid` Nullable(String),
-    `author_account_id` Nullable(String),
-    `pull_request_updated_on` Nullable(String),
-    `pull_request_source_commit_hash` Nullable(String),
-    `pull_request_destination_commit_hash` Nullable(String),
-    `workspace` Nullable(String),
-    `repo_slug` Nullable(String)
+    `repo_full_name` Nullable(String)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_diffstat
@@ -271,35 +218,22 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_diffstat
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
-    `entity_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(String),
-    `record_type` Nullable(String),
-    `generation_id` Nullable(String),
-    `bucket_id` Nullable(Int64),
-    `snapshot_item_count` Nullable(Int64),
-    `snapshot_available` Nullable(Bool),
-    `repository_uuid` Nullable(String),
-    `workspace_uuid` Nullable(String),
     `pr_id` Nullable(Int64),
-    `is_snapshot_marker` Nullable(Bool),
-    `status` Nullable(String),
+    `repo_full_name` Nullable(String),
+    `file_path` Nullable(String),
     `old_path` Nullable(String),
-    `new_path` Nullable(String),
+    `status` Nullable(String),
     `lines_added` Nullable(Int64),
-    `lines_removed` Nullable(Int64),
-    `pull_request_updated_on` Nullable(String),
-    `pull_request_source_commit_hash` Nullable(String),
-    `pull_request_destination_commit_hash` Nullable(String),
-    `workspace` Nullable(String),
-    `repo_slug` Nullable(String)
+    `lines_removed` Nullable(Int64)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_requests
@@ -308,50 +242,34 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_requests
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
-    `entity_key` Nullable(String),
     `data_source` Nullable(String),
     `collected_at` Nullable(String),
-    `record_type` Nullable(String),
-    `generation_id` Nullable(String),
-    `bucket_id` Nullable(Int64),
-    `snapshot_item_count` Nullable(Int64),
-    `snapshot_available` Nullable(Bool),
-    `repository_uuid` Nullable(String),
-    `workspace_uuid` Nullable(String),
     `id` Nullable(Int64),
+    `repo_full_name` Nullable(String),
     `title` Nullable(String),
-    `description` Nullable(String),
     `state` Nullable(String),
+    `draft` Nullable(Bool),
+    `author_uuid` Nullable(String),
+    `author_display_name` Nullable(String),
     `created_on` Nullable(String),
     `updated_on` Nullable(String),
-    `author_display_name` Nullable(String),
-    `author_uuid` Nullable(String),
-    `author_account_id` Nullable(String),
-    `closed_by_display_name` Nullable(String),
+    `merge_commit_sha` Nullable(String),
     `closed_by_uuid` Nullable(String),
-    `closed_by_account_id` Nullable(String),
     `source_branch` Nullable(String),
+    `source_commit_sha` Nullable(String),
     `destination_branch` Nullable(String),
-    `source_commit_hash` Nullable(String),
-    `destination_commit_hash` Nullable(String),
-    `merge_commit_hash` Nullable(String),
-    `task_count` Nullable(Int64),
-    `draft` Nullable(Bool),
-    `queued` Nullable(Bool),
-    `close_source_branch` Nullable(Bool),
-    `reason` Nullable(String),
-    `reviewers` Nullable(String),
     `comment_count` Nullable(Int64),
-    `participants` Nullable(String),
-    `workspace` Nullable(String),
-    `repo_slug` Nullable(String)
+    `task_count` Nullable(Int64),
+    `description` Nullable(String),
+    `destination_commit_sha` Nullable(String),
+    `participants` Nullable(String)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repositories
@@ -360,50 +278,47 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repositories
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
-    `entity_key` Nullable(String),
     `data_source` Nullable(String),
-    `collected_at` Nullable(String),
-    `record_type` Nullable(String),
-    `generation_id` Nullable(String),
-    `bucket_id` Nullable(Int64),
-    `snapshot_item_count` Nullable(Int64),
-    `snapshot_available` Nullable(Bool),
     `repository_uuid` Nullable(String),
-    `workspace_uuid` Nullable(String),
-    `workspace` Nullable(String),
+    `clone_url` Nullable(String),
     `slug` Nullable(String),
     `name` Nullable(String),
     `full_name` Nullable(String),
-    `uuid` Nullable(String),
     `is_private` Nullable(Bool),
-    `description` Nullable(String),
+    `has_issues` Nullable(Bool),
+    `has_wiki` Nullable(Bool),
     `language` Nullable(String),
     `size` Nullable(Int64),
     `created_on` Nullable(String),
     `updated_on` Nullable(String),
-    `has_issues` Nullable(Bool),
-    `has_wiki` Nullable(Bool),
-    `mainbranch_name` Nullable(String),
-    `scm` Nullable(String),
-    `fork_policy` Nullable(String),
-    `website` Nullable(String),
-    `owner_uuid` Nullable(String),
-    `owner_account_id` Nullable(String),
-    `owner_display_name` Nullable(String),
-    `owner_nickname` Nullable(String),
-    `workspace_slug` Nullable(String),
-    `parent_uuid` Nullable(String),
-    `parent_full_name` Nullable(String),
-    `project_key` Nullable(String),
-    `project_name` Nullable(String),
-    `project_uuid` Nullable(String),
-    `links` Nullable(String)
+    `description` Nullable(String)
 )
-ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
-ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.workspace_members
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `account_id` Nullable(String),
+    `display_name` Nullable(String),
+    `nickname` Nullable(String),
+    `user_uuid` Nullable(String),
+    `workspace` Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY _airbyte_raw_id
+SETTINGS index_granularity = 8192
+;

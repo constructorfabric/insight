@@ -1,22 +1,25 @@
 name: bitbucket-cloud
-version: "1.16.0"
-type: cdk
+version: "2.0.0"
 # A slot of its own: replication pods sharing a slot with other connector
 # syncs can be starved of workers, which surfaces as startup and activity
 # timeouts rather than as a connector error.
 schedule: "0 5 * * *"
 workflow: sync
-# CI build metadata + runtime image refs (ADR-0016).
-images:
-  cdk:
-    name: source-bitbucket-cloud-insight
-    dockerfile: ./Dockerfile
-    context: .
-    image: "ghcr.io/constructorfabric/source-bitbucket-cloud-insight:2026.08.16.06.31-310b77d"
+
+# Silver routing via dbt tags on the staging models.
+# silver_targets prohibited per Connector Spec §4.10 — Silver is determined by
+# the dbt tags, and the pipeline's silver step hardcodes `tag:<slug>+`.
 dbt_select: "tag:bitbucket-cloud+"
-connection:
-  namespace: "bronze_bitbucket_cloud"
+
 secret:
+  # The pre-flight Secret validator reads this list and nothing else, so it
+  # carries every field the spec requires, not only the ones beyond it.
   required_fields:
     - bitbucket_token
     - bitbucket_workspaces
+    - bitbucket_start_date
+    - git_proxy_url
+    - git_proxy_token
+
+connection:
+  namespace: bronze_bitbucket_cloud
