@@ -9,7 +9,3 @@ engineStrict: true
 
 # Transitive pins for advisories with no fixed release from the direct dependency
 # yet. exceljs 4.4.0 still asks for the vulnerable ranges.
-overrides:
-  brace-expansion@1: 1.1.18
-  brace-expansion@2: 2.1.4
-  brace-expansion@5: 5.0.9
