@@ -491,9 +491,16 @@ gateway:
     # header and mint their own bucket, so this is never widened to make
     # something work.
     #
-    # The Cloudflare blocks are this stand's edge, taken from
-    # https://www.cloudflare.com/ips (verified 2026-08-14). If they go stale the
-    # failure is graceful: traffic through an unlisted edge keys on that edge
+    # The node entry is what makes this work today. Measured on the stand: the
+    # chain reaching nginx is `<caller>, <node>`, because the load balancer
+    # rewrites the source before Envoy — so the CDN's own address never appears
+    # and the Cloudflare blocks below match nothing. They are kept for the day
+    # the balancer stops rewriting it (externalTrafficPolicy: Local preserves
+    # the source), which would put a CDN address in the chain with no other
+    # warning than every caller collapsing onto one bucket again. Taken from
+    # https://www.cloudflare.com/ips (verified 2026-08-14).
+    #
+    # Whatever goes stale here fails gracefully: an unlisted hop becomes the key
     # instead of the caller. Nothing fails open.
     setRealIpFrom:
       - 10.100.0.0/16 # in-cluster pod network — Envoy reaches the gateway from here
