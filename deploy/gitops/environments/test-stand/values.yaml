@@ -497,6 +497,12 @@ gateway:
     # instead of the caller. Nothing fails open.
     setRealIpFrom:
       - 10.100.0.0/16 # in-cluster pod network — Envoy reaches the gateway from here
+      # The node network. The LoadBalancer SNATs the edge connection to the
+      # node before Envoy sees it, so the node — not Cloudflare — is the last
+      # hop appended to X-Forwarded-For. Observed as 10.0.0.132/.184 in the
+      # gateway's own log; confirm against `kubectl get nodes` with an admin
+      # kubeconfig, which the deploy credential cannot do.
+      - 10.0.0.0/16
       - 173.245.48.0/20
       - 103.21.244.0/22
       - 103.22.200.0/22
