@@ -473,47 +473,52 @@ gateway:
     # gateway generates them from its frontUrl and authenticatorUrl, which is
     # why the UI and login work with no route entry.)
 
-  # Every proxy hop between a caller and this gateway. nginx walks
-  # X-Forwarded-For from the right, skips the addresses listed here, and keys
-  # the /auth/* rate limit on the first one it does not recognise — the caller.
-  # Empty, which is the chart default, leaves that key as the immediate peer:
-  # one address for the whole internet, so a limiter documented as per-IP
-  # becomes a single global bucket that any one client can exhaust for
-  # everybody.
-  #
-  # Listing too FEW hops keys on a proxy rather than the caller — coarser, and
-  # still safe. Listing a range we do not control would let a caller forge the
-  # header and mint their own bucket, so this is never widened to make
-  # something work.
-  #
-  # The Cloudflare blocks are this stand's edge, taken from
-  # https://www.cloudflare.com/ips (verified 2026-08-14). If they go stale the
-  # failure is graceful: traffic through an unlisted edge keys on that edge
-  # instead of the caller. Nothing fails open.
-  setRealIpFrom:
-    - 10.100.0.0/16 # in-cluster pod network — Envoy reaches the gateway from here
-    - 173.245.48.0/20
-    - 103.21.244.0/22
-    - 103.22.200.0/22
-    - 103.31.4.0/22
-    - 141.101.64.0/18
-    - 108.162.192.0/18
-    - 190.93.240.0/20
-    - 188.114.96.0/20
-    - 197.234.240.0/22
-    - 198.41.128.0/17
-    - 162.158.0.0/15
-    - 104.16.0.0/13
-    - 104.24.0.0/14
-    - 172.64.0.0/13
-    - 131.0.72.0/22
-    - 2400:cb00::/32
-    - 2606:4700::/32
-    - 2803:f800::/32
-    - 2405:b500::/32
-    - 2405:8100::/32
-    - 2a06:98c0::/29
-    - 2c0f:f248::/32
+  # The gateway subchart nests its application settings under a `gateway:`
+  # key of its own, so from the umbrella (where the subchart is aliased
+  # `gateway`) the path is gateway.gateway.*, one level deeper than the
+  # deployment-shaped keys above.
+  gateway:
+    # Every proxy hop between a caller and this gateway. nginx walks
+    # X-Forwarded-For from the right, skips the addresses listed here, and keys
+    # the /auth/* rate limit on the first one it does not recognise — the caller.
+    # Empty, which is the chart default, leaves that key as the immediate peer:
+    # one address for the whole internet, so a limiter documented as per-IP
+    # becomes a single global bucket that any one client can exhaust for
+    # everybody.
+    #
+    # Listing too FEW hops keys on a proxy rather than the caller — coarser, and
+    # still safe. Listing a range we do not control would let a caller forge the
+    # header and mint their own bucket, so this is never widened to make
+    # something work.
+    #
+    # The Cloudflare blocks are this stand's edge, taken from
+    # https://www.cloudflare.com/ips (verified 2026-08-14). If they go stale the
+    # failure is graceful: traffic through an unlisted edge keys on that edge
+    # instead of the caller. Nothing fails open.
+    setRealIpFrom:
+      - 10.100.0.0/16 # in-cluster pod network — Envoy reaches the gateway from here
+      - 173.245.48.0/20
+      - 103.21.244.0/22
+      - 103.22.200.0/22
+      - 103.31.4.0/22
+      - 141.101.64.0/18
+      - 108.162.192.0/18
+      - 190.93.240.0/20
+      - 188.114.96.0/20
+      - 197.234.240.0/22
+      - 198.41.128.0/17
+      - 162.158.0.0/15
+      - 104.16.0.0/13
+      - 104.24.0.0/14
+      - 172.64.0.0/13
+      - 131.0.72.0/22
+      - 2400:cb00::/32
+      - 2606:4700::/32
+      - 2803:f800::/32
+      - 2405:b500::/32
+      - 2405:8100::/32
+      - 2a06:98c0::/29
+      - 2c0f:f248::/32
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Authenticator — OIDC login, Redis sessions, gateway-JWT mint
