@@ -1432,16 +1432,23 @@ for dbt-built gold data rather than for containers to report healthy.
           The four backend services (analytics, authenticator,
           identity-resolution, gateway) and the frontend are PULLED, each
           pinned to its own chart's appVersion — never :latest, and never
-          compiled here. Building them took ~26 minutes for code the stand
-          does not change.
+          compiled here. Compiling the backend took ~26 minutes for code the
+          stand does not change.
 
-          --build  Build the whole product from this working tree instead:
-                   the backend compiled from source and the frontend built
-                   with pnpm (served by the front-built nginx). Needed to
-                   test a local change: `up` otherwise refuses when the tree
-                   differs from origin/main under src/backend/ or
-                   src/frontend/, since the pinned images would not be what
-                   ran.
+          Two trees, two independent flags. Pass the one whose source this
+          working tree changes — an appVersion names what main released, so a
+          pinned image would not carry the change under test:
+
+          --build-backend    Compile analytics, authenticator and
+                             identity-resolution from this tree (~26 min).
+          --build-frontend   Build the SPA from this tree with pnpm, served by
+                             the front-built nginx. The backend stays pinned.
+          --build            Both of the above.
+
+          `up` refuses to pin a tree that differs from origin/main under
+          src/backend/ or src/frontend/ and names the flag to pass. That check
+          needs origin/main in the checkout: a shallow clone (every CI runner)
+          says so on stderr and leaves the decision to its caller.
   seed    Re-seed the running stand (default target: all).
   test    Run the stand suite against an already-up stand. Passes extra
           arguments through to pytest — no `--` separator.
@@ -1524,7 +1531,14 @@ test_stand_tree_matches_charts() {
   local subtree="$1" flag="$2"
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
   git remote get-url origin >/dev/null 2>&1 || return 0
-  git rev-parse --verify --quiet origin/main >/dev/null || return 0
+  # Say so rather than passing quietly. A CI checkout is depth-1 and has no
+  # origin/main, so this guard is INERT there — the caller (e2e-stand.yml's
+  # `changes` job) decides what to build, and a reader of the log who thinks
+  # this line vouched for the pinning would be wrong.
+  git rev-parse --verify --quiet origin/main >/dev/null || {
+    echo "NOTE: no origin/main in this checkout — cannot check ${subtree}/ against" >&2
+    echo "      the pinned images; trusting the caller's ${flag} decision." >&2
+    return 0; }
 
   local changed
   changed="$(git diff --name-only origin/main -- "$subtree" 2>/dev/null | head -5)"
@@ -1539,11 +1553,11 @@ test_stand_tree_matches_charts() {
 }
 
 test_stand_backend_matches_charts() {
-  test_stand_tree_matches_charts src/backend --build
+  test_stand_tree_matches_charts src/backend --build-backend
 }
 
 test_stand_frontend_matches_chart() {
-  test_stand_tree_matches_charts src/frontend --build
+  test_stand_tree_matches_charts src/frontend --build-frontend
 }
 
 # Derive the test env file from the committed example, overriding only the
@@ -1801,31 +1815,41 @@ cmd_test_stand() {
 
   case "$verb" in
     up)
-      local image build=false
+      # Two independent axes. Each tree is either PINNED to what its chart's
+      # appVersion names — main's build — or built from this working tree, and
+      # the two questions are asked separately because the two builds cost two
+      # different things: a ~26-minute Rust compile against a pnpm build.
+      # --build is the both-axes alias.
+      local image build_backend=false build_frontend=false
       while [[ $# -gt 0 ]]; do
         case "$1" in
-          --build) build=true; shift ;;
+          --build)          build_backend=true; build_frontend=true; shift ;;
+          --build-backend)  build_backend=true; shift ;;
+          --build-frontend) build_frontend=true; shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
         esac
       done
 
-      if [[ "$build" == true ]]; then
+      if [[ "$build_frontend" == true ]]; then
         test_stand_write_env built || return 1
+        echo "=== the frontend is built from this tree (pnpm), not pulled ==="
       else
         test_stand_frontend_matches_chart || return 1
         image="$(test_stand_frontend_image)" || return 1
         test_stand_write_env ghcr "$image" || return 1
       fi
 
-      # Pinning writes the four *_IMAGE vars into the env file, which is what
-      # makes cmd_up put those services in its ghcr list — so this has to happen
-      # before cmd_up reads it.
-      if [[ "$build" != true ]]; then
+      # INVARIANT: pinning writes the four *_IMAGE vars into the env file, and
+      # that is the ONLY thing separating the two axes downstream — cmd_up puts
+      # a service in its ghcr list iff its image var is set, and compiles only
+      # the binaries that list leaves out. Pull before cmd_up reads the file, or
+      # a pinned backend gets compiled anyway.
+      if [[ "$build_backend" == true ]]; then
+        echo "=== the backend is compiled from this tree, not pulled ==="
+      else
         test_stand_backend_matches_charts || return 1
         test_stand_pull_backends || return 1
-      else
-        echo "=== --build: compiling the backend and building the frontend from this tree ==="
       fi
 
       local up_args=(--env-file "$TEST_STAND_ENV_FILE"
