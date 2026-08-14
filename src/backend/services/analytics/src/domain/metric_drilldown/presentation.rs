@@ -202,6 +202,11 @@ fn presentation_column(key: &str, plan: &EvidencePlan) -> MetricDrilldownColumn 
             MetricDrilldownColumnType::Number,
         ),
         "issue_type" => ("Issue type".to_owned(), MetricDrilldownColumnType::String),
+        "billing_month" => (
+            "Billing month".to_owned(),
+            MetricDrilldownColumnType::String,
+        ),
+        "ceiling_usd" => ("Ceiling".to_owned(), MetricDrilldownColumnType::Number),
         _ => (humanize_field_name(key), MetricDrilldownColumnType::String),
     };
     MetricDrilldownColumn {
@@ -251,6 +256,15 @@ pub(super) fn evidence_presentation(
         ("wiki", "pages_created") => EvidencePresentation {
             detail_keys: &["ref", "title"],
             show_value: false,
+        },
+        // A seat-month row is dated at the day its snapshot was last read, not
+        // at the month it bills for, so the month has to be a column of its own
+        // or the reader cannot tell which month the row is. The ceiling is what
+        // the amount is judged against; blank means none was set, which is why
+        // the ratio metric withholds a value for that seat.
+        ("ai_cost", _) => EvidencePresentation {
+            detail_keys: &["billing_month", "ceiling_usd"],
+            show_value: true,
         },
         _ => EvidencePresentation {
             detail_keys: &[],
@@ -508,5 +522,16 @@ mod tests {
             evidence_presentation("collab", "messages", EvidenceGranularity::SourceSummary)
                 .show_value
         );
+    }
+
+    #[test]
+    fn a_seat_month_row_names_its_billing_month_and_ceiling() {
+        let presentation = evidence_presentation(
+            "ai_cost",
+            "extra_usage_usd",
+            EvidenceGranularity::SourceSummary,
+        );
+        assert_eq!(presentation.detail_keys, &["billing_month", "ceiling_usd"]);
+        assert!(presentation.show_value);
     }
 }
