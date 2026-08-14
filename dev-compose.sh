@@ -1431,24 +1431,20 @@ for dbt-built gold data rather than for containers to report healthy.
 
           The four backend services (analytics, authenticator,
           identity-resolution, gateway) and the frontend are PULLED, each
-          pinned to its own chart's appVersion — never :latest, and never
-          compiled here. Compiling the backend took ~26 minutes for code the
-          stand does not change.
+          pinned to its own chart's appVersion — never :latest.
 
-          Two trees, two independent flags. Pass the one whose source this
-          working tree changes — an appVersion names what main released, so a
-          pinned image would not carry the change under test:
+          An appVersion names what main released, so pass the flag for whatever
+          tree this checkout changes, or the stand will not run it:
 
-          --build-backend    Compile analytics, authenticator and
-                             identity-resolution from this tree (~26 min).
+          --build-backend    Compile the Rust services from this tree. Adds
+                             ~28 min (measured across CI's build-path runs).
           --build-frontend   Build the SPA from this tree with pnpm, served by
-                             the front-built nginx. The backend stays pinned.
-          --build            Both of the above.
+                             the front-built nginx. Backend stays pinned.
+          --build            Both.
 
-          `up` refuses to pin a tree that differs from origin/main under
-          src/backend/ or src/frontend/ and names the flag to pass. That check
-          needs origin/main in the checkout: a shallow clone (every CI runner)
-          says so on stderr and leaves the decision to its caller.
+          `up` refuses to pin a tree that differs from origin/main and names
+          the flag to pass — but only when origin/main is in the checkout. A
+          shallow clone says so on stderr and defers to its caller.
   seed    Re-seed the running stand (default target: all).
   test    Run the stand suite against an already-up stand. Passes extra
           arguments through to pytest — no `--` separator.
@@ -1531,13 +1527,10 @@ test_stand_tree_matches_charts() {
   local subtree="$1" flag="$2"
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
   git remote get-url origin >/dev/null 2>&1 || return 0
-  # Say so rather than passing quietly. A CI checkout is depth-1 and has no
-  # origin/main, so this guard is INERT there — the caller (e2e-stand.yml's
-  # `changes` job) decides what to build, and a reader of the log who thinks
-  # this line vouched for the pinning would be wrong.
+  # Inert on a depth-1 checkout (every CI runner). Say so, so a log reader does
+  # not read the silence as a passed check.
   git rev-parse --verify --quiet origin/main >/dev/null || {
-    echo "NOTE: no origin/main in this checkout — cannot check ${subtree}/ against" >&2
-    echo "      the pinned images; trusting the caller's ${flag} decision." >&2
+    echo "NOTE: no origin/main here — ${subtree}/ unchecked, ${flag} is the caller's call." >&2
     return 0; }
 
   local changed
@@ -1815,11 +1808,8 @@ cmd_test_stand() {
 
   case "$verb" in
     up)
-      # Two independent axes. Each tree is either PINNED to what its chart's
-      # appVersion names — main's build — or built from this working tree, and
-      # the two questions are asked separately because the two builds cost two
-      # different things: a ~26-minute Rust compile against a pnpm build.
-      # --build is the both-axes alias.
+      # Each tree is pinned to its chart's appVersion or built from this one,
+      # asked separately: --build is the both-axes alias.
       local image build_backend=false build_frontend=false
       while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -1840,11 +1830,9 @@ cmd_test_stand() {
         test_stand_write_env ghcr "$image" || return 1
       fi
 
-      # INVARIANT: pinning writes the four *_IMAGE vars into the env file, and
-      # that is the ONLY thing separating the two axes downstream — cmd_up puts
-      # a service in its ghcr list iff its image var is set, and compiles only
-      # the binaries that list leaves out. Pull before cmd_up reads the file, or
-      # a pinned backend gets compiled anyway.
+      # INVARIANT: pinning writes the *_IMAGE vars, and that is the only thing
+      # keeping cmd_up off the compiler — so it has to run before cmd_up reads
+      # the env file.
       if [[ "$build_backend" == true ]]; then
         echo "=== the backend is compiled from this tree, not pulled ==="
       else
