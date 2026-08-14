@@ -308,7 +308,8 @@ export function DomainLensView({
       <div>
         <h1 className="text-lg font-semibold tracking-tight">{config.title}</h1>
         <p className="text-sm text-muted-foreground">
-          {orgScope.count} members · {config.tagline ?? "trend & balance"}
+          {orgScope.count} {orgScope.count === 1 ? "person" : "people"} ·{" "}
+          {config.tagline ?? "trend & balance"}
         </p>
       </div>
 
@@ -533,7 +534,9 @@ function CoverageLevelsSection({
   // would sit at zero — a fault in our infrastructure printed as a verdict
   // about named people. Saying we could not check is the only honest output.
   if (isError) {
-    return <Pending label="Could not read coverage — the check did not complete, so nothing is claimed about anyone." />;
+    return (
+      <Pending label="Could not read coverage. The check did not finish, so nothing here is claimed about anyone." />
+    );
   }
   const counted = distribution.counted;
   if (counted === 0) return null;
@@ -555,8 +558,8 @@ function CoverageLevelsSection({
           <span className="text-muted-foreground">/{counted}</span>
         </span>
         <p className="max-w-md text-sm text-muted-foreground">
-          people are seen in fewer than half of their work — everything else
-          this product says about them rests on that fraction.
+          people have data for fewer than half the sections. Everything shown
+          about them comes from that part only.
         </p>
       </div>
 
@@ -565,7 +568,7 @@ function CoverageLevelsSection({
           one thing it does not mean. */}
       <div className="flex flex-col gap-2">
         <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-          By part of work
+          By section
         </p>
         {parts.map((part) => (
           <div key={part.id} className="flex items-center gap-3 text-sm">
@@ -576,7 +579,7 @@ function CoverageLevelsSection({
                     a broken schema all land here, and only the first is a
                     missing connector — sending someone to plumb a live one is
                     the wrong direction to be wrong in. */}
-                nothing reaches us here
+                no data
               </span>
             ) : (
               <CoverageBar filled={part.seen} total={counted} />
@@ -592,7 +595,7 @@ function CoverageLevelsSection({
           labels: the amber block IS the number at the top. */}
       <div className="flex flex-col gap-2">
         <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-          By person · parts we can see
+          By person · sections with data
         </p>
         {levels.map(([level, n], i) => {
           const thinHere = level < partCount / 2;
@@ -644,18 +647,19 @@ function CoverageLevelsSection({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        A part counts when any of its metrics has a value for that person this
-        period — so this says what we can see, never how well anyone did.
+        A section counts when at least one of its metrics has a value for that
+        person in this period. This shows where data exists, not how well
+        anyone worked.
         {missing.length > 0 && (
           <>
             {" "}
-            Nobody here can reach the top of that scale, because{" "}
+            No one can reach {partCount} of {partCount} here:{" "}
             {missing.map((m) => m.title).join(", ")}{" "}
-            {missing.length === 1 ? "reaches" : "reach"} us for no one.
+            {missing.length === 1 ? "has" : "have"} no data for anyone.
           </>
         )}{" "}
-        Counted over {counted} {counted === 1 ? "person" : "people"} you can
-        see in this scope.
+        Counted over the {counted} {counted === 1 ? "person" : "people"} in
+        this scope.
       </p>
     </section>
   );
@@ -715,7 +719,7 @@ function CoverageLevelPeople({
             )}
             {unconnected.length > 0 && (
               <span className="text-warning">
-                no connector: {unconnected.join(", ")}
+                no data from: {unconnected.join(", ")}
               </span>
             )}
             {idle.length > 0 && (

@@ -33,7 +33,7 @@ export type SectionSpec =
 
 export interface LensConfig {
   title: string;
-  /** Subtitle tail after "N members · " (defaults to "trend & balance"). */
+  /** Subtitle tail after "N people · " (defaults to "trend & balance"). */
   tagline?: string;
   sections: readonly SectionSpec[];
   /** Whole-tab message when no metric of the lens is observed (rule 6). */

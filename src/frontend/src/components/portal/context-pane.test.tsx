@@ -83,7 +83,7 @@ describe("ContextPane", () => {
     expect(screen.getByText("Overview")).toBeInTheDocument();
     expect(screen.getByText("Cross-functional org rollup")).toBeInTheDocument();
     const item = renderHook(() => usePortalItem());
-    await userEvent.click(screen.getByText("What we can see"));
+    await userEvent.click(screen.getByText("Data coverage"));
     expect(item.result.current).toBe("health");
   });
 

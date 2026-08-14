@@ -191,7 +191,7 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
     expect(screen.getByText(/100 commits team total/)).toBeInTheDocument();
     expect(screen.getByText("-50%")).toBeInTheDocument();
     // header carries the scope size + tagline
-    expect(screen.getByText(/4 members · test lens/)).toBeInTheDocument();
+    expect(screen.getByText(/4 people · test lens/)).toBeInTheDocument();
   });
 
   it("divides by ACTIVE people only — zeros don't dilute the denominator", () => {
@@ -499,7 +499,7 @@ describe("coverage section (#2408)", () => {
 
     // And the reason is the actionable half: nothing feeds those parts for the
     // tenant, which is a plumbing job — not people who did no work.
-    expect(screen.getAllByText(/no connector:/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/no data from:/).length).toBeGreaterThan(0);
   });
 
   it("does not open a level nobody is at", async () => {
