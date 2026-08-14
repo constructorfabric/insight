@@ -174,40 +174,52 @@ struct CountRow {
     hits: u64,
 }
 
-/// Which connector instance observed this account. Asked by the login
-/// bootstrap before it writes a binding: the persons-seed matches accounts on
-/// the whole triple (`source_type`, `source_id`, `account_id`), so a binding
-/// written under any other instance id would never be recognised as this
-/// account's and the batch would keep treating it as unbound.
+/// The account as the connectors last described it, for the login bootstrap:
+/// which instance carries it, whether the source has closed it, and whether it
+/// carries an e-mail.
 ///
-/// The latest observation wins, picked by `ORDER BY … LIMIT 1` rather than an
-/// aggregate: an aggregate with no `GROUP BY` still yields ONE row over an
-/// empty match set, carrying the zero UUID — which would read as a real
-/// instance id and turn "nothing observed this account" into an answer.
-const SOURCE_ID_SQL: &str = r"
+/// All three are decisions the bootstrap has to make before writing:
+/// - the instance id, because the persons-seed matches accounts on the whole
+///   triple (`source_type`, `source_id`, `account_id`) and a binding written
+///   under any other one would never be recognised as this account's;
+/// - closure, because an account gone from its source must not open a door;
+/// - the e-mail, because an account that HAS one is the batch's to link — it
+///   groups by e-mail, and minting a fresh person for such an account races
+///   the link and splits one human across two persons.
+///
+/// `GROUP BY` is load-bearing, not tidiness: a bare aggregate returns ONE row
+/// over an empty match set, carrying zero values, which would read as a real
+/// answer and turn "nothing observed this account" into "observed".
+const OBSERVED_ACCOUNT_SQL: &str = r"
     SELECT
-        toString(insight_source_id)     AS source_id,
-        ifNull(operation_type, '')      AS latest_op
+        toString(argMax(insight_source_id, _synced_at))  AS source_id,
+        argMax(ifNull(operation_type, ''), _synced_at)   AS latest_op,
+        argMaxIf(
+            ifNull(value, ''), _synced_at,
+            value_type = 'email' AND operation_type = 'UPSERT' AND value != ''
+        )                                               AS email
     FROM identity.identity_inputs
     WHERE insight_source_type = ?
       AND source_account_id = ?
-    ORDER BY _synced_at DESC
-    LIMIT 1
+    GROUP BY insight_source_type, source_account_id
 ";
 
 #[derive(Debug, Row, Deserialize)]
-struct SourceIdRow {
+struct ObservedRow {
     source_id: String,
     latest_op: String,
+    email: String,
 }
 
-/// One account as the login bootstrap needs to see it: which connector
-/// instance carries it, and whether that connector has since closed it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One account as the login bootstrap needs to see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedAccount {
     pub source_id: Uuid,
     /// The latest event is a closure signal — deactivated at the source.
     pub is_closed: bool,
+    /// The address the connectors carry for it, if any. `Some` means the
+    /// persons-seed can link this account by itself.
+    pub email: Option<String>,
 }
 
 fn map_row(row: FoldedRow) -> anyhow::Result<AccountEvidence> {
@@ -261,9 +273,9 @@ impl ClickHouseEvidenceReader {
         source_type: &str,
         account_id: &str,
     ) -> anyhow::Result<Option<ObservedAccount>> {
-        let row: Result<Option<SourceIdRow>, _> = self
+        let row: Result<Option<ObservedRow>, _> = self
             .client
-            .query(SOURCE_ID_SQL)
+            .query(OBSERVED_ACCOUNT_SQL)
             .bind(source_type)
             .bind(account_id)
             .fetch_optional()
@@ -293,6 +305,7 @@ impl ClickHouseEvidenceReader {
         Ok(Some(ObservedAccount {
             source_id,
             is_closed: row.latest_op == "DELETE",
+            email: non_empty(row.email),
         }))
     }
 }

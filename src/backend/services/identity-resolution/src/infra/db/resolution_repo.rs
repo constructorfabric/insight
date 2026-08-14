@@ -216,6 +216,14 @@ pub async fn person_exists(
 /// of the same statement as the insert removes the window — the condition is
 /// evaluated against the same snapshot that writes.
 ///
+/// "Nobody has decided it" is scoped exactly as the login lookup scopes it —
+/// by (`source_type`, `value_id`), across every tenant and connector instance.
+/// Narrowing the guard to the instance the evidence names would leave the
+/// decisions it is meant to protect invisible: an exclusion recorded before a
+/// connector was re-registered lives under the OLD instance id, while the
+/// lookup that answers "who is in force" ignores the instance entirely — so a
+/// narrow guard would write, and the fresh row would win.
+///
 /// The inner derived table is not decoration: MariaDB refuses a bare subquery
 /// on the INSERT's own target, and materialising it is what makes the
 /// self-reference legal.
@@ -244,10 +252,8 @@ pub async fn append_binding_if_unbound(
         WHERE NOT EXISTS (
             SELECT 1 FROM (
                 SELECT 1 FROM persons
-                WHERE insight_tenant_id = ?
-                  AND value_type = 'id'
+                WHERE value_type = 'id'
                   AND insight_source_type = ?
-                  AND insight_source_id = ?
                   AND value_id = ?
                 LIMIT 1
             ) AS decided
@@ -267,9 +273,7 @@ pub async fn append_binding_if_unbound(
                 row.author_person_id.as_bytes().to_vec().into(),
                 row.reason.clone().into(),
                 row.created_at.into(),
-                tenant_id.as_bytes().to_vec().into(),
                 row.account.source_type.clone().into(),
-                row.account.source_id.as_bytes().to_vec().into(),
                 row.account.account_id.clone().into(),
             ],
         ))

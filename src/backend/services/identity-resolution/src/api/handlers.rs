@@ -242,23 +242,7 @@ pub async fn internal_provision_person(
 ) -> Result<impl IntoResponse, CanonicalError> {
     require_service(&ctx)?;
 
-    let source_type = req.source_type.trim();
-    let external_id = req.external_id.trim();
-    if source_type.is_empty() {
-        return Err(ProfileError::invalid_argument()
-            .with_field_violation("source_type", "source_type must not be empty", "REQUIRED")
-            .create());
-    }
-    if external_id.is_empty() {
-        return Err(ProfileError::invalid_argument()
-            .with_field_violation("external_id", "external_id must not be empty", "REQUIRED")
-            .create());
-    }
-    if req.tenant_id.is_nil() {
-        return Err(ProfileError::invalid_argument()
-            .with_field_violation("tenant_id", "tenant_id must not be nil", "REQUIRED")
-            .create());
-    }
+    let (source_type, external_id) = validated_principal(&req)?;
     let tenant = provisioning_tenant(&state.config.tenant_default_id, req.tenant_id)?;
 
     if let Some(person_id) = lookup_by_external_id(&state, source_type, external_id).await? {
@@ -286,6 +270,33 @@ pub async fn internal_provision_person(
     if observed.is_closed {
         return Err(ProfileError::not_found(format!(
             "source_type '{source_type}' external_id '{external_id}' is closed at its source"
+        ))
+        .with_resource(external_id.to_owned())
+        .create());
+    }
+
+    // An account that carries an e-mail is the BATCH's to resolve, and minting
+    // here would do real harm rather than merely duplicate work: the seed
+    // groups by e-mail, so it would have attached this account to whichever
+    // person already holds that address. A person minted first takes the
+    // account's binding, and the seed then reads the group as a conflict
+    // between two persons with no operator decision to settle it — it keeps
+    // both and drops the rest of the group, so one human stays split until
+    // somebody merges by hand.
+    //
+    // The whole reason this route exists is the account the seed CANNOT
+    // resolve: no address, so no group to join. Refusing anything else keeps
+    // the login path out of identity decisions that belong to the batch.
+    if let Some(email) = &observed.email {
+        tracing::info!(
+            source_type,
+            external_id,
+            "login bootstrap: declined — the account carries an address, so the seed resolves it"
+        );
+        let _ = email;
+        return Err(ProfileError::not_found(format!(
+            "source_type '{source_type}' external_id '{external_id}' carries an address; \
+             identity resolution links it, so there is nothing to bootstrap"
         ))
         .with_resource(external_id.to_owned())
         .create());
@@ -358,6 +369,60 @@ pub async fn internal_provision_person(
 
     Ok(Json(person_response(external_id, person_id)))
 }
+
+/// Trim and bound the principal a provisioning request names.
+///
+/// Bounded against the columns the values land in (`persons.value_id` /
+/// `insight_source_type`), with the same limit `POST /v1/profiles` already
+/// states for an id value. Left unbounded, an over-long id is a 500 under
+/// strict SQL and, under a lax one, a silently truncated row that neither the
+/// write guard nor the read-back can match — so every login attempt would
+/// append another unusable row and still refuse the caller.
+fn validated_principal(req: &InternalProvisionRequest) -> Result<(&str, &str), CanonicalError> {
+    let source_type = req.source_type.trim();
+    let external_id = req.external_id.trim();
+
+    if source_type.is_empty() {
+        return Err(invalid_field("source_type", "source_type must not be empty", "REQUIRED"));
+    }
+    if external_id.is_empty() {
+        return Err(invalid_field("external_id", "external_id must not be empty", "REQUIRED"));
+    }
+    if external_id.chars().count() > MAX_VALUE_ID_CHARS {
+        return Err(invalid_field(
+            "external_id",
+            format!("external_id must be at most {MAX_VALUE_ID_CHARS} characters"),
+            "INVALID",
+        ));
+    }
+    if source_type.chars().count() > MAX_SOURCE_TYPE_CHARS {
+        return Err(invalid_field(
+            "source_type",
+            format!("source_type must be at most {MAX_SOURCE_TYPE_CHARS} characters"),
+            "INVALID",
+        ));
+    }
+    if req.tenant_id.is_nil() {
+        return Err(invalid_field("tenant_id", "tenant_id must not be nil", "REQUIRED"));
+    }
+    Ok((source_type, external_id))
+}
+
+fn invalid_field(
+    field: &str,
+    message: impl Into<String>,
+    reason: &str,
+) -> CanonicalError {
+    ProfileError::invalid_argument()
+        .with_field_violation(field, message.into(), reason)
+        .create()
+}
+
+/// Column widths the bootstrap writes into (`001_persons.sql`). 320 is also
+/// the limit `POST /v1/profiles` states for an id value, so one number means
+/// one contract across both entrances.
+const MAX_VALUE_ID_CHARS: usize = 320;
+const MAX_SOURCE_TYPE_CHARS: usize = 100;
 
 /// The journal reason marking a row this bootstrap wrote — distinguishable
 /// from the seed's own linking and from an operator's decision.
