@@ -1,0 +1,62 @@
+# Insight Git CLI Proxy — gears-rust host config.
+#
+# Usage: git-cli-proxy --config config/insight.yaml
+#
+# The service hosts its own routes (no api-gateway gear) and is
+# cluster-internal (consumed by Airbyte connector pods, never routed through
+# the platform gateway): its /v1 surface is guarded by the service's own static
+# bearer token (`gears.git-cli-proxy.config.proxy_token`) instead of the
+# gateway-JWT pipeline. /healthz is public for probes.
+#
+# Env overrides (scalar leaves only; prefix `APP__gears__<gear>__config__…`):
+#   APP__gears__git_cli_proxy__config__bind_addr
+#   APP__gears__git_cli_proxy__config__data_dir
+#   APP__gears__git_cli_proxy__config__disk_budget_bytes
+#   APP__gears__git_cli_proxy__config__max_repo_bytes
+#   APP__gears__git_cli_proxy__config__default_max_staleness_seconds
+#   APP__gears__git_cli_proxy__config__heavy_ops_concurrency
+#   APP__gears__git_cli_proxy__config__proxy_token
+
+server:
+  home_dir: "~/.insight"
+
+logging:
+  default:
+    console_level: info
+
+gears:
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/git-cli-proxy-grpc"
+
+  git-cli-proxy:
+    config:
+      # ALL values are required and validated at boot — the service refuses to
+      # start on any empty/zero field (no silent defaults for budgets, paths,
+      # or the auth token). The deployment (Helm / compose) supplies real
+      # values via the env overrides listed in the header.
+      #
+      # Address the HTTP server binds.
+      bind_addr: "0.0.0.0:8084"
+      # Root of the repository cache (a PVC mount in K8s).
+      data_dir: ""
+      # Total cache budget, bytes. Keep 10-15% below the volume size.
+      disk_budget_bytes: 0
+      # Per-repo size cap, bytes. Oversized clones abort permanently (413).
+      max_repo_bytes: 0
+      # Freshness window, seconds (overridable per request: X-Max-Staleness).
+      default_max_staleness_seconds: 0
+      # Concurrency cap for heavy git operations (clone / fetch / repack).
+      heavy_ops_concurrency: 0
+      # Service-to-service bearer token for /v1. Never committed.
+      proxy_token: ""
+      # PEM bundle for a self-hosted vendor behind a private CA. Empty = the
+      # system trust store, which is correct for the public clouds. This is the
+      # only optional field.
+      ca_cert_path: ""
+      # Accept file:// origins. Test-harness escape hatch: the hermetic suite
+      # clones from local fixture repositories. Never enable in a deployment.
+      allow_file_repos: false

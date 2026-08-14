@@ -58,16 +58,21 @@ Before creating or modifying any GitHub-visible content, verify that it contains
 
 When uncertain whether information came from a real environment, omit it and use a generic hypothetical formulation instead.
 
-## Comments earn their place
+## Comments
 
-Write a comment only when it names a constraint the code cannot express and that a reader would otherwise undo. Prefer a name to a sentence: extract a function, name the constant, make the invalid state unrepresentable in the type. Reaching for prose is usually a sign that something wanted a name.
-
-Three kinds do not belong in the source:
-
-1. **How it got here.** "This used to loop", "an earlier version used X", "Y was tried and does not work". The commit message and `git blame` carry it, and it ages worst of all — a note about a defect that no longer exists outlives the defect.
-2. **A restatement of the code.** If the line above says what the line below does, delete the line above.
-3. **The case for a road not taken.** Why this approach and not another belongs in the pull request, where it is read once and reviewed.
-
-Keep the ones a reader cannot derive and would otherwise break: a platform quirk, a dependency that must stay out of a list, a rule that forces an unusual shape, a unit or an invariant no type can hold.
-
-A comment that survives all of that should be one or two lines. If it needs a paragraph, the code underneath probably needs the work instead.
+- No comments unless they express a constraint the code cannot.
+- Prefer code over prose: name things clearly, extract functions, use types, make invalid states unrepresentable.
+- Allowed comments are brief and tagged:
+  - `SAFETY:` — non-obvious safety/security/correctness reasoning.
+  - `INVARIANT:` — a fact a future edit could silently break.
+  - `WORKAROUND:` — external/platform/dependency behavior being worked around.
+  - Tool/linter/compiler suppressions — brief adjacent justification.
+- Do not comment:
+  - implementation history or how the code got here;
+  - what the code already says;
+  - alternatives considered or roads not taken;
+  - issue/PR context, phase notes, headers, or discussion history.
+- Non-obvious semantics belong in types, tests, or docs when possible.
+- Doc comments only for genuinely public/external APIs; keep them brief.
+- Comments should normally be one or two lines. If a comment needs a paragraph, improve the code or move the rationale to documentation.
+- If deleting a comment does not materially reduce safety, correctness, or maintainability, delete it when it is within the scope of the current work.

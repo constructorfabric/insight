@@ -107,6 +107,40 @@ pub async fn get_by_id(db: &DatabaseConnection, role_id: Uuid) -> anyhow::Result
         .transpose()
 }
 
+/// Active (`valid_to IS NULL`) roles `person_id` holds in the tenant, with
+/// names, ordered by name. Backs `GET /v1/me`. DISTINCT because nothing in the
+/// schema forbids two active grants of the same role to one person.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored id is not 16 bytes.
+pub async fn active_roles_of_person(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_id: Uuid,
+) -> anyhow::Result<Vec<Role>> {
+    const SQL: &str = r"
+        SELECT DISTINCT r.role_id, r.name
+        FROM person_roles pr
+        JOIN roles r ON r.role_id = pr.role_id
+        WHERE pr.insight_tenant_id = ?
+          AND pr.person_id         = ?
+          AND pr.valid_to IS NULL
+        ORDER BY r.name
+    ";
+
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [
+            tenant_id.as_bytes().to_vec().into(),
+            person_id.as_bytes().to_vec().into(),
+        ],
+    );
+
+    db.query_all(stmt).await?.iter().map(row_to_role).collect()
+}
+
 /// All roles, ordered by name. Ported from `SqlRoles.ListAllRoles`.
 ///
 /// # Errors

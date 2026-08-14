@@ -11,11 +11,14 @@ import {
   YAxis,
   type ChartConfig,
 } from "@/components/ui/chart";
+import { evidenceSelection } from "@/api/metric-drilldown-client";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ChartEmpty } from "@/components/widgets/metric-views/chart-empty";
+import { MetricCardActions } from "@/components/widgets/metric-views/metric-card-actions";
 import { formatMetricNumber } from "@/lib/format";
 import { forEntity, type NormalizedMetricResult } from "@/lib/metrics/collection";
 import { STATUS_COLOR_VAR, statusVsMedian, type Status } from "@/lib/status";
+import { cn } from "@/lib/utils";
 
 export interface MetricHistogramProps {
   metric: NormalizedMetricResult;
@@ -104,11 +107,15 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
   const ownMedian = data.value;
   const peerMedian = data.peer?.median ?? null;
   const direction = directionText(metric);
+  const evidence = metric.drilldown
+    ? evidenceSelection(metric.selection, entityId)
+    : null;
+  const actions = <MetricCardActions evidence={evidence} label={metric.label} />;
 
   // Shared header so an empty tile reads as the same chart, laid out to match
   // its populated neighbours in the grid rather than collapsing to a corner.
   const header = (
-    <CardHeader className="pb-2">
+    <CardHeader className={cn("pb-2", evidence && "pr-10")}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-sm font-semibold">{metric.label}</span>
@@ -138,7 +145,8 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
 
   if (bins.length === 0) {
     return (
-      <Card className="shrink-0">
+      <Card className="relative shrink-0">
+        {actions}
         {header}
         <CardContent>
           <ChartEmpty message="No values in this period" />
@@ -150,7 +158,8 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
   const { rows, pivotLabel } = buildRows(bins, peerMedian, metric);
 
   return (
-    <Card className="shrink-0">
+    <Card className="relative shrink-0">
+      {actions}
       {header}
       <CardContent>
         <ChartContainer config={CONFIG} className="h-48 min-h-48 w-full">

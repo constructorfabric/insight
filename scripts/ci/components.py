@@ -80,6 +80,16 @@ COMPONENTS = [
         # own component); `triggered_by` is the registry's co-trigger for this.
         "triggered_by": ["insight-clickhouse"],
     },
+    # git-cli-proxy shells out to the git CLI; its integration tests build
+    # fixture repos with `git init` + file:// origins in tempdirs (hermetic —
+    # the CI runner's git suffices, no service container).
+    {
+        "name": "git-cli-proxy",
+        "lang": "rust",
+        "root": "src/backend",
+        "package": "git-cli-proxy",
+        "paths": ["src/backend/services/git-cli-proxy"],
+    },
     # routegen is the build-time gateway config compiler (gateway DESIGN
     # DD-GW-02); fmt + clippy + coverage run here. Golden + rejection tests cover
     # the emitter/validator; tests/cli.rs drives the built binary end to end
@@ -143,13 +153,6 @@ COMPONENTS = [
         "root": "src/ingestion/connectors/git/gitlab",
         "cov_package": "source_gitlab",
         "paths": ["src/ingestion/connectors/git/gitlab"],
-    },
-    {
-        "name": "github-v2",
-        "lang": "python",
-        "root": "src/ingestion/connectors/git/github-v2",
-        "cov_package": "source_github_v2",
-        "paths": ["src/ingestion/connectors/git/github-v2"],
     },
     {
         "name": "bitbucket-cloud",
@@ -225,7 +228,10 @@ COMPONENTS = [
         "pytest_args": "--suites-only",
         "cover": False,
         "triggered_by": ["connector-tests-harness"],
-        "paths": ["src/ingestion/connectors/task-tracking/jira"],
+        "paths": [
+            "src/ingestion/connectors/task-tracking/jira",
+            "src/ingestion/connectors/git/github",
+        ],
     },
     # `src/frontend/helm` falls under this path but has no measured lines, so it
     # never moves the number.

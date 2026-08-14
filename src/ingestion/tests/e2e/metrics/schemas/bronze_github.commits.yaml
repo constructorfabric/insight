@@ -11,10 +11,8 @@ schemas:
       tenant_id: {type: string}
       source_id: {type: string}
       unique_key: {type: string}
-      repo_owner: {type: string}
-      repo_name: {type: string}
+      repository: {type: string}
       sha: {type: string}
-      branch_name: {type: string}
       author_name: {type: string}
       author_email: {type: string}
       committer_name: {type: string}
@@ -24,4 +22,4 @@ schemas:
       changed_files: {type: integer}
       additions: {type: integer}
       deletions: {type: integer}
-      parent_hashes: {type: string}
+      is_merge: {type: boolean}

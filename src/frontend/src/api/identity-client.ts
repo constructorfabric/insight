@@ -42,6 +42,337 @@ interface ProfileResponse {
   ids?: unknown[];
 }
 
+/** One active role assignment of the caller, as `GET /me` reports it. */
+export interface MeRole {
+  role_id: string;
+  name: string;
+}
+
+/**
+ * Wire shape of `GET /me` — who the gateway JWT identifies, with their active
+ * identity roles. `roles` comes from the identity service's `person_roles`
+ * table (the same rows every admin endpoint's gate checks) — NOT from the
+ * login token's realm roles, which no identity endpoint reads. An empty list
+ * IS the "not an admin" answer; the endpoint never 403s.
+ */
+export interface MeResponse {
+  person_id: string;
+  insight_tenant_id: string;
+  roles: MeRole[];
+}
+
+/**
+ * The caller's identity and active roles. Live on every call: granting or
+ * revoking a role is visible on the next fetch, no re-login needed.
+ */
+export async function getMe(): Promise<MeResponse> {
+  const res = await fetchWithAuth(`${BASE}/me`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let me: MeResponse;
+  try {
+    me = (await res.json()) as MeResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  // A malformed answer must read as "roles unknown", never as "no roles" —
+  // the admin gate downstream fails closed either way, but an error is
+  // diagnosable where a silent [] is not. The entries are checked too: the
+  // gate reads `role_id` off each one, so a `[null]` would throw during
+  // render rather than fail closed.
+  if (!me.person_id?.trim() || !Array.isArray(me.roles) || !me.roles.every(isMeRole)) {
+    throw new IdentityApiError(res.status, { error: "malformed_me" });
+  }
+  return me;
+}
+
+function isMeRole(role: unknown): role is MeRole {
+  return (
+    typeof role === "object" &&
+    role !== null &&
+    typeof (role as MeRole).role_id === "string" &&
+    (role as MeRole).role_id.trim() !== ""
+  );
+}
+
+/** A person as operator surfaces display them — the wire `PersonSummaryResponse`. */
+export interface PersonSummary {
+  person_id: string;
+  email?: string | null;
+  username?: string | null;
+  display_name?: string | null;
+  job_title?: string | null;
+  status?: string | null;
+}
+
+/** One account awaiting an operator decision. */
+export interface AttentionItem {
+  /** `contested` | `binding_conflict` | `no_evidence` — open vocabulary. */
+  kind: string;
+  source: string;
+  source_id: string;
+  account_id: string;
+  email?: string | null;
+  username?: string | null;
+  /** Hydrated person cards, not bare ids. */
+  candidates: PersonSummary[];
+}
+
+/** Counts over EVERY observed account, regardless of the item cap. */
+export interface ResolutionRates {
+  observed: number;
+  bound: number;
+  pending: number;
+  no_evidence: number;
+  excluded: number;
+}
+
+export interface AttentionResponse {
+  items: AttentionItem[];
+  rates: ResolutionRates;
+  /** The server's evidence read hit its safety cap: the queue and the rates
+   *  describe only a prefix of the tenant's accounts. Optional so a client
+   *  deployed ahead of the backend keeps working; absent reads as complete. */
+  truncated?: boolean;
+  /** `limit` cut the item list — the rates are still whole-tenant, only this
+   *  page is short. Optional for the same reason as {@link truncated}. */
+  items_truncated?: boolean;
+}
+
+/**
+ * The operator review queue (`GET /resolution/attention`) — accounts the
+ * resolver could not decide, with the tenant-wide match rate. Admin-gated
+ * server-side; the caller is expected to sit behind `useIsAdmin`.
+ */
+export async function getAttention(limit = 200): Promise<AttentionResponse> {
+  const res = await fetchWithAuth(`${BASE}/resolution/attention?limit=${limit}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let attention: AttentionResponse;
+  try {
+    attention = (await res.json()) as AttentionResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(attention.items) || attention.rates == null) {
+    throw new IdentityApiError(res.status, { error: "malformed_attention" });
+  }
+  return attention;
+}
+
+/** One decision recorded for an account, newest first on the wire. */
+export interface BindingHistoryEntry {
+  person_id: string;
+  author_person_id: string;
+  /** True when a human recorded it; false = automation (seed/resolver). */
+  by_operator: boolean;
+  /** Verb code (`operator-bind`, …) or an automation reason. Open vocabulary. */
+  reason?: string | null;
+  recorded_at: string;
+}
+
+export interface AccountBinding {
+  source: string;
+  source_id: string;
+  account_id: string;
+  /** Absent = the account is currently bound to nobody. */
+  person_id?: string | null;
+  history: BindingHistoryEntry[];
+}
+
+/**
+ * One account's current binding and its full decision trail
+ * (`GET /resolution/accounts/{source}/{source_id}/{account_id}`). The read
+ * never 404s: an account nobody ever observed or decided answers 200 with
+ * `person_id: null` and an empty history — the state a stale shared link
+ * lands on.
+ */
+export async function getAccountBinding(ref: {
+  source: string;
+  source_id: string;
+  account_id: string;
+}): Promise<AccountBinding> {
+  const path = [ref.source, ref.source_id, ref.account_id]
+    .map(encodeURIComponent)
+    .join("/");
+  const res = await fetchWithAuth(`${BASE}/resolution/accounts/${path}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let binding: AccountBinding;
+  try {
+    binding = (await res.json()) as AccountBinding;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(binding.history)) {
+    throw new IdentityApiError(res.status, { error: "malformed_binding" });
+  }
+  return binding;
+}
+
+/** A source-native account, as the correction verbs address it on the wire. */
+export interface WireAccountRef {
+  source: string;
+  source_id: string;
+  /** The wire calls the account id `id` (unlike the read shapes). */
+  id: string;
+}
+
+/** What happened to one requested account. Open vocabulary. */
+export interface CorrectionItemResult {
+  source: string;
+  source_id: string;
+  account_id: string;
+  /** `applied` | `already_decided` | `refused` | future skip reasons. */
+  outcome: string;
+}
+
+export interface CorrectionResponse {
+  applied: number;
+  already_decided: number;
+  items: CorrectionItemResult[];
+  /** Set by `detach`: the freshly minted person the account moved to. */
+  new_person_id?: string | null;
+}
+
+async function postCorrection(
+  path: string,
+  body: unknown,
+): Promise<CorrectionResponse> {
+  const res = await fetchWithAuth(`${BASE}/resolution/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, errBody);
+  }
+  let outcome: CorrectionResponse;
+  try {
+    outcome = (await res.json()) as CorrectionResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(outcome.items)) {
+    throw new IdentityApiError(res.status, { error: "malformed_correction" });
+  }
+  return outcome;
+}
+
+/** Attach an account to a person — also the "confirm the current binding" act. */
+export async function bindAccount(args: {
+  account: WireAccountRef;
+  person_id: string;
+  comment?: string;
+}): Promise<CorrectionResponse> {
+  return postCorrection("bind", {
+    bindings: [{ account: args.account, person_id: args.person_id }],
+    comment: args.comment ?? "",
+  });
+}
+
+/** Declare two persons one human: every account of `source` moves to `target`. */
+export async function mergePersons(args: {
+  source_person_id: string;
+  target_person_id: string;
+  comment?: string;
+}): Promise<CorrectionResponse> {
+  return postCorrection("merge", {
+    source_person_id: args.source_person_id,
+    target_person_id: args.target_person_id,
+    comment: args.comment ?? "",
+  });
+}
+
+/** Detach an account into a freshly minted person. */
+export async function detachAccount(args: {
+  account: WireAccountRef;
+  comment?: string;
+}): Promise<CorrectionResponse> {
+  return postCorrection("detach", {
+    account: args.account,
+    comment: args.comment ?? "",
+  });
+}
+
+/** Exclude an account as not a person (bot / CI / service account). */
+export async function excludeAccount(args: {
+  account: WireAccountRef;
+  comment?: string;
+}): Promise<CorrectionResponse> {
+  return postCorrection("exclude", {
+    account: args.account,
+    comment: args.comment ?? "",
+  });
+}
+
+export interface PersonSearchResponse {
+  items: PersonSummary[];
+  /** More persons matched than the limit allowed — ask for narrower terms. */
+  truncated: boolean;
+}
+
+/**
+ * The operator person picker (`GET /persons?q=`) — tenant-wide, admin-gated,
+ * matching every whitespace-separated term against current identity values.
+ */
+export async function searchPersons(q: string): Promise<PersonSearchResponse> {
+  const res = await fetchWithAuth(`${BASE}/persons?q=${encodeURIComponent(q)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let found: PersonSearchResponse;
+  try {
+    found = (await res.json()) as PersonSearchResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(found.items)) {
+    throw new IdentityApiError(res.status, { error: "malformed_search" });
+  }
+  return found;
+}
+
+export interface PersonAccountEntry {
+  source: string;
+  source_id: string;
+  account_id: string;
+  email?: string | null;
+  username?: string | null;
+  bound_by_operator: boolean;
+}
+
+/** Every account currently bound to a person — the merge preview's substance. */
+export async function getPersonAccounts(
+  personId: string,
+): Promise<{ person_id: string; accounts: PersonAccountEntry[] }> {
+  const res = await fetchWithAuth(
+    `${BASE}/resolution/persons/${encodeURIComponent(personId)}/accounts`,
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let owned: { person_id: string; accounts: PersonAccountEntry[] };
+  try {
+    owned = (await res.json()) as typeof owned;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(owned.accounts)) {
+    throw new IdentityApiError(res.status, { error: "malformed_accounts" });
+  }
+  return owned;
+}
+
 export class IdentityApiError extends Error {
   status: number;
   body: unknown;

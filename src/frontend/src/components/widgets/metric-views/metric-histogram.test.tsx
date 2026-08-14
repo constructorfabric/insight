@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 
+import { EvidenceDialogContext } from "@/components/metric-evidence-context";
 import { MetricHistogram } from "@/components/widgets/metric-views/metric-histogram";
 import {
   normalizeMetricResults,
@@ -84,5 +86,64 @@ describe("MetricHistogram", () => {
   it("shows the empty state for an entity absent from the view", () => {
     render(<MetricHistogram metric={medianMetric(BINS)} entityId="nobody@x.com" />);
     expect(screen.getByText("No values in this period")).toBeInTheDocument();
+  });
+
+  describe("supporting data", () => {
+    function drillable(
+      metric: NormalizedMetricResult
+    ): NormalizedMetricResult {
+      return {
+        ...metric,
+        drilldown: { granularity: ["event"] },
+        selection: {
+          metric_key: "git.pr_cycle_time_h",
+          entity: { type: "person", ids: ["me@x.com"] },
+          period: { from: "2026-07-01", to: "2026-07-31" },
+          filters: [],
+        },
+      };
+    }
+
+    function renderWithEvidence(metric: NormalizedMetricResult) {
+      const openEvidence = vi.fn();
+      render(
+        <EvidenceDialogContext.Provider
+          value={{ openEvidence, openEvidenceTargets: vi.fn() }}
+        >
+          <MetricHistogram metric={metric} entityId="me@x.com" />
+        </EvidenceDialogContext.Provider>
+      );
+      return openEvidence;
+    }
+
+    it("opens the records behind the distribution", async () => {
+      const user = userEvent.setup();
+      const openEvidence = renderWithEvidence(drillable(medianMetric(BINS)));
+
+      await user.click(
+        screen.getByRole("button", { name: "More actions for PR cycle time" })
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: "View supporting data" })
+      );
+      expect(openEvidence).toHaveBeenCalledWith(
+        expect.objectContaining({ metric_key: "git.pr_cycle_time_h" }),
+        "PR cycle time"
+      );
+    });
+
+    it("offers them on an empty period too, since the metric is still drillable", () => {
+      renderWithEvidence(drillable(medianMetric([])));
+      expect(
+        screen.getByRole("button", { name: "More actions for PR cycle time" })
+      ).toBeInTheDocument();
+    });
+
+    it("offers nothing for a metric that declares no drilldown", () => {
+      renderWithEvidence(medianMetric(BINS));
+      expect(
+        screen.queryByRole("button", { name: /More actions/ })
+      ).not.toBeInTheDocument();
+    });
   });
 });

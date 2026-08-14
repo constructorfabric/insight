@@ -59,9 +59,13 @@ describe("nav classification invariants", () => {
     ]);
   });
 
-  it("Manage keeps exactly the two surfaces that read live data", () => {
+  it("Manage keeps exactly the three surfaces that read live data", () => {
     const { live } = partitionByReadiness(MANAGE_ITEMS, false);
-    expect(live.map((i) => i.id)).toEqual(["metric-catalog", "data-health"]);
+    expect(live.map((i) => i.id)).toEqual([
+      "metric-catalog",
+      "identities",
+      "data-health",
+    ]);
   });
 
   it("every Overview item is live — that zone has no placeholders", () => {
