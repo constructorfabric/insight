@@ -139,7 +139,11 @@ jobs:
       # outage rather than a measurement.
       - name: Prove the limit is charged to the caller
         id: limit
-        if: ${{ inputs.burst && steps.trust.outputs.entries != '0' }}
+        # `inputs.burst` is empty on anything but a dispatch, so it is read only
+        # there; the entries guard is what actually protects a shared bucket.
+        if: >-
+          ${{ (github.event_name != 'workflow_dispatch' || inputs.burst)
+              && steps.trust.outputs.entries != '0' }}
         run: |
           set -euo pipefail
           # Past the configured burst allowance (60r/m + burst 120) on purpose;
