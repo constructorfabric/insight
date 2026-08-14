@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/sidebar";
 import {
   DIRECTIONS,
-  MANAGE_ITEMS,
+  manageItemsFor,
   PEOPLE_ITEMS,
   PLANNED_GROUP_LABEL,
   partitionByReadiness,
@@ -53,6 +53,7 @@ import {
 } from "@/lib/portal/portal-nav";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { cn } from "@/lib/utils";
+import { useIsAdmin } from "@/queries/identity-me";
 
 const ZONE_SUB: Record<string, string> = {
   overview: "Cross-functional org rollup",
@@ -115,7 +116,7 @@ export function ContextPane() {
         ) : activeZone === "people" ? (
           <PeopleNav active={active} />
         ) : activeZone === "manage" ? (
-          <ItemsNav items={MANAGE_ITEMS} groupLabel="Manage" active={active} />
+          <ManageNav active={active} />
         ) : activeZone === "person" ? (
           <PersonSectionsNav />
         ) : (
@@ -266,6 +267,19 @@ function ThemeNav({ zoneId, active }: { zoneId: string; active: string | null })
         </SidebarGroup>
       ) : null}
     </>
+  );
+}
+
+function ManageNav({ active }: { active: string | null }) {
+  // Admin-only surfaces (Identities) drop from the pane for everyone else;
+  // the view behind them refuses direct URLs on its own.
+  const { isAdmin } = useIsAdmin();
+  return (
+    <ItemsNav
+      items={manageItemsFor(isAdmin)}
+      groupLabel="Manage"
+      active={active}
+    />
   );
 }
 

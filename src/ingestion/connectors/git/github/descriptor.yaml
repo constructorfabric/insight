@@ -1,0 +1,22 @@
+name: github
+version: "2.1.0"
+schedule: "0 4 * * *"
+workflow: sync
+
+# Silver routing via dbt tags on the staging models.
+# silver_targets prohibited per Connector Spec §4.10 — Silver is determined by
+# the dbt tags, and the pipeline's silver step hardcodes `tag:<slug>+`.
+dbt_select: "tag:github+"
+
+secret:
+  # The pre-flight Secret validator reads this list and nothing else, so it
+  # carries every field the spec requires, not only the ones beyond it.
+  required_fields:
+    - github_token
+    - github_organizations
+    - github_start_date
+    - git_proxy_url
+    - git_proxy_token
+
+connection:
+  namespace: bronze_github

@@ -38,6 +38,7 @@ Exit:  0 clean (warnings allowed), 1 on any error.
 """
 
 # ruff: noqa: T201  — stdout/stderr IS this script's CI report (cf. changed.py).
+
 from __future__ import annotations
 
 import argparse

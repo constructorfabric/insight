@@ -5,6 +5,7 @@ import {
   formatMetricNumber,
   formatMetricValue,
   formatPp,
+  formatUtcInstant,
   metricDisplayUnit,
 } from "@/lib/format";
 
@@ -53,5 +54,15 @@ describe("small formatters", () => {
     expect(formatPp(0)).toBe("0.0 pp");
   });
 
+  // TZ-independent on purpose: a zone-less identity timestamp must name the
+  // same instant as its explicit-UTC spelling in EVERY runner timezone.
+  it("formatUtcInstant reads a zone-less timestamp as UTC, not local", () => {
+    expect(formatUtcInstant("2026-08-01T10:15:00.000000", "d MMM yyyy, HH:mm")).toBe(
+      formatUtcInstant("2026-08-01T10:15:00Z", "d MMM yyyy, HH:mm"),
+    );
+    expect(
+      formatUtcInstant("2026-08-01T10:15:00+02:00", "HH:mm"),
+    ).toBe(formatUtcInstant("2026-08-01T08:15:00Z", "HH:mm"));
+  });
 });
 
