@@ -339,6 +339,9 @@ export function MetricEvidenceDialog({
             </div>
           ) : (
             <MetricEvidenceTable
+              // Expansion state is the table's; another metric's records must
+              // not inherit it.
+              key={activeMetricKey}
               rows={visibleRows}
               columns={columns}
               sort={sort}

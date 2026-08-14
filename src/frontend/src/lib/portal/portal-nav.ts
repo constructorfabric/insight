@@ -67,6 +67,7 @@ export interface PortalNavActions {
   replaceScope: (patch: Partial<OrgScope>) => void;
   setZone: (zone: string | null) => void;
   setItem: (item: string | null) => void;
+  setAcct: (acct: string | null) => void;
   setDir: (dir: string) => void;
   setLens: (lens: string) => void;
   setSlice: (slice: string) => void;
@@ -82,15 +83,22 @@ export function usePortalNavActions(): PortalNavActions {
     () => ({
       // A zone change drops the item with it: `item` is per-zone, and carrying
       // it across renders a fallback view while the pane highlights nothing.
-      setZone: (zone) => setSearch({ zone: zone ?? undefined, item: undefined }),
+      // `acct` is per-item the same way `item` is per-zone, so both changes
+      // drop it: a selection has no meaning on another surface.
+      setZone: (zone) =>
+        setSearch({ zone: zone ?? undefined, item: undefined, acct: undefined }),
       replaceZone: (zone) =>
-        setSearch({ zone: zone ?? undefined, item: undefined }, { replace: true }),
+        setSearch(
+          { zone: zone ?? undefined, item: undefined, acct: undefined },
+          { replace: true },
+        ),
       replaceScope: (patch) =>
         setSearch(
           { ...("root" in patch ? { scope: patch.root ?? undefined } : {}) },
           { replace: true },
         ),
-      setItem: (item) => setSearch({ item: item ?? undefined }),
+      setItem: (item) => setSearch({ item: item ?? undefined, acct: undefined }),
+      setAcct: (acct) => setSearch({ acct: acct ?? undefined }),
       setDir: (dir) => setSearch({ dir: dir || undefined }),
       setLens: (lens) => setSearch({ lens: lens || undefined }),
       setSlice: (slice) => setSearch({ slice: slice || undefined }),

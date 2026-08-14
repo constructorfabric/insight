@@ -157,6 +157,12 @@ export interface PaneItem {
   badge?: { text: string; tone: "warn" | "new" | "error" };
   /** See {@link Readiness}. Absent = built and data-backed. */
   readiness?: Readiness;
+  /**
+   * Rendered only for viewers holding the active `admin` identity role
+   * (`useIsAdmin`) — a UI courtesy over the server-side gate, which refuses
+   * regardless of what the frontend draws.
+   */
+  adminOnly?: boolean;
 }
 
 export interface PaneGroup {
@@ -280,9 +286,14 @@ export const PEOPLE_ITEMS: readonly PaneItem[] = [
 
 /* ── Manage zone ─────────────────────────────────────────────────────── */
 
+/** The Manage pane for one viewer: admin-only surfaces drop for everyone else. */
+export function manageItemsFor(isAdmin: boolean): readonly PaneItem[] {
+  return MANAGE_ITEMS.filter((item) => !item.adminOnly || isAdmin);
+}
+
 export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "metric-catalog", label: "Metric catalog", icon: LayoutGrid },
-  { id: "identities", label: "Identities", icon: Fingerprint, readiness: "unbuilt" },
+  { id: "identities", label: "Identities", icon: Fingerprint, adminOnly: true },
   { id: "taxonomy", label: "Roles & taxonomy", icon: Boxes, readiness: "unbuilt" },
   { id: "exclusions", label: "Data exclusions", icon: Filter, readiness: "unbuilt" },
   { id: "snapshots", label: "Org snapshots", icon: Clock, readiness: "unbuilt" },

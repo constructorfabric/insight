@@ -402,6 +402,33 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS silver.class_git_item_events
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `item_type` String,
+    `item_number` Int64,
+    `event_id` String,
+    `event_at` Nullable(DateTime),
+    `actor_name` String,
+    `field_id` String,
+    `delta_action` String,
+    `delta_value_id` String,
+    `delta_value_display` String,
+    `prev_value_id` Nullable(String),
+    `prev_value_display` Nullable(String),
+    `data_source` String,
+    `_version` Int64,
+    `_airbyte_extracted_at` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests
 (
     `tenant_id` Nullable(String),

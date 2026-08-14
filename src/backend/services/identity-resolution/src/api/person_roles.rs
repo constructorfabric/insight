@@ -296,12 +296,8 @@ fn reason_too_long() -> CanonicalError {
     )
 }
 
-/// Clamp `?limit=` to `[1, 500]`; negatives → 1, absent → 50 (parity with the
-/// .NET `int?` clamp — a nonsense value never 400s the request).
 fn clamp_limit(limit: Option<i64>) -> u64 {
-    limit.map_or(LIST_DEFAULT_LIMIT, |l| {
-        u64::try_from(l).unwrap_or(1).clamp(1, LIST_MAX_LIMIT)
-    })
+    super::listing::clamp_limit(limit, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT)
 }
 
 #[cfg(test)]

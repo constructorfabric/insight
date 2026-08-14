@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insight-git-cli-proxy.fullname" . }}
+  labels:
+    {{- include "insight-git-cli-proxy.labels" . | nindent 4 }}
+spec:
+  {{- /*
+    Exactly one writer, enforced rather than documented. The per-repository
+    locks, the LRU state and the single-flight map all live in ONE process, so
+    a second replica does not share them — it races the first one over the same
+    PVC. ReadWriteOnce does not prevent that: it admits many pods on one node.
+  */}}
+  {{- if ne (int .Values.replicaCount) 1 }}
+    {{- fail "replicaCount must be 1: cache locking is process-local, so a second replica corrupts the shared volume" }}
+  {{- end }}
+  replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate: the cache PVC is ReadWriteOnce and the LRU /
+    # lock state lives in one process, so the old pod must be gone before the
+    # new one binds the volume.
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "insight-git-cli-proxy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "insight-git-cli-proxy.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when the gears config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global }}
+      {{- with .imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      enableServiceLinks: false
+      # git clones can run for minutes; let an in-flight one finish rather
+      # than leaving a half-written temp dir behind.
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: git-cli-proxy
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/git-cli-proxy"]
+          args: ["-c", "/app/config/insight.yaml"]
+          volumeMounts:
+            - name: config
+              mountPath: /app/config/insight.yaml
+              subPath: insight.yaml
+              readOnly: true
+            # The repository cache: the only large writable path.
+            - name: cache
+              mountPath: {{ .Values.persistence.mountPath }}
+            # The gears host creates server.home_dir at boot and grpc-hub
+            # binds its UDS under /tmp — the only other writable paths.
+            - name: home
+              mountPath: /app/data/home
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.caCertSecret }}
+            - name: git-ca
+              mountPath: /etc/insight/git-ca
+              readOnly: true
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          envFrom:
+            # The umbrella publishes INSIGHT_LOG_LEVEL and, when an OTLP
+            # endpoint is configured, the OTEL_* emission contract here.
+            # Without it the §4.3 metrics are computed and exported nowhere.
+            # The chart ships only as part of the umbrella, so the ref is
+            # hardcoded, as in the sibling services.
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
+            # Carries APP__gears__git_cli_proxy__config__proxy_token.
+            - secretRef:
+                name: {{ required "existingSecret is required" .Values.existingSecret | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "insight-git-cli-proxy.fullname" . }}-config
+        - name: cache
+          persistentVolumeClaim:
+            claimName: {{ include "insight-git-cli-proxy.fullname" . }}-cache
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.caCertSecret }}
+        - name: git-ca
+          secret:
+            secretName: {{ .Values.caCertSecret | quote }}
+        {{- end }}

@@ -56,7 +56,7 @@ stringData:
 
 Replace `CHANGE_ME` (and any other placeholder) values in whichever connector files you need, under `connectors/`:
 
-`jira`, `slack`, `github-v2`, `gitlab`, `m365`, `zoom`, `confluence`, `zendesk`, `bamboohr`, `ms-entra`, `outline`, `hubspot`, `cursor`, `chatgpt-team`, `claude-team`, `claude-enterprise`, `bitbucket-cloud`, `zulip-proxy`, `github-directory`.
+`jira`, `slack`, `github`, `gitlab`, `m365`, `zoom`, `confluence`, `zendesk`, `bamboohr`, `ms-entra`, `outline`, `hubspot`, `cursor`, `chatgpt-team`, `claude-team`, `claude-enterprise`, `bitbucket-cloud`, `zulip-proxy`, `github-directory`.
 
 Apply all of them at once, or one at a time:
 
@@ -141,24 +141,6 @@ stringData:
 ### Source control & CI
 
 ```yaml
-# ⚠ CDK connector; supersedes `github`
-apiVersion: v1
-kind: Secret
-metadata:
-  name: insight-github-v2-main
-  namespace: insight
-  labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: github-v2, insight.cyberfabric.com/source-id: github-v2-main }
-type: Opaque
-stringData:
-  github_token:         "CHANGE_ME"
-  github_organizations: "org-a,org-b"
-  github_start_date:    "2026-01-01"
-  github_skip_archived: "true"
-  github_skip_forks:    "true"
-```
-
-```yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -201,6 +183,27 @@ type: Opaque
 stringData:
   github_token:         "ghp_CHANGE_ME"   # read:org (+ user:email for member emails)
   github_organizations: '["myorg"]'       # JSON array
+```
+
+```yaml
+# Declarative GitHub connector on the git-cli-proxy: commit-level data comes
+# from a bare clone served by the proxy instead of one vendor API call per
+# commit. Needs a reachable git-cli-proxy deployment, with git_proxy_token
+# equal to the proxy's own configured token.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: insight-github-main
+  namespace: insight
+  labels: { app.kubernetes.io/part-of: insight }
+  annotations: { insight.cyberfabric.com/connector: github, insight.cyberfabric.com/source-id: github-main }
+type: Opaque
+stringData:
+  github_token:         "ghp_CHANGE_ME"   # repo, read:org, read:project
+  github_organizations: '["myorg"]'       # JSON array
+  github_start_date:    "2026-01-01"
+  git_proxy_url:        "http://insight-git-cli-proxy:8085"
+  git_proxy_token:      "CHANGE_ME"       # must match the proxy's own Secret
 ```
 
 ### Issue tracking & docs

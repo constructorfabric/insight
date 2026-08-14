@@ -7,7 +7,10 @@ mod gate;
 mod handlers;
 #[cfg(test)]
 mod http_live_tests;
+mod listing;
+pub mod me;
 pub mod person_roles;
+pub mod persons;
 pub mod resolution;
 pub mod roles;
 pub mod seed;
@@ -127,6 +130,49 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(handlers::resolve_profile)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/v1/me")
+        .operation_id("identity_resolution.me.get")
+        .summary("The caller's identity and active roles")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<me::MeResponse>(
+            openapi,
+            StatusCode::OK,
+            "Who the gateway JWT identifies, with their active identity roles",
+        )
+        .standard_errors(openapi)
+        .handler(me::get_me)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/persons")
+        .operation_id("identity_resolution.persons.search")
+        .summary("Search persons by their current observed values (admin)")
+        .authenticated()
+        .query_param(
+            "q",
+            true,
+            "Search terms, at most 8 (200 characters total); every \
+             whitespace-separated term must match one of the person's current \
+             identity values — email, username, display/first/last name or \
+             employee id (case-insensitive substring). Titles and statuses are \
+             displayed on the card but not searched.",
+        )
+        .query_param_typed(
+            "limit",
+            false,
+            "Cap on returned persons (1..=100, default 20)",
+            "integer",
+        )
+        .no_license_required()
+        .json_response_with_schema::<persons::PersonListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Matching persons, named-first",
+        )
+        .standard_errors(openapi)
+        .handler(persons::search_persons)
+        .register(router, openapi);
+
     // Operator identity corrections (ADR-0003): each verb appends binding
     // observations authored by the caller. Admin-gated like the rest of the
     // operator surface; the handlers journal every call in `operations`.
@@ -198,8 +244,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param_typed(
             "limit",
             false,
-            "Cap on returned items (1..=1000, default 100). The rates always \
-             cover every observed account, whatever the cap.",
+            "Cap on returned items (1..=1000, default 100); `items_truncated` \
+             says whether it cut the list. The rates cover every observed \
+             account whatever the cap — unless `truncated` is set, which means \
+             the evidence read itself hit its safety ceiling and both the \
+             rates and the queue describe only the accounts read before it.",
             "integer",
         )
         .json_response_with_schema::<resolution::AttentionResponse>(
