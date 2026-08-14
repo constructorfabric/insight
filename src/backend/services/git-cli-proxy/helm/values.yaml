@@ -1,0 +1,91 @@
+# The service is consumed ONLY by Airbyte connector pods: it is never routed
+# through the platform gateway, never called by another service, and never by a
+# user. Two things enforce that — the NetworkPolicy below and the service's own
+# bearer token (`proxy_token` in the config Secret).
+
+# Must be 1. The chart refuses to render anything else: the per-repository
+# locks, the LRU state and the single-flight map live in one process, so a
+# second replica races the first over the same PVC rather than sharing it.
+replicaCount: 1
+
+podAnnotations: {}
+
+image:
+  repository: ghcr.io/constructorfabric/insight-git-cli-proxy
+  tag: "" # MUST be set by the operator. No `:latest` default.
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8084
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    # git subprocesses (clone, repack) are the CPU/memory consumers here.
+    cpu: "2"
+    memory: 2Gi
+
+# Repository cache volume. The app budget below MUST stay under this size:
+# kubelet enforcement is pod eviction, which is a crash, not a mechanism.
+persistence:
+  size: 50Gi
+  storageClass: ""
+  # Fixed mount path; the config's data_dir points here.
+  mountPath: /app/data/repos
+  # ReadWriteOncePod is the accurate mode: cache locking is process-local, so
+  # exactly one POD may write this volume. Drop to ReadWriteOnce only on a
+  # cluster older than Kubernetes 1.27, where `replicaCount: 1` is the guard.
+  accessMode: ReadWriteOncePod
+
+cache:
+  # Cache budget in bytes. Empty = 85% of persistence.size; the remainder is
+  # headroom for transient packs and git temp files (an ENOSPC mid-pack-write
+  # is a failed sync, not a graceful reclaim). An explicit value must stay
+  # within 50-90% of the volume.
+  diskBudgetBytes: null
+  # Per-repository cap. A clone/fetch beyond it is aborted and answered 413,
+  # so one oversized monorepo cannot evict the whole working set.
+  maxRepoBytes: 10737418240
+  # Freshness window in seconds: a repo fetched more recently is served
+  # without contacting origin. Per-request override: X-Max-Staleness.
+  defaultMaxStalenessSeconds: 300
+  # Concurrency cap for clone/fetch/repack.
+  heavyOpsConcurrency: 4
+  # PEM bundle for self-hosted origins behind a private CA. Empty = system
+  # trust store (correct for the public clouds).
+  caCertPath: ""
+  # EXCEPTIONS to the built-in refusal of loopback, link-local, private and
+  # cluster-internal destinations. Public vendors — github.com, gitlab.com,
+  # bitbucket.org, anything self-hosted on a public address — need nothing
+  # here: tenants add sources without an operator, and this list only ever
+  # widens, never narrows. Name a host only when the vendor sits inside one of
+  # those refused ranges (self-hosted GitLab on a private network), which needs
+  # an operator anyway for egress and DNS.
+  allowedRepoHosts: []
+
+# CA bundle mounted for git's TLS verification. Set `secretName` to a Secret
+# holding `ca.pem` and point cache.caCertPath at the mounted file.
+caCertSecret: ""
+
+# Pre-provisioned Secret carrying the gears-rust host's leaf-config overrides
+# (injected via envFrom; they override the mounted config ConfigMap):
+#   APP__gears__git_cli_proxy__config__proxy_token
+# The umbrella populates `insight-git-cli-proxy-config` automatically; for
+# standalone installs the operator pre-creates an equivalent Secret and sets
+# `existingSecret` to its name.
+existingSecret: ""
+
+networkPolicy:
+  # Ingress is restricted to the namespaces that run Airbyte connector pods.
+  # Disabling this exposes git credentials-bearing endpoints to the whole
+  # cluster — only do it on a cluster without NetworkPolicy support.
+  enabled: true
+  # Namespaces allowed to reach the service, matched by label. Naming none
+  # refuses to render: a policy with no rule denies every caller, which looks
+  # like a healthy install and fails every sync.
+  allowedNamespaceLabels:
+    - key: kubernetes.io/metadata.name
+      values: []

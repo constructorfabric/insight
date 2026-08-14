@@ -1,0 +1,34 @@
+{{- include "insight-git-cli-proxy.validateDiskBudget" . }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "insight-git-cli-proxy.fullname" . }}-cache
+  labels:
+    {{- include "insight-git-cli-proxy.labels" . | nindent 4 }}
+  annotations:
+    # The cache is rebuildable: losing it costs re-clones, never correctness.
+    # Kept on uninstall anyway — a re-clone storm across every tenant's
+    # repositories is expensive enough to be an operator decision.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    # Load-bearing, not a default: the in-process locks, the LRU state and the
+    # single-flight map live in ONE process, so exactly one POD may write this
+    # volume. ReadWriteOnce only promises one NODE — two pods scheduled
+    # together would both mount it — so ReadWriteOncePod is the accurate mode
+    # where the cluster supports it (Kubernetes 1.27+). The chart still
+    # enforces `replicaCount: 1`, which is what protects a cluster too old for
+    # it.
+    - {{ .Values.persistence.accessMode | default "ReadWriteOncePod" }}
+  resources:
+    requests:
+      storage: {{ required "persistence.size is required" .Values.persistence.size }}
+  {{- /* The umbrella documents global.storageClass as visible to every
+         subchart, and the bundled dependencies honour it; a per-subchart
+         value overrides it. Getting this wrong is expensive to undo — the
+         PVC carries resource-policy: keep, so a wrong class means a manual
+         delete. */ -}}
+  {{- $storageClass := .Values.persistence.storageClass | default (default dict .Values.global).storageClass }}
+  {{- with $storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}

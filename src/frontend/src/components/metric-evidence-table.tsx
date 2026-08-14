@@ -1,6 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, ArrowUp, Check, ChevronsUpDown, Copy } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronsUpDown,
+  Copy,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import type {
@@ -17,17 +25,25 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { cellText, type EvidenceSort } from "@/lib/metrics/evidence-rows";
+import {
+  cellText,
+  evidenceRowKeys,
+  summaryLine,
+  type EvidenceSort,
+} from "@/lib/metrics/evidence-rows";
 import { cn } from "@/lib/utils";
 
 function columnLayout(column: MetricEvidenceColumn) {
   if (column.key === "ref") return { basisRem: 9, grow: 0 };
-  if (column.key === "title") return { basisRem: 24, grow: 2 };
-  if (column.key === "repository") return { basisRem: 16, grow: 1.25 };
-  if (column.key === "author") return { basisRem: 12, grow: 1 };
-  if (column.key === "date") return { basisRem: 8, grow: 1 };
+  if (column.key === "title") return { basisRem: 24, grow: 4 };
+  if (column.key === "repository") return { basisRem: 12, grow: 0.5 };
+  if (column.key === "author") return { basisRem: 10, grow: 0.25 };
+  if (column.key === "date") return { basisRem: 8, grow: 0 };
+  if (column.type === "number") return { basisRem: 7, grow: 0 };
   return { basisRem: 9, grow: 1 };
 }
+
+const EXPANDER_REM = 2.25;
 
 function CopyValueButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
@@ -60,7 +76,10 @@ function CopyValueButton({ value }: { value: string }) {
       className="shrink-0 text-muted-foreground hover:text-foreground"
       aria-label={copied ? "Copied" : `Copy ${value}`}
       title={copied ? "Copied" : "Copy ref"}
-      onClick={() => void copyValue()}
+      onClick={(event) => {
+        event.stopPropagation();
+        void copyValue();
+      }}
     >
       {copied ? <Check /> : <Copy />}
     </Button>
@@ -97,18 +116,32 @@ export function MetricEvidenceTable({
   pageLimitReached: boolean;
 }) {
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const rowKeys = useMemo(() => evidenceRowKeys(rows), [rows]);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => viewport,
     estimateSize: () => 44,
     overscan: 8,
+    // The measured height of an expanded row is cached under this key. Left to
+    // default it is the index, and a re-sort then leaves a tall measurement on
+    // whichever row inherits the position.
+    getItemKey: useCallback((index: number) => rowKeys[index] ?? index, [rowKeys]),
   });
   const virtualRows = virtualizer.getVirtualItems();
   const virtualBodyHeight = virtualizer.getTotalSize();
   const last = virtualRows.at(-1)?.index ?? 0;
   const minimumWidth = columns.reduce((total, column) => {
     return total + columnLayout(column).basisRem;
-  }, 0);
+  }, EXPANDER_REM);
+
+  function toggleRow(key: string): void {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (
@@ -150,6 +183,13 @@ export function MetricEvidenceTable({
             role="row"
             className="flex w-full border-b-0 hover:bg-transparent"
           >
+            <TableHead
+              role="columnheader"
+              className="flex h-10 shrink-0 items-center p-0"
+              style={{ flex: `0 0 ${EXPANDER_REM}rem` }}
+            >
+              <span className="sr-only">Expand record</span>
+            </TableHead>
             {columns.map((column) => {
               const layout = columnLayout(column);
               const state = sort?.key === column.key ? sort.direction : null;
@@ -182,7 +222,16 @@ export function MetricEvidenceTable({
                       state && "text-foreground"
                     )}
                   >
-                    <span className="min-w-0 truncate">{column.label}</span>
+                    <span
+                      className={cn(
+                        "min-w-0",
+                        numeric
+                          ? "text-right leading-tight whitespace-normal"
+                          : "truncate"
+                      )}
+                    >
+                      {column.label}
+                    </span>
                     <SortIcon state={state} />
                   </button>
                 </TableHead>
@@ -198,44 +247,100 @@ export function MetricEvidenceTable({
           {virtualRows.map((virtualRow) => {
             const row = rows[virtualRow.index];
             if (!row) return null;
+            const key = rowKeys[virtualRow.index]!;
+            const isOpen = expanded.has(key);
             return (
               <TableRow
                 role="row"
-                key={virtualRow.index}
+                key={key}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
                 aria-rowindex={virtualRow.index + 2}
-                className="absolute top-0 left-0 flex h-11 w-full hover:bg-transparent"
+                aria-expanded={isOpen}
+                onClick={() => toggleRow(key)}
+                className="absolute top-0 left-0 flex w-full cursor-pointer flex-wrap hover:bg-muted/20"
                 style={{
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
+                <TableCell
+                  role="cell"
+                  className="flex h-11 shrink-0 items-center justify-center p-0"
+                  style={{ flex: `0 0 ${EXPANDER_REM}rem` }}
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-expanded={isOpen}
+                    aria-label={isOpen ? "Hide full record" : "Show full record"}
+                    className="text-muted-foreground"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      toggleRow(key);
+                    }}
+                  >
+                    {isOpen ? <ChevronDown /> : <ChevronRight />}
+                  </Button>
+                </TableCell>
                 {columns.map((column) => {
                   const layout = columnLayout(column);
                   const value = row.values[column.key];
                   const text = cellText(value, column.type);
+                  const line = summaryLine(text);
                   return (
                     <TableCell
                       role="cell"
                       key={column.key}
                       className={cn(
-                        "min-w-0 truncate px-3 py-3 tabular-nums",
+                        "h-11 min-w-0 truncate px-3 py-3 tabular-nums",
                         column.type === "number" && "text-right"
                       )}
                       style={{
                         flex: `${layout.grow} 0 ${layout.basisRem}rem`,
                       }}
-                      title={text}
+                      title={line}
                     >
                       {column.key === "ref" && value != null ? (
                         <div className="flex min-w-0 items-center gap-1">
-                          <span className="min-w-0 truncate">{text}</span>
+                          <span className="min-w-0 truncate">{line}</span>
                           <CopyValueButton value={String(value)} />
                         </div>
                       ) : (
-                        text
+                        line
                       )}
                     </TableCell>
                   );
                 })}
+                {isOpen ? (
+                  <TableCell
+                    role="cell"
+                    aria-colspan={columns.length + 1}
+                    // Selecting the text fires a click on the row, which would
+                    // close the panel the reader is trying to read.
+                    onClick={(event) => event.stopPropagation()}
+                    className="w-full basis-full cursor-auto border-t bg-muted/40 px-3 py-3"
+                  >
+                    {/* Capped so a long message scrolls here rather than
+                        filling the table with one record. Not a vh: that is
+                        the window, which can exceed the table's own height. */}
+                    <dl className="grid max-h-96 gap-x-6 gap-y-2 overflow-y-auto overscroll-contain sm:grid-cols-[10rem_1fr]">
+                      {columns.map((column) => {
+                        const text = cellText(row.values[column.key], column.type);
+                        return (
+                          <Fragment key={column.key}>
+                            <dt className="text-sm text-muted-foreground">
+                              {column.label}
+                            </dt>
+                            <dd className="text-sm break-words whitespace-pre-wrap">
+                              {text}
+                            </dd>
+                          </Fragment>
+                        );
+                      })}
+                    </dl>
+                  </TableCell>
+                ) : null}
               </TableRow>
             );
           })}

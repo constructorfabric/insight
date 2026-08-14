@@ -39,13 +39,17 @@ definitions:
     error_handler:
       type: DefaultErrorHandler
       max_retries: 5
+      # The CDK resolves backoff per requester, not per response filter: the
+      # first strategy returning a value wins for every retryable response.
+      # X-RateLimit-Reset is stamped on GitHub responses of any status, so
+      # reading it here would put a transient 5xx to sleep until the hourly
+      # window resets.
       backoff_strategies:
         - type: WaitTimeFromHeader
           header: Retry-After
           max_waiting_time_in_seconds: 600
-        - type: WaitUntilTimeFromHeader
-          header: X-RateLimit-Reset
-          max_waiting_time_in_seconds: 600
+        - type: ExponentialBackoffStrategy
+          factor: 2
       response_filters:
         - type: HttpResponseFilter
           action: RATE_LIMITED

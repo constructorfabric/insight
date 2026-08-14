@@ -5,6 +5,9 @@
  * items for People, catalog items for Manage), and clicking writes the
  * portal-store selection the content area renders from.
  */
+vi.mock("@/queries/identity-me", () => ({
+  useIsAdmin: () => ({ isAdmin: false, isPending: false }),
+}));
 vi.mock("@tanstack/react-router", async () => {
   const { portalRouterMock } = await import("@/test/portal-router");
   return portalRouterMock();

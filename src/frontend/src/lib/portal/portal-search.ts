@@ -24,6 +24,8 @@ export interface PortalSearch {
   zone?: string;
   /** Selected item within a zone (an Overview view, a Manage surface). */
   item?: string;
+  /** Selected account inside the Identities surface (an opaque account key). */
+  acct?: string;
   /** Expanded direction + its active lens, within the Directions zone. */
   dir?: string;
   lens?: string;
@@ -70,6 +72,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
   return {
     zone: str(raw.zone),
     item: str(raw.item),
+    acct: str(raw.acct),
     dir: str(raw.dir),
     lens: str(raw.lens),
     // Lower-cased to match `normalizePersonId`: the same id reaches us from a
@@ -92,6 +95,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
 export const PORTAL_SEARCH_KEYS = [
   "zone",
   "item",
+  "acct",
   "dir",
   "lens",
   "scope",

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -15,6 +16,8 @@ import type {
   MetricDefinitionSchemaStatus,
   MetricDefinition,
 } from "@/api/metric-definitions-client";
+import { IdentitiesView } from "@/components/portal/identities-view";
+import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
 import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -37,6 +40,7 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
 export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
   if (item === "data-health") return <DataHealth />;
+  if (item === "identities") return <IdentitiesGate />;
   return (
     <div className="mx-auto w-full max-w-md p-8">
       <ComingSoon
@@ -46,6 +50,47 @@ export function ManageView({ item }: { item: string | null }) {
       />
     </div>
   );
+}
+
+/**
+ * The role gate in front of the identity-resolution console. Bookmarks and
+ * pasted URLs land here directly (the nav hides the item, the URL does not),
+ * so a non-admin gets an explicit refusal rather than a broken or empty
+ * screen — and never a flash of the console while the check is in flight.
+ * A FAILED check is a third state: still no console (fail closed), but the
+ * copy says "could not verify" with a retry — telling a real admin to go ask
+ * for a role they already hold would send them chasing a grant that fixes
+ * nothing.
+ */
+function IdentitiesGate() {
+  const { t } = useTranslation();
+  const { isAdmin, isPending, isError, retry } = useIsAdmin();
+  if (isPending) return <CenteredSpinner />;
+  if (isError) {
+    return (
+      <div className="mx-auto w-full max-w-md p-8">
+        <ComingSoon
+          variant="card"
+          state="error"
+          label={t("identities.gate.unverified")}
+          onRetry={retry}
+        />
+      </div>
+    );
+  }
+  if (!isAdmin) {
+    return (
+      <div className="mx-auto w-full max-w-md p-8" role="alert">
+        <div className="rounded-lg border p-6 text-center">
+          <p className="text-sm font-semibold">{t("identities.gate.title")}</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {t("identities.gate.description")}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return <IdentitiesView />;
 }
 
 /** Flatten the prefix-grouped query result into one key-sorted list. */
