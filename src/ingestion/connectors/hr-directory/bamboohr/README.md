@@ -83,14 +83,14 @@ BambooHR caps a custom report at 400 fields and answers a larger request with a
 rows merged on employee id.
 
 Requested fields the API key cannot read are dropped from the report silently, with
-the call still succeeding. The connector compares the report's declared columns
-against what it asked for, but only holds the bronze columns to it: those are named
-by alias and come back under it, and publishing one empty would clear identity
-values downstream, so a missing one stops the sync. The rest cannot be checked that
-way — field metadata lists entries a custom report will not return, and a field
-asked for by numeric id comes back under an indexed `<id>.N` key — so an apparent
-gap there says more about BambooHR's naming than about access. A report that
-declares no columns at all is treated as unverifiable rather than as loss.
+the call still succeeding. An API key may hold access to only a subset of the
+declared bronze columns; the sync proceeds and publishes the missing ones as null.
+Bronze columns are named by alias and come back under it, so their absence is
+detectable — the connector logs a warning naming them. The rest cannot be checked
+that way — field metadata lists entries a custom report will not return, and a
+field asked for by numeric id comes back under an indexed `<id>.N` key — so an
+apparent gap there says more about BambooHR's naming than about access. A report
+that declares no columns at all is treated as unverifiable and not warned about.
 
 `SENSITIVE_FIELDS` in `source_bamboohr/streams/employees.py` is the exception:
 government identifiers, protected demographics, personal contact details, street

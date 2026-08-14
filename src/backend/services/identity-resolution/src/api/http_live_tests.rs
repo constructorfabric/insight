@@ -29,6 +29,7 @@ use toolkit_security::SecurityContext;
 use super::AppState;
 use crate::config::GearConfig;
 use crate::infra::db::test_fixture::{Fixture, fixture_or_skip};
+use crate::infra::db::{person_roles_repo, roles_repo};
 
 type TestResult = anyhow::Result<()>;
 
@@ -89,6 +90,18 @@ fn json_req(uri: &str, body: &Value) -> anyhow::Result<Request<Body>> {
 
 async fn post(app: Router, uri: &str, body: &Value) -> anyhow::Result<(StatusCode, Value)> {
     let resp = app.oneshot(json_req(uri, body)?).await?;
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await?;
+    let payload = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    Ok((status, payload))
+}
+
+async fn get(app: Router, uri: &str) -> anyhow::Result<(StatusCode, Value)> {
+    let req = Request::builder()
+        .method("GET")
+        .uri(uri)
+        .body(Body::empty())?;
+    let resp = app.oneshot(req).await?;
     let status = resp.status();
     let bytes = to_bytes(resp.into_body(), usize::MAX).await?;
     let payload = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
@@ -395,5 +408,323 @@ async fn an_unknown_value_type_is_a_client_error() -> TestResult {
     .await?;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+// ── GET /v1/me ──────────────────────────────────────────────
+
+async fn grant_admin(f: &Fixture, person: Uuid) -> anyhow::Result<Uuid> {
+    let grant = Uuid::now_v7();
+    person_roles_repo::insert(
+        &f.db,
+        grant,
+        f.tenant,
+        person,
+        roles_repo::ADMIN_ROLE_ID,
+        None,
+        person,
+        Some("http-live fixture"),
+    )
+    .await?;
+    Ok(grant)
+}
+
+fn role_names(payload: &Value) -> anyhow::Result<Vec<String>> {
+    // Fails on a missing/renamed field instead of defaulting to empty, so an
+    // "expects no roles" assertion cannot pass vacuously on shape drift.
+    let roles = payload["roles"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("no `roles` array in {payload}"))?;
+    Ok(roles
+        .iter()
+        .filter_map(|r| r["name"].as_str().map(str::to_owned))
+        .collect())
+}
+
+#[tokio::test]
+async fn me_names_the_caller_and_their_active_admin_role() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("me-admin@http-live.test").await?;
+    grant_admin(&f, caller).await?;
+
+    let (status, body) = get(app(&f, caller), "/v1/me").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["person_id"], caller.to_string());
+    assert_eq!(body["insight_tenant_id"], f.tenant.to_string());
+    assert_eq!(role_names(&body)?, vec!["admin".to_owned()]);
+    assert_eq!(
+        body["roles"][0]["role_id"],
+        roles_repo::ADMIN_ROLE_ID.to_string()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn me_with_no_grants_is_an_empty_list_not_an_error() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("me-plain@http-live.test").await?;
+
+    let (status, body) = get(app(&f, caller), "/v1/me").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(role_names(&body)?, Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn me_omits_a_revoked_grant() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("me-revoked@http-live.test").await?;
+    let grant = grant_admin(&f, caller).await?;
+    person_roles_repo::soft_delete(&f.db, f.tenant, grant, None).await?;
+
+    let (status, body) = get(app(&f, caller), "/v1/me").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(role_names(&body)?, Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn me_omits_a_grant_from_another_tenant() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("me-crosstenant@http-live.test").await?;
+    grant_admin(&f.in_another_tenant(), caller).await?;
+
+    let (status, body) = get(app(&f, caller), "/v1/me").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(role_names(&body)?, Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn me_without_a_caller_is_unauthenticated() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+
+    let (status, _) = get(app(&f, Uuid::nil()), "/v1/me").await?;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    Ok(())
+}
+
+// ── GET /v1/persons ─────────────────────────────────────────
+
+fn found_ids(payload: &Value) -> anyhow::Result<Vec<String>> {
+    // Same shape-drift guard as `role_names`.
+    let items = payload["items"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("no `items` array in {payload}"))?;
+    Ok(items
+        .iter()
+        .filter_map(|i| i["person_id"].as_str().map(str::to_owned))
+        .collect())
+}
+
+async fn admin_operator(f: &Fixture) -> anyhow::Result<Uuid> {
+    let operator = f.person("operator@http-live.test").await?;
+    grant_admin(f, operator).await?;
+    Ok(operator)
+}
+
+#[tokio::test]
+async fn persons_search_requires_the_admin_row() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let plain = f.person("plain-searcher@http-live.test").await?;
+
+    let (status, _) = get(app(&f, plain), "/v1/persons?q=anything").await?;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    Ok(())
+}
+
+#[tokio::test]
+async fn persons_search_without_terms_is_a_client_error() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let operator = admin_operator(&f).await?;
+
+    for uri in ["/v1/persons", "/v1/persons?q=%20%20"] {
+        let (status, _) = get(app(&f, operator), uri).await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "should reject: {uri}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_person_is_found_by_a_current_email_fragment() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let operator = admin_operator(&f).await?;
+    let marker = Uuid::now_v7().simple().to_string();
+    let person = f.person(&format!("find-{marker}@http-live.test")).await?;
+
+    let (status, body) = get(app(&f, operator), &format!("/v1/persons?q=find-{marker}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![person.to_string()]);
+    assert_eq!(
+        body["items"][0]["email"],
+        format!("find-{marker}@http-live.test")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_superseded_email_no_longer_finds_its_old_owner() -> TestResult {
+    // The moved-mailbox case: the old owner observed a NEWER email from the
+    // same source, so the old address is theirs no more — only the person the
+    // address currently belongs to comes back.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let operator = admin_operator(&f).await?;
+    let marker = Uuid::now_v7().simple().to_string();
+    let moved = format!("moved-{marker}@http-live.test");
+
+    let old_owner = f.person(&moved).await?;
+    f.observed(
+        old_owner,
+        "email",
+        &format!("fresh-{marker}@http-live.test"),
+    )
+    .await?;
+    let new_owner = f.person(&moved).await?;
+
+    let (status, body) = get(app(&f, operator), &format!("/v1/persons?q=moved-{marker}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        found_ids(&body)?,
+        vec![new_owner.to_string()],
+        "the old owner's claim is superseded by their own fresher email"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_still_current_email_two_persons_claim_returns_both() -> TestResult {
+    // The handed-over mailbox with no fresher data for the old owner: the
+    // journal honestly says two persons currently claim it, and the operator
+    // is the one who gets to disambiguate.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let operator = admin_operator(&f).await?;
+    let marker = Uuid::now_v7().simple().to_string();
+    let shared = format!("shared-{marker}@http-live.test");
+
+    let first = f.person(&shared).await?;
+    let second = f.person(&shared).await?;
+
+    let (status, body) = get(app(&f, operator), &format!("/v1/persons?q=shared-{marker}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    let mut ids = found_ids(&body)?;
+    ids.sort();
+    let mut expected = vec![first.to_string(), second.to_string()];
+    expected.sort();
+    assert_eq!(ids, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_term_must_match_though_not_the_same_value() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let operator = admin_operator(&f).await?;
+    let marker = Uuid::now_v7().simple().to_string();
+    let person = f.person(&format!("multi-{marker}@http-live.test")).await?;
+    f.observed(person, "display_name", &format!("Terman Findable {marker}"))
+        .await?;
+
+    let by_both = format!("/v1/persons?q=multi-{marker}%20findable");
+    let (status, body) = get(app(&f, operator), &by_both).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![person.to_string()]);
+    assert_eq!(
+        body["items"][0]["display_name"],
+        format!("Terman Findable {marker}")
+    );
+
+    let with_a_miss = format!("/v1/persons?q=multi-{marker}%20nosuchterm");
+    let (status, body) = get(app(&f, operator), &with_a_miss).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn named_persons_sort_before_email_only_ones() -> TestResult {
+    // The named-first display contract: a person with a display_name lists
+    // before one the journal only knows by email, whatever their ids or
+    // email spellings say.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let operator = admin_operator(&f).await?;
+    let marker = Uuid::now_v7().simple().to_string();
+
+    let email_only = f
+        .person(&format!("aaa-order-{marker}@http-live.test"))
+        .await?;
+    let named = f
+        .person(&format!("zzz-order-{marker}@http-live.test"))
+        .await?;
+    f.observed(named, "display_name", &format!("Orderly Named {marker}"))
+        .await?;
+
+    let (status, body) = get(app(&f, operator), &format!("/v1/persons?q=order-{marker}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        found_ids(&body)?,
+        vec![named.to_string(), email_only.to_string()],
+        "named first, even though the email-only person's email sorts earlier"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cut_page_says_so_instead_of_posing_as_the_answer() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let operator = admin_operator(&f).await?;
+    let marker = Uuid::now_v7().simple().to_string();
+    for i in 0..3 {
+        f.person(&format!("cut-{marker}-{i}@http-live.test"))
+            .await?;
+    }
+
+    let (status, body) = get(
+        app(&f, operator),
+        &format!("/v1/persons?q=cut-{marker}&limit=2"),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?.len(), 2, "the page honours the limit");
+    assert_eq!(body["truncated"], true, "the cut is announced");
+
+    let (_, full) = get(app(&f, operator), &format!("/v1/persons?q=cut-{marker}")).await?;
+    assert_eq!(found_ids(&full)?.len(), 3);
+    assert_eq!(full["truncated"], false);
     Ok(())
 }

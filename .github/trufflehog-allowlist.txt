@@ -95,10 +95,6 @@ c66f2f99c351dfe2  Lob                src/ingestion/connectors/git/bitbucket-clou
 9ed6f7a6d343045c  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_repositories.py  # test function name; `test_` + 35 chars is also the Lob key shape
 a67bc177d183319c  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_request_budget.py  # test function name; `test_` + 35 chars is also the Lob key shape
 fbe6ea67ba120e80  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_unresolvable_heads.py  # test function name; `test_` + 35 chars is also the Lob key shape
-2a7b0de409622f98  Lob                src/ingestion/connectors/git/github-v2/tests/test_base.py  # test function name; `test_` + 35 chars is also the Lob key shape
-595ba01586789e6c  Lob                src/ingestion/connectors/git/github-v2/tests/test_commits.py  # test function name; `test_` + 35 chars is also the Lob key shape
-beee0351c639ec18  Lob                src/ingestion/connectors/git/github-v2/tests/test_commits.py  # test function name; `test_` + 35 chars is also the Lob key shape
-26cff599ec98ae8e  Lob                src/ingestion/connectors/git/github-v2/tests/test_file_changes.py  # test function name; `test_` + 35 chars is also the Lob key shape
 063a530576b20665  Lob                src/ingestion/connectors/git/gitlab/tests/test_mr_child.py  # test function name; `test_` + 35 chars is also the Lob key shape
 6975843dfd4f4686  Lob                src/ingestion/connectors/git/gitlab/tests/test_windowing.py  # test function name; `test_` + 35 chars is also the Lob key shape
 bb96cc56962de929  Lob                src/ingestion/connectors/hr-directory/bamboohr/tests/test_client.py  # test function name; `test_` + 35 chars is also the Lob key shape
@@ -122,6 +118,7 @@ f6a76a6832046cba  Lob                tests/stand/api/test_identity.py  # test fu
 10c14a66053d0859  SQLServer          src/backend/services/identity/.env.local.example  # placeholder in an example env file / unit test
 a41e6a136aac6865  SQLServer          src/backend/services/identity/tests/Insight.Identity.Tests.Unit/MariaDbConnectionFactoryTests.cs  # placeholder in an example env file / unit test
 ffa3052a64e250a1  URI                src/backend/infra/local-dev.sh  # local dev connection string, no live credential
+95b838ac246d5801  URI                src/backend/services/git-cli-proxy/src/engine/url.rs  # test literal asserting a userinfo clone URL is rejected
 823cebaae9cccd2e  URI                src/backend/services/identity/src/Insight.Identity.Infrastructure/ClickHouse/ClickHouseOptions.cs  # local dev connection string, no live credential
 523b1ceec0ec4385  URI                src/backend/services/identity/tests/Insight.Identity.Tests.Unit/ClickHouseConnectionFactoryTests.cs  # local dev connection string, no live credential
 a80cb0d9ce8131da  URI                src/backend/services/identity/tests/Insight.Identity.Tests.Unit/ClickHouseConnectionFactoryTests.cs  # local dev connection string, no live credential

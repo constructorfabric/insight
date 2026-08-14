@@ -167,11 +167,11 @@ class TestSilentlyOmittedFields:
         (record,) = read(stream)
         assert record["raw_data"]["4463.0"] == "checked"
 
-    def test_a_withheld_bronze_column_stops_the_sync(self):
+    def test_a_withheld_bronze_column_does_not_stop_the_sync(self):
         stream, _ = employees_stream([EMPLOYEE], omit={"workEmail"})
 
-        with pytest.raises(RuntimeError, match="workEmail"):
-            read(stream)
+        (record,) = read(stream)
+        assert record["workEmail"] is None
 
     def test_a_report_that_declares_no_columns_is_not_read_as_data_loss(self):
         meta = [meta_field(4001, alias="customTeam")]

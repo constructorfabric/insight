@@ -101,6 +101,18 @@ export function formatDate(iso: string, pattern = "d MMM"): string {
   return format(parseISO(iso), pattern, { locale: enUS });
 }
 
+/**
+ * Format an instant the identity service journals. Its timestamps are UTC
+ * clock readings serialized WITHOUT a zone designator (`.NET` wire parity:
+ * `2026-08-01T10:15:00.000000`); `parseISO` would read that as local time and
+ * shift every audit entry by the viewer's UTC offset. Zone-suffixed input is
+ * passed through untouched, so the helper is safe for either shape.
+ */
+export function formatUtcInstant(iso: string, pattern = "d MMM"): string {
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso);
+  return formatDate(hasZone ? iso : `${iso}Z`, pattern);
+}
+
 /** "1.0k" reads worse than "1k" on an axis. */
 function trimTrailingZero(s: string): string {
   return s.endsWith(".0") ? s.slice(0, -2) : s;

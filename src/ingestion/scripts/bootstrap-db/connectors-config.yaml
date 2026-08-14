@@ -126,22 +126,22 @@ connectors:
         value: github-directory-acme-prod
       insight_tenant_id:
         value: fake
-  github-v2:
-    path: git/github-v2
+  github:
+    path: git/github
     config:
+      git_proxy_token:
+        value: fake
+      git_proxy_url:
+        value: fake
       github_organizations:
         value:
           - fake
-      github_skip_archived:
-        value: true
-      github_skip_forks:
-        value: true
       github_start_date:
-        value: "2024-01-01"
+        value: "2020-01-01"
       github_token:
         value: fake
       insight_source_id:
-        value: github-acme-prod
+        value: fake
       insight_tenant_id:
         value: fake
   gitlab:

@@ -58,7 +58,8 @@
       "expand": "Expand",
       "try_again": "Try again",
       "reload": "Reload",
-      "retry": "Retry"
+      "retry": "Retry",
+      "cancel": "Cancel"
     },
     "ui_components": {
       "sidebar": {
@@ -395,6 +396,101 @@
       "empty": "The metric returned no values.",
       "entity_column": "entity_id",
       "value_column": "value"
+    }
+  },
+  "identities": {
+    "title": "Identities",
+    "subtitle": "Accounts the resolver could not decide — review and resolve them.",
+    "rates": {
+      "observed": "Observed",
+      "bound": "Resolved",
+      "pending": "Pending review",
+      "no_evidence": "No evidence",
+      "excluded": "Excluded"
+    },
+    "kind": {
+      "contested": "Contested — more than one person claims the account",
+      "binding_conflict": "Binding conflicts — evidence disagrees with the current binding",
+      "no_evidence": "No evidence — nothing links the account to anyone",
+      "other": "Needs review"
+    },
+    "queue": {
+      "load_failed": "Unable to load the review queue",
+      "items_truncated": "Only the first accounts needing review are listed — resolve these and reload to see the rest.",
+      "truncated": "The evidence read hit its cap — these counts and this queue cover only part of the observed accounts, not the whole tenant.",
+      "empty_title": "Everything is resolved",
+      "empty_description": "Every observed account is bound to a person. New conflicts will appear here."
+    },
+    "detail": {
+      "no_selection": "No account selected",
+      "no_selection_description": "Pick an account from the queue to see its evidence and history.",
+      "not_found": "This account is unknown — the link may be stale.",
+      "load_failed": "Unable to load the account",
+      "current_binding": "Currently bound to",
+      "unbound": "Nobody — the account is unresolved.",
+      "candidates": "Candidates",
+      "history": "Decision history",
+      "no_history": "No decisions recorded yet."
+    },
+    "person": {
+      "terminated": "terminated"
+    },
+    "history": {
+      "bind": "Bound",
+      "merge": "Merged",
+      "detach": "Detached",
+      "exclude": "Excluded",
+      "automatic": "Automatic",
+      "to": "to",
+      "by_operator": "by an operator"
+    },
+    "actions": {
+      "bind": "Bind",
+      "confirm": "Confirm",
+      "merge": "Merge…",
+      "merge_confirm": "Merge persons",
+      "detach": "Detach into a new person",
+      "detach_confirm": "Detach",
+      "exclude": "Exclude (bot / CI)",
+      "exclude_confirm": "Exclude",
+      "assign_other": "Assign to someone else"
+    },
+    "dialogs": {
+      "bind_title": "Bind this account?",
+      "confirm_title": "Confirm the current binding?",
+      "bind_description": "The account will belong to {{name}} from here on.",
+      "merge_title": "Merge two persons?",
+      "merge_description": "Every account of the currently bound person moves to {{name}}. Merging back is another merge — nothing is lost, but metrics re-attribute.",
+      "merge_preview_loading": "Counting the accounts that would move…",
+      "merge_preview_failed": "Could not count the accounts that would move.",
+      "merge_preview_one": "{{count}} account moves:",
+      "merge_preview_other": "{{count}} accounts move:",
+      "merge_preview_more": "…and {{count}} more.",
+      "detach_title": "Detach into a new person?",
+      "detach_description": "The account gets a freshly minted person of its own.",
+      "exclude_title": "Exclude this account?",
+      "exclude_description": "Bots, CI and service accounts are excluded from every person metric. Reversible by binding the account to a person later.",
+      "failed": "The correction was not applied. Try again."
+    },
+    "outcomes": {
+      "applied_one": "{{count}} applied",
+      "applied_other": "{{count}} applied",
+      "already_decided_one": "{{count}} already decided",
+      "already_decided_other": "{{count}} already decided",
+      "refused_one": "{{count}} refused",
+      "refused_other": "{{count}} refused",
+      "new_person": "New person:"
+    },
+    "picker": {
+      "placeholder": "Search people by name, email or handle…",
+      "no_matches": "Nobody matches those terms.",
+      "truncated": "More people matched than shown — narrow the terms.",
+      "failed": "Search failed. Try again."
+    },
+    "gate": {
+      "title": "Identities is an admin surface",
+      "description": "Managing identity resolution needs the administrator role. Ask an existing administrator to grant it if this is part of your job.",
+      "unverified": "Could not verify the administrator role"
     }
   }
 }

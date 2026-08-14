@@ -28,6 +28,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/auth", () => ({
   useViewer: () => ({ email: "boss@x", personId: mocks.personId }),
 }));
+vi.mock("@/queries/identity-me", () => ({
+  useIsAdmin: () => ({ isAdmin: false, isPending: false }),
+}));
 vi.mock("@/lib/portal/use-viewer-is-manager", () => ({
   useViewerIsManager: () => ({ isManager: mocks.isManager, isPending: mocks.isPending }),
 }));

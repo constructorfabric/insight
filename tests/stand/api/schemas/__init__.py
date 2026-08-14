@@ -67,7 +67,9 @@ from .identity import (
     AccountBindingResponse,
     AttentionResponse,
     CorrectionResponse,
+    MeResponse,
     PersonAccountsResponse,
+    PersonListResponse,
     SubchartNode,
 )
 from .identity import (
@@ -126,11 +128,13 @@ __all__: Sequence[str] = (
     "ImportCustomMetricsRequest",
     "ImportCustomMetricsResponse",
     "ListResponse",
+    "MeResponse",
     "MetricDefinitionListResponse",
     "MetricResultsResponse",
     "Operation",
     "PeriodView",
     "PersonAccountsResponse",
+    "PersonListResponse",
     "PersonRole",
     "PersonRoleList",
     "ProblemDocument",
