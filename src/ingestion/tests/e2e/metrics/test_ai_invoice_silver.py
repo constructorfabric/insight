@@ -29,6 +29,9 @@ SELECTOR = "tag:claude-team-invoices+"
 
 TENANT = "11111111-1111-1111-1111-111111111111"
 SOURCE = "claude-team-invoices-test"
+# Its own source: the class keeps every test's rows for the session, and the
+# recovery pair is only legible on its own.
+SOURCE_RECOVERED = "claude-team-invoices-recovered"
 
 # 2026-08-01 and 2026-09-01 UTC — the window a monthly line charges for.
 AUG_START, SEP_START = 1785542400, 1788220800
@@ -233,7 +236,8 @@ def test_a_line_is_dated_by_the_period_it_charges_for(invoice_silver):
 RECOVERED_ROWS = [
     _row(
         _airbyte_extracted_at="2026-09-02T00:00:00Z",
-        unique_key=f"{TENANT}-{SOURCE}-failed-{RAISED_AT}-pi_recovered",
+        source_id=SOURCE_RECOVERED,
+        unique_key=f"{TENANT}-{SOURCE_RECOVERED}-failed-{RAISED_AT}-pi_recovered",
         chain_status="failed",
         invoice_id=None,
         invoice_payment_intent="pi_recovered",
@@ -246,7 +250,8 @@ RECOVERED_ROWS = [
     _row(
         _airbyte_extracted_at="2026-09-03T00:00:00Z",
         collected_at="2026-09-03T00:00:00Z",
-        unique_key=f"{TENANT}-{SOURCE}-in_RECOVERED-il_late",
+        source_id=SOURCE_RECOVERED,
+        unique_key=f"{TENANT}-{SOURCE_RECOVERED}-in_RECOVERED-il_late",
         invoice_id="in_RECOVERED",
         invoice_payment_intent="pi_recovered",
         line_id="il_late",
@@ -274,7 +279,7 @@ def recovered_invoice_silver(
         ch_migrations_applied,
         "SELECT chain_status, invoice_id, line_id, invoice_net_cents "
         "FROM silver.class_ai_invoice FINAL "
-        f"WHERE source_id = '{SOURCE}' ORDER BY chain_status",
+        f"WHERE source_id = '{SOURCE_RECOVERED}' ORDER BY chain_status",
     )
     return [dict(zip(["chain_status", "invoice_id", "line_id", "invoice_net_cents"], row)) for row in rows]
 
