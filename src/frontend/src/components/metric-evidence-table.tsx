@@ -123,9 +123,8 @@ export function MetricEvidenceTable({
     getScrollElement: () => viewport,
     estimateSize: () => 44,
     overscan: 8,
-    // The measured height of an expanded row is cached under this key. Left to
-    // default it is the index, and a re-sort then leaves a tall measurement on
-    // whichever row inherits the position.
+    // INVARIANT: must match the row's React key — the measured height of an
+    // expanded row is cached under it.
     getItemKey: useCallback((index: number) => rowKeys[index] ?? index, [rowKeys]),
   });
   const virtualRows = virtualizer.getVirtualItems();
@@ -316,14 +315,13 @@ export function MetricEvidenceTable({
                   <TableCell
                     role="cell"
                     aria-colspan={columns.length + 1}
-                    // Selecting the text fires a click on the row, which would
-                    // close the panel the reader is trying to read.
+                    // INVARIANT: selecting text here must not reach the row's
+                    // expand toggle.
                     onClick={(event) => event.stopPropagation()}
                     className="w-full basis-full cursor-auto border-t bg-muted/40 px-3 py-3"
                   >
-                    {/* Capped so a long message scrolls here rather than
-                        filling the table with one record. Not a vh: that is
-                        the window, which can exceed the table's own height. */}
+                    {/* INVARIANT: a fixed cap, not a vh — the window can
+                        exceed the table's own height. */}
                     <dl className="grid max-h-96 gap-x-6 gap-y-2 overflow-y-auto overscroll-contain sm:grid-cols-[10rem_1fr]">
                       {columns.map((column) => {
                         const text = cellText(row.values[column.key], column.type);

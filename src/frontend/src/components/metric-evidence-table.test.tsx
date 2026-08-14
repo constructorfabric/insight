@@ -80,9 +80,8 @@ describe("MetricEvidenceTable", () => {
   });
 
   it("hands every row to the virtualizer to measure", () => {
-    // An expanded row is as tall as its message, so without measurement the
-    // rows below it overlap. jsdom lays nothing out; the call is the only
-    // observable half of that contract.
+    // WORKAROUND: jsdom lays nothing out, so the call is all that is
+    // observable of the measurement contract.
     renderTable();
 
     const measured = mocks.measureElement.mock.calls
@@ -138,8 +137,8 @@ describe("MetricEvidenceTable", () => {
       await user.click(toggle!);
       expect(toggle).toHaveAttribute("aria-expanded", "true");
       const detail = screen.getByText(/It handles nested groups/);
-      // textContent keeps the newlines that toHaveTextContent would normalize
-      // away; the class is the only observable half of "they survive layout".
+      // INVARIANT: textContent, not toHaveTextContent — the latter normalizes
+      // away the newlines under test.
       expect(detail.textContent).toBe(message);
       expect(detail).toHaveClass("whitespace-pre-wrap");
     });
@@ -184,7 +183,8 @@ describe("MetricEvidenceTable", () => {
       await user.click(
         screen.getAllByRole("button", { name: "Show full record" })[0]!
       );
-      // jsdom lays nothing out, so the cap is only observable as the class.
+      // WORKAROUND: jsdom lays nothing out — the class is all that is
+      // observable of the cap.
       const panel = screen.getByText(/It handles nested groups/).closest("dl");
       expect(panel).toHaveClass("max-h-96", "overflow-y-auto");
     });
