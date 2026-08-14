@@ -52,6 +52,24 @@ class FieldRejected(Exception):
         super().__init__(f"{field}: {reason}")
 
 
+def _required_object(container: JsonValue, key: str, origin: Path) -> JsonObject:
+    if not isinstance(container, dict):
+        raise SpecUnavailable(f"{origin}: expected an object, found {type(container).__name__}")
+    if key not in container:
+        raise SpecUnavailable(f"{origin}: {key} is missing")
+    value = container[key]
+    if not isinstance(value, dict):
+        raise SpecUnavailable(f"{origin}: {key} is {type(value).__name__}, expected an object")
+    return value
+
+
+def _checked_connection_spec(spec: JsonObject, origin: Path) -> JsonObject:
+    properties = spec.get("properties")
+    if properties is not None and not isinstance(properties, dict):
+        raise SpecUnavailable(f"{origin}: properties is {type(properties).__name__}, expected an object")
+    return spec
+
+
 def _load_connection_spec(connector_dir: Path, connector_type: str) -> JsonObject:
     if connector_type == "cdk":
         specs = sorted(connector_dir.glob("source_*/spec.json"))
@@ -61,7 +79,7 @@ def _load_connection_spec(connector_dir: Path, connector_type: str) -> JsonObjec
             spec = json.loads(specs[0].read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
             raise SpecUnavailable(f"cannot read {specs[0]}: {e}") from e
-        return spec.get("connectionSpecification") or {}
+        return _checked_connection_spec(_required_object(spec, "connectionSpecification", specs[0]), specs[0])
 
     # Only declarative connectors carry a manifest, so the cdk path above stays
     # runnable wherever PyYAML is absent.
@@ -69,10 +87,25 @@ def _load_connection_spec(connector_dir: Path, connector_type: str) -> JsonObjec
 
     manifest_path = connector_dir / "connector.yaml"
     try:
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as e:
         raise SpecUnavailable(f"cannot read {manifest_path}: {e}") from e
-    return (manifest.get("spec") or {}).get("connection_specification") or {}
+
+    manifest_spec = _required_object(manifest, "spec", manifest_path)
+    return _checked_connection_spec(
+        _required_object(manifest_spec, "connection_specification", manifest_path), manifest_path
+    )
+
+
+def _finite_float(text: str) -> float:
+    parsed = float(text)
+    if not math.isfinite(parsed):
+        raise ValueError("expected finite numbers")
+    return parsed
+
+
+def _reject_json_constant(token: str) -> float:
+    raise ValueError(f"expected finite numbers, got {token}")
 
 
 def _parse_scalar(raw: str, declared: str) -> JsonValue:
@@ -97,7 +130,9 @@ def _parse_scalar(raw: str, declared: str) -> JsonValue:
         return parsed_number
     if declared in ("array", "object"):
         try:
-            parsed = json.loads(raw)
+            # json.loads accepts NaN/Infinity, which json.dump then re-emits as
+            # tokens no JSON parser on the Airbyte side accepts.
+            parsed = json.loads(raw, parse_float=_finite_float, parse_constant=_reject_json_constant)
         except json.JSONDecodeError:
             raise ValueError(f"expected a JSON {declared}") from None
         if not isinstance(parsed, list if declared == "array" else dict):
@@ -160,11 +195,7 @@ def coerce_field(field: str, value: JsonValue, declared: JsonValue) -> JsonValue
 
 
 def build_config(
-    secret_data: JsonObject,
-    spec: JsonObject,
-    tenant_id: str,
-    source_id: str,
-    injected: JsonObject | None = None,
+    secret_data: JsonObject, spec: JsonObject, tenant_id: str, source_id: str, injected: JsonObject | None = None
 ) -> JsonObject:
     properties = spec.get("properties") or {}
     config = {
