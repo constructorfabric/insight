@@ -1,0 +1,238 @@
+# Does the gateway know who is calling it?
+#
+# The /auth/* flood guard keys on the client address, and behind a proxy that
+# address is the proxy's unless every hop in front of the gateway is named in
+# `gateway.gateway.setRealIpFrom`. Get that list wrong and nothing breaks
+# loudly: the limiter keeps limiting, it just charges one bucket for the whole
+# internet, so any single caller can lock everyone out of logging in.
+#
+# This run answers three questions against the deployed stand, from a runner
+# with its own public address:
+#
+#   1. is a trust list configured on the gateway at all?
+#   2. does the gateway log THIS runner's address, or a proxy's?
+#   3. is the rate limit charged to the caller, or shared?
+#
+# It exists because the topology it depends on lives outside this repository —
+# an edge change that starts rewriting the source address regresses this
+# silently, and the only evidence is in the gateway's own access log.
+#
+# Addresses never reach this log. Every check is computed in-process and only
+# verdicts and counts are published: a public run must not become a list of
+# who used the stand. The one exception is the runner's own address, reported
+# masked, because correlating it is the whole point of question 2.
+name: Debug — gateway client IP
+
+on:
+  workflow_dispatch:
+    inputs:
+      burst:
+        description: >-
+          Also prove the rate limit is charged per caller by tripping it. Skipped automatically when no trust list is configured, because there the bucket is shared and this would take everyone's logins with it.
+        required: false
+        default: true
+        type: boolean
+  # TEMPORARY — delete before merge. workflow_dispatch cannot be triggered until
+  # the file is on the default branch, so this is the only way to see a result
+  # while the change is still on a branch.
+  push:
+    branches: [fix/gateway-real-client-ip]
+    paths: ['.github/workflows/debug-stand-client-ip.yml']
+
+concurrency:
+  # The deploy's group: a deploy mid-run would swap the gateway underneath the
+  # measurement. Safe to share because nothing here calls that workflow.
+  group: test-stand-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  client-ip:
+    name: does the gateway see the caller
+    runs-on: ubuntu-latest
+    environment: insight-test-stand
+    timeout-minutes: 15
+    env:
+      STAND_NAMESPACE: insight
+      BASE_URL: ${{ vars.TEST_STAND_BASE_URL }}
+      # /auth/me answers 401 to an anonymous caller, so nothing here needs a
+      # persona password — the gateway logs the request either way.
+      PROBE_PATH: /auth/me
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+
+      - name: Confirm the environment is wired up
+        env:
+          HAVE_KUBECONFIG: ${{ secrets.TEST_STAND_KUBECONFIG != '' }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ "$HAVE_KUBECONFIG" = "true" ] || missing="$missing secrets.TEST_STAND_KUBECONFIG"
+          [ -n "${BASE_URL:-}" ]          || missing="$missing vars.TEST_STAND_BASE_URL"
+          [ -z "$missing" ] || { echo "::error::the insight-test-stand environment is missing:$missing"; exit 1; }
+
+      - name: Write the stand kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.TEST_STAND_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          target="$RUNNER_TEMP/test-stand.kubeconfig"
+          (umask 077; printf '%s' "$KUBECONFIG_B64" | tr -d '[:space:]' | base64 -d > "$target")
+          chmod 600 "$target"
+          kubectl config view --minify --kubeconfig "$target" >/dev/null
+          echo "KUBECONFIG=$target" >> "$GITHUB_ENV"
+
+      # Question 1. The COUNT, never the ranges: which networks sit in front of
+      # a stand is not something a public run needs to publish.
+      - name: Read the configured trust list
+        id: trust
+        run: |
+          set -euo pipefail
+          raw="$(kubectl -n "$STAND_NAMESPACE" get deploy insight-gateway \
+            -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="GATEWAY_SET_REAL_IP_FROM")].value}' 2>/dev/null || true)"
+          n=0
+          [ -n "$raw" ] && n="$(printf '%s' "$raw" | tr ',' '\n' | grep -c . || true)"
+          echo "entries=$n" >> "$GITHUB_OUTPUT"
+          echo "trusted hops configured: $n"
+
+      - name: Probe the stand and read back what the gateway logged
+        id: probe
+        run: |
+          set -euo pipefail
+          mine="$(curl -sS -m 20 https://api.ipify.org)"
+          echo "::add-mask::$mine"
+          echo "mine=$mine" >> "$GITHUB_OUTPUT"
+          for _ in 1 2 3 4 5; do
+            curl -sS -o /dev/null -m 25 "$BASE_URL$PROBE_PATH" || true
+          done
+          sleep 6
+          kubectl -n "$STAND_NAMESPACE" logs -l app.kubernetes.io/name=gateway \
+            --tail=400 --since=3m > "$RUNNER_TEMP/gateway.log" 2>/dev/null || true
+          python3 - "$RUNNER_TEMP/gateway.log" "$mine" >> "$GITHUB_OUTPUT" <<'PY'
+          import json, sys, collections
+          log, mine = sys.argv[1], sys.argv[2]
+          seen = collections.Counter()
+          for line in open(log, encoding="utf-8", errors="replace"):
+              line = line.strip()
+              if not line.startswith("{"):
+                  continue
+              try:
+                  seen[json.loads(line).get("remote_addr", "")] += 1
+              except ValueError:
+                  continue
+          # Only aggregates leave this process. An address is a person's
+          # location; a distinct COUNT is the fact under test.
+          print(f"distinct={len(seen)}")
+          print(f"mine_seen={seen.get(mine, 0)}")
+          print(f"private_only={str(all(a.startswith(('10.','172.','192.168.')) for a in seen if a)).lower()}")
+          PY
+
+      # Question 3. Refused when no trust list is configured: that is exactly
+      # the case where the bucket is shared and this would be a self-inflicted
+      # outage rather than a measurement.
+      - name: Prove the limit is charged to the caller
+        id: limit
+        if: ${{ inputs.burst && steps.trust.outputs.entries != '0' }}
+        run: |
+          set -euo pipefail
+          # Past the configured burst allowance (60r/m + burst 120) on purpose;
+          # under it nothing is refused and the check proves nothing.
+          # shellcheck disable=SC2016 # $0/$1 belong to the inner sh, bound by the args after it
+          seq 1 260 | xargs -P 8 -I{} sh -c \
+            'curl -sS -o /dev/null -w "%{http_code}\n" -m 25 "$0$1" || true' "$BASE_URL" "$PROBE_PATH" \
+            > "$RUNNER_TEMP/codes.txt"
+          refused="$(grep -c '^503$' "$RUNNER_TEMP/codes.txt" || true)"
+          served="$(grep -c '^401$' "$RUNNER_TEMP/codes.txt" || true)"
+          echo "refused=$refused" >> "$GITHUB_OUTPUT"
+          echo "served=$served" >> "$GITHUB_OUTPUT"
+          sleep 6
+          kubectl -n "$STAND_NAMESPACE" logs -l app.kubernetes.io/name=gateway \
+            --tail=800 --since=3m > "$RUNNER_TEMP/gateway-burst.log" 2>/dev/null || true
+          python3 - "$RUNNER_TEMP/gateway-burst.log" "${{ steps.probe.outputs.mine }}" >> "$GITHUB_OUTPUT" <<'PY'
+          import json, sys
+          log, mine = sys.argv[1], sys.argv[2]
+          mine_503 = other_503 = 0
+          for line in open(log, encoding="utf-8", errors="replace"):
+              line = line.strip()
+              if not line.startswith("{"):
+                  continue
+              try:
+                  row = json.loads(line)
+              except ValueError:
+                  continue
+              if row.get("status") != 503:
+                  continue
+              if row.get("remote_addr") == mine:
+                  mine_503 += 1
+              else:
+                  other_503 += 1
+          print(f"charged_to_me={mine_503}")
+          print(f"charged_elsewhere={other_503}")
+          PY
+
+      - name: Summarise
+        if: always()
+        env:
+          ENTRIES: ${{ steps.trust.outputs.entries }}
+          DISTINCT: ${{ steps.probe.outputs.distinct }}
+          MINE_SEEN: ${{ steps.probe.outputs.mine_seen }}
+          PRIVATE_ONLY: ${{ steps.probe.outputs.private_only }}
+          REFUSED: ${{ steps.limit.outputs.refused }}
+          SERVED: ${{ steps.limit.outputs.served }}
+          CHARGED_ME: ${{ steps.limit.outputs.charged_to_me }}
+          CHARGED_OTHER: ${{ steps.limit.outputs.charged_elsewhere }}
+          BURST_RESULT: ${{ steps.limit.outcome }}
+        run: |
+          set -euo pipefail
+          verdict() { [ "$1" = "yes" ] && echo "✅ yes" || echo "❌ no"; }
+
+          sees_me=no
+          [ "${MINE_SEEN:-0}" -gt 0 ] 2>/dev/null && sees_me=yes
+          per_caller=no
+          if [ "${CHARGED_ME:-0}" -gt 0 ] 2>/dev/null && [ "${CHARGED_OTHER:-0}" -eq 0 ] 2>/dev/null; then
+            per_caller=yes
+          fi
+
+          {
+            echo "## Does the gateway see the caller?"
+            echo ""
+            echo "| Question | Answer |"
+            echo "|---|---|"
+            echo "| Trusted hops configured on the gateway | \`${ENTRIES:-0}\` |"
+            echo "| Distinct client addresses in the gateway's log | \`${DISTINCT:-?}\` |"
+            echo "| Gateway logged **this runner's** address | $(verdict "$sees_me") (\`${MINE_SEEN:-0}\` requests) |"
+            echo "| Every address it logged was private (i.e. a proxy) | \`${PRIVATE_ONLY:-?}\` |"
+            if [ "$BURST_RESULT" = "success" ]; then
+              echo "| Burst refused / served | \`${REFUSED:-0}\` / \`${SERVED:-0}\` |"
+              echo "| Refusals charged to this runner | \`${CHARGED_ME:-0}\` |"
+              echo "| Refusals charged to anyone else | \`${CHARGED_OTHER:-0}\` |"
+              echo "| **Limit is per-caller** | $(verdict "$per_caller") |"
+            else
+              echo "| Rate-limit check | not run |"
+            fi
+            echo ""
+            if [ "${ENTRIES:-0}" = "0" ]; then
+              echo "> **No trust list.** The gateway's only peer is the proxy in front of it, so"
+              echo "> every caller shares one \`/auth/*\` bucket of 60 requests a minute and any"
+              echo "> one of them can lock the rest out of logging in. Set"
+              echo "> \`gateway.gateway.setRealIpFrom\` to every hop between a caller and the"
+              echo "> gateway — note the doubled key: the subchart nests its own settings, so a"
+              echo "> value one level shallower is silently ignored."
+            elif [ "$sees_me" = "no" ]; then
+              echo "> **Configured, but still not the caller.** The list is set and the gateway"
+              echo "> still did not log this runner, so a hop is missing from it — nginx stops at"
+              echo "> the first address it does not recognise. A load balancer that rewrites the"
+              echo "> source before the edge sees it puts a NODE address in that position, so the"
+              echo "> node network usually has to be trusted too, not just the pod network."
+            else
+              echo "> The gateway is identifying callers. Addresses are deliberately absent from"
+              echo "> this summary — a public run must not become a list of who used the stand."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
