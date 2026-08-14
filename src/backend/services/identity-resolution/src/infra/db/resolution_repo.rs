@@ -270,7 +270,10 @@ pub async fn append_binding_if_unbound(
     // makes `INSERT ... SELECT` take a locking read — a deployment that changed
     // the default must not silently weaken this.
     let txn = db
-        .begin_with_config(Some(IsolationLevel::RepeatableRead), Some(AccessMode::ReadWrite))
+        .begin_with_config(
+            Some(IsolationLevel::RepeatableRead),
+            Some(AccessMode::ReadWrite),
+        )
         .await?;
 
     let result = txn

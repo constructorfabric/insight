@@ -20,11 +20,11 @@ use super::AppState;
 use super::canonical_json::CanonicalJson;
 use super::error::ProfileError;
 use super::gate::{require_caller, require_service};
+use crate::domain::login_bootstrap;
 use crate::domain::profile::{
     ParentProjection, PersonResponse, ResolveProfileRequest, assemble_person, assemble_profile,
     latest_values,
 };
-use crate::domain::login_bootstrap;
 use crate::infra::db::{persons_repo, resolution_repo, subchart_repo};
 
 /// `POST /v1/profiles` — resolve one identity (email or source-native id) to a
@@ -274,13 +274,8 @@ pub async fn internal_provision_person(
             .create()
         })?;
 
-    let row = login_bootstrap::decide(
-        principal,
-        &observed,
-        tenant,
-        chrono::Utc::now().naive_utc(),
-    )
-    .map_err(|refusal| refused(refusal, &req))?;
+    let row = login_bootstrap::decide(principal, &observed, tenant, chrono::Utc::now().naive_utc())
+        .map_err(|refusal| refused(refusal, &req))?;
 
     let minted = resolution_repo::append_binding_if_unbound(&state.db, tenant, &row)
         .await
@@ -348,11 +343,9 @@ fn refused(refusal: login_bootstrap::Refusal, req: &InternalProvisionRequest) ->
                 "TENANT_MISMATCH",
             )
             .create(),
-        Refusal::Closed => ProfileError::not_found(format!(
-            "'{resource}' is closed at its source"
-        ))
-        .with_resource(resource)
-        .create(),
+        Refusal::Closed => ProfileError::not_found(format!("'{resource}' is closed at its source"))
+            .with_resource(resource)
+            .create(),
         Refusal::Addressed => ProfileError::not_found(format!(
             "'{resource}' carries an address; identity resolution links it, \
              so there is nothing to bootstrap"
@@ -746,7 +739,4 @@ mod tests {
         );
         Ok(())
     }
-
-
-
 }

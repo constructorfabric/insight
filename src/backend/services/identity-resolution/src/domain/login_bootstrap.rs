@@ -21,7 +21,10 @@ const PERSON_NAMESPACE: Uuid = Uuid::from_u128(0x9f2c_6ad1_4e83_4f27_bd51_7c0a_3
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
     /// A field is unusable: empty, or longer than the column it lands in.
-    Invalid { field: &'static str, message: String },
+    Invalid {
+        field: &'static str,
+        message: String,
+    },
     /// The token asserts a tenant this journal is not keyed by, or the service
     /// cannot say which tenant that is.
     Tenant(TenantRefusal),
@@ -213,8 +216,20 @@ mod tests {
         for (case, source_type, external_id, tenant, field) in [
             ("empty source_type", "  ", "octocat", TENANT, "source_type"),
             ("empty external_id", "github", " ", TENANT, "external_id"),
-            ("over-long external_id", "github", long_id.as_str(), TENANT, "external_id"),
-            ("over-long source_type", long_source.as_str(), "octocat", TENANT, "source_type"),
+            (
+                "over-long external_id",
+                "github",
+                long_id.as_str(),
+                TENANT,
+                "external_id",
+            ),
+            (
+                "over-long source_type",
+                long_source.as_str(),
+                "octocat",
+                TENANT,
+                "source_type",
+            ),
             ("nil tenant", "github", "octocat", Uuid::nil(), "tenant_id"),
         ] {
             let refused = parse_principal(source_type, external_id, tenant);
@@ -247,7 +262,12 @@ mod tests {
                 Uuid::from_u128(10),
                 Err(TenantRefusal::Mismatch),
             ),
-            ("unconfigured", String::new(), TENANT, Err(TenantRefusal::Unconfigured)),
+            (
+                "unconfigured",
+                String::new(),
+                TENANT,
+                Err(TenantRefusal::Unconfigured),
+            ),
             (
                 "unreadable configuration",
                 "not-a-uuid".to_owned(),
@@ -269,7 +289,11 @@ mod tests {
             .map_err(|r| format!("a well-formed principal was refused: {r:?}"))?;
 
         for (case, evidence, expected) in [
-            ("closed at its source", observed(None, true), Some(Refusal::Closed)),
+            (
+                "closed at its source",
+                observed(None, true),
+                Some(Refusal::Closed),
+            ),
             (
                 "carries an address",
                 observed(Some("jane@example.com"), false),
@@ -287,7 +311,10 @@ mod tests {
                 (Err(got), Some(want)) => assert_eq!(got, want, "wrong refusal for: {case}"),
                 (Ok(row), None) => {
                     assert_eq!(row.reason, LOGIN_BOOTSTRAP_REASON, "case: {case}");
-                    assert!(row.author_person_id.is_nil(), "case: {case} — not an operator");
+                    assert!(
+                        row.author_person_id.is_nil(),
+                        "case: {case} — not an operator"
+                    );
                 }
                 (got, want) => panic!("case {case}: got {got:?}, wanted {want:?}"),
             }
