@@ -167,6 +167,7 @@ def deterministic_int(*parts: str) -> int:
 #: than quietly widening what a seed run destroys.
 RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("bronze_bamboohr", "employees"),
+    ("bronze_claude_team_invoices", "claude_team_invoice_lines"),
     ("silver", "class_ai_assistant_usage"),
     ("silver", "class_ai_dev_usage"),
     ("silver", "class_ai_overage"),

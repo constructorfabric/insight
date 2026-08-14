@@ -113,6 +113,13 @@ def apply_create_bronze_placeholders() -> None:
 # silver:identity_inputs tag marks only its staging feeders.
 IDENTITY_INPUTS_SELECT = "+identity_inputs"
 
+# Invoices are seeded at bronze, so the connector's own staging model has to
+# run for the class to exist at all. Selected by model name, never by the
+# connector tag: a tag also materialises its sibling staging models, and the
+# placeholder-drop hook would then replace a directly seeded class with what
+# an unseeded bronze produces — nothing.
+AI_INVOICE_SELECT = "claude_team__ai_invoice+"
+
 
 def apply_ch_migrations(dbt_select: str | None = None) -> None:
     """Apply gold-view migrations + build dbt-owned gold models.
@@ -192,7 +199,7 @@ def run() -> None:
         # 3. Real deploy mechanism: migrations + gold + identity inputs. Gold
         #    builds unresolved here — the orchestrator runs the persons-seed/
         #    sync pair and then the `gold` subcommand to rebuild it.
-        apply_ch_migrations(dbt_select=f"tag:gold {IDENTITY_INPUTS_SELECT}")
+        apply_ch_migrations(dbt_select=f"tag:gold {IDENTITY_INPUTS_SELECT} {AI_INVOICE_SELECT}")
     finally:
         client.close()
     LOG.info("DONE: silver rows seeded + gold layer built via deploy scripts.")

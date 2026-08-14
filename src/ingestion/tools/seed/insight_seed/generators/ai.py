@@ -1,5 +1,6 @@
 """
-AI tooling silver-table generator: dev usage + assistant usage + seat overage.
+AI tooling generator: dev usage, assistant usage and seat overage (silver),
+vendor invoices (bronze).
 
 dev-usage (`silver.class_ai_dev_usage`) covers Cursor + Claude Code.
 assistant-usage (`silver.class_ai_assistant_usage`) covers ChatGPT +
@@ -7,6 +8,11 @@ Claude web. The gold-view filters discriminate by `tool` and `surface`
 so we honour those exact strings.
 seat-overage (`silver.class_ai_overage`) covers Claude Team seat spend
 against the ceiling an administrator set on it, at seat-month grain.
+invoices are seeded into BRONZE instead, so the connector's own staging model
+runs on the stand and its conversion is exercised rather than bypassed. The
+same is not possible for overage: the vendor's key carries no month, so a
+bronze table keyed on it keeps one snapshot per seat and a stand built in one
+pass would hold a single billing month.
 """
 
 from __future__ import annotations
@@ -55,6 +61,9 @@ _ASSISTANT_TOOLS = (
 _SEAT_TIER_BY_TEAM = {"development": "team_tier_1", "support": "unassigned"}
 # The ceiling a tiered seat carries, in the cents the vendor reports: $100.00.
 _SEAT_CEILING_CENTS = 10_000
+# What the tier itself costs per month, in the same cents: $12.00. The
+# invoice prices seats with it; the ceiling above bounds extra usage only.
+_SEAT_PRICE_CENTS = 1_200
 
 
 def seed_ai_dev_usage(
@@ -334,6 +343,142 @@ def seed_ai_seat_overage(
     return bulk_insert(client, "silver", "class_ai_overage", cols, rows)
 
 
+def seed_claude_team_invoices_bronze(
+    client: clickhouse_connect.driver.client.Client,
+    roster: Sequence[Person],
+    tenant_uuid: str,
+    days: int,
+) -> int:
+    """Vendor invoices as the Stripe chain returns them, into bronze.
+
+    An invoice is an organisation-level fact, not a per-person one: one per
+    billing month, priced per tier, plus the extra usage the same month billed.
+    Its lines are what a seat price is recoverable from, so the grain is the
+    line and aggregation stays gold's job.
+    """
+    truncate(client, "bronze_claude_team_invoices", "claude_team_invoice_lines")
+    cols = [
+        "_airbyte_raw_id",
+        "_airbyte_extracted_at",
+        "_airbyte_meta",
+        "_airbyte_generation_id",
+        "tenant_id",
+        "source_id",
+        "unique_key",
+        "collected_at",
+        "data_source",
+        "chain_status",
+        "invoice_id",
+        "invoice_status",
+        "invoice_created_ts",
+        "invoice_due_date_ts",
+        "invoice_currency",
+        "invoice_total",
+        "invoice_total_excluding_tax",
+        "invoice_num_seats",
+        "invoice_payment_intent",
+        "line_id",
+        "description",
+        "product_name",
+        "tier_label",
+        "category",
+        "is_proration",
+        "amount",
+        "currency",
+        "quantity",
+        "unit_amount",
+        "seat_unit_amount",
+        "period_start_ts",
+        "period_end_ts",
+    ]
+    source_id = deterministic_uuid("ai.invoice.src", tenant_uuid)
+    tiered_seats = sum(
+        1
+        for p in roster
+        if p.team
+        and TEAM_PROFILES[p.team].weights.get("claude_team", 0) > 0
+        and _SEAT_TIER_BY_TEAM.get(p.team, "unassigned") != "unassigned"
+    )
+    rows: list[tuple[object, ...]] = []
+    for period_month, read_day in _seat_month_reads(days):
+        seats_total = tiered_seats * _SEAT_PRICE_CENTS
+        extra = int(seats_total * 0.1)
+        invoice_id = f"in_{period_month:%Y%m}"
+        raised_at = _dt.datetime.combine(period_month, _dt.time(), tzinfo=_dt.UTC)
+        read_at = _dt.datetime.combine(read_day, _dt.time(), tzinfo=_dt.UTC)
+        period_end = _dt.datetime.combine(
+            (period_month + _dt.timedelta(days=32)).replace(day=1), _dt.time(), tzinfo=_dt.UTC
+        )
+        invoice = {
+            "invoice_id": invoice_id,
+            "invoice_created_ts": int(raised_at.timestamp()),
+            "invoice_total": seats_total + extra,
+            "invoice_total_excluding_tax": seats_total + extra,
+            "invoice_num_seats": tiered_seats,
+            "invoice_payment_intent": f"pi_{period_month:%Y%m}",
+        }
+        lines = [
+            (
+                "subscriptions",
+                f"il_seats_{period_month:%Y%m}",
+                f"{tiered_seats} x Example plan - Standard",
+                seats_total,
+                tiered_seats,
+                _SEAT_PRICE_CENTS,
+                _SEAT_PRICE_CENTS,
+            ),
+            (
+                "overusage",
+                f"il_extra_{period_month:%Y%m}",
+                "Prepaid extra usage, Example plan",
+                extra,
+                1,
+                extra,
+                None,
+            ),
+        ]
+        for category, line_id, description, amount, quantity, unit, seat_unit in lines:
+            rows.append(
+                (
+                    deterministic_uuid("ai.invoice.raw", invoice_id, line_id),
+                    read_at,
+                    "{}",
+                    0,
+                    tenant_uuid,
+                    source_id,
+                    f"{tenant_uuid}-{source_id}-{invoice_id}-{line_id}",
+                    read_at.isoformat(),
+                    "insight_claude_team",
+                    "ok",
+                    invoice_id,
+                    "paid",
+                    invoice["invoice_created_ts"],
+                    None,
+                    "usd",
+                    invoice["invoice_total"],
+                    invoice["invoice_total_excluding_tax"],
+                    invoice["invoice_num_seats"],
+                    invoice["invoice_payment_intent"],
+                    line_id,
+                    description,
+                    "Example plan - Standard",
+                    "Standard" if category == "subscriptions" else None,
+                    category,
+                    False,
+                    amount,
+                    "usd",
+                    quantity,
+                    unit,
+                    seat_unit,
+                    int(raised_at.timestamp()),
+                    int(period_end.timestamp()),
+                )
+            )
+    return bulk_insert(
+        client, "bronze_claude_team_invoices", "claude_team_invoice_lines", cols, rows
+    )
+
+
 def generate(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
@@ -346,4 +491,7 @@ def generate(
             client, roster, tenant_uuid, days
         ),
         "silver.class_ai_overage": seed_ai_seat_overage(client, roster, tenant_uuid, days),
+        "bronze_claude_team_invoices.claude_team_invoice_lines": seed_claude_team_invoices_bronze(
+            client, roster, tenant_uuid, days
+        ),
     }
