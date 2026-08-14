@@ -8,6 +8,10 @@ can never be confused for one another:
   the login-bootstrap resolve, scoped to the IdP's `source_type` + its
   source-native external id (e.g. the Entra `oid` claim). This is what the
   authenticator actually calls during login.
+- `POST /internal/persons/provision` — the login bootstrap's WRITE half: the
+  same principal, minted when the journal has no binding for it yet and no
+  connector observation carries an address for it (the batch resolves anything
+  that does).
 - `GET /internal/persons/by-email-override?email=...` — the authenticator's
   admin `__override` (view-as) resolve; never used by login. This is the URL
   the OLD, now-removed `GET /internal/persons/by-email/{email}` login-bootstrap
@@ -258,4 +262,133 @@ def test_by_external_id_never_resolves_by_email(
     assert response.status_code == 404, (
         f"an email-shaped external_id resolved (status {response.status_code}) instead of "
         f"404ing like any other unknown id: {response.text[:300]}"
+    )
+
+
+# ── POST /internal/persons/provision ────────────────────────────────────────
+# The login bootstrap's write half: same gate and same response shape as the
+# resolve above, but it MINTS when the journal has no binding yet. It exists
+# because the nightly persons-seed groups accounts by e-mail and skips one
+# that carries none, so a roster member whose directory publishes no address
+# is refused at login until an operator binds them by hand.
+#
+# The seeded stand cannot exercise the mint itself — every roster persona is
+# seeded WITH an e-mail and therefore already bound, and creating an
+# e-mail-less observation would mean writing to the connector evidence, which
+# this suite does not do. What it can pin, and what actually carries the risk,
+# is the two answers that are not a mint: an already-bound principal must come
+# back as THEIR person rather than a second one, and a principal no connector
+# has observed must be refused rather than invented.
+
+PROVISION: str = "/internal/persons/provision"
+
+
+def _provision_body(stand_manifest: Manifest, external_id: str) -> dict[str, str]:
+    return {
+        "source_type": stand_manifest.capabilities.idp,
+        "external_id": external_id,
+        "tenant_id": stand_manifest.tenant,
+    }
+
+
+@pytest.mark.requires_service_principal
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
+def test_provision_returns_the_existing_person_rather_than_a_second_one(
+    service_client: ApiClient, stand_manifest: Manifest
+) -> None:
+    """A principal the journal already knows is looked up, never minted.
+
+    This is the property that keeps provisioning safe to put on the login
+    path: it runs for EVERY login once enabled, so an already-bound person
+    must come back unchanged. A fresh id here would mean every sign-in split
+    its owner into another person.
+    """
+    _, external_id = _dev_lead_login_id(stand_manifest)
+    person = stand_manifest.fixture("dev_lead")
+
+    first = service_client.post(PROVISION, json_body=_provision_body(stand_manifest, external_id))
+    assert first.status_code == 200, f"{first.status_code} {first.text[:300]}"
+    assert str(first.parse(IdentityValue).insight_source_id) == person.uuid
+
+    # Twice, because idempotence is the whole claim: two tabs, two pods, two
+    # retries of one login must not produce two people.
+    second = service_client.post(PROVISION, json_body=_provision_body(stand_manifest, external_id))
+    assert second.status_code == 200, f"{second.status_code} {second.text[:300]}"
+    assert str(second.parse(IdentityValue).insight_source_id) == person.uuid
+
+
+@pytest.mark.requires_service_principal
+@pytest.mark.security
+def test_provision_refuses_a_principal_no_connector_has_observed(
+    service_client: ApiClient, stand_manifest: Manifest
+) -> None:
+    """The roster decides who exists; the IdP only decides who may enter.
+
+    Without this the endpoint would mint for anything the IdP authenticates,
+    which is the difference between "a member of the org may sign in" and
+    "whoever reaches the IdP becomes a person here".
+    """
+    response = service_client.post(
+        PROVISION, json_body=_provision_body(stand_manifest, "nobody-has-ever-observed-this")
+    )
+    assert response.status_code == 404, (
+        f"an unobserved principal was provisioned (status {response.status_code}) instead of "
+        f"being refused: {response.text[:300]}"
+    )
+
+
+@pytest.mark.requires_service_principal
+@pytest.mark.security
+def test_provision_refuses_an_over_long_external_id(
+    service_client: ApiClient, stand_manifest: Manifest
+) -> None:
+    """An id longer than the column it lands in is a bad argument, not a 500 —
+    and under a lax SQL mode an unchecked one would be stored truncated, so
+    neither the write guard nor the read-back could match it again and every
+    login attempt would append another unusable journal row."""
+    response = service_client.post(
+        PROVISION, json_body=_provision_body(stand_manifest, "x" * 400)
+    )
+    assert response.status_code == 400, (
+        f"an over-long external_id answered {response.status_code}, not 400: {response.text[:300]}"
+    )
+
+
+@pytest.mark.requires_service_principal
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.security
+def test_provision_refuses_a_tenant_the_journal_is_not_keyed_by(
+    service_client: ApiClient, stand_manifest: Manifest
+) -> None:
+    """A row written under another tenant is invisible to the persons-seed:
+    never adopted, and a second person minted for the same account on the next
+    run. The caller's asserted tenant is therefore checked, not trusted."""
+    _, external_id = _dev_lead_login_id(stand_manifest)
+    body = _provision_body(stand_manifest, external_id)
+    body["tenant_id"] = "01900000-0000-7000-8000-00000000dead"
+
+    response = service_client.post(PROVISION, json_body=body)
+    assert response.status_code == 400, (
+        f"a foreign tenant answered {response.status_code}, not 400: {response.text[:300]}"
+    )
+
+
+@pytest.mark.requires_service_principal
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.security
+def test_provision_refuses_a_person(
+    lead_session: PersonaSession, stand_manifest: Manifest
+) -> None:
+    """The write half is service-only too. Without this, a 200 for the service
+    principal above would be equally consistent with the route being open to
+    anybody authenticated — and this one WRITES."""
+    _, external_id = _dev_lead_login_id(stand_manifest)
+
+    response = lead_session.client.post(
+        identity_path(PROVISION), json_body=_provision_body(stand_manifest, external_id)
+    )
+    assert response.status_code == 403, (
+        f"a person reached the service-only write route (status {response.status_code}): "
+        f"{response.text[:300]}"
     )

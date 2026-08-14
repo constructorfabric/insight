@@ -57,9 +57,9 @@ describe("KpiTile", () => {
     expect(screen.getByText(/Team median 3,563 · 3\.5×/)).toBeInTheDocument();
   });
 
-  it("falls back to 'No peer data' without a median label", () => {
+  it("falls back to 'No comparison' without a median label", () => {
     render(<KpiTile periodNoun="month" tile={tile({ medianLabel: null })} />);
-    expect(screen.getByText("No peer data")).toBeInTheDocument();
+    expect(screen.getByText("No comparison")).toBeInTheDocument();
   });
 
   it("omits the delta badge when delta is null", () => {

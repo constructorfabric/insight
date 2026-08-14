@@ -159,7 +159,7 @@ describe("TeamMetricGroupCard", () => {
         onOpen={vi.fn()}
       />,
     );
-    expect(screen.getByText("no peer data")).toBeInTheDocument();
+    expect(screen.getByText("no comparison")).toBeInTheDocument();
     expect(
       screen.getByText(/No metrics with peer data/i),
     ).toBeInTheDocument();

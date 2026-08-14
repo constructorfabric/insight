@@ -1,0 +1,15 @@
+# Tenant config for the LOCAL declarative-connector runner
+# (tools/declarative-connector/source.sh). Not used by the deployed reconcile
+# loop, which reads the tenant from the connector Secret in the cluster.
+#
+# Copy to {tenant-name}.yaml (e.g. acme.yaml) and pass that name as the
+# <tenant> argument:
+#
+#   cp example-tenant.yaml.example acme.yaml
+#   ./tools/declarative-connector/source.sh check git/github acme
+#
+# Contains ONLY tenant_id — every credential comes from the connector Secret
+# in secrets/connectors/<connector>.yaml, and insight_source_id from that
+# Secret's insight.cyberfabric.com/source-id annotation.
+
+tenant_id: example_tenant

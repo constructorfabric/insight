@@ -9,7 +9,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait, Value};
+use sea_orm::{
+    AccessMode, ConnectionTrait, DatabaseConnection, DbBackend, IsolationLevel, Statement,
+    TransactionTrait, Value,
+};
 use uuid::Uuid;
 
 use crate::domain::resolution::{BINDING_VALUE_TYPE, BindingRow};
@@ -207,6 +210,127 @@ pub async fn person_exists(
 /// # Errors
 ///
 /// Returns an error if any statement fails; the transaction is rolled back.
+/// Append one binding ONLY IF the account has none yet, in a single statement.
+///
+/// The login bootstrap cannot check-then-write: between the two an operator's
+/// exclusion or the seed's own link can land, and because the binding in force
+/// is the LATEST row, an automation row written after it would silently
+/// override a human's decision. Making "nobody has decided this account" part
+/// of the same statement as the insert removes the window — the condition is
+/// evaluated against the same snapshot that writes.
+///
+/// "Nobody has decided it" is scoped exactly as the login lookup scopes it —
+/// by (`source_type`, `value_id`), across every tenant and connector instance.
+/// Narrowing the guard to the instance the evidence names would leave the
+/// decisions it is meant to protect invisible: an exclusion recorded before a
+/// connector was re-registered lives under the OLD instance id, while the
+/// lookup that answers "who is in force" ignores the instance entirely — so a
+/// narrow guard would write, and the fresh row would win.
+///
+/// The inner derived table is not decoration: MariaDB refuses a bare subquery
+/// on the INSERT's own target, and materialising it is what makes the
+/// self-reference legal.
+///
+/// Returns whether the row was written. `false` means somebody else had
+/// already decided the account, and the caller must read what they decided
+/// rather than assume its own row is in force.
+///
+/// # Errors
+///
+/// Returns an error if the statement fails.
+pub async fn append_binding_if_unbound(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    row: &BindingRow,
+) -> anyhow::Result<bool> {
+    const SQL: &str = r"
+        INSERT INTO persons
+            (value_type, insight_source_type, insight_source_id, insight_tenant_id,
+             value_id, value_full_text, value, person_id, author_person_id, reason,
+             created_at)
+        SELECT * FROM (
+            SELECT 'id' AS c1, ? AS c2, ? AS c3, ? AS c4, ? AS c5,
+                   NULL AS c6, NULL AS c7, ? AS c8, ? AS c9, ? AS c10, ? AS c11
+        ) AS incoming
+        WHERE NOT EXISTS (
+            SELECT 1 FROM (
+                SELECT 1 FROM persons
+                WHERE value_type = 'id'
+                  AND insight_source_type = ?
+                  AND value_id = ?
+                LIMIT 1
+            ) AS decided
+        )
+    ";
+
+    // The isolation level is stated, not inherited: the guard's protection rests
+    // on the self-read seeing the same snapshot the insert writes into, and
+    // under READ COMMITTED that read does not lock, so an operator decision can
+    // slip between them. MariaDB defaults to REPEATABLE READ, which is what
+    // makes `INSERT ... SELECT` take a locking read — a deployment that changed
+    // the default must not silently weaken this.
+    let txn = db
+        .begin_with_config(
+            Some(IsolationLevel::RepeatableRead),
+            Some(AccessMode::ReadWrite),
+        )
+        .await?;
+
+    let statement = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [
+            row.account.source_type.clone().into(),
+            row.account.source_id.as_bytes().to_vec().into(),
+            tenant_id.as_bytes().to_vec().into(),
+            row.account.account_id.clone().into(),
+            row.person_id.as_bytes().to_vec().into(),
+            row.author_person_id.as_bytes().to_vec().into(),
+            row.reason.clone().into(),
+            row.created_at.into(),
+            row.account.source_type.clone().into(),
+            row.account.account_id.clone().into(),
+        ],
+    );
+
+    let result = match txn.execute(statement).await {
+        Ok(result) => result,
+        // A lock conflict here means another login is writing THIS account
+        // right now. "We did not write" is the truthful answer, and the
+        // caller's read-back then reports whatever the winner decided —
+        // whereas surfacing it would put a 500 on the login screen for a
+        // condition the design already handles.
+        Err(e) if is_lock_conflict(&e) => {
+            tracing::info!(
+                source_type = %row.account.source_type,
+                account_id = %row.account.account_id,
+                "login bootstrap: another writer holds this account; deferring to it"
+            );
+            let _ = txn.rollback().await;
+            return Ok(false);
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    txn.commit().await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Whether MariaDB refused the statement because another transaction held the
+/// rows: deadlock (1213) or lock-wait timeout (1205).
+///
+/// Classified from the message for the same reason `is_missing_relation` does
+/// it for ClickHouse — the driver surfaces the server's code in the text and
+/// exposes no typed variant for either condition.
+fn is_lock_conflict(error: &sea_orm::DbErr) -> bool {
+    let message = error.to_string();
+    message.contains("1213")
+        || message.contains("1205")
+        || message.contains("Deadlock found")
+        || message.contains("Lock wait timeout exceeded")
+}
+
 pub async fn append_bindings(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -393,4 +517,60 @@ pub async fn present_rows(
             ))
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{DbErr, RuntimeErr};
+
+    use super::*;
+
+    /// A lock conflict is not a fault to surface: it means another login is
+    /// writing this very account, and the caller's read-back is what resolves
+    /// it. Misclassifying either code puts a 500 on the login screen instead.
+    #[test]
+    fn a_lock_conflict_is_told_apart_from_a_real_failure() {
+        for (case, message, expected) in [
+            (
+                "deadlock, by code",
+                "Execution Error: error returned from database: 1213 (40001): \
+                 Deadlock found when trying to get lock; try restarting transaction",
+                true,
+            ),
+            (
+                "lock-wait timeout, by code",
+                "Execution Error: error returned from database: 1205 (HY000): \
+                 Lock wait timeout exceeded; try restarting transaction",
+                true,
+            ),
+            (
+                "deadlock, wording only",
+                "Deadlock found when trying to get lock",
+                true,
+            ),
+            (
+                "lock-wait timeout, wording only",
+                "Lock wait timeout exceeded",
+                true,
+            ),
+            (
+                "a duplicate key is NOT a lock conflict",
+                "error returned from database: 1062 (23000): Duplicate entry for key 'PRIMARY'",
+                false,
+            ),
+            (
+                "a syntax error is NOT a lock conflict",
+                "error returned from database: 1064 (42000): You have an error in your SQL syntax",
+                false,
+            ),
+            (
+                "a dead connection is NOT a lock conflict",
+                "Connection Error: closed",
+                false,
+            ),
+        ] {
+            let error = DbErr::Exec(RuntimeErr::Internal(message.to_owned()));
+            assert_eq!(is_lock_conflict(&error), expected, "misclassified: {case}");
+        }
+    }
 }

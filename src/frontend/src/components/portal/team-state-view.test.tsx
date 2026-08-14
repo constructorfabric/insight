@@ -127,7 +127,7 @@ describe("TeamStateView", () => {
 
   it("keeps the steady attention note when nobody diverges", () => {
     render(<TeamStateView />);
-    expect(screen.getByText("All 4 people are within their usual range this period.")).toBeInTheDocument();
+    expect(screen.getByText("All 4 people are in their usual range this period.")).toBeInTheDocument();
     expect(screen.getByText(/No outliers, declines, or collapses/)).toBeInTheDocument();
   });
 
@@ -136,7 +136,7 @@ describe("TeamStateView", () => {
     render(<TeamStateView />);
     expect(
       screen.getByText(
-        "No people in the current scope — pick a different scope in the topbar.",
+        "No people in the current scope. Pick a different scope at the top of the page.",
       ),
     ).toBeInTheDocument();
   });

@@ -1,0 +1,71 @@
+[package]
+name = "git-cli-proxy"
+version = "0.1.0"
+description = "Git CLI Proxy — clone-based commit data extraction for nocode git connectors"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# ToolKit host runtime. This service runs as a gears-rust host under
+# `toolkit::bootstrap::run_server`, but unlike analytics/identity-resolution it
+# is its OWN `rest_host` (see `gear.rs`) instead of a guest of the
+# `api-gateway` system gear, whose hardcoded 30s request timeout cannot hold a
+# page read. Auth is likewise not the gateway-JWT pipeline: the service is
+# cluster-internal (consumed by Airbyte connector pods) and every /v1 route is
+# guarded by our own static bearer token middleware (`api::auth`).
+toolkit = { workspace = true, features = ["bootstrap"] }
+toolkit-canonical-errors = { workspace = true }
+# Pinned to match the `ToSchema` the toolkit OperationBuilder compiles against.
+utoipa = { version = "5.5" }
+chrono = { workspace = true }
+# Pinned to the toolkit's major: instruments must register against the global
+# meter provider the host installs, and a different major is a different global.
+opentelemetry = "0.31"
+# statvfs: the volume is the ground truth the per-entry accounting cannot
+# see. rustix rather than libc — the workspace forbids unsafe code.
+rustix = { version = "1.1", features = ["fs"] }
+
+# System gears linked into the host. Discovered at link time via inventory
+# (`use … as _;` in main.rs is load-bearing). Deliberately minimal: no
+# api-gateway (this service hosts its own routes), and no authn / authz /
+# tenant-resolver plugins — see the auth note above.
+gear_orchestrator = { workspace = true }
+grpc_hub = { workspace = true }
+types_registry = { workspace = true }
+
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+
+# Repo-cache engine: cache keys are sha256(tenant \0 source \0 clone_url)
+# hex dir names; git credentials travel as an env-injected Basic header.
+sha2 = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+# Hosting the routes ourselves: the lifecycle entry the gear macro generates
+# takes a `CancellationToken`, and a panicking handler must still answer.
+tokio-util = "0.7"
+tower-http = { version = "0.6", features = ["catch-panic"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+# `tower::ServiceExt::oneshot` for driving the Axum router in tests without a
+# bound socket (same approach as the analytics HTTP live tests).
+tower = { version = "0.5", features = ["util"] }
+# tests/boot.rs drives the built binary over real HTTP (routegen cli.rs
+# precedent — covers main.rs/gear.rs under llvm-cov).
+reqwest = { workspace = true, features = ["json"] }
+serde_json = { workspace = true }

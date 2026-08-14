@@ -81,7 +81,7 @@ describe("MembersOverview", () => {
       />,
     );
 
-    expect(screen.getByText("Members × metrics")).toBeInTheDocument();
+    expect(screen.getByText("People × metrics")).toBeInTheDocument();
     const props = gridProps.mock.calls.at(-1)![0] as {
       members: { entityId: string; displayName: string }[];
       metricKeys: readonly string[];

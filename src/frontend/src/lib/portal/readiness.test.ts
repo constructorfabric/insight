@@ -59,9 +59,13 @@ describe("nav classification invariants", () => {
     ]);
   });
 
-  it("Manage keeps exactly the two surfaces that read live data", () => {
+  it("Manage keeps exactly the three surfaces that read live data", () => {
     const { live } = partitionByReadiness(MANAGE_ITEMS, false);
-    expect(live.map((i) => i.id)).toEqual(["metric-catalog", "data-health"]);
+    expect(live.map((i) => i.id)).toEqual([
+      "metric-catalog",
+      "identities",
+      "data-health",
+    ]);
   });
 
   it("every Overview item is live — that zone has no placeholders", () => {
@@ -112,7 +116,7 @@ describe("lens roadmap entries carry a reason", () => {
     for (const { dir, lens, entry } of roadmap) {
       const e = entry as { comingSoon: string; readiness: string };
       if (e.readiness === "planned") {
-        expect(e.comingSoon, `${dir}/${lens}`).toMatch(/semantic layer/i);
+        expect(e.comingSoon, `${dir}/${lens}`).toMatch(/not available yet/i);
         expect(e.comingSoon, `${dir}/${lens}`).not.toMatch(/in development/i);
       } else {
         expect(e.comingSoon, `${dir}/${lens}`).toMatch(/in development/i);

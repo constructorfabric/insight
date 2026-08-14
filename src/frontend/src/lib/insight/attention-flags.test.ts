@@ -57,7 +57,7 @@ describe("computeAttentionFlags", () => {
       name: "Name x",
     });
     expect(flags[0]!.reason).toContain("no commits");
-    expect(flags[0]!.reason).toContain("team median 10");
+    expect(flags[0]!.reason).toContain("the team median is 10");
   });
 
   it("flags a low outlier below the Tukey fence on a higher-is-better metric", () => {
@@ -66,7 +66,7 @@ describe("computeAttentionFlags", () => {
     );
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("outlier");
-    expect(flags[0]!.reason).toContain("unusually low");
+    expect(flags[0]!.reason).toContain("well below");
   });
 
   it("flags a HIGH outlier when lower is better (e.g. meeting hours)", () => {
@@ -79,7 +79,7 @@ describe("computeAttentionFlags", () => {
     );
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("outlier");
-    expect(flags[0]!.reason).toContain("unusually high");
+    expect(flags[0]!.reason).toContain("well above");
   });
 
   it("does not flag anyone in a tight, healthy cohort", () => {
@@ -119,12 +119,12 @@ describe("computeAttentionFlags", () => {
     );
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("decline");
-    expect(flags[0]!.reason).toBe("down 50% vs last period");
+    expect(flags[0]!.reason).toBe("down 50% from last period");
   });
 
   it("treats an INCREASE as adverse when lower is better", () => {
     // x=12 stays inside the Tukey fence (so the outlier branch, which is
-    // checked first and wins, stays quiet) but is +50% vs last period.
+    // checked first and wins, stays quiet) but is +50% from last period.
     const flags = computeAttentionFlags(
       params({
         byKey: new Map([
@@ -137,7 +137,7 @@ describe("computeAttentionFlags", () => {
     );
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("decline");
-    expect(flags[0]!.reason).toBe("up 50% vs last period");
+    expect(flags[0]!.reason).toBe("up 50% from last period");
   });
 
   it("judges members within their own cohort, not the whole roster", () => {
@@ -158,7 +158,7 @@ describe("computeAttentionFlags", () => {
   });
 
   it("keeps only the strongest flag per person+metric and ranks by severity", () => {
-    // x collapses (0 vs median) AND declined vs last period — collapse wins.
+    // x collapses (0 vs median) AND declined from last period — collapse wins.
     const flags = computeAttentionFlags(
       params({
         byKey: new Map([["t.metric", fixture([...BASE, ["x", 0], ["y", 2]])]]),
@@ -177,7 +177,13 @@ describe("computeAttentionFlags", () => {
 describe("attentionSummary", () => {
   it("reports steady when there are no flags", () => {
     expect(attentionSummary([], 0, 12)).toBe(
-      "All 12 people are within their usual range this period.",
+      "All 12 people are in their usual range this period.",
+    );
+  });
+
+  it("does not say 'All 1 people' when the scope holds one person", () => {
+    expect(attentionSummary([], 0, 1)).toBe(
+      "The one person in scope is in their usual range this period.",
     );
   });
 
@@ -190,7 +196,7 @@ describe("attentionSummary", () => {
       params({ byKey: new Map([["t.metric", fixture([...BASE, ["x", 0]])]]) }),
     );
     expect(attentionSummary(flags, 1, 8)).toBe(
-      "1 of 8 people need a look — most often Commits (1 person).",
+      "1 of 8 people stands out this period — most often Commits (1 person).",
     );
   });
 });

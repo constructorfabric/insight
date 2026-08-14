@@ -120,10 +120,8 @@ export function MetricEvidenceDialog({
     [rows, columns, search, sort]
   );
 
-  // Searching and sorting must answer for the whole result, not for whichever
-  // pages happened to be scrolled into view, so narrowing pulls the rest in.
-  // The table's own scroll-triggered paging cannot do it: a search that hides
-  // most rows also stops the scroll that would load more.
+  // INVARIANT: narrowing must see every page — the table's scroll-triggered
+  // paging stalls once a search hides most rows.
   useEffect(() => {
     if (
       narrowed &&
@@ -190,8 +188,11 @@ export function MetricEvidenceDialog({
             <div className="flex items-center justify-between gap-4">
               {state.targets.length > 1 ? (
                 <>
+                  {/* INVARIANT: the dialog is named for what it shows — a
+                      caller that names the whole set wins, otherwise the
+                      metric on screen. */}
                   <DialogTitle className="sr-only">
-                    {state.title ?? "Metric evidence"}
+                    {state.title ?? activeTarget.label}
                   </DialogTitle>
                   <Select
                     value={activeTarget.selection.metric_key}
@@ -303,8 +304,8 @@ export function MetricEvidenceDialog({
           ) : visibleRows.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3">
               {query.isFetchNextPageError ? (
-                // Only the pages that loaded were searched, so "no match"
-                // would be a claim about records nobody has seen.
+                // SAFETY: only loaded pages were searched — "no match" would
+                // claim something about records nobody has seen.
                 <>
                   <p role="alert" className="text-sm text-muted-foreground">
                     Nothing matched the records loaded so far, and the rest
@@ -339,6 +340,9 @@ export function MetricEvidenceDialog({
             </div>
           ) : (
             <MetricEvidenceTable
+              // INVARIANT: remounts per metric — expansion state is the
+              // table's and must not carry across.
+              key={activeMetricKey}
               rows={visibleRows}
               columns={columns}
               sort={sort}
@@ -356,11 +360,6 @@ export function MetricEvidenceDialog({
   );
 }
 
-/**
- * Both counts are of what has been paged in, so whenever pages are still
- * outstanding — loading, or left behind by a failure — the total says as much
- * rather than reading as the answer.
- */
 function recordCount({
   visible,
   loaded,

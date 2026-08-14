@@ -71,6 +71,10 @@ pub struct IdpConfig {
     /// to `sub` (fine for IdPs where `sub` IS the stable directory id, e.g.
     /// Keycloak).
     pub external_id_claim: String,
+    // INVARIANT: off by default — it widens who may ENTER, which is a
+    // deployment's policy to set. Identity refuses to mint for a principal no
+    // connector has observed, so it never widens who exists.
+    pub provision_on_login: bool,
     /// Fallback tenant when the id_token carries no tenant claim at all (e.g.
     /// Okta). Empty = no fallback: the gateway JWT gets an empty `tenant_id`
     /// and downstream services fail closed. Interim until the Identity
@@ -115,6 +119,7 @@ impl Default for IdpConfig {
             tenant_claim: "tenant_id".to_owned(),
             source_type: String::new(),
             external_id_claim: "sub".to_owned(),
+            provision_on_login: false,
             default_tenant_id: String::new(),
             extra_ca_cert_path: String::new(),
             hosts: HashMap::new(),

@@ -51,9 +51,9 @@ export const PEER_TEXT: Record<PeerStatusWithNeutral, string> = {
 
 export const PEER_LABEL: Record<PeerStatusWithNeutral, string> = {
   top: "Top 25%",
-  in_pack: "On par",
+  in_pack: "Near the median",
   bottom: "Bottom 25%",
-  neutral: "No peer data",
+  neutral: "No comparison",
 }
 
 export const PEER_FILL: Record<PeerStatusWithNeutral, string> = {

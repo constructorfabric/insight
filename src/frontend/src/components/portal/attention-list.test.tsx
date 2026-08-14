@@ -29,7 +29,7 @@ function flag(over: Partial<AttentionFlag>): AttentionFlag {
     metricLabel: "Commits",
     kind: "outlier",
     valueText: "2",
-    reason: "unusually low · team median 10",
+    reason: "well below the team median of 10",
     severity: 1,
     ...over,
   };
@@ -76,13 +76,12 @@ describe("AttentionList", () => {
     render(
       <AttentionList
         flags={FLAGS.slice(0, 2)}
-        summary="2 of 8 people need a look — most flags on Commits (2)."
-        peopleLabel="2 of 8 people"
+        summary="2 of 8 people stand out this period — most often Commits (2)."
       />,
     );
-    expect(screen.getByText(/2 of 8 people need a look/)).toBeInTheDocument();
+    expect(screen.getByText(/2 of 8 people stand out this period/)).toBeInTheDocument();
     expect(screen.getByText("Person 0")).toBeInTheDocument();
-    expect(screen.getAllByText("unusually low · team median 10")).toHaveLength(2);
+    expect(screen.getAllByText("well below the team median of 10")).toHaveLength(2);
   });
 
   it("links every row to that person's personal page", () => {

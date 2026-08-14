@@ -157,6 +157,12 @@ export interface PaneItem {
   badge?: { text: string; tone: "warn" | "new" | "error" };
   /** See {@link Readiness}. Absent = built and data-backed. */
   readiness?: Readiness;
+  /**
+   * Rendered only for viewers holding the active `admin` identity role
+   * (`useIsAdmin`) — a UI courtesy over the server-side gate, which refuses
+   * regardless of what the frontend draws.
+   */
+  adminOnly?: boolean;
 }
 
 export interface PaneGroup {
@@ -197,7 +203,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
         { id: "by-direction", label: "By direction", icon: Layers },
         { id: "trend", label: "Trend", icon: TrendingUp },
         { id: "attention", label: "Attention needed", icon: AlertTriangle },
-        { id: "health", label: "What we can see", icon: ScanEye },
+        { id: "health", label: "Data coverage", icon: ScanEye },
         { id: "contribution", label: "Contribution breakdown", icon: Users },
       ],
     },
@@ -244,17 +250,17 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
     {
       items: [
         { id: "fixed", label: "Fixed scorecard", icon: LayoutGrid, readiness: "unbuilt" },
-        { id: "detailed", label: "Detailed (drill)", icon: Layers, readiness: "unbuilt" },
-        { id: "quarterly", label: "Quarterly QoQ", icon: TrendingUp, readiness: "unbuilt" },
+        { id: "detailed", label: "Detailed breakdown", icon: Layers, readiness: "unbuilt" },
+        { id: "quarterly", label: "Quarter over quarter", icon: TrendingUp, readiness: "unbuilt" },
       ],
     },
   ],
   reports: [
     {
-      label: "Generated (diagnosis)",
+      label: "Generated reports",
       items: [
-        { id: "delivery-trend", label: "Delivery trend v3", icon: FileText, readiness: "unbuilt" },
-        { id: "ttm", label: "TTM report", icon: FileText, readiness: "unbuilt" },
+        { id: "delivery-trend", label: "Delivery trend", icon: FileText, readiness: "unbuilt" },
+        { id: "ttm", label: "Trailing twelve months", icon: FileText, readiness: "unbuilt" },
       ],
     },
     {
@@ -280,9 +286,14 @@ export const PEOPLE_ITEMS: readonly PaneItem[] = [
 
 /* ── Manage zone ─────────────────────────────────────────────────────── */
 
+/** The Manage pane for one viewer: admin-only surfaces drop for everyone else. */
+export function manageItemsFor(isAdmin: boolean): readonly PaneItem[] {
+  return MANAGE_ITEMS.filter((item) => !item.adminOnly || isAdmin);
+}
+
 export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "metric-catalog", label: "Metric catalog", icon: LayoutGrid },
-  { id: "identities", label: "Identities", icon: Fingerprint, readiness: "unbuilt" },
+  { id: "identities", label: "Identities", icon: Fingerprint, adminOnly: true },
   { id: "taxonomy", label: "Roles & taxonomy", icon: Boxes, readiness: "unbuilt" },
   { id: "exclusions", label: "Data exclusions", icon: Filter, readiness: "unbuilt" },
   { id: "snapshots", label: "Org snapshots", icon: Clock, readiness: "unbuilt" },

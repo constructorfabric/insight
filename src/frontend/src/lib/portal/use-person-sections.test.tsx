@@ -126,7 +126,7 @@ describe("usePersonSectionStandings", () => {
     mocks.byKey = normalizeMetricResults([metric("git.commits", null, 20)]);
     const git = standings().find((s) => s.id === "git_output")!;
     expect(git.hasData).toBe(false);
-    expect(git.phrase).toBe("no peer data");
+    expect(git.phrase).toBe("no comparison");
   });
 
   it("separates a section this person is absent from one nobody is measured in", () => {

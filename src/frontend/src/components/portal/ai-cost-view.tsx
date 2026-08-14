@@ -51,16 +51,16 @@ const GRID_KEYS = [COST_KEY, DAYS_KEY, LINES_KEY, "ai.dev_conversations"];
 const COMING_SOON: Record<string, string> = {
   "per-tool":
     "Per-tool detail — the tool split is summarised on Overview → By tool; a standalone per-tool drilldown is pending.",
-  autofix: "Autofix — no autofix signal ingested.",
-  "ai-audit": "AI Audit — pending the diagnosis circuit.",
+  autofix: "Autofix — no autofix data is collected.",
+  "ai-audit": "AI Audit — not built yet.",
   "spend-by-tool":
     "Spend by tool — see Overview → By tool; a dedicated spend breakdown is pending.",
   "cost-by-unit":
     "Cost by unit / user — unit rollup is under “By unit / role”, per-user is on Overview; a combined view is pending.",
   "idle-seats":
-    "Idle seats — the seat roster lives in bronze (52 ChatGPT seats) but isn't exposed through the analytics API yet.",
-  credits: "Credits burn-down — no credit/quota feed ingested.",
-  "ai-pricing": "AI pricing config — not wired.",
+    "Idle seats — seat data is collected but not available in this view yet.",
+  credits: "Credits burn-down — no credit or quota data is collected.",
+  "ai-pricing": "AI pricing settings — not built yet.",
 };
 
 const TOOL_LABEL: Record<string, string> = {
@@ -287,7 +287,7 @@ export function AiCostView({ item }: { item: string | null }) {
     memberCount: members.length,
     gridPending: grid.isPending,
     gridError: grid.isError,
-    emptyLabel: "No people in the current scope — pick a different scope in the topbar.",
+    emptyLabel: "No people in the current scope. Pick a different scope at the top of the page.",
     onRetry: () => {
       orgScope.refetch();
       grid.refetch();
@@ -396,7 +396,7 @@ export function AiCostView({ item }: { item: string | null }) {
             ))}
           </div>
         ) : (
-          <ComingSoon variant="card" state="empty" label="No per-tool breakdown for this period." />
+          <ComingSoon variant="card" state="empty" label="No breakdown by tool for this period." />
         )}
         <p className="text-xs text-muted-foreground">
           Only Claude Code is usage-metered. ChatGPT (per-seat subscription) and

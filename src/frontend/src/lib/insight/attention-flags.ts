@@ -147,7 +147,7 @@ export function computeAttentionFlags({
         if (sev != null) {
           out.push({
             personId, name, metricKey: key, metricLabel: label, kind: "collapse",
-            valueText, reason: `no ${label.toLowerCase()} (${cohortLabel} median ${st.medianText})`,
+            valueText, reason: `no ${label.toLowerCase()} — the ${cohortLabel} median is ${st.medianText}`,
             severity: sev,
           });
         }
@@ -164,7 +164,7 @@ export function computeAttentionFlags({
           out.push({
             personId, name, metricKey: key, metricLabel: label, kind: "outlier",
             valueText,
-            reason: `${higherIsBetter ? "unusually low" : "unusually high"} · ${cohortLabel} median ${st.medianText}`,
+            reason: `${higherIsBetter ? "well below" : "well above"} the ${cohortLabel} median of ${st.medianText}`,
             severity: sev,
           });
         }
@@ -186,7 +186,7 @@ export function computeAttentionFlags({
             out.push({
               personId, name, metricKey: key, metricLabel: label, kind: "decline",
               valueText,
-              reason: `${higherIsBetter ? "down" : "up"} ${Math.round(adverse * 100)}% vs last period`,
+              reason: `${higherIsBetter ? "down" : "up"} ${Math.round(adverse * 100)}% from last period`,
               severity: sev ?? adverse,
             });
           }
@@ -255,7 +255,9 @@ export function attentionSummary(
   teamSize: number,
 ): string {
   if (flags.length === 0)
-    return `All ${people(teamSize)} are within their usual range this period.`;
+    return teamSize === 1
+      ? "The one person in scope is in their usual range this period."
+      : `All ${people(teamSize)} are in their usual range this period.`;
   // Counted in PEOPLE, like the rest of the line. Counting flags here made one
   // sentence hold two units — "3 of 16 people … most flags on Commits (5)" —
   // and left a reader to work out that five flags can belong to two people.
@@ -269,5 +271,7 @@ export function attentionSummary(
     .sort((a, b) => b[1].size - a[1].size)
     .slice(0, 2);
   const themes = top.map(([label, who]) => `${label} (${people(who.size)})`).join(", ");
-  return `${flaggedPeople} of ${people(teamSize)} need a look — most often ${themes}.`;
+  return `${flaggedPeople} of ${people(teamSize)} ${
+    flaggedPeople === 1 ? "stands" : "stand"
+  } out this period — most often ${themes}.`;
 }

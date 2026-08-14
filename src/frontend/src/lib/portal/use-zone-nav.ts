@@ -6,6 +6,7 @@ import {
 } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useViewerIsManager } from "@/lib/portal/use-viewer-is-manager";
+import { useIsAdmin } from "@/queries/identity-me";
 
 /**
  * Zones that still make sense when the viewer manages no one — everything else
@@ -35,10 +36,14 @@ export function useZoneNav(): {
   // shell collapses to Person. While the viewer's identity is still resolving,
   // assume manager so the nav doesn't flash a collapsed state.
   const orgZonesVisible = isManager || mgrPending;
+  // Manage is opened by the admin role, not by having reports: the operator
+  // persona is an IC by design. Fail closed while the role check is pending —
+  // a rail entry that vanishes is worse than one that appears a beat late.
+  const { isAdmin } = useIsAdmin();
 
   const zones = ZONES.filter(
     (z) =>
-      (orgZonesVisible || IC_ZONES.has(z.id)) &&
+      (orgZonesVisible || IC_ZONES.has(z.id) || (z.id === "manage" && isAdmin)) &&
       (z.readiness !== "unbuilt" || showPlanned),
   );
 
@@ -60,7 +65,7 @@ export function useZoneNav(): {
       // a lingering `?zone=` there would only contradict it.
       search: (prev: Record<string, unknown>) => ({
         ...prev,
-        ...(activeZone !== zone.id ? { item: undefined } : {}),
+        ...(activeZone !== zone.id ? { item: undefined, acct: undefined } : {}),
         zone: entity ? undefined : zone.id,
       }),
     });

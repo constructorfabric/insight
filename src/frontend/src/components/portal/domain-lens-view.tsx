@@ -276,7 +276,7 @@ export function DomainLensView({
     gridPending: grid.isPending,
     gridError: grid.isError,
     emptyLabel:
-      "No team in the current scope — a Direction shows a domain across a team; pick a different scope in the topbar.",
+      "No people in the current scope. Pick a different scope at the top of the page.",
     onRetry: () => {
       orgScope.refetch();
       grid.refetch();
@@ -297,7 +297,7 @@ export function DomainLensView({
       <Pending
         label={
           config.notIngested ??
-          `${config.title} — source isn't ingested for this org yet.`
+          `${config.title} — this data source is not connected yet.`
         }
       />
     );
@@ -308,7 +308,8 @@ export function DomainLensView({
       <div>
         <h1 className="text-lg font-semibold tracking-tight">{config.title}</h1>
         <p className="text-sm text-muted-foreground">
-          {orgScope.count} members · {config.tagline ?? "trend & balance"}
+          {orgScope.count} {orgScope.count === 1 ? "person" : "people"} ·{" "}
+          {config.tagline ?? "trend & balance"}
         </p>
       </div>
 
@@ -420,7 +421,7 @@ function Section({
       ) : (
         // Say which of the two dials to turn — a bare "no data" would read as
         // an ingestion gap rather than a request nobody can answer.
-        <Pending label="Trend needs a narrower period or a smaller scope — this many people over this window exceeds one request." />
+        <Pending label="Too many people over too long a period to chart at once. Pick a shorter period or a smaller scope." />
       );
     case "distribution":
       return (
@@ -529,11 +530,13 @@ function CoverageLevelsSection({
     useScopeCoverage(memberIds);
   if (isPending) return <Pending label="Reading coverage…" />;
   // Before anything else. With a request failed nothing is known to reach the
-  // tenant, so every part would read "no data reaches us" and every person
+  // tenant, so every part would read "no data" and every person
   // would sit at zero — a fault in our infrastructure printed as a verdict
   // about named people. Saying we could not check is the only honest output.
   if (isError) {
-    return <Pending label="Could not read coverage — the check did not complete, so nothing is claimed about anyone." />;
+    return (
+      <Pending label="Could not read coverage. The check did not finish, so nothing here is claimed about anyone." />
+    );
   }
   const counted = distribution.counted;
   if (counted === 0) return null;
@@ -555,8 +558,8 @@ function CoverageLevelsSection({
           <span className="text-muted-foreground">/{counted}</span>
         </span>
         <p className="max-w-md text-sm text-muted-foreground">
-          people are seen in fewer than half of their work — everything else
-          this product says about them rests on that fraction.
+          people have data for fewer than half the sections. Everything shown
+          about them comes from those sections only.
         </p>
       </div>
 
@@ -565,7 +568,7 @@ function CoverageLevelsSection({
           one thing it does not mean. */}
       <div className="flex flex-col gap-2">
         <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-          By part of work
+          By section
         </p>
         {parts.map((part) => (
           <div key={part.id} className="flex items-center gap-3 text-sm">
@@ -576,7 +579,7 @@ function CoverageLevelsSection({
                     a broken schema all land here, and only the first is a
                     missing connector — sending someone to plumb a live one is
                     the wrong direction to be wrong in. */}
-                nothing reaches us here
+                no data
               </span>
             ) : (
               <CoverageBar filled={part.seen} total={counted} />
@@ -592,7 +595,7 @@ function CoverageLevelsSection({
           labels: the amber block IS the number at the top. */}
       <div className="flex flex-col gap-2">
         <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-          By person · parts we can see
+          By person · sections with data
         </p>
         {levels.map(([level, n], i) => {
           const thinHere = level < partCount / 2;
@@ -644,18 +647,19 @@ function CoverageLevelsSection({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        A part counts when any of its metrics has a value for that person this
-        period — so this says what we can see, never how well anyone did.
+        A section counts when at least one of its metrics has a value for that
+        person in this period. This shows where data exists, not how well
+        anyone worked.
         {missing.length > 0 && (
           <>
             {" "}
-            Nobody here can reach the top of that scale, because{" "}
+            No one can reach {partCount} of {partCount} here:{" "}
             {missing.map((m) => m.title).join(", ")}{" "}
-            {missing.length === 1 ? "reaches" : "reach"} us for no one.
+            {missing.length === 1 ? "has" : "have"} no data for anyone.
           </>
         )}{" "}
-        Counted over {counted} {counted === 1 ? "person" : "people"} you can
-        see in this scope.
+        Counted over the {counted} {counted === 1 ? "person" : "people"} in
+        this scope.
       </p>
     </section>
   );
@@ -715,12 +719,12 @@ function CoverageLevelPeople({
             )}
             {unconnected.length > 0 && (
               <span className="text-warning">
-                no connector: {unconnected.join(", ")}
+                not measured for anyone: {unconnected.join(", ")}
               </span>
             )}
             {idle.length > 0 && (
               <span className="text-muted-foreground">
-                nothing recorded: {idle.join(", ")}
+                nothing recorded for this person: {idle.join(", ")}
               </span>
             )}
           </li>
@@ -1192,11 +1196,11 @@ const FRAMING_COPY: Record<
   { heading: string; note: string }
 > = {
   "bus-factor": {
-    heading: "Bus factor · top 10% of contributors",
+    heading: "How much of the work sits with the busiest tenth",
     note: "high concentration = continuity risk",
   },
   "load-balance": {
-    heading: "Load concentration · top 10% of contributors",
+    heading: "How much of the load sits with the busiest tenth",
     note: "even share ≈ 10%",
   },
 };
@@ -1366,11 +1370,6 @@ function AttentionSection({
     <AttentionList
       flags={flags}
       summary={attentionSummary(flags, flaggedPeople, memberIds.length)}
-      peopleLabel={
-        flags.length
-          ? `${flaggedPeople} of ${memberIds.length} people`
-          : undefined
-      }
       max={spec.max}
     />
   );
@@ -1465,7 +1464,7 @@ function DirectionCardsSection({
                 })
               ) : (
                 <span className="text-xs text-muted-foreground">
-                  source isn&apos;t ingested for this org yet
+                  this data source is not connected yet
                 </span>
               )}
             </div>
@@ -1479,7 +1478,7 @@ function DirectionCardsSection({
 /* ── by-unit auto-section (rule 7) ───────────────────────────────────── */
 
 const NO_COMPARABLE_UNITS_NOTE =
-  "No comparable units for this lens at this slice (needs a summable headline metric and ≥2 units of ≥4 people).";
+  "Nothing to compare at this grouping: it needs at least two groups of four or more people, and a metric that can be added up.";
 
 function ByUnitSection({
   config,
@@ -1502,7 +1501,7 @@ function ByUnitSection({
   const planned = PLANNED_SLICES.find((d) => d.key === sliceKey);
   if (planned) {
     return (
-      <SliceNote text={`The ${planned.label} dimension isn't ingested yet.`} />
+      <SliceNote text={`Grouping by ${planned.label} is not available yet.`} />
     );
   }
 
