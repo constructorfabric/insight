@@ -92,5 +92,5 @@ models:
     description: "Append-only SCD2 over issue availability — a version per state flip. Deletion is recorded here as an event in the issue's history, never as a physical delete."
   - name: jira__issue_availability_history
     description: "Per-issue availability transition events (availability: old → new @ detection time) derived from the availability snapshot."
-  - name: jira__task_availability
-    description: "Per-source staging projection of issue availability. Unioned into silver.class_task_availability; gold task models filter deleted/trashed issues through it."
+  - name: jira__availability_events
+    description: "Availability transitions as synthetic field-history events (field_id='availability', event_kind='availability'). Unioned into silver.class_task_field_history so an issue's whole lifecycle — including deletion and lost access — lives in one source-agnostic table."

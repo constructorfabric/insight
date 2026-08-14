@@ -13,15 +13,15 @@ models:
         tests:
           - not_null
       - name: event_id
-        description: "Natural identifier of the event. For `event_kind='changelog'` this is `jira_issue_history.changelog_id` (shared across all fields changed in one changelog). For `event_kind='synthetic_initial'` it is `'initial:<issue_id>'` (shared across all initial fields of one issue). Per ADR-005, operator audit JOIN key is (insight_source_id, id_readable, event_id, field_id)."
+        description: "Natural identifier of the event. For `event_kind='changelog'` this is `jira_issue_history.changelog_id` (shared across all fields changed in one changelog). For `event_kind='synthetic_initial'` it is `'initial:<issue_id>'` (shared across all initial fields of one issue). For `event_kind='availability'` it is `'availability:<issue_id>:<detection epoch ms>'` (issue id included because census-only issues have an empty `id_readable`, and the audit grain needs event_id to disambiguate them). Per ADR-005, operator audit JOIN key is (insight_source_id, id_readable, event_id, field_id)."
         tests:
           - not_null
       - name: event_kind
-        description: "Discriminator for event origin. Enum8: `changelog` = real field change from jira_issue_history; `synthetic_initial` = bootstrap row emitted for every tracked field on first observation of an issue."
+        description: "Discriminator for event origin. Enum8: `changelog` = real field change from jira_issue_history; `synthetic_initial` = bootstrap row emitted for every tracked field on first observation of an issue; `availability` = synthetic availability transition (present / deleted / archived / trashed / access_lost / unobserved) detected by the source's census streams — deletion is an event in the issue's history, in the same table as every other field change."
         tests:
           - not_null
           - accepted_values:
-              values: ['changelog', 'synthetic_initial']
+              values: ['changelog', 'synthetic_initial', 'availability']
       - name: field_id
         description: "Field identifier (e.g. 'status', 'assignee', 'customfield_10020'). Part of the ReplacingMergeTree ORDER BY together with (insight_source_id, data_source, id_readable, event_id) — see ADR-005."
         tests:
@@ -36,23 +36,6 @@ models:
       - name: field_id
         tests:
           - not_null
-
-  - name: class_task_availability
-    description: "Current availability per task-tracker entity (issue): present / deleted / archived / trashed / access_lost / unobserved, classified from the source's census streams. Gold task models exclude deleted/trashed entities through it. Full transition history lives in the per-connector availability snapshot/history models. See connectors/task-tracking/jira/specs/DELETION-AND-VISIBILITY.md."
-    columns:
-      - name: insight_source_id
-        tests:
-          - not_null
-      - name: entity_kind
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['issue']
-      - name: availability
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['present', 'deleted', 'archived', 'trashed', 'access_lost', 'unobserved']
 
   - name: class_task_comments
     description: "Unified issue comments from all task-tracker sources."

@@ -47,8 +47,9 @@ jira_issue_census        ──────────────►  jira__is
   id-only sweep of ALL issues               availability per ever-seen issue
   in every visible live project           ► jira__issue_availability_snapshot   (SCD2, snapshot())
                                           ► jira__issue_availability_history    (events, fields_history())
-                                          ► jira__task_availability             (staging → silver)
-                                            └─► silver.class_task_availability  (union_by_tag)
+                                          ► jira__availability_events           (staging → silver)
+                                            └─► silver.class_task_field_history (union_by_tag,
+                                                 event_kind='availability')
                                                  └─► gold task models filter on it
 ```
 
@@ -168,23 +169,32 @@ the latter for hard-deleted entities.
 
 ## Downstream contract
 
-New silver class table `class_task_availability` (fed by
-`jira__task_availability` via `union_by_tag('silver:class_task_availability')`):
+Availability transitions enter silver as **synthetic field-history events** in
+`class_task_field_history` — the same table, shape and machinery as every
+other field change. `jira__availability_events` maps the transitions from the
+availability SCD2 snapshot into the contract and unions in via
+`union_by_tag('silver:class_task_field_history')`:
 
-| column | meaning |
-|--------|---------|
-| `unique_key` | `{tenant}-{source}-{entity_kind}-{entity_id}` |
-| `insight_source_id` / `data_source` | standard class columns |
-| `entity_kind` | `issue` (other kinds may join the contract later) |
-| `entity_id` | numeric Jira issue id — matches `class_task_field_history.issue_id` |
-| `id_readable` | issue key (`PROJ-123`) where known — join key for tables keyed by readable id (comments, worklogs); NULL for issues only ever seen by the census |
-| `availability` | enum from the classification table above |
-| `last_seen_at` | last census observation |
-| `availability_changed_at` | when the current state was first detected |
+| field-history column | value for availability events |
+|----------------------|--------------------------------|
+| `field_id` / `field_name` | `availability` / `Availability` |
+| `event_kind` | `availability` (new enum value alongside `changelog`, `synthetic_initial`) |
+| `event_id` | `availability:<detection epoch ms>` |
+| `event_at` | detection time (census generation) |
+| `value_ids` / `value_displays` | the new state — enum from the classification table above |
+| `value_id_type` | `string_literal` |
+
+This keeps the contract **source-agnostic**: the census streams and the
+classifier are Jira's way of *detecting* absence, but the silver surface only
+says "this issue's availability changed at T" — a YouTrack, GitHub or any
+other task-tracker connector emits identical events from whatever deletion
+signal its API exposes (soft-delete flags, activity logs, webhooks), and every
+consumer reads one table for the entire issue lifecycle, deletion included.
 
 Consumption policy (implemented):
 
-- `gold/task_issue_state.sql` — anti-filters issues whose availability is
+- `gold/task_issue_state.sql` — pivots `field_id = 'availability'` alongside
+  the other fields and filters out issues whose latest availability is
   `deleted` or `trashed`. Deleted issues therefore leave every task metric on
   the next build (`task_status_spans`, `task_worklog_flow`,
   `task_metric_evidence` all derive from `task_issue_state`, so the filter
@@ -231,3 +241,9 @@ availability data supports either choice.
   would add immediacy but require an inbound endpoint the batch-pull
   architecture does not have; the census is the guaranteed path. If webhooks
   are added later they emit into the same availability model.
+- The silver contract changes this mechanism ships (`event_kind` gains
+  `availability`, `class_task_worklogs` gains `is_deleted`) are deployed via
+  the **major descriptor bump**: per ADR-0015 reconcile dispatches a one-shot
+  sync with `dbt --full-refresh` on the connector's selector, which rebuilds
+  the affected staging/silver tables from bronze. No ALTER migrations are
+  shipped for staging/silver.
