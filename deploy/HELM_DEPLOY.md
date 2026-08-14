@@ -253,10 +253,12 @@ authenticator:
                                       # for sourceType. Default "sub" is correct when `sub` itself is
                                       # that stable id; Entra needs "oid" instead (its `sub` is
                                       # pairwise-unique per client, NOT the directory-stable id).
-  # provisionOnLogin: true           # let a roster member enter on first login instead of waiting
+    # provisionOnLogin: true         # let a roster member enter on first login instead of waiting
                                       # for the nightly persons-seed — which links by e-mail, so a
                                       # member whose directory publishes none never gets a person.
-                                      # See "First login provisioning" below before turning it on.
+                                      # Note the indentation: this is authenticator.oidc.*, and a
+                                      # misplaced key is ignored in silence. See "First login
+                                      # provisioning" below before turning it on.
   # csrfOrigins: ["https://<HOST>"]  # fail-closed by default: if the UI's POST /auth/logout,
                                      # /auth/refresh or DELETE /auth/sessions return 403, set this
 
