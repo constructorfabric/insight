@@ -230,9 +230,8 @@ def test_a_line_is_dated_by_the_period_it_charges_for(invoice_silver):
     assert _by_line(invoice_silver, "il_premium")["period_month"] == "2026-08-01"
 
 
-# A recovery: the first sync failed on one invoice, the second reached its lines.
-# Both readings sit in bronze, keyed differently — the gap by the wrapper, the
-# lines by Stripe's ids — so the class has to decide which survives.
+# A recovery: a failed sync's gap and the later lines sit in bronze under
+# different keys, so the class has to decide which of them survives.
 RECOVERED_ROWS = [
     _row(
         _airbyte_extracted_at="2026-09-02T00:00:00Z",

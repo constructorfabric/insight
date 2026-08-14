@@ -83,8 +83,10 @@ class SourceClaudeTeamInvoices(AbstractSource):
             return False, "invoice list answered 200 with a body that is not JSON"
         if not isinstance(listing, dict):
             return False, f"invoice list answered a {type(listing).__name__}, not an object"
-        if "invoices" not in listing:
-            return False, "invoice list did not carry an `invoices` field"
+        if not isinstance(listing.get("invoices"), list):
+            # A sync extends this value; anything else fails mid-run, after
+            # this check has already reported the source healthy.
+            return False, "invoice list did not carry an `invoices` array"
 
         try:
             # Unauthenticated and harmless: it proves the host resolves and TLS

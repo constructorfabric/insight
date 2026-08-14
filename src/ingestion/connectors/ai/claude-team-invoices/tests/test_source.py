@@ -79,12 +79,17 @@ def test_any_other_status_is_reported_with_its_code(source, http):
     [
         ({"text": "<html>maintenance</html>"}, "not JSON"),
         ({"json": ["invoice"]}, "answered a list"),
-        ({"json": {"data": []}}, "`invoices` field"),
+        ({"json": {"data": []}}, "`invoices` array"),
+        ({"json": {"invoices": 1}}, "`invoices` array"),
     ],
-    ids=["not-json", "not-an-object", "no-invoices-field"],
+    ids=["not-json", "not-an-object", "no-invoices-field", "invoices-not-an-array"],
 )
 def test_a_200_that_is_not_an_invoice_listing_is_refused(source, http, body, expected):
-    """A 200 proves the proxy answered, not that it answered this API."""
+    """A 200 proves the proxy answered, not that it answered this API.
+
+    The array case matters most: a sync extends that value, so a scalar would
+    fail mid-run after this check had already reported the source healthy.
+    """
     http.get(INVOICES_URL, **body)
     ok, message = source.check_connection(None, CONFIG)
     assert ok is False

@@ -20,9 +20,10 @@ Same reasoning as github-copilot ADR-0001.
 | 3 | `GET invoicedata.stripe.com/hosted_invoice_page/{acct}/{token}` | `invoice_id` and a short-lived `ephemeral_key` |
 | 4 | `GET api.stripe.com/v1/invoices/{id}/lines?limit=100`, paginated on `has_more` | the full line set |
 
-Steps 3 and 4 pin `Stripe-Version: 2026-06-24.dahlia` and pass
-`Stripe-Account: {acct}`. The ephemeral key is short-lived, authorises the line
-calls, and is never written to a record, a state message or a log line.
+Step 3 carries no header: the token inside its URL is what authorises it.
+Step 4 sends the ephemeral key, `Stripe-Version: 2026-06-24.dahlia` and
+`Stripe-Account: {acct}` on every line page. The key is short-lived and is
+never written to a record, a state message or a log line.
 
 Follow a URL inside the run that fetched it. Stripe expires a hosted invoice URL
 30 days after the due date, and claude.ai re-issues a fresh one on every list
