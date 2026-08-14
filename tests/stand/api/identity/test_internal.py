@@ -8,6 +8,10 @@ can never be confused for one another:
   the login-bootstrap resolve, scoped to the IdP's `source_type` + its
   source-native external id (e.g. the Entra `oid` claim). This is what the
   authenticator actually calls during login.
+- `POST /internal/persons/provision` — the login bootstrap's WRITE half: the
+  same principal, minted when the journal has no binding for it yet and no
+  connector observation carries an address for it (the batch resolves anything
+  that does).
 - `GET /internal/persons/by-email-override?email=...` — the authenticator's
   admin `__override` (view-as) resolve; never used by login. This is the URL
   the OLD, now-removed `GET /internal/persons/by-email/{email}` login-bootstrap
@@ -331,6 +335,23 @@ def test_provision_refuses_a_principal_no_connector_has_observed(
     assert response.status_code == 404, (
         f"an unobserved principal was provisioned (status {response.status_code}) instead of "
         f"being refused: {response.text[:300]}"
+    )
+
+
+@pytest.mark.requires_service_principal
+@pytest.mark.security
+def test_provision_refuses_an_over_long_external_id(
+    service_client: ApiClient, stand_manifest: Manifest
+) -> None:
+    """An id longer than the column it lands in is a bad argument, not a 500 —
+    and under a lax SQL mode an unchecked one would be stored truncated, so
+    neither the write guard nor the read-back could match it again and every
+    login attempt would append another unusable journal row."""
+    response = service_client.post(
+        PROVISION, json_body=_provision_body(stand_manifest, "x" * 400)
+    )
+    assert response.status_code == 400, (
+        f"an over-long external_id answered {response.status_code}, not 400: {response.text[:300]}"
     )
 
 
