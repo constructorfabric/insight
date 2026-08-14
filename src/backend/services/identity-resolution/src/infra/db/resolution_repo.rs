@@ -276,28 +276,59 @@ pub async fn append_binding_if_unbound(
         )
         .await?;
 
-    let result = txn
-        .execute(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            SQL,
-            [
-                row.account.source_type.clone().into(),
-                row.account.source_id.as_bytes().to_vec().into(),
-                tenant_id.as_bytes().to_vec().into(),
-                row.account.account_id.clone().into(),
-                row.person_id.as_bytes().to_vec().into(),
-                row.author_person_id.as_bytes().to_vec().into(),
-                row.reason.clone().into(),
-                row.created_at.into(),
-                row.account.source_type.clone().into(),
-                row.account.account_id.clone().into(),
-            ],
-        ))
-        .await?;
+    let statement = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [
+            row.account.source_type.clone().into(),
+            row.account.source_id.as_bytes().to_vec().into(),
+            tenant_id.as_bytes().to_vec().into(),
+            row.account.account_id.clone().into(),
+            row.person_id.as_bytes().to_vec().into(),
+            row.author_person_id.as_bytes().to_vec().into(),
+            row.reason.clone().into(),
+            row.created_at.into(),
+            row.account.source_type.clone().into(),
+            row.account.account_id.clone().into(),
+        ],
+    );
+
+    let result = match txn.execute(statement).await {
+        Ok(result) => result,
+        // A lock conflict here means another login is writing THIS account
+        // right now. "We did not write" is the truthful answer, and the
+        // caller's read-back then reports whatever the winner decided —
+        // whereas surfacing it would put a 500 on the login screen for a
+        // condition the design already handles.
+        Err(e) if is_lock_conflict(&e) => {
+            tracing::info!(
+                source_type = %row.account.source_type,
+                account_id = %row.account.account_id,
+                "login bootstrap: another writer holds this account; deferring to it"
+            );
+            let _ = txn.rollback().await;
+            return Ok(false);
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     txn.commit().await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+/// Whether MariaDB refused the statement because another transaction held the
+/// rows: deadlock (1213) or lock-wait timeout (1205).
+///
+/// Classified from the message for the same reason `is_missing_relation` does
+/// it for ClickHouse — the driver surfaces the server's code in the text and
+/// exposes no typed variant for either condition.
+fn is_lock_conflict(error: &sea_orm::DbErr) -> bool {
+    let message = error.to_string();
+    message.contains("1213")
+        || message.contains("1205")
+        || message.contains("Deadlock found")
+        || message.contains("Lock wait timeout exceeded")
 }
 
 pub async fn append_bindings(
@@ -486,4 +517,60 @@ pub async fn present_rows(
             ))
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{DbErr, RuntimeErr};
+
+    use super::*;
+
+    /// A lock conflict is not a fault to surface: it means another login is
+    /// writing this very account, and the caller's read-back is what resolves
+    /// it. Misclassifying either code puts a 500 on the login screen instead.
+    #[test]
+    fn a_lock_conflict_is_told_apart_from_a_real_failure() {
+        for (case, message, expected) in [
+            (
+                "deadlock, by code",
+                "Execution Error: error returned from database: 1213 (40001): \
+                 Deadlock found when trying to get lock; try restarting transaction",
+                true,
+            ),
+            (
+                "lock-wait timeout, by code",
+                "Execution Error: error returned from database: 1205 (HY000): \
+                 Lock wait timeout exceeded; try restarting transaction",
+                true,
+            ),
+            (
+                "deadlock, wording only",
+                "Deadlock found when trying to get lock",
+                true,
+            ),
+            (
+                "lock-wait timeout, wording only",
+                "Lock wait timeout exceeded",
+                true,
+            ),
+            (
+                "a duplicate key is NOT a lock conflict",
+                "error returned from database: 1062 (23000): Duplicate entry for key 'PRIMARY'",
+                false,
+            ),
+            (
+                "a syntax error is NOT a lock conflict",
+                "error returned from database: 1064 (42000): You have an error in your SQL syntax",
+                false,
+            ),
+            (
+                "a dead connection is NOT a lock conflict",
+                "Connection Error: closed",
+                false,
+            ),
+        ] {
+            let error = DbErr::Exec(RuntimeErr::Internal(message.to_owned()));
+            assert_eq!(is_lock_conflict(&error), expected, "misclassified: {case}");
+        }
+    }
 }
