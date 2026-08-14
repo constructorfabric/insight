@@ -928,7 +928,7 @@ async fn candidate_cards(
         .map_err(|e| internal(&e, "failed to read candidate cards"))
 }
 
-fn evidence_reader(state: &AppState) -> ClickHouseEvidenceReader {
+pub(super) fn evidence_reader(state: &AppState) -> ClickHouseEvidenceReader {
     ClickHouseEvidenceReader::connect(
         &state.config.clickhouse_url,
         &state.config.clickhouse_database,

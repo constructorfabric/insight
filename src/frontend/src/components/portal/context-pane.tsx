@@ -1,8 +1,15 @@
-import { ChevronRight, Layers, LayoutGrid, Settings2 } from "lucide-react";
+import {
+  ChevronRight,
+  Layers,
+  LayoutGrid,
+  Search,
+  Settings2,
+} from "lucide-react";
 import { useState } from "react";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import { OrgTree } from "@/components/org-tree";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -42,9 +49,7 @@ import {
   type Direction,
   type PaneItem,
 } from "@/lib/portal/nav-model";
-import {
-  usePortalShowPlanned,
-} from "@/lib/portal/portal-store";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import {
   usePortalDir,
   usePortalItem,
@@ -140,7 +145,11 @@ export function ContextPane() {
                     </SidebarMenuButton>
                   }
                 />
-                <PopoverContent side="top" align="start" className="w-60 gap-0 p-1">
+                <PopoverContent
+                  side="top"
+                  align="start"
+                  className="w-60 gap-0 p-1"
+                >
                   <AppSidebarFooter />
                 </PopoverContent>
               </Popover>
@@ -199,7 +208,7 @@ function MobileZoneNav() {
               <ChevronRight
                 className={cn(
                   "ms-auto transition-transform",
-                  expanded && "rotate-90",
+                  expanded && "rotate-90"
                 )}
                 aria-hidden
               />
@@ -230,7 +239,13 @@ function MobileZoneNav() {
 
 /* ── Theme zones (Overview / AI & Cost / Scorecard / Reports) ────────── */
 
-function ThemeNav({ zoneId, active }: { zoneId: string; active: string | null }) {
+function ThemeNav({
+  zoneId,
+  active,
+}: {
+  zoneId: string;
+  active: string | null;
+}) {
   const groups = ZONE_SECTIONS[zoneId] ?? [];
   const showPlanned = usePortalShowPlanned();
   // Everything not yet real is pulled out of its original group and collected
@@ -252,7 +267,7 @@ function ThemeNav({ zoneId, active }: { zoneId: string; active: string | null })
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        ) : null,
+        ) : null
       )}
       {planned.length ? (
         <SidebarGroup>
@@ -260,7 +275,12 @@ function ThemeNav({ zoneId, active }: { zoneId: string; active: string | null })
           <SidebarGroupContent>
             <SidebarMenu>
               {planned.map((it) => (
-                <ItemButton key={it.id} item={it} active={active === it.id} planned />
+                <ItemButton
+                  key={it.id}
+                  item={it}
+                  active={active === it.id}
+                  planned
+                />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -317,7 +337,12 @@ function ItemsNav({
           <SidebarGroupContent>
             <SidebarMenu>
               {planned.map((it) => (
-                <ItemButton key={it.id} item={it} active={active === it.id} planned />
+                <ItemButton
+                  key={it.id}
+                  item={it}
+                  active={active === it.id}
+                  planned
+                />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -356,7 +381,7 @@ function ItemButton({
           <span
             className={cn(
               "ml-auto rounded-full px-1.5 py-0.5 text-xs font-semibold",
-              BADGE_TONE[item.badge.tone],
+              BADGE_TONE[item.badge.tone]
             )}
           >
             {item.badge.text}
@@ -418,7 +443,11 @@ function DirectionItem({ direction }: { direction: Direction }) {
   return (
     <>
       <SidebarMenuItem>
-        <SidebarMenuButton isActive={expanded} onClick={toggle} aria-expanded={expanded}>
+        <SidebarMenuButton
+          isActive={expanded}
+          onClick={toggle}
+          aria-expanded={expanded}
+        >
           <Icon />
           <span>{direction.name}</span>
           {direction.source === "bullet" ? (
@@ -430,7 +459,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
             className={cn(
               "size-4 text-muted-foreground transition-transform",
               direction.source === "bullet" ? "ml-1" : "ml-auto",
-              expanded && "rotate-90",
+              expanded && "rotate-90"
             )}
           />
         </SidebarMenuButton>
@@ -486,11 +515,24 @@ function PeopleNav({ active }: { active: string | null }) {
 }
 
 function WorkChart() {
+  const [query, setQuery] = useState("");
+
   return (
     <SidebarGroup>
       <SidebarGroupLabel>WorkChart</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <OrgTree leadsToTeam />
+      <SidebarGroupContent className="flex flex-col gap-2">
+        <div className="relative px-2">
+          <Search className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Find someone"
+            aria-label="Find someone in the org"
+            className="h-8 ps-7 text-sm"
+          />
+        </div>
+        <OrgTree leadsToTeam query={query} />
       </SidebarGroupContent>
     </SidebarGroup>
   );
@@ -574,7 +616,7 @@ function PersonSectionsNav() {
                           ? STATUS_BG_CLASS[standing.status]
                           : standing.peersHaveData
                             ? "bg-muted-foreground/30"
-                            : "border border-muted-foreground/40",
+                            : "border border-muted-foreground/40"
                       )}
                       aria-hidden
                     />

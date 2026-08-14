@@ -174,6 +174,54 @@ struct CountRow {
     hits: u64,
 }
 
+/// The account as the connectors last described it, for the login bootstrap:
+/// which instance carries it, whether the source has closed it, and whether it
+/// carries an e-mail.
+///
+/// All three are decisions the bootstrap has to make before writing:
+/// - the instance id, because the persons-seed matches accounts on the whole
+///   triple (`source_type`, `source_id`, `account_id`) and a binding written
+///   under any other one would never be recognised as this account's;
+/// - closure, because an account gone from its source must not open a door;
+/// - the e-mail, because an account that HAS one is the batch's to link — it
+///   groups by e-mail, and minting a fresh person for such an account races
+///   the link and splits one human across two persons.
+///
+/// `GROUP BY` is load-bearing, not tidiness: a bare aggregate returns ONE row
+/// over an empty match set, carrying zero values, which would read as a real
+/// answer and turn "nothing observed this account" into "observed".
+const OBSERVED_ACCOUNT_SQL: &str = r"
+    SELECT
+        toString(argMax(insight_source_id, _synced_at))  AS source_id,
+        argMax(ifNull(operation_type, ''), _synced_at)   AS latest_op,
+        argMaxIf(
+            ifNull(value, ''), _synced_at,
+            value_type = 'email' AND operation_type = 'UPSERT' AND value != ''
+        )                                               AS email
+    FROM identity.identity_inputs
+    WHERE insight_source_type = ?
+      AND source_account_id = ?
+    GROUP BY insight_source_type, source_account_id
+";
+
+#[derive(Debug, Row, Deserialize)]
+struct ObservedRow {
+    source_id: String,
+    latest_op: String,
+    email: String,
+}
+
+/// One account as the login bootstrap needs to see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedAccount {
+    pub source_id: Uuid,
+    /// The latest event is a closure signal — deactivated at the source.
+    pub is_closed: bool,
+    /// The address the connectors carry for it, if any. `Some` means the
+    /// persons-seed can link this account by itself.
+    pub email: Option<String>,
+}
+
 fn map_row(row: FoldedRow) -> anyhow::Result<AccountEvidence> {
     Ok(AccountEvidence {
         account: SourceAccountKey {
@@ -211,6 +259,54 @@ impl ClickHouseEvidenceReader {
             Err(e) if is_missing_relation(&e) => Ok(false),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// The account as the connectors last described it, or `None` when none
+    /// has seen it. See [`SOURCE_ID_SQL`] for why the caller needs the
+    /// instance id rather than one of its own choosing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails or the stored id is not a UUID.
+    pub async fn observed_account(
+        &self,
+        source_type: &str,
+        account_id: &str,
+    ) -> anyhow::Result<Option<ObservedAccount>> {
+        let row: Result<Option<ObservedRow>, _> = self
+            .client
+            .query(OBSERVED_ACCOUNT_SQL)
+            .bind(source_type)
+            .bind(account_id)
+            .fetch_optional()
+            .await;
+
+        let found = match row {
+            Ok(found) => found,
+            // Same reading as `has_account`: no relation yet is "nothing
+            // observed", not a failure to answer.
+            Err(e) if is_missing_relation(&e) => None,
+            Err(e) => return Err(e.into()),
+        };
+
+        // An account nothing has observed yields no row at all. A blank or
+        // all-zero stored id is not an instance id either: a binding written
+        // under one would be invisible to the seed's account matching, so it
+        // reads as "no such account" rather than as an answer.
+        let Some(row) = found.filter(|r| !r.source_id.trim().is_empty()) else {
+            return Ok(None);
+        };
+
+        let source_id = Uuid::parse_str(row.source_id.trim())?;
+        if source_id.is_nil() {
+            return Ok(None);
+        }
+
+        Ok(Some(ObservedAccount {
+            source_id,
+            is_closed: row.latest_op == "DELETE",
+            email: non_empty(row.email),
+        }))
     }
 }
 

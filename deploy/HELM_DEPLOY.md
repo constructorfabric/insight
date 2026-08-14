@@ -253,6 +253,12 @@ authenticator:
                                       # for sourceType. Default "sub" is correct when `sub` itself is
                                       # that stable id; Entra needs "oid" instead (its `sub` is
                                       # pairwise-unique per client, NOT the directory-stable id).
+    # provisionOnLogin: true         # let a roster member enter on first login instead of waiting
+                                      # for the nightly persons-seed — which links by e-mail, so a
+                                      # member whose directory publishes none never gets a person.
+                                      # Note the indentation: this is authenticator.oidc.*, and a
+                                      # misplaced key is ignored in silence. See "First login
+                                      # provisioning" below before turning it on.
   # csrfOrigins: ["https://<HOST>"]  # fail-closed by default: if the UI's POST /auth/logout,
                                      # /auth/refresh or DELETE /auth/sessions return 403, set this
 
@@ -442,6 +448,21 @@ Other notable (non-placeholder) settings in this file:
 - Image tags are omitted deliberately. Each subchart renders `image.tag | default .Chart.AppVersion`, so a chart release already carries a tested set of product images. Set `<service>.image.tag` only to pin one service to a different build.
 - `credentials.deploymentMode: helm` and `credentials.autoGenerate: true` — this enables the "bring your own" credentials path, where the chart keeps a labelless `insight-db-creds` Secret instead of generating random passwords.
 - `identityResolution.deploy: true` — the chart default; don't flip it off.
+- `authenticator.oidc.provisionOnLogin` — **First login provisioning.** Off by
+  default. A person can sign in only once `persons` holds a `value_type='id'`
+  row binding their IdP external id to a person, and that row is written by the
+  nightly persons-seed, which groups accounts **by e-mail**. A roster member
+  whose directory publishes no address therefore never gets one: they
+  authenticate at the IdP and are still refused, until an operator binds them by
+  hand in Manage → Identities. Turning this on lets identity mint the person
+  during the login itself. It widens who may **enter**, not who **exists** —
+  identity mints only for an account a connector has already observed, refuses
+  one the source has closed, refuses one an operator excluded as not-a-person,
+  and writes only under the tenant its own journal is keyed by — so
+  `global.tenantDefaultId` is required, and the chart refuses to render without
+  it rather than leaving the switch on and inert. The minted person carries
+  the source-native id alone until the next seed run attaches the roster's name
+  and org placement to it.
 - `authenticator.tlsDiscovery.issuerRef.name` — the cert-manager `ClusterIssuer` the JWKS-discovery Certificate is issued from. Always set this: the chart ships `local-ca`, which is the self-signed root that `make bootstrap-cert-manager ENV=local` creates for the local k3s sandbox, not anything a real cluster has.
 - There is no auth-off toggle anywhere in this chart. `authenticator.oidc.issuerUrl` and `authenticator.oidc.redirectUri` are hard `required` fields, so a real IdP is a prerequisite; install Keycloak as a separate release if the stand has none. The bundled `keycloak` subchart is wired for this repo's own environments (roster realm, config-cli-managed content) and not a substitute here.
 
