@@ -384,6 +384,19 @@ authenticator:
     # id_token claim carrying the IdP's stable external user id for
     # sourceType (e.g. Entra's "oid"). Defaults to "sub".
     externalIdClaim: "sub"
+    # Provision a person on first successful login instead of refusing one the
+    # journal has no binding for yet.
+    #
+    # The login-bootstrap row is otherwise written only by the nightly
+    # persons-seed, which links a person by e-mail — so a roster member whose
+    # directory publishes no address (a GitHub member with a hidden e-mail, for
+    # one) cannot enter until an operator binds them by hand.
+    #
+    # Off by default because it widens who may ENTER. It does not widen who
+    # EXISTS: identity mints only for an account a connector has already
+    # observed, refuses one the source has closed, refuses one an operator
+    # excluded, and writes only under the tenant its own journal is keyed by.
+    provisionOnLogin: false
   # Honor `/auth/login?__override=<email>` (view-as, #1941): the session is
   # minted for that person instead of the authenticated one. Dev/demo
   # environments ONLY — MUST stay false anywhere real users log in.
