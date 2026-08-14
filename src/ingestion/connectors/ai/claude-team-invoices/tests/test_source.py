@@ -5,6 +5,9 @@ is asserted by what it says, not merely by being false: a check that fails
 without naming the fix costs the same debugging time as no check at all.
 """
 
+from collections.abc import Iterator
+from typing import Any
+
 import pytest
 import requests
 import requests_mock as rm_module
@@ -23,43 +26,47 @@ STRIPE_PING = "https://api.stripe.com/v1"
 
 
 @pytest.fixture
-def source():
+def source() -> SourceClaudeTeamInvoices:
     return SourceClaudeTeamInvoices()
 
 
 @pytest.fixture
-def http():
+def http() -> Iterator[rm_module.Mocker]:
     with rm_module.Mocker() as mocker:
         yield mocker
 
 
-def test_the_stream_schema_ships_with_the_package():
+def test_the_stream_schema_ships_with_the_package() -> None:
     """`discover` reads it, so a missing file is a connector that cannot run."""
     schema = load_stream_schema("claude_team_invoice_lines")
     assert schema["properties"]["unique_key"] == {"type": "string"}
     assert "seat_unit_amount" in schema["properties"]
 
 
-def test_the_source_offers_the_one_stream(source):
+def test_the_source_offers_the_one_stream(source: SourceClaudeTeamInvoices) -> None:
     streams = source.streams(CONFIG)
     assert [type(s) for s in streams] == [InvoiceLines]
 
 
-def test_an_empty_source_id_is_refused_before_any_request(source, http):
+def test_an_empty_source_id_is_refused_before_any_request(
+    source: SourceClaudeTeamInvoices, http: rm_module.Mocker
+) -> None:
     ok, message = source.check_connection(None, dict(CONFIG, insight_source_id="  "))
     assert ok is False
     assert "insight_source_id" in message and "annotation" in message
     assert http.call_count == 0, "a config that cannot produce keys is refused without a call"
 
 
-def test_an_unreachable_proxy_names_the_url(source, http):
+def test_an_unreachable_proxy_names_the_url(source: SourceClaudeTeamInvoices, http: rm_module.Mocker) -> None:
     http.get(INVOICES_URL, exc=requests.ConnectionError("no route"))
     ok, message = source.check_connection(None, CONFIG)
     assert ok is False
     assert "proxy unreachable at https://proxy.example" in message
 
 
-def test_a_forbidden_listing_names_the_rotation_it_needs(source, http):
+def test_a_forbidden_listing_names_the_rotation_it_needs(
+    source: SourceClaudeTeamInvoices, http: rm_module.Mocker
+) -> None:
     http.get(INVOICES_URL, status_code=403)
     ok, message = source.check_connection(None, CONFIG)
     assert ok is False
@@ -67,7 +74,7 @@ def test_a_forbidden_listing_names_the_rotation_it_needs(source, http):
     assert "POST /admin/session-key" in message, "the refusal carries the fix"
 
 
-def test_any_other_status_is_reported_with_its_code(source, http):
+def test_any_other_status_is_reported_with_its_code(source: SourceClaudeTeamInvoices, http: rm_module.Mocker) -> None:
     http.get(INVOICES_URL, status_code=502)
     ok, message = source.check_connection(None, CONFIG)
     assert ok is False
@@ -84,7 +91,9 @@ def test_any_other_status_is_reported_with_its_code(source, http):
     ],
     ids=["not-json", "not-an-object", "no-invoices-field", "invoices-not-an-array"],
 )
-def test_a_200_that_is_not_an_invoice_listing_is_refused(source, http, body, expected):
+def test_a_200_that_is_not_an_invoice_listing_is_refused(
+    source: SourceClaudeTeamInvoices, http: rm_module.Mocker, body: dict[str, Any], expected: str
+) -> None:
     """A 200 proves the proxy answered, not that it answered this API.
 
     The array case matters most: a sync extends that value, so a scalar would
@@ -96,7 +105,9 @@ def test_a_200_that_is_not_an_invoice_listing_is_refused(source, http, body, exp
     assert expected in message
 
 
-def test_blocked_egress_to_stripe_is_refused_even_when_the_proxy_is_healthy(source, http):
+def test_blocked_egress_to_stripe_is_refused_even_when_the_proxy_is_healthy(
+    source: SourceClaudeTeamInvoices, http: rm_module.Mocker
+) -> None:
     """A green proxy with no egress yields invoices without prices — the silent
     emptiness this check exists to prevent."""
     http.get(INVOICES_URL, json={"invoices": []})
@@ -107,7 +118,7 @@ def test_blocked_egress_to_stripe_is_refused_even_when_the_proxy_is_healthy(sour
     assert "every seat price would be missing" in message
 
 
-def test_a_reachable_proxy_and_stripe_pass(source, http):
+def test_a_reachable_proxy_and_stripe_pass(source: SourceClaudeTeamInvoices, http: rm_module.Mocker) -> None:
     http.get(INVOICES_URL, json={"invoices": []})
     http.get(STRIPE_PING, status_code=401, json={"error": "unauthenticated"})
     assert source.check_connection(None, CONFIG) == (True, None)
