@@ -113,11 +113,8 @@ def apply_create_bronze_placeholders() -> None:
 # silver:identity_inputs tag marks only its staging feeders.
 IDENTITY_INPUTS_SELECT = "+identity_inputs"
 
-# Invoices are seeded at bronze, so the connector's own staging model has to
-# run for the class to exist at all. Selected by model name, never by the
-# connector tag: a tag also materialises its sibling staging models, and the
-# placeholder-drop hook would then replace a directly seeded class with what
-# an unseeded bronze produces — nothing.
+# By model name, never by the connector tag: a tag materialises sibling
+# staging models too, and the placeholder-drop hook then empties their class.
 AI_INVOICE_SELECT = "claude_team__ai_invoice+"
 
 
