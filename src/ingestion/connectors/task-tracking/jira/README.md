@@ -7,6 +7,9 @@ Extracts projects, users, issues, issue history (changelog), comments, worklogs,
 - [Deletion & visibility mechanism](specs/DELETION-AND-VISIBILITY.md) — how
   deleted Jira entities are detected, distinguished from lost access, and
   recorded as history events.
+- [Data completeness](specs/DATA-COMPLETENESS.md) — metadata-driven
+  story-points resolution, board configuration, project lead, and the
+  automated API-to-Bronze completeness checks.
 
 ## Prerequisites
 
@@ -43,6 +46,7 @@ stringData:
 | `jira_email` | Yes | Atlassian account email for Basic Auth |
 | `jira_api_token` | Yes | Atlassian API token. Marked `airbyte_secret: true` — never logged |
 | `jira_start_date` | No | Earliest date to sync issues from, `YYYY-MM-DD`. Default `2020-01-01` |
+| `jira_story_points_field_id` | No | Explicit override for the Story Points custom-field id. Leave unset — dbt resolves it from `/rest/api/3/field` metadata (see [specs/DATA-COMPLETENESS.md](specs/DATA-COMPLETENESS.md)) |
 
 ### Automatically injected
 
@@ -78,6 +82,8 @@ kubectl apply -f src/ingestion/secrets/connectors/jira.yaml
 | `jira_sprints` | `GET /rest/agile/1.0/board/{board_id}/sprint` | Substream of boards | — | Offset |
 | `jira_project_visibility` | `GET /rest/api/3/project/search?status=<live\|archived\|deleted>` | Full refresh | — | Offset |
 | `jira_issue_census` | `GET /rest/api/3/search/jql` (`fields=id`) | Full refresh | — | Cursor (`nextPageToken`) |
+| `jira_worklog_deleted` | `GET /rest/api/3/worklog/deleted` | Full refresh | — | `nextPage` URL |
+| `jira_board_configuration` | `GET /rest/agile/1.0/board/{board_id}/configuration` | Substream of boards | — | None |
 
 The `jira_boards` stream (`GET /rest/agile/1.0/board`) is the substream parent for `jira_sprints` and materializes its own Bronze table.
 

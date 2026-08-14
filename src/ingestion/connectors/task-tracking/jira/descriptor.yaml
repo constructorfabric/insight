@@ -12,7 +12,12 @@ name: jira
 # 2.9.0 (minor): add the jira_project_visibility + jira_issue_census streams
 # (deletion/visibility mechanism — specs/DELETION-AND-VISIBILITY.md). Both are
 # full-refresh censuses; no incremental state is affected.
-version: "2.9.0"
+# 2.10.0 (minor): add jira_worklog_deleted (deletion tombstones) and
+# jira_board_configuration (estimation field + column mapping); expand=lead on
+# jira_projects; drop the hardcoded story-points field-id default (dbt resolves
+# it from /field metadata — specs/DATA-COMPLETENESS.md). No incremental state
+# is affected.
+version: "2.10.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is

@@ -38,6 +38,10 @@ sources:
       # _airbyte_extracted_at is the entity's last-seen timestamp.
       - name: jira_project_visibility
       - name: jira_issue_census
+      # Worklog deletion tombstones from /rest/api/3/worklog/deleted.
+      - name: jira_worklog_deleted
+      # Per-board estimation field + column-to-status mapping.
+      - name: jira_board_configuration
 
   # Staging tables written by the Rust `jira-enrich` binary (not by dbt). DDL is
   # managed by the `create_task_field_history_staging` macro in `on-run-start`.

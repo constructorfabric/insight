@@ -73,6 +73,8 @@ models:
       - name: worklog_id
         tests:
           - not_null
+      - name: is_deleted
+        description: "1 when the worklog was deleted at the source: an authoritative /worklog/deleted tombstone, absence from the issue's re-fetched worklog list, or a deleted/trashed parent issue. Gold consumers must filter ifNull(is_deleted, 0) = 0."
 
   - name: class_task_users
     description: "Unified task-tracker user directory (anchor for identity resolution)."

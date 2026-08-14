@@ -866,6 +866,7 @@ CREATE TABLE IF NOT EXISTS silver.class_task_worklogs
     `duration_seconds` Nullable(Float64),
     `description` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
+    `is_deleted` Nullable(UInt8),
     `_version` Int64
 )
 ENGINE = ReplacingMergeTree(_version)

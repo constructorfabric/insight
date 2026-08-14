@@ -32,9 +32,7 @@ WITH census AS (
         unique_key,
         tenant_id,
         source_id,
-        -- bronze stores the id as Decimal(38, 9) (Airbyte number); the other
-        -- union arms carry it as String — normalize before the UNION.
-        toString(toInt64(jira_id))                           AS jira_id,
+        jira_id,
         project_key,
         CAST(NULL AS Nullable(String))                       AS id_readable,
         _airbyte_extracted_at                                AS seen_at

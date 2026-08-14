@@ -66,5 +66,7 @@
    the last-seen timestamp — the absence classifier reads exactly that. #}
 {% do promote_bronze_to_rmt(table='bronze_jira.jira_project_visibility', order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_jira.jira_issue_census',       order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_jira.jira_worklog_deleted',    order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_jira.jira_board_configuration', order_by='unique_key') %}
 
 SELECT 1 AS promoted

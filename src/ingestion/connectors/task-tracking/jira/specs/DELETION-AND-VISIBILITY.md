@@ -196,13 +196,19 @@ Consumption policy (implemented):
   was re-fetched but the comment was not re-emitted (deleting a comment bumps
   the issue's `updated`, which re-syncs the issue's full comment list), or
   when its parent issue is `deleted`/`trashed`.
+- `class_task_worklogs.is_deleted` — real, from three OR-ed signals in
+  `jira__task_worklogs`: an authoritative tombstone from the
+  `jira_worklog_deleted` stream (`GET /rest/api/3/worklog/deleted` — the one
+  Jira surface where deletions are first-class; the whole bounded tombstone
+  list is re-read every sync, census-style), the same re-fetch generation
+  diff as comments (editing or deleting a worklog bumps the issue's
+  `updated`, re-syncing its full worklog list), and a deleted/trashed parent
+  issue. *Updated* worklogs need no extra stream: the per-issue re-fetch
+  already re-emits them — the same `updated`-bump assumption the project
+  discovery gate has relied on all along.
 - `gold/task_worklog_flow.sql` — the in-progress side inherits the filter
-  through its `task_issue_state` join; the worklog side aggregates per person
-  without touching issues, so it anti-joins `class_task_availability` by
-  `id_readable` to drop worklogs logged on deleted/trashed issues.
-  Reconciling *individually* updated/deleted worklogs
-  (`/rest/api/3/worklog/updated|deleted`) is separate scope of #2419, not
-  this mechanism.
+  through its `task_issue_state` join; the worklog side filters
+  `ifNull(is_deleted, 0) = 0` from the class contract.
 
 Changing the policy (e.g. excluding deleted issues from historical throughput
 vs only from open-issue counts) is a one-line change in the gold filter; the
