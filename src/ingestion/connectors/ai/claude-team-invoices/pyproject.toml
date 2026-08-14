@@ -32,6 +32,10 @@ override-dependencies = ["nltk>=3.10.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The suite shares fixtures across modules by importing `tests.<module>`.
+# `python -m pytest` puts the root on the path and CI runs that; this makes
+# a bare `pytest` behave the same instead of failing collection.
+pythonpath = ["."]
 
 [tool.setuptools.packages.find]
 where = ["."]
