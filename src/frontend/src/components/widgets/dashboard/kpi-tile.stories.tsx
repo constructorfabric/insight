@@ -11,7 +11,7 @@
  *   - `TestOkTile`   — play-driven test asserting the tile renders the
  *                      display-ready selector output (value, delta, median).
  *   - `TestNoPeers`  — a tile whose selector produced no median (server-side
- *                      suppression or no peer data) falls back in the footer.
+ *                      suppression or no comparison) falls back in the footer.
  *
  * KpiTile is presentational: selectors in `lib/insight/kpi-row.ts` own all
  * formatting and scoring, so these stories feed the tile intermediate
@@ -87,7 +87,7 @@ export const TestOkTile: Story = {
 
 /**
  * Component test: a tile without a median (selector suppressed it — thin
- * cohort server-side, schema error, or no peer data) falls back in the
+ * cohort server-side, schema error, or no comparison) falls back in the
  * footer and renders the value without peer coloring.
  */
 export const TestNoPeers: Story = {
@@ -98,7 +98,7 @@ export const TestNoPeers: Story = {
   },
   play: async ({ canvas }) => {
     await expect(canvas.getByText("Bugs Fixed")).toBeInTheDocument();
-    await expect(canvas.getByText(/no peer data/i)).toBeInTheDocument();
+    await expect(canvas.getByText(/no comparison/i)).toBeInTheDocument();
     await expect(canvas.queryByText(/median/i)).not.toBeInTheDocument();
   },
 };
