@@ -262,20 +262,15 @@ impl IdentityPersonResolver {
             .send()
             .await
             .context("Identity provision request")?;
-        // Every 4xx is an ANSWER, not a fault: 404 = no connector has observed
-        // this principal, 400 = this login may not be provisioned here (a
-        // tenant the journal is not keyed by), 403 = the service token was
-        // refused. All of them mean "no person", and the caller then denies the
-        // login the way it always did. Turning them into an error instead would
-        // replace a login screen that says "access denied" with a 500 page —
-        // for what is a configuration answer, not a crash. Logged so a
-        // deployment can see WHICH answer it got.
+        // ONLY 404 is an answer: no connector has observed this principal, so
+        // there is nobody to be, and the caller denies the login as it always
+        // did. Every other status is a fault of ours — a refused service token,
+        // an unconfigured tenant, a malformed body — and must surface as one.
+        // Folding those into "unknown person" would dress a broken deployment
+        // up as an ordinary access denial, which is the version nobody
+        // diagnoses.
         let status = resp.status();
-        if status.is_client_error() {
-            tracing::warn!(
-                status = status.as_u16(),
-                "login bootstrap: Identity declined to provision this principal"
-            );
+        if status == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
         anyhow::ensure!(

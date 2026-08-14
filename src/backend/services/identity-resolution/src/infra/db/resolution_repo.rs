@@ -207,6 +207,77 @@ pub async fn person_exists(
 /// # Errors
 ///
 /// Returns an error if any statement fails; the transaction is rolled back.
+/// Append one binding ONLY IF the account has none yet, in a single statement.
+///
+/// The login bootstrap cannot check-then-write: between the two an operator's
+/// exclusion or the seed's own link can land, and because the binding in force
+/// is the LATEST row, an automation row written after it would silently
+/// override a human's decision. Making "nobody has decided this account" part
+/// of the same statement as the insert removes the window — the condition is
+/// evaluated against the same snapshot that writes.
+///
+/// The inner derived table is not decoration: MariaDB refuses a bare subquery
+/// on the INSERT's own target, and materialising it is what makes the
+/// self-reference legal.
+///
+/// Returns whether the row was written. `false` means somebody else had
+/// already decided the account, and the caller must read what they decided
+/// rather than assume its own row is in force.
+///
+/// # Errors
+///
+/// Returns an error if the statement fails.
+pub async fn append_binding_if_unbound(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    row: &BindingRow,
+) -> anyhow::Result<bool> {
+    const SQL: &str = r"
+        INSERT INTO persons
+            (value_type, insight_source_type, insight_source_id, insight_tenant_id,
+             value_id, value_full_text, value, person_id, author_person_id, reason,
+             created_at)
+        SELECT * FROM (
+            SELECT 'id' AS c1, ? AS c2, ? AS c3, ? AS c4, ? AS c5,
+                   NULL AS c6, NULL AS c7, ? AS c8, ? AS c9, ? AS c10, ? AS c11
+        ) AS incoming
+        WHERE NOT EXISTS (
+            SELECT 1 FROM (
+                SELECT 1 FROM persons
+                WHERE insight_tenant_id = ?
+                  AND value_type = 'id'
+                  AND insight_source_type = ?
+                  AND insight_source_id = ?
+                  AND value_id = ?
+                LIMIT 1
+            ) AS decided
+        )
+    ";
+
+    let result = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            SQL,
+            [
+                row.account.source_type.clone().into(),
+                row.account.source_id.as_bytes().to_vec().into(),
+                tenant_id.as_bytes().to_vec().into(),
+                row.account.account_id.clone().into(),
+                row.person_id.as_bytes().to_vec().into(),
+                row.author_person_id.as_bytes().to_vec().into(),
+                row.reason.clone().into(),
+                row.created_at.into(),
+                tenant_id.as_bytes().to_vec().into(),
+                row.account.source_type.clone().into(),
+                row.account.source_id.as_bytes().to_vec().into(),
+                row.account.account_id.clone().into(),
+            ],
+        ))
+        .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn append_bindings(
     db: &DatabaseConnection,
     tenant_id: Uuid,

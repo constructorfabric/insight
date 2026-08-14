@@ -297,24 +297,6 @@ pub async fn internal_provision_person(
         account_id: external_id.to_owned(),
     };
 
-    // An account bound to nobody per the lookup above can still be DECIDED:
-    // the lookup hides the excluded sentinel, so "no person" also covers "an
-    // operator ruled this is not a human". Minting there would quietly undo
-    // that ruling on the next login.
-    let decided = resolution_repo::current_bindings(&state.db, tenant, std::slice::from_ref(&account))
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "login bootstrap: current-binding lookup failed");
-            CanonicalError::internal("lookup failed").create()
-        })?;
-    if decided.contains_key(&account) {
-        return Err(ProfileError::not_found(format!(
-            "source_type '{source_type}' external_id '{external_id}' is excluded from resolution"
-        ))
-        .with_resource(external_id.to_owned())
-        .create());
-    }
-
     let row = resolution::BindingRow {
         // Derived, not random: two logins racing (two tabs, two pods) both
         // reach this line, and the natural key carries `person_id`, so two
@@ -329,34 +311,50 @@ pub async fn internal_provision_person(
         reason: LOGIN_BOOTSTRAP_REASON.to_owned(),
         created_at: chrono::Utc::now().naive_utc(),
     };
-    resolution_repo::append_bindings(&state.db, tenant, std::slice::from_ref(&row))
+    // Write only if nobody has decided this account, in ONE statement. A
+    // check followed by a write would leave a window in which an operator's
+    // exclusion (or the seed's own link) lands first, and since the binding in
+    // force is the LATEST row, this automation row would then override a
+    // human's decision.
+    let minted = resolution_repo::append_binding_if_unbound(&state.db, tenant, &row)
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "login bootstrap: binding write failed");
             CanonicalError::internal("provisioning failed").create()
         })?;
 
-    // Read back rather than trusting the write: whatever the journal now holds
-    // in force is the answer, including a row a racing login landed first.
+    // Read what is in force, never what was intended. Two interleavings end up
+    // here: a racing login wrote first (its person is the answer, and with a
+    // derived id it is the same one anyway), or an operator decided first —
+    // including an exclusion, which the lookup hides and which must read as
+    // "no person to enter as" rather than as a fresh mint.
     let person_id = lookup_by_external_id(&state, source_type, external_id)
         .await?
         .ok_or_else(|| {
-            tracing::error!(
+            tracing::warn!(
+                target: "audit",
+                event = "login_bootstrap_refused_decided_account",
                 source_type,
                 external_id,
-                "login bootstrap: binding vanished immediately after the write"
+                "the account is already decided as not-a-person; no login identity for it"
             );
-            CanonicalError::internal("provisioning failed").create()
+            ProfileError::not_found(format!(
+                "source_type '{source_type}' external_id '{external_id}' resolves to no person"
+            ))
+            .with_resource(external_id.to_owned())
+            .create()
         })?;
 
-    tracing::info!(
-        target: "audit",
-        event = "login_bootstrap_person_provisioned",
-        source_type,
-        external_id,
-        person_id = %person_id,
-        "minted a person for an authenticated principal the roster already lists"
-    );
+    if minted {
+        tracing::info!(
+            target: "audit",
+            event = "login_bootstrap_person_provisioned",
+            source_type,
+            external_id,
+            person_id = %person_id,
+            "minted a person for an authenticated principal the roster already lists"
+        );
+    }
 
     Ok(Json(person_response(external_id, person_id)))
 }
