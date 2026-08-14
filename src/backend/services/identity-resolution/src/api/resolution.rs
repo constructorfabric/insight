@@ -686,6 +686,10 @@ pub struct AttentionResponse {
     /// only the first accounts of the tenant, not all of them. Consumers must
     /// not present these numbers as tenant-wide.
     pub truncated: bool,
+    /// `limit` cut the item list — more accounts await a decision than are
+    /// listed here. Distinct from `truncated`: the rates stay whole-tenant,
+    /// only this page is short.
+    pub items_truncated: bool,
 }
 impl toolkit::api::api_dto::ResponseApiDto for AttentionResponse {}
 
@@ -704,6 +708,7 @@ pub async fn attention(
     let limit = params.limit.map_or(DEFAULT_QUEUE_LIMIT, |l| {
         usize::try_from(l).unwrap_or(1).clamp(1, MAX_QUEUE_LIMIT)
     });
+    let items_truncated = review.items.len() > limit;
     let page: Vec<_> = review.items.into_iter().take(limit).collect();
 
     let cards = candidate_cards(state.as_ref(), tenant, &page).await?;
@@ -733,6 +738,7 @@ pub async fn attention(
             excluded: review.rates.excluded,
         },
         truncated,
+        items_truncated,
     }))
 }
 

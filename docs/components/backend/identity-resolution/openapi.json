@@ -82,6 +82,10 @@
             },
             "type": "array"
           },
+          "items_truncated": {
+            "description": "`limit` cut the item list — more accounts await a decision than are\nlisted here. Distinct from `truncated`: the rates stay whole-tenant,\nonly this page is short.",
+            "type": "boolean"
+          },
           "rates": {
             "$ref": "#/components/schemas/ResolutionRatesResponse"
           },
@@ -93,7 +97,8 @@
         "required": [
           "items",
           "rates",
-          "truncated"
+          "truncated",
+          "items_truncated"
         ],
         "type": "object"
       },
@@ -2557,7 +2562,7 @@
         "operationId": "identity_resolution.resolution.attention",
         "parameters": [
           {
-            "description": "Cap on returned items (1..=1000, default 100). The rates always cover every observed account, whatever the cap.",
+            "description": "Cap on returned items (1..=1000, default 100); `items_truncated` says whether it cut the list. The rates cover every observed account whatever the cap — unless `truncated` is set, which means the evidence read itself hit its safety ceiling and both the rates and the queue describe only the accounts read before it.",
             "in": "query",
             "name": "limit",
             "required": false,

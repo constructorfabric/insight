@@ -104,6 +104,12 @@ def test_the_queue_answers_with_coherent_tenant_wide_rates(
         "the seeded roster is far below the evidence cap — a truncated answer "
         "means the read is broken, not that the stand is big"
     )
+    # Two distinct caps, and the seeded roster clears both: a set flag here
+    # would mean the queue is a prefix, which makes the assertion above about
+    # its length meaningless.
+    assert queue.items_truncated is False, (
+        "the queue reports its item cap was hit on a roster far below it"
+    )
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead")

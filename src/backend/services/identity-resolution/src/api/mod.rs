@@ -244,8 +244,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param_typed(
             "limit",
             false,
-            "Cap on returned items (1..=1000, default 100). The rates always \
-             cover every observed account, whatever the cap.",
+            "Cap on returned items (1..=1000, default 100); `items_truncated` \
+             says whether it cut the list. The rates cover every observed \
+             account whatever the cap — unless `truncated` is set, which means \
+             the evidence read itself hit its safety ceiling and both the \
+             rates and the queue describe only the accounts read before it.",
             "integer",
         )
         .json_response_with_schema::<resolution::AttentionResponse>(

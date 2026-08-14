@@ -487,6 +487,7 @@ class AttentionResponse(BaseModel):
         extra='forbid',
     )
     items: list[QueueItemResponse]
+    items_truncated: bool = Field(..., description='`limit` cut the item list — more accounts await a decision than are\nlisted here. Distinct from `truncated`: the rates stay whole-tenant,\nonly this page is short.')
     rates: ResolutionRatesResponse
     truncated: bool = Field(..., description='The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide.')
 
