@@ -8434,8 +8434,8 @@ streams:
         additionalProperties: true
 
   # Id-only sweep of ALL issues in every visible live project. Jira Cloud
-  # serves large pages when only `id` is requested (maxResults=5000 honoured,
-  # verified live), so the census costs ceil(issues/5000) requests per
+  # serves large pages when only `id` is requested (maxResults up to 5000),
+  # so the census costs ceil(issues/5000) requests per
   # project. Keyed by numeric issue id, never by key: moving an issue between
   # projects changes its key but not its id — a key-based census would report
   # every moved issue as deleted.

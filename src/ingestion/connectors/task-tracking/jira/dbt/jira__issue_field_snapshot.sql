@@ -50,9 +50,14 @@
 -- team-managed projects store the value in different fields, so extraction
 -- coalesces over all candidates per issue.
 WITH sp_fields AS (
+    -- arraySort over the aggregated tuples, not ORDER BY before groupArray:
+    -- parallel aggregation does not preserve input order, and a
+    -- non-deterministic candidate order could resolve a different field id
+    -- per run for issues valued in more than one candidate.
     SELECT
         COALESCE(source_id, '')                                       AS insight_source_id,
-        groupArray(candidate_field_id)                                AS sp_field_ids
+        arrayMap(t -> t.2, arraySort(groupArray((priority, candidate_field_id))))
+                                                                      AS sp_field_ids
     FROM (
         SELECT
             source_id,
@@ -66,7 +71,6 @@ WITH sp_fields AS (
         WHERE field_id IS NOT NULL
           AND (schema_custom = 'com.pyxis.greenhopper.jira:jsw-story-points'
                OR lowerUTF8(COALESCE(name, '')) IN ('story points', 'story point estimate'))
-        ORDER BY priority, candidate_field_id
     )
     GROUP BY source_id
 ),

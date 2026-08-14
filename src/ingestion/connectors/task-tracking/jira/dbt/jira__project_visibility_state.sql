@@ -26,8 +26,15 @@ WITH roster AS (
     FROM {{ source('bronze_jira', 'jira_project_visibility') }} FINAL
 ),
 
+-- Per (tenant, source): each source instance censuses on its own clock, and
+-- one instance's fresher watermark must not mark another's projects stale.
 generation AS (
-    SELECT max(seen_at) AS watermark FROM roster
+    SELECT
+        tenant_id,
+        source_id,
+        max(seen_at) AS watermark
+    FROM roster
+    GROUP BY tenant_id, source_id
 )
 
 SELECT
@@ -41,4 +48,6 @@ SELECT
     r.project_status                                        AS project_status,
     r.seen_at                                               AS last_seen_at
 FROM roster AS r
-CROSS JOIN generation AS g
+INNER JOIN generation AS g
+    ON g.tenant_id = r.tenant_id
+    AND g.source_id = r.source_id

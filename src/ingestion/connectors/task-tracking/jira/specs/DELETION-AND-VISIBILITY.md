@@ -35,7 +35,7 @@ API identically to deletion. The two must not be conflated.
 
 ## Mechanism overview
 
-```
+```text
 connector (per sync)                      dbt (per run)
 ────────────────────                      ─────────────────────────────────────
 jira_project_visibility  ──────────────►  jira__project_visibility_state
@@ -139,8 +139,9 @@ what used to exist, which only Bronze has.
   without any deletion. Indistinguishable from deletion via the REST API
   (Jira intentionally returns identical 404s). Mitigated by the mass
   threshold only when it changes in bulk; a single issue hidden this way will
-  be classified `deleted`. Accepted: issue security is rare in the target
-  deployments, and the raw data stays in Bronze either way.
+  be classified `deleted`. Accepted: a misclassification is reversible — the
+  raw data stays in Bronze, and the issue reclassifies to `present` as soon
+  as it becomes observable again.
 - Deletion cannot be distinguished from "hidden" retroactively: permission
   APIs (`mypermissions`, `permissions/check`) cannot be asked about an entity
   that no longer appears. Hence the roster is captured *every* sync — the
@@ -241,6 +242,14 @@ availability data supports either choice.
   would add immediacy but require an inbound endpoint the batch-pull
   architecture does not have; the census is the guaranteed path. If webhooks
   are added later they emit into the same availability model.
+- Known limitation — total access loss is not classified: if the account
+  loses Browse on *every* project, the roster and the census return zero
+  rows, no new generation appears, and every issue stays frozen at its last
+  state (`present`). This fails safe — nothing is misclassified as deleted —
+  and the same event empties every stream of the connector, so the existing
+  `bronze_jira` source-freshness gates (warn 36h / error 72h) raise the alarm
+  operationally. A per-generation completion marker could classify this case
+  explicitly; deliberately not built here.
 - The silver contract changes this mechanism ships (`event_kind` gains
   `availability`, `class_task_worklogs` gains `is_deleted`) are deployed via
   the **major descriptor bump**: per ADR-0015 reconcile dispatches a one-shot
