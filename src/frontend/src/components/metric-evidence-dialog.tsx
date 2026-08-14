@@ -190,8 +190,11 @@ export function MetricEvidenceDialog({
             <div className="flex items-center justify-between gap-4">
               {state.targets.length > 1 ? (
                 <>
+                  {/* INVARIANT: the dialog is named for what it shows — a
+                      caller that names the whole set wins, otherwise the
+                      metric on screen. */}
                   <DialogTitle className="sr-only">
-                    {state.title ?? "Metric evidence"}
+                    {state.title ?? activeTarget.label}
                   </DialogTitle>
                   <Select
                     value={activeTarget.selection.metric_key}
