@@ -12,6 +12,7 @@
 //! own sea-orm pool in `AppState`.
 
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use toolkit::api::OpenApiRegistry;
@@ -92,11 +93,19 @@ impl Gear for AnalyticsApiGear {
 
         let contract_ch = ch.clone();
 
+        // Fails open by construction: an unreachable Redis leaves the cache
+        // disabled and retrying in the background instead of holding up boot.
+        let view_cache = infra::cache::MetricViewCache::connect(
+            &cfg.redis_url,
+            Duration::from_secs(cfg.metric_results_cache.ttl_secs),
+        );
+
         let state = api::AppState {
             db,
             ch,
             identity,
             config: cfg,
+            view_cache,
         };
 
         self.state

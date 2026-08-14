@@ -282,3 +282,133 @@ def test_one_hidden_person_refuses_the_whole_request(
         f"a request naming one hidden person answered {response.status_code} — if it "
         f"succeeded, the hidden entity was silently dropped: {response.text[:300]}"
     )
+
+
+def _ask_many(
+    api: ApiClient, manifest: Manifest, entity_ids: list[str], metric_key: str
+) -> ApiResponse:
+    start, end = query_window(manifest)
+    return api.post(
+        METRIC_RESULTS,
+        json_body={
+            "entity": {"type": "person", "ids": entity_ids},
+            "period": {"from": start, "to": end},
+            "metrics": [
+                {
+                    "metric_key": metric_key,
+                    "views": [{"view": "period"}, {"view": "peer"}],
+                }
+            ],
+        },
+    )
+
+
+def _ok(response: ApiResponse) -> JsonValue:
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+    return response.json()
+
+
+@pytest.mark.reliability
+def test_asking_the_same_question_twice_gives_the_same_answer(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """A repeated request answers identically, however it was served.
+
+    The deployed service answers metric reads through a result cache, so the
+    second identical request is served from stored fragments rather than
+    recomputed from ClickHouse. That is invisible to the caller only if the two
+    responses agree exactly — this asserts the whole document, so a value, an
+    ordering or an omitted entity that survives one path but not the other
+    fails here rather than in a dashboard.
+
+    Nothing in the request says "cache": the point is that the caller cannot
+    tell, and neither can this test.
+    """
+    person = stand_manifest.fixture("dev_lead")
+    metric_key = _a_metric_key(api)
+
+    cold = _ok(_ask_many(api, stand_manifest, [person.uuid], metric_key))
+    warm = _ok(_ask_many(api, stand_manifest, [person.uuid], metric_key))
+
+    assert cold == warm, "the same request answered differently the second time"
+
+
+@pytest.mark.requires_seed("dev_lead", "development_ic")
+@pytest.mark.reliability
+def test_adding_a_person_leaves_the_others_answer_unchanged(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """One person's numbers do not depend on who else was asked about.
+
+    Period and peer are both per-entity results — a person's period total is
+    their own, and their peer pool is their cohort's, neither of which the
+    composition of the request may influence. Asking alone and then in company
+    is the observable form of that promise, and the one a roster-shaped
+    dashboard depends on when it pages through people in chunks.
+
+    `development_ic` is inside a development lead's subchart, so both people are
+    visible to this session and the request is answered rather than refused.
+    """
+    lead = stand_manifest.fixture("dev_lead")
+    report = stand_manifest.fixture("development_ic")
+    metric_key = _a_metric_key(api)
+
+    def entry(document: JsonValue, entity_id: str) -> list[JsonValue]:
+        metrics = document["metrics"]  # type: ignore[index,call-overload]
+        return [
+            value
+            for metric in metrics
+            for view in metric["views"]
+            for value in view["values"]
+            if value["entity_id"] == entity_id
+        ]
+
+    alone = _ok(_ask_many(api, stand_manifest, [lead.uuid], metric_key))
+    together = _ok(_ask_many(api, stand_manifest, [lead.uuid, report.uuid], metric_key))
+
+    assert entry(alone, lead.uuid) == entry(together, lead.uuid), (
+        f"{metric_key} answered differently for the same person once another "
+        f"person joined the request"
+    )
+
+
+@pytest.mark.requires_seed("dev_lead", "development_ic")
+@pytest.mark.reliability
+def test_the_answer_follows_the_order_the_request_asked_in(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """Reversing the entity list reverses the answer, and nothing else.
+
+    Period values are rendered in the order the caller listed their people, so
+    a permuted request must be answered in its own order — never in the order
+    of some earlier request that happened to name the same people. The values
+    themselves have to survive the permutation untouched.
+    """
+    lead = stand_manifest.fixture("dev_lead")
+    report = stand_manifest.fixture("development_ic")
+    metric_key = _a_metric_key(api)
+
+    def period_values(document: JsonValue) -> list[tuple[str, float | None]]:
+        metrics = document["metrics"]  # type: ignore[index,call-overload]
+        return [
+            (value["entity_id"], value["value"])
+            for metric in metrics
+            for view in metric["views"]
+            if view["view"] == "period"
+            for value in view["values"]
+        ]
+
+    forward = period_values(
+        _ok(_ask_many(api, stand_manifest, [lead.uuid, report.uuid], metric_key))
+    )
+    reversed_ = period_values(
+        _ok(_ask_many(api, stand_manifest, [report.uuid, lead.uuid], metric_key))
+    )
+
+    assert [entity for entity, _ in forward] == [lead.uuid, report.uuid]
+    assert [entity for entity, _ in reversed_] == [report.uuid, lead.uuid], (
+        "the permuted request was answered in the first request's order"
+    )
+    assert dict(forward) == dict(reversed_), (
+        "permuting the entity list changed the values themselves"
+    )

@@ -281,6 +281,21 @@ impl MetricDefinition {
             ComputationSpec::Ratio { numerator, .. } => &numerator.observation,
         }
     }
+
+    /// Every input the compiler reads, not just the one that names the batch
+    /// group — a ratio's denominator can carry its own observation source.
+    pub fn inputs(&self) -> Vec<&MetricInput> {
+        match &self.spec {
+            ComputationSpec::Sum { value }
+            | ComputationSpec::Median { value }
+            | ComputationSpec::DistinctCount { value } => vec![value],
+            ComputationSpec::Ratio {
+                numerator,
+                denominator,
+                ..
+            } => vec![numerator, denominator],
+        }
+    }
 }
 
 impl ObservationRelation {
