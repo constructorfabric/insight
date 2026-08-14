@@ -4,6 +4,8 @@ import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import {
   attentionSummary,
   computeAttentionFlags,
+  groupFlagsByTheme,
+  type AttentionFlag,
   type FlagParams,
 } from "./attention-flags";
 
@@ -67,6 +69,7 @@ describe("computeAttentionFlags", () => {
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("outlier");
     expect(flags[0]!.reason).toContain("well below");
+    expect(flags[0]!.moved).toBe("down");
   });
 
   it("flags a HIGH outlier when lower is better (e.g. meeting hours)", () => {
@@ -80,6 +83,7 @@ describe("computeAttentionFlags", () => {
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("outlier");
     expect(flags[0]!.reason).toContain("well above");
+    expect(flags[0]!.moved).toBe("up");
   });
 
   it("does not flag anyone in a tight, healthy cohort", () => {
@@ -110,6 +114,19 @@ describe("computeAttentionFlags", () => {
     expect(flags).toEqual([]);
   });
 
+  it("ignores a big drop that leaves the person inside the pack", () => {
+    // Halved against their own past, and still sitting on the cohort median.
+    // A quarter of one's own past is ordinary; without the pack agreeing that
+    // something is off, this is movement, not attention.
+    const flags = computeAttentionFlags(
+      params({
+        byKey: new Map([["t.metric", fixture([...BASE, ["x", 10]])]]),
+        previousByKey: new Map([["t.metric", fixture([...BASE, ["x", 20]])]]),
+      }),
+    );
+    expect(flags).toEqual([]);
+  });
+
   it("flags an adverse period-over-period decline", () => {
     const flags = computeAttentionFlags(
       params({
@@ -120,6 +137,31 @@ describe("computeAttentionFlags", () => {
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("decline");
     expect(flags[0]!.reason).toBe("down 50% from last period");
+  });
+
+  it("flags a decline when the cohort is too small to say where the pack is", () => {
+    // Two cohorts of four: A has stats, B's single measured member does not
+    // reach MIN_COHORT, so there is no pack to be inside of and the move
+    // stands on its own.
+    const now: Array<[string, number | null]> = [
+      ["a1", 9], ["a2", 10], ["a3", 11], ["a4", 10],
+      ["b1", 10], ["b2", null], ["b3", null], ["b4", null],
+    ];
+    const before: Array<[string, number | null]> = [
+      ["a1", 9], ["a2", 10], ["a3", 11], ["a4", 10],
+      ["b1", 20], ["b2", null], ["b3", null], ["b4", null],
+    ];
+    const flags = computeAttentionFlags(
+      params({
+        byKey: new Map([["t.metric", fixture(now)]]),
+        previousByKey: new Map([["t.metric", fixture(before)]]),
+        memberIds: now.map(([id]) => id),
+        cohortOf: (id) => (id.startsWith("a") ? "A" : "B"),
+      }),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.personId).toBe("person-b1");
+    expect(flags[0]!.kind).toBe("decline");
   });
 
   it("treats an INCREASE as adverse when lower is better", () => {
@@ -138,6 +180,7 @@ describe("computeAttentionFlags", () => {
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("decline");
     expect(flags[0]!.reason).toBe("up 50% from last period");
+    expect(flags[0]!.moved).toBe("up");
   });
 
   it("judges members within their own cohort, not the whole roster", () => {
@@ -320,5 +363,51 @@ describe("severity is scale-free", () => {
     // Everyone identical and at zero: nothing is unusual, and no scale exists to
     // rank by. A flag here would carry a number that means something else.
     expect(flagsFor([["m1", 0], ["m2", 0], ["m3", 0], ["m4", 0]])).toEqual([]);
+  });
+});
+
+describe("groupFlagsByTheme", () => {
+  function f(over: Partial<AttentionFlag>): AttentionFlag {
+    return {
+      personId: "p",
+      name: "Person",
+      metricKey: "t.commits",
+      metricLabel: "Commits",
+      kind: "outlier",
+      moved: "down",
+      valueText: "1",
+      reason: "r",
+      severity: 1,
+      ...over,
+    };
+  }
+
+  it("gathers a metric's flags under one theme, strongest first", () => {
+    const themes = groupFlagsByTheme([
+      f({ personId: "a", severity: 1 }),
+      f({ personId: "b", severity: 5 }),
+    ]);
+    expect(themes).toHaveLength(1);
+    expect(themes[0]!.metricLabel).toBe("Commits");
+    expect(themes[0]!.flags.map((x) => x.personId)).toEqual(["b", "a"]);
+  });
+
+  it("puts the metric that touches more people first, however weak", () => {
+    // The lone flag is the more severe one. People count still wins: the point
+    // of the screen is what is happening broadly, not who is worst.
+    const themes = groupFlagsByTheme([
+      f({ personId: "a", metricKey: "t.meetings", metricLabel: "Meeting hours", severity: 99 }),
+      f({ personId: "b", severity: 1 }),
+      f({ personId: "c", severity: 1 }),
+    ]);
+    expect(themes.map((t) => t.metricLabel)).toEqual(["Commits", "Meeting hours"]);
+  });
+
+  it("breaks a tie in people on the strongest flag", () => {
+    const themes = groupFlagsByTheme([
+      f({ personId: "a", severity: 2 }),
+      f({ personId: "b", metricKey: "t.meetings", metricLabel: "Meeting hours", severity: 7 }),
+    ]);
+    expect(themes.map((t) => t.metricLabel)).toEqual(["Meeting hours", "Commits"]);
   });
 });

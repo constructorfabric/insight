@@ -16,6 +16,8 @@ export interface AttentionFlag {
   metricKey: string;
   metricLabel: string;
   kind: FlagKind;
+  /** Which way the number went — adverse either way, so it is not a verdict. */
+  moved: "up" | "down";
   valueText: string;
   reason: string;
   severity: number;
@@ -91,6 +93,8 @@ export function computeAttentionFlags({
     const stats = new Map<
       string,
       {
+        p25: number;
+        p75: number;
         p50: number;
         loFence: number;
         hiFence: number;
@@ -116,6 +120,8 @@ export function computeAttentionFlags({
       const p75 = quantile(sorted, 0.75);
       const iqr = p75 - p25;
       stats.set(c, {
+        p25,
+        p75,
         p50,
         iqr,
         loFence: p25 - 1.5 * iqr,
@@ -147,7 +153,7 @@ export function computeAttentionFlags({
         if (sev != null) {
           out.push({
             personId, name, metricKey: key, metricLabel: label, kind: "collapse",
-            valueText, reason: `no ${label.toLowerCase()} — the ${cohortLabel} median is ${st.medianText}`,
+            moved: "down", valueText, reason: `no ${label.toLowerCase()} — the ${cohortLabel} median is ${st.medianText}`,
             severity: sev,
           });
         }
@@ -163,7 +169,7 @@ export function computeAttentionFlags({
         if (sev != null) {
           out.push({
             personId, name, metricKey: key, metricLabel: label, kind: "outlier",
-            valueText,
+            moved: higherIsBetter ? "down" : "up", valueText,
             reason: `${higherIsBetter ? "well below" : "well above"} the ${cohortLabel} median of ${st.medianText}`,
             severity: sev,
           });
@@ -175,7 +181,16 @@ export function computeAttentionFlags({
         if (pv != null && Number.isFinite(pv) && Math.abs(pv) > 1e-9) {
           const change = (v - pv) / Math.abs(pv);
           const adverse = higherIsBetter ? -change : change;
-          if (adverse >= DELTA_MIN) {
+          // A move alone is not attention: over a quarter, a quarter of a
+          // person's own past is ordinary. It counts when it also left them
+          // worse than three quarters of their cohort. Without cohort stats
+          // there is no pack to be outside of, so the move stands on its own.
+          const outOfPack = st
+            ? higherIsBetter
+              ? v < st.p25
+              : v > st.p75
+            : true;
+          if (adverse >= DELTA_MIN && outOfPack) {
             // The trigger stays a percentage of the person's own past — that is
             // the question a decline answers. Severity converts the MOVE into
             // cohort IQRs so it can share a ranking with the other two kinds;
@@ -185,7 +200,7 @@ export function computeAttentionFlags({
             const sev = st ? severityIn(st.scale, moved) : null;
             out.push({
               personId, name, metricKey: key, metricLabel: label, kind: "decline",
-              valueText,
+              moved: higherIsBetter ? "down" : "up", valueText,
               reason: `${higherIsBetter ? "down" : "up"} ${Math.round(adverse * 100)}% from last period`,
               severity: sev ?? adverse,
             });
@@ -274,4 +289,42 @@ export function attentionSummary(
   return `${flaggedPeople} of ${people(teamSize)} ${
     flaggedPeople === 1 ? "stands" : "stand"
   } out this period — most often ${themes}.`;
+}
+
+export interface AttentionTheme {
+  metricKey: string;
+  metricLabel: string;
+  /** Flags in this theme, strongest first. */
+  flags: AttentionFlag[];
+  severity: number;
+}
+
+/**
+ * Flags gathered by the metric they are about.
+ *
+ * Sixty people whose meeting hours rose is one fact about the org, not sixty
+ * findings; listed person by person it reads as sixty and hides that it is
+ * one. Themes carrying more people come first, ties broken by the strongest
+ * flag in them.
+ */
+export function groupFlagsByTheme(
+  flags: readonly AttentionFlag[]
+): AttentionTheme[] {
+  const byMetric = new Map<string, AttentionFlag[]>();
+  for (const flag of flags) {
+    byMetric.set(flag.metricKey, [...(byMetric.get(flag.metricKey) ?? []), flag]);
+  }
+  return [...byMetric.entries()]
+    .map(([metricKey, group]) => {
+      const sorted = [...group].sort((a, b) => b.severity - a.severity);
+      return {
+        metricKey,
+        metricLabel: sorted[0]!.metricLabel,
+        flags: sorted,
+        severity: sorted[0]!.severity,
+      };
+    })
+    .sort(
+      (a, b) => b.flags.length - a.flags.length || b.severity - a.severity
+    );
 }

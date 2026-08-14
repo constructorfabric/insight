@@ -14,7 +14,7 @@ vi.mock("@tanstack/react-router", async () => {
 
 import { portalRouter } from "@/test/portal-router";
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -443,6 +443,8 @@ describe("direction-cards / attention sections", () => {
       />,
     );
     expect(screen.getByText(/1 of 8 people stands out this period/)).toBeInTheDocument();
+    // The metric leads; the person is named once it is opened.
+    fireEvent.click(screen.getByRole("button", { name: /Commits\s*1 person/ }));
     // Identity owns the display name now.
     expect(screen.getByText("z")).toBeInTheDocument();
     expect(screen.getByText(/no commits/)).toBeInTheDocument();

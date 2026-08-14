@@ -11,23 +11,20 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AttentionFlag } from "@/lib/insight/attention-flags";
-import {
-  usePortalZone,
-} from "@/lib/portal/portal-nav";
-
+import { usePortalZone } from "@/lib/portal/portal-nav";
 
 import { pid } from "@/test/identity";
 
 import { AttentionList } from "./attention-list";
 
-
 function flag(over: Partial<AttentionFlag>): AttentionFlag {
   return {
     personId: pid("p0"),
     name: "Person",
-    metricKey: "t.metric",
+    metricKey: "t.commits",
     metricLabel: "Commits",
     kind: "outlier",
+    moved: "down",
     valueText: "2",
     reason: "well below the team median of 10",
     severity: 1,
@@ -35,90 +32,136 @@ function flag(over: Partial<AttentionFlag>): AttentionFlag {
   };
 }
 
-const FLAGS = Array.from({ length: 5 }, (_, i) =>
-  flag({ personId: pid(`p${i}`), name: `Person ${i}`, severity: 5 - i }),
-);
+/** Three people on Commits, one on Meetings. */
+const MIXED = [
+  ...Array.from({ length: 3 }, (_, i) =>
+    flag({ personId: pid(`p${i}`), name: `Person ${i}`, severity: 3 - i })
+  ),
+  flag({
+    personId: pid("p0"),
+    name: "Person 0",
+    metricKey: "t.meetings",
+    metricLabel: "Meeting hours",
+    severity: 9,
+  }),
+];
+
+async function openTheme(name: RegExp) {
+  await userEvent.click(screen.getByRole("button", { name }));
+}
 
 describe("AttentionList", () => {
-  it("gives no subject more rows than the cap, however many they trip", () => {
-    // A row is one finding and the list is ranked by severity, so without a
-    // cap the subject in the most trouble takes the most of the visible slice
-    // and pushes everyone else behind "+N more" — the list hides people better
-    // the worse things are.
-    const many = [
-      flag({ personId: pid("p0"), name: "Busy", metricLabel: "Commits", severity: 9 }),
-      flag({ personId: pid("p0"), name: "Busy", metricLabel: "PRs merged", severity: 8 }),
-      flag({ personId: pid("p0"), name: "Busy", metricLabel: "Code lines", severity: 7 }),
-      flag({ personId: pid("p1"), name: "Other", metricLabel: "Active days", severity: 6 }),
-    ];
-    render(<AttentionList flags={many} summary="s" />);
-    expect(screen.getAllByText("Busy")).toHaveLength(2);
-    // The one dropped is the weakest, and the other subject still shows.
-    expect(screen.queryByText("Code lines")).not.toBeInTheDocument();
-    expect(screen.getByText("Other")).toBeInTheDocument();
+  it("leads with the metric and how many people it is about", () => {
+    render(<AttentionList flags={MIXED} summary="s" />);
+    expect(
+      screen.getByRole("button", { name: /Commits\s*3 people/ })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Meeting hours\s*1 person/ })
+    ).toBeInTheDocument();
   });
 
-  it("counts the capped rows in \"+N more\", not the raw findings", () => {
-    // The toggle has to promise what expanding will actually reveal.
-    const many = Array.from({ length: 4 }, (_, i) =>
-      flag({
-        personId: pid("p0"),
-        name: "Busy",
-        metricLabel: `Metric ${i}`,
-        severity: 9 - i,
-      }),
-    );
-    render(<AttentionList flags={many} summary="s" max={1} />);
-    expect(screen.getByRole("button", { name: "+1 more" })).toBeInTheDocument();
+  it("puts the metric that touches most people first", () => {
+    render(<AttentionList flags={MIXED} summary="s" />);
+    const headers = screen.getAllByRole("button").map((b) => b.textContent);
+    expect(headers[0]).toMatch(/Commits/);
+    expect(headers[1]).toMatch(/Meeting hours/);
   });
 
-  it("renders the summary, people label and flag rows with reasons", () => {
+  it("names nobody until a metric is opened", () => {
+    render(<AttentionList flags={MIXED} summary="s" />);
+    expect(screen.queryByText("Person 1")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("opens a metric into its people, strongest first", async () => {
+    render(<AttentionList flags={MIXED} summary="s" />);
+    await openTheme(/Commits/);
+    const names = screen
+      .getAllByRole("link")
+      .map((a) => a.textContent?.match(/Person \d/)?.[0]);
+    expect(names).toEqual(["Person 0", "Person 1", "Person 2"]);
+  });
+
+  it("lists one person under each metric they trip", async () => {
+    render(<AttentionList flags={MIXED} summary="s" />);
+    await openTheme(/Commits/);
+    await openTheme(/Meeting hours/);
+    expect(screen.getAllByText("Person 0")).toHaveLength(2);
+  });
+
+  it("links a person to their own page", async () => {
     render(
-      <AttentionList
-        flags={FLAGS.slice(0, 2)}
-        summary="2 of 8 people stand out this period — most often Commits (2)."
-      />,
+      <AttentionList flags={[flag({ personId: pid("who") })]} summary="s" />
     );
-    expect(screen.getByText(/2 of 8 people stand out this period/)).toBeInTheDocument();
-    expect(screen.getByText("Person 0")).toBeInTheDocument();
-    expect(screen.getAllByText("well below the team median of 10")).toHaveLength(2);
-  });
-
-  it("links every row to that person's personal page", () => {
-    render(<AttentionList flags={[flag({ personId: pid("who") })]} summary="s" />);
+    await openTheme(/Commits/);
     expect(screen.getByRole("link")).toHaveAttribute(
       "href",
-      `/ic/${pid("who")}/personal`,
+      `/ic/${pid("who")}/personal`
     );
   });
 
   it("clears the pinned zone on click so the route-driven Person zone wins", async () => {
     act(() => portalRouter.set({ zone: "overview" }));
-    const { result } = renderZone();
+    const { result } = renderHook(() => usePortalZone());
     render(<AttentionList flags={[flag({})]} summary="s" />);
+    await openTheme(/Commits/);
     await userEvent.click(screen.getByRole("link"));
     expect(result.current).toBeNull();
   });
 
-  it("shows the steady note when there are no flags", () => {
-    render(<AttentionList flags={[]} summary="All steady." />);
-    expect(screen.getByText(/No outliers, declines, or collapses/)).toBeInTheDocument();
+  it("caps the metrics listed, and expands on request", async () => {
+    render(<AttentionList flags={MIXED} summary="s" max={1} />);
+    expect(screen.queryByRole("button", { name: /Meeting hours/ })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "+1 more" }));
+    expect(
+      screen.getByRole("button", { name: /Meeting hours/ }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(screen.queryByRole("button", { name: /Meeting hours/ })).not.toBeInTheDocument();
   });
 
-  it("collapses to max rows and expands on '+N more', then collapses back", async () => {
-    render(<AttentionList flags={FLAGS} summary="s" max={2} />);
-    expect(screen.getAllByRole("link")).toHaveLength(2);
+  it("caps the people inside one metric, and expands on request", async () => {
+    // 14 people on Commits: the twelfth is the last one listed.
+    const many = Array.from({ length: 14 }, (_, i) =>
+      flag({ personId: pid(`q${i}`), name: `Q${i}`, severity: 14 - i }),
+    );
+    render(<AttentionList flags={many} summary="s" />);
+    await openTheme(/Commits/);
+    expect(screen.getAllByRole("link")).toHaveLength(12);
 
-    await userEvent.click(screen.getByRole("button", { name: "+3 more" }));
-    expect(screen.getAllByRole("link")).toHaveLength(5);
+    await userEvent.click(screen.getByRole("button", { name: "+2 more" }));
+    expect(screen.getAllByRole("link")).toHaveLength(14);
+  });
 
-    await userEvent.click(screen.getByRole("button", { name: "Show less" }));
-    expect(screen.getAllByRole("link")).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "+3 more" })).toBeInTheDocument();
+  it("points the arrow the way the number actually went", async () => {
+    // A rise is adverse on a lower-is-better metric. A down arrow beside
+    // "well above the median" contradicts the sentence next to it.
+    render(
+      <AttentionList
+        flags={[
+          flag({
+            metricLabel: "Meeting hours",
+            metricKey: "t.meetings",
+            moved: "up",
+            reason: "well above the team median of 5 h",
+          }),
+        ]}
+        summary="s"
+      />,
+    );
+    await openTheme(/Meeting hours/);
+    const link = screen.getByRole("link");
+    expect(link.querySelector(".lucide-arrow-up-right")).not.toBeNull();
+    expect(link.querySelector(".lucide-arrow-down-right")).toBeNull();
+  });
+
+  it("says so when nothing stands out", () => {
+    render(<AttentionList flags={[]} summary="All steady." />);
+    expect(
+      screen.getByText("Nothing stands out this period.")
+    ).toBeInTheDocument();
   });
 });
-
-// Small helper: observe the portal zone through the public hook.
-function renderZone() {
-  return renderHook(() => usePortalZone());
-}
