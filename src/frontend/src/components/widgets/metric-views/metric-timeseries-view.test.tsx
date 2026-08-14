@@ -492,7 +492,7 @@ describe("MetricTimeseriesView", () => {
           }),
         }),
       ]),
-      "Commits & Lines added"
+      { title: "Commits & Lines added" }
     );
   });
 
@@ -510,10 +510,10 @@ describe("MetricTimeseriesView", () => {
     };
     mocks.collection.mockReturnValue({ ...ready, byKey });
     mocks.evidenceColumn = groupedTimeseriesModel().columns[0]?.key ?? "";
-    const openEvidence = vi.fn();
+    const openEvidenceTargets = vi.fn();
     render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence, openEvidenceTargets: vi.fn() }}
+        value={{ openEvidence: vi.fn(), openEvidenceTargets }}
       >
         <MetricTimeseriesView
           id="point-evidence"
@@ -526,19 +526,24 @@ describe("MetricTimeseriesView", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "drill point" }));
-    expect(openEvidence).toHaveBeenCalledWith(
-      expect.objectContaining({
-        metric_key: "git.commits",
-        period: { from: "2026-04-20", to: "2026-04-26" },
-        filters: [
-          {
-            dimension: "repository",
-            values: ["org/repo-a"],
-          },
-        ],
-        display_dimensions: ["repository"],
-      }),
-      "Commits"
+    expect(openEvidenceTargets).toHaveBeenCalledWith(
+      [
+        {
+          selection: expect.objectContaining({
+            metric_key: "git.commits",
+            period: { from: "2026-04-20", to: "2026-04-26" },
+            filters: [
+              {
+                dimension: "repository",
+                values: ["org/repo-a"],
+              },
+            ],
+            display_dimensions: ["repository"],
+          }),
+          label: "Commits",
+        },
+      ],
+      { activeMetricKey: "git.commits" }
     );
   });
 });

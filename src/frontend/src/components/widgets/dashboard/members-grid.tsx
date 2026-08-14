@@ -57,7 +57,12 @@ import { applyFocusStatus, STATUS_TEXT_CLASS } from "@/lib/status";
 import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import { evidenceSelection } from "@/api/metric-drilldown-client";
-import { useMetricEvidenceOptional } from "@/components/metric-evidence-context";
+import {
+  EvidenceScopeContext,
+  useEvidenceScope,
+  useMetricEvidenceOptional,
+  withOwnTarget,
+} from "@/components/metric-evidence-context";
 
 export interface MembersGridMember {
   /** Canonical person id — keys every metric lookup AND the IC link. */
@@ -479,6 +484,14 @@ function MemberRow({
         : counts.top > 0
           ? "top"
           : "in_pack";
+  const rowEvidenceTargets = cells.flatMap((cell) => {
+    if (!cell.col.metric.drilldown) return [];
+    const selection = evidenceSelection(
+      cell.col.metric.selection,
+      member.entityId
+    );
+    return selection ? [{ selection, label: cell.col.label }] : [];
+  });
   return (
     <tr>
       <th
@@ -512,17 +525,19 @@ function MemberRow({
           ) : null}
         </div>
       </th>
-      {cells.map((cell) => (
-        <td key={cell.col.key} className="p-0 align-middle">
-          <GridCell
-            cell={cell}
-            entityId={member.entityId}
-            memberName={member.displayName}
-            cohortLabel={cohortLabel}
-            focusMode={focusMode}
-          />
-        </td>
-      ))}
+      <EvidenceScopeContext.Provider value={rowEvidenceTargets}>
+        {cells.map((cell) => (
+          <td key={cell.col.key} className="p-0 align-middle">
+            <GridCell
+              cell={cell}
+              entityId={member.entityId}
+              memberName={member.displayName}
+              cohortLabel={cohortLabel}
+              focusMode={focusMode}
+            />
+          </td>
+        ))}
+      </EvidenceScopeContext.Provider>
     </tr>
   );
 }
@@ -542,6 +557,7 @@ function GridCell({
 }) {
   const focused = applyFocus(cell.status, focusMode);
   const evidenceContext = useMetricEvidenceOptional();
+  const scope = useEvidenceScope();
   const { col, value, previous, delta, median, observed } = cell;
   const evidence = col.metric.drilldown
     ? evidenceSelection(
@@ -599,7 +615,14 @@ function GridCell({
           <button
             type="button"
             onClick={() => {
-              if (evidence) evidenceContext?.openEvidence(evidence, col.label);
+              if (!evidence) return;
+              evidenceContext?.openEvidenceTargets(
+                withOwnTarget(scope, {
+                  selection: evidence,
+                  label: col.label,
+                }),
+                { activeMetricKey: evidence.metric_key }
+              );
             }}
             aria-label={
               observed
@@ -630,12 +653,7 @@ function GridCell({
         <div className="flex flex-col gap-1">
           <p className="text-sm font-semibold">{col.label}</p>
           <p className="text-xs text-muted-foreground">{memberName}</p>
-          <p
-            className={cn(
-              "mt-2", TEXT_FIGURE, "",
-              PEER_TEXT[focused]
-            )}
-          >
+          <p className={cn("mt-2", TEXT_FIGURE, "", PEER_TEXT[focused])}>
             {displayWithUnit}
           </p>
           <p className="text-xs text-muted-foreground">

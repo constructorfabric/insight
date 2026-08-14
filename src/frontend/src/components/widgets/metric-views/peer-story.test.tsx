@@ -121,11 +121,11 @@ describe("PeerStory", () => {
 
   it("neutral focus renders flat-grid supporting-data actions", async () => {
     const user = userEvent.setup();
-    const openEvidence = vi.fn();
+    const openEvidenceTargets = vi.fn();
     settings.focusMode = "neutral";
     render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence, openEvidenceTargets: vi.fn() }}
+        value={{ openEvidence: vi.fn(), openEvidenceTargets }}
       >
         <PeerStory
           entries={entriesFrom([
@@ -145,9 +145,14 @@ describe("PeerStory", () => {
     await user.click(
       await screen.findByRole("menuitem", { name: "View supporting data" })
     );
-    expect(openEvidence).toHaveBeenCalledWith(
-      expect.objectContaining({ metric_key: "issue" }),
-      "issue"
+    expect(openEvidenceTargets).toHaveBeenCalledWith(
+      [
+        {
+          selection: expect.objectContaining({ metric_key: "issue" }),
+          label: "issue",
+        },
+      ],
+      { activeMetricKey: "issue" }
     );
   });
 
