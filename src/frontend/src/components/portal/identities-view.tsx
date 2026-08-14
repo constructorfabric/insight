@@ -67,7 +67,8 @@ export function IdentitiesView() {
     );
   }
 
-  const { items, rates, truncated } = attention.data;
+  const { items, rates, truncated, items_truncated: itemsTruncated } =
+    attention.data;
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
       <header>
@@ -82,6 +83,17 @@ export function IdentitiesView() {
         <Alert variant="destructive" role="status">
           <TriangleAlert />
           <AlertDescription>{t("identities.queue.truncated")}</AlertDescription>
+        </Alert>
+      ) : null}
+      {/* The list was cut by the server's item cap while the rates stay
+          whole-tenant — a different fact from `truncated`, and one an
+          operator working to zero has to know. */}
+      {itemsTruncated && !truncated ? (
+        <Alert role="status">
+          <TriangleAlert />
+          <AlertDescription>
+            {t("identities.queue.items_truncated")}
+          </AlertDescription>
         </Alert>
       ) : null}
       <RatesStrip rates={rates} />

@@ -50,9 +50,17 @@ export function ConfirmDialog({
   onConfirm: () => void;
 }) {
   const { t } = useTranslation();
+  // A verb in flight is not dismissable. Disabling Cancel is not enough:
+  // Escape, an overlay click and the built-in close button all bypass it, and
+  // closing resets the mutation — so the operator would lose the outcome of a
+  // write the server goes on to apply.
+  const requestClose = (next: boolean) => {
+    if (isPending && !next) return;
+    onOpenChange(next);
+  };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+    <Dialog open={open} onOpenChange={requestClose}>
+      <DialogContent className="sm:max-w-md" showCloseButton={!isPending}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description ? (
@@ -70,7 +78,7 @@ export function ConfirmDialog({
           <Button
             type="button"
             variant="ghost"
-            onClick={() => onOpenChange(false)}
+            onClick={() => requestClose(false)}
             disabled={isPending}
           >
             {t("common.actions.cancel")}

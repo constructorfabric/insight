@@ -27,6 +27,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import type { AccountRef } from "@/lib/identities/account-key";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { formatUtcInstant } from "@/lib/format";
 import { useAccountBinding } from "@/queries/identity-resolution";
 
@@ -167,7 +168,7 @@ function HistoryRow({
         <span>{t("identities.history.to")}</span>
         {target ? (
           <span className="font-medium text-foreground">
-            {target.display_name?.trim() || target.email?.trim() || entry.person_id}
+            {personDisplayName(target)}
           </span>
         ) : (
           <PersonId id={entry.person_id} />

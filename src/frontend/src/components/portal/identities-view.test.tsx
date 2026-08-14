@@ -109,6 +109,33 @@ describe("IdentitiesView", () => {
     expect(screen.getByText(/cover only part of the observed accounts/i)).toBeInTheDocument();
   });
 
+  // Two different facts: the evidence read hit its ceiling (rates are a
+  // prefix) versus the item cap cut the list (rates still whole-tenant).
+  it("says the list was cut when only the item cap was hit", () => {
+    attention.q.data = { items: [], rates: RATES, items_truncated: true };
+    render(<IdentitiesView />);
+
+    expect(screen.getByText(/only the first accounts needing review/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/cover only part of the observed accounts/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not repeat the item-cap notice when the evidence read was truncated too", () => {
+    attention.q.data = {
+      items: [],
+      rates: RATES,
+      truncated: true,
+      items_truncated: true,
+    };
+    render(<IdentitiesView />);
+
+    expect(screen.getByText(/cover only part of the observed accounts/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/only the first accounts needing review/i),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows no truncation warning on a complete read, including from an older backend", () => {
     attention.q.data = { items: [], rates: RATES };
     render(<IdentitiesView />);

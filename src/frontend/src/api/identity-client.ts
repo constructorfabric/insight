@@ -79,11 +79,22 @@ export async function getMe(): Promise<MeResponse> {
   }
   // A malformed answer must read as "roles unknown", never as "no roles" —
   // the admin gate downstream fails closed either way, but an error is
-  // diagnosable where a silent [] is not.
-  if (!me.person_id?.trim() || !Array.isArray(me.roles)) {
+  // diagnosable where a silent [] is not. The entries are checked too: the
+  // gate reads `role_id` off each one, so a `[null]` would throw during
+  // render rather than fail closed.
+  if (!me.person_id?.trim() || !Array.isArray(me.roles) || !me.roles.every(isMeRole)) {
     throw new IdentityApiError(res.status, { error: "malformed_me" });
   }
   return me;
+}
+
+function isMeRole(role: unknown): role is MeRole {
+  return (
+    typeof role === "object" &&
+    role !== null &&
+    typeof (role as MeRole).role_id === "string" &&
+    (role as MeRole).role_id.trim() !== ""
+  );
 }
 
 /** A person as operator surfaces display them — the wire `PersonSummaryResponse`. */
@@ -125,6 +136,9 @@ export interface AttentionResponse {
    *  describe only a prefix of the tenant's accounts. Optional so a client
    *  deployed ahead of the backend keeps working; absent reads as complete. */
   truncated?: boolean;
+  /** `limit` cut the item list — the rates are still whole-tenant, only this
+   *  page is short. Optional for the same reason as {@link truncated}. */
+  items_truncated?: boolean;
 }
 
 /**

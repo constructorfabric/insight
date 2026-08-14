@@ -9,6 +9,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import "@/i18n";
 import type { MetricDefinition } from "@/api/metric-definitions-client";
 import type { MetricDefinitionGroup } from "@/queries/metric-definitions";
 

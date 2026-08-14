@@ -11,6 +11,7 @@ import {
   getAttention,
   getMe,
   getPerson,
+  getPersonAccounts,
   IdentityApiError,
   mergePersons,
   searchPersons,
@@ -194,6 +195,24 @@ describe("getMe", () => {
       body: { error: "malformed_me" },
     });
   });
+
+  // The gate reads `role_id` off every entry, so a well-shaped list of badly
+  // shaped members has to fail here — downstream it would throw during render
+  // instead of failing closed.
+  it.each([
+    ["a null member", [null]],
+    ["a non-object member", ["admin"]],
+    ["a member with no role_id", [{ name: "admin" }]],
+    ["a member whose role_id is blank", [{ role_id: "  ", name: "admin" }]],
+  ])("rejects a roles array with %s", async (_name, roles) => {
+    mockFetch.mockResolvedValueOnce(
+      response({ person_id: "p-1", insight_tenant_id: "t-1", roles } as never),
+    );
+
+    await expect(getMe()).rejects.toMatchObject({
+      body: { error: "malformed_me" },
+    });
+  });
 });
 
 describe("getAttention", () => {
@@ -336,6 +355,55 @@ describe("searchPersons", () => {
 
     await expect(searchPersons("x y")).rejects.toMatchObject({
       body: { error: "malformed_search" },
+    });
+  });
+});
+
+describe("getPersonAccounts", () => {
+  const OWNED = {
+    person_id: "01900000-0000-7000-8000-0000000000b0",
+    accounts: [
+      {
+        source: "github",
+        source_id: "01900000-0000-7000-8000-00000000aa01",
+        account_id: "gh-1",
+        email: "gh-1@example.com",
+        username: null,
+        bound_by_operator: true,
+      },
+    ],
+  };
+
+  it("URI-encodes the person id and returns the accounts", async () => {
+    mockFetch.mockResolvedValueOnce(response(OWNED));
+
+    await expect(getPersonAccounts(OWNED.person_id)).resolves.toEqual(OWNED);
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      `/api/identity/v1/resolution/persons/${OWNED.person_id}/accounts`,
+    );
+  });
+
+  it("keeps an empty account list a valid answer", async () => {
+    mockFetch.mockResolvedValueOnce(response({ person_id: "p-1", accounts: [] }));
+
+    await expect(getPersonAccounts("p-1")).resolves.toMatchObject({ accounts: [] });
+  });
+
+  it("throws on an HTTP failure instead of reporting nothing to move", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({ title: "forbidden" }, { ok: false, status: 403 }),
+    );
+
+    await expect(getPersonAccounts("p-1")).rejects.toMatchObject({ status: 403 });
+  });
+
+  // The merge preview counts this list, so a malformed body must not read as
+  // "no accounts move" — that would understate what the merge is about to do.
+  it("rejects a malformed body rather than reading it as nothing to move", async () => {
+    mockFetch.mockResolvedValueOnce(response({ person_id: "p-1" } as never));
+
+    await expect(getPersonAccounts("p-1")).rejects.toMatchObject({
+      body: { error: "malformed_accounts" },
     });
   });
 });

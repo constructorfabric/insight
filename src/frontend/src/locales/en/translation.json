@@ -416,6 +416,7 @@
     },
     "queue": {
       "load_failed": "Unable to load the review queue",
+      "items_truncated": "Only the first accounts needing review are listed — resolve these and reload to see the rest.",
       "truncated": "The evidence read hit its cap — these counts and this queue cover only part of the observed accounts, not the whole tenant.",
       "empty_title": "Everything is resolved",
       "empty_description": "Every observed account is bound to a person. New conflicts will appear here."
@@ -485,6 +486,11 @@
       "no_matches": "Nobody matches those terms.",
       "truncated": "More people matched than shown — narrow the terms.",
       "failed": "Search failed. Try again."
+    },
+    "gate": {
+      "title": "Identities is an admin surface",
+      "description": "Managing identity resolution needs the administrator role. Ask an existing administrator to grant it if this is part of your job.",
+      "unverified": "Could not verify the administrator role"
     }
   }
 }

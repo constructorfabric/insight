@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -62,6 +63,7 @@ export function ManageView({ item }: { item: string | null }) {
  * nothing.
  */
 function IdentitiesGate() {
+  const { t } = useTranslation();
   const { isAdmin, isPending, isError, retry } = useIsAdmin();
   if (isPending) return <CenteredSpinner />;
   if (isError) {
@@ -70,7 +72,7 @@ function IdentitiesGate() {
         <ComingSoon
           variant="card"
           state="error"
-          label="Could not verify the administrator role"
+          label={t("identities.gate.unverified")}
           onRetry={retry}
         />
       </div>
@@ -80,10 +82,9 @@ function IdentitiesGate() {
     return (
       <div className="mx-auto w-full max-w-md p-8" role="alert">
         <div className="rounded-lg border p-6 text-center">
-          <p className="text-sm font-semibold">Identities is an admin surface</p>
+          <p className="text-sm font-semibold">{t("identities.gate.title")}</p>
           <p className="mt-2 text-sm text-muted-foreground">
-            Managing identity resolution needs the administrator role. Ask an
-            existing administrator to grant it if this is part of your job.
+            {t("identities.gate.description")}
           </p>
         </div>
       </div>

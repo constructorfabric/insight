@@ -546,6 +546,7 @@ export const handlers = [
       ],
       rates: { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 },
       truncated: false,
+      items_truncated: false,
     });
   }),
   http.post(
