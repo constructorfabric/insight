@@ -116,7 +116,7 @@ describe("lens roadmap entries carry a reason", () => {
     for (const { dir, lens, entry } of roadmap) {
       const e = entry as { comingSoon: string; readiness: string };
       if (e.readiness === "planned") {
-        expect(e.comingSoon, `${dir}/${lens}`).toMatch(/semantic layer/i);
+        expect(e.comingSoon, `${dir}/${lens}`).toMatch(/not available yet/i);
         expect(e.comingSoon, `${dir}/${lens}`).not.toMatch(/in development/i);
       } else {
         expect(e.comingSoon, `${dir}/${lens}`).toMatch(/in development/i);

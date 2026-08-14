@@ -227,7 +227,7 @@ describe("org-scope gates", () => {
   it("shows the empty-roster label instead of a fabricated dashboard", () => {
     mocks.tree = person("boss");
     render(<DomainLensView config={HEADLINE_CONFIG} />);
-    expect(screen.getByText(/No team in the current scope/)).toBeInTheDocument();
+    expect(screen.getByText(/No people in the current scope/)).toBeInTheDocument();
   });
 
   it("surfaces a grid failure as retryable error", () => {
@@ -421,7 +421,7 @@ describe("by-unit auto-section (rule 7: slice cohorts inside scope)", () => {
     act(() => portalRouter.set({ slice: "division" }));
     // default org: 4 people all WITHOUT division values → no comparable units
     render(<DomainLensView config={CONFIG} />);
-    expect(screen.getByText(/Nothing to compare here/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing to compare at this grouping/)).toBeInTheDocument();
   });
 });
 
@@ -442,7 +442,7 @@ describe("direction-cards / attention sections", () => {
         }}
       />,
     );
-    expect(screen.getByText(/1 of 8 people stand out this period/)).toBeInTheDocument();
+    expect(screen.getByText(/1 of 8 people stands out this period/)).toBeInTheDocument();
     // Identity owns the display name now.
     expect(screen.getByText("z")).toBeInTheDocument();
     expect(screen.getByText(/no commits/)).toBeInTheDocument();
@@ -499,7 +499,7 @@ describe("coverage section (#2408)", () => {
 
     // And the reason is the actionable half: nothing feeds those parts for the
     // tenant, which is a plumbing job — not people who did no work.
-    expect(screen.getAllByText(/no data from:/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/not measured for anyone:/).length).toBeGreaterThan(0);
   });
 
   it("does not open a level nobody is at", async () => {

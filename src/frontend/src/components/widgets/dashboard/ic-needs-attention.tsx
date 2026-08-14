@@ -100,8 +100,8 @@ export function IcNeedsAttention({
                         {item.kind === "fell"
                           ? "dropped this period"
                           : item.noPrevious
-                            ? "nothing to compare"
-                            : "still low"}
+                            ? "no earlier period to compare"
+                            : "not new this period"}
                       </span>
                     </span>
                     <span className="flex items-baseline gap-2 sm:contents">

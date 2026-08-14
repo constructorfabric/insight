@@ -59,9 +59,9 @@ const ZONE_SUB: Record<string, string> = {
   overview: "Cross-functional org rollup",
   directions: "Functional domains",
   person: "Personal metrics",
-  people: "Roster & org structure",
+  people: "People & org structure",
   aicost: "Adoption funnel & cost",
-  scorecard: "Unit × quarter × QoQ",
+  scorecard: "By unit and quarter",
   reports: "Generated & custom",
   manage: "Catalog, identity & governance",
 };
@@ -550,7 +550,7 @@ function PersonSectionsNav() {
                         ? standing.phrase
                         : standing.peersHaveData
                           ? "No data this period"
-                          : "No data reaches us for this section"
+                          : "No data source is connected for this section"
                   }
                 >
                   <Layers />

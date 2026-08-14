@@ -104,7 +104,7 @@ export function TeamCollectionDrilldown({
             byKey={data.byKey}
             previousByKey={data.previousByKey}
             showIssues
-            caption={`${def.title} metrics for each team member vs their own ${cohortLabel} peers`}
+            caption={`${def.title} metrics for each person, compared with their own ${cohortLabel} peers`}
             cohortLabel={cohortLabel}
           />
         </CardContent>

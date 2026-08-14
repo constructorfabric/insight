@@ -96,7 +96,7 @@ export function MembersOverview({
   return (
     <Card>
       <CardHeader className="gap-1">
-        <CardTitle>Members × metrics</CardTitle>
+        <CardTitle>People × metrics</CardTitle>
         <p className="text-xs text-muted-foreground">
           {members.length} members · cell colour = position vs {cohortLabel}{" "}
           peers
@@ -114,7 +114,7 @@ export function MembersOverview({
             previousByKey={previousHeatmapByKey}
             countsByMember={countsByMember}
             worstByMember={worstByMember}
-            caption={`Team members compared to their own ${cohortLabel} peers across cross-family metrics`}
+            caption={`People compared to their own ${cohortLabel} peers across cross-family metrics`}
             cohortLabel={cohortLabel}
           />
         </div>

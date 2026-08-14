@@ -41,7 +41,7 @@ function statsOf(values: number[]): CohortStats | null {
 
 /**
  * Peer stats aren't computed by the backend yet, so the shared members grid
- * paints every cell neutral ("no peer data"). Synthesize a peer view where each
+ * paints every cell neutral ("no comparison"). Synthesize a peer view where each
  * member is ranked **within their own cohort** — the group of members sharing
  * `cohortOf(id)` (e.g. same division / title / manager). This drives the grid
  * heat, attention outliers, and the Person "vs your <slice> median" framing off

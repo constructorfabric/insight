@@ -190,7 +190,7 @@ describe("attentionSummary", () => {
       params({ byKey: new Map([["t.metric", fixture([...BASE, ["x", 0]])]]) }),
     );
     expect(attentionSummary(flags, 1, 8)).toBe(
-      "1 of 8 people stand out this period — most often Commits (1 person).",
+      "1 of 8 people stands out this period — most often Commits (1 person).",
     );
   });
 });

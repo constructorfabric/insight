@@ -424,7 +424,7 @@ function SupportingFold({
   const summaryDescription =
     neutralCount === 0
       ? `Metrics in the normal range for this ${cohortLabel}`
-      : "Other metrics, none standing out";
+      : "Other metrics, with nothing standing out or nothing to compare";
   return (
     <div className="rounded-md border">
       <button
@@ -487,7 +487,7 @@ function SupportingRow({
       </div>
       <div className="text-muted-foreground">
         {!entry.stats ? (
-          <span>no peer data</span>
+          <span>no comparison</span>
         ) : !entry.observed ? (
           <span>
             no recorded activity · {cohortLabel} median:{" "}
@@ -548,9 +548,9 @@ export function PeerStory({
           <SideCards entries={sideCards} cohortLabel={cohortLabel} />
         </div>
       ) : focusMode === "critical" ? (
-        <EmptyState label="Nothing stands out as low this period" />
+        <EmptyState label="Nothing stands out as behind this period" />
       ) : focusMode === "rewards" ? (
-        <EmptyState label="Nothing stands out as high this period" />
+        <EmptyState label="Nothing stands out as ahead this period" />
       ) : null}
       <OutlierChips entries={chips} cohortLabel={cohortLabel} />
       <SupportingFold entries={folded} cohortLabel={cohortLabel} />

@@ -84,9 +84,9 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
       {
         kind: "distribution",
         metric: "git.commits",
-        title: "Commit-volume distribution",
+        title: "How many commits people made",
         caption:
-          "How many people fall in each commit-count band — a long right tail means a few people produce most of the commits.",
+          "How many people fall in each commit-count band — when the bars stretch far to the right, a few people account for most of it.",
         unitLabel: "commits per person",
       },
     ],

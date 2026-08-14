@@ -113,7 +113,7 @@ describe("ContextPane", () => {
   it("renders the People zone with the org tree and roster items", () => {
     mocks.zone = { activeZone: "people", activePerson: "boss@x" };
     pane();
-    expect(screen.getByText("Roster & org structure")).toBeInTheDocument();
+    expect(screen.getByText("People & org structure")).toBeInTheDocument();
     expect(screen.getByTestId("org-tree")).toBeInTheDocument();
   });
 
@@ -188,7 +188,7 @@ describe("ContextPane", () => {
         id: "git_output",
         title: "Git output",
         status: "neutral",
-        phrase: "no peer data",
+        phrase: "no comparison",
         hasData: false,
         peersHaveData: true,
         isPending: false,
@@ -209,14 +209,14 @@ describe("ContextPane", () => {
         id: "git_output",
         title: "Git output",
         status: "neutral",
-        phrase: "no peer data",
+        phrase: "no comparison",
         hasData: false,
         peersHaveData: false,
         isPending: false,
       },
     ];
     pane();
-    const button = screen.getByTitle("No data reaches us for this section");
+    const button = screen.getByTitle("No data source is connected for this section");
     const mark = button.querySelector("span[aria-hidden]")!;
     expect(mark.className).not.toContain("bg-muted-foreground");
     expect(mark.className).toContain("border");

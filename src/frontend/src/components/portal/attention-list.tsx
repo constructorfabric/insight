@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ArrowDownRight, ChevronRight, Sparkles, TrendingDown } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ChevronRight, TrendingDown } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import type { AttentionFlag, FlagKind } from "@/lib/insight/attention-flags";
@@ -55,7 +55,6 @@ export function AttentionList({
 }: {
   flags: AttentionFlag[];
   summary: string;
-  /** e.g. "3 of 16 people" — shown top-right; omit to hide. */
   max?: number;
 }) {
   const { setZone } = usePortalNavActions();
@@ -69,12 +68,7 @@ export function AttentionList({
       </p>
 
       <Card>
-        <CardContent className="flex items-start gap-2 p-3 text-sm">
-          <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <div>
-            <span className="text-foreground">{summary}</span>
-          </div>
-        </CardContent>
+        <CardContent className="p-3 text-sm">{summary}</CardContent>
       </Card>
 
       {shown.length > 0 ? (

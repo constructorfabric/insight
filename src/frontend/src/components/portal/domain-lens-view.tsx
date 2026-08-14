@@ -276,7 +276,7 @@ export function DomainLensView({
     gridPending: grid.isPending,
     gridError: grid.isError,
     emptyLabel:
-      "No team in the current scope. Pick a different scope at the top of the page.",
+      "No people in the current scope. Pick a different scope at the top of the page.",
     onRetry: () => {
       orgScope.refetch();
       grid.refetch();
@@ -297,7 +297,7 @@ export function DomainLensView({
       <Pending
         label={
           config.notIngested ??
-          `${config.title} — source isn't ingested for this org yet.`
+          `${config.title} — this data source is not connected yet.`
         }
       />
     );
@@ -421,7 +421,7 @@ function Section({
       ) : (
         // Say which of the two dials to turn — a bare "no data" would read as
         // an ingestion gap rather than a request nobody can answer.
-        <Pending label="Too many people over too long a period to chart at once. Pick a shorter period or a smaller group." />
+        <Pending label="Too many people over too long a period to chart at once. Pick a shorter period or a smaller scope." />
       );
     case "distribution":
       return (
@@ -530,7 +530,7 @@ function CoverageLevelsSection({
     useScopeCoverage(memberIds);
   if (isPending) return <Pending label="Reading coverage…" />;
   // Before anything else. With a request failed nothing is known to reach the
-  // tenant, so every part would read "no data reaches us" and every person
+  // tenant, so every part would read "no data" and every person
   // would sit at zero — a fault in our infrastructure printed as a verdict
   // about named people. Saying we could not check is the only honest output.
   if (isError) {
@@ -559,7 +559,7 @@ function CoverageLevelsSection({
         </span>
         <p className="max-w-md text-sm text-muted-foreground">
           people have data for fewer than half the sections. Everything shown
-          about them comes from that part only.
+          about them comes from those sections only.
         </p>
       </div>
 
@@ -719,12 +719,12 @@ function CoverageLevelPeople({
             )}
             {unconnected.length > 0 && (
               <span className="text-warning">
-                no data from: {unconnected.join(", ")}
+                not measured for anyone: {unconnected.join(", ")}
               </span>
             )}
             {idle.length > 0 && (
               <span className="text-muted-foreground">
-                nothing recorded: {idle.join(", ")}
+                nothing recorded for this person: {idle.join(", ")}
               </span>
             )}
           </li>
@@ -1464,7 +1464,7 @@ function DirectionCardsSection({
                 })
               ) : (
                 <span className="text-xs text-muted-foreground">
-                  source isn&apos;t ingested for this org yet
+                  this data source is not connected yet
                 </span>
               )}
             </div>
@@ -1478,7 +1478,7 @@ function DirectionCardsSection({
 /* ── by-unit auto-section (rule 7) ───────────────────────────────────── */
 
 const NO_COMPARABLE_UNITS_NOTE =
-  "Nothing to compare here: this needs at least two groups of four or more people, and a metric that can be added up.";
+  "Nothing to compare at this grouping: it needs at least two groups of four or more people, and a metric that can be added up.";
 
 function ByUnitSection({
   config,
@@ -1501,7 +1501,7 @@ function ByUnitSection({
   const planned = PLANNED_SLICES.find((d) => d.key === sliceKey);
   if (planned) {
     return (
-      <SliceNote text={`The ${planned.label} dimension isn't ingested yet.`} />
+      <SliceNote text={`Grouping by ${planned.label} is not available yet.`} />
     );
   }
 

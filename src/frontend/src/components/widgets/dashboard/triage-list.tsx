@@ -83,7 +83,7 @@ export function TriageList({ rows }: TriageListProps) {
                       </span>
                     ) : (
                       <span className="text-xs text-muted-foreground">
-                        on par with peers
+                        near the median
                       </span>
                     )}
                   </div>

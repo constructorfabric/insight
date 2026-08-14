@@ -106,7 +106,7 @@ export function sectionMetricKeys(config: LensConfig): string[] {
 
 /** Product-side gap: the metric family is not in the semantic layer yet. */
 const DEV_PLANNED = (what: string): LensRoadmap => ({
-  comingSoon: `${what} — not in the semantic layer yet. This tab lights up when its metric family ships.`,
+  comingSoon: `${what} — not available yet.`,
   readiness: "planned",
 });
 
@@ -128,7 +128,7 @@ const DEV: Record<string, LensEntry> = {
       { kind: "headline", metrics: ["git.commits", "git.prs_merged", "git.lines_added"] },
       {
         kind: "stat-tiles",
-        title: "Typical time, from start to done",
+        title: "Typical values (median)",
         metrics: ["git.pr_cycle_time_h", "git.pr_size", "git.merge_rate"],
       },
       { kind: "trend", metrics: ["git.commits", "git.prs_merged"] },
@@ -154,7 +154,7 @@ const DEV: Record<string, LensEntry> = {
         metric: "git.commits",
         title: "How many commits people made",
         caption:
-          "How many people fall in each commit-count band — a long right tail means a few people produce most of the commits.",
+          "How many people fall in each commit-count band — when the bars stretch far to the right, a few people account for most of it.",
         unitLabel: "commits per person",
       },
       { kind: "concentration", metrics: ["git.commits"], framing: "bus-factor" },
@@ -172,7 +172,7 @@ const DEV: Record<string, LensEntry> = {
     sections: [
       {
         kind: "stat-tiles",
-        title: "Typical time, from start to done",
+        title: "Typical values (median)",
         metrics: [
           "git.pr_cycle_time_h",
           "git.pr_size",
@@ -190,12 +190,12 @@ const DEV: Record<string, LensEntry> = {
   },
   Delivery: {
     title: "Development · Delivery",
-    notIngested: "Task source (Jira) isn't ingested for this org yet.",
+    notIngested: "Jira is not connected yet.",
     sections: [
       { kind: "headline", metrics: ["tasks.closed", "tasks.bugs_fixed"] },
       {
         kind: "stat-tiles",
-        title: "Typical time to close a task",
+        title: "Typical task times (median)",
         metrics: ["tasks.resolution_time", "tasks.pickup_time", "tasks.dev_time"],
       },
       { kind: "trend", metrics: ["tasks.closed", "tasks.bugs_fixed"] },
@@ -288,7 +288,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.emails_sent",
-        title: "Email-volume distribution",
+        title: "How many emails people sent",
         caption:
           "How many people fall in each sent-email band — a long right tail means a few people send most of the email.",
         unitLabel: "emails sent per person",
@@ -303,7 +303,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.focus_time_pct",
-        title: "Focus-time distribution",
+        title: "How much focus time people had",
         caption:
           "How many people fall in each focus-time band — a cluster on the left means many people have little uninterrupted focus time.",
         unitLabel: "focus time (share of working time) per person",
@@ -321,7 +321,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.files_shared",
-        title: "File-sharing distribution",
+        title: "How many files people shared",
         caption:
           "How many people fall in each files-shared band — a long right tail means a few people do most of the sharing.",
         unitLabel: "files shared per person",
@@ -342,7 +342,7 @@ const WIKI: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "wiki.edits",
-        title: "Edit-volume distribution",
+        title: "How many wiki edits people made",
         caption:
           "How many people fall in each wiki-edits band — a long right tail means knowledge writing is concentrated in a few hands.",
         unitLabel: "wiki edits per person",
@@ -357,7 +357,7 @@ const WIKI: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "wiki.pages_created",
-        title: "Authoring distribution",
+        title: "How many pages people created",
         caption: "Each bar is a range of pages created, and how many people fall in it.",
         unitLabel: "pages created per person",
       },
@@ -372,7 +372,7 @@ const WIKI: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "wiki.edits",
-        title: "Edit-volume distribution",
+        title: "How many wiki edits people made",
         caption: "Each bar is a range of wiki edits, and how many people fall in it.",
         unitLabel: "wiki edits per person",
       },
@@ -400,11 +400,11 @@ const WIKI: Record<string, LensEntry> = {
 /* ── Sales / Support (bullet-only directions) ────────────────────────── */
 
 const SALES_NOTE: LensRoadmap = {
-  comingSoon: "HubSpot isn't in the semantic layer yet — bullet-only direction.",
+  comingSoon: "HubSpot data is not available yet.",
   readiness: "planned",
 };
 const SUPPORT_NOTE: LensRoadmap = {
-  comingSoon: "Zendesk isn't in the semantic layer yet — bullet-only direction.",
+  comingSoon: "Zendesk data is not available yet.",
   readiness: "planned",
 };
 

@@ -250,17 +250,17 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
     {
       items: [
         { id: "fixed", label: "Fixed scorecard", icon: LayoutGrid, readiness: "unbuilt" },
-        { id: "detailed", label: "Detailed (drill)", icon: Layers, readiness: "unbuilt" },
-        { id: "quarterly", label: "Quarterly QoQ", icon: TrendingUp, readiness: "unbuilt" },
+        { id: "detailed", label: "Detailed breakdown", icon: Layers, readiness: "unbuilt" },
+        { id: "quarterly", label: "Quarter over quarter", icon: TrendingUp, readiness: "unbuilt" },
       ],
     },
   ],
   reports: [
     {
-      label: "Generated (diagnosis)",
+      label: "Generated reports",
       items: [
-        { id: "delivery-trend", label: "Delivery trend v3", icon: FileText, readiness: "unbuilt" },
-        { id: "ttm", label: "TTM report", icon: FileText, readiness: "unbuilt" },
+        { id: "delivery-trend", label: "Delivery trend", icon: FileText, readiness: "unbuilt" },
+        { id: "ttm", label: "Trailing twelve months", icon: FileText, readiness: "unbuilt" },
       ],
     },
     {

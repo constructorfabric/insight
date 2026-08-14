@@ -70,7 +70,7 @@ describe("TriageList", () => {
     ).toBeInTheDocument();
     expect(
       within(screen.getByText("Cy").closest("a")!).getByText(
-        "on par with peers",
+        "near the median",
       ),
     ).toBeInTheDocument();
   });
