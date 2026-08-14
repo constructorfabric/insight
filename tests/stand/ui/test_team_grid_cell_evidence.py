@@ -24,6 +24,7 @@ from playwright.sync_api import Page, expect
 
 from .evidence_requests import evidence_selection
 from .flows import sign_in
+from .pages.group_dialog import MetricEvidenceDialog
 from .pages.person_view import PersonView
 from .pages.team_view import TeamView
 
@@ -63,6 +64,7 @@ def test_team_heatmap_cell_opens_that_members_supporting_data(
 
     cell = team.any_recorded_metric_cell(member.display_name)
     expect(cell).to_be_visible()
+    clicked = team.cell_metric_label(cell, member.display_name)
     with evidence_selection(page) as selection:
         evidence = team.open_cell_evidence(cell, member.display_name)
     expect(evidence.dialog).to_be_visible()
@@ -76,6 +78,32 @@ def test_team_heatmap_cell_opens_that_members_supporting_data(
     expect(table).to_be_visible()
     expect(evidence.column_header("Date")).to_be_visible()
     expect(table).to_have_attribute("aria-rowcount", re.compile(r"^[1-9]\d*$"))
-    assert evidence.metric_selector().count() == 0, (
-        "a cell names one metric, so its dialog must not offer a metric to choose"
+
+    # The row offers its own columns to switch between, opened on the one the
+    # reader clicked. The picker renders only for more than one metric, so its
+    # presence is also what makes the switch below reachable.
+    selector = evidence.metric_selector()
+    expect(selector).to_be_visible()
+    expect(selector).to_contain_text(clicked)
+
+    # Switching metric must not switch person: the scope is that member's row,
+    # and a scope rebuilt from the wrong axis would answer 200 with the lead's
+    # own rows under the member's name.
+    selector.click()
+    other = next(
+        label
+        for label in (text.strip() for text in page.get_by_role("option").all_inner_texts())
+        if label != clicked
+    )
+    with evidence_selection(page) as switched:
+        page.get_by_role("option", name=other, exact=True).click()
+
+    # A cell dialog takes its accessible name from the metric on show, so the
+    # switch renames it — the handle opened as `clicked` no longer resolves.
+    # What the switch has to hold is the PERSON, not rows: a neighbouring column
+    # this member has nothing recorded for answers honestly with no records.
+    expect(MetricEvidenceDialog(page, other).dialog).to_be_visible()
+    assert switched["entity"]["id"] == member.uuid, (
+        f"switching to {other} left the dialog asking about {switched['entity']} rather than "
+        f"{member.display_name}"
     )
