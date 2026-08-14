@@ -81,7 +81,7 @@ export interface MembersGridProps {
   /**
    * Optional triage facet: per-member standing counts across ALL groups.
    * When present each row carries a standing chip (behind / ahead / on par,
-   * the section-card vocabulary) and the grid offers the "Most behind" sort
+   * the section-card vocabulary) and the grid offers the "Furthest behind" sort
    * (the default).
    */
   countsByMember?: Map<string, RankCounts>;
@@ -160,7 +160,7 @@ interface RowShape {
   member: MembersGridMember;
   cells: CellShape[];
   /** Cross-group standing counts when provided, else derived from the row's
-   *  own cells. Drives the chip phrase and the "Most behind" sort. */
+   *  own cells. Drives the chip phrase and the "Furthest behind" sort. */
   counts: RankCounts;
   worstLabel: string | null;
 }
@@ -666,7 +666,7 @@ function GridCell({
                 "Not recorded"
               )
             ) : median == null ? (
-              "No peer data"
+              "No comparison"
             ) : gapText != null ? (
               <>
                 <span className={cn("font-medium", PEER_TEXT[focused])}>

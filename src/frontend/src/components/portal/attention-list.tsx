@@ -51,13 +51,11 @@ function capPerSubject(flags: AttentionFlag[]): AttentionFlag[] {
 export function AttentionList({
   flags,
   summary,
-  peopleLabel,
   max = 12,
 }: {
   flags: AttentionFlag[];
   summary: string;
   /** e.g. "3 of 16 people" — shown top-right; omit to hide. */
-  peopleLabel?: string;
   max?: number;
 }) {
   const { setZone } = usePortalNavActions();
@@ -66,21 +64,15 @@ export function AttentionList({
   const shown = expanded ? ranked : ranked.slice(0, max);
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-          Needs attention
-        </p>
-        {peopleLabel ? (
-          <span className="text-xs text-muted-foreground">{peopleLabel}</span>
-        ) : null}
-      </div>
+      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        Needs attention
+      </p>
 
       <Card>
         <CardContent className="flex items-start gap-2 p-3 text-sm">
           <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div>
             <span className="text-foreground">{summary}</span>
-            <span className="ml-1 text-xs text-muted-foreground">· rule-based</span>
           </div>
         </CardContent>
       </Card>

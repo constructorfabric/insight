@@ -128,7 +128,7 @@ const DEV: Record<string, LensEntry> = {
       { kind: "headline", metrics: ["git.commits", "git.prs_merged", "git.lines_added"] },
       {
         kind: "stat-tiles",
-        title: "Flow health · median",
+        title: "Typical time, from start to done",
         metrics: ["git.pr_cycle_time_h", "git.pr_size", "git.merge_rate"],
       },
       { kind: "trend", metrics: ["git.commits", "git.prs_merged"] },
@@ -152,7 +152,7 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "git.commits",
-        title: "Commit-volume distribution",
+        title: "How many commits people made",
         caption:
           "How many people fall in each commit-count band — a long right tail means a few people produce most of the commits.",
         unitLabel: "commits per person",
@@ -172,7 +172,7 @@ const DEV: Record<string, LensEntry> = {
     sections: [
       {
         kind: "stat-tiles",
-        title: "Flow health · median",
+        title: "Typical time, from start to done",
         metrics: [
           "git.pr_cycle_time_h",
           "git.pr_size",
@@ -184,7 +184,7 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "event-histogram",
         metric: "git.pr_cycle_time_h",
-        title: "PR cycle-time distribution (events)",
+        title: "How long pull requests stayed open",
       },
     ],
   },
@@ -195,15 +195,15 @@ const DEV: Record<string, LensEntry> = {
       { kind: "headline", metrics: ["tasks.closed", "tasks.bugs_fixed"] },
       {
         kind: "stat-tiles",
-        title: "Delivery health · median",
+        title: "Typical time to close a task",
         metrics: ["tasks.resolution_time", "tasks.pickup_time", "tasks.dev_time"],
       },
       { kind: "trend", metrics: ["tasks.closed", "tasks.bugs_fixed"] },
       {
         kind: "distribution",
         metric: "tasks.closed",
-        title: "Task-throughput distribution",
-        caption: "How many people fall in each tasks-closed band.",
+        title: "How many tasks people closed",
+        caption: "Each bar is a range of tasks closed, and how many people fall in it.",
         unitLabel: "tasks closed per person",
       },
     ],
@@ -229,7 +229,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.meeting_hours",
-        title: "Meeting-load distribution",
+        title: "How many hours people spent in meetings",
         caption:
           "How many people fall in each meeting-hours band — a long right tail means a few people carry an outsized meeting load.",
         unitLabel: "meeting hours per person",
@@ -252,7 +252,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.messages_sent",
-        title: "Messaging-load distribution",
+        title: "How many messages people sent",
         caption:
           "How many people fall in each message-volume band — a long right tail means a few people account for most of the chatter.",
         unitLabel: "messages per person",
@@ -271,7 +271,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.meeting_hours",
-        title: "Meeting-load distribution",
+        title: "How many hours people spent in meetings",
         caption:
           "How many people fall in each meeting-hours band — a long right tail means a few people carry an outsized meeting load.",
         unitLabel: "meeting hours per person",
@@ -358,7 +358,7 @@ const WIKI: Record<string, LensEntry> = {
         kind: "distribution",
         metric: "wiki.pages_created",
         title: "Authoring distribution",
-        caption: "How many people fall in each pages-created band.",
+        caption: "Each bar is a range of pages created, and how many people fall in it.",
         unitLabel: "pages created per person",
       },
       { kind: "concentration", metrics: ["wiki.pages_created"], framing: "bus-factor" },
@@ -373,7 +373,7 @@ const WIKI: Record<string, LensEntry> = {
         kind: "distribution",
         metric: "wiki.edits",
         title: "Edit-volume distribution",
-        caption: "How many people fall in each wiki-edits band.",
+        caption: "Each bar is a range of wiki edits, and how many people fall in it.",
         unitLabel: "wiki edits per person",
       },
     ],

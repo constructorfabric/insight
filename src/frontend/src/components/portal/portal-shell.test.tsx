@@ -218,7 +218,7 @@ describe("PeopleView", () => {
     rerender(<PeopleView person={pid("p1")} item="employees" />);
     expect(screen.getByTestId("employees")).toBeInTheDocument();
     rerender(<PeopleView person={pid("p1")} item="median-by-role" />);
-    expect(screen.getByText(/Cohort role medians/)).toBeInTheDocument();
+    expect(screen.getByText(/Medians by role/)).toBeInTheDocument();
   });
 
   it("syncs the route person into the org scope ONCE, then defers to the user", () => {

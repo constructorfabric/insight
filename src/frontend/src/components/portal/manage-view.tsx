@@ -46,7 +46,7 @@ export function ManageView({ item }: { item: string | null }) {
       <ComingSoon
         variant="card"
         state="empty"
-        label="Admin surface — not wired yet"
+        label="Not built yet"
       />
     </div>
   );

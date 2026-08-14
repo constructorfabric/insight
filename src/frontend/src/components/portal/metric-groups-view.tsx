@@ -218,7 +218,7 @@ export function MetricGroupsView({
         <ComingSoon
           variant="card"
           state="empty"
-          label="Not in the semantic layer yet — bullet-only direction"
+          label="Not available yet for this direction"
         />
       </div>
     );

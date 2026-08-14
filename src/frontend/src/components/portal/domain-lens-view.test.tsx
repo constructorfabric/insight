@@ -186,7 +186,7 @@ afterEach(() => vi.clearAllMocks());
 describe("headline (rules 1–2: per-capita + PoP delta)", () => {
   it("shows the per-active-person value, the team total and the delta", () => {
     render(<DomainLensView config={HEADLINE_CONFIG} />);
-    // 100 commits over 4 active people = 25/person; halved vs last period.
+    // 100 commits over 4 active people = 25/person; halved from last period.
     expect(screen.getByText("25 commits")).toBeInTheDocument();
     expect(screen.getByText(/100 commits team total/)).toBeInTheDocument();
     expect(screen.getByText("-50%")).toBeInTheDocument();
@@ -421,7 +421,7 @@ describe("by-unit auto-section (rule 7: slice cohorts inside scope)", () => {
     act(() => portalRouter.set({ slice: "division" }));
     // default org: 4 people all WITHOUT division values → no comparable units
     render(<DomainLensView config={CONFIG} />);
-    expect(screen.getByText(/No comparable units/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing to compare here/)).toBeInTheDocument();
   });
 });
 
@@ -442,7 +442,7 @@ describe("direction-cards / attention sections", () => {
         }}
       />,
     );
-    expect(screen.getByText(/1 of 8 people need a look/)).toBeInTheDocument();
+    expect(screen.getByText(/1 of 8 people stand out this period/)).toBeInTheDocument();
     // Identity owns the display name now.
     expect(screen.getByText("z")).toBeInTheDocument();
     expect(screen.getByText(/no commits/)).toBeInTheDocument();

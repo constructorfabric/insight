@@ -153,7 +153,7 @@ describe("Manage · Data health", () => {
 describe("Manage · unwired items", () => {
   it("renders an honest placeholder instead of a fake admin screen", () => {
     render(<ManageView item="taxonomy" />);
-    expect(screen.getByText(/not wired yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/not built yet/i)).toBeInTheDocument();
   });
 });
 

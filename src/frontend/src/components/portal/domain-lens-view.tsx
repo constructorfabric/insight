@@ -276,7 +276,7 @@ export function DomainLensView({
     gridPending: grid.isPending,
     gridError: grid.isError,
     emptyLabel:
-      "No team in the current scope — a Direction shows a domain across a team; pick a different scope in the topbar.",
+      "No team in the current scope. Pick a different scope at the top of the page.",
     onRetry: () => {
       orgScope.refetch();
       grid.refetch();
@@ -421,7 +421,7 @@ function Section({
       ) : (
         // Say which of the two dials to turn — a bare "no data" would read as
         // an ingestion gap rather than a request nobody can answer.
-        <Pending label="Trend needs a narrower period or a smaller scope — this many people over this window exceeds one request." />
+        <Pending label="Too many people over too long a period to chart at once. Pick a shorter period or a smaller group." />
       );
     case "distribution":
       return (
@@ -1196,11 +1196,11 @@ const FRAMING_COPY: Record<
   { heading: string; note: string }
 > = {
   "bus-factor": {
-    heading: "Bus factor · top 10% of contributors",
+    heading: "How much of the work sits with the busiest tenth",
     note: "high concentration = continuity risk",
   },
   "load-balance": {
-    heading: "Load concentration · top 10% of contributors",
+    heading: "How much of the load sits with the busiest tenth",
     note: "even share ≈ 10%",
   },
 };
@@ -1370,11 +1370,6 @@ function AttentionSection({
     <AttentionList
       flags={flags}
       summary={attentionSummary(flags, flaggedPeople, memberIds.length)}
-      peopleLabel={
-        flags.length
-          ? `${flaggedPeople} of ${memberIds.length} people`
-          : undefined
-      }
       max={spec.max}
     />
   );
@@ -1483,7 +1478,7 @@ function DirectionCardsSection({
 /* ── by-unit auto-section (rule 7) ───────────────────────────────────── */
 
 const NO_COMPARABLE_UNITS_NOTE =
-  "No comparable units for this lens at this slice (needs a summable headline metric and ≥2 units of ≥4 people).";
+  "Nothing to compare here: this needs at least two groups of four or more people, and a metric that can be added up.";
 
 function ByUnitSection({
   config,

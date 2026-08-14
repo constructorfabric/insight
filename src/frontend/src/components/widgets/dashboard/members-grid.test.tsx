@@ -126,7 +126,7 @@ describe("MembersGrid", () => {
     expect(
       within(table).getByRole("button", { name: "Member" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Most behind")).not.toBeInTheDocument();
+    expect(screen.queryByText("Furthest behind")).not.toBeInTheDocument();
     expect(screen.queryByText(/on par/)).not.toBeInTheDocument();
   });
 
@@ -206,7 +206,7 @@ describe("MembersGrid", () => {
     // Suppressed cohort (n < 5): the member's value shows without a standing.
     expect(
       screen.getByRole("button", {
-        name: /Bo — Active AI days: 4 days — No peer data/,
+        name: /Bo — Active AI days: 4 days — No comparison/,
       }),
     ).toBeInTheDocument();
   });

@@ -287,7 +287,7 @@ export function AiCostView({ item }: { item: string | null }) {
     memberCount: members.length,
     gridPending: grid.isPending,
     gridError: grid.isError,
-    emptyLabel: "No people in the current scope — pick a different scope in the topbar.",
+    emptyLabel: "No people in the current scope. Pick a different scope at the top of the page.",
     onRetry: () => {
       orgScope.refetch();
       grid.refetch();
@@ -396,7 +396,7 @@ export function AiCostView({ item }: { item: string | null }) {
             ))}
           </div>
         ) : (
-          <ComingSoon variant="card" state="empty" label="No per-tool breakdown for this period." />
+          <ComingSoon variant="card" state="empty" label="No breakdown by tool for this period." />
         )}
         <p className="text-xs text-muted-foreground">
           Only Claude Code is usage-metered. ChatGPT (per-seat subscription) and
