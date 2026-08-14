@@ -114,6 +114,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         "/internal/persons/by-email-override",
         axum::routing::get(handlers::internal_person_by_email_override),
     );
+    let router = router.route(
+        "/internal/persons/provision",
+        axum::routing::post(handlers::internal_provision_person),
+    );
 
     let router = OperationBuilder::post("/v1/profiles")
         .operation_id("identity_resolution.profiles.resolve")

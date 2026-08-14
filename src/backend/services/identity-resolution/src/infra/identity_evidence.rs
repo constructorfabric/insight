@@ -174,6 +174,42 @@ struct CountRow {
     hits: u64,
 }
 
+/// Which connector instance observed this account. Asked by the login
+/// bootstrap before it writes a binding: the persons-seed matches accounts on
+/// the whole triple (`source_type`, `source_id`, `account_id`), so a binding
+/// written under any other instance id would never be recognised as this
+/// account's and the batch would keep treating it as unbound.
+///
+/// The latest observation wins, picked by `ORDER BY … LIMIT 1` rather than an
+/// aggregate: an aggregate with no `GROUP BY` still yields ONE row over an
+/// empty match set, carrying the zero UUID — which would read as a real
+/// instance id and turn "nothing observed this account" into an answer.
+const SOURCE_ID_SQL: &str = r"
+    SELECT
+        toString(insight_source_id)     AS source_id,
+        ifNull(operation_type, '')      AS latest_op
+    FROM identity.identity_inputs
+    WHERE insight_source_type = ?
+      AND source_account_id = ?
+    ORDER BY _synced_at DESC
+    LIMIT 1
+";
+
+#[derive(Debug, Row, Deserialize)]
+struct SourceIdRow {
+    source_id: String,
+    latest_op: String,
+}
+
+/// One account as the login bootstrap needs to see it: which connector
+/// instance carries it, and whether that connector has since closed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObservedAccount {
+    pub source_id: Uuid,
+    /// The latest event is a closure signal — deactivated at the source.
+    pub is_closed: bool,
+}
+
 fn map_row(row: FoldedRow) -> anyhow::Result<AccountEvidence> {
     Ok(AccountEvidence {
         account: SourceAccountKey {
@@ -211,6 +247,53 @@ impl ClickHouseEvidenceReader {
             Err(e) if is_missing_relation(&e) => Ok(false),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// The account as the connectors last described it, or `None` when none
+    /// has seen it. See [`SOURCE_ID_SQL`] for why the caller needs the
+    /// instance id rather than one of its own choosing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails or the stored id is not a UUID.
+    pub async fn observed_account(
+        &self,
+        source_type: &str,
+        account_id: &str,
+    ) -> anyhow::Result<Option<ObservedAccount>> {
+        let row: Result<Option<SourceIdRow>, _> = self
+            .client
+            .query(SOURCE_ID_SQL)
+            .bind(source_type)
+            .bind(account_id)
+            .fetch_optional()
+            .await;
+
+        let found = match row {
+            Ok(found) => found,
+            // Same reading as `has_account`: no relation yet is "nothing
+            // observed", not a failure to answer.
+            Err(e) if is_missing_relation(&e) => None,
+            Err(e) => return Err(e.into()),
+        };
+
+        // An account nothing has observed yields no row at all. A blank or
+        // all-zero stored id is not an instance id either: a binding written
+        // under one would be invisible to the seed's account matching, so it
+        // reads as "no such account" rather than as an answer.
+        let Some(row) = found.filter(|r| !r.source_id.trim().is_empty()) else {
+            return Ok(None);
+        };
+
+        let source_id = Uuid::parse_str(row.source_id.trim())?;
+        if source_id.is_nil() {
+            return Ok(None);
+        }
+
+        Ok(Some(ObservedAccount {
+            source_id,
+            is_closed: row.latest_op == "DELETE",
+        }))
     }
 }
 

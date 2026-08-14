@@ -24,7 +24,9 @@ use crate::domain::profile::{
     ParentProjection, PersonResponse, ResolveProfileRequest, assemble_person, assemble_profile,
     latest_values,
 };
-use crate::infra::db::{persons_repo, subchart_repo};
+use crate::domain::resolution;
+use crate::domain::seed::SourceAccountKey;
+use crate::infra::db::{persons_repo, resolution_repo, subchart_repo};
 
 /// `POST /v1/profiles` — resolve one identity (email or source-native id) to a
 /// person, then assemble the profile.
@@ -190,27 +192,261 @@ pub async fn internal_person_by_external_id(
             .create());
     }
 
-    let person_id =
-        persons_repo::resolve_person_id_by_source_any_tenant(&state.db, source_type, external_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "internal by-external-id lookup failed");
-                CanonicalError::internal("lookup failed").create()
-            })?
-            .ok_or_else(|| {
-                ProfileError::not_found(format!(
-                    "person with source_type '{source_type}' external_id '{external_id}' not found"
-                ))
-                .with_resource(external_id.to_owned())
-                .create()
-            })?;
+    let person_id = lookup_by_external_id(&state, source_type, external_id)
+        .await?
+        .ok_or_else(|| {
+            ProfileError::not_found(format!(
+                "person with source_type '{source_type}' external_id '{external_id}' not found"
+            ))
+            .with_resource(external_id.to_owned())
+            .create()
+        })?;
 
-    Ok(Json(InternalPersonResponse {
+    Ok(Json(person_response(external_id, person_id)))
+}
+
+/// Body for `POST /internal/persons/provision`.
+#[derive(Debug, serde::Deserialize)]
+pub struct InternalProvisionRequest {
+    source_type: String,
+    external_id: String,
+    /// The tenant the `id_token` asserted. A read can stay tenant-agnostic; a
+    /// write cannot, and at login there is no caller context to infer it from.
+    tenant_id: Uuid,
+}
+
+/// `POST /internal/persons/provision` — SERVICE-ONLY login bootstrap that
+/// MINTS a person when the journal has no binding for this IdP principal yet.
+/// Same contract and gate as [`internal_person_by_external_id`], and the same
+/// response shape, so the caller can treat the two identically.
+///
+/// Why this exists: the login-bootstrap row is otherwise written only by the
+/// nightly persons-seed, which links a person by e-mail and skips an account
+/// that carries none. A member of the IdP's roster with no published address
+/// is therefore refused at login until an operator binds them by hand.
+///
+/// It mints only for an account a connector has ALREADY OBSERVED, and reuses
+/// that observation's `insight_source_id`. Both halves matter:
+///
+/// - the roster stays the authority on who exists, so this is "the IdP
+///   authenticated someone the org already lists", never "anyone who reaches
+///   the IdP becomes a person";
+/// - the persons-seed recognises an account by the whole triple, so a binding
+///   written under any other instance id would be invisible to it and the
+///   account would stay unbound forever. Matching the observed id is what
+///   makes the next batch run ADOPT this person rather than mint a second.
+pub async fn internal_provision_person(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    CanonicalJson(req): CanonicalJson<InternalProvisionRequest>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    require_service(&ctx)?;
+
+    let source_type = req.source_type.trim();
+    let external_id = req.external_id.trim();
+    if source_type.is_empty() {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation("source_type", "source_type must not be empty", "REQUIRED")
+            .create());
+    }
+    if external_id.is_empty() {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation("external_id", "external_id must not be empty", "REQUIRED")
+            .create());
+    }
+    if req.tenant_id.is_nil() {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation("tenant_id", "tenant_id must not be nil", "REQUIRED")
+            .create());
+    }
+    let tenant = provisioning_tenant(&state.config.tenant_default_id, req.tenant_id)?;
+
+    if let Some(person_id) = lookup_by_external_id(&state, source_type, external_id).await? {
+        return Ok(Json(person_response(external_id, person_id)));
+    }
+
+    let observed = super::resolution::evidence_reader(&state)
+        .observed_account(source_type, external_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "login bootstrap: connector evidence lookup failed");
+            CanonicalError::internal("lookup failed").create()
+        })?
+        .ok_or_else(|| {
+            ProfileError::not_found(format!(
+                "no connector has observed source_type '{source_type}' external_id '{external_id}'"
+            ))
+            .with_resource(external_id.to_owned())
+            .create()
+        })?;
+
+    // A closed account is gone from its source. The review queue drops those
+    // before it counts anything; entering through one would let a deactivated
+    // roster entry keep a door the roster already shut.
+    if observed.is_closed {
+        return Err(ProfileError::not_found(format!(
+            "source_type '{source_type}' external_id '{external_id}' is closed at its source"
+        ))
+        .with_resource(external_id.to_owned())
+        .create());
+    }
+
+    let account = SourceAccountKey {
+        source_type: source_type.to_owned(),
+        source_id: observed.source_id,
+        account_id: external_id.to_owned(),
+    };
+
+    // An account bound to nobody per the lookup above can still be DECIDED:
+    // the lookup hides the excluded sentinel, so "no person" also covers "an
+    // operator ruled this is not a human". Minting there would quietly undo
+    // that ruling on the next login.
+    let decided = resolution_repo::current_bindings(&state.db, tenant, std::slice::from_ref(&account))
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "login bootstrap: current-binding lookup failed");
+            CanonicalError::internal("lookup failed").create()
+        })?;
+    if decided.contains_key(&account) {
+        return Err(ProfileError::not_found(format!(
+            "source_type '{source_type}' external_id '{external_id}' is excluded from resolution"
+        ))
+        .with_resource(external_id.to_owned())
+        .create());
+    }
+
+    let row = resolution::BindingRow {
+        // Derived, not random: two logins racing (two tabs, two pods) both
+        // reach this line, and the natural key carries `person_id`, so two
+        // random mints would both insert and leave the two sessions on two
+        // different people for one human. Deriving it from the account makes
+        // the racers agree on the answer instead.
+        person_id: derived_person_id(tenant, &account),
+        account,
+        // Automation, not an operator decision: an operator-authored binding
+        // settles a contested group (ADR-0003), and this one settles nothing.
+        author_person_id: Uuid::nil(),
+        reason: LOGIN_BOOTSTRAP_REASON.to_owned(),
+        created_at: chrono::Utc::now().naive_utc(),
+    };
+    resolution_repo::append_bindings(&state.db, tenant, std::slice::from_ref(&row))
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "login bootstrap: binding write failed");
+            CanonicalError::internal("provisioning failed").create()
+        })?;
+
+    // Read back rather than trusting the write: whatever the journal now holds
+    // in force is the answer, including a row a racing login landed first.
+    let person_id = lookup_by_external_id(&state, source_type, external_id)
+        .await?
+        .ok_or_else(|| {
+            tracing::error!(
+                source_type,
+                external_id,
+                "login bootstrap: binding vanished immediately after the write"
+            );
+            CanonicalError::internal("provisioning failed").create()
+        })?;
+
+    tracing::info!(
+        target: "audit",
+        event = "login_bootstrap_person_provisioned",
+        source_type,
+        external_id,
+        person_id = %person_id,
+        "minted a person for an authenticated principal the roster already lists"
+    );
+
+    Ok(Json(person_response(external_id, person_id)))
+}
+
+/// The journal reason marking a row this bootstrap wrote — distinguishable
+/// from the seed's own linking and from an operator's decision.
+const LOGIN_BOOTSTRAP_REASON: &str = "login-bootstrap";
+
+/// Namespace for [`derived_person_id`] — a fixed `UUIDv4`, never reused
+/// elsewhere, so a derived id cannot collide with one derived for anything
+/// else that adopts the same scheme later.
+const LOGIN_BOOTSTRAP_NAMESPACE: Uuid = Uuid::from_u128(0x9f2c_6ad1_4e83_4f27_bd51_7c0a_38e9_1b64);
+
+/// The person a given account provisions to. Deterministic on purpose: the
+/// journal's natural key includes `person_id`, so two concurrent logins that
+/// each minted a random id would both insert and split one human across two
+/// people. Deriving it makes the write idempotent by construction — the
+/// racers compute the same id, and the second insert is the duplicate the
+/// journal already knows how to ignore.
+fn derived_person_id(tenant: Uuid, account: &SourceAccountKey) -> Uuid {
+    let name = format!(
+        "{tenant}\u{1f}{}\u{1f}{}\u{1f}{}",
+        account.source_type, account.source_id, account.account_id
+    );
+    Uuid::new_v5(&LOGIN_BOOTSTRAP_NAMESPACE, name.as_bytes())
+}
+
+/// Which tenant a provisioned binding may be written under.
+///
+/// The journal is single-tenant by deployment (#1550) and the persons-seed
+/// reads exactly one tenant, so a row written under any other is invisible to
+/// it: never adopted, never merged, and a second person minted for the same
+/// account on the next run. The service's configured tenant is therefore the
+/// only one this may write to, and a token asserting another is refused
+/// rather than silently stored somewhere nothing reads.
+///
+/// An unconfigured service cannot name the tenant its journal uses, so it
+/// declines to guess.
+fn provisioning_tenant(configured: &str, asserted: Uuid) -> Result<Uuid, CanonicalError> {
+    let configured = configured.trim();
+    if configured.is_empty() {
+        return Err(ProfileError::failed_precondition()
+            .with_precondition_violation(
+                "tenant",
+                "provisioning needs the service's default tenant to be configured",
+                "tenant_unconfigured",
+            )
+            .create());
+    }
+    let configured = Uuid::parse_str(configured).map_err(|_| {
+        ProfileError::failed_precondition()
+            .with_precondition_violation(
+                "tenant",
+                "the service's default tenant is not a UUID",
+                "tenant_unconfigured",
+            )
+            .create()
+    })?;
+    if configured != asserted {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation(
+                "tenant_id",
+                "tenant_id is not the tenant this journal is keyed by",
+                "TENANT_MISMATCH",
+            )
+            .create());
+    }
+    Ok(configured)
+}
+
+async fn lookup_by_external_id(
+    state: &AppState,
+    source_type: &str,
+    external_id: &str,
+) -> Result<Option<Uuid>, CanonicalError> {
+    persons_repo::resolve_person_id_by_source_any_tenant(&state.db, source_type, external_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "internal by-external-id lookup failed");
+            CanonicalError::internal("lookup failed").create()
+        })
+}
+
+fn person_response(external_id: &str, person_id: Uuid) -> InternalPersonResponse {
+    InternalPersonResponse {
         value_type: "id".to_owned(),
         value: external_id.to_owned(),
         insight_source_type: "person",
         insight_source_id: person_id,
-    }))
+    }
 }
 
 /// Query params for `GET /internal/persons/by-email-override`.
@@ -572,6 +808,78 @@ mod tests {
         assert_eq!(
             json["insight_source_id"],
             "00000000-0000-0000-0000-000000000001"
+        );
+        Ok(())
+    }
+    fn account(account_id: &str) -> SourceAccountKey {
+        SourceAccountKey {
+            source_type: "github".to_owned(),
+            source_id: Uuid::from_u128(0xaa01),
+            account_id: account_id.to_owned(),
+        }
+    }
+
+    /// The whole point of deriving it: two concurrent logins must compute the
+    /// same person, because the journal's natural key carries `person_id` and
+    /// two random mints would both insert.
+    #[test]
+    fn a_provisioned_person_id_is_the_same_for_the_same_account() {
+        let tenant = Uuid::from_u128(9);
+
+        let first = derived_person_id(tenant, &account("octocat"));
+        let second = derived_person_id(tenant, &account("octocat"));
+
+        assert_eq!(first, second);
+        assert!(!first.is_nil(), "a derived id must never be the nil uuid");
+    }
+
+    /// Distinct accounts, tenants and sources must never collide onto one
+    /// person — including the pair that would collide under naive
+    /// concatenation (`a` + `bc` vs `ab` + `c`).
+    #[test]
+    fn distinct_accounts_derive_distinct_persons() {
+        let tenant = Uuid::from_u128(9);
+        let other_tenant = Uuid::from_u128(10);
+
+        let mut seen = std::collections::HashSet::new();
+        for id in [
+            derived_person_id(tenant, &account("octocat")),
+            derived_person_id(tenant, &account("octocat2")),
+            derived_person_id(other_tenant, &account("octocat")),
+            derived_person_id(tenant, &account("a\u{1f}bc")),
+            derived_person_id(tenant, &account("ab\u{1f}c")),
+            derived_person_id(
+                tenant,
+                &SourceAccountKey {
+                    source_type: "gitlab".to_owned(),
+                    source_id: Uuid::from_u128(0xaa01),
+                    account_id: "octocat".to_owned(),
+                },
+            ),
+        ] {
+            assert!(seen.insert(id), "two distinct accounts derived one person");
+        }
+    }
+
+    /// A write goes only to the tenant the persons-seed reads. Anything else
+    /// would be stored where nothing looks, and the next batch run would mint
+    /// a second person for the same account.
+    #[test]
+    fn provisioning_writes_only_to_the_journals_own_tenant() -> anyhow::Result<()> {
+        let tenant = Uuid::from_u128(9);
+
+        assert_eq!(provisioning_tenant(&tenant.to_string(), tenant)?, tenant);
+        assert!(
+            provisioning_tenant(&tenant.to_string(), Uuid::from_u128(10)).is_err(),
+            "a token asserting another tenant must be refused",
+        );
+        assert!(
+            provisioning_tenant("", tenant).is_err(),
+            "an unconfigured service must not guess which tenant its journal uses",
+        );
+        assert!(
+            provisioning_tenant("not-a-uuid", tenant).is_err(),
+            "an unreadable configured tenant is a precondition failure, not a match",
         );
         Ok(())
     }
