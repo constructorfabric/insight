@@ -143,6 +143,9 @@ updates:
       # fails to load until that is rewritten (#2430).
       - dependency-name: msw-storybook-addon
         versions: [">=3"]
+      # That addon declares `peer msw ^2.0.0`, so the two come off the hold together.
+      - dependency-name: msw
+        versions: [">=3"]
       # The lint job runs inside mcr.microsoft.com/playwright, pinned in ci.yml
       # where this ecosystem cannot see it; both move together, by hand (#2503).
       - dependency-name: playwright
