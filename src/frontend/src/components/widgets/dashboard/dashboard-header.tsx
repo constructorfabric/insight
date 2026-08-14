@@ -4,6 +4,7 @@ import { IcViewToggle } from "@/components/ic-view-toggle";
 import { PeriodSelectorBar } from "@/components/widgets/period-selector-bar";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { usePeriod } from "@/hooks/use-period";
+import { TEXT_TITLE } from "@/lib/type-scale";
 
 export interface DashboardHeaderProps {
   title: string;
@@ -28,7 +29,7 @@ export function DashboardHeader({
       <div className="flex items-center gap-3">
         <SidebarTrigger />
         <div className="flex flex-col">
-          <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+          <h1 className={TEXT_TITLE}>{title}</h1>
           {subtitle ? (
             <p className="text-xs text-muted-foreground">{subtitle}</p>
           ) : null}

@@ -1,5 +1,6 @@
 import { headlineMetricKeys } from "@/lib/insight/groups";
 import { sectionMetricKeys, type LensConfig } from "@/lib/portal/lens-configs";
+import { ZONE_DEFAULT_ITEM } from "@/lib/portal/nav-model";
 
 /**
  * The Overview zone registry: each pane item (nav-model ZONE_SECTIONS.overview)
@@ -12,7 +13,7 @@ import { sectionMetricKeys, type LensConfig } from "@/lib/portal/lens-configs";
 const ATTENTION_KEYS: readonly string[] = headlineMetricKeys();
 
 /** The item the router renders when no pane item is selected. */
-export const DEFAULT_OVERVIEW_ITEM = "at-a-glance";
+export const DEFAULT_OVERVIEW_ITEM = ZONE_DEFAULT_ITEM.overview!;
 
 export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
   [DEFAULT_OVERVIEW_ITEM]: {
@@ -62,9 +63,15 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     sections: [{ kind: "attention", metrics: ATTENTION_KEYS, max: 30 }],
   },
   health: {
-    title: "Overview · Health radar",
-    tagline: "domain coverage",
-    sections: [{ kind: "coverage-radar" }],
+    title: "Overview · What we can see",
+    tagline: "how much of the work reaches us, by part and by person",
+    // One model, three cuts: the verdict, the parts nothing reaches, and how
+    // thinly people are seen. The radar that used to live here computed
+    // coverage a second way — a different predicate (`entityObserved`, which
+    // refuses zero-filled sums) over a different key set (each group's card
+    // preview rather than all its metrics) — so the same screen carried two
+    // counts of one thing by two definitions.
+    sections: [{ kind: "coverage-levels" }],
   },
   contribution: {
     title: "Overview · Contribution breakdown",

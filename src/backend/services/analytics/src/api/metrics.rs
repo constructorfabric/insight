@@ -37,8 +37,6 @@ const OBSERVATION_CONTRACT_COLUMNS: &str = "tenant_id, source_key, entity_type, 
 
 /// ClickHouse-side execution cap for the observation probe (seconds).
 const PROBE_MAX_EXECUTION_SECS: u32 = 5;
-/// ClickHouse-side row-scan cap for the observation probe.
-const PROBE_MAX_ROWS_TO_READ: u32 = 1;
 /// Outer wall-clock deadline for the observation probe.
 const PROBE_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -73,7 +71,7 @@ pub async fn create_custom_metric_handler(
     graph.origin = None;
     graph.observation_sql = normalize_observation_sql(&graph.observation_sql);
     validate_graph(&graph).map_err(invalid_graph)?;
-    probe_observation_sql(&state, &graph.observation_sql).await?;
+    probe_observation_sql(&state.ch, &graph.observation_sql).await?;
 
     match create_custom_metric(&state.db, tenant_id, &graph)
         .await
@@ -100,7 +98,7 @@ pub async fn update_custom_metric_handler(
     graph.origin = None;
     graph.observation_sql = normalize_observation_sql(&graph.observation_sql);
     validate_graph(&graph).map_err(invalid_graph)?;
-    probe_observation_sql(&state, &graph.observation_sql).await?;
+    probe_observation_sql(&state.ch, &graph.observation_sql).await?;
 
     match replace_custom_metric(&state.db, tenant_id, &metric_key, &graph)
         .await
@@ -159,7 +157,7 @@ pub async fn import_custom_metrics_handler(
         graph.origin = None;
         graph.observation_sql = normalize_observation_sql(&graph.observation_sql);
         validate_graph(graph).map_err(invalid_graph)?;
-        probe_observation_sql(&state, &graph.observation_sql).await?;
+        probe_observation_sql(&state.ch, &graph.observation_sql).await?;
     }
 
     let skipped = import_custom_metrics(&state.db, tenant_id, &graphs)
@@ -177,19 +175,27 @@ pub async fn import_custom_metrics_handler(
 /// with `LIMIT 0`, so a source that omits a column or does not parse fails the
 /// write. The raw engine message is logged, never returned, so ClickHouse
 /// internals do not leak to the client.
-async fn probe_observation_sql(state: &AppState, sql: &str) -> Result<(), CanonicalError> {
+async fn probe_observation_sql(
+    ch: &insight_clickhouse::Client,
+    sql: &str,
+) -> Result<(), CanonicalError> {
     // The probe runs author-supplied SQL, so it is bounded twice: ClickHouse
     // `SETTINGS` cap the work the engine will do, and an outer wall-clock
     // deadline caps a stalled connection — neither the engine nor the request
     // thread can be held open by an expensive source.
+    //
+    // INVARIANT: no `max_rows_to_read` here — ClickHouse enforces it against
+    // the planner's storage-scan estimate before `LIMIT 0` applies, so any cap
+    // rejects every real (multi-row) source while `LIMIT 0` already keeps the
+    // read at zero rows.
     let probe = format!(
         "SELECT {OBSERVATION_CONTRACT_COLUMNS} FROM ({sql}) LIMIT 0 \
          SETTINGS max_execution_time = {PROBE_MAX_EXECUTION_SECS}, max_result_rows = 0, \
-         max_rows_to_read = {PROBE_MAX_ROWS_TO_READ}, timeout_overflow_mode = 'throw'"
+         timeout_overflow_mode = 'throw'"
     );
 
     let run = async {
-        let mut cursor = state.ch.query(&probe).fetch_bytes("JSONEachRow")?;
+        let mut cursor = ch.query(&probe).fetch_bytes("JSONEachRow")?;
         cursor.collect().await.map(|_| ())
     };
 
@@ -259,4 +265,97 @@ fn source_conflict(source_key: &str) -> CanonicalError {
 fn db_error(error: DbErr) -> CanonicalError {
     tracing::error!(error = %error, "custom metric database operation failed");
     CanonicalError::internal("custom metric operation failed").create()
+}
+
+/// Live ClickHouse tests for the observation probe. `#[ignore]`d and skip
+/// silently when `INTEGRATION_TESTS_CLICKHOUSE_URL` is unset (same convention
+/// as the MariaDB `live_tests`); optional auth via
+/// `INTEGRATION_TESTS_CLICKHOUSE_USER` / `INTEGRATION_TESTS_CLICKHOUSE_PASSWORD`.
+#[cfg(test)]
+mod probe_live_tests {
+    use uuid::Uuid;
+
+    use super::probe_observation_sql;
+
+    const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
+
+    fn client_or_skip() -> Option<insight_clickhouse::Client> {
+        let Ok(url) = std::env::var(URL_VAR) else {
+            eprintln!("skipping: {URL_VAR} not set");
+            return None;
+        };
+        let mut config = insight_clickhouse::Config::new(url, "default");
+        if let (Ok(user), Ok(password)) = (
+            std::env::var("INTEGRATION_TESTS_CLICKHOUSE_USER"),
+            std::env::var("INTEGRATION_TESTS_CLICKHOUSE_PASSWORD"),
+        ) {
+            config = config.with_auth(user, password);
+        }
+        Some(insight_clickhouse::Client::new(config))
+    }
+
+    async fn create_contract_table(
+        ch: &insight_clickhouse::Client,
+        rows: u32,
+    ) -> Result<String, insight_clickhouse::Error> {
+        let table = format!("probe_live_{}", Uuid::now_v7().simple());
+        ch.query(&format!(
+            "CREATE TABLE {table} (tenant_id UUID, source_key String, entity_type String, \
+             entity_id UUID, metric_date Date, measure_key String, observed_at DateTime64(3), \
+             value Float64, subject_key Nullable(String), \
+             dimensions Array(Tuple(key String, value String, label Nullable(String)))) \
+             ENGINE = MergeTree ORDER BY (tenant_id, metric_date)"
+        ))
+        .execute()
+        .await?;
+        ch.query(&format!(
+            "INSERT INTO {table} SELECT generateUUIDv4(), 'probe', 'person', generateUUIDv4(), \
+             toDate('2026-01-01') + number, 'measure', now64(3), number, NULL, [] \
+             FROM numbers({rows})"
+        ))
+        .execute()
+        .await?;
+        Ok(table)
+    }
+
+    async fn drop_table(ch: &insight_clickhouse::Client, table: &str) {
+        let _ = ch
+            .query(&format!("DROP TABLE IF EXISTS {table}"))
+            .execute()
+            .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
+    async fn probe_accepts_a_source_larger_than_one_row() -> anyhow::Result<()> {
+        let Some(ch) = client_or_skip() else {
+            return Ok(());
+        };
+        let table = create_contract_table(&ch, 1000).await?;
+
+        let result = probe_observation_sql(&ch, &format!("SELECT * FROM {table}")).await;
+
+        drop_table(&ch, &table).await;
+        anyhow::ensure!(
+            result.is_ok(),
+            "the probe must validate columns, not source size (cf/insight#2337)"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
+    async fn probe_rejects_a_source_missing_contract_columns() -> anyhow::Result<()> {
+        let Some(ch) = client_or_skip() else {
+            return Ok(());
+        };
+
+        let result = probe_observation_sql(&ch, "SELECT 1 AS tenant_id").await;
+
+        anyhow::ensure!(
+            result.is_err(),
+            "a source without the contract columns must fail the probe"
+        );
+        Ok(())
+    }
 }

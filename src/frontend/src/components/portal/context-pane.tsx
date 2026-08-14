@@ -9,6 +9,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { GROUPS } from "@/lib/insight/groups";
+import { usePersonSectionStandings } from "@/lib/portal/use-person-sections";
+import { STATUS_BG_CLASS } from "@/lib/status";
 import { lensEntry } from "@/lib/portal/lens-configs";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
 import { useZoneNav } from "@/lib/portal/use-zone-nav";
@@ -30,10 +32,11 @@ import {
 } from "@/components/ui/sidebar";
 import {
   DIRECTIONS,
-  MANAGE_ITEMS,
+  manageItemsFor,
   PEOPLE_ITEMS,
   PLANNED_GROUP_LABEL,
   partitionByReadiness,
+  resolveZoneItem,
   ZONE_SECTIONS,
   zoneById,
   type Direction,
@@ -50,11 +53,12 @@ import {
 } from "@/lib/portal/portal-nav";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { cn } from "@/lib/utils";
+import { useIsAdmin } from "@/queries/identity-me";
 
 const ZONE_SUB: Record<string, string> = {
   overview: "Cross-functional org rollup",
   directions: "Functional domains",
-  person: "Pick a person",
+  person: "Personal metrics",
   people: "Roster & org structure",
   aicost: "Adoption funnel & cost",
   scorecard: "Unit × quarter × QoQ",
@@ -87,6 +91,7 @@ export function ContextPane() {
   const { activeZone } = useActiveZone();
   const zone = zoneById(activeZone);
   const title = zone?.label ?? "Insight";
+  const active = resolveZoneItem(activeZone, usePortalItem());
 
   return (
     <Sidebar collapsible={drawer ? "offcanvas" : "none"} className="border-e">
@@ -109,13 +114,13 @@ export function ContextPane() {
         {activeZone === "directions" ? (
           <DirectionsNav />
         ) : activeZone === "people" ? (
-          <PeopleNav />
+          <PeopleNav active={active} />
         ) : activeZone === "manage" ? (
-          <ItemsNav items={MANAGE_ITEMS} groupLabel="Manage" />
+          <ManageNav active={active} />
         ) : activeZone === "person" ? (
           <PersonSectionsNav />
         ) : (
-          <ThemeNav zoneId={activeZone} />
+          <ThemeNav zoneId={activeZone} active={active} />
         )}
       </SidebarContent>
       {isPhone ? (
@@ -225,9 +230,8 @@ function MobileZoneNav() {
 
 /* ── Theme zones (Overview / AI & Cost / Scorecard / Reports) ────────── */
 
-function ThemeNav({ zoneId }: { zoneId: string }) {
+function ThemeNav({ zoneId, active }: { zoneId: string; active: string | null }) {
   const groups = ZONE_SECTIONS[zoneId] ?? [];
-  const active = usePortalItem();
   const showPlanned = usePortalShowPlanned();
   // Everything not yet real is pulled out of its original group and collected
   // under one demoted "Planned" group at the bottom, so the working menu reads
@@ -266,14 +270,28 @@ function ThemeNav({ zoneId }: { zoneId: string }) {
   );
 }
 
+function ManageNav({ active }: { active: string | null }) {
+  // Admin-only surfaces (Identities) drop from the pane for everyone else;
+  // the view behind them refuses direct URLs on its own.
+  const { isAdmin } = useIsAdmin();
+  return (
+    <ItemsNav
+      items={manageItemsFor(isAdmin)}
+      groupLabel="Manage"
+      active={active}
+    />
+  );
+}
+
 function ItemsNav({
   items,
   groupLabel,
+  active,
 }: {
   items: readonly PaneItem[];
   groupLabel: string;
+  active: string | null;
 }) {
-  const active = usePortalItem();
   const showPlanned = usePortalShowPlanned();
   const { live, planned } = partitionByReadiness(items, showPlanned);
   return (
@@ -337,7 +355,7 @@ function ItemButton({
         {item.badge ? (
           <span
             className={cn(
-              "ml-auto rounded-full px-1.5 py-0.5 text-[9px] font-semibold",
+              "ml-auto rounded-full px-1.5 py-0.5 text-xs font-semibold",
               BADGE_TONE[item.badge.tone],
             )}
           >
@@ -356,7 +374,7 @@ function DirectionsNav() {
     <SidebarGroup>
       <SidebarGroupLabel>
         Directions
-        <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+        <span className="ml-1 text-xs font-normal text-muted-foreground">
           · catalog · {DIRECTIONS.length}
         </span>
       </SidebarGroupLabel>
@@ -404,7 +422,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
           <Icon />
           <span>{direction.name}</span>
           {direction.source === "bullet" ? (
-            <span className="ml-auto rounded-full bg-warning/15 px-1.5 py-0.5 text-[9px] font-semibold text-warning">
+            <span className="ml-auto rounded-full bg-warning/15 px-1.5 py-0.5 text-xs font-semibold text-warning">
               bullet
             </span>
           ) : null}
@@ -449,8 +467,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
 
 /* ── People / Person zones ───────────────────────────────────────────── */
 
-function PeopleNav() {
-  const active = usePortalItem();
+function PeopleNav({ active }: { active: string | null }) {
   return (
     <>
       <SidebarGroup>
@@ -485,6 +502,11 @@ function PersonSectionsNav() {
   const { setItem } = usePortalNavActions();
   const dismiss = useDismissDrawer();
   const active = usePortalItem();
+  const { activePerson } = useActiveZone();
+  // Costs no request: these are the section screens' own queries, so
+  // react-query serves them from cache.
+  const standings = usePersonSectionStandings(activePerson);
+  const standingById = new Map(standings.map((st) => [st.id as string, st]));
   const groups = GROUPS;
   const groupIds = groups.map((g) => g.id) as string[];
   const glance = active == null || !groupIds.includes(active);
@@ -505,20 +527,62 @@ function PersonSectionsNav() {
               <span>At a glance</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
-          {groups.map((g) => (
-            <SidebarMenuItem key={g.id}>
-              <SidebarMenuButton
-                isActive={active === g.id}
-                onClick={() => {
-                  setItem(g.id);
-                  dismiss();
-                }}
-              >
-                <Layers />
-                <span>{g.title}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
+          {groups.map((g) => {
+            const standing = standingById.get(g.id as string);
+            return (
+              <SidebarMenuItem key={g.id}>
+                <SidebarMenuButton
+                  isActive={active === g.id}
+                  onClick={() => {
+                    setItem(g.id);
+                    dismiss();
+                  }}
+                  title={
+                    // Nothing to say until the standings arrive. Both flags
+                    // read false while the queries are in flight, so left to
+                    // fall through, the tooltip announced the strongest of the
+                    // three — that nothing feeds this section — on an answer
+                    // the hook had not given. The mark is hidden for that
+                    // reason already; the words have to follow it.
+                    standing == null || standing.isPending
+                      ? undefined
+                      : standing.hasData
+                        ? standing.phrase
+                        : standing.peersHaveData
+                          ? "No data this period"
+                          : "No data reaches us for this section"
+                  }
+                >
+                  <Layers />
+                  <span className="min-w-0 flex-1 truncate">{g.title}</span>
+                  {/* The mark that answers "which section is worth opening",
+                      beside the thing you click.
+
+                      Three marks, not two, because empty means two different
+                      things. A grey dot is a section that reads fine and holds
+                      nothing for this person this period — a fact about them.
+                      A hollow ring is one nothing feeds — a fact about the
+                      install, and not worth opening at all until that changes.
+                      Drawn identically, the second sent readers looking for a
+                      person's missing work when the connector was the whole
+                      story. */}
+                  {standing && !standing.isPending ? (
+                    <span
+                      className={cn(
+                        "size-1.5 shrink-0 rounded-full",
+                        standing.hasData
+                          ? STATUS_BG_CLASS[standing.status]
+                          : standing.peersHaveData
+                            ? "bg-muted-foreground/30"
+                            : "border border-muted-foreground/40",
+                      )}
+                      aria-hidden
+                    />
+                  ) : null}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            );
+          })}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>

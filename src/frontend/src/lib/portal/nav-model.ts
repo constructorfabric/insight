@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Plus,
   Radar,
+  ScanEye,
   Server,
   Settings2,
   ShieldCheck,
@@ -77,7 +78,7 @@ export const ZONES: readonly Zone[] = [
   { id: "aicost", label: "AI & Cost", icon: DollarSign, kind: "theme" },
   // Pure scaffolds: no view, no data path. Our backlog, not a tenant gap.
   { id: "scorecard", label: "Scorecard", icon: BarChart3, kind: "theme", readiness: "unbuilt" },
-  { id: "reports", label: "Reports", icon: FileText, kind: "theme", readiness: "unbuilt" },
+  { id: "reports", label: "Reports", icon: FileText, kind: "theme" },
   { id: "manage", label: "Manage", icon: Settings2, kind: "manage" },
 ];
 
@@ -156,6 +157,12 @@ export interface PaneItem {
   badge?: { text: string; tone: "warn" | "new" | "error" };
   /** See {@link Readiness}. Absent = built and data-backed. */
   readiness?: Readiness;
+  /**
+   * Rendered only for viewers holding the active `admin` identity role
+   * (`useIsAdmin`) — a UI courtesy over the server-side gate, which refuses
+   * regardless of what the frontend draws.
+   */
+  adminOnly?: boolean;
 }
 
 export interface PaneGroup {
@@ -196,7 +203,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
         { id: "by-direction", label: "By direction", icon: Layers },
         { id: "trend", label: "Trend", icon: TrendingUp },
         { id: "attention", label: "Attention needed", icon: AlertTriangle },
-        { id: "health", label: "Health radar", icon: Radar },
+        { id: "health", label: "What we can see", icon: ScanEye },
         { id: "contribution", label: "Contribution breakdown", icon: Users },
       ],
     },
@@ -259,7 +266,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
     {
       label: "Custom",
       items: [
-        { id: "report-builder", label: "Report builder", icon: LayoutGrid, readiness: "unbuilt" },
+        { id: "report-builder", label: "Report builder", icon: LayoutGrid },
         { id: "dashboards", label: "Saved dashboards", icon: Layers, readiness: "unbuilt" },
         { id: "new-report", label: "New report", icon: Plus, readiness: "unbuilt" },
       ],
@@ -279,9 +286,14 @@ export const PEOPLE_ITEMS: readonly PaneItem[] = [
 
 /* ── Manage zone ─────────────────────────────────────────────────────── */
 
+/** The Manage pane for one viewer: admin-only surfaces drop for everyone else. */
+export function manageItemsFor(isAdmin: boolean): readonly PaneItem[] {
+  return MANAGE_ITEMS.filter((item) => !item.adminOnly || isAdmin);
+}
+
 export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "metric-catalog", label: "Metric catalog", icon: LayoutGrid },
-  { id: "identities", label: "Identities", icon: Fingerprint, readiness: "unbuilt" },
+  { id: "identities", label: "Identities", icon: Fingerprint, adminOnly: true },
   { id: "taxonomy", label: "Roles & taxonomy", icon: Boxes, readiness: "unbuilt" },
   { id: "exclusions", label: "Data exclusions", icon: Filter, readiness: "unbuilt" },
   { id: "snapshots", label: "Org snapshots", icon: Clock, readiness: "unbuilt" },
@@ -293,3 +305,35 @@ export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "config", label: "Config & setup", icon: Settings2, readiness: "unbuilt" },
   { id: "whats-new", label: "What's new", icon: Megaphone, readiness: "unbuilt" },
 ];
+
+/* ── Zone item resolution ────────────────────────────────────────────── */
+
+/**
+ * The item a zone falls back to when the URL names none. Absent = the zone's
+ * no-item view is no menu row (Manage), or its default has no id at all
+ * (Person — see ContextPane.PersonSectionsNav).
+ */
+export const ZONE_DEFAULT_ITEM: Record<string, string> = {
+  overview: "at-a-glance",
+  aicost: "overview",
+  people: "roster",
+};
+
+/** Every pane item a zone lists, in display order, planned ones included. */
+export function zoneItems(zoneId: string): readonly PaneItem[] {
+  if (zoneId === "people") return PEOPLE_ITEMS;
+  if (zoneId === "manage") return MANAGE_ITEMS;
+  return (ZONE_SECTIONS[zoneId] ?? []).flatMap((g) => g.items);
+}
+
+/**
+ * The item a zone is showing: the one the URL names if this zone has it, else
+ * the zone's default. Pane and content resolve through here so the menu marks
+ * the view on screen — a bare `?zone=` used to highlight nothing while the
+ * content rendered a default, and an `item` left behind by another zone still
+ * matched nothing here while that zone's view fell back.
+ */
+export function resolveZoneItem(zoneId: string, item: string | null): string | null {
+  if (item && zoneItems(zoneId).some((i) => i.id === item)) return item;
+  return ZONE_DEFAULT_ITEM[zoneId] ?? null;
+}

@@ -29,6 +29,9 @@ from insight_stand.api import JsonValue
 
 from .. import scratch
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 #: `{id}` routes, with the offending segment already substituted. Written out
 #: rather than generated from `operations.py`: the point is to state which
 #: segment is under test, and a route with two ids is two different claims.

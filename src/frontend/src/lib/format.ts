@@ -50,6 +50,26 @@ export function formatMetricValue(
   return unit ? `${s} ${unit}` : s;
 }
 
+/**
+ * The value split into what a column of digits shows and what sits beside it.
+ *
+ * `formatMetricNumber` + `metricDisplayUnit` do NOT compose back into
+ * `formatMetricValue`: a percent loses its sign, because the suffix lives in
+ * the value formatter and the unit helper reports none. A split that drops a
+ * "%" turns 50% into 50 — a different number, not a shorter one.
+ */
+export function splitMetricValue(
+  v: number,
+  fmt: MetricFormat,
+  unit?: string | null,
+): { number: string; unit: string } {
+  const number = formatMetricNumber(v, fmt);
+  if (fmt === "percent") return { number, unit: "%" };
+  // Currency carries its symbol inside the number.
+  if (fmt === "currency") return { number, unit: "" };
+  return { number, unit: unit ?? "" };
+}
+
 /** Unit rendered beside the number; none when the number carries it. */
 export function metricDisplayUnit(
   fmt: MetricFormat,
@@ -79,6 +99,18 @@ export function formatPp(diff: number, decimals = 1): string {
 
 export function formatDate(iso: string, pattern = "d MMM"): string {
   return format(parseISO(iso), pattern, { locale: enUS });
+}
+
+/**
+ * Format an instant the identity service journals. Its timestamps are UTC
+ * clock readings serialized WITHOUT a zone designator (`.NET` wire parity:
+ * `2026-08-01T10:15:00.000000`); `parseISO` would read that as local time and
+ * shift every audit entry by the viewer's UTC offset. Zone-suffixed input is
+ * passed through untouched, so the helper is safe for either shape.
+ */
+export function formatUtcInstant(iso: string, pattern = "d MMM"): string {
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso);
+  return formatDate(hasZone ? iso : `${iso}Z`, pattern);
 }
 
 /** "1.0k" reads worse than "1k" on an axis. */

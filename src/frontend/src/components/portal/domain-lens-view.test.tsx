@@ -15,8 +15,10 @@ vi.mock("@tanstack/react-router", async () => {
 import { portalRouter } from "@/test/portal-router";
 
 import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { GROUPS } from "@/lib/insight/groups";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { identityPerson, pid } from "@/test/identity";
 import type { IdentityPerson } from "@/types/insight";
@@ -35,6 +37,8 @@ const mocks = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
   call: 0,
+  collectionSet: new Map<string, unknown>(),
+  definitions: [] as unknown[],
   collections: [] as Array<{
     byKey: Map<string, NormalizedMetricResult>;
     isPending: boolean;
@@ -68,11 +72,21 @@ vi.mock("@/queries/metric-results", () => ({
     mocks.call += 1;
     return r;
   },
+  // Only the coverage section reads the set form; it fetches its own
+  // period-only collection rather than riding the zone grid.
+  useMetricCollectionSet: () => mocks.collectionSet,
+}));
+vi.mock("@/queries/metric-definitions", async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  useMetricDefinitionsResponse: () => ({
+    data: { metrics: mocks.definitions },
+    isPending: false,
+  }),
 }));
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
     period: "week",
-    dateRange: { start: "2026-07-20", end: "2026-07-26" },
+    dateRange: { from: "2026-07-20", to: "2026-07-26" },
   }),
 }));
 // Charts are exercised by the browser/storybook project; here they'd render
@@ -411,7 +425,7 @@ describe("by-unit auto-section (rule 7: slice cohorts inside scope)", () => {
   });
 });
 
-describe("direction-cards / coverage-radar / attention sections", () => {
+describe("direction-cards / attention sections", () => {
   it("renders attention rows for cohort outliers, named and linked (O3)", () => {
     // 7 healthy + 1 collapsed member
     const labels = ["m1", "m2", "m3", "m4", "m5", "m6", "m7", "z"];
@@ -434,16 +448,68 @@ describe("direction-cards / coverage-radar / attention sections", () => {
     expect(screen.getByText(/no commits/)).toBeInTheDocument();
   });
 
-  it("suppresses the coverage radar below the minimum cohort", () => {
-    mocks.tree = person("boss", {}, [person("a"), person("b")]);
+});
+
+describe("coverage section (#2408)", () => {
+  /** One group reading for the named people, the rest silent. */
+  function coverageWorld(seenByGitOutput: string[]) {
+    const ids = seenByGitOutput.map((l) => pid(l));
+    mocks.definitions = GROUPS.flatMap((g) =>
+      g.collection.metrics.map((m) => ({
+        metric_key: m.key,
+        is_enabled: true,
+        schema_status: "ok",
+        schema_error_code: null,
+        // Only git output has ever observed anything for this tenant, so every
+        // other part must read as "no connector" rather than as idle people.
+        last_observed_date: g.id === "git_output" ? "2026-07-26" : null,
+      })),
+    );
+    const gitKey = GROUPS.find((g) => g.id === "git_output")!.collection
+      .metrics[0]!.key;
+    mocks.collectionSet = new Map(
+      GROUPS.map((g) => [
+        g.id,
+        {
+          byKey:
+            g.id === "git_output"
+              ? new Map([
+                  [gitKey, metric(gitKey, ids.map((id) => [id, 3]))],
+                ])
+              : new Map(),
+          isPending: false,
+        },
+      ]),
+    );
+  }
+
+  it("opens a level into exactly the people at it, and why each is thin", async () => {
+    mocks.tree = person("boss", {}, [person("a"), person("b"), person("c")]);
+    coverageWorld(["a"]);
     render(
       <DomainLensView
-        config={{ title: "T", sections: [
-          { kind: "headline", metrics: ["t.commits"] },
-          { kind: "coverage-radar" },
-        ] }}
+        config={{ title: "T", sections: [{ kind: "coverage-levels" }] }}
       />,
     );
-    expect(screen.queryByText("Health radar")).not.toBeInTheDocument();
+
+    // One person reads in one part; the other two read in none.
+    await userEvent.click(screen.getByRole("button", { name: /1 of 5/ }));
+    expect(screen.getByText("a")).toBeInTheDocument();
+    expect(screen.queryByText("b")).not.toBeInTheDocument();
+
+    // And the reason is the actionable half: nothing feeds those parts for the
+    // tenant, which is a plumbing job — not people who did no work.
+    expect(screen.getAllByText(/no connector:/).length).toBeGreaterThan(0);
+  });
+
+  it("does not open a level nobody is at", async () => {
+    mocks.tree = person("boss", {}, [person("a")]);
+    coverageWorld([]);
+    render(
+      <DomainLensView
+        config={{ title: "T", sections: [{ kind: "coverage-levels" }] }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /5 of 5/ })).toBeDisabled();
   });
 });

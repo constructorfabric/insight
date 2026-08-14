@@ -85,7 +85,7 @@ function ImprovementList({
     <>
       {itemKeys.map((key) => (
         <article key={key}>
-          <h4 className="text-base leading-snug font-semibold">
+          <h4 className="text-sm leading-snug font-semibold">
             {t(`${itemsKey}.${key}.title`)}
           </h4>
           <p
@@ -118,7 +118,7 @@ function ReleaseSections({
           key={section.id}
           className="grid gap-x-5 gap-y-3 p-4 sm:grid-cols-[10rem_1fr] sm:p-5"
         >
-          <h4 className="pt-0.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          <h4 className="pt-0.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
             {t(`${baseKey}.sections.${section.id}.title`)}
           </h4>
           <div className="flex flex-col gap-4">
@@ -140,7 +140,7 @@ export function WhatsNewScreen() {
     <>
       <header className="sticky top-0 z-20 flex items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur-sm">
         <SidebarTrigger />
-        <h1 className="text-xl font-semibold tracking-tight">
+        <h1 className="text-lg font-semibold tracking-tight">
           {t("whats_new.nav_label")}
         </h1>
       </header>
@@ -148,10 +148,10 @@ export function WhatsNewScreen() {
       <main className="flex flex-1 flex-col p-4 md:p-6">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 pb-12">
           <section>
-            <p className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
+            <p className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
               {t("whats_new.eyebrow")}
             </p>
-            <h2 className="mt-3 text-3xl font-bold tracking-tight text-balance">
+            <h2 className="mt-3 text-lg font-semibold tracking-tight text-balance">
               {t("whats_new.title")}
             </h2>
             <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 font-mono text-xs text-muted-foreground">
@@ -177,7 +177,7 @@ export function WhatsNewScreen() {
           </section>
 
           <section>
-            <h3 className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
+            <h3 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
               {t("whats_new.improvements_label")}
             </h3>
             <div className="mt-3 divide-y overflow-hidden rounded-lg border bg-card">
@@ -189,7 +189,7 @@ export function WhatsNewScreen() {
           </section>
 
           <section>
-            <h3 className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
+            <h3 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
               {t("whats_new.coming.label")}
             </h3>
             <div className="mt-3 divide-y overflow-hidden rounded-lg border bg-card">
@@ -201,7 +201,7 @@ export function WhatsNewScreen() {
           </section>
 
           <section>
-            <h3 className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
+            <h3 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
               {t("whats_new.history_label")}
             </h3>
             <div className="mt-3 flex flex-col gap-2.5">

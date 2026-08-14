@@ -1,23 +1,13 @@
-# Build context = src/backend/ for all three backend services
-# (api-gateway, analytics, identity). This file mirrors the union of
-# the per-service ignore patterns. Without it, host build artifacts leak
-# into the image and Linux builds fail on Windows-built `project.assets.json`
-# or stale Rust target trees.
+# Build context = src/backend/ for all backend services. Without it, host
+# build artifacts leak into the image and Linux builds fail on stale Rust
+# target trees.
 
 # Rust
 **/target
 
-# .NET — critical: leaking Windows bin/obj breaks `dotnet publish` with
-# "Unable to find fallback package folder 'C:\Program Files (x86)\...'".
-**/bin
-**/obj
-
 # IDE state
-**/.vs
 **/.vscode
 **/.idea
-**/*.user
-**/*.suo
 
 # VCS / Docker / repo hygiene
 **/.git
@@ -26,7 +16,6 @@
 **/Dockerfile*
 
 # Caches and node_modules
-**/TestResults
 **/.cache
 **/node_modules
 

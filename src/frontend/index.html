@@ -2,8 +2,25 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Runtime <base>: under /exp/<name>/ every relative URL (assets, favicon)
+         resolves inside the experiment; at "/" behavior is unchanged. Must be
+         the first resource-affecting element; hashed in the nginx CSP. -->
+    <script>
+      (function () {
+        var m = location.pathname.match(
+          /^\/exp\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?=\/|$)/
+        );
+        var b = document.createElement("base");
+        b.href = m ? m[0] + "/" : "/";
+        document.head.appendChild(b);
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <title>Insight</title>
+    <!-- Deferred, like the module script, so both run in document order: this
+         one defines the config that one reads. -->
+    <script defer src="/config.js"></script>
   </head>
   <body>
     <div id="root"></div>

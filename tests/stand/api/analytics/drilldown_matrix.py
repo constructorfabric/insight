@@ -119,6 +119,8 @@ MATRIX: Sequence[Expectation] = (
     Expectation("ai.chat_assistant_conversations", "ai", Tier.EXACT_SUM),
     Expectation("ai.cost", "ai", Tier.EXACT_SUM),
     Expectation("ai.dev_conversations", "ai", Tier.EXACT_SUM),
+    Expectation("ai.extra_usage_cost", "ai_cost", Tier.EXACT_SUM),
+    Expectation("ai.extra_usage_utilisation", "ai_cost", Tier.EXACT_RATIO, scale=100.0),
     Expectation("ai.removed_lines", "ai", Tier.EXACT_SUM),
     Expectation("ai.tool_acceptance_rate", "ai", Tier.EXACT_RATIO, scale=100.0),
     Expectation("collab.active_days", "collab", Tier.EXACT_DISTINCT_DATES),
@@ -161,6 +163,7 @@ MATRIX: Sequence[Expectation] = (
     Expectation("tasks.bugs_fixed", "task", Tier.EXACT_COUNT),
     Expectation("tasks.bugs_ratio", "task", Tier.EXACT_RATIO, scale=100.0),
     Expectation("tasks.closed", "task", Tier.EXACT_COUNT),
+    Expectation("tasks.closed_non_bug", "task", Tier.EXACT_COUNT),
     Expectation("tasks.dev_time", "task", Tier.EXACT_MEDIAN),
     Expectation("tasks.due_date_compliance", "task", Tier.EXACT_RATIO, scale=100.0),
     Expectation(

@@ -105,7 +105,7 @@ fix.
 ## Decision Outcome
 
 Adopt the combined fix in a single migration
-`Migrations/004_persons_relax_constraints.sql`:
+`src/backend/services/identity-resolution/src/migration/sql/004_persons_relax_constraints.sql`:
 
 ```sql
 ALTER TABLE persons DROP INDEX uq_person_observation;

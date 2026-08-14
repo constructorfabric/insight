@@ -1,14 +1,7 @@
+import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
-import {
-  PolarAngleAxis,
-  PolarGrid,
-  PolarRadiusAxis,
-  Radar,
-  RadarChart,
-  ResponsiveContainer,
-} from "recharts";
-
 import { AttentionList } from "@/components/portal/attention-list";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
@@ -31,14 +24,24 @@ import {
   computeAttentionFlags,
 } from "@/lib/insight/attention-flags";
 import { GROUPS } from "@/lib/insight/groups";
-import { availableSlices, cohortKey, collectRosterAttrs, PLANNED_SLICES } from "@/lib/insight/slices";
+import type { PersonCoverage } from "@/lib/insight/coverage";
+import { useScopeCoverage } from "@/lib/portal/use-scope-coverage";
+import {
+  availableSlices,
+  cohortKey,
+  collectRosterAttrs,
+  PLANNED_SLICES,
+} from "@/lib/insight/slices";
 import { MIN_COHORT } from "@/lib/insight/within-team-peer";
 import {
   forEntity,
   type MetricCollectionConfig,
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
-import type { MetricBucket, MetricDirection } from "@/api/metric-results-client";
+import type {
+  MetricBucket,
+  MetricDirection,
+} from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { formatMetricValue } from "@/lib/format";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
@@ -46,7 +49,6 @@ import {
   distribution,
   familyObserved,
   fmtCompact,
-  groupCoverage,
   medianAcross,
   perCapita,
   representative,
@@ -61,14 +63,13 @@ import {
 } from "@/lib/portal/lens-configs";
 import { DIRECTIONS } from "@/lib/portal/nav-model";
 import { buildTrendData, pickTrendBucket } from "@/lib/portal/trend-data";
-import {
-  usePortalNavActions,
-  usePortalSlice,
-} from "@/lib/portal/portal-nav";
+import { usePortalNavActions, usePortalSlice } from "@/lib/portal/portal-nav";
 import type { TeamMember } from "@/types/insight";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { useMetricCollection } from "@/queries/metric-results";
 import { useMemberGridData } from "@/queries/member-grid";
+import { TEXT_FIGURE } from "@/lib/type-scale";
+import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
 
@@ -109,11 +110,11 @@ export function DomainLensView({
         person_id: entry.person_id,
         name: entry.display_name,
       })),
-    [roster],
+    [roster]
   );
   const memberIds = useMemo(
     () => members.map((m) => normalizePersonId(m.person_id)),
-    [members],
+    [members]
   );
 
   // Lens's own keys drive the rule-6 observed-gate and every section below.
@@ -123,7 +124,7 @@ export function DomainLensView({
   // grid query key — only the request widens, nothing downstream does.
   const fetchKeys = useMemo(
     () => (gridKeysProp ? [...gridKeysProp] : lensKeys),
-    [gridKeysProp, lensKeys],
+    [gridKeysProp, lensKeys]
   );
   const gridCollection = useMemo<MetricCollectionConfig>(
     () => ({
@@ -132,26 +133,29 @@ export function DomainLensView({
         views: [{ view: "period" as const }, { view: "peer" as const }],
       })),
     }),
-    [fetchKeys],
+    [fetchKeys]
   );
   const grid = useMemberGridData(
     gridCollection.metrics.length ? gridCollection : EMPTY_COLLECTION,
     { type: "person", ids: memberIds },
     dateRange,
-    period,
+    period
   );
 
   // Trend: bucket coarsened to the roster so org scope never trips the row limit.
   const trendKeys = useMemo(
     () =>
       config.sections
-        .filter((s): s is Extract<SectionSpec, { kind: "trend" }> => s.kind === "trend")
+        .filter(
+          (s): s is Extract<SectionSpec, { kind: "trend" }> =>
+            s.kind === "trend"
+        )
         .flatMap((s) => s.metrics),
-    [config],
+    [config]
   );
   const trendBucket = useMemo(
     () => pickTrendBucket(memberIds.length, trendKeys.length, dateRange),
-    [memberIds.length, trendKeys.length, dateRange],
+    [memberIds.length, trendKeys.length, dateRange]
   );
   const trendCollection = useMemo<MetricCollectionConfig>(
     () => ({
@@ -165,23 +169,26 @@ export function DomainLensView({
           }))
         : [],
     }),
-    [trendKeys, trendBucket],
+    [trendKeys, trendBucket]
   );
   const trend = useMetricCollection(
-    trendCollection.metrics.length && memberIds.length ? trendCollection : EMPTY_COLLECTION,
+    trendCollection.metrics.length && memberIds.length
+      ? trendCollection
+      : EMPTY_COLLECTION,
     trendCollection.metrics.length && memberIds.length
       ? { type: "person", ids: memberIds }
       : { type: "person", ids: [] },
-    dateRange,
+    dateRange
   );
 
   // Composition: one breakdown request covering every composition section.
   const compSections = useMemo(
     () =>
       config.sections.filter(
-        (s): s is Extract<SectionSpec, { kind: "composition" }> => s.kind === "composition",
+        (s): s is Extract<SectionSpec, { kind: "composition" }> =>
+          s.kind === "composition"
       ),
-    [config],
+    [config]
   );
   const compCollection = useMemo<MetricCollectionConfig>(
     () => ({
@@ -190,14 +197,14 @@ export function DomainLensView({
         views: [{ view: "breakdown" as const, dimensions: [s.dimension] }],
       })),
     }),
-    [compSections],
+    [compSections]
   );
   const compData = useMetricCollection(
     compSections.length && memberIds.length ? compCollection : EMPTY_COLLECTION,
     compSections.length && memberIds.length
       ? { type: "person", ids: memberIds }
       : { type: "person", ids: [] },
-    dateRange,
+    dateRange
   );
 
   // Event histograms: per-entity server bins, merged org-side only when edges
@@ -205,43 +212,58 @@ export function DomainLensView({
   const eventSections = useMemo(
     () =>
       config.sections.filter(
-        (s): s is Extract<SectionSpec, { kind: "event-histogram" }> => s.kind === "event-histogram",
+        (s): s is Extract<SectionSpec, { kind: "event-histogram" }> =>
+          s.kind === "event-histogram"
       ),
-    [config],
+    [config]
   );
   const eventCollection = useMemo<MetricCollectionConfig>(
     () => ({
-      metrics: eventSections.map((s) => ({ key: s.metric, views: [{ view: "histogram" as const }] })),
+      metrics: eventSections.map((s) => ({
+        key: s.metric,
+        views: [{ view: "histogram" as const }],
+      })),
     }),
-    [eventSections],
+    [eventSections]
   );
   const eventData = useMetricCollection(
-    eventSections.length && memberIds.length ? eventCollection : EMPTY_COLLECTION,
+    eventSections.length && memberIds.length
+      ? eventCollection
+      : EMPTY_COLLECTION,
     eventSections.length && memberIds.length
       ? { type: "person", ids: memberIds }
       : { type: "person", ids: [] },
-    dateRange,
+    dateRange
   );
 
   // Slice → by-unit auto-section (rule 7).
   const slice = usePortalSlice();
-  const attrByEntity = useMemo(() => collectRosterAttrs(pivot, normalizePersonId), [pivot]);
-  const sliceDims = useMemo(() => availableSlices(attrByEntity.values()), [attrByEntity]);
+  const attrByEntity = useMemo(
+    () => collectRosterAttrs(pivot, normalizePersonId),
+    [pivot]
+  );
+  const sliceDims = useMemo(
+    () => availableSlices(attrByEntity.values()),
+    [attrByEntity]
+  );
   const sliceLabel = slice
     ? (sliceDims.find((d) => d.key === slice)?.label ?? slice)
     : null;
 
   const nameByEntity = useMemo(
     () => new Map(members.map((m) => [normalizePersonId(m.person_id), m.name])),
-    [members],
+    [members]
   );
   const personIdByEntity = useMemo(
-    () => new Map(members.map((m) => [normalizePersonId(m.person_id), m.person_id])),
-    [members],
+    () =>
+      new Map(
+        members.map((m) => [normalizePersonId(m.person_id), m.person_id])
+      ),
+    [members]
   );
   const cohortOf = useMemo(
     () => (id: string) => cohortKey(attrByEntity.get(id), slice),
-    [attrByEntity, slice],
+    [attrByEntity, slice]
   );
   const cohortLabel = slice ? (sliceLabel ?? "cohort").toLowerCase() : "team";
 
@@ -263,10 +285,20 @@ export function DomainLensView({
   if (gate) return gate;
 
   // Rule 6: nothing in this family was ever observed → the source isn't wired.
-  if (!familyObserved(grid.byKey, lensKeys, memberIds)) {
+  //
+  // Exempt: a lens that reads no metric of its own cannot be judged by whether
+  // its metrics were observed, and one whose SUBJECT is coverage must survive
+  // exactly the case this gate fires on. Telling a reader "no source is
+  // ingested" on the screen built to tell them which sources are not ingested
+  // would withhold the answer at the moment it is worth most.
+  const readsGrid = config.sections.some((s) => s.kind !== "coverage-levels");
+  if (readsGrid && !familyObserved(grid.byKey, lensKeys, memberIds)) {
     return (
       <Pending
-        label={config.notIngested ?? `${config.title} — source isn't ingested for this org yet.`}
+        label={
+          config.notIngested ??
+          `${config.title} — source isn't ingested for this org yet.`
+        }
       />
     );
   }
@@ -274,7 +306,7 @@ export function DomainLensView({
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">{config.title}</h1>
+        <h1 className="text-lg font-semibold tracking-tight">{config.title}</h1>
         <p className="text-sm text-muted-foreground">
           {orgScope.count} members · {config.tagline ?? "trend & balance"}
         </p>
@@ -360,25 +392,44 @@ function Section({
 }) {
   switch (spec.kind) {
     case "headline":
-      return <HeadlineSection metrics={spec.metrics} grid={grid} memberIds={memberIds} />;
+      return (
+        <HeadlineSection
+          metrics={spec.metrics}
+          grid={grid}
+          memberIds={memberIds}
+        />
+      );
     case "stat-tiles":
       return (
-        <StatTilesSection title={spec.title} metrics={spec.metrics} grid={grid} memberIds={memberIds} />
+        <StatTilesSection
+          title={spec.title}
+          metrics={spec.metrics}
+          grid={grid}
+          memberIds={memberIds}
+        />
       );
     case "trend":
-      return (
-        trendBucket ? (
-          <TrendSection metrics={spec.metrics} grid={grid} trend={trend} bucket={trendBucket} memberIds={memberIds} />
-        ) : (
-          // Say which of the two dials to turn — a bare "no data" would read as
-          // an ingestion gap rather than a request nobody can answer.
-          <Pending label="Trend needs a narrower period or a smaller scope — this many people over this window exceeds one request." />
-        )
+      return trendBucket ? (
+        <TrendSection
+          metrics={spec.metrics}
+          grid={grid}
+          trend={trend}
+          bucket={trendBucket}
+          memberIds={memberIds}
+        />
+      ) : (
+        // Say which of the two dials to turn — a bare "no data" would read as
+        // an ingestion gap rather than a request nobody can answer.
+        <Pending label="Trend needs a narrower period or a smaller scope — this many people over this window exceeds one request." />
       );
     case "distribution":
-      return <DistributionSection spec={spec} grid={grid} memberIds={memberIds} />;
+      return (
+        <DistributionSection spec={spec} grid={grid} memberIds={memberIds} />
+      );
     case "concentration":
-      return <ConcentrationSection spec={spec} grid={grid} memberIds={memberIds} />;
+      return (
+        <ConcentrationSection spec={spec} grid={grid} memberIds={memberIds} />
+      );
     case "composition":
       return (
         <CompositionSection
@@ -391,7 +442,14 @@ function Section({
         />
       );
     case "participation":
-      return <ParticipationSection spec={spec} grid={grid} trend={trend} memberIds={memberIds} />;
+      return (
+        <ParticipationSection
+          spec={spec}
+          grid={grid}
+          trend={trend}
+          memberIds={memberIds}
+        />
+      );
     case "event-histogram":
       return (
         <EventHistogramSection
@@ -415,10 +473,261 @@ function Section({
         />
       );
     case "direction-cards":
-      return <DirectionCardsSection variant={spec.variant} grid={grid} memberIds={memberIds} />;
-    case "coverage-radar":
-      return <CoverageRadarSection grid={grid} memberIds={memberIds} />;
+      return (
+        <DirectionCardsSection
+          variant={spec.variant}
+          grid={grid}
+          memberIds={memberIds}
+        />
+      );
+    case "coverage-levels":
+      return (
+        <CoverageLevelsSection
+          memberIds={memberIds}
+          nameByEntity={nameByEntity}
+          personIdByEntity={personIdByEntity}
+        />
+      );
   }
+}
+
+/* ── coverage (#2408): three cuts of one model, read top to bottom — the
+      verdict, then which parts are missing, then who is thinly seen. Little
+      prose on purpose: a screen that needs a paragraph to explain itself has
+      already failed the reader who only glanced at it. ──────────────────── */
+
+function CoverageBar({
+  filled,
+  total,
+  warn,
+}: {
+  filled: number;
+  total: number;
+  warn?: boolean;
+}) {
+  return (
+    <div className="h-2.5 min-w-px flex-1 overflow-hidden rounded-full bg-muted">
+      <div
+        className={`h-full rounded-full ${warn ? "bg-warning/80" : "bg-primary/60"}`}
+        style={{ width: `${total > 0 ? (filled / total) * 100 : 0}%` }}
+      />
+    </div>
+  );
+}
+
+function CoverageLevelsSection({
+  memberIds,
+  nameByEntity,
+  personIdByEntity,
+}: {
+  memberIds: readonly string[];
+  nameByEntity: Map<string, string>;
+  personIdByEntity: Map<string, string>;
+}) {
+  const [openLevel, setOpenLevel] = useState<number | null>(null);
+  const { distribution, parts, people, thin, isPending, isError } =
+    useScopeCoverage(memberIds);
+  if (isPending) return <Pending label="Reading coverage…" />;
+  // Before anything else. With a request failed nothing is known to reach the
+  // tenant, so every part would read "no data reaches us" and every person
+  // would sit at zero — a fault in our infrastructure printed as a verdict
+  // about named people. Saying we could not check is the only honest output.
+  if (isError) {
+    return <Pending label="Could not read coverage — the check did not complete, so nothing is claimed about anyone." />;
+  }
+  const counted = distribution.counted;
+  if (counted === 0) return null;
+
+  const partCount = GROUPS.length;
+  const levels = [...distribution.byLevel.entries()].sort((a, b) => b[0] - a[0]);
+  const missing = parts.filter((p) => p.unreachable);
+
+  return (
+    <section className="flex flex-col gap-6">
+      {/* 1 — the verdict, as a number rather than a sentence: it is meant to
+          be seen, not parsed. */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className={TEXT_FIGURE}>
+          {/* Same amber as the rows it is the sum of. The link between the
+              number and the block of bars is the one thing a reader has to
+              make unaided, and colour makes it without a caption. */}
+          <span className="text-warning">{thin}</span>
+          <span className="text-muted-foreground">/{counted}</span>
+        </span>
+        <p className="max-w-md text-sm text-muted-foreground">
+          people are seen in fewer than half of their work — everything else
+          this product says about them rests on that fraction.
+        </p>
+      </div>
+
+      {/* 2 — where it is missing. A part nothing reaches is NOT drawn as a bar
+          at zero, because that reads as people who did nothing, which is the
+          one thing it does not mean. */}
+      <div className="flex flex-col gap-2">
+        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+          By part of work
+        </p>
+        {parts.map((part) => (
+          <div key={part.id} className="flex items-center gap-3 text-sm">
+            <span className="w-36 shrink-0 truncate">{part.title}</span>
+            {part.unreachable ? (
+              <span className="flex-1 text-xs text-warning">
+                {/* No cause named. Absent observations, a disabled metric and
+                    a broken schema all land here, and only the first is a
+                    missing connector — sending someone to plumb a live one is
+                    the wrong direction to be wrong in. */}
+                nothing reaches us here
+              </span>
+            ) : (
+              <CoverageBar filled={part.seen} total={counted} />
+            )}
+            <span className="w-14 shrink-0 text-right text-muted-foreground tabular-nums">
+              {part.unreachable ? "—" : part.seen}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* 3 — who. Colour carries the finding, so the shape reads without the
+          labels: the amber block IS the number at the top. */}
+      <div className="flex flex-col gap-2">
+        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+          By person · parts we can see
+        </p>
+        {levels.map(([level, n], i) => {
+          const thinHere = level < partCount / 2;
+          // The rule sits where it applies. Without it the reader has to work
+          // out which rows the headline counted, and having to work it out is
+          // the same as not knowing it.
+          const boundary =
+            thinHere && !(levels[i - 1] && levels[i - 1]![0] < partCount / 2);
+          return (
+            <div key={level} className="flex flex-col gap-2">
+              {boundary && (
+                <div className="mt-1 flex items-center gap-3">
+                  <span className="w-36 shrink-0 text-xs text-warning">
+                    fewer than half
+                  </span>
+                  <span className="h-px flex-1 bg-warning/40" />
+                  <span className="w-14 shrink-0 text-right text-xs font-medium text-warning tabular-nums dark:text-warning">
+                    {thin}
+                  </span>
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={n === 0}
+                onClick={() => setOpenLevel(openLevel === level ? null : level)}
+                aria-expanded={openLevel === level}
+                aria-controls={`coverage-level-${level}`}
+                className="-mx-2 flex items-center gap-3 rounded-sm px-2 py-0.5 text-left text-sm enabled:hover:bg-muted/60 disabled:cursor-default"
+              >
+                <span className="w-36 shrink-0 text-muted-foreground tabular-nums">
+                  {level} of {partCount}
+                </span>
+                <CoverageBar filled={n} total={counted} warn={thinHere} />
+                <span className="w-14 shrink-0 text-right tabular-nums">
+                  {n}
+                </span>
+              </button>
+              {openLevel === level && (
+                <CoverageLevelPeople
+                  id={`coverage-level-${level}`}
+                  people={people.filter((p) => p.level === level)}
+                  nameByEntity={nameByEntity}
+                  personIdByEntity={personIdByEntity}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        A part counts when any of its metrics has a value for that person this
+        period — so this says what we can see, never how well anyone did.
+        {missing.length > 0 && (
+          <>
+            {" "}
+            Nobody here can reach the top of that scale, because{" "}
+            {missing.map((m) => m.title).join(", ")}{" "}
+            {missing.length === 1 ? "reaches" : "reach"} us for no one.
+          </>
+        )}{" "}
+        Counted over {counted} {counted === 1 ? "person" : "people"} you can
+        see in this scope.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * The people at one coverage level, and what is missing for each.
+ *
+ * The missing parts are the point, not the names. A level says how much we
+ * cannot see; this says which systems to go and look at — and separates the
+ * two kinds of absence, because they lead different places. "No connector"
+ * is somebody's job to fix. "Nothing recorded" is a person who does that work
+ * elsewhere, or does not do it, and no amount of plumbing changes it.
+ */
+function CoverageLevelPeople({
+  id,
+  people,
+  nameByEntity,
+  personIdByEntity,
+}: {
+  id: string;
+  people: readonly PersonCoverage[];
+  nameByEntity: Map<string, string>;
+  personIdByEntity: Map<string, string>;
+}) {
+  const titleById = new Map(GROUPS.map((g) => [g.id, g.title]));
+  const rows = [...people].sort((a, b) =>
+    (nameByEntity.get(a.entityId) ?? a.entityId).localeCompare(
+      nameByEntity.get(b.entityId) ?? b.entityId,
+    ),
+  );
+
+  return (
+    <ul id={id} className="mb-2 ml-36 flex flex-col gap-1 border-s ps-3">
+      {rows.map((p) => {
+        const unconnected: string[] = [];
+        const idle: string[] = [];
+        for (const [id, state] of p.states) {
+          const title = titleById.get(id) ?? id;
+          if (state === "no_data_reaches_us") unconnected.push(title);
+          else if (state === "nothing_recorded") idle.push(title);
+        }
+        const personId = personIdByEntity.get(p.entityId);
+        const name = nameByEntity.get(p.entityId) ?? p.entityId;
+        return (
+          <li key={p.entityId} className="flex flex-wrap items-baseline gap-x-2 text-xs">
+            {personId ? (
+              <Link
+                to="/ic/$person/personal"
+                params={{ person: personId }}
+                className="font-medium hover:underline"
+              >
+                {name}
+              </Link>
+            ) : (
+              <span className="font-medium">{name}</span>
+            )}
+            {unconnected.length > 0 && (
+              <span className="text-warning">
+                no connector: {unconnected.join(", ")}
+              </span>
+            )}
+            {idle.length > 0 && (
+              <span className="text-muted-foreground">
+                nothing recorded: {idle.join(", ")}
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 /* ── participation (rule 8 variant — "N of M are active") ────────────── */
@@ -466,10 +775,11 @@ function ParticipationSection({
   }, [spec.metrics, trend.byKey, memberIds]);
 
   const active = memberIds.filter((id) => isActive(grid.byKey, id)).length;
-  const prevActive = memberIds.filter((id) => isActive(grid.previousByKey, id)).length;
+  const prevActive = memberIds.filter((id) =>
+    isActive(grid.previousByKey, id)
+  ).length;
   // After the hook: an early return above it would make the hook conditional.
   if (memberIds.length === 0) return null;
-
 
   return (
     <section className="flex flex-col gap-3">
@@ -480,14 +790,21 @@ function ParticipationSection({
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-xs font-medium text-muted-foreground">{spec.noun}</div>
-              <Delta now={active} prev={prevActive || null} direction="higher_is_better" />
+              <div className="text-xs font-medium text-muted-foreground">
+                {spec.noun}
+              </div>
+              <Delta
+                now={active}
+                prev={prevActive || null}
+                direction="higher_is_better"
+              />
             </div>
-            <div className="mt-1 text-2xl font-semibold tabular-nums">
+            <div className={cn("mt-1", TEXT_FIGURE)}>
               {active} of {memberIds.length}
             </div>
             <div className="text-xs text-muted-foreground">
-              {Math.round((active / memberIds.length) * 100)}% of the team this period
+              {Math.round((active / memberIds.length) * 100)}% of the team this
+              period
             </div>
           </CardContent>
         </Card>
@@ -538,13 +855,19 @@ function HeadlineSection({
           <Card key={c.key}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-medium text-muted-foreground">
-                  {c.r.short_label ?? c.r.label}
-                </div>
+                <MetricName
+                  metric={c.r}
+                  text={c.r.short_label ?? c.r.label}
+                  className="text-xs font-medium text-muted-foreground"
+                />
                 <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
               </div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums">
-                {formatMetricValue(c.isSum ? perCapita(c.r, memberIds) : c.now, c.r.format, c.r.unit)}
+              <div className={cn("mt-1", TEXT_FIGURE)}>
+                {formatMetricValue(
+                  c.isSum ? perCapita(c.r, memberIds) : c.now,
+                  c.r.format,
+                  c.r.unit
+                )}
               </div>
               <div className="text-xs text-muted-foreground">
                 {c.isSum
@@ -586,21 +909,27 @@ function StatTilesSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">{title}</p>
+      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        {title}
+      </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
         {tiles.map((t) => (
           <Card key={t.key}>
             <CardContent className="p-4">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-medium text-muted-foreground">
-                  {t.r.short_label ?? t.r.label}
-                </div>
+                <MetricName
+                  metric={t.r}
+                  text={t.r.short_label ?? t.r.label}
+                  className="text-xs font-medium text-muted-foreground"
+                />
                 <Delta now={t.median} prev={t.prev} direction={t.r.direction} />
               </div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums">
+              <div className={cn("mt-1", TEXT_FIGURE)}>
                 {formatMetricValue(t.median, t.r.format, t.r.unit)}
               </div>
-              <div className="text-xs text-muted-foreground">median / person</div>
+              <div className="text-xs text-muted-foreground">
+                median / person
+              </div>
             </CardContent>
           </Card>
         ))}
@@ -637,7 +966,11 @@ function TrendSection({
       type: "line" as const,
       yAxisId: (i === 0 ? "left" : "right") as "left" | "right",
     }));
-  const data = buildTrendData(series.map((s) => s.key), trend.byKey, memberIds);
+  const data = buildTrendData(
+    series.map((s) => s.key),
+    trend.byKey,
+    memberIds
+  );
 
   if (series.length === 0) return null;
   if (trend.isError)
@@ -683,7 +1016,9 @@ function DistributionSection({
         .filter((v): v is number => v != null && Number.isFinite(v) && v >= 0)
     : [];
   const fmt =
-    r?.format === "percent" ? (n: number) => formatMetricValue(n, "percent", null) : fmtCompact;
+    r?.format === "percent"
+      ? (n: number) => formatMetricValue(n, "percent", null)
+      : fmtCompact;
   const rows = distribution(values, fmt);
   if (!rows.length) return null;
 
@@ -696,8 +1031,15 @@ function DistributionSection({
         <CardContent className="p-4">
           <p className="mb-3 text-xs text-muted-foreground">{spec.caption}</p>
           <ChartContainer config={DIST_CONFIG} className="h-56 w-full">
-            <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
+            <BarChart
+              data={rows}
+              margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+            >
+              <CartesianGrid
+                vertical={false}
+                strokeDasharray="3 3"
+                stroke="var(--border)"
+              />
               <XAxis
                 dataKey="label"
                 tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
@@ -717,15 +1059,23 @@ function DistributionSection({
                   <ChartTooltipContent
                     className="min-w-40"
                     labelFormatter={(_, p) =>
-                      (p?.[0]?.payload as { range?: string } | undefined)?.range ?? ""
+                      (p?.[0]?.payload as { range?: string } | undefined)
+                        ?.range ?? ""
                     }
                   />
                 }
               />
-              <ChartBar dataKey="count" name="People" radius={[2, 2, 0, 0]} fill="var(--chart-1)" />
+              <ChartBar
+                dataKey="count"
+                name="People"
+                radius={[2, 2, 0, 0]}
+                fill="var(--chart-1)"
+              />
             </BarChart>
           </ChartContainer>
-          <p className="mt-1 text-center text-[10px] text-muted-foreground">{spec.unitLabel}</p>
+          <p className="mt-1 text-center text-xs text-muted-foreground">
+            {spec.unitLabel}
+          </p>
         </CardContent>
       </Card>
     </section>
@@ -762,7 +1112,9 @@ function EventHistogramSection({
   if (!bins) return null;
 
   const fmt =
-    r?.format === "percent" ? (n: number) => formatMetricValue(n, "percent", null) : fmtCompact;
+    r?.format === "percent"
+      ? (n: number) => formatMetricValue(n, "percent", null)
+      : fmtCompact;
   const rows = bins.map((bin) => ({
     label: fmt(bin.lo),
     range: `${fmt(bin.lo)}–${fmt(bin.hi)}`,
@@ -781,8 +1133,15 @@ function EventHistogramSection({
             Distribution of events (every PR), not people.
           </p>
           <ChartContainer config={DIST_CONFIG} className="h-56 w-full">
-            <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
+            <BarChart
+              data={rows}
+              margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+            >
+              <CartesianGrid
+                vertical={false}
+                strokeDasharray="3 3"
+                stroke="var(--border)"
+              />
               <XAxis
                 dataKey="label"
                 tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
@@ -802,15 +1161,21 @@ function EventHistogramSection({
                   <ChartTooltipContent
                     className="min-w-40"
                     labelFormatter={(_, p) =>
-                      (p?.[0]?.payload as { range?: string } | undefined)?.range ?? ""
+                      (p?.[0]?.payload as { range?: string } | undefined)
+                        ?.range ?? ""
                     }
                   />
                 }
               />
-              <ChartBar dataKey="count" name="Events" radius={[2, 2, 0, 0]} fill="var(--chart-1)" />
+              <ChartBar
+                dataKey="count"
+                name="Events"
+                radius={[2, 2, 0, 0]}
+                fill="var(--chart-1)"
+              />
             </BarChart>
           </ChartContainer>
-          <p className="mt-1 text-center text-[10px] text-muted-foreground">
+          <p className="mt-1 text-center text-xs text-muted-foreground">
             {r?.short_label ?? r?.label ?? spec.metric}
             {r?.unit ? ` (${r.unit})` : ""}
           </p>
@@ -822,7 +1187,10 @@ function EventHistogramSection({
 
 /* ── concentration (rules 4, 10 — aggregate only, framed per domain) ─── */
 
-const FRAMING_COPY: Record<ConcentrationFraming, { heading: string; note: string }> = {
+const FRAMING_COPY: Record<
+  ConcentrationFraming,
+  { heading: string; note: string }
+> = {
   "bus-factor": {
     heading: "Bus factor · top 10% of contributors",
     note: "high concentration = continuity risk",
@@ -851,7 +1219,12 @@ function ConcentrationSection({
         .filter((v): v is number => v != null && Number.isFinite(v) && v > 0);
       const share = topDecileShare(vals);
       if (share == null) return null;
-      return { key, label: r.short_label ?? r.label, share, contributors: vals.length };
+      return {
+        key,
+        label: r.short_label ?? r.label,
+        share,
+        contributors: vals.length,
+      };
     })
     .filter((x): x is NonNullable<typeof x> => x != null);
   if (!cards.length) return null;
@@ -866,12 +1239,15 @@ function ConcentrationSection({
         {cards.map((c) => (
           <Card key={c.key}>
             <CardContent className="p-4">
-              <div className="text-xs font-medium text-muted-foreground">{c.label}</div>
-              <div className="mt-1 text-2xl font-semibold tabular-nums">
+              <div className="text-xs font-medium text-muted-foreground">
+                {c.label}
+              </div>
+              <div className={cn("mt-1", TEXT_FIGURE)}>
                 {Math.round(c.share * 100)}%
               </div>
               <div className="text-xs text-muted-foreground">
-                carried by the busiest {Math.max(1, Math.ceil(c.contributors * 0.1))} of{" "}
+                carried by the busiest{" "}
+                {Math.max(1, Math.ceil(c.contributors * 0.1))} of{" "}
                 {c.contributors} · {copy.note}
               </div>
             </CardContent>
@@ -932,7 +1308,12 @@ function CompositionSection({
   if (rows.length < 2) return null;
 
   return (
-    <BarList title={spec.title} rows={rows} format={r?.format ?? "integer"} unit={r?.unit ?? null} />
+    <BarList
+      title={spec.title}
+      rows={rows}
+      format={r?.format ?? "integer"}
+      unit={r?.unit ?? null}
+    />
   );
 }
 
@@ -968,7 +1349,16 @@ function AttentionSection({
         personIdOf: (id) => personIdByEntity.get(id) ?? id,
         cohortLabel,
       }),
-    [spec.metrics, grid.byKey, grid.previousByKey, memberIds, cohortOf, cohortLabel, nameByEntity, personIdByEntity],
+    [
+      spec.metrics,
+      grid.byKey,
+      grid.previousByKey,
+      memberIds,
+      cohortOf,
+      cohortLabel,
+      nameByEntity,
+      personIdByEntity,
+    ]
   );
   if (!memberIds.length) return null;
   const flaggedPeople = new Set(flags.map((f) => f.personId)).size;
@@ -976,7 +1366,11 @@ function AttentionSection({
     <AttentionList
       flags={flags}
       summary={attentionSummary(flags, flaggedPeople, memberIds.length)}
-      peopleLabel={flags.length ? `${flaggedPeople} of ${memberIds.length} people` : undefined}
+      peopleLabel={
+        flags.length
+          ? `${flaggedPeople} of ${memberIds.length} people`
+          : undefined
+      }
       max={spec.max}
     />
   );
@@ -999,11 +1393,17 @@ function DirectionCardsSection({
     const entry = lensEntry(d.id, "Overview");
     if (!entry || "comingSoon" in entry) return null;
     const headline = entry.sections.find(
-      (s): s is Extract<SectionSpec, { kind: "headline" }> => s.kind === "headline",
+      (s): s is Extract<SectionSpec, { kind: "headline" }> =>
+        s.kind === "headline"
     );
     if (!headline) return null;
-    const keys = variant === "compact" ? headline.metrics.slice(0, 2) : headline.metrics;
-    const observed = familyObserved(grid.byKey, sectionMetricKeys(entry), memberIds);
+    const keys =
+      variant === "compact" ? headline.metrics.slice(0, 2) : headline.metrics;
+    const observed = familyObserved(
+      grid.byKey,
+      sectionMetricKeys(entry),
+      memberIds
+    );
     return { id: d.id, name: d.name, keys, observed };
   }).filter((c): c is NonNullable<typeof c> => c != null);
   if (!cards.length) return null;
@@ -1035,16 +1435,28 @@ function DirectionCardsSection({
                   if (!r) return null;
                   const now = representative(r, memberIds);
                   if (now == null) return null;
-                  const prev = representative(grid.previousByKey.get(key), memberIds);
+                  const prev = representative(
+                    grid.previousByKey.get(key),
+                    memberIds
+                  );
                   const isSum = r.computation === "sum";
                   return (
-                    <div key={key} className="flex items-center justify-between gap-2 text-sm">
-                      <span className="truncate text-muted-foreground">
-                        {r.short_label ?? r.label}
-                      </span>
+                    <div
+                      key={key}
+                      className="flex items-center justify-between gap-2 text-sm"
+                    >
+                      <MetricName
+                        metric={r}
+                        text={r.short_label ?? r.label}
+                        className="truncate text-muted-foreground"
+                      />
                       <span className="flex items-center gap-2">
                         <span className="font-medium tabular-nums">
-                          {formatMetricValue(isSum ? perCapita(r, memberIds) : now, r.format, r.unit)}
+                          {formatMetricValue(
+                            isSum ? perCapita(r, memberIds) : now,
+                            r.format,
+                            r.unit
+                          )}
                         </span>
                         <Delta now={now} prev={prev} direction={r.direction} />
                       </span>
@@ -1060,59 +1472,6 @@ function DirectionCardsSection({
           </button>
         ))}
       </div>
-    </section>
-  );
-}
-
-/* ── coverage-radar (Overview design O5: coverage = share of members with ≥1
-      OBSERVED metric per group — entityObserved, never zero-filled sums) ── */
-
-function CoverageRadarSection({
-  grid,
-  memberIds,
-}: {
-  grid: GridData;
-  memberIds: readonly string[];
-}) {
-  if (memberIds.length < MIN_COHORT) return null;
-  const data = GROUPS.map((g) => ({
-    domain: g.title,
-    coverage: Math.round((groupCoverage(grid.byKey, g.card.preview, memberIds) ?? 0) * 100),
-  }));
-  if (data.every((d) => d.coverage === 0)) return null;
-
-  return (
-    <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        Health radar
-      </p>
-      <Card>
-        <CardContent className="p-4">
-          <div className="h-72 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <RadarChart data={data} outerRadius="70%">
-                <PolarGrid />
-                <PolarAngleAxis dataKey="domain" tick={{ fontSize: 12 }} />
-                {/* Percent scale is absolute: full edge = 100% coverage, not
-                    the period's max — and the explicit axis gives recharts a
-                    radius scale (without one the polygon collapses to center). */}
-                <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-                <Radar
-                  dataKey="coverage"
-                  stroke="var(--primary)"
-                  fill="var(--primary)"
-                  fillOpacity={0.25}
-                  isAnimationActive={false}
-                />
-              </RadarChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Coverage — % of people in scope with any observed activity in each domain this
-            period.
-          </p>
-        </CardContent>
-      </Card>
     </section>
   );
 }
@@ -1142,12 +1501,15 @@ function ByUnitSection({
   // "no comparable units" note, which would wrongly suggest a data quirk.
   const planned = PLANNED_SLICES.find((d) => d.key === sliceKey);
   if (planned) {
-    return <SliceNote text={`The ${planned.label} dimension isn't ingested yet.`} />;
+    return (
+      <SliceNote text={`The ${planned.label} dimension isn't ingested yet.`} />
+    );
   }
 
   // Compare units on the lens's first headline counter, per active person.
   const headline = config.sections.find(
-    (s): s is Extract<SectionSpec, { kind: "headline" }> => s.kind === "headline",
+    (s): s is Extract<SectionSpec, { kind: "headline" }> =>
+      s.kind === "headline"
   );
   // No headline → by-unit was never promised for this lens; stay silent.
   if (!headline) return null;
@@ -1192,7 +1554,11 @@ interface BarRow {
 function toBarRows(bucket: Map<string, number>): BarRow[] {
   const total = [...bucket.values()].reduce((a, b) => a + b, 0) || 1;
   return [...bucket.entries()]
-    .map(([label, value]) => ({ label, value, pct: Math.round((value / total) * 100) }))
+    .map(([label, value]) => ({
+      label,
+      value,
+      pct: Math.round((value / total) * 100),
+    }))
     .sort((a, b) => b.value - a.value);
 }
 
@@ -1250,7 +1616,9 @@ function BarList({
               onClick={() => setExpanded((v) => !v)}
               className="self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
             >
-              {expanded ? "Show less" : `+${rows.length - BAR_LIST_COLLAPSED} more`}
+              {expanded
+                ? "Show less"
+                : `+${rows.length - BAR_LIST_COLLAPSED} more`}
             </button>
           ) : null}
         </CardContent>
@@ -1279,16 +1647,29 @@ function Delta({
   if (prev == null || prev === 0) return null;
   const diff = now - prev;
   if (Math.abs(diff) / Math.abs(prev) < 0.01) {
-    return <span className="text-xs text-muted-foreground tabular-nums">±0%</span>;
+    return (
+      <span className="text-xs text-muted-foreground tabular-nums">±0%</span>
+    );
   }
   const up = diff > 0;
-  const good = direction === "neutral" ? null : direction === "higher_is_better" ? up : !up;
+  const good =
+    direction === "neutral"
+      ? null
+      : direction === "higher_is_better"
+        ? up
+        : !up;
   const color =
-    good == null ? "text-muted-foreground" : good ? "text-success" : "text-destructive";
+    good == null
+      ? "text-muted-foreground"
+      : good
+        ? "text-success"
+        : "text-destructive";
   const Icon = up ? ArrowUpRight : ArrowDownRight;
   const pct = Math.round((diff / Math.abs(prev)) * 100);
   return (
-    <span className={`flex items-center gap-0.5 text-xs font-medium tabular-nums ${color}`}>
+    <span
+      className={`flex items-center gap-0.5 text-xs font-medium tabular-nums ${color}`}
+    >
       <Icon className="h-3.5 w-3.5" />
       {up ? "+" : ""}
       {pct}%

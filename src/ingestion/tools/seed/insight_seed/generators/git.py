@@ -8,10 +8,11 @@ get zero rows here by construction.
 from __future__ import annotations
 
 import datetime as _dt
+import random
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from ..profiles import TEAM_PROFILES, Person
+from ..profiles import DEV_LEAD_UUID, TEAM_PROFILES, Person
 from .base import (
     bulk_insert,
     clamp,
@@ -51,10 +52,45 @@ REPO_SLUG = "insight/insight"
 # change_type_label multiIf; anything else renders as the raw value.
 CHANGE_TYPES = ("added", "modified", "renamed", "deleted")
 
+# Deliberately hostile — and clearly synthetic — commit messages for the
+# drilldown-export escaping scenario (#1603 scenario 11). The gold evidence
+# model surfaces a commit's message as the drilldown "Title" cell, so these
+# cover every value class a spreadsheet consumer can mishandle: the four
+# formula-prefix bytes ('=', '+', '-', '@') and a value with an embedded tab
+# and an embedded newline (which must stay inside one CSV cell). Only the
+# FIRST few commits the dev lead generates carry one; every other commit
+# keeps the column default, so no row count, metric value, or other
+# person's evidence changes.
+HOSTILE_COMMIT_MESSAGES = (
+    "=SUM(A1:A9) synthetic title",
+    "+A1 synthetic title",
+    "-2+3 synthetic title",
+    "@macro synthetic title",
+    "tab\tinside synthetic title",
+    "newline\ninside synthetic title",
+)
+
 
 def _eligible(roster: Sequence[Person]) -> list[Person]:
     """Persons whose team profile has any git weight."""
     return [p for p in roster if p.team and TEAM_PROFILES[p.team].weights.get("github", 0) > 0]
+
+
+def _daily_commit_count(rng: random.Random, mean: float) -> int:
+    """The day's commit count, floored at one per person-day.
+
+    The floor keeps every git bucket drillable: the dashboard's trailing
+    windows start on whichever calendar day the run lands, so the leading
+    partial week bucket can cover a single day — and a zero-commit day
+    renders that bucket "—", undrillable. weekday_multiplier still shapes
+    the volume.
+
+    One formula on purpose: seed_class_git_pull_requests_commits re-derives
+    the day's commit list from the same RNG stream seed_class_git_commits
+    draws from, and any divergence — such as only one of them flooring —
+    strands that day's PRs without link rows.
+    """
+    return max(1, min(poisson(rng, mean), COMMITS_CAP))
 
 
 def seed_class_git_commits(
@@ -78,23 +114,34 @@ def seed_class_git_commits(
         "lines_added",
         "lines_removed",
         "data_source",
+        # Appended after the long-standing columns: the link-parity tests read
+        # this table positionally, so a mid-tuple insertion moves their fields.
+        "message",
         "_version",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
+    # Dealt to the dev lead's first commits in generation order (a merge
+    # commit is skipped — gold's evidence model filters those out, so a
+    # message on one would never reach the drilldown). Deterministic across
+    # re-seeds because the commit stream itself is.
+    hostile_messages = list(HOSTILE_COMMIT_MESSAGES)
     for p in _eligible(roster):
         persona = persona_multiplier(p.uuid)
         weight = TEAM_PROFILES[p.team or ""].weights["github"]
         for d in days_window(days):
             rng = seeded_rng(p.uuid, d, "git.commits")
             mean = 5 * persona * weight * weekday_multiplier(d)
-            n_commits = min(poisson(rng, mean), COMMITS_CAP)
+            n_commits = _daily_commit_count(rng, mean)
             for i in range(n_commits):
                 sha = deterministic_uuid("git.commit", p.uuid, d.isoformat(), str(i))[:40]
                 is_merge = 1 if rng.random() < 0.05 else 0
                 # LOC per commit capped at ≤200 by construction.
                 added = float(rng.randint(2, 180))
                 removed = float(rng.randint(0, 80))
+                message = ""
+                if p.uuid == DEV_LEAD_UUID and not is_merge and hostile_messages:
+                    message = hostile_messages.pop(0)
                 rows.append(
                     (
                         tenant_uuid,
@@ -110,6 +157,7 @@ def seed_class_git_commits(
                         added,
                         removed,
                         "insight_github",
+                        message,
                         version,
                     )
                 )
@@ -316,9 +364,7 @@ def seed_class_git_pull_requests_commits(
             # seed_class_git_commits does (same salt, same draw order).
             crng = seeded_rng(p.uuid, d, "git.commits")
             cmean = 5 * persona * weight * weekday_multiplier(d)
-            n_commits = min(poisson(crng, cmean), COMMITS_CAP)
-            if n_commits == 0:
-                continue
+            n_commits = _daily_commit_count(crng, cmean)
             hashes = [
                 deterministic_uuid("git.commit", p.uuid, d.isoformat(), str(i))[:40].replace(
                     "-", ""
@@ -331,9 +377,13 @@ def seed_class_git_pull_requests_commits(
             n_prs = min(poisson(prng, pmean), PRS_CAP)
             for i in range(n_prs):
                 pr_id = deterministic_int("git.pr", p.uuid, d.isoformat(), str(i))
-                # Deal the day's commits round-robin across the day's PRs so
-                # every PR gets at least one and no commit is double-linked.
-                linked = hashes[i::n_prs] if n_prs else []
+                # Deal the day's commits round-robin across the day's PRs.
+                # A day with fewer commits than PRs wraps instead of leaving
+                # the tail PRs linkless: gold's pr_commit_emails derives a
+                # PR's author attribution from these links, so a linkless PR
+                # NULLs its dimensions, while a commit shared by two PRs is
+                # ordinary git.
+                linked = hashes[i::n_prs] or [hashes[i % n_commits]]
                 for order, commit_hash in enumerate(linked):
                     rows.append(
                         (

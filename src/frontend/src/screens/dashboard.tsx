@@ -10,16 +10,15 @@ import {
 } from "@/components/widgets/dashboard/kpi-tile";
 import { MetricGroupCard } from "@/components/widgets/metric-views/metric-group-card";
 import { GroupDrilldownSheet } from "@/components/widgets/dashboard/group-drilldown-sheet";
+import { previousPeriodRange } from "@/api/period-to-date-range";
 import { usePeriod } from "@/hooks/use-period";
 import { useSettings } from "@/hooks/use-settings";
-import { metricAttentionItems } from "@/lib/insight/attention";
-import { metricKpiTiles, type KpiTileData } from "@/lib/insight/kpi-row";
 import {
-  GROUPS,
-  KPI_ROW,
-  KPI_ROW_COLLECTION,
-  type GroupId,
-} from "@/lib/insight/groups";
+  metricAttentionItems,
+  orderAttentionItems,
+} from "@/lib/insight/attention";
+import { metricKpiTiles } from "@/lib/insight/kpi-row";
+import { GROUPS, KPI_ROW_COLLECTION, type GroupId } from "@/lib/insight/groups";
 import {
   projectViews,
   type MetricCollectionConfig,
@@ -74,6 +73,18 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
     dateRange
   );
 
+  // The same collections over the previous period. Attention reports a
+  // standing that is ALSO a change, so without this the block would go silent
+  // here — which reads as "nothing to see" rather than "not compared".
+  const previousGroupData = useMetricCollectionSet(
+    GROUPS.map((def) => ({
+      key: def.id,
+      collection: projectViews(def.collection, ["period"]),
+    })),
+    entity,
+    previousPeriodRange(dateRange, period)
+  );
+
   const [openGroup, setOpenGroup] = useState<GroupId | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const openDetails = (group: GroupId) => {
@@ -103,7 +114,15 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
   // The one loading gate: a single page spinner while any of the screen's
   // queries has no data. A period change mints new query keys, so the same
   // gate re-trips — no per-widget loaders, no partial paints.
-  const isLoading = kpiData.isPending || collectionSetPending(groupData);
+  //
+  // The comparison period counts: attention needs it to tell a change from a
+  // standing, so a pending one is still loading. Left out, the block would
+  // paint before it could say anything — and an empty attention block reads as
+  // "nothing to see" rather than "not compared yet".
+  const isLoading =
+    kpiData.isPending ||
+    collectionSetPending(groupData) ||
+    collectionSetPending(previousGroupData);
   // Identity failing is not a metric failure: with no person there is no name,
   // no reports, and the metrics below are unauthorized anyway. A 404 means the
   // id is gone or outside the viewer's visible set — say so, rather than paint
@@ -117,16 +136,21 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
     entityId,
     focusMode
   );
-  const tilesByKey = new Map<string, KpiTileData>(
-    tiles.map((tile) => [tile.key, tile])
-  );
 
-  const attentionItems = GROUPS.flatMap((def) =>
-    metricAttentionItems(
-      def,
-      groupData.get(def.id)?.byKey ?? new Map(),
-      entityId
-    )
+  // What the row actually rendered — the block skips exactly those, no more.
+  const headlineKeys = new Set(tiles.map((t) => t.key));
+
+  const attentionItems = orderAttentionItems(
+    GROUPS.flatMap((def) =>
+      metricAttentionItems(
+        def,
+        groupData.get(def.id)?.byKey ?? new Map(),
+        previousGroupData.get(def.id)?.byKey ?? null,
+        entityId,
+        headlineKeys
+      )
+    ),
+    headlineKeys
   );
 
   // Close any open drilldown when the viewed person changes. Render-phase
@@ -166,37 +190,57 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
               <p className="flex items-center gap-1.5 text-xs font-medium tracking-wider text-muted-foreground uppercase">
                 At a glance
               </p>
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(13rem,1fr))] gap-3">
-                {KPI_ROW.map((key) => {
-                  const tile = tilesByKey.get(key);
-                  if (tile) {
-                    return (
-                      <KpiTile
-                        key={key}
-                        tile={tile}
-                        onOpenGroup={openDetails}
-                      />
-                    );
-                  }
-                  if (kpiData.isError) {
-                    return (
-                      <ComingSoon
-                        key={key}
-                        variant="card"
-                        state="error"
-                        onRetry={kpiData.refetch}
-                      />
-                    );
-                  }
-                  return <KpiTilePlaceholder key={key} />;
-                })}
+              {/* Counted columns, so the last row of tiles is never a single
+                  one beside a hole — see KPI_ROW_MAX. */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {/* The tiles ARE the row — see the note in
+                    `metric-groups-view`. One error card for the row, not one
+                    per key: the request fails as a whole. */}
+                {kpiData.isError ? (
+                  <ComingSoon
+                    variant="card"
+                    state="error"
+                    onRetry={kpiData.refetch}
+                  />
+                ) : tiles.length ? (
+                  tiles.map((tile) => (
+                    <KpiTile
+                      key={tile.key}
+                      tile={tile}
+                      periodNoun={period}
+                      onOpenGroup={openDetails}
+                    />
+                  ))
+                ) : (
+                  <KpiTilePlaceholder />
+                )}
               </div>
             </section>
 
-            <IcNeedsAttention
-              items={attentionItems}
-              onOpenGroup={openDetails}
-            />
+            {/* A failed comparison is an error, not silence: without it the
+                block cannot judge a change, and rendering nothing claims the
+                person has nothing worth looking at. */}
+            {[...previousGroupData.values()].some((r) => r.isError) ? (
+              <section className="flex flex-col gap-3">
+                <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+                  Needs attention
+                </p>
+                <ComingSoon
+                  variant="card"
+                  state="error"
+                  onRetry={() =>
+                    previousGroupData.forEach((r) => {
+                      if (r.isError) r.refetch();
+                    })
+                  }
+                />
+              </section>
+            ) : (
+              <IcNeedsAttention
+                items={attentionItems}
+                onOpenGroup={openDetails}
+              />
+            )}
 
             <section className="flex flex-col gap-3">
               <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">

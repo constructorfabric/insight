@@ -118,6 +118,44 @@ Build-time (Vite, `.env.local`):
 | `VITE_API_PROXY_TARGET` | Dev-only `/api` proxy target (e.g. `http://localhost:8080`). |
 | `VITE_API_BASE` | Override analytics API base URL (default `/api/analytics/v1`). |
 | `VITE_IDENTITY_BASE` | Override identity API base URL (default `/api/identity/v1`). |
+| `VITE_SENTRY_DSN` | Sentry DSN for local runs only; a deployed stand uses `sentry.dsn`. Unset means Sentry never initializes. |
+| `VITE_APP_RELEASE` | Release attached to events. Defaults to `local-<git sha>`; CI passes the image tag. |
+
+## Error Reporting and Tracing
+
+[src/sentry.ts](src/sentry.ts) initializes Sentry as the first statement in
+[src/main.tsx](src/main.tsx). The module imports above it — i18n, the query
+client, the router — have already run by then, so a throw while they initialize
+goes unreported.
+
+What leaves the browser:
+
+- Render errors, via `onError` on [app-error-boundary.tsx](src/components/app-error-boundary.tsx).
+- Unhandled exceptions and rejections, from the SDK's own handlers.
+- Performance transactions for 10% of page loads and navigations. Browser
+  tracing also instruments `fetch`/XHR and adds `sentry-trace` and `baggage`
+  headers to same-origin requests.
+
+Events carry the hostname as their `environment` (`local` on localhost) — one
+image serves every stand, so nothing else tells them apart.
+
+The image carries no DSN. A deployed stand takes two chart values, and they
+must agree:
+
+1. `sentry.dsn` — rendered into a ConfigMap that mounts over `/config.js`,
+   which the SPA reads before it boots.
+2. `sentry.connectSrc`, set to the same origin. The container's CSP is
+   rendered from it at start; without it the browser blocks every event and
+   nothing arrives.
+
+Locally there is no chart, so `VITE_SENTRY_DSN` stands in for the first and
+the CSP does not apply.
+
+The SDK attaches no cookies, IP or headers to events. Session Replay is not
+enabled.
+
+The build emits no sourcemaps and uploads none, so a stack trace names the
+minified bundle rather than your code.
 
 ## Routes
 

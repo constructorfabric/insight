@@ -7,7 +7,7 @@ Exit:   0 always; 2 on bad arg count.
 
 Source names follow `{connector}-{source-id}-{tenant}`. Connector slugs
 themselves can contain dashes (e.g. `ms-entra`, `bitbucket-cloud`,
-`github-v2`), so a naive `split("-")[0]` would mis-identify
+`github-directory`), so a naive `split("-")[0]` would mis-identify
 `ms-entra-main-default` as connector `ms` and incorrectly cascade-delete
 a healthy connection. We resolve the connector by **longest-prefix
 match** against the `known` set: the connector slug is the longest

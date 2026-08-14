@@ -69,12 +69,15 @@ def _person_ids_for(emails: list[str], aliases: dict[str, list[str]]) -> dict[st
 
 
 def _seed_identity_persons(cfg: SessionConfig, person_ids: dict[str, str]) -> None:
-    """Replace identity.identity_persons with one email binding per persona.
+    """Give each persona an account that carries their email and is bound to
+    their person id — the shape resolve_person_id() reads.
 
-    Runs BEFORE the gold dbt build so resolve_person_id() attributes every
-    observation row; the table exists thanks to the on-run-start hook (and is
-    normally fed by the identity-resolution persons-sync — the rig plays that
-    role here).
+    Resolution is account-derived: `identity_inputs` says which account carries
+    an email, `identity_persons` says who that account belongs to. The rig plays
+    both producers (the connector models and the service's persons-sync), one
+    synthetic account per persona.
+
+    Runs BEFORE the gold dbt build so every observation row resolves.
     """
     # NOT worker-scoped: the resolve_person_id macro names `identity` literally,
     # so a per-worker suffix here would leave gold reading an unseeded table.
@@ -94,22 +97,60 @@ def _seed_identity_persons(cfg: SessionConfig, person_ids: dict[str, str]) -> No
         ) ENGINE = MergeTree ORDER BY id
         """,
     )
+    clickhouse.execute(
+        cfg,
+        """
+        CREATE TABLE IF NOT EXISTS identity.identity_inputs (
+            unique_key String, insight_tenant_id UUID,
+            insight_source_id UUID, insight_source_type String,
+            source_account_id Nullable(String), value_type String,
+            value Nullable(String), value_field_name String,
+            operation_type String, _synced_at DateTime64(3), _version Int64
+        ) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key
+        SETTINGS allow_nullable_key = 1
+        """,
+    )
     clickhouse.execute(cfg, "TRUNCATE TABLE identity.identity_persons")
+    clickhouse.execute(cfg, "TRUNCATE TABLE identity.identity_inputs")
     if not person_ids:
         return
-    rows = ", ".join(
-        f"({index + 1}, 'email', 'e2e-rig', generateUUIDv4(), generateUUIDv4(), "
+
+    personas = sorted(person_ids.items())
+
+    # The account id is the email: deterministic, and the two tables must agree
+    # on it for the join to land.
+    binding_rows = ", ".join(
+        f"({index + 1}, 'id', 'e2e-rig', toUUID('{_RIG_SOURCE_ID}'), generateUUIDv4(), "
         f"'{email}', '{email}', toUUID('{person_id}'), "
         f"toUUID('00000000-0000-0000-0000-000000000000'), now64(6), now64(3))"
-        for index, (email, person_id) in enumerate(sorted(person_ids.items()))
+        for index, (email, person_id) in enumerate(personas)
     )
     clickhouse.execute(
         cfg,
         "INSERT INTO identity.identity_persons "  # noqa: S608 — values derive from fixture emails
         "(id, value_type, insight_source_type, insight_source_id, insight_tenant_id,"
         " value_id, value_effective, person_id, author_person_id, created_at, _synced_at) "
-        "VALUES " + rows,
+        "VALUES " + binding_rows,
     )
+
+    evidence_rows = ", ".join(
+        f"('e2e-rig:{email}:email', generateUUIDv4(), toUUID('{_RIG_SOURCE_ID}'), 'e2e-rig', "
+        f"'{email}', 'email', '{email}', 'e2e.rig.email', 'UPSERT', now64(3), 1)"
+        for email, _ in personas
+    )
+    clickhouse.execute(
+        cfg,
+        "INSERT INTO identity.identity_inputs "  # noqa: S608 — values derive from fixture emails
+        "(unique_key, insight_tenant_id, insight_source_id, insight_source_type,"
+        " source_account_id, value_type, value, value_field_name, operation_type,"
+        " _synced_at, _version) "
+        "VALUES " + evidence_rows,
+    )
+
+
+# One synthetic connector instance for every rig persona: the account triple is
+# what joins evidence to bindings, so both inserts must name the same source.
+_RIG_SOURCE_ID = "e2e0e2e0-0000-4000-8000-000000000001"
 
 
 def _translate(value: Any, mapping: dict[str, str]) -> Any:

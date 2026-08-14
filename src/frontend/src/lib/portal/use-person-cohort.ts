@@ -3,9 +3,7 @@ import { useMemo } from "react";
 import { useViewer } from "@/auth";
 import { cohortKey, collectRosterAttrs } from "@/lib/insight/slices";
 import { normalizePersonId } from "@/lib/metrics/entity";
-import {
-  usePortalSlice,
-} from "@/lib/portal/portal-nav";
+import { useCohortOptions } from "@/lib/portal/use-cohort-options";
 import { useIcPerson } from "@/queries/ic-dashboard";
 
 /**
@@ -16,12 +14,15 @@ import { useIcPerson } from "@/queries/ic-dashboard";
  * once, not re-derived per screen.
  */
 export function usePersonCohort(entityId: string): string[] {
-  const slice = usePortalSlice();
+  // The slice the OPTIONS still contain, not whatever is stored: a value the
+  // catalog has since dropped would otherwise keep building cohorts while the
+  // control shows "Team (all)".
+  const { slice } = useCohortOptions();
   const { personId } = useViewer();
   const tree = useIcPerson(personId ?? "").data ?? null;
   const attrByEntity = useMemo(
     () => collectRosterAttrs(tree, normalizePersonId),
-    [tree],
+    [tree]
   );
   return useMemo(() => {
     if (!slice) return [];

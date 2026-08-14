@@ -67,33 +67,6 @@ ORDER BY id
 SETTINGS index_granularity = 8192
 ;
 
-CREATE TABLE IF NOT EXISTS identity.seed_aliases_from_claude_admin
-(
-    `id` UUID,
-    `insight_tenant_id` UUID,
-    `person_id` UUID,
-    `value_type` String,
-    `value` Nullable(String),
-    `value_field_name` String,
-    `insight_source_id` UUID,
-    `insight_source_type` String,
-    `source_account_id` Nullable(String),
-    `confidence` Float32,
-    `is_active` UInt8,
-    `effective_from` DateTime64(3),
-    `effective_to` DateTime64(3, 'UTC'),
-    `first_observed_at` DateTime64(3),
-    `last_observed_at` DateTime64(3),
-    `created_at` DateTime64(3),
-    `updated_at` DateTime64(3),
-    `is_deleted` UInt8,
-    `_version` Int64
-)
-ENGINE = MergeTree
-ORDER BY id
-SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
-;
-
 CREATE TABLE IF NOT EXISTS identity.seed_aliases_from_cursor
 (
     `id` UUID,

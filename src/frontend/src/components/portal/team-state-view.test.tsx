@@ -43,7 +43,7 @@ vi.mock("@/queries/ic-dashboard", () => ({
 }));
 vi.mock("@/queries/member-grid", () => ({ useMemberGridData: () => mocks.grid }));
 vi.mock("@/hooks/use-portal-period", () => ({
-  usePortalPeriod: () => ({ period: "week", dateRange: { start: "2026-07-20", end: "2026-07-26" } }),
+  usePortalPeriod: () => ({ period: "week", dateRange: { from: "2026-07-20", to: "2026-07-26" } }),
 }));
 
 

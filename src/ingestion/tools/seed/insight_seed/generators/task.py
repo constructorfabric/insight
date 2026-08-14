@@ -1,12 +1,11 @@
 """
 task-tracking silver generator: worklogs + users + field-history events.
 
-`class_task_field_history` is the substrate the
-`insight.task_issue_current_state` MV groups into per-issue records
-— driving bugs_fixed / tasks_closed / on_time_count / etc. Every
-issue gets one row per relevant field (status, assignee, issuetype,
-priority, duedate, timeoriginalestimate, timespent) tagged
-event_kind='synthetic_initial'; closed issues add a follow-up
+`class_task_field_history` is the substrate the `task_issue_state` gold
+model groups into per-issue records — driving bugs_fixed / tasks_closed /
+on_time_count / etc. Every issue gets one row per relevant field (status,
+assignee, issuetype, priority, duedate, timeoriginalestimate, timespent)
+tagged event_kind='synthetic_initial'; closed issues add a follow-up
 'changelog' row flipping status to 'Closed'.
 
 Everyone except sales (light) tracks tasks. Support team gets extra
@@ -122,8 +121,8 @@ def seed_task_users(
     roster: Sequence[Person],
     tenant_uuid: str,
 ) -> int:
-    """Required so `insight.task_worklog_seconds_per_day` (INNER JOIN
-    on insight_source_id + user_id) actually emits rows."""
+    """Required so the `task_worklog_flow` gold model (INNER JOIN on
+    insight_source_id + user_id) actually emits rows."""
     truncate(client, "silver", "class_task_users")
     cols = [
         "tenant_id",
@@ -167,7 +166,7 @@ _ISSUE_TYPE_DIM = {
 _PRIORITIES = ("Highest", "High", "Medium", "Medium", "Low")
 _CLOSE_STATUSES = ("Closed", "Resolved", "Verified")
 
-# Status dimension. The task_issue_current_state MV resolves a status to a
+# Status dimension. The task_issue_state gold model resolves a status to a
 # lifecycle category by joining class_task_statuses on
 # (insight_source_id, status_id), and gold detects a closed task via
 # status_category = 'done' (never a localized name — see issue #1541). So
@@ -373,9 +372,10 @@ def seed_class_task_statuses(
     roster: Sequence[Person],
 ) -> int:
     """Status dimension: one row per (source, status) mapping a status_id to
-    its lifecycle status_category. task_issue_current_state joins this on
+    its lifecycle status_category. task_issue_state joins this on
     (insight_source_id, status_id); without it status_category is NULL and
-    jira_closed_tasks (which filters status_category = 'done') is empty."""
+    every closed-task measure (which filters status_category = 'done') is
+    empty."""
     truncate(client, "silver", "class_task_statuses")
     cols = [
         "insight_source_id",
@@ -452,27 +452,6 @@ def seed_class_task_issuetypes(
                 )
             )
     return bulk_insert(client, "silver", "class_task_issuetypes", cols, rows)
-
-
-# Refreshable materialized views that derive from class_task_field_history.
-# Listed explicitly so a CH version mismatch errors loudly here rather than
-# leaving downstream metrics stale until the scheduled refresh tick.
-# NOTE: task_status_intervals is NOT here — the migration creates it as a
-# stub (so that migration's own downstream CREATE VIEWs type-check), but it
-# is a dbt-owned gold *table* now (gold/task_status_intervals.sql), rebuilt
-# fresh over seeded silver by `dbt run --select tag:gold` in
-# apply-ch-migrations.sh. SYSTEM REFRESH VIEW on a table errors.
-_TASK_REFRESHABLE_MVS = ("insight.task_issue_current_state",)
-
-
-def refresh_dependent_mvs(client: clickhouse_connect.driver.client.Client) -> None:
-    """Force-refresh every task-pipeline refreshable MV. Default schedule
-    is 1h cadence; without an explicit refresh, freshly-seeded
-    class_task_field_history rows don't surface in
-    insight.jira_closed_tasks / .task_delivery_bullet_rows until the
-    next tick."""
-    for mv in _TASK_REFRESHABLE_MVS:
-        client.command(f"SYSTEM REFRESH VIEW {mv}")
 
 
 def generate(

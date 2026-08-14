@@ -43,6 +43,9 @@ from ..scratch import (
     track,
 )
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 METRICS = analytics_path("/v1/metrics")
 EXPORT = analytics_path("/v1/metrics/export")
 IMPORT = analytics_path("/v1/metrics/import")
@@ -91,6 +94,55 @@ def test_custom_metric_create_get_update_delete_round_trip(api: ApiClient) -> No
 
     assert api.get(_metric_path(metric_key)).status_code == 404
     assert metric_key not in _listed_keys(api), "a deleted custom metric is still listed"
+
+
+def test_custom_metric_round_trips_subject_and_tags(api: ApiClient) -> None:
+    """`subject` and `tags` persist through create → read → list → update.
+
+    A custom metric can declare a grouping `subject` and cross-cutting `tags` —
+    the same fields the builtin definitions listing exposes. The create echoes
+    them, the read returns them, the list summary carries the `subject` a
+    management screen groups by, and an update replaces both. `extra="forbid"`
+    on the models means a dropped field surfaces as a missing value here rather
+    than passing silently. (The export path is xfail on a fresh stand per
+    #2360, so its subject/tags round-trip is left to the Rust `into_graph`
+    test.) Deleted in a `finally` so the row cannot leak.
+    """
+    metric_key, source_key = scratch_metric_identity("subjtags")
+    body = custom_metric_body(
+        metric_key, source_key, subject="throughput", tags=["rate", "duration"]
+    )
+    created = api.post(METRICS, json_body=body)
+    assert created.status_code == 201, f"create: {created.status_code} {created.text[:300]}"
+    track(METRICS, "metric_key", metric_key)
+    try:
+        made = created.parse(CustomMetric)
+        assert made.subject == "throughput", f"create dropped subject: {made.subject!r}"
+        assert made.tags == ["rate", "duration"], f"create dropped tags: {made.tags!r}"
+
+        fetched = api.get(_metric_path(metric_key)).parse(CustomMetric)
+        assert fetched.subject == "throughput", f"read dropped subject: {fetched.subject!r}"
+        assert fetched.tags == ["rate", "duration"], f"read dropped tags: {fetched.tags!r}"
+
+        summary = next(
+            (
+                item
+                for item in api.get(METRICS).parse(CustomMetricListResponse).items
+                if item.metric_key == metric_key
+            ),
+            None,
+        )
+        assert summary is not None, "created metric is not listed"
+        assert summary.subject == "throughput", f"list dropped subject: {summary.subject!r}"
+
+        changed = custom_metric_body(metric_key, source_key, subject="quality", tags=["ratio"])
+        updated = api.put(_metric_path(metric_key), json_body=changed)
+        assert updated.status_code == 200, f"update: {updated.status_code} {updated.text[:300]}"
+        reloaded = updated.parse(CustomMetric)
+        assert reloaded.subject == "quality", f"update kept stale subject: {reloaded.subject!r}"
+        assert reloaded.tags == ["ratio"], f"update kept stale tags: {reloaded.tags!r}"
+    finally:
+        api.delete(_metric_path(metric_key))
 
 
 def test_get_metric_404_unknown(api: ApiClient) -> None:
@@ -145,8 +197,10 @@ def test_create_metric_409_on_a_duplicate_key(api: ApiClient) -> None:
         ("bad metric_key", {"metric_key": "NoDot"}),
         ("non-single-select observation_sql", {"observation_sql": "DROP TABLE t"}),
         ("observation_sql omitting a contract column", {"observation_sql": "SELECT 1 AS one"}),
+        ("malformed subject", {"subject": "Bad Subject"}),
+        ("malformed tag", {"tags": ["Bad-Tag"]}),
     ],
-    ids=["bad-key", "not-a-read", "missing-column"],
+    ids=["bad-key", "not-a-read", "missing-column", "bad-subject", "bad-tag"],
 )
 def test_create_metric_400_for_an_invalid_graph(
     api: ApiClient, label: str, mutation: dict[str, Any]
@@ -168,6 +222,11 @@ def test_create_metric_400_for_an_invalid_graph(
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="constructorfabric/insight#2360 — export answers 500 on a freshly seeded "
+    'stand (server log: corrupt custom metric row: observation_sql = "NULL")',
+)
 def test_export_metrics_200(api: ApiClient, scratch_custom_metric: CustomMetric) -> None:
     """The tenant's custom graphs come back portable — the scratch one among them."""
     response = api.get(EXPORT)

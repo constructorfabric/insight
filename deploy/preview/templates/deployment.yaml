@@ -34,7 +34,9 @@ spec:
           # return path arrives with #1972; the FE only serves static assets here.
           ports:
             - name: http
-              containerPort: 80
+              # The FE image serves on the non-root port (same as the main
+              # frontend chart) — probes and the Service target it by name.
+              containerPort: 8080
               protocol: TCP
           livenessProbe:
             httpGet:

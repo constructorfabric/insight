@@ -17,12 +17,14 @@ stand) reads that ledger back and answers two questions:
      precisely the mistake this gate exists to prevent.
   2. Did every status code the analytics CONTRACT declares get observed?
 
-Only analytics is gated on its spec. The committed identity document is the
-retired .NET contract — it declares only `200` on every operation, lists routes
-the service answers 404 for, and omits ones it serves — so gating against it
-would demand codes that cannot exist and miss everything real. Identity is held
-to (1) instead, which needs no trustworthy document. Same judgement, and for the
-same reason, as `Untrusted` in `tests/generate_schemas.py`.
+Only analytics is gated on its spec. That was once because the committed
+identity document was the retired .NET contract; it no longer is — identity
+emits its own document and CI drift-gates it beside analytics. What still blocks
+(2) for identity is the other side of the comparison: every status code the
+document declares has to be OBSERVED, and `.standard_errors` stamps the full
+error set onto every operation. Identity stays held to (1) until the suite
+either observes those codes or the gate learns to discount the stamped ones
+(#1669), which is a change to the gate rather than to this note.
 
 This is a port of `src/ingestion/tests/e2e/lib/api_coverage.py`. The universal
 table agrees with it — the rig dropped 401 from its own exclusions once its host

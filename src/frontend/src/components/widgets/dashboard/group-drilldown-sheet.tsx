@@ -2,6 +2,8 @@ import { Maximize2, Minimize2, XIcon } from "lucide-react";
 
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { CollectionDrilldown } from "@/components/widgets/metric-views/collection-drilldown";
+import { PeerStory } from "@/components/widgets/metric-views/peer-story";
+import { buildPeerStoryEntries } from "@/lib/metrics/peer-story";
 import {
   TeamCollectionDrilldown,
   type TeamMemberRef,
@@ -132,8 +134,20 @@ function DrilldownPanel({
             data={metricTarget.data}
             entityId={metricTarget.entityId}
             range={range}
-            cohortLabel={cohortLabel}
-          />
+          >
+            {/* A drilldown opened from a card is answering "how do I
+                compare", so the standing follows the composition here. The
+                section screen reached from the navigation answers a different
+                question and puts the work itself in this slot. */}
+            <PeerStory
+              entries={buildPeerStoryEntries(
+                def.collection,
+                metricTarget.data.byKey,
+                metricTarget.entityId
+              )}
+              cohortLabel={cohortLabel}
+            />
+          </CollectionDrilldown>
         ) : metricTarget?.kind === "team" && range && period ? (
           <TeamCollectionDrilldown
             def={def}

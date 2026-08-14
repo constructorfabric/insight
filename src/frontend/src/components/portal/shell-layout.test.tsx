@@ -28,6 +28,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => mocks.layout === "phone" }));
 vi.mock("@/lib/portal/use-shell-layout", () => ({ useShellLayout: () => mocks.layout }));
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
+vi.mock("@/queries/identity-me", () => ({
+  useIsAdmin: () => ({ isAdmin: false, isPending: false }),
+}));
 vi.mock("@/lib/portal/use-viewer-is-manager", () => ({
   useViewerIsManager: () => ({ isManager: mocks.isManager, isPending: false }),
 }));
@@ -45,6 +48,11 @@ vi.mock("@/components/widgets/period-selector-bar", () => ({
 }));
 vi.mock("@/queries/ic-dashboard", () => ({
   useIcPerson: () => ({ data: null }),
+}));
+// The topbar asks the catalog which attributes a comparison may use; this
+// test is about the shell's layout, not about that answer.
+vi.mock("@/queries/metric-definitions", () => ({
+  useMetricDefinitionsResponse: () => ({ data: undefined }),
 }));
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({

@@ -51,6 +51,34 @@ export interface MetricCollectionConfig {
   metrics: MetricCollectionMetricConfig[];
 }
 
+/**
+ * Drop metrics this installation's catalog does not offer.
+ *
+ * The backend resolves a request ALL-or-NOTHING: one key it cannot serve and
+ * the whole `/v1/metric-results` call is rejected with 400 UNAVAILABLE
+ * (`metric_definitions/repository.rs` — `return Err(unavailable(key))`), so a
+ * single missing metric blanks an entire screen rather than its own tile.
+ *
+ * The frontend's metric keys are compiled in, but the catalog is per
+ * installation: it is seeded from a registry that moves, and a tenant running
+ * an older backend, or a different connector set, simply has fewer keys. Asking
+ * only for what the catalog lists turns "the screen is broken" into "that one
+ * metric has no data here", which every section already renders honestly.
+ *
+ * `available === null` means the catalog has not answered yet (or failed) —
+ * then nothing is dropped, because a not-yet-known catalog must not silently
+ * shrink a request. The config object is returned unchanged when no key is
+ * dropped, so query keys stay stable.
+ */
+export function filterCollectionToAvailable(
+  collection: MetricCollectionConfig,
+  available: ReadonlySet<string> | null,
+): MetricCollectionConfig {
+  if (!available) return collection;
+  const kept = collection.metrics.filter((m) => available.has(m.key));
+  return kept.length === collection.metrics.length ? collection : { metrics: kept };
+}
+
 export interface MetricCollectionEntity {
   type: MetricEntityType;
   ids: string[];

@@ -8,7 +8,7 @@ ALWAYS resolve and enforce prerequisites of skills/workflows/commands BEFORE app
 
 ## Project Rules
 
-ALWAYS open and follow `docs/domain/metrics/specs/DESIGN.md` WHEN adding or changing metrics, metric definitions, metric seeds, observation sources, or gold metric views
+NEVER put an identifier containing `_` in a Markdown heading a table of contents links to — the TOC generator drops the underscore while GitHub keeps it, so the anchor breaks (markdownlint MD051). Word the heading in prose and keep the identifier in the body.
 
 ## Never expose production-derived information
 
@@ -57,3 +57,22 @@ Before creating or modifying any GitHub-visible content, verify that it contains
 4. Statements that imply access to or examination of live data
 
 When uncertain whether information came from a real environment, omit it and use a generic hypothetical formulation instead.
+
+## Comments
+
+- No comments unless they express a constraint the code cannot.
+- Prefer code over prose: name things clearly, extract functions, use types, make invalid states unrepresentable.
+- Allowed comments are brief and tagged:
+  - `SAFETY:` — non-obvious safety/security/correctness reasoning.
+  - `INVARIANT:` — a fact a future edit could silently break.
+  - `WORKAROUND:` — external/platform/dependency behavior being worked around.
+  - Tool/linter/compiler suppressions — brief adjacent justification.
+- Do not comment:
+  - implementation history or how the code got here;
+  - what the code already says;
+  - alternatives considered or roads not taken;
+  - issue/PR context, phase notes, headers, or discussion history.
+- Non-obvious semantics belong in types, tests, or docs when possible.
+- Doc comments only for genuinely public/external APIs; keep them brief.
+- Comments should normally be one or two lines. If a comment needs a paragraph, improve the code or move the rationale to documentation.
+- If deleting a comment does not materially reduce safety, correctness, or maintainability, delete it when it is within the scope of the current work.

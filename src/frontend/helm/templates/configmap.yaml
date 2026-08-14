@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "insight-frontend.fullname" . }}-runtime
+  labels:
+    {{- include "insight-frontend.labels" . | nindent 4 }}
+data:
+  config.js: |
+    window.__INSIGHT_CONFIG__ = {{ toJson (dict "sentryDsn" .Values.sentry.dsn) }};

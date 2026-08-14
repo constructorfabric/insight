@@ -87,6 +87,31 @@ pub async fn validate_export_request(
     .await
 }
 
+// Canonical person id, like every other person-keyed route since the identity
+// cutover; the pre-cutover email shape (and the nil UUID, which parses but is
+// never a person) is a loud 400.
+//
+// INVARIANT: this runs before the visibility gate on both drilldown handlers,
+// so it must not reach any backend — an unauthorized caller gets no further.
+pub(crate) fn parse_person_entity(
+    entity: &MetricDrilldownEntity,
+) -> Result<(String, Uuid), CanonicalError> {
+    let entity_type = normalize_entity_type(&entity.r#type)?;
+    if entity_type != "person" {
+        return Err(invalid_error(
+            "entity.type",
+            "only person entities are supported",
+        ));
+    }
+
+    let person_id = Uuid::parse_str(entity.id.trim())
+        .ok()
+        .filter(|id| !id.is_nil())
+        .ok_or_else(|| invalid_error("entity.id", "entity.id must be a person UUID"))?;
+
+    Ok((entity_type, person_id))
+}
+
 async fn validate_common(
     db: &DatabaseConnection,
     ch: &insight_clickhouse::Client,
@@ -104,19 +129,7 @@ async fn validate_common(
         cursor,
     } = request;
     let metric_key = normalize_metric_key("metric_key", &metric_key)?;
-    let entity_type = normalize_entity_type(&entity.r#type)?;
-    if entity_type != "person" {
-        return invalid("entity.type", "only person entities are supported");
-    }
-    // Canonical person id, like every other person-keyed route since the
-    // identity cutover; the pre-cutover email shape (and the nil UUID, which
-    // parses but is never a person) is a loud 400. The compiler translates the
-    // id back to the person's source emails, because the evidence relations
-    // deliberately stay email-keyed (coverage measures the gap from them).
-    let person_id = uuid::Uuid::parse_str(entity.id.trim())
-        .ok()
-        .filter(|id| !id.is_nil())
-        .ok_or_else(|| invalid_error("entity.id", "entity.id must be a person UUID"))?;
+    let (entity_type, person_id) = parse_person_entity(&entity)?;
     let entity_id = person_id.to_string();
     if limit == 0 || limit > max_limit {
         return invalid("limit", format!("limit must be between 1 and {max_limit}"));
@@ -173,7 +186,6 @@ async fn validate_common(
     };
     Ok(ValidatedMetricDrilldown {
         selection,
-        person_id,
         tenant_id,
         // The handler overwrites this from config; false is the runtime-wide
         // default (#1967) so tests compile queries in the degraded form.

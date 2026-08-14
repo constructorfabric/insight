@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ArrowDownRight, Sparkles, TrendingDown } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ChevronRight, Sparkles, TrendingDown } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import type { AttentionFlag, FlagKind } from "@/lib/insight/attention-flags";
@@ -14,6 +14,34 @@ const FLAG_ICON: Record<FlagKind, typeof AlertTriangle> = {
   decline: TrendingDown,
   collapse: AlertTriangle,
 };
+
+/** Rows one subject may occupy before the rest wait on their own page. */
+const MAX_ROWS_PER_SUBJECT = 2;
+
+/**
+ * Keep every subject's strongest findings and no more.
+ *
+ * A row is one finding, so a subject who trips five metrics takes five rows —
+ * and because the list is ranked by severity, the subject in the most trouble
+ * takes the most of it. The visible slice then fills with one person while
+ * others wait behind "+N more", which is precisely backwards: the list hides
+ * people better the worse things are.
+ *
+ * Capping keeps the shape — one row, one readable claim — and bounds what any
+ * one subject can crowd out. What is dropped is never lost: every row opens
+ * that subject's own page, where all of their findings are.
+ *
+ * Input order is preserved, so the strongest findings survive the cap.
+ */
+function capPerSubject(flags: AttentionFlag[]): AttentionFlag[] {
+  const taken = new Map<string, number>();
+  return flags.filter((f) => {
+    const n = taken.get(f.personId) ?? 0;
+    if (n >= MAX_ROWS_PER_SUBJECT) return false;
+    taken.set(f.personId, n + 1);
+    return true;
+  });
+}
 
 /**
  * Shared "needs attention" panel: a rule-based summary line (placeholder for a
@@ -34,7 +62,8 @@ export function AttentionList({
 }) {
   const { setZone } = usePortalNavActions();
   const [expanded, setExpanded] = useState(false);
-  const shown = expanded ? flags : flags.slice(0, max);
+  const ranked = capPerSubject(flags);
+  const shown = expanded ? ranked : ranked.slice(0, max);
   return (
     <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
@@ -83,16 +112,22 @@ export function AttentionList({
                 </span>
                 <span className="shrink-0 font-medium tabular-nums">{f.valueText}</span>
                 <span className="truncate text-xs text-muted-foreground">{f.reason}</span>
+                {/* Standing affordance — the row opens that person's page, and
+                    a border alone does not say so. */}
+                <ChevronRight
+                  className="ml-auto size-3.5 shrink-0 text-muted-foreground"
+                  aria-hidden
+                />
               </Link>
             );
           })}
-          {flags.length > max ? (
+          {ranked.length > max ? (
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
               className="self-start px-3 pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
             >
-              {expanded ? "Show less" : `+${flags.length - max} more`}
+              {expanded ? "Show less" : `+${ranked.length - max} more`}
             </button>
           ) : null}
         </div>

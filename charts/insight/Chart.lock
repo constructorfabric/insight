@@ -14,8 +14,11 @@ dependencies:
 - name: insight-identity-resolution
   repository: file://../../src/backend/services/identity-resolution/helm
   version: 0.1.0
+- name: insight-git-cli-proxy
+  repository: file://../../src/backend/services/git-cli-proxy/helm
+  version: 0.1.0
 - name: insight-frontend
   repository: file://../../src/frontend/helm
   version: 0.1.0
-digest: sha256:784e86e2d61578466e3c8bd82ff1821b2dc39c40faea318269320f0519f323f6
-generated: "2026-08-07T11:00:44.602105+08:00"
+digest: sha256:6b2fbd414c97c623bd4f8a267452734aa032c4732fafef2a2826c9b282cb3e15
+generated: "2026-08-10T12:33:23.572107+08:00"

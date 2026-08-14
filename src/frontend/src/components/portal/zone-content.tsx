@@ -5,13 +5,14 @@ import { OverviewView } from "@/components/portal/overview-view";
 import { ManageView } from "@/components/portal/manage-view";
 import { PeopleView } from "@/components/portal/people-view";
 import { PersonView } from "@/components/portal/person-view";
-import { zoneById } from "@/lib/portal/nav-model";
+import { resolveZoneItem, zoneById } from "@/lib/portal/nav-model";
 import {
   usePortalDir,
   usePortalItem,
   usePortalLens,
 } from "@/lib/portal/portal-nav";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
+import { ReportBuilderView } from "@/components/portal/report-builder-view";
 
 /**
  * Content for the non-entity portal zones. Overview rolls the org up; Directions
@@ -26,7 +27,9 @@ export function ZoneContent() {
   const { activeZone, activePerson } = useActiveZone();
   const dir = usePortalDir();
   const lens = usePortalLens();
-  const item = usePortalItem();
+  // Resolved here, not per view: the pane highlights the same value, so the
+  // menu and the content can never name different things.
+  const item = resolveZoneItem(activeZone, usePortalItem());
 
   switch (activeZone) {
     case "person":
@@ -41,8 +44,13 @@ export function ZoneContent() {
       return <PeopleView person={activePerson} item={item} />;
     case "manage":
       return <ManageView item={item} />;
-    case "scorecard":
     case "reports":
+      return item === "report-builder" ? (
+        <ReportBuilderView />
+      ) : (
+        <ZoneScaffold zone={activeZone} />
+      );
+    case "scorecard":
       return <ZoneScaffold zone={activeZone} />;
     default:
       return <ZoneScaffold zone={activeZone} />;
@@ -63,7 +71,7 @@ function ZoneScaffold({ zone }: { zone: string }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8">
       <div className="flex flex-col items-center gap-1 text-center">
-        <h1 className="text-2xl font-semibold tracking-tight">
+        <h1 className="text-lg font-semibold tracking-tight">
           {zoneById(zone)?.label ?? "Portal"}
         </h1>
         <p className="max-w-md text-sm text-muted-foreground">

@@ -241,6 +241,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .error_400(openapi)
         .error_401(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_415(openapi)
         .error_429(openapi)

@@ -28,6 +28,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/auth", () => ({
   useViewer: () => ({ email: "boss@x", personId: mocks.personId }),
 }));
+vi.mock("@/queries/identity-me", () => ({
+  useIsAdmin: () => ({ isAdmin: false, isPending: false }),
+}));
 vi.mock("@/lib/portal/use-viewer-is-manager", () => ({
   useViewerIsManager: () => ({ isManager: mocks.isManager, isPending: mocks.isPending }),
 }));
@@ -267,11 +270,11 @@ describe("SliceSelect", () => {
     const slice = renderHook(() => usePortalSlice());
     render(<SliceSelect dims={[{ key: "division", label: "Division" }]} />);
     // "Slice:" is a separate, md-only span now, so match the value itself.
-    expect(screen.getByRole("combobox", { name: "Slice by" })).toHaveTextContent(
+    expect(screen.getByRole("combobox", { name: "Cohort" })).toHaveTextContent(
       "Team (all)",
     );
 
-    await userEvent.click(screen.getByRole("combobox", { name: "Slice by" }));
+    await userEvent.click(screen.getByRole("combobox", { name: "Cohort" }));
     await userEvent.click(await screen.findByRole("option", { name: "Division" }));
     expect(slice.result.current).toBe("division");
   });
@@ -280,7 +283,7 @@ describe("SliceSelect", () => {
     act(() => portalRouter.set({ slice: "division" }));
     render(<SliceSelect dims={[{ key: "division", label: "Division" }]} />);
     const slice = renderHook(() => usePortalSlice());
-    await userEvent.click(screen.getByRole("combobox", { name: "Slice by" }));
+    await userEvent.click(screen.getByRole("combobox", { name: "Cohort" }));
     await userEvent.click(await screen.findByRole("option", { name: "Team (all)" }));
     expect(slice.result.current).toBe("");
   });

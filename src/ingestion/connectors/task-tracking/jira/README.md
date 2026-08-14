@@ -4,8 +4,6 @@ Extracts projects, users, issues, issue history (changelog), comments, worklogs,
 
 ## Specification
 
-- **PRD**: [../../../../../docs/components/connectors/task-tracking/jira/specs/PRD.md](../../../../../docs/components/connectors/task-tracking/jira/specs/PRD.md)
-- **DESIGN**: [../../../../../docs/components/connectors/task-tracking/jira/specs/DESIGN.md](../../../../../docs/components/connectors/task-tracking/jira/specs/DESIGN.md)
 
 ## Prerequisites
 
@@ -97,5 +95,5 @@ The `jira_boards` stream (`GET /rest/agile/1.0/board`) is the substream parent f
 
 ## Related
 
-- Silver layer (unified task-tracker schema): `docs/components/connectors/task-tracking/silver/`
+- Silver layer (unified task-tracker schema): `src/ingestion/silver/task-tracking/`
 - Sibling connector: YouTrack (planned, same Silver target)

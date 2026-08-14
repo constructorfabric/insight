@@ -20,6 +20,9 @@ from .pages.keycloak_login_page import KeycloakLoginPage
 from .pages.landing_page import LandingPage
 from .pages.login_page import LoginPage
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 
 def _cookie_failure(page: Page, origin: str, found: list[Cookie]) -> str:
     """Explain a missing session cookie, including the usual cause.

@@ -1,0 +1,265 @@
+##
+## environments/test-stand/inventory.yaml
+##
+## The published test stand (insight-test.cfabric.org) — the cluster CI
+## upgrades to the umbrella chart it just published on merge to `main`
+## (constructorfabric/insight#2244), then seeds and smoke-tests.
+##
+## ─────────────────────────────────────────────────────────────────────────
+## THIS ENV MANAGES THE UMBRELLA AND NOTHING ELSE
+## ─────────────────────────────────────────────────────────────────────────
+## Every other environment in this tree assumes the gitops layer owns the
+## whole stack: `make bootstrap` installs ingress-nginx / cert-manager /
+## sealed-secrets, `make system-*` installs the datastores as Bitnami
+## releases into `insight-infra`, and `make deploy` puts the umbrella on
+## top. This stand is NOT built that way, and pretending otherwise would
+## be actively destructive:
+##
+##   what               this tree's default model      the test stand
+##   ─────────────────  ─────────────────────────────  ────────────────────────
+##   datastores         Bitnami charts, one release    Kubernetes OPERATORS,
+##                      each, all in `insight-infra`   each in its OWN
+##                      (`make system-<svc>`)          namespace, installed and
+##                                                     owned outside this repo
+##   edge               ingress-nginx + Ingress        Envoy Gateway + Gateway
+##                      objects rendered by the        API HTTPRoutes, RENDERED
+##                      chart                          BY THE CHART from
+##                                                     `gateway.route` and
+##                                                     `keycloak.route`, and
+##                                                     attached to a shared
+##                                                     Gateway this repo does
+##                                                     not own
+##   secrets            sealed-secrets controller +    plain Secrets, pre-created
+##                      `make seal` + committed        once and composed from the
+##                      SealedSecret manifests         datastore namespaces by the
+##                                                     L0/L2 bring-up scripts
+##   namespaces         `insight` + `insight-infra`    `insight` only; there is
+##                                                     no `insight-infra`
+##
+## So: every `bootstrap.*` and every `system.*` toggle below is false, and
+## nothing is sealed. This env is a values overlay plus a cluster address —
+## the L0 (cluster prereqs) and L2 (datastores, Envoy Gateway, Airbyte,
+## Argo) layers are brought up and owned elsewhere. See README.md in this
+## directory for the ownership boundary and the exact deploy command, and
+## INFRA.md for what those layers must be, component by component.
+##
+
+# ─── Cluster targeting ─────────────────────────────────────────────────
+#
+# This name is an ASSERTION, not a lookup: `make`'s `kube-ctx` target
+# refuses to run unless `kubectl config current-context` equals it. That
+# check is the only thing standing between a mistyped KUBECONFIG and an
+# upgrade landing on a cluster that is not this one, so the value is
+# deliberately specific rather than something generic like `default`
+# (a name several kubeconfigs use, which would make the guard pass by
+# accident).
+#
+# Consequence: whoever produces a kubeconfig for this stand must NAME the
+# context this. CI writes its kubeconfig from the `insight-test-stand`
+# GitHub environment and renames the context to match. A human holding an
+# admin kubeconfig whose context is called something else either renames
+# it (`kubectl config rename-context <old> insight-test-stand`) or passes
+# `KUBE_CTX=<their context>` on the make command line — KUBE_CTX is a `?=`
+# assignment, so the command line and the shell environment both win over
+# this file.
+kubeContext: insight-test-stand
+
+# TRUE, deliberately: this stand is published on the public internet and
+# people look at it. `make deploy` therefore refuses to run unless the
+# operator repeats the env name back:
+#
+#     make deploy ENV=test-stand CONFIRM=yes-deploy-test-stand
+#
+# The token is `yes-deploy-<ENV>`, built by the Makefile's `confirm`
+# target — for this env, exactly `yes-deploy-test-stand`. CI is not
+# exempt: the deploy workflow passes that literal string. That is not a
+# security control (anything running with these credentials could deploy
+# anyway), it is a typo control — it makes `ENV=test-stand` impossible to
+# reach by tab-completion or by copying a command meant for another env.
+protected: true
+
+# ─── Namespaces ────────────────────────────────────────────────────────
+namespaces:
+  # The umbrella release namespace. Everything this env touches lives
+  # here, which is also why a namespace-scoped ServiceAccount is enough
+  # for CI to deploy — no cluster-scoped grant is needed or wanted.
+  services: insight
+
+  # Read the warning before changing this.
+  #
+  # THERE IS NO INFRA NAMESPACE ON THIS STAND. The datastores run under
+  # operators in their own namespaces, none of which is called this. The
+  # key is kept because the Makefile reads `.namespaces.infra` on the
+  # deploy path and hands it to scripts/push-deploy-log.sh, which tries a
+  # port-forward to a Loki Service in it. That Service does not exist
+  # here, the port-forward times out in a few seconds, and the Makefile
+  # appends `|| true` — so the deploy-log push is a no-op for this env by
+  # construction. Nothing else on the deploy path reads it.
+  #
+  # It is spelled with the default value rather than something invented so
+  # that a reader diffing this file against another env sees "same as
+  # everywhere else, and unused here" instead of wondering what a novel
+  # namespace name means.
+  infra: insight-infra
+
+# ─── L3 helm release ───────────────────────────────────────────────────
+# Must match the release already installed in `insight`. The chart hard-codes
+# `insight-`-prefixed in-cluster DNS in several places (the keycloakConfig
+# URL below among them), so this is not freely renameable.
+release: insight
+
+# ─── Deploy shape ──────────────────────────────────────────────────────
+#
+# What makes `make deploy ENV=test-stand` represent THIS stand rather than a
+# sandbox. Each key below existed as a reason not to use the official target;
+# declaring them is what lets CI and an operator run the same command.
+deploy:
+  # NO `--atomic`, and this is a property of a disposable stand rather than a
+  # preference. `--atomic` rolls a failed upgrade back to the previous
+  # revision, which here means two bad things at once: it reinstalls the
+  # PREVIOUS chart — a downgrade, on a stand whose entire job is to show what
+  # the newest one does — and it deletes the pods holding the reason it failed.
+  #
+  # Recovery here is the next merge, or wiping the stand and installing the
+  # current chart onto it. Never a rollback, and never a downgrade: reinstalling
+  # an older chart over a newer one leaves live objects in the old chart's shape
+  # that the next upgrade cannot patch, which has wedged this stand once already.
+  #
+  # Consequence handled in the Makefile, not here: with atomic off, a FAILED
+  # FIRST install leaves a release with no deployed revision, which helm then
+  # refuses to upgrade forever ("has no deployed releases"). `deploy-insight`
+  # detects that and says which command clears it.
+  atomic: false
+
+# ─── Keycloak realm ownership ──────────────────────────────────────────
+keycloak:
+  # `external` — the ConfigMap `insight-keycloak-config-realms` is written by
+  # the bring-up outside this repository, and `make keycloak-broker-realms`
+  # must not write it. This directory therefore ships no `keycloak/realms/`,
+  # and that absence is a decision rather than an omission: two writers on one
+  # object means whoever ran last decides who can log in, and neither of them
+  # reports the conflict.
+  #
+  # NOT expressed as `keycloakConfig.enabled`, which is true in every
+  # environment — the question is who owns the realm CONTENT, not whether the
+  # chart applies it.
+  realms: external
+
+# ─── Where the OIDC client secret is read from at deploy time ──────────
+#
+# The values file leaves `authenticator.oidc.clientSecret` empty because this
+# repository is public. The deploy reads it out of the cluster instead, from
+# the Secret named here, and passes it to helm — so there is exactly ONE copy
+# of the value and it is the one the realm was configured with. A second copy
+# in a CI secret store would be a second thing to rotate and a second way for
+# the two to disagree.
+#
+# The key is `client-secret` and not the `oidc-client-secret` that
+# scripts/compose-app-secrets.sh looks for; that script does not run here
+# (credentials.deploymentMode: helm), and naming the key explicitly is what
+# stops the difference from mattering.
+oidcClientSecret:
+  secret: insight-oidc
+  key: client-secret
+
+# ─── L0 — cluster prereqs (drives `make bootstrap`) ────────────────────
+#
+# ALL FALSE. `make bootstrap ENV=test-stand` is a no-op that prints four
+# skip lines, and that is the intended behaviour — running any of these
+# against this stand would install a second, competing copy of something
+# the cluster already has:
+#
+#   namespaces    — `insight` exists; the CI ServiceAccount is scoped to
+#                   it and cannot create namespaces anyway. `helm upgrade
+#                   --install --create-namespace` covers the only case
+#                   this toggle would have handled.
+#   ingressNginx  — the edge is Envoy Gateway. Installing ingress-nginx
+#                   would put a second LoadBalancer in front of the same
+#                   hostname.
+#   certManager   — already installed and owning the ClusterIssuer this
+#                   env's `authenticator.tlsDiscovery.issuerRef` names.
+#   sealedSecrets — not installed, and must not be: see `secrets:` below.
+bootstrap:
+  namespaces: false
+  ingressNginx: false
+  certManager: false
+  sealedSecrets: false
+
+# ─── L2 — shared infra (drives `make system`) ──────────────────────────
+#
+# ALL FALSE, for the same reason: every one of these is already running,
+# installed by the deployment repo, and in a different shape than
+# `make system-<svc>` would produce. `make system-clickhouse` would
+# install a Bitnami ClickHouse release into `insight-infra` alongside the
+# operator-managed one — two ClickHouses, one of them empty, and the
+# umbrella still pointed at neither by accident.
+#
+# The umbrella does not need any of them installed by us; it only needs
+# their addresses, which are the `<dep>.host` values in values.yaml.
+system:
+  mariadb: false
+  clickhouse: false
+  redis: false
+  redpanda: false
+  redpandaConsole: false
+  airbyte: false
+  argoWorkflows: false
+  # Observability: this stand exports nothing over OTLP
+  # (`observability.otlp.endpoint` is left at the chart's empty default in
+  # values.yaml, i.e. structured JSON to stdout only). Flipping these on
+  # would self-host an LGTM stack that nothing points at.
+  loki: false
+  alloy: false
+  grafana: false
+
+# ─── Secrets (drives `make seal`) ──────────────────────────────────────
+#
+# NOTHING IS SEALED FOR THIS ENV, and nothing may become sealed without a
+# deliberate decision, because every Secret this release consumes already
+# exists in the cluster with generate-once semantics:
+#
+#   insight-db-creds                  composed at bring-up from the
+#                                     credentials the ClickHouse / MariaDB /
+#                                     Redis OPERATORS generated in their own
+#                                     namespaces. Sealing a copy here and
+#                                     letting a controller apply it would
+#                                     overwrite those with values the
+#                                     datastores have never heard of, and
+#                                     every service loses its database.
+#   insight-authenticator-signing-keys the ES256 key the authenticator signs
+#                                     gateway JWTs with. Generated once. A new
+#                                     key invalidates every session and every
+#                                     JWT already in flight.
+#   insight-oidc                      the confidential OIDC client secret,
+#                                     shared with the realm. Re-materialising
+#                                     it breaks the token exchange until the
+#                                     realm is updated to match.
+#   insight-keycloak-admin            bootstrap admin for the bundled Keycloak.
+#   insight-keycloak-config           the keycloak-config-cli login, plus the
+#                                     confidential client secret the realm
+#                                     document substitutes in. Nothing more on
+#                                     this stand: the realm is seeded from the
+#                                     demo organisation with LOCAL password
+#                                     users, so there is no external IdP and
+#                                     nothing to broker to. External-IdP
+#                                     passthrough values (an upstream
+#                                     provider's client id/secret) exist only
+#                                     on a federated stand shape.
+#
+# There is also no sealed-secrets CONTROLLER and no SealedSecret CRD on this
+# cluster, so the manifests would not reconcile even if they were committed.
+#
+# This is more than documentation: `make deploy`'s `apply-app-secrets`
+# prerequisite hard-requires at least one *-sealedsecret.yaml under
+# `sealed-secrets/insight/` and aborts without one. That abort is why this
+# env does not use `make deploy` today — see README.md, "Why not `make
+# deploy`".
+secrets:
+  # Empty on purpose, not omitted: there is no infra namespace to seal into.
+  infra: []
+  services:
+    - {name: insight-db-creds, enabled: false}
+    - {name: insight-authenticator-signing-keys, enabled: false}
+    - {name: insight-oidc, enabled: false}
+    - {name: insight-keycloak-admin, enabled: false}
+    - {name: insight-keycloak-config, enabled: false}

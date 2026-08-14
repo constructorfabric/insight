@@ -88,7 +88,7 @@ export function PeerComparison({
       </div>
       {/* Min/max hug the bar (mt-1); the value pointer sits above the bar
           (ArrowDown), clear of these labels. */}
-      <div className="mt-1 grid grid-cols-2 gap-3 text-[10px] tabular-nums">
+      <div className="mt-1 grid grid-cols-2 gap-3 text-xs tabular-nums">
         <span className="text-left text-muted-foreground">
           {formatMetricValue(stats.min, format, unit)}
         </span>

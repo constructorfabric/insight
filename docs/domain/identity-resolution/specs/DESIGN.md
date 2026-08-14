@@ -1,3 +1,9 @@
+> [!WARNING]
+> **Under review — audited against the implementation and found inaccurate in places.**
+> Several capabilities it calls planned are already shipped. Read it against the code,
+> not as authority; the specific claims are listed in the repository
+> [README](../../../../README.md#backend-specs--under-review).
+
 # Technical Design — Identity Resolution
 
 
@@ -94,7 +100,7 @@ This domain is deliberately narrow: it owns the account-to-person binding (the `
 
 - `cpt-ir-adr-stable-person-id` — [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md): stable `person_id` via the append-only `persons` observation journal; three-mode seed binding; known-account rule.
 - `cpt-ir-adr-operator-decisions-as-observations` — [ADR-0003](ADR/0003-operator-decisions-as-persons-observations.md): operator corrections are ordinary journal observations; no separate decision store in v1; snapshot-based merge/split superseded.
-- `cpt-ir-adr-shared-unmapped` — [person-domain ADR-0001](../../person/specs/ADR/0001-shared-unmapped-table.md): one shared operator queue across identity and person domains (realised in v1 as the derived review queue; a shared persistent store may return with the matcher).
+- `cpt-ir-adr-shared-unmapped` — person-domain ADR-0001: one shared operator queue across identity and person domains (realised in v1 as the derived review queue; a shared persistent store may return with the matcher).
 
 **Implemented PRD requirements anchored by this design**: `cpt-ir-fr-accept-bootstrap-inputs` (the `identity_inputs` evidence intake, §3.7) and `cpt-ir-interface-analytics-resolution` (the mirror + macro analytics read path, §4.4). Incremental seed processing (`cpt-ir-fr-bootstrap-incremental`) is open: each run folds the full evidence set (REC-IR-02).
 
@@ -206,7 +212,7 @@ Deterministic matching first (exact email, exact HR ID). Fuzzy matching is opt-i
 
 ClickHouse holds the evidence and read-side tables: `identity_inputs` (connector observations) and `identity.identity_persons` (the persons-sync mirror of the journal consumed by dbt). The legacy `identity.aliases` table also physically exists in ClickHouse but is not part of the resolution path (see §3.7).
 
-The journal tables — `persons` (append-only observation log), `account_person_map` (derived SCD2 cache), `operations` (admin-operation journal) — are stored in MariaDB (see §3.7): a transactional store is the right fit for binding decisions, row-level operator corrections, and audit history. Schema is owned and applied by the `identity-resolution` Rust service itself via its embedded SeaORM `Migrator` (see [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)).
+The journal tables — `persons` (append-only observation log), `account_person_map` (derived SCD2 cache), `operations` (admin-operation journal) — are stored in MariaDB (see §3.7): a transactional store is the right fit for binding decisions, row-level operator corrections, and audit history. Schema is owned and applied by the `identity-resolution` Rust service itself via its embedded SeaORM `Migrator` (see ADR-0006).
 
 
 #### PR #55 Naming Conventions
@@ -736,7 +742,7 @@ Resolved alias-to-person mapping. Each row links one `(value_type, value)` from 
 
 Identity-attribute observation history for persons, stored in MariaDB. Each row represents one observed value of one named attribute for one source-account at one moment in time — an SCD-style append-only log. Every connector emits a `value_type='id'` observation (value = `source_account_id`) in addition to its attribute observations, which makes `persons` the **authoritative source of truth** for the account→person binding (see ADR-0002). Attribute value types include `id` (binding anchor), `email`, `display_name`, `employee_id`, `platform_id`, and is extensible to any custom field (e.g., `functional_team`).
 
-**Database**: MariaDB, database `identity` — dedicated to identity-resolution-domain tables, reached via the service's `database_url` configuration. The service does not assume co-location with any other MariaDB database; any other service owning MariaDB tables configures its own connection independently. Each backend service owns and applies its own schema — see [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md).
+**Database**: MariaDB, database `identity` — dedicated to identity-resolution-domain tables, reached via the service's `database_url` configuration. The service does not assume co-location with any other MariaDB database; any other service owning MariaDB tables configures its own connection independently. Each backend service owns and applies its own schema — see ADR-0006.
 
 **DDL**: SeaORM migrations in `src/backend/services/identity-resolution/src/migration/` (applied by the service's `migrate` subcommand). The shape below reflects the migration chain as of `m20260724_000014` — notably migration 004, which (a) moved the natural-key UNIQUE from `value_hash` to `created_at` so that legitimate value re-transitions (Active → Inactive → Active) are recordable, and (b) switched `value_id` to case-insensitive collation. The migrations are authoritative; on divergence, trust them over this table.
 
@@ -860,7 +866,7 @@ lives inside the identity-resolution service at
 `src/backend/services/identity-resolution/src/migration/`
 and is applied by the service's own SeaORM migrator via the
 `migrate` subcommand. See
-[ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)
+ADR-0006
 for the service-owned-migrations policy. The seed operates on the
 already-created tables and never issues DDL; `persons` is never
 deleted from or updated, and the only row deletion in the
@@ -906,7 +912,7 @@ See [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md) for the fu
 1. Connector secrets applied (`./secrets/apply.sh`).
 2. Kubernetes deploy (`cd deploy/gitops && make deploy ENV=<env>`) — installs Airbyte + Argo Workflows (L2 system) and the Insight umbrella chart (L3 app). The umbrella's `identity-db-init-job` Helm pre-install Job provisions the `identity` MariaDB database and grants. The identity-resolution pod then starts and applies its sea-orm migrations (including the `persons` table) at startup via `run_migrations(&db)` in `main.rs`.
 3. `./src/ingestion/reconcile-connectors.sh` — registers connectors, creates Airbyte connections + per-connector CronWorkflows. (ClickHouse migrations run via the `clickhouse-migrate` Helm Hook Job on helm install/upgrade in step 2, not from a host script.)
-4. Airbyte sync produces Bronze data (`./sync-all.sh` + wait).
+4. Airbyte sync produces Bronze data (`./run-sync.sh` + wait).
 5. dbt models run to populate `identity.identity_inputs` (`dbt run --select +identity_inputs`).
 6. Seed run — the `identity-resolution seed` subcommand, scheduled by the umbrella chart (or invoked manually for ad-hoc reseeds).
 
@@ -1228,7 +1234,7 @@ The persons-seed currently folds the **full** `identity_inputs` set on every run
 
 ### REC-IR-03: Shared unmapped table for all domains — RESOLVED
 
-**Decision**: Use a single shared operator queue (owned by the IR domain) for both alias-level and person-attribute-level unresolved observations. See [ADR-0001: Shared unmapped table](../../person/specs/ADR/0001-shared-unmapped-table.md) for full rationale (also listed in §1.2 key decision records). In v1 the shared queue is realised as the derived review queue; the shared persistent table remains the plan if/when the matcher lands.
+**Decision**: Use a single shared operator queue (owned by the IR domain) for both alias-level and person-attribute-level unresolved observations. See ADR-0001: Shared unmapped table for full rationale (also listed in §1.2 key decision records). In v1 the shared queue is realised as the derived review queue; the shared persistent table remains the plan if/when the matcher lands.
 
 Reason: identical structure (both carry `insight_tenant_id`, `insight_source_id`, `insight_source_type`, `source_account_id`, `value_type`, `value`) and common data origin (`identity_inputs`). Differentiation by `value_type` values is sufficient — identity value types (`id`, `email`, `username`, `employee_id`, `platform_id`) vs person-attribute types (`display_name`, `role`, `location`, etc.). No separate `person_unmapped` table needed.
 
@@ -1290,5 +1296,5 @@ Phase 1 seed and connector models derive `insight_tenant_id` (UUID) and `insight
 - **Source walkthrough**: `inbox/architecture/EXAMPLE_IDENTITY_PIPELINE.md` — end-to-end example: Anna Ivanova
 - **Related (person domain)**: Person domain DESIGN — golden record, person attributes, person-level conflicts
 - **Related (org-chart domain)**: Org-chart domain DESIGN — org_units, person_assignments, SCD Type 2 hierarchy
-- **Related (permissions)**: `docs/architecture/permissions/PERMISSION_DESIGN.md` — permission architecture consuming identity data
+- **Related (permissions)**: `inbox/architecture/permissions/PERMISSION_DESIGN.md` — permission architecture consuming identity data
 - **Connectors**: `docs/components/connectors/hr-directory/` — HR connector specifications (sources for Bootstrap)

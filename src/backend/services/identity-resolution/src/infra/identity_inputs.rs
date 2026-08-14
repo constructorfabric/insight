@@ -66,7 +66,9 @@ use crate::domain::seed_service::IdentityInputsReader;
 /// …): a same-name `ifNull(value,'') AS value` would shadow the `value`
 /// referenced in `WHERE` and can trip a ClickHouse "Cyclic aliases" error (the
 /// .NET reader avoids this the same way). `is_delete` is derived from
-/// `operation_type`.
+/// `operation_type`. DELETE rows are closure signals that arrive with an
+/// empty `value` by the write contract, so the non-empty filter applies to
+/// UPSERT rows only — value-filtering DELETEs would drop every tombstone.
 const STREAM_SQL: &str = r"
     SELECT
         ifNull(insight_source_type, '')  AS source_type,
@@ -77,9 +79,8 @@ const STREAM_SQL: &str = r"
         toString(_synced_at)             AS synced_at,
         ifNull(operation_type, '')       AS op_type
     FROM identity.identity_inputs
-    WHERE operation_type IN ('UPSERT', 'DELETE')
-      AND value IS NOT NULL
-      AND value != ''
+    WHERE (operation_type = 'UPSERT' AND value IS NOT NULL AND value != '')
+       OR operation_type = 'DELETE'
     ORDER BY
         insight_source_type,
         insight_source_id,
@@ -166,6 +167,18 @@ fn parse_ch_datetime(s: &str) -> anyhow::Result<DateTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_sql_keeps_empty_value_delete_rows() {
+        assert!(
+            STREAM_SQL.contains("OR operation_type = 'DELETE'"),
+            "DELETE closure signals carry an empty value and must not be value-filtered"
+        );
+        assert!(
+            STREAM_SQL.contains("operation_type = 'UPSERT' AND value IS NOT NULL"),
+            "the non-empty filter applies to UPSERT rows only"
+        );
+    }
 
     #[test]
     fn parses_clickhouse_datetime_with_and_without_fraction() -> anyhow::Result<()> {

@@ -18,6 +18,7 @@ import { LoginError } from "@/components/login-error";
 import { ThemeProvider } from "@/components/theme-provider";
 import i18n from "@/i18n";
 import { queryClient } from "@/query-client";
+import { initSentry } from "@/sentry";
 import { router } from "./router";
 
 async function enableMocking(): Promise<void> {
@@ -26,6 +27,8 @@ async function enableMocking(): Promise<void> {
   const { worker } = await import("@/mocks/browser");
   await worker.start({ onUnhandledRequest: "bypass" });
 }
+
+initSentry(router);
 
 // `?__override=<email>` (view-as, insight#1941) bounces straight into the
 // login flow — before mocks, session probe, or the router touch anything.

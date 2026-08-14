@@ -21,7 +21,7 @@ one host, and `helm uninstall preview-<experiment>` removes exactly one.
 
 {{/* The URL prefix this experiment is served under, e.g. /exp/<name>. */}}
 {{- define "insight-preview.path" -}}
-{{- printf "%s/%s" (trimSuffix "/" .Values.ingress.basePath) (include "insight-preview.experiment" .) -}}
+{{- printf "%s/%s" (trimSuffix "/" .Values.route.basePath) (include "insight-preview.experiment" .) -}}
 {{- end }}
 
 {{- define "insight-preview.labels" -}}

@@ -5,7 +5,7 @@ use axum::Json;
 use axum::body::Body;
 use axum::extract::Extension;
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
-use axum::http::{HeaderValue, Response};
+use axum::http::{HeaderMap, HeaderValue, Response};
 use tokio::sync::Semaphore;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
@@ -14,11 +14,12 @@ use super::AppState;
 use crate::api::error::MetricError;
 use crate::domain::metric_drilldown::{
     EVIDENCE_QUERY_TIMEOUT_SECS, EvidenceQueryRow, MAX_EXPORT_BYTES, MAX_EXPORT_ROWS,
-    MetricDrilldownColumn, MetricDrilldownExportFormat, MetricDrilldownExportRequest,
-    MetricDrilldownRequest, MetricDrilldownResponse, MetricDrilldownRow, ValidatedMetricDrilldown,
-    build_export, build_response, compile_query, decode_evidence_rows, evidence_unavailable,
-    export_filename, export_internal, export_limit, presentation, validate_export_request,
-    validate_request, verify_evidence_snapshot, with_evidence_query_limits,
+    MetricDrilldownColumn, MetricDrilldownEntity, MetricDrilldownExportFormat,
+    MetricDrilldownExportRequest, MetricDrilldownRequest, MetricDrilldownResponse,
+    MetricDrilldownRow, ValidatedMetricDrilldown, build_export, build_response, compile_query,
+    decode_evidence_rows, evidence_unavailable, export_filename, export_internal, export_limit,
+    parse_person_entity, presentation, validate_export_request, validate_request,
+    verify_evidence_snapshot, with_evidence_query_limits,
 };
 use crate::domain::person_visibility::authorize_entity_ids;
 
@@ -36,25 +37,14 @@ static QUERY_SEMAPHORE: LazyLock<Semaphore> =
 pub async fn query_metric_drilldown(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     Json(req): Json<MetricDrilldownRequest>,
 ) -> Result<Json<MetricDrilldownResponse>, CanonicalError> {
     let started = Instant::now();
+    authorize_person_entity(&state, &ctx, &headers, &req.entity).await?;
+
     let mut req = validate_request(&state.db, &state.ch, ctx.subject_tenant_id(), req).await?;
     req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
-
-    // Visibility gate BEFORE any ClickHouse work, same predicate and failure
-    // matrix as `/v1/metric-results`: this endpoint serves per-person evidence
-    // rows — names, record labels, contributions — so an unchecked id here is
-    // the same IDOR the sibling endpoint answers 403 for.
-    authorize_entity_ids(
-        &state.identity,
-        &ctx,
-        super::forwarded_authorization(&headers),
-        &req.selection.entity.r#type,
-        &[req.person_id],
-    )
-    .await?;
 
     let log_comment = format!("metric-drilldown:page:{}", req.plan.definition.key());
     let rows = fetch_rows(&state, &req, &log_comment).await?;
@@ -75,9 +65,14 @@ pub async fn query_metric_drilldown(
 pub async fn export_metric_drilldown(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
+    headers: HeaderMap,
     Json(req): Json<MetricDrilldownExportRequest>,
 ) -> Result<Response<Body>, CanonicalError> {
     let started = Instant::now();
+    // Ahead of the permit: a caller who may not see this person must not occupy
+    // one of MAX_CONCURRENT_EXPORTS slots.
+    authorize_person_entity(&state, &ctx, &headers, &req.entity).await?;
+
     let permit = acquire_export_permit().await?;
     let deadline = tokio::time::Instant::now() + EXPORT_TIMEOUT;
 
@@ -118,6 +113,29 @@ pub async fn export_metric_drilldown(
     attachment_response(body, content_type, &export_name(&validated, extension))
 }
 
+// INVARIANT: both drilldown routes call this before validation touches MariaDB
+// or ClickHouse. They serve per-person evidence — names, record labels,
+// contributions — so an unchecked id is the IDOR `/v1/metric-results` answers
+// 403 for. Gating ahead of validation also stops its error codes (404 unknown
+// metric, 400 unhealthy evidence) from describing a person the caller cannot see.
+async fn authorize_person_entity(
+    state: &AppState,
+    ctx: &SecurityContext,
+    headers: &HeaderMap,
+    entity: &MetricDrilldownEntity,
+) -> Result<(), CanonicalError> {
+    let (entity_type, person_id) = parse_person_entity(entity)?;
+
+    authorize_entity_ids(
+        &state.identity,
+        ctx,
+        super::forwarded_authorization(headers),
+        &entity_type,
+        &[person_id],
+    )
+    .await
+}
+
 async fn acquire_export_permit() -> Result<tokio::sync::SemaphorePermit<'static>, CanonicalError> {
     // INVARIANT: the caller holds this permit across validation, fetch, and the
     // blocking serialization — the hold is the MAX_CONCURRENT_EXPORTS cap.
@@ -134,6 +152,20 @@ async fn acquire_export_permit() -> Result<tokio::sync::SemaphorePermit<'static>
         .map_err(|_| export_busy())
 }
 
+async fn acquire_query_permit() -> Result<tokio::sync::SemaphorePermit<'static>, CanonicalError> {
+    tokio::time::timeout(QUERY_ACQUIRE_TIMEOUT, QUERY_SEMAPHORE.acquire())
+        .await
+        .map_err(|_| {
+            tracing::warn!(
+                capacity = MAX_CONCURRENT_QUERIES,
+                available = QUERY_SEMAPHORE.available_permits(),
+                "metric drilldown query capacity exhausted"
+            );
+            query_busy()
+        })?
+        .map_err(|_| query_busy())
+}
+
 async fn collect_export_rows(
     state: &Arc<AppState>,
     validated: &ValidatedMetricDrilldown,
@@ -148,12 +180,17 @@ async fn collect_export_rows(
         .map_err(|_| export_limit("Export exceeded the execution time limit."))??;
     verify_evidence_snapshot(&state.ch, &validated.plan.relation, &validated.snapshot_id).await?;
 
-    if rows.len() > MAX_EXPORT_ROWS {
+    enforce_export_row_limit(rows.len())?;
+    Ok(rows)
+}
+
+fn enforce_export_row_limit(rows: usize) -> Result<(), CanonicalError> {
+    if rows > MAX_EXPORT_ROWS {
         return Err(export_limit(format!(
             "Export exceeds the {MAX_EXPORT_ROWS} row limit."
         )));
     }
-    Ok(rows)
+    Ok(())
 }
 
 async fn serialize_export(
@@ -212,10 +249,7 @@ async fn fetch_rows(
 ) -> Result<Vec<EvidenceQueryRow>, CanonicalError> {
     // INVARIANT: the permit is held across the awaited ClickHouse execution and
     // byte collection below — the hold is the MAX_CONCURRENT_QUERIES cap.
-    let _permit = tokio::time::timeout(QUERY_ACQUIRE_TIMEOUT, QUERY_SEMAPHORE.acquire())
-        .await
-        .map_err(|_| query_busy())?
-        .map_err(|_| query_busy())?;
+    let _permit = acquire_query_permit().await?;
     let (sql, params) = compile_query(req)?;
     let base = state
         .ch
@@ -314,5 +348,55 @@ mod tests {
             internal.status_code(),
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
         );
+    }
+
+    #[test]
+    fn the_export_row_limit_refuses_only_past_the_cap() {
+        assert!(enforce_export_row_limit(MAX_EXPORT_ROWS).is_ok());
+        let refused = enforce_export_row_limit(MAX_EXPORT_ROWS + 1)
+            .err()
+            .map(|error| error.status_code());
+        assert_eq!(
+            refused,
+            Some(axum::http::StatusCode::TOO_MANY_REQUESTS.as_u16())
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn export_permits_refuse_past_the_concurrency_cap() {
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONCURRENT_EXPORTS {
+            held.extend(acquire_export_permit().await.ok());
+        }
+        assert_eq!(held.len(), MAX_CONCURRENT_EXPORTS);
+        let refused = acquire_export_permit()
+            .await
+            .err()
+            .map(|error| error.status_code());
+        assert_eq!(
+            refused,
+            Some(axum::http::StatusCode::TOO_MANY_REQUESTS.as_u16())
+        );
+        drop(held);
+        assert!(acquire_export_permit().await.is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn query_permits_refuse_past_the_concurrency_cap() {
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONCURRENT_QUERIES {
+            held.extend(acquire_query_permit().await.ok());
+        }
+        assert_eq!(held.len(), MAX_CONCURRENT_QUERIES);
+        let refused = acquire_query_permit()
+            .await
+            .err()
+            .map(|error| error.status_code());
+        assert_eq!(
+            refused,
+            Some(axum::http::StatusCode::TOO_MANY_REQUESTS.as_u16())
+        );
+        drop(held);
+        assert!(acquire_query_permit().await.is_ok());
     }
 }

@@ -5,7 +5,7 @@
 # Scanner images are NOT covered: they are invoked as `docker run <image>@sha256:…`
 # inside workflow shell steps rather than as `FROM` lines, which the docker
 # ecosystem cannot see. They are refreshed by hand — see
-# docs/components/deployment/specs/sop/scanner-image-refresh.md.
+# the scanner-image refresh SOP.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -39,6 +39,10 @@ updates:
       # Python 3.14 yet, and the toolbox image the seeder ships in is 3.12.
       - dependency-name: python
         versions: [">=3.14"]
+      # Odd Node majors are never LTS — 25 ended 2026-06-01. Moving to 26 (LTS from
+      # 2026-10-28) also moves package.json engines and .nvmrc, so it is deliberate.
+      - dependency-name: node
+        versions: [">=25"]
 
   - package-ecosystem: cargo
     directory: /src/backend
@@ -123,3 +127,8 @@ updates:
     groups:
       npm:
         patterns: ["*"]
+    ignore:
+      # typescript-eslint caps its typescript peer at <6.1.0 up to and including
+      # 8.66.0, and refuses to load past it, so TS 7 breaks the ESLint job (#2371).
+      - dependency-name: typescript
+        versions: [">=6.1"]

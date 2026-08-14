@@ -57,13 +57,13 @@ describe("metricKpiTiles", () => {
     expect(active.value).toBe("14");
     // 14 sits inside the IQR (5..15) — with the pack, so no color even
     // though it's above the median.
-    expect(active.valueStatus).toBe("neutral");
+    expect(active.gapStatus).toBe("neutral");
     expect(active.delta?.text).toBe("+17%");
     expect(active.medianLabel).toBe("median 10");
     expect(active.groupId).toBe("ai_adoption");
     const lines = tiles[1]!;
     // 900 ≥ p75 15 — top quartile earns the color.
-    expect(lines.valueStatus).toBe("good");
+    expect(lines.gapStatus).toBe("good");
     expect(lines.delta).toEqual({ text: "-10%", status: "bad", down: true });
   });
 
@@ -88,11 +88,15 @@ describe("metricKpiTiles", () => {
       "me@x.com",
       "all"
     );
-    expect(tiles[0]?.valueStatus).toBe("neutral");
+    expect(tiles[0]?.gapStatus).toBe("neutral");
     expect(tiles[0]?.medianLabel).toBeNull();
   });
 
-  it("renders neutral for unmeasured people (null peer target_value)", () => {
+  it("gives no slot to a metric this person is not measured on", () => {
+    // A null peer target means no connector feeds this metric for them. It used
+    // to render "—" over one of five slots in the most valuable space on the
+    // page, while the metrics the person's work does register sit further
+    // down the screen.
     const result = metricResult("ai.active_days", 0);
     const peerView = result.views[1];
     if (peerView?.view === "peer" && peerView.values[0]) {
@@ -104,7 +108,21 @@ describe("metricKpiTiles", () => {
       "me@x.com",
       "all"
     );
-    expect(tiles[0]?.valueStatus).toBe("neutral");
+    expect(tiles).toEqual([]);
+  });
+
+  it("KEEPS the slot for a measured zero — that is a finding, not a gap", () => {
+    // The distinction the row rests on: a developer who merged nothing this
+    // month must still see the empty PR tile. Only "nobody measures this for
+    // you" drops out.
+    const result = metricResult("ai.active_days", 0);
+    const tiles = metricKpiTiles(
+      normalizeMetricResults([result]),
+      null,
+      "me@x.com",
+      "all"
+    );
+    expect(tiles.map((t) => t.key)).toEqual(["ai.active_days"]);
   });
 
   it("computes pp deltas for percent-ratio tiles (focus time)", () => {
@@ -126,5 +144,23 @@ describe("metricKpiTiles", () => {
       "all"
     );
     expect(tiles[0]?.delta?.text).toBe("+5 pp");
+  });
+});
+
+describe("one finding, one mark", () => {
+  it("puts the peer verdict on the line that states the comparison", () => {
+    // One standing, one mark — and on the sentence that explains it. Colouring
+    // the value put a cohort verdict and a period trend in one red/green
+    // channel, so a red number beside a green badge read as a contradiction
+    // rather than as two different facts.
+    const result = metricResult("ai.active_days", 2);
+    const tiles = metricKpiTiles(
+      normalizeMetricResults([result]),
+      null,
+      "me@x.com",
+      "all"
+    );
+    expect(tiles[0]?.gapStatus).toBe("bad");
+    expect(tiles[0]?.gapText).not.toBeNull();
   });
 });

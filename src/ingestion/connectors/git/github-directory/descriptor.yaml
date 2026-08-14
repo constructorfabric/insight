@@ -11,7 +11,13 @@
 
 name: github-directory
 # Strict semver per ADR-0015.
-version: "1.0.0"
+#
+# 1.0.1 — the manifest stopped storing absent profile fields as the text
+# "None" (#2393). The bump is what makes that reach Airbyte at all: reconcile
+# republishes a nocode manifest only on descriptor-version drift, so the
+# previous manifest-only change was live in the repo and inert on every
+# cluster.
+version: "1.0.2"
 # `nocode` = declarative-manifest connector (connector.yaml published to the
 # Airbyte builder), as opposed to `cdk`. MUST be `nocode`/absent for
 # declarative connectors: reconcile only branches on `nocode` vs `cdk` — any
@@ -20,7 +26,7 @@ type: nocode
 schedule: "30 3 * * *"       # 03:30 UTC daily
 workflow: sync               # Argo workflow template: ingestion-pipeline
 
-dbt_select: "tag:github_directory+"
+dbt_select: "tag:github-directory+"
 
 connection:
   namespace: "bronze_github_directory"

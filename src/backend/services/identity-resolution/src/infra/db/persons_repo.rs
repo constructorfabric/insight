@@ -6,7 +6,13 @@
 //! `infra::db` module docs + constructorfabric/gears-rust#4239), so we run them
 //! as **raw SQL** via SeaORM's `Statement` and read columns off the
 //! `QueryResult`. Running the same SQL as the .NET service keeps resolution
-//! behaviour identical.
+//! behaviour identical — with ONE deliberate deviation the .NET service never
+//! needed: rows naming the excluded-person sentinel (ADR-0003; only the Rust
+//! correction verbs can mint them) are filtered AFTER the latest-wins ranking,
+//! so an excluded account resolves as no person rather than as the shared
+//! sentinel, and an older binding is never resurrected past an exclusion.
+
+use std::collections::HashMap;
 
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
@@ -15,6 +21,8 @@ use sea_orm::{
 use uuid::Uuid;
 
 use super::entities::persons;
+use crate::domain::person_card::{self, CARD_VALUE_TYPES, PersonCard};
+use crate::domain::resolution::EXCLUDED_PERSON;
 
 /// Resolve the set of `person_id`s whose CURRENT email (latest observation per
 /// source instance) equals `email` within the tenant.
@@ -51,6 +59,7 @@ pub async fn resolve_person_ids_by_email(
         FROM ranked
         WHERE rn = 1
           AND value_id = ?
+          AND person_id != ?
     ";
 
     let stmt = Statement::from_sql_and_values(
@@ -59,6 +68,7 @@ pub async fn resolve_person_ids_by_email(
         [
             tenant_id.as_bytes().to_vec().into(),
             email.trim().to_owned().into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
         ],
     );
 
@@ -101,12 +111,19 @@ pub async fn resolve_person_id_by_email_any_tenant(
         SELECT person_id
         FROM ranked
         WHERE rn = 1
+          AND person_id != ?
         ORDER BY created_at DESC, id DESC
         LIMIT 1
     ";
 
-    let stmt =
-        Statement::from_sql_and_values(DbBackend::MySql, SQL, [email.trim().to_owned().into()]);
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [
+            email.trim().to_owned().into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
+        ],
+    );
 
     match db.query_one(stmt).await? {
         Some(row) => {
@@ -168,6 +185,7 @@ pub async fn resolve_person_id_by_source_any_tenant(
         SELECT person_id
         FROM ranked
         WHERE rn = 1
+          AND person_id != ?
         ORDER BY created_at DESC, id DESC
         LIMIT 1
     ";
@@ -175,7 +193,11 @@ pub async fn resolve_person_id_by_source_any_tenant(
     let stmt = Statement::from_sql_and_values(
         DbBackend::MySql,
         SQL,
-        [source_type.to_owned().into(), external_id.to_owned().into()],
+        [
+            source_type.to_owned().into(),
+            external_id.to_owned().into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
+        ],
     );
 
     match db.query_one(stmt).await? {
@@ -220,6 +242,7 @@ pub async fn resolve_person_ids_by_source_id(
         FROM ranked
         WHERE rn = 1
           AND value_id = ?
+          AND person_id != ?
     ";
 
     let stmt = Statement::from_sql_and_values(
@@ -232,6 +255,7 @@ pub async fn resolve_person_ids_by_source_id(
             // Source-native ids are matched as-is (the .NET service trims only
             // email, not the id path).
             value.to_owned().into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
         ],
     );
 
@@ -272,6 +296,7 @@ pub async fn persons_in_tenant(
         .column(persons::Column::PersonId)
         .filter(persons::Column::InsightTenantId.eq(tenant_id.as_bytes().to_vec()))
         .filter(persons::Column::PersonId.is_in(person_ids.iter().map(|id| id.as_bytes().to_vec())))
+        .filter(persons::Column::PersonId.ne(EXCLUDED_PERSON.as_bytes().to_vec()))
         .distinct()
         .into_tuple::<Vec<u8>>()
         .all(db)
@@ -285,12 +310,162 @@ pub async fn person_exists(
     tenant_id: Uuid,
     person_id: Uuid,
 ) -> anyhow::Result<bool> {
+    // The excluded-person sentinel accumulates journal rows once any account
+    // is excluded, but it is not a person and the read API must not serve it.
+    if person_id == EXCLUDED_PERSON {
+        return Ok(false);
+    }
+
     let found = persons::Entity::find()
         .filter(persons::Column::InsightTenantId.eq(tenant_id.as_bytes().to_vec()))
         .filter(persons::Column::PersonId.eq(person_id.as_bytes().to_vec()))
         .one(db)
         .await?;
     Ok(found.is_some())
+}
+
+/// Find persons whose CURRENT observed values match every search term
+/// (case-insensitive substring). "Current" is the same window rule
+/// [`resolve_person_ids_by_email`] applies — the latest observation per
+/// person × source × value type — so a value superseded by that person's own
+/// newer data stops matching, while a value two persons both currently claim
+/// returns both. Ordered by `person_id` for a stable page; the API layer
+/// re-sorts for display.
+///
+/// INVARIANT: this is a deliberate tenant-bounded scan, not a missing index.
+/// A substring match over the journal cannot use a B-tree, and a derived
+/// current-values table would be one more cache to keep in sync with every
+/// write path. The consumer is the admin picker — one debounced human — and
+/// the scan is bounded by the tenant filter and the six searchable value
+/// types. Revisit as a derived table only if measured slow at real scale.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn search_persons_by_current_values(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    terms: &[String],
+    limit: u64,
+) -> anyhow::Result<Vec<Uuid>> {
+    if terms.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // One EXISTS per term: every term must match SOME current value of the
+    // person, not necessarily the same one ("iva example.com" finds a person
+    // via name + email together).
+    let mut sql = String::from(
+        r"
+        WITH ranked AS (
+            SELECT
+                person_id,
+                value_effective,
+                ROW_NUMBER() OVER (
+                    PARTITION BY person_id, insight_source_type, insight_source_id, value_type
+                    ORDER BY created_at DESC, id DESC
+                ) AS rn
+            FROM persons
+            WHERE insight_tenant_id = ?
+              AND value_type IN ('email', 'username', 'display_name',
+                                 'first_name', 'last_name', 'employee_id')
+        ),
+        current_vals AS (
+            SELECT person_id, value_effective
+            FROM ranked
+            WHERE rn = 1 AND value_effective IS NOT NULL
+        )
+        SELECT DISTINCT cv.person_id
+        FROM current_vals cv
+        WHERE cv.person_id != ?
+    ",
+    );
+    for _ in terms {
+        sql.push_str(
+            " AND EXISTS (SELECT 1 FROM current_vals t \
+              WHERE t.person_id = cv.person_id AND t.value_effective LIKE ? ESCAPE '!')",
+        );
+    }
+    sql.push_str(" ORDER BY cv.person_id LIMIT ?");
+
+    let mut values: Vec<sea_orm::Value> = vec![
+        tenant_id.as_bytes().to_vec().into(),
+        EXCLUDED_PERSON.as_bytes().to_vec().into(),
+    ];
+    values.extend(terms.iter().map(|t| like_pattern(t).into()));
+    values.push(limit.into());
+
+    let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
+    person_ids_from_rows(db.query_all(stmt).await?)
+}
+
+/// `%…%` LIKE pattern for a term, with the wildcard characters neutralised via
+/// the `!` escape (declared in the query) — `50%` searches for a literal
+/// percent sign instead of everything.
+fn like_pattern(term: &str) -> String {
+    let escaped = term
+        .replace('!', "!!")
+        .replace('%', "!%")
+        .replace('_', "!_");
+    format!("%{escaped}%")
+}
+
+/// Hydrate person cards for MANY persons in one query — the shared id→display
+/// read behind every operator response that embeds cards (queue candidates,
+/// person search). Only the CURRENT observation per person × source × value
+/// type leaves the database (the same `rn = 1` window the resolvers use): the
+/// journal is append-only, and shipping a person's full re-observation history
+/// to collapse it in Rust would grow every response with tenant age. The Rust
+/// collapse then picks the latest across sources. An id the journal holds no
+/// card attributes for is simply absent from the map, and the caller renders
+/// it via [`PersonCard::empty`].
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub async fn person_cards(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_ids: &[Uuid],
+) -> anyhow::Result<HashMap<Uuid, PersonCard>> {
+    if person_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let id_placeholders = vec!["?"; person_ids.len()].join(", ");
+    let type_list = CARD_VALUE_TYPES
+        .iter()
+        .map(|t| format!("'{t}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        r"
+        SELECT id, value_type, insight_source_type, insight_source_id,
+               insight_tenant_id, value_id, value_full_text, value,
+               value_effective, value_hash, person_id, author_person_id,
+               reason, created_at
+        FROM (
+            SELECT p.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY person_id, insight_source_type, insight_source_id, value_type
+                       ORDER BY created_at DESC, id DESC
+                   ) AS rn
+            FROM persons p
+            WHERE insight_tenant_id = ?
+              AND person_id IN ({id_placeholders})
+              AND value_type IN ({type_list})
+        ) current_rows
+        WHERE rn = 1
+    "
+    );
+
+    let mut values: Vec<sea_orm::Value> = vec![tenant_id.as_bytes().to_vec().into()];
+    values.extend(person_ids.iter().map(|id| id.as_bytes().to_vec().into()));
+
+    let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
+    let rows = persons::Entity::find().from_raw_sql(stmt).all(db).await?;
+
+    Ok(person_card::assemble_cards(rows))
 }
 
 /// Fetch every observation row for a person within the tenant (all value types,
@@ -507,6 +682,18 @@ fn person_ids_from_rows(rows: Vec<QueryResult>) -> anyhow::Result<Vec<Uuid>> {
 mod tests {
     use super::*;
     use crate::infra::db;
+
+    #[test]
+    fn like_pattern_neutralises_wildcards() {
+        for (term, expected) in [
+            ("alice", "%alice%"),
+            ("50%", "%50!%%"),
+            ("a_b", "%a!_b%"),
+            ("bang!", "%bang!!%"),
+        ] {
+            assert_eq!(like_pattern(term), expected, "term: {term:?}");
+        }
+    }
 
     /// Integration test against a live MariaDB. Data-dependent (dev cluster).
     /// Set `IDENTITY_TEST_DB_URL` + `IDENTITY_TEST_TENANT_ID` + `IDENTITY_TEST_EMAIL`

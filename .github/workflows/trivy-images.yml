@@ -49,12 +49,9 @@ jobs:
           # Python connectors
           - source-active-directory-insight
           - source-bitbucket-cloud-insight
-          - source-github-copilot-insight
-          - source-github-v2-insight
           - source-gitlab-insight
           # Keep the waiver on the entry line: the GitLab detector reads this image name as a token.
           - source-hubspot-insight # trufflehog:ignore
-          - source-salesforce-insight
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -135,10 +132,19 @@ jobs:
           out.close()
           PY
 
+      - name: Give the image scans their own tool name
+        # Code scanning reports missing configurations per tool, and only this nightly
+        # can produce these categories — keep them off the Trivy check PRs see (#2266).
+        if: ${{ always() && hashFiles('trivy-image.sarif') != '' }}
+        run: |
+          set -euo pipefail
+          jq '.runs[].tool.driver.name = "Trivy Images"' trivy-image.sarif > renamed.sarif
+          mv renamed.sarif trivy-image.sarif
+
       - name: Upload SARIF to GitHub Code Scanning
         # Guard: a failed pull must not also report a missing SARIF.
         if: ${{ always() && hashFiles('trivy-image.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           sarif_file: trivy-image.sarif
           # Per-image category: one analysis per image, so alerts never overwrite each other.

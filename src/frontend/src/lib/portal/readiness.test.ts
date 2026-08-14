@@ -47,20 +47,25 @@ describe("partitionByReadiness", () => {
 describe("nav classification invariants", () => {
   it("hiding planned work still leaves every zone the portal can render", () => {
     const { live } = partitionByReadiness(ZONES, false);
-    // The five zones with real views must survive the strictest filter.
+    // Every zone with a real view must survive the strictest filter.
     expect(live.map((z) => z.id)).toEqual([
       "overview",
       "directions",
       "person",
       "people",
       "aicost",
+      "reports",
       "manage",
     ]);
   });
 
-  it("Manage keeps exactly the two surfaces that read live data", () => {
+  it("Manage keeps exactly the three surfaces that read live data", () => {
     const { live } = partitionByReadiness(MANAGE_ITEMS, false);
-    expect(live.map((i) => i.id)).toEqual(["metric-catalog", "data-health"]);
+    expect(live.map((i) => i.id)).toEqual([
+      "metric-catalog",
+      "identities",
+      "data-health",
+    ]);
   });
 
   it("every Overview item is live — that zone has no placeholders", () => {

@@ -2,7 +2,8 @@
 HR / focus metrics generator.
 
 Produces one row per person per day in `silver.class_focus_metrics` —
-the table that drives `insight.ic_kpis.focus_time_pct` and `dev_time_h`.
+the table that drives the `collab.focus_time_pct` and `collab.dev_time_h`
+metrics via the `focus_hours` / `working_hours` measures.
 
 `working_hours_per_day` is the headline number HR consumers see;
 `meeting_hours` matches what the collab.meeting generator produces;

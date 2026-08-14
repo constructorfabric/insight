@@ -9,10 +9,8 @@ import {
 } from "@/components/ui/select";
 import type { SliceDim } from "@/lib/insight/slices";
 import { PLANNED_SLICES } from "@/lib/insight/slices";
-import {
-  usePortalNavActions,
-  usePortalSlice,
-} from "@/lib/portal/portal-nav";
+import { NO_COHORT_REASON } from "@/lib/portal/cohort-options";
+import { usePortalNavActions, usePortalSlice } from "@/lib/portal/portal-nav";
 
 /**
  * "No slice" — the whole roster is one cohort and views stay per-person. The
@@ -35,6 +33,17 @@ export function SliceSelect({ dims }: { dims: SliceDim[] }) {
   const { setSlice } = usePortalNavActions();
   const slice = usePortalSlice();
   const all = [TEAM_SLICE, ...dims, ...PLANNED_SLICES];
+  // Slices are discovered by enumerating people and grouping them by an
+  // attribute, so a viewer whose roster holds only themselves has nothing to
+  // group: identity serves a viewer their own subtree, and an individual
+  // contributor's subtree is one person. Their attributes are all there —
+  // there is simply no second value for any of them.
+  //
+  // The comparisons on screen still happen: the peer view compares within the
+  // person's organization unit, decided server-side. What is missing is the
+  // CHOICE, and a control offering exactly one option states the opposite —
+  // it reads as a setting the reader picked, not as the only thing available.
+  const hasChoice = dims.length + PLANNED_SLICES.length > 0;
   const current = slice || TEAM_KEY;
   const value = all.some((d) => d.key === current) ? current : TEAM_KEY;
   const label = all.find((d) => d.key === value)?.label ?? "Team (all)";
@@ -43,16 +52,22 @@ export function SliceSelect({ dims }: { dims: SliceDim[] }) {
       value={value}
       onValueChange={(v) => setSlice(v && v !== TEAM_KEY ? v : "")}
     >
-      <SelectTrigger size="sm" aria-label="Slice by" className="w-32 md:w-48">
-        <SelectValue>
-          <span className="hidden md:inline">Slice: </span>
-          {label}
-        </SelectValue>
+      {/* The trigger carries the VALUE only; the word "Cohort" labels the
+          control from outside, next to the tooltip that explains it. Inside,
+          it read as part of the value and repeated on every option list. */}
+      <SelectTrigger
+        size="sm"
+        aria-label="Cohort"
+        className="w-32 md:w-44"
+        disabled={!hasChoice}
+        title={hasChoice ? undefined : NO_COHORT_REASON}
+      >
+        <SelectValue>{label}</SelectValue>
       </SelectTrigger>
       <SelectContent align="end">
         <SelectGroup>
           <SelectLabel className="text-xs text-muted-foreground">
-            Slice by
+            Compare against
           </SelectLabel>
           {all.map((d) => (
             <SelectItem key={d.key} value={d.key}>

@@ -22,6 +22,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -89,7 +90,12 @@ CANONICAL_ENV: dict[str, str] = {
 # instead of shipping.
 _FORBIDDEN_LITERALS = frozenset(
     {
-        "insight-dev",  # keycloak_realm dev password
+        "insight-dev",  # keycloak_realm dev password (the default)
+        # The runtime persona password too, when a stand overrides the default —
+        # mirrors keycloak_realm.DEV_PASSWORD without importing it (no cycle).
+        os.environ.get(
+            "INSIGHT_SEED_PERSONA_PASSWORD", "insight-dev"
+        ),  # RULE-DEFAULTS-OK: same tagged default as keycloak_realm.DEV_PASSWORD
         "insight-authenticator-dev-secret",  # keycloak_realm client secret
         "insight-local",  # MariaDB / ClickHouse dev password
         "root-local",  # MariaDB root password
@@ -339,8 +345,34 @@ def render_manifest(doc: dict[str, Any]) -> str:
     return json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
+#: The line CI greps for: `grep -m1 '^SEED_MANIFEST_JSON: ' | cut -d' ' -f2-`.
+#: A single physical line, so the pod-log transport needs no parser.
+SENTINEL_PREFIX = "SEED_MANIFEST_JSON: "
+
+#: CRI reassembles a container's log line up to this many bytes; longer and
+#: `grep -m1` on the far side would capture a fragment, not the document.
+_SENTINEL_MAX_BYTES = 16 * 1024
+
+
+def emit_manifest_sentinel(doc: dict[str, Any]) -> None:
+    """Print the compact-JSON sentinel line the CI capture step greps for."""
+    line = SENTINEL_PREFIX + json.dumps(
+        doc, separators=(",", ":"), sort_keys=True, ensure_ascii=False
+    )
+    size = len(line.encode("utf-8"))
+    if size > _SENTINEL_MAX_BYTES:
+        raise RuntimeError(
+            f"manifest sentinel line is {size} bytes, over the {_SENTINEL_MAX_BYTES}-byte "
+            "CRI line-reassembly bound"
+        )
+    print(line)
+
+
 def write_manifest(doc: dict[str, Any], path: Path | None = None) -> Path:
+    # The scrub gate runs before either transport touches `doc`: the sentinel
+    # line and the file are two renderings of the one object it already cleared.
     assert_no_credentials(doc)
+    emit_manifest_sentinel(doc)
     target = path or manifest_path()
     target.write_text(render_manifest(doc), encoding="utf-8", newline="\n")
     return target

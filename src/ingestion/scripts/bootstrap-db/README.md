@@ -47,21 +47,15 @@ Throw it away with `docker rm -f bootstrap-db-clickhouse`.
 
    ```yaml
 connectors:
-  salesforce:
-    path: crm/salesforce
+  hubspot:
+    path: crm/hubspot
     config:
+      hubspot_access_token:
+        value: fake
       insight_source_id:
-        value: salesforce-acme-prod
+        value: hubspot-acme-prod
       insight_tenant_id:
         value: fake
-      salesforce_client_id:
-        value: fake
-      salesforce_client_secret:
-        value: fake
-      salesforce_instance_url:
-        value: https://mycompany.my.salesforce.com
-      salesforce_start_date:
-        value: "2024-01-01"
   example-live-catalog-connector:
     path: category/name
     config:

@@ -11,11 +11,9 @@ schemas:
       tenant_id: {type: string}
       source_id: {type: string}
       unique_key: {type: string}
-      repo_owner: {type: string}
-      repo_name: {type: string}
+      repository: {type: string}
       sha: {type: string}
       filename: {type: string}
       status: {type: string}
       additions: {type: integer}
       deletions: {type: integer}
-      source_type: {type: string}

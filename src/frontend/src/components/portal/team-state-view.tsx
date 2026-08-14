@@ -29,6 +29,8 @@ import type { TeamMember } from "@/types/insight";
 import { useCohortLabel } from "@/lib/portal/use-cohort-label";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { useMemberGridData } from "@/queries/member-grid";
+import { TEXT_FIGURE } from "@/lib/type-scale";
+import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
 
@@ -208,7 +210,7 @@ export function TeamStateView() {
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">
+        <h1 className="text-lg font-semibold tracking-tight">
           {teamName ? `${teamName}'s team` : "Team"}
         </h1>
         <p className="text-sm text-muted-foreground">
@@ -223,7 +225,7 @@ export function TeamStateView() {
             <Card key={s.key}>
               <CardContent className="p-4">
                 <div className="text-xs font-medium text-muted-foreground">{s.label}</div>
-                <div className="mt-1 text-2xl font-semibold tabular-nums">{s.text}</div>
+                <div className={cn("mt-1", TEXT_FIGURE)}>{s.text}</div>
                 <div className="text-xs text-muted-foreground">{s.kind}</div>
               </CardContent>
             </Card>

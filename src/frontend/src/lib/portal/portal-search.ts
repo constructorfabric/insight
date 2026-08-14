@@ -24,6 +24,8 @@ export interface PortalSearch {
   zone?: string;
   /** Selected item within a zone (an Overview view, a Manage surface). */
   item?: string;
+  /** Selected account inside the Identities surface (an opaque account key). */
+  acct?: string;
   /** Expanded direction + its active lens, within the Directions zone. */
   dir?: string;
   lens?: string;
@@ -70,6 +72,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
   return {
     zone: str(raw.zone),
     item: str(raw.item),
+    acct: str(raw.acct),
     dir: str(raw.dir),
     lens: str(raw.lens),
     // Lower-cased to match `normalizePersonId`: the same id reaches us from a
@@ -92,6 +95,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
 export const PORTAL_SEARCH_KEYS = [
   "zone",
   "item",
+  "acct",
   "dir",
   "lens",
   "scope",
@@ -119,6 +123,26 @@ export type PortalSearchPatch =
   | ((prev: PortalSearch) => Partial<PortalSearch>);
 
 /**
+ * Merge a patch into the current search, clearing a key by setting it to
+ * `undefined` rather than removing it.
+ *
+ * The distinction is load-bearing. `retainSearchParams` restores any listed key
+ * that is ABSENT from the result — its test is `key in copy` — so a deleted key
+ * comes straight back with its old value. Present-but-undefined passes through
+ * untouched, and both the serialiser and `validatePortalSearch` omit it.
+ */
+export function applySearchPatch(
+  prev: Record<string, unknown>,
+  patch: Partial<PortalSearch>,
+): Record<string, unknown> {
+  const next = { ...prev };
+  for (const [key, value] of Object.entries(patch)) {
+    next[key] = value === "" || value === false ? undefined : value;
+  }
+  return next;
+}
+
+/**
  * `replace` exists because not every write is a navigation the reader made.
  * An effect that pins the landing zone or syncs the scope from the route is
  * CORRECTING the URL, not moving through the app — pushing those makes Back
@@ -139,12 +163,7 @@ export function useSetPortalSearch(): (
         search: (prev: Record<string, unknown>) => {
           const resolved =
             typeof patch === "function" ? patch(prev as PortalSearch) : patch;
-          const next = { ...prev };
-          for (const [k, v] of Object.entries(resolved)) {
-            if (v === undefined || v === "" || v === false) delete next[k];
-            else next[k] = v;
-          }
-          return next;
+          return applySearchPatch(prev, resolved);
         },
         replace: opts?.replace ?? false,
       });

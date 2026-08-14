@@ -137,6 +137,38 @@ def test_login_normalized_is_lowercased(http_mocker: HttpMocker) -> None:
     assert record["unique_key"] == f"test-tenant:test-source:{ORG}:dev-one"
 
 
+def test_absent_profile_fields_are_empty_not_the_text_none(http_mocker: HttpMocker) -> None:
+    """A field GitHub does not expose must arrive as `''`, never as `"None"`.
+
+    GitHub returns `null` for a member's e-mail unless it is verified and
+    visible to the token's scopes, so this is the COMMON case, not an edge one.
+    These fields carry `value_type: string`, which renders a Jinja `none` as the
+    four-character text `None` — a value, not an absence. Identity anchors on
+    e-mail, so every such member would share one "address" and be grouped into a
+    single person: one member's sign-in would then load another's profile.
+
+    Asserted as `''` rather than as a real NULL deliberately.
+    `fields_history` detects changes with `curr != prev`, which yields NULL
+    across a NULL boundary in ClickHouse and emits NO history row in either
+    direction — so a field that later gained a value would never be observed at
+    all. `''` compares normally and the downstream filters already read it as
+    absence.
+    """
+    config = GitHubDirectoryConfigBuilder().build()
+    http_mocker.post(
+        HttpRequest(GRAPHQL_URL, body=_body()),
+        _page([_member("dev-one", 7001, email=None, name=None, company=None)]),
+    )
+
+    record = read_stream(CONNECTOR, _STREAM, config).records[0].record.data
+
+    for field in ("email", "name", "company"):
+        assert record[field] == "", (
+            f"{field} came through as {record[field]!r}; anything other than '' "
+            f"is stored as a value and groups unrelated members together"
+        )
+
+
 def test_pagination_injects_cursor(http_mocker: HttpMocker) -> None:
     config = GitHubDirectoryConfigBuilder().build()
     http_mocker.post(

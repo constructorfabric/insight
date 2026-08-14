@@ -9,7 +9,7 @@ models:
         tests:
           - not_null
       - name: data_source
-        description: "Source system discriminator (e.g. 'jira', 'youtrack')"
+        description: "Source system discriminator (e.g. 'jira')"
         tests:
           - not_null
       - name: event_id

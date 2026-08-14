@@ -100,6 +100,7 @@ from .stand import (
     resolve_base_url,
     resolve_endpoint,
 )
+from .vectors import distinct_vectors, governs_vector, quality_vectors
 from .wait import wait_for, wait_until
 
 __all__: Sequence[str] = (
@@ -157,12 +158,15 @@ __all__: Sequence[str] = (
     "default_identity_url",
     "default_manifest_path",
     "default_token_url",
+    "distinct_vectors",
     "expected_realm_roles",
+    "governs_vector",
     "identity_path",
     "load_manifest",
     "open_service_session",
     "open_session",
     "persona_password",
+    "quality_vectors",
     "resolve_base_url",
     "resolve_by_realm_role",
     "resolve_endpoint",

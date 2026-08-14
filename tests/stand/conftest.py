@@ -54,8 +54,11 @@ from insight_stand import (  # noqa: E402  (import follows the sys.path bootstra
     coverage,
     default_identity_url,
     default_manifest_path,
+    distinct_vectors,
+    governs_vector,
     open_service_session,
     open_session,
+    quality_vectors,
     resolve_by_realm_role,
     resolve_endpoint,
 )
@@ -66,6 +69,37 @@ from insight_stand import (  # noqa: E402  (import follows the sys.path bootstra
 CAPABILITY_MARKERS: dict[str, str] = {
     "requires_ingestion": "ingestion",
     "requires_service_principal": "service_principals",
+}
+
+# `requires_seed` fixtures a stand may legitimately not have, mapped to why.
+#
+# Everything else in a manifest's fixture catalog is the canonical roster, and a
+# canonical name that is absent means the stand was seeded wrong — the session
+# aborts, which is the contract `pytest_collection_modifyitems` documents below.
+# These names are different: the seeder is CONFIGURED not to write them on some
+# stands, so their absence is a property of the stand and resolves like a
+# capability marker — skip that item, with a reason, and run the rest.
+#
+# This is not a new policy, it is the one already written down. tests/stand/
+# README.md, "Cross-tenant refusal": "A cluster stand turns it off … so tests
+# declaring `requires_seed('other_tenant_lead')` skip rather than fail". The
+# seeder says the same from the other side, in
+# src/ingestion/tools/seed/insight_seed/manifest.py, where advertising an absent
+# second tenant "would turn every test that declares
+# requires_seed('other_tenant_lead') from a skip into a failure".
+#
+# Neither was true. The gate treated every declared name as mandatory, so on any
+# cluster stand these two tests aborted the whole session at collection: 264
+# tests, none run, exit 4, before a single request was made — and `--deselect`
+# could not rescue it, because this hook runs before pytest applies deselection.
+# Two optional-by-design tests took down the entire suite.
+OPTIONAL_SEED_FIXTURES: dict[str, str] = {
+    OTHER_TENANT_FIXTURE: (
+        "the second tenant is written only when SEED_CROSS_TENANT_FIXTURE is on, which "
+        "compose sets and a cluster stand does not (a second tenant aborts "
+        "identity-resolution's scheduled projection); cross-tenant refusal is covered on "
+        "compose"
+    ),
 }
 
 #: Where the coverage ledger lands at session end. Read by the gate
@@ -111,6 +145,11 @@ def _manifest() -> Manifest:
 # NOT re-registered here: two declarations of the same marker are two places to
 # drift, and the project config is the one a reader looks at first.
 
+# The five quality vectors of the Insight quality program are ALSO declared
+# only in tests/pyproject.toml: the gate below derives the set from the marker
+# declarations (`insight_stand.quality_vectors`) rather than re-declaring it,
+# so adding or renaming a vector is a one-file change.
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     """`--stand-manifest`, for parity with pytest-base-url's `--base-url`.
@@ -131,6 +170,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help=(
             "seed manifest describing the stand under test "
             f"(default: ${MANIFEST_PATH_ENV}, else {MANIFEST_PATH})"
+        ),
+    )
+    parser.addoption(
+        "--rebuild-lane",
+        action="store_true",
+        default=False,
+        help=(
+            "run the tests marked rebuild_lane, which trigger a scoped dbt rebuild of a gold "
+            "evidence relation through the stand's own seed image. Off by default: they need "
+            "docker beside the local compose stand, and they mutate shared stand state mid-run, "
+            "so the run they join must not share the stand with anything else"
         ),
     )
 
@@ -204,21 +254,62 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Validate data requirements before a single test runs.
 
-    Two different resolutions, on purpose:
+    Different resolutions, on purpose:
 
-    * `requires_seed` — a missing fixture means the stand was seeded wrong.
-      Every collected test is inspected, every missing name is gathered, and
-      the session aborts ONCE with all of them listed. Failing per-test would
-      report the same root cause dozens of times; failing on the first miss
-      would hide the rest and force a fix-rerun-discover loop.
     * capability markers — a missing capability is a legitimate property of
       this stand, not a defect, so it skips that item alone.
     * `requires_catalogue` — same resolution as a capability, for the rows
       `src/ingestion/tools/seed/analytics.py` writes. A stand seeded without that step is a
       real state, and a test that needs those rows must say so rather than
       assert against an empty universe and pass for the wrong reason.
+    * quality vectors — every api/ui test must carry EXACTLY ONE vector
+      marker: a module-level `pytestmark` where the whole module shares a
+      vector, per-test markers everywhere in a mixed module. Exactly one, not
+      "nearest wins": pytest markers are additive, so a module default plus a
+      function override would leave BOTH on the item and `-m` selections for
+      two vectors would overlap. The attribution is what makes a feature
+      issue's scenario tags auditable against the suite, so a wrongly-marked
+      test aborts the session like a seeding defect. Checked here, over the
+      FULL collected tree, deliberately before `-m` deselection — a vector
+      marker missing anywhere is a defect of the suite, whatever subset runs.
+    * `requires_seed` — a missing fixture means the stand was seeded wrong and
+      the session aborts. That check lives in `pytest_collection_finish`,
+      AFTER `-m` deselection, so it judges only the tests that will run.
+    * `rebuild_lane` — OPT-IN, skipped unless `--rebuild-lane` was passed.
+      Neither a capability nor a seeding fact: these tests mutate shared stand
+      state (a scoped dbt rebuild of a gold evidence relation) and shell out to
+      docker, which only works against the local compose stand. A skip rather
+      than a deselect, so `-ra` keeps the lane visible with its reason.
     """
-    del config
+    vectors = quality_vectors(config.getini("markers"))
+    misvectored = {
+        item.nodeid: sorted(named)
+        for item in items
+        if governs_vector(item.path)
+        and len(named := distinct_vectors((m.name for m in item.iter_markers()), vectors)) != 1
+    }
+    if misvectored:
+        lines = [f"  - {nodeid}: {names or ['<none>']}" for nodeid, names in misvectored.items()]
+        raise pytest.UsageError(
+            "quality vector: every stand api/ui test carries exactly one of "
+            f"({', '.join(sorted(vectors))}) — module pytestmark for a uniform module, "
+            "per-test markers throughout a mixed one (a module default PLUS a per-test marker "
+            "leaves both on the item and breaks -m selection).\n" + "\n".join(lines)
+        )
+
+    if not config.getoption("--rebuild-lane"):
+        for item in items:
+            if item.get_closest_marker("rebuild_lane") is not None:
+                item.add_marker(
+                    pytest.mark.skip(
+                        reason=(
+                            "rebuild_lane: opt-in only — pass --rebuild-lane. The test "
+                            "rebuilds a gold evidence relation through the stand's own seed "
+                            "image, so it needs docker beside the local compose stand and a "
+                            "run nothing else shares."
+                        )
+                    )
+                )
 
     try:
         manifest = _manifest()
@@ -226,28 +317,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         # UsageError aborts the session with a non-zero exit before any test
         # runs — the "refuse to start" contract.
         raise pytest.UsageError(f"stand manifest unusable: {exc}") from exc
-
-    missing: dict[str, list[str]] = {}
-    for item in items:
-        for marker in item.iter_markers(name="requires_seed"):
-            for name in marker.args:
-                if name not in manifest.seeded_names:
-                    missing.setdefault(str(name), []).append(item.nodeid)
-
-    if missing:
-        lines = [
-            f"  - {name!r} required by: {', '.join(nodeids)}"
-            for name, nodeids in sorted(missing.items())
-        ]
-        available = ", ".join(sorted(manifest.seeded_names)) or "<none>"
-        raise pytest.UsageError(
-            "requires_seed: manifest is missing fixtures needed by collected tests:\n"
-            + "\n".join(lines)
-            + f"\n  manifest: {manifest.source_path} (seeded steps: "
-            + f"{', '.join(manifest.seeded) or 'none'})"
-            + f"\n  available fixtures: {available}"
-            + "\n  Re-seed the stand:  ./dev-compose.sh test-stand seed"
-        )
 
     for item in items:
         for marker in item.iter_markers(name="requires_catalogue"):
@@ -292,6 +361,65 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                     )
                 )
             )
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Abort ONCE if the manifest lacks fixtures the SELECTED tests need.
+
+    Every selected test is inspected, every missing name is gathered, and the
+    session aborts once with all of them listed. Failing per-test would report
+    the same root cause dozens of times; failing on the first miss would hide
+    the rest and force a fix-rerun-discover loop.
+
+    Deliberately this hook and not `pytest_collection_modifyitems`: it runs
+    after the mark plugin's `-m` deselection, so `session.items` is the set
+    that will actually run. A vector-scoped run (`-m security`) against a
+    stand seeded with only the personas its tests need must not be refused
+    over fixtures that only deselected tests declare.
+    """
+    missing: dict[str, list[str]] = {}
+    for item in session.items:
+        # Per item, not per name: a name in OPTIONAL_SEED_FIXTURES describes
+        # the stand rather than a fault, so an item whose EVERY missing name
+        # is optional skips like a capability marker — but one canonical name
+        # absent still aborts, however many optional ones sit beside it.
+        absent = [
+            str(name)
+            for marker in item.iter_markers(name="requires_seed")
+            for name in marker.args
+            if name not in _manifest().seeded_names
+        ]
+        if not absent:
+            continue
+        if all(name in OPTIONAL_SEED_FIXTURES for name in absent):
+            item.add_marker(
+                pytest.mark.skip(
+                    reason=(
+                        f"requires_seed: {', '.join(sorted(absent))} not seeded on this stand "
+                        f"({_manifest().source_path}) — "
+                        + "; ".join(OPTIONAL_SEED_FIXTURES[name] for name in sorted(set(absent)))
+                    )
+                )
+            )
+            continue
+        for name in absent:
+            missing.setdefault(name, []).append(item.nodeid)
+
+    if missing:
+        manifest = _manifest()
+        lines = [
+            f"  - {name!r} required by: {', '.join(nodeids)}"
+            for name, nodeids in sorted(missing.items())
+        ]
+        available = ", ".join(sorted(manifest.seeded_names)) or "<none>"
+        raise pytest.UsageError(
+            "requires_seed: manifest is missing fixtures needed by selected tests:\n"
+            + "\n".join(lines)
+            + f"\n  manifest: {manifest.source_path} (seeded steps: "
+            + f"{', '.join(manifest.seeded) or 'none'})"
+            + f"\n  available fixtures: {available}"
+            + "\n  Re-seed the stand:  ./dev-compose.sh test-stand seed"
+        )
 
 
 # ---------------------------------------------------------------------------

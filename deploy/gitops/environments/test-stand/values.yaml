@@ -1,0 +1,727 @@
+##
+## Insight umbrella — test-stand overlay (insight-test.cfabric.org).
+##
+## The values file CI passes to `helm upgrade --install` after publishing a
+## new umbrella chart from `main` (constructorfabric/insight#2244). It is
+## also the file a human passes for a manual upgrade — there is no second,
+## hidden copy anywhere.
+##
+## ─────────────────────────────────────────────────────────────────────────
+## THE CONTRACT THIS FILE HAS TO KEEP
+## ─────────────────────────────────────────────────────────────────────────
+## An upgrade with this file must be semantically identical to the release
+## already installed on the stand, EXCEPT for the chart version. That is not
+## a nice-to-have: the first automated deploy runs against a stand that has
+## real state (a Keycloak realm, generated signing keys, database
+## credentials the operators own, a seeded tenant), and anything this file
+## says differently from the live release is a change that lands the moment
+## CI first fires — unreviewed, at merge speed, on a published stand.
+##
+## Every value below was reconciled against the running release's
+## user-supplied values (`helm get values insight -n insight`). Where the
+## originating deployment repo and the live release disagreed, the LIVE
+## value wins and the difference is called out in a comment.
+##
+## Verify before changing anything here:
+##     helm get values insight -n insight -o yaml            # what runs now
+##     make diff ENV=test-stand INSIGHT_VERSION=<version>    # render-vs-render
+##
+## ─────────────────────────────────────────────────────────────────────────
+## WHAT THIS FILE DOES NOT CONTAIN
+## ─────────────────────────────────────────────────────────────────────────
+## No secrets, and no way to reconstruct one. The repository is public.
+## Exactly one secret-shaped key exists in the chart's surface that this
+## stand needs — `authenticator.oidc.clientSecret` — and it is left empty
+## here on purpose; see the long note on it below for how the deploy
+## supplies it. Everything else the release consumes arrives through
+## `existingSecret` / `passwordSecret` references to Secrets that already
+## live in the cluster.
+##
+## In-cluster Service DNS names and the tenant UUID DO appear below. They
+## are configuration, not credentials: none of them is reachable or
+## meaningful outside this cluster, and the chart cannot dial the
+## datastores without them.
+##
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Credentials mode — deliberately NOT the gitops mode
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Every other environment in this tree runs `deploymentMode: gitops` +
+# `autoGenerate: false`, because the gitops model pre-creates
+# `insight-db-creds` from sealed secrets and composes the per-service config
+# Secrets with scripts/compose-app-secrets.sh.
+#
+# This env keeps `helm` + `autoGenerate: true`, matching the installed
+# release. Three independent reasons, any one of which is sufficient:
+#
+#  1. The chart wraps `insight-analytics-config`,
+#     `insight-authenticator-config` and `insight-identity-resolution-config`
+#     in `{{- if .Values.credentials.autoGenerate }}`. Flipping to gitops
+#     mode makes the chart stop emitting all three, so they are present in
+#     the previous release manifest and absent from the new one — i.e. Helm
+#     DELETES them mid-upgrade, and the services that mount them via
+#     `envFrom` fail to start. Recovering needs a `helm.sh/resource-policy:
+#     keep` annotation applied to all three BEFORE the upgrade. That is a
+#     migration, not a values change.
+#
+#  2. `autoGenerate: true` does not generate anything here. The chart reuses
+#     an existing `insight-db-creds` through `lookup`, which works because
+#     this stand is upgraded with `helm upgrade` (a live API server) and not
+#     rendered by a reconcile loop. The rotation hazard the chart's own
+#     values.yaml warns about is specific to `helm template`, where `lookup`
+#     returns nil — it does not apply to this deploy path. The chart's
+#     validator enforces the pairing in the other direction anyway: it
+#     refuses `gitops` + `autoGenerate: true`.
+#
+#  3. Under gitops mode the three config Secrets would instead be composed
+#     by scripts/compose-app-secrets.sh, which reads the OIDC client secret
+#     from `insight-oidc` under the key `oidc-client-secret`. The Secret on
+#     this stand carries that value under the key `client-secret`. The
+#     script's lookup would miss, fall back to the (correctly empty)
+#     `authenticator.oidc.clientSecret` below, and write a BLANK client
+#     secret into the authenticator's config — a confidential OIDC client
+#     with no secret, i.e. login broken on the next pod restart, with every
+#     pod still reporting healthy.
+#
+# Switch to gitops mode only as its own reviewed change, with the keep
+# annotations applied first and the key-name mismatch resolved.
+credentials:
+  deploymentMode: helm
+  autoGenerate: true
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  keycloak — the chart's bundled IdP (insight-keycloak subchart)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The stack's own Keycloak (ADR-0003): a stateless `start` Deployment whose
+# entire state lives in the MariaDB `keycloak` database — created and
+# granted by the chart's `mariadb-init-svcdbs` hook Job precisely because
+# `deploy: true` here — with realm content coming exclusively from the
+# keycloakConfig Job below.
+#
+# It is published at /kc by the `keycloak.route` block below — still inside
+# this `keycloak:` key, past the database wiring — which the umbrella renders
+# as an HTTPRoute the RELEASE owns. Not an Ingress: the chart's `ingress` keys
+# are gone, and one written here would be silently ignored. And no longer a
+# manifest applied beside the release either — this directory used to carry
+# manifests/httproute-keycloak.yaml and does not any more. See that block for
+# why the hand-applied copy had to go rather than stay on as a belt-and-braces
+# duplicate.
+keycloak:
+  deploy: true
+  # Advertised issuer base — the URL the browser AND the authenticator pod
+  # both resolve. MUST end in /kc: Keycloak 26's hostname-v2 does not fold
+  # `--http-relative-path` into the advertised issuer, so the prefix has to
+  # be part of the hostname the subchart passes.
+  hostname: "https://insight-test.cfabric.org/kc"
+  admin:
+    # Generate-once bootstrap admin, created by the L0/L2 bring-up outside
+    # this repo. Not sealed, not templated, not rotated by a deploy.
+    existingSecret: "insight-keycloak-admin"
+  database:
+    # The operator's single-writer Service, for the same reason as
+    # `mariadb.host` below — see that comment.
+    host: "mariadb-primary.mariadb.svc.cluster.local"
+    port: 3306
+    name: "keycloak"
+    # The existing application user. The chart's init Job grants it the
+    # `keycloak` database, so no separate MariaDB user or credential exists
+    # for Keycloak — the password is the same `mariadb-password` already in
+    # `insight-db-creds`.
+    username: "insight"
+    passwordSecret: {name: "insight-db-creds", key: "mariadb-password"}
+
+  # ───────────────────────────────────────────────────────────────────────
+  # keycloak.route — the /kc edge, and the ONLY thing that publishes it
+  # ───────────────────────────────────────────────────────────────────────
+  # The umbrella renders this block as an HTTPRoute owned by the release, so
+  # `helm upgrade` creates it and patches it on every deploy. That is exactly
+  # why the hand-written manifests/httproute-keycloak.yaml this directory used
+  # to carry was DELETED rather than kept alongside as a second copy: two
+  # writers on one object means whoever ran last decides where /kc points, and
+  # neither writer reports the conflict. The old manifest's reasoning did not
+  # disappear with it — it is restated here and in the `route:` keys below.
+  #
+  # Keycloak rides the APPLICATION's hostname because it has no DNS record of
+  # its own. That is safe only because Gateway API gives the longest matching
+  # PathPrefix priority, so the gateway route's "/" cannot swallow /kc.
+  #
+  # Ordering note for a namespace rebuild: Gateway API awards a contested path
+  # to the OLDEST route. A stale route still claiming /kc has to be deleted
+  # BEFORE this one is rendered, not after — otherwise the upgrade succeeds,
+  # the HTTPRoute is `Accepted`, and requests keep going to the stale backend.
+  route:
+    # /kc on the SAME public hostname as the application. Keycloak serves
+    # under /kc natively (--http-relative-path), so there is no rewrite here
+    # and the prefix is part of the advertised issuer above — strip it and
+    # discovery breaks in a way that looks like a TLS problem.
+    enabled: true
+    host: insight-test.cfabric.org
+    parentRef:
+      name: insight
+      namespace: envoy-gateway-system
+      sectionName: https
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  keycloakConfig — realm as code (ADR-0003)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The chart's keycloak-config-cli post-install/post-upgrade hook Job applies
+# whatever realm files are in the ConfigMap `<release>-keycloak-config-realms`
+# against the server above, with the import cache OFF — so the realm is
+# re-imposed on every deploy and admin-console edits do not survive.
+#
+# Keep this banner anchored immediately above `keycloakConfig:`. It used to
+# sit higher up, between `keycloak:` and `keycloak.route`, where the
+# indentation invited every reader to attribute the whole essay to the route —
+# and none of it is about the route. It documents the key directly below it
+# and nothing else.
+#
+# OWNERSHIP, and why this env does not ship a `keycloak/realms/` directory:
+#
+# That ConfigMap is created OUTSIDE the Helm release by the deployment
+# repo's bring-up script; the chart only reads it. Keeping it that way means
+# an upgrade through this file re-applies the realm content that is already
+# on the stand and changes nothing about login.
+#
+# The gitops Makefile has a competing mechanism — the `keycloak-broker-realms`
+# target packs `environments/<ENV>/keycloak/realms/*` into that same
+# ConfigMap name, with no placeholder rendering. Adding such a directory here
+# would make two writers fight over one object: a manual bring-up and a CI
+# deploy would each revert the other's realm, and whoever ran last would
+# decide whether anyone can log in.
+#
+# Note what a checked-in realm would have to be on THIS stand, which is not
+# what that Makefile target was built for. The realm here is `insight` — the
+# roster realm the seeder GENERATES at deploy time from the same roster module
+# that writes `identity.persons`, so the two stay projections of one source.
+# Checking a realm into this tree would mean a literal document restating
+# every roster uuid and local password, maintained by hand against a generator
+# that can change — and a realm and a person table that disagree produce a
+# login that authenticates and then resolves to nobody. (It would NOT mean
+# deciding what to do about an external IdP's client credentials: this stand
+# federates to nothing. That question belongs to the federated `insight-broker`
+# shape, not here.) Moving realm ownership into this tree is therefore a
+# deliberate follow-up, not a side effect of adding this environment.
+keycloakConfig:
+  enabled: true
+  # The subchart's in-release Service over plain HTTP; the /kc relative path
+  # is part of the URL. `allowInsecureUrl` is required for a non-https URL
+  # and is acceptable only because this hop never leaves the cluster network
+  # — TLS terminates at the edge for the public name.
+  url: "http://insight-keycloak:8085/kc"
+  allowInsecureUrl: true
+  # The Job takes this Secret by `envFrom`, so every key in it becomes an env
+  # var — both the config-cli login and whatever the realm's `$(env:VAR)`
+  # placeholders resolve against. `keycloakConfig.extraEnv` is left unset here,
+  # so this Secret is the only source of those, and its KEY NAMES are the
+  # contract rather than an incidental detail.
+  #
+  # It is recomposed at bring-up from two Secrets that already live in this
+  # namespace, and on a seeded stand it carries exactly two things:
+  #
+  #   * the config-cli login, keyed KEYCLOAK_USER / KEYCLOAK_PASSWORD — the
+  #     bootstrap admin from `insight-keycloak-admin`, which is who the Job
+  #     authenticates to the server above as; and
+  #   * the confidential client secret, from `insight-oidc`, which the Job
+  #     pushes into the realm's `insight-authenticator` client on every deploy
+  #     so the realm's copy and the authenticator's copy cannot drift. It is
+  #     the same value the `--set-string` for `authenticator.oidc.clientSecret`
+  #     below reads, out of that same `insight-oidc` Secret — one source of
+  #     truth, not two copies to rotate.
+  #
+  # It does NOT carry the tenant id, and must not be made to. The Job sets
+  # INSIGHT_TENANT_ID in its own `env:` block from `global.tenantDefaultId`, so
+  # storing it here would add another copy of that UUID to the list already
+  # enumerated at `global.tenantDefaultId` — one that drifts silently because
+  # the Job's own value would keep winning.
+  #
+  # And it does not carry any external IdP's OAuth credentials. An earlier
+  # version of this comment said it did; that describes the OTHER stand shape —
+  # the federated `insight-broker` realm, where Keycloak brokers login to an
+  # upstream provider and needs that provider's client id and secret to do it.
+  # This stand runs the seeded `insight` realm with local password users and
+  # federates to nothing, so there is no upstream, no OAuth app, and nothing to
+  # register one with. Adapting this file for a federated stand means ADDING
+  # those keys here; their absence is not something that has gone missing.
+  existingSecret: "insight-keycloak-config"
+  # The generated roster realm is JSON, and the chart's default pattern is
+  # "/config/*.yaml" only. config-cli errors on a glob that matches nothing,
+  # so this names exactly the pattern this stand's ConfigMap contains — in
+  # seeded mode the broker realm's YAML is not packed at all.
+  filesLocations: "/config/*.json"
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Global
+# ═══════════════════════════════════════════════════════════════════════════
+global:
+  # The stand's single tenant. Not a credential — an identifier the deploy
+  # cannot work without: the chart's default is empty, and an empty tenant
+  # fails closed in the analytics metric-catalog resolver and in
+  # identity-resolution's bootstrap-admin seed.
+  #
+  # This UUID has to stay equal to THREE other places or the stand
+  # silently half-works: `ingestion.reconcile.tenantId` below,
+  # `authenticator.oidc.defaultTenantId` below, and the value the seeder
+  # discovers from the composed `insight-identity-resolution-config` Secret
+  # at seed time (src/ingestion/tools/seed/seed-stand.sh reads it from the
+  # cluster rather than taking a flag, so a drift here silently seeds a
+  # tenant nobody can log into).
+  tenantDefaultId: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
+  # Not set, and worth knowing why: `observability.otlp.endpoint` is left at
+  # the chart's empty default, which means every service emits structured
+  # JSON to stdout and exports no OTLP. There is no collector on this stand
+  # to export to (all `system.*` toggles in inventory.yaml are false), and a
+  # non-empty endpoint pointed at nothing costs every pod a retry loop.
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Datastores — all external, all operator-managed, none deployed by us
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The umbrella never runs a datastore; these four blocks are pure wiring —
+# the host/port/database/username strings the app services and the chart's
+# init Jobs dial. Passwords are NOT here: each subchart defaults its
+# `passwordSecret` to a key of `insight-db-creds`, which the L0/L2 bring-up
+# composed from the credentials the operators generated.
+#
+# There is no `deploy: false` on these blocks. The chart has no deploy
+# switch for any datastore, so such a key would read like an off switch
+# someone could flip and would in fact be ignored.
+
+clickhouse:
+  # A PER-POD Service, not the cluster-wide one, and that distinction is
+  # load-bearing.
+  #
+  # The chart is not cluster-aware: no template emits `ON CLUSTER`, there is
+  # no cluster-name value, and the objects it creates are
+  # ReplacingMergeTree / MergeTree / View rather than Replicated*, so nothing
+  # is synchronised between servers. Pointed at a Service that fans out
+  # across replicas, each new HTTP connection can land on a different server,
+  # so the post-install migration's DDL statements are distributed across
+  # independent servers that then disagree about which tables exist — the
+  # failure surfaces as ClickHouse's UNKNOWN_TABLE from whichever server
+  # answers a later statement. Airbyte writes and analytics reads would
+  # scatter the same way.
+  #
+  # `chi-<chi>-<cluster>-<shard>-<replica>` is the Altinity operator's
+  # per-pod Service, so this name always resolves to exactly one server. It
+  # is used even where the installation currently runs a single replica: the
+  # guarantee then lives in this file rather than in a replica count, so
+  # scaling out cannot silently reintroduce round-robin DDL.
+  #
+  # Revisit if the chart learns `ON CLUSTER` DDL and Replicated engines.
+  host: chi-clickhouse-clickhouse-0-0.clickhouse.svc.cluster.local
+  port: 8123
+  database: insight
+  username: insight
+
+mariadb:
+  # The operator's `-primary` Service, not the all-members one.
+  #
+  # MariaDB runs here as a Galera cluster, which certifies every write
+  # across all members. Concurrent writers arriving on different members
+  # through a round-robin Service produce certification conflicts, which a
+  # schema-migration Job — many statements, one transaction each, no retry —
+  # surfaces as lock-wait/deadlock errors and a failed upgrade. The operator
+  # keeps `-primary` pointed at a single member and moves it on failover, so
+  # this address gives a single writer without pinning a pod name.
+  host: mariadb-primary.mariadb.svc.cluster.local
+  port: 3306
+  database: insight
+  username: insight
+
+redis:
+  # The replication group's primary Service — NOT a Redis Cluster endpoint.
+  #
+  # The authenticator's Redis client is compiled without cluster support
+  # (src/backend/Cargo.toml enables only tokio-comp and connection-manager;
+  # the Rust `redis` crate feature-gates cluster behind "cluster"), and it
+  # opens a plain standalone connection. A clustered Redis answers MOVED for
+  # any key the contacted node does not own, and that client cannot follow
+  # the redirect — so every session operation whose key hashes to a slot
+  # owned by another node fails, and /auth/login returns 500. Sessions are
+  # not optional: a Redis the authenticator cannot address means nobody can
+  # log in, which is exactly what the smoke gate is there to catch.
+  #
+  # docs/components/backend/specs/DESIGN.md states the same contract
+  # ("Redis: Single instance; Sentinel for HA"), and every other environment
+  # in this tree points at a `redis-master` Service.
+  #
+  # `-master` selects on the operator's redis-role=master label, so it
+  # follows a failover without the client noticing.
+  host: redis-master.redis.svc.cluster.local
+  port: 6379
+
+redpanda:
+  # ONE comma-separated `host:PORT` bootstrap string, not a host/port pair
+  # like the datastores above — the chart hands this to a Kafka client
+  # verbatim, so a bare hostname silently becomes host:9092 and never
+  # connects. 9093 is the internal Kafka API listener of the redpanda chart.
+  # Confirm the port on a stand with:
+  #   kubectl -n redpanda get svc redpanda \
+  #     -o jsonpath='{range .spec.ports[*]}{.name}={.port}{"\n"}{end}'
+  brokers: redpanda.redpanda.svc.cluster.local:9093
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Ingestion
+# ═══════════════════════════════════════════════════════════════════════════
+ingestion:
+  templates:
+    # The umbrella's Argo WorkflowTemplates / CronWorkflows. On this stand
+    # Argo Workflows is installed (outside this repo) and configured to watch
+    # this namespace, so the templates are useful here — unlike the local
+    # sandbox, where they are off because the controller only watches its own
+    # namespace.
+    #
+    # Note what this implies for a namespace rebuild: the templates pin
+    # `serviceAccountName: argo-workflow`, a ServiceAccount the chart
+    # references but does not create. It exists on the stand today, applied
+    # outside the release. See README.md, "What this env does not own".
+    enabled: true
+  reconcile:
+    # Must equal `global.tenantDefaultId`. Two copies of one UUID is a drift
+    # risk the chart does not check for us.
+    tenantId: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
+    destinationName: clickhouse-bronze
+    # `<argo-release-name>-<argo-namespace>` — the instance id the Argo
+    # controller filters Workflows on. A wrong value here produces Workflows
+    # that are created and never picked up.
+    argoInstanceId: "argo-workflows-argo"
+  airbyteSync:
+    # How long a connector may sit idle before the sync loop treats it as
+    # stalled, in seconds. Chart default carried forward.
+    idleThresholdSeconds: 3600
+
+airbyte:
+  # `namespace` does two things and only one of them is the URL: it also
+  # decides where the chart renders the Role/RoleBinding that lets the
+  # reconcile loop read Airbyte's own auth Secret. Left empty it defaults to
+  # the release namespace, so the RBAC would land in `insight`, where that
+  # Secret does not exist — and connector provisioning then fails at run time
+  # while every pod still looks healthy.
+  namespace: airbyte
+  # Deliberately empty: the chart computes
+  # http://<release>-airbyte-server-svc.<namespace>.svc.cluster.local:8001
+  # from the release name and the namespace above, which is the address on
+  # this stand. Set it only for a non-standard URL.
+  apiUrl: ""
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Application services
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# No image overrides anywhere in this file, on purpose. Each subchart renders
+# `image.tag | default .Chart.AppVersion`, so a published chart version
+# already names a coherent, tested set of images — which is the whole premise
+# of deploying by chart version. Pinning one service's tag here would hold it
+# on a different build from everything around it and make the deployed state
+# unreadable from the chart version alone.
+
+analytics:
+  replicaCount: 1 # chart default is 2; one is enough for a test stand
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+
+frontend: # the web UI (dashboard)
+  replicaCount: 1
+  route:
+    # Correct, and also the chart's own default: the UI is never published
+    # directly. The gateway owns the only public route and proxies "/" to
+    # this Service, so a second entry point here would bypass the auth edge
+    # entirely.
+    #
+    # `route`, not `ingress`: the chart grew native Gateway API HTTPRoute
+    # templates, so the edge is expressed in values rather than in manifests
+    # applied beside the release. The `ingress` keys are gone; leaving one
+    # here would be silently ignored, which is the failure mode that keeps
+    # dead keys alive in values files for months.
+    enabled: false
+
+gateway:
+  replicaCount: 1
+  route:
+    # The public entry point, and now rendered BY THE CHART. This replaces the
+    # pair of HTTPRoute manifests this directory used to carry: the umbrella
+    # gained native Gateway API templates, so the release owns the routes, and
+    # a hand-applied copy beside it would be a second writer on one object.
+    #
+    # `host` must match `authenticator.oidc.redirectUri` and the `issuerUrl`
+    # below — the browser is redirected to all three, and a mismatch shows up
+    # as a login that loops rather than as a routing error.
+    enabled: true
+    host: insight-test.cfabric.org
+    parentRef:
+      # The shared Envoy Gateway, which lives in the controller's own
+      # namespace — a namespace this deploy's credential cannot see at all.
+      # It does not need to: attaching to a Gateway is a reference, and the
+      # `Accepted` condition the deploy checks afterwards is written onto the
+      # HTTPRoute in THIS namespace.
+      name: insight
+      namespace: envoy-gateway-system
+      sectionName: https
+  resources:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 500m, memory: 128Mi}
+    # No `gateway.routes` override. Overriding a list REPLACES the chart's
+    # table rather than merging into it, so any route a later chart release
+    # adds would silently stop being served — which is the opposite of what a
+    # deploy-the-newest-chart stand wants. Re-add only to CHANGE a route, never
+    # to restate the defaults, and diff against the gateway subchart's
+    # values.yaml first. ("/" and "/auth/*" are not in that table at all: the
+    # gateway generates them from its frontUrl and authenticatorUrl, which is
+    # why the UI and login work with no route entry.)
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Authenticator — OIDC login, Redis sessions, gateway-JWT mint
+# ═══════════════════════════════════════════════════════════════════════════
+authenticator:
+  replicaCount: 1
+
+  # Honour `/auth/login?__override=<email>` — the session is minted for that
+  # person instead of the authenticated one.
+  #
+  # TRUE here because it is true on the installed release, and this file's
+  # job is to be equivalent to what runs. It is NOT endorsed: the chart's own
+  # values.yaml says this is for dev/demo environments only and "MUST stay
+  # false anywhere real users log in", and the service gates it on this flag
+  # alone — no role check, and it resolves an email regardless of tenant. On
+  # a stand reachable from the internet that is a standing impersonation
+  # primitive available to anyone who can complete a login.
+  #
+  # Changing it to false is a behaviour change to a published stand and does
+  # not belong in the change that introduces this environment; it is filed as
+  # a follow-up. If the smoke suite ends up depending on this flag to reach
+  # multiple personas, that dependency must be stated out loud rather than
+  # inherited quietly.
+  overrideEnabled: true
+
+  # Origins accepted for state-changing requests. Exactly the public origin —
+  # the same host as `oidc.redirectUri` and the HTTPRoute hostname.
+  csrfOrigins:
+    - "https://insight-test.cfabric.org"
+
+  tlsDiscovery:
+    enabled: true
+    issuerRef:
+      # Must name the ClusterIssuer the cluster's cert-manager actually has;
+      # the bring-up outside this repo validates that the two agree. A typo
+      # here leaves the authn-tls sidecar without a certificate and the
+      # authenticator unreachable from the gateway.
+      name: insight-ca
+      kind: ClusterIssuer
+
+  oidc:
+    # Realm `insight` — the roster realm generated from the demo seed's own
+    # organisation — NOT `insight-broker`, which is the GitHub-federated one.
+    # This stand is the CI stand: no GitHub login, no OAuth app, nobody
+    # signing in by hand, so its people are the seeded roster and they carry
+    # local passwords. That single decision is what makes an automated
+    # multi-persona login possible here at all.
+    #
+    # Consequence worth stating: the stand is only useful once the seeder has
+    # run. Logins resolve against `identity.persons` rows the seeder writes,
+    # so an unseeded stand authenticates a user and then denies them.
+    #
+    # Served at /kc on the public hostname. The authenticator resolves this
+    # URL ITSELF at startup for discovery, so the name has to be reachable
+    # from inside the cluster as well as from the browser — which is why it is
+    # the public name and not an in-cluster Service address.
+    issuerUrl: "https://insight-test.cfabric.org/kc/realms/insight"
+    clientId: "insight-authenticator"
+
+    # ─────────────────────────────────────────────────────────────────────
+    # EMPTY ON PURPOSE — and the deploy MUST supply it.
+    # ─────────────────────────────────────────────────────────────────────
+    # This is the confidential client's secret. The repository is public, so
+    # it cannot live here, and it must not be reconstructible from anything
+    # here.
+    #
+    # It is NOT optional: with `credentials.autoGenerate: true` the chart
+    # writes this value straight into the authenticator's config Secret. An
+    # upgrade that leaves it empty produces a confidential OIDC client with a
+    # blank secret — the pods stay Ready, the release reports `deployed`, and
+    # the authorization-code exchange fails for every login.
+    #
+    # The deploy passes it at apply time, from the Secret that already holds
+    # it in this namespace:
+    #
+    #   --set-string authenticator.oidc.clientSecret="$(kubectl -n insight \
+    #       get secret insight-oidc -o jsonpath='{.data.client-secret}' \
+    #       | base64 -d)"
+    #
+    # Reading it out of the cluster rather than out of a GitHub secret is
+    # deliberate: the cluster copy is the one the realm was configured with,
+    # so there is exactly one source of truth and no second copy to rotate.
+    # It costs the CI credential a `get` on this one Secret. If that grant is
+    # unacceptable, the alternative is a value in the `insight-test-stand`
+    # GitHub environment — but then rotating the realm's client secret means
+    # rotating two places, and forgetting one breaks login silently.
+    clientSecret: ""
+
+    redirectUri: "https://insight-test.cfabric.org/auth/callback"
+
+    # `openid` alone is correct here and is not an oversight. An earlier
+    # version of this comment argued it from the broker client's
+    # `fullScopeAllowed: false` and its fixed default scopes — that is the
+    # federated realm, which this stand no longer uses. The reason on the
+    # seeded realm is different and simpler.
+    #
+    # The generated realm attaches its claim mappers to the CLIENTS directly,
+    # not to a client scope. In
+    # src/ingestion/tools/seed/insight_seed/keycloak_realm.py,
+    # `_protocol_mappers()` builds five mappers — `tenant_id` and `org_unit`
+    # (oidc-usermodel-attribute-mapper), `groups`, `roles`, and the
+    # `aud-insight` audience mapper — and the SAME list is handed to both
+    # clients as `protocolMappers`, in `_client_insight()` and
+    # `_client_insight_authenticator()`. `build_realm()` emits `realm`,
+    # `roles`, `groups`, `users` and `clients` and nothing else: the document
+    # declares no `clientScopes`, no `defaultClientScopes` and no
+    # `optionalClientScopes` at all. A client's own dedicated mappers run on
+    # every token that client issues, unconditionally — they are not gated on
+    # a scope being requested — so the claims the login bootstrap needs are
+    # already in the id_token with `openid` as the only scope. `idp_sub`
+    # arrives by the same mechanism: the deploy post-processes the generated
+    # document to add one more attribute mapper on each client (see
+    # `externalIdClaim` below).
+    #
+    # Consequence for a future edit: adding a scope name here cannot ADD a
+    # claim, because nothing here is scope-gated — but a scope the realm does
+    # not have configured makes the authorization request fail outright with
+    # `invalid_scope`, i.e. login stops working to gain nothing. A new claim is
+    # added in the generator as a mapper, never here as a scope.
+    scopes: ["openid"]
+
+    # How a logged-in principal is resolved to a person row. The login
+    # bootstrap calls
+    #   GET /internal/persons/by-external-id?source_type=<sourceType>
+    #                                       &external_id=<the externalIdClaim>
+    # and fails CLOSED when there is no match — there is no email fallback,
+    # by design.
+    #
+    # These two values are GLOBAL to the authenticator: the per-host issuer
+    # map (ADR-0003) can override only issuerUrl / clientId / clientSecret /
+    # redirectUri / defaultTenantId, never these. So every realm this
+    # deployment serves must key its people the same way, which is the
+    # constraint any change to how CI logs in has to satisfy.
+    #
+    # `keycloak`, matching the seeded realm above. The seeder writes
+    # (insight_source_type='keycloak', value_type='id', value_id=<roster uuid>)
+    # and the realm generator pins each realm user to that same uuid, so the
+    # login-bootstrap lookup finds the person.
+    #
+    # The seed Job's IDP_SOURCE_TYPE must equal this. It is not repeated
+    # anywhere: seed-stand.sh reads it back out of insight-authenticator-config.
+    #
+    # ─────────────────────────────────────────────────────────────────────
+    # `idp_sub` — and specifically NOT `sub`. Read this before "fixing" it.
+    # ─────────────────────────────────────────────────────────────────────
+    # `sub` is the obvious answer and it is wrong here, in a way that looks
+    # like a data problem rather than a configuration one.
+    #
+    # The realm generator sets each realm user's `id` to that person's roster
+    # uuid (`_user()` in keycloak_realm.py returns `"id": person.uuid`), and
+    # on a Keycloak REALM IMPORT that id is what `sub` carries — which is what
+    # makes `sub` look correct. But the chart does not import the realm: the
+    # keycloakConfig Job runs keycloak-config-cli, which creates users one at
+    # a time through the admin REST API, and Keycloak assigns its OWN id on
+    # `POST /users` and silently discards the document's. So on this stand
+    # `sub` is a Keycloak-internal uuid that matches nothing the seeder ever
+    # wrote to `identity.persons`.
+    #
+    # The deploy therefore copies the roster uuid into an `idp_sub` user
+    # attribute and adds an `oidc-usermodel-attribute-mapper` that emits it —
+    # a custom claim carrying the id `sub` would have carried under an import.
+    # (Keycloak 26's declarative user profile must also allow that attribute
+    # through, or it is dropped on creation and the mapper emits nothing.)
+    #
+    # Change this to `sub` and every persona still authenticates — password
+    # accepted, tokens issued, pods healthy, release `deployed` — and is then
+    # denied at the callback with `login denied: no matching person in
+    # Identity`, against a fully populated `identity.persons`. Nothing in that
+    # signal points back at this line. INFRA.md §11 has the same warning.
+    sourceType: "keycloak"
+    externalIdClaim: "idp_sub"
+
+    # Fallback tenant for an id_token without a tenant claim. Must equal
+    # `global.tenantDefaultId`; empty would fail closed.
+    defaultTenantId: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Identity Resolution — the only identity service, plus its two CronJobs
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# There is no `identity:` block anywhere in this file. The .NET identity
+# service was removed from the umbrella; `identity.*` keys are no longer read
+# by anything, so one written here would be silently ignored rather than
+# rejected.
+identityResolution:
+  deploy: true
+  databaseName: "identity"
+
+  # persons-seed: rebuilds the identity org projection — `persons`,
+  # `account_person_map`, `org_chart` — in MariaDB from the ClickHouse
+  # `identity_inputs` observation history the seeder populates.
+  #
+  # ON so its CronJob object EXISTS for seed-stand.sh to force once,
+  # synchronously, after every CI seed (`kubectl create job --from=cronjob`).
+  # It is what makes person metrics non-null. `resolve_person_id()`
+  # (src/ingestion/dbt/macros/resolve_person_id.sql) binds an account to a
+  # person by INNER JOINing the seeded account evidence in `identity_inputs`
+  # to the `value_type='id'` rows in `identity.identity_persons` on
+  # (source_type, source_id, account_id). The seeder writes login bindings only
+  # under the IdP source type (`keycloak`) — not under the connector/HR source
+  # types the account evidence carries — so without this run there is no
+  # connector-account binding to join to, every `*_metric_observations` model
+  # (which filters `entity_id != ''`) selects nothing, and the API answers 200
+  # with a null for every metric.
+  #
+  # persons-seed writes exactly the missing bindings: it LINKS each connector
+  # account to the seeded roster person by e-mail — resolve_assignments'
+  # `LinkedByEmail`, matching the account's e-mail to the person the seeder
+  # already wrote it under — so the roster UUID the login resolves to is the
+  # same UUID gold attributes activity to. Safe over a seeded stand: it APPENDS
+  # to `persons` (INSERT IGNORE — seed_repo.rs), so the login rows survive and
+  # logins keep resolving; it rebuilds account_person_map/org_chart from
+  # `persons`, and the HR directory's supervisorEmail reaches `identity_inputs`,
+  # so the org_chart it derives matches the seeder's. This is the same flow the
+  # compose stand runs (dev-compose.sh `seed_identity_projection`).
+  #
+  # The 06:30 schedule is inert between merges — nothing rebuilds gold overnight,
+  # so served metrics do not change until the next reseed. The projection that
+  # matters is the one seed-stand.sh forces right after each seed.
+  seed:
+    enabled: true
+    schedule: "30 6 * * *" # chart default; the CI seed forces a run, not the cron
+    # Trimmed from the chart's 100m/128Mi request: these are transient Jobs
+    # and two of them fire within fifteen minutes of each other. Limits stay
+    # at the chart's ceiling so a real run can burst.
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+      # No `tenantDefaultId` here: for an umbrella install the composed
+      # identity-resolution config Secret already carries the tenant from
+      # `global.tenantDefaultId`. Setting it here would add a fourth copy of
+      # the same UUID that can drift; the key exists for standalone installs
+      # whose Secret does not carry one.
+
+  # Publishes that MariaDB persons log into ClickHouse, where the metrics
+  # models resolve email -> person_id against it. Deliberately 15 minutes
+  # after the seed: the seed rewrites the log, the sync publishes it. Each
+  # run is a full snapshot plus an atomic swap, so the ordering is a
+  # freshness concern, never a correctness one.
+  sync:
+    enabled: true
+    schedule: "45 6 * * *" # chart default; 15 min after seed
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+
+  # Both Jobs guard their input and exit non-zero rather than publishing an
+  # empty projection: seed aborts on an empty observation read or a tenant
+  # mismatch, sync on an empty persons log. A failing Job is the guard working,
+  # not a broken install. seed-stand.sh forces both after each seed; run one by
+  # hand with:
+  #   kubectl -n insight create job --from=cronjob/insight-identity-resolution-seed seed-manual
+  #   kubectl -n insight create job --from=cronjob/insight-identity-resolution-sync sync-manual

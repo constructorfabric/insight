@@ -6,7 +6,8 @@
  * Identity/auth/router dependencies are stubbed at the module boundary;
  * assertions are about the derived semantics, not the wiring.
  */
-import { act, renderHook } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { IdentityPerson } from "@/types/insight";
@@ -23,6 +24,10 @@ const C = "cccccccc-1111-4111-8111-111111111111";
 const mocks = vi.hoisted(() => ({
   personId: "11111111-1111-4111-8111-111111111111" as string | null,
   pathname: "/" as string,
+  definitions: { metrics: [] } as { metrics: unknown[] } & Record<
+    string,
+    unknown
+  >,
   ic: {
     data: undefined as IdentityPerson | undefined,
     isPending: false,
@@ -36,6 +41,11 @@ vi.mock("@/auth", () => ({
   useViewer: () => ({ email: "viewer@x", personId: mocks.personId }),
 }));
 vi.mock("@/queries/ic-dashboard", () => ({ useIcPerson: () => mocks.ic }));
+// Only the request is stubbed; `useMetricDefinitionsResponse` itself runs, so
+// a cohort built from an attribute the catalog does not offer fails here.
+vi.mock("@/api/metric-definitions-client", () => ({
+  listMetricDefinitions: () => Promise.resolve(mocks.definitions),
+}));
 vi.mock("@tanstack/react-router", async () => {
   const { portalRouterMock } = await import("@/test/portal-router");
   return portalRouterMock();
@@ -50,7 +60,7 @@ const person = (
   personId: string,
   name: string,
   over: Partial<IdentityPerson> = {},
-  subordinates: IdentityPerson[] = [],
+  subordinates: IdentityPerson[] = []
 ): IdentityPerson =>
   ({
     person_id: personId,
@@ -68,6 +78,7 @@ const TREE = person(BOSS, "boss", { division: "R&D" }, [
 
 beforeEach(() => {
   mocks.personId = BOSS;
+  mocks.definitions = { metrics: [] };
   portalRouter.go("/");
   mocks.ic.data = TREE;
   mocks.ic.isPending = false;
@@ -89,7 +100,9 @@ describe("useActiveZone", () => {
 
   it("maps /team routes to the people zone", () => {
     portalRouter.go(`/ic/${A}/team`);
-    expect(renderHook(() => useActiveZone()).result.current.activeZone).toBe("people");
+    expect(renderHook(() => useActiveZone()).result.current.activeZone).toBe(
+      "people"
+    );
   });
 
   it("only the trailing /team segment means People", () => {
@@ -104,7 +117,9 @@ describe("useActiveZone", () => {
 
   it("tolerates a trailing slash on the team route", () => {
     portalRouter.go(`/ic/${A}/team/`);
-    expect(renderHook(() => useActiveZone()).result.current.activeZone).toBe("people");
+    expect(renderHook(() => useActiveZone()).result.current.activeZone).toBe(
+      "people"
+    );
   });
 
   it("the path wins over a stale ?zone= — the URL cannot contradict itself", () => {
@@ -114,18 +129,24 @@ describe("useActiveZone", () => {
     // IS person, whatever an older param says.
     portalRouter.go(`/ic/${A}/personal`);
     act(() => portalRouter.set({ zone: "overview" }));
-    expect(renderHook(() => useActiveZone()).result.current.activeZone).toBe("person");
+    expect(renderHook(() => useActiveZone()).result.current.activeZone).toBe(
+      "person"
+    );
   });
 
   it("uses ?zone= when the path names no zone", () => {
     portalRouter.go("/portal");
     act(() => portalRouter.set({ zone: "overview" }));
-    expect(renderHook(() => useActiveZone()).result.current.activeZone).toBe("overview");
+    expect(renderHook(() => useActiveZone()).result.current.activeZone).toBe(
+      "overview"
+    );
   });
 
   it("falls back to the viewer for a non-person route", () => {
     portalRouter.go("/metrics");
-    expect(renderHook(() => useActiveZone()).result.current.activePerson).toBe(BOSS);
+    expect(renderHook(() => useActiveZone()).result.current.activePerson).toBe(
+      BOSS
+    );
   });
 });
 
@@ -139,7 +160,9 @@ describe("useViewerIsManager", () => {
 
   it("is not a manager for a leaf node (IC shell)", () => {
     mocks.personId = A;
-    expect(renderHook(() => useViewerIsManager()).result.current.isManager).toBe(false);
+    expect(
+      renderHook(() => useViewerIsManager()).result.current.isManager
+    ).toBe(false);
   });
 
   it("reports pending while identity resolves (callers assume manager)", () => {
@@ -151,19 +174,46 @@ describe("useViewerIsManager", () => {
 });
 
 describe("usePersonCohort", () => {
+  /** A real query client, so the catalog query runs rather than being faked. */
+  const cohortOf = (id: string) =>
+    renderHook(() => usePersonCohort(id), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider
+          client={
+            new QueryClient({ defaultOptions: { queries: { retry: false } } })
+          }
+        >
+          {children}
+        </QueryClientProvider>
+      ),
+    });
+
   it("is empty when no slice is active", () => {
-    expect(renderHook(() => usePersonCohort(A)).result.current).toEqual([]);
+    expect(cohortOf(A).result.current).toEqual([]);
   });
 
   it("returns everyone sharing the person's slice value", () => {
     act(() => portalRouter.set({ slice: "division" }));
-    const { result } = renderHook(() => usePersonCohort(A));
+    const { result } = cohortOf(A);
     expect(result.current.sort()).toEqual([A, BOSS, C].sort());
+  });
+
+  it("drops a slice the catalog does not offer, rather than comparing by it", async () => {
+    // The control falls back to "Team (all)" when the options lose a
+    // dimension. If the cohort kept building from the stored value, the
+    // screen would show one thing and compare by another.
+    mocks.definitions = {
+      metrics: [],
+      comparison_attributes: [{ id: "job_title", label: "Title" }],
+    };
+    act(() => portalRouter.set({ slice: "division" }));
+    const { result } = cohortOf(A);
+    await waitFor(() => expect(result.current).toEqual([]));
   });
 
   it("is empty when the person has no value for the slice attribute", () => {
     act(() => portalRouter.set({ slice: "title" }));
-    expect(renderHook(() => usePersonCohort(A)).result.current).toEqual([]);
+    expect(cohortOf(A).result.current).toEqual([]);
   });
 });
 

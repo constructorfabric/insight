@@ -64,3 +64,8 @@ toolkit-security = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
 # utoipa pinned to match the `ToSchema` the toolkit OperationBuilder compiles against.
 utoipa = { version = "5.5", features = ["chrono", "uuid"] }
+
+[dev-dependencies]
+# `tower::ServiceExt::oneshot` for driving the Axum router in the HTTP
+# integration tests. Same dev-dep pattern as the analytics service.
+tower = { version = "0.5", features = ["util"] }

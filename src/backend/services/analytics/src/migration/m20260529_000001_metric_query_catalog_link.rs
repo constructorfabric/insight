@@ -24,14 +24,13 @@
 //! (no orphan junction rows; cascaded cleanup when either parent is
 //! removed).
 //!
-//! ## DESIGN amendment
+//! ## Design amendment
 //!
-//! `docs/domain/metric-catalog/specs/DESIGN.md` §3.1 ("Metric ↔
-//! `analytics.metrics.query_ref` by `metric_key`. Loose pointer; no FK")
-//! and §6 integration table ("Read-only (loose pointer) … No FK") both
-//! ship pre-amendment. The amendment shipping in the same change as this
+//! The earlier rule linked metric to `analytics.metrics.query_ref` by
+//! `metric_key` as a read-only loose pointer with no FK. The amendment
+//! shipping in the same change as this
 //! migration narrows that rule: catalog still does NOT open or parse
-//! `query_ref` (opacity preserved per PRD §1.1 layer boundary), and
+//! `query_ref` (opacity preserved — the layer boundary is unchanged), and
 //! catalog still does NOT carry a `query_ref` column or any compute
 //! semantics. The new junction adds a *referential* link only — both
 //! sides remain agnostic to each other's payload.

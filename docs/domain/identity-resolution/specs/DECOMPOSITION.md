@@ -185,7 +185,7 @@ The Identity Resolution DESIGN is decomposed into four features. Features 1–2 
 
 ---
 
-### 2.3 [Matching Engine](feature-matching-engine/) — MEDIUM
+### 2.3 Matching Engine — MEDIUM
 
 - [ ] `p2` - **ID**: `cpt-ir-feature-matching-engine`
 

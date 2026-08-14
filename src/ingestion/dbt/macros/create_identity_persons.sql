@@ -11,6 +11,11 @@
   resolve comes back NULL and the pipeline behaves exactly as before the
   person_id column existed. Graceful degradation, not a build failure.
 
+  The resolver's other input, `identity.identity_inputs`, is deliberately NOT
+  created here: dbt owns that relation (an incremental silver model). Creating
+  it early would make its first run think it is incremental and filter its own
+  seed rows away. The resolver degrades on its own when the relation is absent.
+
   SCHEMA CONTRACT: this DDL is a byte-for-byte copy of COLUMNS_DDL in
   src/backend/services/identity-resolution/src/infra/identity_persons.rs —
   the service owns the schema (it mirrors its own MariaDB `persons` log,

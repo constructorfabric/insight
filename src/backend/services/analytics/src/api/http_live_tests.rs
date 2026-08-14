@@ -157,6 +157,26 @@ fn metric_results_body(person_ids: &[Uuid]) -> Value {
     })
 }
 
+fn drilldown_body(person_id: Uuid) -> Value {
+    json!({
+        "metric_key": "git.commits",
+        "entity": {"type": "person", "id": person_id.to_string()},
+        "period": {"from": "2026-07-01", "to": "2026-07-28"},
+        "limit": 100
+    })
+}
+
+fn drilldown_export_body(person_id: Uuid) -> Value {
+    json!({
+        "metric_key": "git.commits",
+        "entity": {"type": "person", "id": person_id.to_string()},
+        "period": {"from": "2026-07-01", "to": "2026-07-28"},
+        "filters": [],
+        "display_dimensions": [],
+        "format": "csv"
+    })
+}
+
 /// Seed a `SecurityContext` (subject + tenant) the way `authverify` would.
 async fn inject_host_context(
     axum::extract::State(tenant): axum::extract::State<Uuid>,
@@ -249,6 +269,59 @@ async fn metric_results_does_not_deny_a_person_inside_the_callers_visible_set() 
         StatusCode::INTERNAL_SERVER_ERROR,
         "a visible person must pass the gate and fail only on the unreachable \
          ClickHouse; a 400 would mean the request never got that far"
+    );
+    Ok(())
+}
+
+// Both drilldown routes gate before validation, so neither test needs a
+// `DrilldownFixture`: the metric definition is never loaded. A 404 here would
+// mean the gate had moved back behind validation.
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn metric_drilldown_forbids_a_person_outside_the_callers_visible_set() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
+    let app = app_with_identity(db, Uuid::now_v7(), identity);
+
+    let req = json_req(
+        "POST",
+        "/v1/metric-drilldown",
+        &drilldown_body(HIDDEN_PERSON),
+    )?;
+    let resp = app.oneshot(req).await?;
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a person the caller cannot see must not resolve to evidence rows"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn metric_drilldown_export_forbids_a_person_outside_the_callers_visible_set() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
+    let app = app_with_identity(db, Uuid::now_v7(), identity);
+
+    let req = json_req(
+        "POST",
+        "/v1/metric-drilldown/export",
+        &drilldown_export_body(HIDDEN_PERSON),
+    )?;
+    let resp = app.oneshot(req).await?;
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "the export route serves the same per-person evidence as the page route \
+         and must deny the same callers"
     );
     Ok(())
 }
@@ -548,11 +621,15 @@ async fn metric_drilldown_validates_selection_before_clickhouse_error() -> TestR
         return Ok(());
     };
     let fixture = DrilldownFixture::insert(&db, &["git.commits"], &["repository"]).await?;
+    let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
     let result: anyhow::Result<()> = async {
-        let app = app(db.clone(), fixture.tenant_id);
+        // A visible person: the gate admits, so what these assertions pin is
+        // validation reaching the unreachable ClickHouse snapshot probe. A 403
+        // would mean the gate denied a person it was told is visible.
+        let app = app_with_identity(db.clone(), fixture.tenant_id, identity);
         let body = json!({
             "metric_key": "git.commits",
-            "entity": {"type": "person", "id": "019e2830-0000-7000-8000-000000000001"},
+            "entity": {"type": "person", "id": VISIBLE_PERSON.to_string()},
             "period": {"from": "2026-07-01", "to": "2026-07-28"},
             "filters": [{"dimension": "repository", "values": ["org/repo"]}],
             "display_dimensions": ["repository"],
@@ -563,6 +640,17 @@ async fn metric_drilldown_validates_selection_before_clickhouse_error() -> TestR
             .oneshot(json_req("POST", "/v1/metric-drilldown", &body)?)
             .await?;
         anyhow::ensure!(resp.status() == StatusCode::BAD_REQUEST);
+        let resp = app
+            .clone()
+            .oneshot(json_req(
+                "POST",
+                "/v1/metric-drilldown/export",
+                &drilldown_export_body(VISIBLE_PERSON),
+            )?)
+            .await?;
+        anyhow::ensure!(resp.status() == StatusCode::BAD_REQUEST);
+        // The pre-cutover email shape fails in the entity parse, which runs
+        // ahead of the gate — so it stays a 400 rather than becoming a 403.
         let export = json!({
             "metric_key": "git.commits",
             "entity": {"type": "person", "id": "person@example.com"},
@@ -588,7 +676,11 @@ async fn metric_drilldown_rejects_invalid_selection_without_clickhouse() -> Test
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
-    let app = app(db, Uuid::now_v7());
+    // Only the reversed-period case carries a parseable person id and so reaches
+    // the gate; the rest fail in the entity parse ahead of it. The identity has
+    // to be real either way, or that one case would fail closed with a 500.
+    let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
+    let app = app_with_identity(db, Uuid::now_v7(), identity);
     for body in [
         json!({
             "metric_key": "git.commits",
@@ -604,7 +696,7 @@ async fn metric_drilldown_rejects_invalid_selection_without_clickhouse() -> Test
         }),
         json!({
             "metric_key": "git.commits",
-            "entity": {"type": "person", "id": "019e2830-0000-7000-8000-000000000001"},
+            "entity": {"type": "person", "id": VISIBLE_PERSON.to_string()},
             "period": {"from": "2026-07-28", "to": "2026-07-01"},
             "limit": 100
         }),

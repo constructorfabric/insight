@@ -27,10 +27,10 @@ export const Route = createFileRoute("/portal")({
 });
 
 function PortalRoute() {
-  // The root shell swaps in PortalLayout for this route while the preview is
+  // The root shell swaps in PortalLayout for this route while the portal is
   // on, so this component only mounts with it OFF — a pasted /portal URL, or a
-  // viewer who turned the preview off while standing here. Either way the
-  // portal must not render: send them to the app they do have.
+  // viewer who opted out while standing here. Either way the portal must not
+  // render: send them to the app they do have.
   if (!usePortalEnabled()) return <Navigate to="/" replace />;
   return <PortalLayout />;
 }

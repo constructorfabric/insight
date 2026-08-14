@@ -48,6 +48,22 @@ export interface PeerStanding {
   gapPct: number | null;
   /** Outlier ordering weight; 0 when ineligible. */
   severity: number;
+  /**
+   * Distance from the median measured in cohort spreads (IQR), rather than in
+   * percent of the median.
+   *
+   * A percentage of a small median says almost nothing: one commit against a
+   * median of two is "−50%" and one hundred against two hundred is also
+   * "−50%", so ordering by percentage puts the rounding error first. Dividing
+   * by the spread asks the question that survives small numbers — how far
+   * outside the range peers actually occupy — and a cohort where everyone
+   * differs by little makes the same absolute gap count for more, which is
+   * correct.
+   *
+   * 0 when ineligible. Never divides by zero: a flat pool is ineligible before
+   * this is read, and `peerSpread` floors anyway.
+   */
+  spreadGap: number;
 }
 
 export function toPeerStats(row: PeerEntityStats | null): PeerStats | null {
@@ -71,7 +87,7 @@ export function toPeerStats(row: PeerEntityStats | null): PeerStats | null {
 }
 
 /** IQR, falling back to range then 1, for severity normalization. */
-function peerSpread(stats: PeerStats): number {
+export function peerSpread(stats: PeerStats): number {
   const iqr = Math.abs(stats.p75 - stats.p25);
   if (iqr > 1e-9) return iqr;
   const range = Math.abs(stats.max - stats.min);
@@ -103,6 +119,7 @@ export function derivePeerStanding(
     gapDelta,
     gapPct,
     severity: 0,
+    spreadGap: 0,
   });
 
   if (value == null || !Number.isFinite(value)) return ineligible("no_value");
@@ -120,5 +137,6 @@ export function derivePeerStanding(
     gapDelta,
     gapPct,
     severity: Math.abs(gapPct ?? gapDelta / peerSpread(stats)),
+    spreadGap: Math.abs(gapDelta) / peerSpread(stats),
   };
 }

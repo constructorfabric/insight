@@ -244,6 +244,25 @@ reconcile_classify_change() {
 _RECONCILE_MANIFEST_REPO="airbyte/source-declarative-manifest"
 
 # ---------------------------------------------------------------------------
+# reconcile_find_custom_definition_id <workspace_id> <connector_name>
+#
+# The id of the Insight-managed (custom, per ADR-0009) source definition holding
+# this connector's name, or empty. Emits nothing but the id, so it is safe to
+# read with a command substitution — unlike anything that logs, since log_line
+# writes its JSON to stdout.
+# ---------------------------------------------------------------------------
+reconcile_find_custom_definition_id() {
+  local workspace_id="$1" connector_name="$2"
+  ab_list_definitions "${workspace_id}" | python3 -c '
+import sys, json
+target = sys.argv[1]
+for d in json.load(sys.stdin):
+    if d.get("name") == target and d.get("custom") is True:
+        print(d.get("sourceDefinitionId", "")); break
+' "${connector_name}"
+}
+
+# ---------------------------------------------------------------------------
 # reconcile_migrated_state_file <source_name>
 #
 # Path of the state backup taken when reconcile_migrate_definition_kind tore a
@@ -375,7 +394,6 @@ for s in json.load(sys.stdin):
 
   reconcile__log CHANGE "${connector_name}" \
     "migrated to cdk definition ${new_def_id} (${docker_repo}:${docker_tag}); source and connection are rebuilt by the later stages"
-  printf '%s' "${new_def_id}"
 }
 
 # ---------------------------------------------------------------------------
@@ -435,16 +453,7 @@ reconcile_definitions() {
   # @cpt-begin:cpt-insightspec-algo-reconcile-diff-definition-version:p1:inst-ddv-if-none
   local workspace_id
   workspace_id="$(ab_workspace_id)"
-  local defs_json
-  defs_json="$(ab_list_definitions "${workspace_id}")"
-  # custom is True: Insight namespace separation per ADR-0009.
-  definition_id="$(printf '%s' "${defs_json}" | python3 -c '
-import sys, json
-target = sys.argv[1]
-for d in json.load(sys.stdin):
-    if d.get("name") == target and d.get("custom") is True:
-        print(d.get("sourceDefinitionId", "")); break
-' "${connector_name}")"
+  definition_id="$(reconcile_find_custom_definition_id "${workspace_id}" "${connector_name}")"
 
   if [[ -z "${definition_id}" ]]; then
     if [[ "${type}" == "nocode" ]]; then
@@ -621,10 +630,20 @@ for d in json.load(sys.stdin):
         printf 'republish\tpatch\t%s\n' "${definition_id}"
         return 0
       fi
-      local migrated_def_id
-      if ! migrated_def_id="$(reconcile_migrate_definition_kind \
-            "${connector_name}" "${definition_id}" "${cdk_image}")"; then
+      # Called directly, never through a command substitution: it logs, and
+      # log_line writes JSON to stdout, so capturing it would swallow the log
+      # lines into the value. The new id is read back from Airbyte afterwards,
+      # which also confirms the definition really does hold the name now.
+      if ! reconcile_migrate_definition_kind \
+            "${connector_name}" "${definition_id}" "${cdk_image}"; then
         reconcile__log ERROR "${connector_name}" "definition migration failed"
+        return 1
+      fi
+      local migrated_def_id
+      migrated_def_id="$(reconcile_find_custom_definition_id "${workspace_id}" "${connector_name}")"
+      if [[ -z "${migrated_def_id}" ]]; then
+        reconcile__log ERROR "${connector_name}" \
+          "migration reported success but no definition holds the name — the next pass republishes it as a first publish"
         return 1
       fi
       _RECONCILE_CHANGED=$((_RECONCILE_CHANGED + 1))
@@ -1004,7 +1023,7 @@ reconcile_refresh_catalog() {
 # Decision #5: state_export → delete → create_source → create_connection
 # → state_import. If <connection_id> empty, the function looks up the
 # connection bound to <source_id> first. <connector_name> is the
-# descriptor slug (e.g. `github-v2`) and drives the connection's
+# descriptor slug (e.g. `bitbucket-cloud`) and drives the connection's
 # bronze_<connector> namespace; passed explicitly because parsing it
 # out of source_name breaks for slugs containing `-`.
 # ---------------------------------------------------------------------------
@@ -1284,22 +1303,30 @@ _reconcile_one_connector() {
   [[ -n "${source_id_label}" ]] || source_id_label="main"
   local expected_source_name="${name}-${source_id_label}-${tenant_id}"
 
-  # Inject Insight platform identity fields into the source config the
-  # K8s Secret only carries connector-specific credentials; the manifest
-  # spec also requires `insight_tenant_id` (from reconcile's tenant
-  # config) and `insight_source_id` (from the secret's
-  # `insight.cyberfabric.com/source-id` annotation). We add them here so
-  # the operator never has to duplicate identity into the secret payload.
+  # Fields the platform owns rather than the tenant. The K8s Secret carries
+  # connector-specific credentials only; identity (`insight_tenant_id`,
+  # `insight_source_id`) and the git-cli-proxy address/token are added here so
+  # the operator never has to duplicate them into the secret payload.
+  local injected_json="{}" uses_git_proxy
+  # Lowercased: parse_descriptor prints the YAML boolean as Python renders it
+  # (`True`), its no-PyYAML fallback prints the raw token (`true`).
+  uses_git_proxy="$(python3 "${_RECONCILE_PY_DIR}/parse_descriptor.py" \
+    --descriptor "${connector_dir}/descriptor.yaml" --field platform_config.git_proxy 2>/dev/null \
+    | tr '[:upper:]' '[:lower:]')"
+  if [[ "${uses_git_proxy}" == "true" ]]; then
+    if [[ -z "${GIT_PROXY_URL:-}" || -z "${GIT_PROXY_TOKEN:-}" ]]; then
+      reconcile__log WARN "${name}" "descriptor sets platform_config.git_proxy but GIT_PROXY_URL/GIT_PROXY_TOKEN are absent from this environment — skipping connector (deploy the proxy with gitCliProxy.deploy=true, which publishes both into this CronJob)."
+      _RECONCILE_SKIPPED=$((_RECONCILE_SKIPPED + 1))
+      return 0
+    fi
+    injected_json="$(GIT_PROXY_URL_VAL="${GIT_PROXY_URL}" GIT_PROXY_TOKEN_VAL="${GIT_PROXY_TOKEN}" \
+      python3 -c 'import os, json; print(json.dumps({"git_proxy_url": os.environ["GIT_PROXY_URL_VAL"], "git_proxy_token": os.environ["GIT_PROXY_TOKEN_VAL"]}))')"
+  fi
+
   local source_cfg_json
-  source_cfg_json="$(INSIGHT_TENANT_ID_VAL="${tenant_id}" \
-                     INSIGHT_SOURCE_ID_VAL="${source_id_label}" \
-    python3 -c '
-import sys, os, json
-d = json.loads(sys.stdin.read() or "{}") or {}
-d["insight_tenant_id"] = os.environ["INSIGHT_TENANT_ID_VAL"]
-d["insight_source_id"] = os.environ["INSIGHT_SOURCE_ID_VAL"]
-print(json.dumps(d))
-' <<<"${secret_data_json}")"
+  source_cfg_json="$(python3 "${_RECONCILE_PY_DIR}/compose_source_config.py" \
+    --tenant-id "${tenant_id}" --source-id "${source_id_label}" \
+    --injected "${injected_json}" <<<"${secret_data_json}")"
 
   # Destination ClickHouse schema (bronze namespace) comes ONLY from
   # descriptor.connection.namespace — no bronze_<slug> fallback. Missing/empty
@@ -1331,6 +1358,21 @@ print(json.dumps(d))
   fi
   # Source create/update/recreate is data-affecting per ADR-0008.
   [[ "${src_action}" != "noop" ]] && data_changed=1
+
+  # A rotated proxy token is invisible to both drift signals: Airbyte returns
+  # `airbyte_secret: true` fields masked, so classify_change cannot see it, and
+  # the cfg-hash tag covers the K8s Secret, which does not carry an injected
+  # field. Re-push the composed config on every noop tick instead. Not
+  # data-affecting: the token re-authenticates the same dataset, so it does not
+  # warrant the forced re-sync a tenant credential change gets.
+  if [[ "${uses_git_proxy}" == "true" && "${src_action}" == "noop" ]]; then
+    if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
+      reconcile__log CHANGE "${name}" "would refresh injected platform config on source ${src_id}"
+    elif ! ab_update_source "${src_id}" "${source_cfg_json}" "${expected_source_name}" >/dev/null; then
+      reconcile__log ERROR "${name}" "ab_update_source failed refreshing injected platform config for ${src_id}"
+      rc=1
+    fi
+  fi
 
   # Layer 3 — connection tags. Two outcomes are data-affecting and trigger
   # a sync afterwards:

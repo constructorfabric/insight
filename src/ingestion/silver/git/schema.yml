@@ -1,6 +1,31 @@
 version: 2
 
 models:
+  - name: class_git_item_events
+    description: "Unified issue and pull-request lifecycle events from all sources (GitHub today)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key; the vendor event id is the natural key"
+        tests:
+          - not_null
+          - unique
+      - name: item_type
+        description: "Which kind of item the event belongs to"
+        tests:
+          - accepted_values:
+              values: ['issue', 'pull_request']
+      - name: actor_name
+        description: "The actor's login; GitHub's Actor exposes no stable id, so no uuid column is claimed"
+      - name: delta_action
+        description: "Whether the event sets a single value or adds/removes one of many"
+        tests:
+          - accepted_values:
+              values: ['set', 'add', 'remove']
+
   - name: class_git_repositories
     description: "Unified git repositories from all sources (GitHub, Bitbucket, GitLab)"
     columns:

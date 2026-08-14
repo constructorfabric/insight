@@ -1,6 +1,6 @@
 ---
 name: playwright-cli
-description: Automate browser interactions, test web pages and work with Playwright tests.
+description: "Drive a browser from the command line with the `playwright-cli` binary — open pages, snapshot the accessibility tree, click and type by ref, read network and console, manage sessions, cookies, storage state, tracing and video — and run or debug Node/TypeScript Playwright Test projects (`npx playwright test`, attach-to-paused-page, spec-driven plan/generate/heal). Use for interactive browser work at a prompt: exploring a page, validating a locator before committing it, inspecting element attributes, reproducing a UI bug, or debugging a `.spec.ts` run. NOT for authoring this repository's committed browser tests — this repo contains no `.spec.ts` Playwright specs at all; its browser journeys are pytest + pytest-playwright under tests/stand/ui/, run with uv, and belong to stand-ui-test. For getting an authenticated browser onto an Insight stand and capturing evidence, drive-ui owns the acquisition and this skill owns the commands."
 allowed-tools: Bash(playwright-cli:*) Bash(npx:*) Bash(npm:*)
 ---
 

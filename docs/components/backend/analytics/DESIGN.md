@@ -3,6 +3,12 @@ status: proposed
 date: 2026-04-08
 ---
 
+> [!WARNING]
+> **Under review — audited against the implementation and found inaccurate in places.**
+> Read it against the code, not as authority. The specific claims the code contradicts
+> are listed in the repository [README](../../../../README.md#backend-specs--under-review). Where this
+> document and the committed `openapi.json` disagree, the contract is right.
+
 # Technical Design -- Analytics API
 
 - [ ] `p1` - **ID**: `cpt-insightspec-design-analytics-api`
@@ -548,6 +554,16 @@ Catalog of available columns in Silver/Gold ClickHouse tables.
 **Query pattern**: `WHERE insight_tenant_id IS NULL OR insight_tenant_id = ?`
 
 ## 4. Additional Context
+
+### Metric families specified beside this document
+
+`specs/ai-cost/` carries the AI development cost family — PRD, design, decomposition and the
+audit behind them — with [ADR-0003](specs/ADR/0003-price-card-per-person-token-cost.md) on
+pricing. It specifies `insight.ai_cost_metric_evidence` and
+`insight.ai_cost_metric_observations`, a separate evidence family because seat measures are
+monthly snapshots rather than daily activity and one evidence relation binds per source. Those
+documents are written against the code they ship with; where they and this document disagree,
+they are the newer of the two.
 
 ### Inter-Service Authentication
 

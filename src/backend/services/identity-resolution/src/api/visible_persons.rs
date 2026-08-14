@@ -20,7 +20,7 @@ use crate::infra::db::{persons_repo, subchart_repo};
 // the analytics metric-results cap on purpose: that endpoint forwards a whole
 // cleared request here, so a smaller cap would reject a request analytics
 // already accepted.
-const MAX_PERSON_IDS: usize = 1000;
+pub(super) const MAX_PERSON_IDS: usize = 1000;
 
 /// Canonical person UUIDs to check (the metric runtime's key since the
 /// identity cutover — the earlier email-based draft of this endpoint never

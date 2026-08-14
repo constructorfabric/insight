@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -331,5 +331,217 @@ describe("MetricEvidenceDialog", () => {
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("Export failed")
     );
+  });
+
+  describe("searching and sorting", () => {
+    const threeRows = readyQuery({
+      data: {
+        pages: [
+          {
+            columns: [
+              { key: "ref", label: "Ref", type: "string" },
+              { key: "value", label: "Value", type: "number" },
+            ],
+            rows: [
+              { values: { ref: "add-parser", value: 12 } },
+              { values: { ref: "fix-logging", value: 3 } },
+              { values: { ref: "add-cache", value: 40 } },
+            ],
+            next_cursor: null,
+          },
+        ],
+      },
+    });
+
+    function renderDialog(overrides: Record<string, unknown> = {}) {
+      mocks.query = { ...threeRows, ...overrides };
+      return render(
+        <MetricEvidenceDialog
+          state={state}
+          onMetricChange={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+    }
+
+    function tableRefs(): unknown[] {
+      const rows = mocks.tableProps?.rows as Array<{
+        values: Record<string, unknown>;
+      }>;
+      return rows.map((row) => row.values.ref);
+    }
+
+    it("counts the records it is showing", () => {
+      renderDialog();
+      expect(screen.getByText("3 records")).toBeInTheDocument();
+    });
+
+    it("narrows the rows to the search and says how many of how many", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+
+      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      expect(tableRefs()).toEqual(["add-parser", "add-cache"]);
+      expect(screen.getByText("2 of 3 records")).toBeInTheDocument();
+    });
+
+    it("offers a way back when the search matches nothing", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      const box = screen.getByRole("searchbox", { name: "Search records" });
+
+      await user.type(box, "nothing here");
+      expect(screen.queryByText("evidence table")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Clear search" }));
+      expect(screen.getByText("evidence table")).toBeInTheDocument();
+      expect(box).toHaveValue("");
+    });
+
+    function sortBy(key: string): void {
+      const onSortChange = mocks.tableProps?.onSortChange as (
+        column: string
+      ) => void;
+      act(() => onSortChange(key));
+    }
+
+    it("does not call a search empty while pages are still coming", async () => {
+      const user = userEvent.setup();
+      renderDialog({ fetchNextPage: vi.fn(), hasNextPage: true });
+
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "nothing"
+      );
+      expect(
+        screen.getByText("Nothing matched yet — still loading the rest")
+      ).toBeInTheDocument();
+      expect(screen.getByText("0 of 3 records so far")).toBeInTheDocument();
+      expect(
+        screen.queryByText("No records match this search")
+      ).not.toBeInTheDocument();
+    });
+
+    it("says the rest could not be loaded rather than claiming no match", async () => {
+      const user = userEvent.setup();
+      const fetchNextPage = vi.fn();
+      renderDialog({
+        fetchNextPage,
+        hasNextPage: true,
+        isFetchNextPageError: true,
+      });
+
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "nothing"
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "the rest could not be loaded"
+      );
+      expect(screen.getByText("0 of 3 records so far")).toBeInTheDocument();
+
+      fetchNextPage.mockClear();
+      await user.click(screen.getByRole("button", { name: "Retry" }));
+      expect(fetchNextPage).toHaveBeenCalled();
+    });
+
+    it("calls a search empty once every page is in", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "nothing"
+      );
+      expect(
+        screen.getByText("No records match this search")
+      ).toBeInTheDocument();
+      expect(screen.getByText("0 of 3 records")).toBeInTheDocument();
+    });
+
+    it("cycles a column through ascending, descending and back", () => {
+      renderDialog();
+
+      sortBy("value");
+      expect(mocks.tableProps?.sort).toEqual({
+        key: "value",
+        direction: "asc",
+      });
+      expect(tableRefs()).toEqual(["fix-logging", "add-parser", "add-cache"]);
+
+      sortBy("value");
+      expect(mocks.tableProps?.sort).toEqual({
+        key: "value",
+        direction: "desc",
+      });
+      expect(tableRefs()).toEqual(["add-cache", "add-parser", "fix-logging"]);
+
+      sortBy("value");
+      expect(mocks.tableProps?.sort).toBeNull();
+    });
+
+    it("pulls in the remaining pages once a search is on, so it answers for all of them", async () => {
+      const user = userEvent.setup();
+      const fetchNextPage = vi.fn();
+      renderDialog({ fetchNextPage, hasNextPage: true });
+      fetchNextPage.mockClear();
+
+      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      await waitFor(() => expect(fetchNextPage).toHaveBeenCalled());
+    });
+
+    it("stops pulling pages after one fails rather than retrying forever", async () => {
+      const user = userEvent.setup();
+      const fetchNextPage = vi.fn();
+      renderDialog({
+        fetchNextPage,
+        hasNextPage: true,
+        isFetchNextPageError: true,
+      });
+      fetchNextPage.mockClear();
+
+      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      expect(fetchNextPage).not.toHaveBeenCalled();
+    });
+
+    it("drops the search and sort when the dialog moves to another metric", async () => {
+      const user = userEvent.setup();
+      const multiState: EvidenceDialogState = {
+        targets: [
+          { selection, label: "Commits" },
+          {
+            selection: { ...selection, metric_key: "wiki.pages" },
+            label: "Wiki pages",
+          },
+        ],
+        activeMetricKey: "git.commits",
+      };
+      mocks.query = threeRows;
+      const view = render(
+        <MetricEvidenceDialog
+          state={multiState}
+          onMetricChange={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+
+      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      sortBy("value");
+      expect(mocks.tableProps?.sort).not.toBeNull();
+
+      view.rerender(
+        <MetricEvidenceDialog
+          state={{ ...multiState, activeMetricKey: "wiki.pages" }}
+          onMetricChange={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+
+      expect(mocks.tableProps?.sort).toBeNull();
+      expect(
+        screen.getByRole("searchbox", { name: "Search records" })
+      ).toHaveValue("");
+      expect(tableRefs()).toHaveLength(3);
+    });
   });
 });

@@ -27,6 +27,9 @@ from .flows import sign_in
 from .pages.person_view import PersonView
 from .pages.team_view import TeamView
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 
 @pytest.mark.requires_seed("dev_lead")
 def test_team_heatmap_cell_opens_that_members_supporting_data(

@@ -31,3 +31,11 @@ pub struct VisibilityError;
 
 #[resource_error("gts.cf.insight.identity_resolution.subchart.v1~")]
 pub struct SubchartError;
+
+/// Operator identity corrections (bind / merge / detach / exclude).
+#[resource_error("gts.cf.insight.identity_resolution.correction.v1~")]
+pub struct CorrectionError;
+
+/// Person search (`GET /v1/persons`) — the operator picker.
+#[resource_error("gts.cf.insight.identity_resolution.person_search.v1~")]
+pub struct PersonSearchError;

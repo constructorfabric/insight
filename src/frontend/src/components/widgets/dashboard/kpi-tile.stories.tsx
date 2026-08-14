@@ -32,12 +32,11 @@ function makeTile(overrides: Partial<KpiTileData> = {}): KpiTileData {
     key: "tasks.closed",
     label: "Bugs Fixed",
     value: "12",
-    valueStatus: "good",
     delta: { text: "+9%", status: "good", down: false },
     medianLabel: "median 6",
     gapText: null,
     gapStatus: "neutral",
-    context: "Jira",
+    help: { description: "Issues closed in the period", explanation: null },
     groupId: "task_delivery",
     ...overrides,
   };
@@ -66,21 +65,23 @@ type Story = StoryObj<typeof KpiTile>;
 
 /** Demo story for the Storybook UI (not a test — no `test` tag). */
 export const Default: Story = {
-  args: { tile: makeTile() },
+  args: { tile: makeTile(), periodNoun: "month" },
 };
 
 /** Component test: the display-ready tile input drives every element. */
 export const TestOkTile: Story = {
   tags: ["test"],
-  args: { tile: makeTile() },
+  args: { tile: makeTile(), periodNoun: "month" },
   play: async ({ canvas }) => {
     // Singular `getByText` (throws on >1 match) doubles as a guard that the
     // preview decorators wrap the story exactly once — a double-applied
     // decorator would render two <KpiTile>s and fail here.
     await expect(canvas.getByText("Bugs Fixed")).toBeInTheDocument();
     await expect(canvas.getByText("12")).toBeInTheDocument();
-    await expect(canvas.getByText("+9%")).toBeInTheDocument();
-    await expect(canvas.getByText(/median 6/i)).toBeInTheDocument();
+    // The change now names what it is measured against — a bare "+9%" was
+    // readable as either of the tile's two comparisons.
+    await expect(canvas.getByText(/\+9% since last month/)).toBeInTheDocument();
+    await expect(canvas.getByText(/team median 6/i)).toBeInTheDocument();
   },
 };
 
@@ -92,7 +93,8 @@ export const TestOkTile: Story = {
 export const TestNoPeers: Story = {
   tags: ["test"],
   args: {
-    tile: makeTile({ valueStatus: "neutral", medianLabel: null, delta: null }),
+    tile: makeTile({ gapStatus: "neutral", medianLabel: null, delta: null }),
+    periodNoun: "month",
   },
   play: async ({ canvas }) => {
     await expect(canvas.getByText("Bugs Fixed")).toBeInTheDocument();
