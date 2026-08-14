@@ -111,3 +111,5 @@ deny). These rules cover only what tooling cannot enforce.
 - Tests read as spec: table-driven loops with per-case assert messages
   (`"should reject: {input:?}"`); alias `type R = Result<(), Box<dyn Error>>`
   to cut ceremony.
+
+<!-- CI probe: exercises the --build-backend lane. Not for merge. -->
