@@ -121,6 +121,39 @@ update_env_var() {
 }
 
 # ──────────────────────────────────────────────────────────────────────
+# build provenance
+# ──────────────────────────────────────────────────────────────────────
+# What an artefact was built from, stamped beside it. Staleness is then a
+# question about CONTENT: a checkout or a rebase rewrites every mtime, so an
+# mtime comparison reports work that never happened, and a warning that cries
+# wolf is one nobody reads.
+FRONTEND_BUILD_STAMP="src/frontend/dist/.source-fingerprint"
+BACKEND_BUILD_STAMP="deploy/compose/build/.source-fingerprint"
+
+source_fingerprint() {
+  local subtree="$1"
+  {
+    git rev-parse "HEAD:${subtree}" 2>/dev/null || echo no-git
+    git diff HEAD -- "$subtree" 2>/dev/null
+    git ls-files --others --exclude-standard -- "$subtree" 2>/dev/null | sort
+  } | shasum -a 256 | cut -c1-16
+}
+
+stamp_build() {
+  local stamp="$1" subtree="$2"
+  mkdir -p "$(dirname "$stamp")" 2>/dev/null || return 0
+  source_fingerprint "$subtree" > "$stamp" 2>/dev/null || true
+}
+
+# 0 when the artefact does not match the tree — including when it carries no
+# stamp at all, which is what every build made before this existed looks like.
+build_is_stale() {
+  local stamp="$1" subtree="$2"
+  [[ -f "$stamp" ]] || return 0
+  [[ "$(cat "$stamp" 2>/dev/null)" != "$(source_fingerprint "$subtree")" ]]
+}
+
+# ──────────────────────────────────────────────────────────────────────
 # up
 # ──────────────────────────────────────────────────────────────────────
 
@@ -744,10 +777,12 @@ YML
             cmp -s /target/release/identity-resolution /out/identity-resolution/identity-resolution || { echo 'ERROR: /out/identity-resolution/identity-resolution copied corrupt' >&2; exit 1; }
           fi
         "
+      stamp_build "$BACKEND_BUILD_STAMP" src/backend
     fi
     if [[ "$no_frontend" != "true" && "$FRONTEND_MODE" == "built" ]]; then
       echo "--- Frontend: pnpm build"
       "${compose_cmd[@]}" --profile build run --rm build-frontend
+      stamp_build "$FRONTEND_BUILD_STAMP" src/frontend
     fi
   fi
 
@@ -1083,9 +1118,15 @@ cmd_build() {
     esac
   done
   rust_bins="$(trim "$rust_bins")"
-  # shellcheck disable=SC2086 # word-split the bin list intentionally
-  [[ -n "$rust_bins" ]] && build_rust_bins $rust_bins
-  [[ "$want_frontend" == true ]] && "${compose_cmd[@]}" run --rm build-frontend
+  if [[ -n "$rust_bins" ]]; then
+    # shellcheck disable=SC2086 # word-split the bin list intentionally
+    build_rust_bins $rust_bins
+    stamp_build "$BACKEND_BUILD_STAMP" src/backend
+  fi
+  if [[ "$want_frontend" == true ]]; then
+    "${compose_cmd[@]}" run --rm build-frontend
+    stamp_build "$FRONTEND_BUILD_STAMP" src/frontend
+  fi
   echo "Done. If a runtime container has ENABLE_AUTO_RELOAD=true it will restart automatically."
 }
 
@@ -1419,7 +1460,7 @@ TEST_STAND_READY_INTERVAL=5
 
 cmd_test_stand_help() {
   cat <<'EOF'
-usage: dev-compose.sh test-stand <up|seed|test|down> [args]
+usage: dev-compose.sh test-stand <up|seed|test|status|down> [args]
 
 The stack in test configuration: pinned ghcr images for the frontend and all
 four backend services, real Keycloak login, and a readiness gate that waits
@@ -1441,10 +1482,15 @@ for dbt-built gold data rather than for containers to report healthy.
           --build-frontend   Build the SPA from this tree with pnpm, served by
                              the front-built nginx. Backend stays pinned.
           --build            Both.
+          --skip-seed        Keep the data a previous seed left instead of
+                             seeding again. Saves minutes when only the SPA
+                             changed; the readiness gate is then replaced by a
+                             weaker check, since nothing rebuilt gold this run.
 
-          `up` refuses to pin a tree that differs from origin/main and names
-          the flag to pass — but only when origin/main is in the checkout. A
-          shallow clone says so on stderr and defers to its caller.
+          `up` refuses to pin a tree the pinned build does not carry, and names
+          the flag to pass. It compares against the commit the appVersion names,
+          so a branch merely behind main is not a difference. A checkout without
+          that commit says so on stderr and defers to its caller.
   seed    Re-seed the running stand (default target: all).
   test    Run the stand suite against an already-up stand. Passes extra
           arguments through to pytest — no `--` separator.
@@ -1459,6 +1505,9 @@ for dbt-built gold data rather than for containers to report healthy.
                          paths are then IMAGE-SIDE (/tests/stand/ui, not
                          tests/stand/ui), and pytest-playwright's artefacts
                          land in ./test-results as usual.
+  status  What this stand is: what it was built from, whether it answers,
+          whether it is seeded, and whether the tree has moved since. Read
+          only; changes nothing.
   down    Stop the stand and REMOVE its volumes, so the next `up` starts
           from empty databases.
 
@@ -1471,12 +1520,31 @@ EOF
 # build the umbrella chart would deploy. Never `:latest`, which would make a run
 # unreproducible — build-images.yml's bump-descriptors writes these on every
 # successful main push, so an appVersion names an image that provably exists.
+test_stand_chart_app_version() {
+  local chart="$1" version
+  [[ -f "$chart" ]] || { echo "ERROR: $chart not found." >&2; return 1; }
+  version="$(awk -F'"' '/^appVersion:/ {print $2; exit}' "$chart")"
+  [[ -n "$version" ]] || { echo "ERROR: no appVersion in $chart." >&2; return 1; }
+  printf '%s' "$version"
+}
+
 test_stand_pinned_image() {
   local chart="$1" name="$2" version
-  [[ -f "$chart" ]] || { echo "ERROR: $chart not found — cannot pin $name." >&2; return 1; }
-  version="$(awk -F'"' '/^appVersion:/ {print $2; exit}' "$chart")"
-  [[ -n "$version" ]] || { echo "ERROR: no appVersion in $chart — cannot pin $name." >&2; return 1; }
+  version="$(test_stand_chart_app_version "$chart")" || return 1
   printf 'ghcr.io/constructorfabric/insight-%s:%s' "$name" "$version"
+}
+
+# The commit an appVersion names. bump-descriptors stamps
+# <timestamp>-<short sha>, so the tail is the tree the image was built from —
+# which is the only thing worth comparing a working tree against.
+test_stand_pinned_commit() {
+  local version="$1"
+  # Its own statement: bash expands every word of a `local` before any of its
+  # assignments land, so `local a=$1 b=${a#...}` would read an empty `a`.
+  local sha="${version##*-}"
+  [[ "$sha" =~ ^[0-9a-f]{7,40}$ ]] || return 1
+  git rev-parse --verify --quiet "${sha}^{commit}" >/dev/null 2>&1 || return 1
+  printf '%s' "$sha"
 }
 
 test_stand_frontend_image() {
@@ -1517,40 +1585,206 @@ test_stand_pull_backends() {
   done
 }
 
-# Refuse to pin when the working tree differs from what a chart describes.
+# First line: what the tree was compared against. Lines after it: what differs,
+# none when the tree matches. Non-zero when no base could be resolved at all.
 #
-# The appVersions track main. A branch that edits the given source tree and
-# then runs against published images would report green for code it never
-# executed. The PR path filter makes this unreachable in the normal lane; this
-# covers workflow_dispatch and local runs, which bypass it.
-test_stand_tree_matches_charts() {
-  local subtree="$1" flag="$2"
-  git rev-parse --git-dir >/dev/null 2>&1 || return 0
-  git remote get-url origin >/dev/null 2>&1 || return 0
-  # Inert on a depth-1 checkout (every CI runner). Say so, so a log reader does
-  # not read the silence as a passed check.
-  git rev-parse --verify --quiet origin/main >/dev/null || {
-    echo "NOTE: no origin/main here — ${subtree}/ unchecked, ${flag} is the caller's call." >&2
-    return 0; }
+# The base is the COMMIT THE IMAGE WAS BUILT FROM, not origin/main: a branch
+# merely behind main changes nothing an image carries, and comparing against
+# main's tip reported that as a difference. Falls back to origin/main when the
+# commit is not in this checkout.
+#
+# helm/ is excluded. The chart is deploy metadata, never baked into the image,
+# and its appVersion necessarily names an EARLIER commit than the one it sits
+# in — so a chart file always "differs" from the build it names.
+test_stand_tree_diff() {
+  local subtree="$1" version="$2" base
+  git rev-parse --git-dir >/dev/null 2>&1 || return 1
 
-  local changed
-  changed="$(git diff --name-only origin/main -- "$subtree" 2>/dev/null | head -5)"
+  if base="$(test_stand_pinned_commit "$version" 2>/dev/null)"; then
+    echo "the build ${version} was made from (${base})"
+  elif base="$(git rev-parse --verify --quiet origin/main)"; then
+    echo "origin/main (${version:-<no appVersion>} names no commit in this checkout)"
+  else
+    return 1
+  fi
+
+  # `*` spans slashes here: pathspec magic without `glob` is fnmatch without
+  # FNM_PATHNAME, so this one pattern covers src/frontend/helm/ and
+  # src/backend/services/*/helm/ alike. The `**` form does NOT match.
+  git diff --name-only "$base" -- "$subtree" ":(exclude)${subtree}/*helm/*" 2>/dev/null | head -5
+}
+
+# Refuse to pin a tree the pinned image would not carry.
+#
+# Without this a branch runs against images built from somebody else's commit
+# and reports green for code it never executed. In CI the `changes` job decides
+# instead — a depth-1 checkout resolves no base here, which this says out loud
+# rather than passing silently.
+test_stand_tree_matches_charts() {
+  local subtree="$1" flag="$2" version="$3"
+  local out base changed
+  out="$(test_stand_tree_diff "$subtree" "$version")" || {
+    echo "NOTE: no base commit in this checkout — ${subtree}/ unchecked, ${flag} is" >&2
+    echo "      the caller's call." >&2
+    return 0; }
+  base="$(printf '%s\n' "$out" | head -1)"
+  changed="$(printf '%s\n' "$out" | tail -n +2)"
   [[ -z "$changed" ]] && return 0
 
-  echo "ERROR: this tree changes ${subtree}/ relative to origin/main:" >&2
+  echo "ERROR: ${subtree}/ in this tree differs from ${base}:" >&2
   printf '         %s\n' $changed >&2
-  echo "       The stand pins each published image to its chart's appVersion, which" >&2
-  echo "       tracks main — so those changes would NOT be what runs. Pass" >&2
-  echo "       ${flag} to build this tree instead." >&2
+  echo "       Pinning would run that build, not this tree. Pass ${flag} to build" >&2
+  echo "       this tree instead, or rebase onto a release that carries it." >&2
   return 1
 }
 
+# One appVersion for the backend only when every chart names the same build,
+# which is what one release job produces. Anything else is not a pin this can
+# reason about, and the guard falls back to origin/main.
+test_stand_backend_app_version() {
+  local entry chart version seen=""
+  for entry in "${TEST_STAND_PINNED_BACKENDS[@]}"; do
+    IFS='|' read -r _ chart _ <<<"$entry"
+    version="$(test_stand_chart_app_version "$chart")" || return 1
+    [[ -z "$seen" || "$seen" == "$version" ]] || return 1
+    seen="$version"
+  done
+  printf '%s' "$seen"
+}
+
 test_stand_backend_matches_charts() {
-  test_stand_tree_matches_charts src/backend --build-backend
+  test_stand_tree_matches_charts src/backend --build-backend \
+    "$(test_stand_backend_app_version 2>/dev/null)"
 }
 
 test_stand_frontend_matches_chart() {
-  test_stand_tree_matches_charts src/frontend --build-frontend
+  test_stand_tree_matches_charts src/frontend --build-frontend \
+    "$(test_stand_chart_app_version src/frontend/helm/Chart.yaml 2>/dev/null)"
+}
+
+# One knob out of the generated env file, or empty.
+test_stand_env_value() {
+  grep -E "^[[:space:]]*$1=" "$TEST_STAND_ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-
+}
+
+# What the running stack was built from, against what this tree holds now.
+#
+# Never fatal, and never a gate: pointing the stack at an older build is a
+# legitimate thing to do on purpose. Reported by `status` so an accidental one
+# is answerable in a command rather than guessed at from failures.
+test_stand_drift() {
+  local warned=false
+  local mode diff changed
+
+  mode="$(test_stand_env_value FRONTEND_MODE)"
+  if [[ "$mode" == "built" ]]; then
+    if build_is_stale "$FRONTEND_BUILD_STAMP" src/frontend; then
+      echo "WARN: the SPA this stack serves was not built from this tree."
+      echo "      Rebuild it (seconds, no restart): ./dev-compose.sh build frontend"
+      warned=true
+    fi
+  else
+    diff="$(test_stand_tree_diff src/frontend \
+      "$(test_stand_chart_app_version src/frontend/helm/Chart.yaml 2>/dev/null)" 2>/dev/null || true)"
+    changed="$(printf '%s\n' "$diff" | tail -n +2)"
+    if [[ -n "$changed" ]]; then
+      echo "WARN: this stack runs the pinned frontend image, which does not carry:"
+      printf '%s\n' "$changed" | sed 's/^/        /'
+      echo "      Bring it up with --build-frontend to run this tree."
+      warned=true
+    fi
+  fi
+
+  if [[ -z "$(test_stand_env_value ANALYTICS_IMAGE)" ]]; then
+    if build_is_stale "$BACKEND_BUILD_STAMP" src/backend; then
+      echo "WARN: the backend binaries this stack runs were not built from this tree."
+      echo "      Rebuild them: ./dev-compose.sh build rust"
+      warned=true
+    fi
+  else
+    diff="$(test_stand_tree_diff src/backend \
+      "$(test_stand_backend_app_version 2>/dev/null)" 2>/dev/null || true)"
+    changed="$(printf '%s\n' "$diff" | tail -n +2)"
+    if [[ -n "$changed" ]]; then
+      echo "WARN: this stack runs the pinned backend images, which do not carry:"
+      printf '%s\n' "$changed" | sed 's/^/        /'
+      echo "      Bring it up with --build-backend to run this tree."
+      warned=true
+    fi
+  fi
+
+  [[ "$warned" == true ]] || echo "  matches this tree"
+  return 0
+}
+
+#: Written by the seed; the suite refuses to run without it.
+TEST_STAND_MANIFEST="src/ingestion/tools/seed/manifest.json"
+
+# A previous seed's data is still here — the most --skip-seed can prove.
+#
+# Deliberately weaker than the readiness gate: nothing rebuilt gold this run,
+# so "rebuilt since" has no meaning. What remains checkable is that every
+# observation family holds signal and a manifest describes who is on the stand.
+test_stand_assert_seeded() {
+  local table missing=() populated
+  [[ -f "$TEST_STAND_MANIFEST" ]] || {
+    echo "ERROR: --skip-seed, but $TEST_STAND_MANIFEST is absent — this stand was" >&2
+    echo "       never seeded from this checkout. Drop the flag." >&2
+    return 1; }
+
+  for table in "${TEST_STAND_READY_TABLES[@]}"; do
+    populated="$(test_stand_ch_query "SELECT countIf(value > 0) > 0 FROM insight.${table}")"
+    [[ "$populated" == "1" ]] || missing+=("$table")
+  done
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "ERROR: --skip-seed, but ${#missing[@]} gold observation tables hold nothing:" >&2
+    printf '         insight.%s\n' "${missing[@]}" >&2
+    echo "       Drop the flag and let this run seed." >&2
+    return 1
+  fi
+  echo "=== --skip-seed: kept the data a previous seed left (manifest: $(date -r "$TEST_STAND_MANIFEST" '+%Y-%m-%d %H:%M')) ==="
+}
+
+# What this stand is, in one screen: what it was built from, whether it answers,
+# whether it is seeded, and whether the tree has moved since.
+test_stand_status() {
+  local port gw table count mode image
+
+  echo "=== env ==="
+  if [[ ! -f "$TEST_STAND_ENV_FILE" ]]; then
+    echo "  no $TEST_STAND_ENV_FILE — no stand has been brought up from this checkout."
+    return 0
+  fi
+  mode="$(test_stand_env_value FRONTEND_MODE)"
+  image="$(test_stand_env_value FRONTEND_IMAGE)"
+  echo "  frontend: ${image:-built from src/frontend (mode: ${mode:-<unset>})}"
+  local analytics
+  analytics="$(test_stand_env_value ANALYTICS_IMAGE)"
+  echo "  backend:  ${analytics:-compiled from src/backend}"
+
+  echo "=== containers ==="
+  docker ps --filter "name=insight-" --format '{{.Names}}\t{{.Image}}\t{{.Status}}' 2>/dev/null |
+    grep -v -- '-run-' | sed 's/^/  /' | column -t -s $'\t' || echo "  none running"
+
+  port="$(test_stand_env_value GATEWAY_PORT)"; port="${port:-8080}"
+  gw="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://localhost:${port}/" 2>/dev/null || true)"
+  echo "=== gateway ==="
+  echo "  http://localhost:${port}/ -> ${gw:-no answer}"
+
+  echo "=== seed ==="
+  if [[ -f "$TEST_STAND_MANIFEST" ]]; then
+    echo "  manifest written $(date -r "$TEST_STAND_MANIFEST" '+%Y-%m-%d %H:%M')"
+  else
+    echo "  no manifest — the suite will refuse to collect"
+  fi
+  for table in "${TEST_STAND_READY_TABLES[@]}"; do
+    count="$(test_stand_ch_query "SELECT count() FROM insight.${table}")"
+    echo "  insight.${table}: ${count:-unreachable}"
+  done
+
+  echo "=== tree ==="
+  test_stand_drift | sed 's/^/  /'
 }
 
 # Derive the test env file from the committed example, overriding only the
@@ -1810,12 +2044,13 @@ cmd_test_stand() {
     up)
       # Each tree is pinned to its chart's appVersion or built from this one,
       # asked separately: --build is the both-axes alias.
-      local image build_backend=false build_frontend=false
+      local image build_backend=false build_frontend=false skip_seed=false
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --build)          build_backend=true; build_frontend=true; shift ;;
           --build-backend)  build_backend=true; shift ;;
           --build-frontend) build_frontend=true; shift ;;
+          --skip-seed)      skip_seed=true; shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
         esac
@@ -1840,6 +2075,13 @@ cmd_test_stand() {
         test_stand_pull_backends || return 1
       fi
 
+      # Keeping the databases means keeping their seed, so tell cmd_up they are
+      # already seeded — write_env blanked those flags to force a fresh seed.
+      if [[ "$skip_seed" == true ]]; then
+        update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_MARIA true
+        update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_CH    true
+      fi
+
       local up_args=(--env-file "$TEST_STAND_ENV_FILE"
                      --authenticator-redirect "$(test_stand_origin)/auth/callback")
       cmd_up "${up_args[@]}" || return 1
@@ -1854,14 +2096,25 @@ cmd_test_stand() {
       local run_started_at
       run_started_at="$(date -u '+%Y-%m-%d %H:%M:%S')"
 
-      # cmd_up's first-run auto-seed may already have run, but it ran before
-      # the issuer was persisted — so its manifest would record the wrong IdP.
-      # Re-seed explicitly now that the env file is complete.
-      cmd_seed --env-file "$TEST_STAND_ENV_FILE" all || return 1
+      if [[ "$skip_seed" == true ]]; then
+        # The run-scoped gate cannot apply: nothing rebuilt gold this run. What
+        # is checkable is that a previous seed left data behind, so check that
+        # and say whose data the suite is about to run against.
+        test_stand_assert_seeded || return 1
+      else
+        # cmd_up's first-run auto-seed may already have run, but it ran before
+        # the issuer was persisted — so its manifest would record the wrong IdP.
+        # Re-seed explicitly now that the env file is complete.
+        cmd_seed --env-file "$TEST_STAND_ENV_FILE" all || return 1
 
-      test_stand_wait_ready "$run_started_at" || return 1
+        test_stand_wait_ready "$run_started_at" || return 1
+      fi
 
       echo "=== test-stand is ready ==="
+      ;;
+
+    status)
+      test_stand_status
       ;;
 
     seed)
@@ -1948,7 +2201,7 @@ Subcommands:
   prune   Destructive wipe of containers, volumes, build/, override,
           and .env.compose. Asks for confirmation.
 
-  test-stand <up|seed|test|down>
+  test-stand <up|seed|test|status|down>
           The stack in TEST configuration, driven from its own
           .env.compose.test-stand so your .env.compose is untouched:
           pinned ghcr frontend, real Keycloak login, and a readiness
