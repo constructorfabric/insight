@@ -154,7 +154,7 @@ export function TeamMetricGroupCard({
 
 /**
  * The row's verdict in the shared chip vocabulary — behind wins over ahead,
- * on par only when nothing sticks out, "no comparison" when nobody on the
+ * near the median only when nothing sticks out, "no comparison" when nobody on the
  * roster is rankable. Counts only; the drilldown names who.
  */
 function RowStanding({
@@ -196,5 +196,9 @@ function RowStanding({
       </span>
     );
   }
-  return <span className="shrink-0 text-xs text-muted-foreground">on par</span>;
+  return (
+    <span className="shrink-0 text-xs text-muted-foreground">
+      near the median
+    </span>
+  );
 }

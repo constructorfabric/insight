@@ -65,7 +65,7 @@ export function TeamCollectionDrilldown({
   if (members.length === 0) {
     return (
       <p className="py-6 text-center text-sm text-muted-foreground">
-        No team members to display.
+        Nobody in this team yet.
       </p>
     );
   }

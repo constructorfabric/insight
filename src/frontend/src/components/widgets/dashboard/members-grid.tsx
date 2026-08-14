@@ -80,7 +80,7 @@ export interface MembersGridProps {
   previousByKey?: Map<string, NormalizedMetricResult>;
   /**
    * Optional triage facet: per-member standing counts across ALL groups.
-   * When present each row carries a standing chip (behind / ahead / on par,
+   * When present each row carries a standing chip (behind / ahead / near the median,
    * the section-card vocabulary) and the grid offers the "Furthest behind" sort
    * (the default).
    */

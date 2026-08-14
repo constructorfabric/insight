@@ -495,7 +495,7 @@ function SupportingRow({
           </span>
         ) : entry.status === "in_pack" ? (
           <span>
-            on par · {cohortLabel} median:{" "}
+            near the {cohortLabel} median:{" "}
             {formatMetricValue(entry.stats.p50, entry.format, entry.unit)}
           </span>
         ) : (

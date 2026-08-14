@@ -181,6 +181,12 @@ describe("attentionSummary", () => {
     );
   });
 
+  it("does not say 'All 1 people' when the scope holds one person", () => {
+    expect(attentionSummary([], 0, 1)).toBe(
+      "The one person in scope is in their usual range this period.",
+    );
+  });
+
   it("names the top metric themes, counted in people", () => {
     // The line already opens in people, so the theme has to be in people too:
     // "most flags on Commits (5)" over "3 of 16 people" holds two units in one
