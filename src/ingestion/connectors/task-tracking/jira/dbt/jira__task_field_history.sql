@@ -28,7 +28,7 @@ SELECT
     id_readable,
     event_id,
     event_at,
-    CAST(event_kind, 'Enum8(\'changelog\' = 1, \'synthetic_initial\' = 2, \'availability\' = 3)')
+    CAST(event_kind, 'Enum8(\'changelog\' = 1, \'synthetic_initial\' = 2, \'availability\' = 3, \'lifecycle\' = 4)')
                         AS event_kind,
     _seq,
     author_id,

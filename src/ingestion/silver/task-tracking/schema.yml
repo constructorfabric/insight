@@ -17,11 +17,11 @@ models:
         tests:
           - not_null
       - name: event_kind
-        description: "Discriminator for event origin. Enum8: `changelog` = real field change from jira_issue_history; `synthetic_initial` = bootstrap row emitted for every tracked field on first observation of an issue; `availability` = synthetic availability transition (present / deleted / archived / trashed / access_lost / unobserved) detected by the source's census streams — deletion is an event in the issue's history, in the same table as every other field change."
+        description: "Discriminator for event origin. Enum8: `changelog` = real field change from jira_issue_history; `synthetic_initial` = bootstrap row emitted for every tracked field on first observation of an issue; `availability` = synthetic availability transition (present / deleted / archived / trashed / access_lost / unobserved) detected by the source's census streams; `lifecycle` = sub-entity lifecycle (field_id `comment` / `worklog`, delta_action add/set/remove) — value_ids[1] is the entity id, the lookup key into class_task_comments / class_task_worklogs. The issue's entire history, including deletions of the issue and of its sub-entities, lives in this one table."
         tests:
           - not_null
           - accepted_values:
-              values: ['changelog', 'synthetic_initial', 'availability']
+              values: ['changelog', 'synthetic_initial', 'availability', 'lifecycle']
       - name: field_id
         description: "Field identifier (e.g. 'status', 'assignee', 'customfield_10020'). Part of the ReplacingMergeTree ORDER BY together with (insight_source_id, data_source, id_readable, event_id) — see ADR-005."
         tests:

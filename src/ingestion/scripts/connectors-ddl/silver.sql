@@ -698,7 +698,7 @@ CREATE TABLE IF NOT EXISTS silver.class_task_field_history
     `id_readable` String,
     `event_id` String,
     `event_at` DateTime64(3),
-    `event_kind` Enum8('changelog' = 1, 'synthetic_initial' = 2, 'availability' = 3),
+    `event_kind` Enum8('changelog' = 1, 'synthetic_initial' = 2, 'availability' = 3, 'lifecycle' = 4),
     `_seq` UInt32,
     `author_id` Nullable(String),
     `author_display` Nullable(String),

@@ -94,3 +94,19 @@ models:
     description: "Per-issue availability transition events (availability: old → new @ detection time) derived from the availability snapshot."
   - name: jira__availability_events
     description: "Availability transitions as synthetic field-history events (field_id='availability', event_kind='availability'). Unioned into silver.class_task_field_history so an issue's whole lifecycle — including deletion and lost access — lives in one source-agnostic table."
+  - name: jira__comment_state
+    description: "Current state per comment including is_deleted (re-fetch generation diff + parent-issue availability). Feeds the class projection and the lifecycle snapshot chain."
+  - name: jira__comment_snapshot
+    description: "Append-only SCD2 over comment state — a version per edit (updated_at) or deletion flip."
+  - name: jira__comment_lifecycle_history
+    description: "Per-field transitions derived from the comment snapshot; raw input for the lifecycle events."
+  - name: jira__comment_lifecycle_events
+    description: "Comment add/set/remove as field-history events (field_id='comment', event_kind='lifecycle'); value carries the comment id — the lookup key into class_task_comments. Unioned into silver.class_task_field_history."
+  - name: jira__worklog_state
+    description: "Current state per worklog including is_deleted (tombstone + generation diff + parent-issue availability) and the tombstone's real deletion timestamp. Feeds the class projection and the lifecycle snapshot chain."
+  - name: jira__worklog_snapshot
+    description: "Append-only SCD2 over worklog state — a version per edit (updated_at / seconds / started) or deletion flip."
+  - name: jira__worklog_lifecycle_history
+    description: "Per-field transitions derived from the worklog snapshot; raw input for the lifecycle events."
+  - name: jira__worklog_lifecycle_events
+    description: "Worklog add/set/remove as field-history events (field_id='worklog', event_kind='lifecycle'); value carries the worklog id — the lookup key into class_task_worklogs; remove is dated by the /worklog/deleted tombstone when available. Unioned into silver.class_task_field_history."

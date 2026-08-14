@@ -168,6 +168,27 @@ Availability state feeds the same SCD2 machinery as user profiles
 not the moment the user clicked delete in Jira — the REST API does not expose
 the latter for hard-deleted entities.
 
+### Sub-entity lifecycle events
+
+Comments and worklogs are the two issue sub-entities the changelog does not
+cover, so their lifecycle enters the same journal as synthetic events
+(`event_kind='lifecycle'`, `field_id='comment'|'worklog'`, `delta_action`
+add/set/remove). The event carries the **entity id** (`value_ids[1]`) — the
+lookup key into `class_task_comments` / `class_task_worklogs` — not the
+payload: the class tables stay the materialized current state (typed columns,
+cheap aggregates), the journal holds the history. Sources with a native event
+log (e.g. YouTrack activities) can emit these events directly; for Jira they
+are derived from the entity snapshots:
+
+- **add** — first observation; dated by the entity's own `updated` timestamp
+  (real time).
+- **set** — the entity's `updated` (worklogs: also seconds/started) changed
+  between syncs; dated by the new `updated`. Multiple edits between two syncs
+  collapse into one event — the API exposes no intermediate states.
+- **remove** — the deletion signals of this spec flip `is_deleted`; worklog
+  removals are dated by the `/worklog/deleted` tombstone (real deletion
+  time), comment removals by detection.
+
 ## Downstream contract
 
 Availability transitions enter silver as **synthetic field-history events** in

@@ -32,7 +32,7 @@ SELECT
     COALESCE(st.id_readable, '')                                AS id_readable,
     event_id                                                    AS event_id,
     toDateTime64(h.updated_at, 3)                               AS event_at,
-    CAST('availability', 'Enum8(\'changelog\' = 1, \'synthetic_initial\' = 2, \'availability\' = 3)')
+    CAST('availability', 'Enum8(\'changelog\' = 1, \'synthetic_initial\' = 2, \'availability\' = 3, \'lifecycle\' = 4)')
                                                                 AS event_kind,
     toUInt32(0)                                                 AS _seq,
     CAST(NULL AS Nullable(String))                              AS author_id,
