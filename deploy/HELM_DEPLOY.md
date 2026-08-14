@@ -456,8 +456,9 @@ Other notable (non-placeholder) settings in this file:
   during the login itself. It widens who may **enter**, not who **exists** —
   identity mints only for an account a connector has already observed, refuses
   one the source has closed, refuses one an operator excluded as not-a-person,
-  and writes only under the tenant its own journal is keyed by (so
-  `identityResolution.tenantDefaultId` must be set). The minted person carries
+  and writes only under the tenant its own journal is keyed by — so
+  `global.tenantDefaultId` is required, and the chart refuses to render without
+  it rather than leaving the switch on and inert. The minted person carries
   the source-native id alone until the next seed run attaches the roster's name
   and org placement to it.
 - `authenticator.tlsDiscovery.issuerRef.name` — the cert-manager `ClusterIssuer` the JWKS-discovery Certificate is issued from. Always set this: the chart ships `local-ca`, which is the self-signed root that `make bootstrap-cert-manager ENV=local` creates for the local k3s sandbox, not anything a real cluster has.
