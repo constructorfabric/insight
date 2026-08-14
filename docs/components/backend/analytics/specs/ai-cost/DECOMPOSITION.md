@@ -528,7 +528,7 @@ cpt-insightspec-aicost-feature-claude-team-403 (HIGH, p1)
                                             |
                 cpt-insightspec-aicost-feature-claude-team-seat-cost (MEDIUM, p2)
 
-PHASE 2 - Claude API
+PHASE 3 - per-token cost (Claude API branch, deferred)
 
 cpt-insightspec-aicost-feature-token-usage-contract (HIGH, p1)
     |
