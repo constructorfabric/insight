@@ -304,10 +304,8 @@ pub async fn callback(
         tracing::info!(session_id = %old_sid, "session-fixation guard: revoked presented session");
     }
 
-    // Resolve the internal person; when `idp.provision_on_login` is set, a
-    // principal the journal does not know yet is minted rather than refused —
-    // Identity still requires a connector to have observed them, so the roster
-    // decides who exists and this only decides who waits for it.
+    // Identity requires a connector to have observed the principal before it
+    // mints, so this decides who waits for the batch, not who exists.
     let resolved = match state.resolver.resolve(&idp.identity).await {
         Ok(Some(p)) => Ok(Some(p)),
         Ok(None) if state.cfg.idp.provision_on_login => {

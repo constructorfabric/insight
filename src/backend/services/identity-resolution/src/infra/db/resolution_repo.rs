@@ -9,7 +9,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, TransactionTrait, Value};
+use sea_orm::{
+    AccessMode, ConnectionTrait, DatabaseConnection, DbBackend, IsolationLevel, Statement,
+    TransactionTrait, Value,
+};
 use uuid::Uuid;
 
 use crate::domain::resolution::{BINDING_VALUE_TYPE, BindingRow};
@@ -260,7 +263,17 @@ pub async fn append_binding_if_unbound(
         )
     ";
 
-    let result = db
+    // The isolation level is stated, not inherited: the guard's protection rests
+    // on the self-read seeing the same snapshot the insert writes into, and
+    // under READ COMMITTED that read does not lock, so an operator decision can
+    // slip between them. MariaDB defaults to REPEATABLE READ, which is what
+    // makes `INSERT ... SELECT` take a locking read — a deployment that changed
+    // the default must not silently weaken this.
+    let txn = db
+        .begin_with_config(Some(IsolationLevel::RepeatableRead), Some(AccessMode::ReadWrite))
+        .await?;
+
+    let result = txn
         .execute(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
@@ -278,6 +291,8 @@ pub async fn append_binding_if_unbound(
             ],
         ))
         .await?;
+
+    txn.commit().await?;
 
     Ok(result.rows_affected() > 0)
 }

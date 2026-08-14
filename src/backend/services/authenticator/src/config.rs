@@ -71,19 +71,9 @@ pub struct IdpConfig {
     /// to `sub` (fine for IdPs where `sub` IS the stable directory id, e.g.
     /// Keycloak).
     pub external_id_claim: String,
-    /// Provision a person on first successful login instead of refusing one
-    /// the journal has no binding for yet.
-    ///
-    /// Off by default: turning it on says "whoever this IdP authenticates and
-    /// the connector roster already lists may enter", which is a deployment's
-    /// policy to set, not a default to inherit. Identity still refuses to
-    /// mint for a principal no connector has observed, so this widens who may
-    /// enter, never who exists.
-    ///
-    /// What it buys: the login-bootstrap row is otherwise written only by the
-    /// nightly persons-seed, which links by e-mail and skips an account that
-    /// carries none — so a roster member with no published address waits for
-    /// an operator to bind them by hand.
+    // INVARIANT: off by default — it widens who may ENTER, which is a
+    // deployment's policy to set. Identity refuses to mint for a principal no
+    // connector has observed, so it never widens who exists.
     pub provision_on_login: bool,
     /// Fallback tenant when the id_token carries no tenant claim at all (e.g.
     /// Okta). Empty = no fallback: the gateway JWT gets an empty `tenant_id`

@@ -79,20 +79,13 @@ pub trait PersonResolver: Send + Sync {
     /// Fails when the Identity Service is unreachable or errors.
     async fn resolve(&self, id: &IdpIdentity) -> anyhow::Result<Option<PersonResolution>>;
 
-    /// Resolve, minting a person when the journal has no binding for this
-    /// principal yet. `Ok(None)` = still unknown, and the caller denies the
-    /// login exactly as it would without provisioning.
-    ///
-    /// Only a normal login may provision: the admin `__override` resolves an
-    /// existing person by an email its operator typed, and minting there would
-    /// let a typo conjure a person to impersonate. Implementations must refuse
-    /// anything but [`ResolveTarget::ExternalId`].
-    ///
-    /// Defaults to "cannot provision" so a resolver that has no such power
-    /// fails closed rather than by omission.
+    /// Resolve, minting a person when the journal has no binding yet.
+    /// `Ok(None)` = still unknown, and the caller denies the login.
     ///
     /// # Errors
     /// Fails when the Identity Service is unreachable or errors.
+    // INVARIANT: the default refuses, so a resolver without minting power
+    // fails closed rather than by omission.
     async fn provision(&self, id: &IdpIdentity) -> anyhow::Result<Option<PersonResolution>> {
         let _ = id;
         Ok(None)
@@ -130,10 +123,9 @@ struct ResolveProfile {
     insight_source_id: Option<Uuid>,
 }
 
-/// The external id a login may be provisioned under, or `None` when this
-/// principal must not be minted at all. The `__override` view-as resolves an
-/// existing person by an email its operator typed; minting on that path would
-/// turn a typo into a person to become, so it never provisions.
+// INVARIANT: only a normal login may provision. The `__override` view-as
+// resolves by an email its operator typed, and minting there would turn a typo
+// into a person to become.
 fn provisionable_external_id(target: &ResolveTarget) -> Option<&str> {
     match target {
         ResolveTarget::ExternalId(external_id) => Some(external_id),
@@ -236,10 +228,6 @@ impl IdentityPersonResolver {
         .await
     }
 
-    /// Login-bootstrap provisioning: ask Identity for this principal's person,
-    /// minting one when the journal has no binding yet. Identity refuses to
-    /// mint for a principal no connector has observed, so the roster stays the
-    /// authority on who exists.
     async fn provision_person_by_external_id(
         &self,
         external_id: &str,
@@ -262,13 +250,9 @@ impl IdentityPersonResolver {
             .send()
             .await
             .context("Identity provision request")?;
-        // ONLY 404 is an answer: no connector has observed this principal, so
-        // there is nobody to be, and the caller denies the login as it always
-        // did. Every other status is a fault of ours — a refused service token,
-        // an unconfigured tenant, a malformed body — and must surface as one.
-        // Folding those into "unknown person" would dress a broken deployment
-        // up as an ordinary access denial, which is the version nobody
-        // diagnoses.
+        // INVARIANT: only 404 means "no such principal". Folding any other
+        // status into it would dress a broken deployment up as an ordinary
+        // access denial, which is the version nobody diagnoses.
         let status = resp.status();
         if status == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
