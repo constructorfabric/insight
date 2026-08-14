@@ -2579,7 +2579,7 @@ dependencies = [
  "chrono",
  "clap",
  "hex",
- "opentelemetry 0.31.0",
+ "opentelemetry 0.32.0",
  "reqwest 0.12.28",
  "rustix",
  "serde",
