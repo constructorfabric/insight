@@ -517,6 +517,20 @@
       "title": "Identities is an admin surface",
       "description": "Managing identity resolution needs the administrator role. Ask an existing administrator to grant it if this is part of your job.",
       "unverified": "Could not verify the administrator role"
+    },
+    "modes": {
+      "queue": "Review queue",
+      "people": "A person and their accounts"
+    },
+    "people": {
+      "no_person": "Nobody chosen yet",
+      "no_person_description": "Find a person to see every account bound to them — and correct any of it.",
+      "accounts": "Accounts bound to this person",
+      "no_accounts": "No account is bound to this person.",
+      "by_operator": "decided by an operator",
+      "by_automation": "bound automatically",
+      "open": "Open",
+      "load_failed": "Unable to load this person’s accounts"
     }
   }
 }

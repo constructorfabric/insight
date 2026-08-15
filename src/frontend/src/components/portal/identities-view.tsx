@@ -18,15 +18,9 @@ import { useTranslation } from "react-i18next";
 
 import type { AttentionItem, ResolutionRates } from "@/api/identity-client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { CopyValueButton } from "@/components/copy-value-button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import { CaseDialog } from "@/components/portal/case-dialog";
+import { PersonAccountsView } from "@/components/portal/person-accounts-view";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +38,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
   TooltipContent,
@@ -57,13 +52,12 @@ import {
   useSetPortalSearch,
 } from "@/lib/portal/portal-search";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
-import { itemKey, parseAccountKey } from "@/lib/identities/account-key";
+import { itemKey } from "@/lib/identities/account-key";
 import {
   filterQueue,
   groupIntoCases,
   type QueueCase,
 } from "@/lib/identities/cases";
-import { AccountDetail } from "@/components/portal/account-detail";
 import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
@@ -100,7 +94,53 @@ function opensTheCase(event: React.MouseEvent<HTMLElement>): boolean {
   return !selection || selection.isCollapsed;
 }
 
+/**
+ * The modes the console offers. A mode is a way IN to the same decisions —
+ * the queue arrives at them from a problem, the person view from a name — so
+ * adding one is an entry here and a component, nothing else.
+ */
+const MODES = ["queue", "people"] as const;
+const DEFAULT_MODE = MODES[0];
+
 export function IdentitiesView() {
+  const { t } = useTranslation();
+  const { mode } = usePortalSearch();
+  const setSearch = useSetPortalSearch();
+  const active: string = MODES.find((m) => m === mode) ?? DEFAULT_MODE;
+
+  return (
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
+      <header>
+        <h1 className="text-lg font-semibold tracking-tight">
+          {t("identities.title")}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          {t("identities.subtitle")}
+        </p>
+      </header>
+      <Tabs
+        value={active}
+        // A mode change drops the open account: a case picked in one mode
+        // means nothing in another, and carrying it would open a window the
+        // list behind it does not contain.
+        onValueChange={(next) =>
+          setSearch({ mode: String(next), acct: undefined })
+        }
+      >
+        <TabsList>
+          {MODES.map((m) => (
+            <TabsTrigger key={m} value={m}>
+              {t(`identities.modes.${m}`)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      {active === "people" ? <PersonAccountsView /> : <ReviewQueue />}
+    </div>
+  );
+}
+
+function ReviewQueue() {
   const { t } = useTranslation();
   const attention = useAttention();
 
@@ -121,15 +161,7 @@ export function IdentitiesView() {
   const { items, rates, truncated, items_truncated: itemsTruncated } =
     attention.data;
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
-      <header>
-        <h1 className="text-lg font-semibold tracking-tight">
-          {t("identities.title")}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          {t("identities.subtitle")}
-        </p>
-      </header>
+    <div className="flex min-w-0 flex-col gap-6">
       {truncated ? (
         <Alert variant="destructive" role="status">
           <TriangleAlert />
@@ -389,107 +421,6 @@ function QueueFilter() {
   );
 }
 
-/**
- * One account under review, in a window rather than a column: this is where
- * every decision is taken, and a decision that re-attributes a person's work
- * deserves the room to show what it acts on.
- *
- * Opened by the `?acct=` in the URL — never by click state alone — so a link
- * an operator shares lands their colleague on the same case.
- */
-function CaseDialog({
-  acct,
-  items,
-  ordered,
-  onSelect,
-  onClose,
-}: {
-  acct: string | undefined;
-  items: AttentionItem[];
-  /** Account keys in the order the queue renders them. */
-  ordered: string[];
-  onSelect: (key: string) => void;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  const ref = parseAccountKey(acct);
-  const queueItem = items.find((i) => itemKey(i) === acct);
-  const heading =
-    queueItem?.email?.trim() || queueItem?.username?.trim() || ref?.account_id;
-  const at = acct ? ordered.indexOf(acct) : -1;
-  const previous = at > 0 ? ordered[at - 1] : undefined;
-  const next = at >= 0 ? ordered[at + 1] : undefined;
-
-  return (
-    <Dialog
-      open={ref != null}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      {/* A fixed height, not a fitted one: an operator walks from case to case
-          and a window that resizes to each one moves the verbs under their
-          cursor. The history takes the slack instead. */}
-      <DialogContent
-        className="flex h-[85vh] flex-col gap-4 sm:max-w-3xl"
-        // The window itself, not its first tabbable child — which is a copy
-        // control in the header, and opening a case reading "Copy dev-42"
-        // announces the wrong thing and rings the wrong element.
-        initialFocus={false}
-      >
-        <DialogHeader>
-          <DialogTitle className="truncate select-text">{heading}</DialogTitle>
-          <DialogDescription
-            render={<div className="flex items-center gap-1" />}
-          >
-            <span className="truncate font-mono text-xs select-text">
-              {ref?.source} · {ref?.account_id}
-            </span>
-            {ref ? (
-              <CopyValueButton
-                value={ref.account_id}
-                title={t("identities.detail.copy_account_id")}
-                copyLabel={t("common.copy")}
-                copiedLabel={t("common.copied")}
-                errorMessage={t("common.copy_failed")}
-              />
-            ) : null}
-          </DialogDescription>
-        </DialogHeader>
-        {/* Keyed by the account: the body holds per-account state (a verb's
-            outcome, an open confirmation), and a cached binding renders the
-            next case synchronously — unkeyed, that state would follow. */}
-        {ref ? (
-          <AccountDetail key={acct} accountRef={ref} queueItem={queueItem} />
-        ) : null}
-        {/* Working a backlog is a conveyor: the next case is one press away,
-            without a trip back through the list. */}
-        {previous || next ? (
-          <div className="flex shrink-0 justify-between gap-2 border-t pt-3">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={!previous}
-              onClick={() => previous && onSelect(previous)}
-            >
-              {t("identities.queue.previous_case")}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={!next}
-              onClick={() => next && onSelect(next)}
-            >
-              {t("identities.queue.next_case")}
-            </Button>
-          </div>
-        ) : null}
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 /** Cases rendered before the group asks to be expanded further. */
 const CASE_PAGE = 10;

@@ -30,6 +30,14 @@ const attention = vi.hoisted(() => ({
 }));
 vi.mock("@/queries/identity-resolution", () => ({
   useAttention: () => attention.q,
+  // The people mode has its own test file; here it only has to mount.
+  usePersonSearch: () => ({ data: undefined, isFetching: false, isError: false }),
+  usePersonAccounts: () => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+  }),
   // The panel under a selection; its own behaviour is account-detail.test's.
   useAccountBinding: () => ({
     data: undefined,
@@ -404,6 +412,31 @@ describe("IdentitiesView", () => {
     await userEvent.click(screen.getByRole("button", { name: /next account/i }));
 
     expect(portalRouter.search.acct).toContain("a2");
+  });
+
+  // Modes are ways IN to the same decisions; the mode rides in the URL so a
+  // link opens the one it was sent from.
+  it("switches modes through the URL, dropping the account selected in the old one", async () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    // A selection the window cannot open (a mistyped link) leaves the value in
+    // the URL with no modal over the tabs — the state the switch must clear.
+    portalRouter.set({ zone: "manage", item: "identities", acct: "malformed" });
+    render(<IdentitiesView />);
+
+    await userEvent.click(screen.getByRole("tab", { name: /a person and their accounts/i }));
+
+    expect(portalRouter.search.mode).toBe("people");
+    // A case picked in the queue means nothing in a list it is not part of.
+    expect(portalRouter.search.acct).toBeUndefined();
+    expect(screen.getByText(/nobody chosen yet/i)).toBeInTheDocument();
+  });
+
+  it("falls back to the queue when the URL names a mode that does not exist", () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    portalRouter.set({ zone: "manage", item: "identities", mode: "not-a-mode" });
+    render(<IdentitiesView />);
+
+    expect(screen.getByRole("button", { name: /dev42@example\.com/i })).toBeInTheDocument();
   });
 
   it("offers a retry on a failed load", async () => {
