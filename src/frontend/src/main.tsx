@@ -80,19 +80,20 @@ function bootstrap(): void {
 function startUsageCollection(): void {
   const { session } = authStore.getSnapshot();
   if (!session) return;
-  void startUsageTelemetry(session).then(() => {
+  // Recorded before the instance has answered whether collection is on:
+  // telemetry holds these until it knows, and drops them if the answer is no.
+  recordPageView(
+    portalPath(
+      window.location.pathname,
+      Object.fromEntries(new URLSearchParams(window.location.search)),
+    ),
+  );
+  router.subscribe("onResolved", ({ toLocation }) => {
     recordPageView(
-      portalPath(
-        window.location.pathname,
-        Object.fromEntries(new URLSearchParams(window.location.search)),
-      ),
+      portalPath(toLocation.pathname, toLocation.search as Record<string, unknown>),
     );
-    router.subscribe("onResolved", ({ toLocation }) => {
-      recordPageView(
-        portalPath(toLocation.pathname, toLocation.search as Record<string, unknown>),
-      );
-    });
   });
+  void startUsageTelemetry(session);
 }
 
 /**

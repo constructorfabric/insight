@@ -25,6 +25,23 @@ const APP_VERSION =
 let service: TelemetryService | null = null;
 
 /**
+ * Events recorded before the instance has answered whether collection is on.
+ * The reader has usually opened a page by then, and that first view is the one
+ * a fresh install is judged on. Bounded: an install with collection off never
+ * drains this.
+ */
+const pending: Array<{ name: string; data: Record<string, unknown> }> = [];
+const MAX_PENDING = 50;
+
+function emit(name: string, data: Record<string, unknown>): void {
+  if (service) {
+    service.logEvent(name, data);
+    return;
+  }
+  if (pending.length < MAX_PENDING) pending.push({ name, data });
+}
+
+/**
  * Start collecting for this session, unless the instance has usage collection
  * switched off or the session is a view-as. Resolves once that is decided.
  */
@@ -32,7 +49,10 @@ export async function startUsageTelemetry(session: Session): Promise<void> {
   if (service || session.impersonatorEmail) return;
 
   const config = await getUsageConfig().catch(() => null);
-  if (!config?.enabled) return;
+  if (!config?.enabled) {
+    pending.length = 0;
+    return;
+  }
 
   service = createTelemetry({
     appName: APP_NAME,
@@ -42,6 +62,10 @@ export async function startUsageTelemetry(session: Session): Promise<void> {
   })
     .identify(session.personId)
     .start();
+
+  for (const event of pending.splice(0)) {
+    service.logEvent(event.name, event.data);
+  }
 }
 
 /**
@@ -65,7 +89,7 @@ function isIdentifier(segment: string): boolean {
 }
 
 export function recordPageView(path: string): void {
-  service?.logEvent("page_view", { path: screenPath(path) });
+  emit("page_view", { path: screenPath(path) });
 }
 
 /**
@@ -73,5 +97,5 @@ export function recordPageView(path: string): void {
  * `target` is what the action was aimed at, and is what the usage page ranks.
  */
 export function recordUsageEvent(name: string, target: string): void {
-  service?.logEvent(name, { target });
+  emit(name, { target });
 }
