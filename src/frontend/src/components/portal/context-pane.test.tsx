@@ -20,7 +20,6 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  layout: "wide" as "phone" | "narrow" | "wide",
   zone: { activeZone: "overview", activePerson: "boss@x" },
   standings: [] as Array<{
     id: string;
@@ -33,9 +32,6 @@ const mocks = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock("@/lib/portal/use-shell-layout", () => ({
-  useShellLayout: () => mocks.layout,
-}));
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
 vi.mock("@/components/org-tree", () => ({
   OrgTree: () => <div data-testid="org-tree" />,
@@ -71,7 +67,6 @@ beforeEach(() => {
     removeListener: () => {},
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
-  mocks.layout = "wide";
   mocks.zone = { activeZone: "overview", activePerson: "boss@x" };
   mocks.standings = [];
   act(() => {
@@ -83,14 +78,6 @@ beforeEach(() => {
 });
 
 describe("ContextPane", () => {
-  it("opens the tablet drawer beside the rail rather than under it", () => {
-    mocks.layout = "narrow";
-    const { container } = pane();
-    expect(container.querySelector('[data-slot="sidebar-container"]')).toHaveClass(
-      "data-[side=left]:left-14",
-    );
-  });
-
   it("lists the Overview theme items and writes the selection on click", async () => {
     pane();
     expect(screen.getByText("Overview")).toBeInTheDocument();

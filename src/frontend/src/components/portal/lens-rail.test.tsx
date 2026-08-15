@@ -135,9 +135,6 @@ describe("LensRail", () => {
   });
 
   it("drops the icon's tooltip once the label is readable", async () => {
-    // The tooltip is the shut rail's only naming of an icon. Left in place
-    // while the labels are out, the browser draws it over the zone below the
-    // one being pointed at, saying the word already printed on the button.
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     rail();
     expect(screen.getByRole("button", { name: "People" })).toHaveAttribute(

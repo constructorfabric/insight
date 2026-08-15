@@ -108,9 +108,7 @@ export function ContextPane() {
       collapsible={drawer ? "offcanvas" : "none"}
       className={cn(
         "border-e",
-        // The drawer is positioned from the viewport edge, which on a tablet is
-        // where the rail is.
-        drawer && !isPhone && "data-[side=left]:left-14"
+        layout === "narrow" && "data-[side=left]:left-(--rail-width)"
       )}
     >
       {/* The drawer's zone row already names the zone, so repeating it in a
