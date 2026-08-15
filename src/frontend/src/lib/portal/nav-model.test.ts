@@ -88,4 +88,10 @@ describe("manageItemsFor", () => {
     expect(visible.map((i) => i.id)).not.toContain("identities");
     expect(visible).toEqual(MANAGE_ITEMS.filter((i) => !i.adminOnly));
   });
+
+  it("shows What's new without opting into planned work", () => {
+    const { live } = partitionByReadiness(manageItemsFor(false), false);
+
+    expect(live.map((i) => i.id)).toContain("whats-new");
+  });
 });

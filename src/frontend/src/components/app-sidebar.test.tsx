@@ -29,6 +29,7 @@ vi.mock("@tanstack/react-router", () => ({
   }: {
     select: (s: { location: { pathname: string } }) => string;
   }) => select({ location: { pathname: currentPath } }),
+  useSearch: () => ({}),
 }));
 
 vi.mock("@/auth", () => ({

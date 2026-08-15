@@ -294,7 +294,7 @@ export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "platform-usage", label: "Platform usage", icon: Activity, readiness: "unbuilt" },
   { id: "mcp", label: "MCP servers", icon: Server, readiness: "unbuilt" },
   { id: "config", label: "Config & setup", icon: Settings2, readiness: "unbuilt" },
-  { id: "whats-new", label: "What's new", icon: Megaphone, readiness: "unbuilt" },
+  { id: "whats-new", label: "What's new", icon: Megaphone },
 ];
 
 /* ── Zone item resolution ────────────────────────────────────────────── */

@@ -119,12 +119,13 @@ describe("nav classification invariants", () => {
     ]);
   });
 
-  it("Manage keeps exactly the three surfaces that read live data", () => {
+  it("Manage keeps exactly the surfaces that render something", () => {
     const { live } = partitionByReadiness(MANAGE_ITEMS, false);
     expect(live.map((i) => i.id)).toEqual([
       "metric-catalog",
       "identities",
       "data-health",
+      "whats-new",
     ]);
   });
 

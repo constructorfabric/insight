@@ -12,6 +12,8 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { getInitials } from "@/lib/insight/get-initials";
+import { usePortalSearch } from "@/lib/portal/portal-search";
+import { useInPortalShell } from "@/lib/portal/use-portal-shell";
 import { useIcPerson } from "@/queries/ic-dashboard";
 
 /**
@@ -19,6 +21,10 @@ import { useIcPerson } from "@/queries/ic-dashboard";
  * settings (portal / focus / explanations), theme switch, and the viewer
  * identity block. Extracted from AppSidebar so the portal shell can surface
  * the same controls (from the rail's settings popover) without duplicating them.
+ *
+ * Both shells render it, so the first two entries name the surface the reader
+ * is standing on: the portal's Manage zone from inside the portal, the
+ * standalone screens outside it.
  */
 export function AppSidebarFooter() {
   const { t } = useTranslation();
@@ -26,18 +32,39 @@ export function AppSidebarFooter() {
   const viewerQ = useIcPerson(viewerPersonId ?? "");
   const viewer = viewerQ.data ?? null;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const inPortal = useInPortalShell();
+  const { zone, item } = usePortalSearch();
 
   const primaryEmail = viewer?.email ?? viewerEmail;
   const primary = viewer?.display_name || primaryEmail;
   const showSecondary = primary !== primaryEmail;
+
+  // `acct` belongs to the Identities console and means nothing on another
+  // surface. Cleared rather than omitted: `retainSearchParams` restores any
+  // portal key ABSENT from the target search.
+  const manage = (surface: string) =>
+    ({
+      to: "/portal",
+      search: { zone: "manage", item: surface, acct: undefined },
+    }) as const;
+  const inManage = (surface: string) =>
+    inPortal && zone === "manage" && item === surface;
 
   return (
     <>
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
-            isActive={pathname === "/metrics"}
-            render={<Link to="/metrics" />}
+            isActive={
+              inPortal ? inManage("metric-catalog") : pathname === "/metrics"
+            }
+            render={
+              inPortal ? (
+                <Link {...manage("metric-catalog")} />
+              ) : (
+                <Link to="/metrics" />
+              )
+            }
           >
             <BookOpenText />
             <span>{t("metric_definitions.nav_label")}</span>
@@ -45,8 +72,16 @@ export function AppSidebarFooter() {
         </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
-            isActive={pathname === "/whats-new"}
-            render={<Link to="/whats-new" />}
+            isActive={
+              inPortal ? inManage("whats-new") : pathname === "/whats-new"
+            }
+            render={
+              inPortal ? (
+                <Link {...manage("whats-new")} />
+              ) : (
+                <Link to="/whats-new" />
+              )
+            }
           >
             <Megaphone />
             <span>{t("whats_new.nav_label")}</span>
