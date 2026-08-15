@@ -97,6 +97,9 @@ pub async fn search_persons(
         .map(PersonSummaryResponse::from)
         .collect();
     sort_for_display(&mut items);
+    // A picker is where the wrong person gets chosen, so a person who exists
+    // only because somebody signed in must say so here of all places.
+    super::resolution::mark_provisional(&state, tenant, &mut items).await?;
 
     Ok(Json(PersonListResponse {
         items,

@@ -722,6 +722,10 @@
             "format": "uuid",
             "type": "string"
           },
+          "provisional": {
+            "description": "The journal holds nothing but a login-mint for this person: they exist\nso somebody could sign in, and may duplicate one the roster knows. Not\na merge target — the history is on the other side.",
+            "type": "boolean"
+          },
           "status": {
             "type": [
               "string",

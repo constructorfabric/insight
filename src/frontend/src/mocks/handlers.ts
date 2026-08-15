@@ -608,7 +608,7 @@ export const handlers = [
           email: null,
           username: "new-joiner",
           bound_to: carol?.person_id,
-          candidates: [card(carol)],
+          candidates: [card(carol, { provisional: true })],
         },
         {
           // Neither address nor handle — nothing automation can match on. The

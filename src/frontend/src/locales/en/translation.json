@@ -460,7 +460,8 @@
     "person": {
       "terminated": "terminated",
       "unnamed": "Unnamed person",
-      "copy_id": "Copy the person id"
+      "copy_id": "Copy the person id",
+      "provisional": "provisional — created at a first sign-in"
     },
     "history": {
       "bind": "Bound",

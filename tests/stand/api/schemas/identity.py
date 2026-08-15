@@ -218,6 +218,7 @@ class PersonSummaryResponse(BaseModel):
     email: str | None = None
     job_title: str | None = None
     person_id: UUID
+    provisional: bool | None = Field(None, description='The journal holds nothing but a login-mint for this person: they exist\nso somebody could sign in, and may duplicate one the roster knows. Not\na merge target — the history is on the other side.')
     status: str | None = None
     username: str | None = Field(None, description='Source-native handle (e.g. a git login) — often the only recognisable\nfield of an identity no HR system has observed yet.')
 

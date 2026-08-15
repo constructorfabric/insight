@@ -100,6 +100,10 @@ function isMeRole(role: unknown): role is MeRole {
 /** A person as operator surfaces display them — the wire `PersonSummaryResponse`. */
 export interface PersonSummary {
   person_id: string;
+  /** The journal holds nothing but a login-mint for them: they exist so
+   *  somebody could sign in, and may duplicate a person the roster knows.
+   *  Never a merge target — the history is on the other side. */
+  provisional?: boolean;
   email?: string | null;
   username?: string | null;
   display_name?: string | null;

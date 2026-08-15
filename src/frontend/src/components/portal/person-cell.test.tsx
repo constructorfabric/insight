@@ -70,6 +70,16 @@ describe("PersonCell", () => {
     ).toHaveLength(1);
   });
 
+  // The picker is where the wrong person gets chosen, and a stub minted at a
+  // sign-in is the wrong side of a merge — its counterpart holds the history.
+  it("marks a person the journal knows only from a first sign-in", () => {
+    render(
+      <PersonCell person={person({ display_name: "New Joiner", provisional: true })} />,
+    );
+
+    expect(screen.getByText(/provisional/i)).toBeInTheDocument();
+  });
+
   it("marks a terminated person", () => {
     render(
       <PersonCell

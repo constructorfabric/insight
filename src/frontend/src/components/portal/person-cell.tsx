@@ -9,6 +9,10 @@
  * handle. A `terminated` status is marked so nobody merges INTO a leaver by
  * accident.
  *
+ * A person minted at a first sign-in is marked wherever they appear: the
+ * picker is where the wrong one gets chosen, and merging INTO such a stub is
+ * the wrong direction — the history is on the other side.
+ *
  * The `person_id` is always shown and always copyable. A conflict is normally
  * two records of the same human, so name and address are exactly the fields
  * that fail to tell them apart — the id is the one that never does, and it is
@@ -63,6 +67,11 @@ export function PersonCell({
           >
             {name}
           </span>
+          {person.provisional ? (
+            <Badge variant="outline" className="font-normal">
+              {t("identities.person.provisional")}
+            </Badge>
+          ) : null}
           {person.status?.trim().toLowerCase() === TERMINATED ? (
             <Badge
               variant="secondary"

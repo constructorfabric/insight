@@ -661,6 +661,11 @@ pub struct QueueItemResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonSummaryResponse {
     pub person_id: Uuid,
+    /// The journal holds nothing but a login-mint for this person: they exist
+    /// so somebody could sign in, and may duplicate one the roster knows. Not
+    /// a merge target — the history is on the other side.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub provisional: bool,
     pub email: Option<String>,
     /// Source-native handle (e.g. a git login) — often the only recognisable
     /// field of an identity no HR system has observed yet.
@@ -674,6 +679,7 @@ impl From<PersonCard> for PersonSummaryResponse {
     fn from(card: PersonCard) -> Self {
         Self {
             person_id: card.person_id,
+            provisional: false,
             email: card.email,
             username: card.username,
             display_name: card.display_name,
@@ -681,6 +687,30 @@ impl From<PersonCard> for PersonSummaryResponse {
             status: card.status,
         }
     }
+}
+
+/// Mark the cards the journal holds nothing but a login-mint for.
+///
+/// A separate read rather than a card attribute: the mark is a fact about the
+/// person's bindings, and the card is assembled from observed values.
+///
+/// # Errors
+///
+/// Returns an error if the read fails.
+pub async fn mark_provisional(
+    state: &AppState,
+    tenant: Uuid,
+    people: &mut [PersonSummaryResponse],
+) -> Result<(), CanonicalError> {
+    let ids: Vec<Uuid> = people.iter().map(|p| p.person_id).collect();
+    let provisional = persons_repo::provisional_persons(&state.db, tenant, &ids)
+        .await
+        .map_err(|e| internal(&e, "failed to read which persons are provisional"))?;
+
+    for person in people {
+        person.provisional = provisional.contains(&person.person_id);
+    }
+    Ok(())
 }
 
 /// Share of observed accounts per resolution state — the operator-visible match
@@ -728,6 +758,14 @@ pub async fn attention(
     let page: Vec<_> = review.items.into_iter().take(limit).collect();
 
     let cards = candidate_cards(state.as_ref(), tenant, &page).await?;
+    let provisional = persons_repo::provisional_persons(
+        &state.db,
+        tenant,
+        &cards.keys().copied().collect::<Vec<_>>(),
+    )
+    .await
+    .map_err(|e| internal(&e, "failed to read which persons are provisional"))?;
+
     let items = page
         .into_iter()
         .map(|i| QueueItemResponse {
@@ -745,7 +783,13 @@ pub async fn attention(
             bound_to: i.bound_to,
             candidates: person_card::in_requested_order(&i.candidates, &cards)
                 .into_iter()
-                .map(PersonSummaryResponse::from)
+                .map(|card| {
+                    let is_provisional = provisional.contains(&card.person_id);
+                    PersonSummaryResponse {
+                        provisional: is_provisional,
+                        ..PersonSummaryResponse::from(card)
+                    }
+                })
                 .collect(),
         })
         .collect();
