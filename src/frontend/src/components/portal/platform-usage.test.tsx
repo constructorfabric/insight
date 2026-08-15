@@ -4,7 +4,7 @@
  * a bar the reader cannot put a day against says traffic happened, not when.
  */
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Recharts needs a real layout; the assertions here are about what the page
 // hands the chart, so the primitives report their props as data attributes.
@@ -35,6 +35,21 @@ vi.mock("@/components/ui/chart", () => ({
   ChartTooltipContent: () => <div data-testid="tooltip-content" />,
 }));
 
+// The house harness for a virtualized body: report every row, and record what
+// the page asked to virtualize.
+const mocks = vi.hoisted(() => ({ counts: [] as number[], summary: null as unknown }));
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => {
+    mocks.counts.push(count);
+    return {
+      getVirtualItems: () =>
+        Array.from({ length: count }, (_, index) => ({ index, start: index * 44 })),
+      getTotalSize: () => count * 44,
+      measureElement: () => {},
+    };
+  },
+}));
+
 vi.mock("@/queries/identity-me", () => ({
   useIsAdmin: () => ({ isAdmin: true, isPending: false }),
 }));
@@ -58,7 +73,7 @@ const asked: Array<{ since?: string; until?: string }> = [];
 vi.mock("@/queries/usage", () => ({
   useUsageSummary: (range: { since?: string; until?: string }) => {
     asked.push(range);
-    return { data: SUMMARY, isPending: false, isError: false };
+    return { data: mocks.summary ?? SUMMARY, isPending: false, isError: false };
   },
 }));
 
@@ -77,6 +92,11 @@ vi.mock("@tanstack/react-query", () => ({
 import { PlatformUsage } from "./platform-usage";
 
 describe("PlatformUsage", () => {
+  beforeEach(() => {
+    mocks.summary = null;
+    mocks.counts.length = 0;
+  });
+
   it("asks for a period with the same control every other zone uses", () => {
     render(<PlatformUsage />);
 
@@ -91,6 +111,18 @@ describe("PlatformUsage", () => {
 
     const today = new Date().toISOString().slice(0, 10);
     expect(asked.at(-1)?.until).toBe(today);
+  });
+
+  it("hands a long breakdown to the virtualizer instead of rendering all of it", () => {
+    const many = Array.from({ length: 300 }, (_, i) => ({
+      path: `/portal/page-${i}`,
+      views: 300 - i,
+      visitors: 1,
+    }));
+    mocks.summary = { ...SUMMARY, by_page: many };
+    render(<PlatformUsage />);
+
+    expect(mocks.counts).toContain(300);
   });
 
   it("plots visits against the day they happened", () => {

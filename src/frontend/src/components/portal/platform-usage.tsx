@@ -6,7 +6,8 @@
  * someone else.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useQueries } from "@tanstack/react-query";
 
 import { getPerson } from "@/api/identity-client";
@@ -173,6 +174,101 @@ function VisitsChart({ days }: { days: UsageDay[] }) {
   );
 }
 
+const ROW_HEIGHT = 40;
+
+/** Above this the body scrolls rather than growing the page. */
+const MAX_BODY_HEIGHT = 360;
+
+interface Column<T> {
+  header: string;
+  /** Flex basis in rem — the row is a flex line, not a grid. */
+  width?: number;
+  align?: "left" | "right";
+  cell: (row: T, index: number) => ReactNode;
+}
+
+/**
+ * A ranked breakdown. Rows are virtualized because a busy install has a row per
+ * person and per page, and all three tables sit on one screen.
+ */
+function VirtualTable<T>({
+  rows,
+  columns,
+  rowKey,
+  label,
+}: {
+  rows: T[];
+  columns: Column<T>[];
+  rowKey: (row: T, index: number) => string;
+  label: string;
+}) {
+  // State, not a ref: the virtualizer has to re-read the scroll element once
+  // it exists, and a ref never re-renders to tell it.
+  const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => viewport,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8,
+  });
+  const bodyHeight = virtualizer.getTotalSize();
+
+  const cellClass = (column: Column<T>) =>
+    cn("truncate", column.align === "right" ? "text-right" : "");
+  const cellStyle = (column: Column<T>) => ({
+    flex: column.width ? `0 0 ${column.width}rem` : "1 1 0%",
+  });
+
+  return (
+    <div
+      ref={setViewport}
+      className="overflow-auto rounded-md border"
+      style={{ maxHeight: MAX_BODY_HEIGHT }}
+    >
+      <Table aria-label={label}>
+        <TableHeader className="sticky top-0 z-10 bg-background">
+          <TableRow className="flex w-full">
+            {columns.map((column) => (
+              <TableHead
+                key={column.header}
+                className={cellClass(column)}
+                style={cellStyle(column)}
+              >
+                {column.header}
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody className="relative grid" style={{ height: bodyHeight }}>
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const row = rows[virtualRow.index];
+            if (!row) return null;
+            return (
+              <TableRow
+                key={rowKey(row, virtualRow.index)}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
+                className="absolute top-0 left-0 flex w-full"
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                {columns.map((column) => (
+                  <TableCell
+                    key={column.header}
+                    className={cellClass(column)}
+                    style={cellStyle(column)}
+                  >
+                    {column.cell(row, virtualRow.index)}
+                  </TableCell>
+                ))}
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 function Kpi({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-lg border p-4">
@@ -205,28 +301,24 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
       {rows.length === 0 ? (
         <Empty />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Person</TableHead>
-              <TableHead className="text-right">Visits</TableHead>
-              <TableHead className="text-right">Pages</TableHead>
-              <TableHead>Last seen</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((row, index) => (
-              <TableRow key={row.person_id}>
-                <TableCell className={cn("font-medium")}>
+        <VirtualTable
+          label="Who opened it"
+          rows={rows}
+          rowKey={(row) => row.person_id}
+          columns={[
+            {
+              header: "Person",
+              cell: (row, index) => (
+                <span className="font-medium">
                   {profiles[index]?.data?.display_name ?? row.person_id}
-                </TableCell>
-                <TableCell className="text-right">{row.visits}</TableCell>
-                <TableCell className="text-right">{row.page_views}</TableCell>
-                <TableCell>{row.last_seen.slice(0, 16)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                </span>
+              ),
+            },
+            { header: "Visits", width: 6, align: "right", cell: (row) => row.visits },
+            { header: "Pages", width: 6, align: "right", cell: (row) => row.page_views },
+            { header: "Last seen", width: 11, cell: (row) => row.last_seen.slice(0, 16) },
+          ]}
+        />
       )}
     </section>
   );
@@ -239,26 +331,20 @@ function EventsTable({ rows }: { rows: UsageEvent[] }) {
       {rows.length === 0 ? (
         <Empty />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Action</TableHead>
-              <TableHead>Target</TableHead>
-              <TableHead className="text-right">Opens</TableHead>
-              <TableHead className="text-right">People</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((row) => (
-              <TableRow key={`${row.event_name}:${row.target}`}>
-                <TableCell className="font-medium">{row.event_name}</TableCell>
-                <TableCell className="font-mono text-xs">{row.target || "—"}</TableCell>
-                <TableCell className="text-right">{row.opens}</TableCell>
-                <TableCell className="text-right">{row.people}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <VirtualTable
+          label="Drill-downs and other actions"
+          rows={rows}
+          rowKey={(row) => `${row.event_name}:${row.target}`}
+          columns={[
+            { header: "Action", cell: (row) => <span className="font-medium">{row.event_name}</span> },
+            {
+              header: "Target",
+              cell: (row) => <span className="font-mono text-xs">{row.target || "—"}</span>,
+            },
+            { header: "Opens", width: 6, align: "right", cell: (row) => row.opens },
+            { header: "People", width: 6, align: "right", cell: (row) => row.people },
+          ]}
+        />
       )}
     </section>
   );
@@ -271,24 +357,19 @@ function PagesTable({ rows }: { rows: UsagePage[] }) {
       {rows.length === 0 ? (
         <Empty />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Page</TableHead>
-              <TableHead className="text-right">Views</TableHead>
-              <TableHead className="text-right">People</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((row) => (
-              <TableRow key={row.path}>
-                <TableCell className="font-mono text-xs">{row.path}</TableCell>
-                <TableCell className="text-right">{row.views}</TableCell>
-                <TableCell className="text-right">{row.visitors}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <VirtualTable
+          label="What they opened"
+          rows={rows}
+          rowKey={(row) => row.path}
+          columns={[
+            {
+              header: "Page",
+              cell: (row) => <span className="font-mono text-xs">{row.path}</span>,
+            },
+            { header: "Views", width: 6, align: "right", cell: (row) => row.views },
+            { header: "People", width: 6, align: "right", cell: (row) => row.visitors },
+          ]}
+        />
       )}
     </section>
   );
