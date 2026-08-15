@@ -347,6 +347,10 @@ pub async fn search_persons_by_current_values(
     db: &DatabaseConnection,
     tenant_id: Uuid,
     terms: &[String],
+    // Restrict matching to these persons; empty = the whole tenant. The id+value
+    // search needs the value filter applied WITHIN the named ids — intersecting
+    // with an independently truncated tenant-wide result drops genuine matches.
+    within: &[Uuid],
     limit: u64,
 ) -> anyhow::Result<Vec<Uuid>> {
     if terms.is_empty() {
@@ -381,6 +385,12 @@ pub async fn search_persons_by_current_values(
         WHERE cv.person_id != ?
     ",
     );
+    if !within.is_empty() {
+        let placeholders = vec!["?"; within.len()].join(", ");
+        sql.push_str(" AND cv.person_id IN (");
+        sql.push_str(&placeholders);
+        sql.push(')');
+    }
     for _ in terms {
         sql.push_str(
             " AND EXISTS (SELECT 1 FROM current_vals t \
@@ -393,6 +403,7 @@ pub async fn search_persons_by_current_values(
         tenant_id.as_bytes().to_vec().into(),
         EXCLUDED_PERSON.as_bytes().to_vec().into(),
     ];
+    values.extend(within.iter().map(|id| id.as_bytes().to_vec().into()));
     values.extend(terms.iter().map(|t| like_pattern(t).into()));
     values.push(limit.into());
 

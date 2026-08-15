@@ -78,7 +78,7 @@ pub async fn search_persons(
 
     // Over-fetch by one: the extra row is the truncation probe, never served.
     let mut ids = if named.is_empty() {
-        persons_repo::search_persons_by_current_values(&state.db, tenant, &values, limit + 1)
+        persons_repo::search_persons_by_current_values(&state.db, tenant, &values, &[], limit + 1)
             .await
             .map_err(|e| read_err(&e))?
     } else {
@@ -131,6 +131,11 @@ fn partition_terms(terms: &[String]) -> (Vec<Uuid>, Vec<String>) {
 }
 
 /// Persons named by id, narrowed by any value terms alongside them.
+///
+/// The value filter runs WITHIN the named ids — intersecting with a tenant-wide
+/// value search would test membership in an independently truncated prefix and
+/// silently drop a genuine match. Sorted and capped so the caller's truncation
+/// probe drops a deterministic id, never whichever the database returned last.
 async fn persons_named_by_id(
     state: &AppState,
     tenant: Uuid,
@@ -138,21 +143,18 @@ async fn persons_named_by_id(
     values: &[String],
     limit: u64,
 ) -> Result<Vec<Uuid>, CanonicalError> {
-    let known = persons_repo::persons_in_tenant(&state.db, tenant, named)
+    let mut known = persons_repo::persons_in_tenant(&state.db, tenant, named)
         .await
         .map_err(|e| read_err(&e))?;
-    if values.is_empty() {
+    known.sort_unstable();
+    known.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    if values.is_empty() || known.is_empty() {
         return Ok(known);
     }
 
-    let by_value = persons_repo::search_persons_by_current_values(&state.db, tenant, values, limit)
+    persons_repo::search_persons_by_current_values(&state.db, tenant, values, &known, limit)
         .await
-        .map_err(|e| read_err(&e))?;
-
-    Ok(known
-        .into_iter()
-        .filter(|id| by_value.contains(id))
-        .collect())
+        .map_err(|e| read_err(&e))
 }
 
 /// Split `q` into terms: non-empty, whitespace-separated, capped in count and

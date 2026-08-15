@@ -764,13 +764,19 @@ pub async fn attention(
     let page: Vec<_> = review.items.into_iter().take(limit).collect();
 
     let cards = candidate_cards(state.as_ref(), tenant, &page).await?;
-    let provisional = persons_repo::provisional_persons(
-        &state.db,
-        tenant,
-        &cards.keys().copied().collect::<Vec<_>>(),
-    )
-    .await
-    .map_err(|e| internal(&e, "failed to read which persons are provisional"))?;
+    // Over the candidate ids, NOT the hydrated cards' keys: a login-minted
+    // person has no card attributes at all (their journal holds only the
+    // binding row), so the card set misses exactly the persons this flag
+    // exists to mark.
+    let candidate_ids: Vec<Uuid> = page
+        .iter()
+        .flat_map(|i| i.candidates.iter().copied())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let provisional = persons_repo::provisional_persons(&state.db, tenant, &candidate_ids)
+        .await
+        .map_err(|e| internal(&e, "failed to read which persons are provisional"))?;
 
     let items = page
         .into_iter()
