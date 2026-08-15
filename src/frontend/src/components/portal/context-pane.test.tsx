@@ -128,6 +128,8 @@ describe("ContextPane", () => {
     ["overview", "At a glance"],
     ["aicost", "Overview"],
     ["people", "People (roster)"],
+    ["reports", "Report builder"],
+    ["manage", "Metric catalog"],
   ])("highlights the default item of %s when the URL names none", (zone, label) => {
     mocks.zone = { activeZone: zone, activePerson: "boss@x" };
     pane();
@@ -148,10 +150,10 @@ describe("ContextPane", () => {
     expect(buttonFor("People (roster)")).toHaveAttribute("data-active");
   });
 
-  it("highlights nothing in Manage, whose no-item view is no menu entry", () => {
-    mocks.zone = { activeZone: "manage", activePerson: "boss@x" };
+  it("highlights nothing in a zone with nothing built to open on", () => {
+    mocks.zone = { activeZone: "scorecard", activePerson: "boss@x" };
     pane();
-    expect(buttonFor("Metric catalog")).not.toHaveAttribute("data-active");
+    expect(document.querySelectorAll("[data-active]")).toHaveLength(0);
   });
 
   it("renders the person's sections nav in the Person zone", () => {

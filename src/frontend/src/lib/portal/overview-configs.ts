@@ -1,6 +1,6 @@
 import { headlineMetricKeys } from "@/lib/insight/groups";
 import { sectionMetricKeys, type LensConfig } from "@/lib/portal/lens-configs";
-import { ZONE_DEFAULT_ITEM } from "@/lib/portal/nav-model";
+import { defaultZoneItem } from "@/lib/portal/nav-model";
 
 /**
  * The Overview zone registry: each pane item (nav-model ZONE_SECTIONS.overview)
@@ -13,7 +13,7 @@ import { ZONE_DEFAULT_ITEM } from "@/lib/portal/nav-model";
 const ATTENTION_KEYS: readonly string[] = headlineMetricKeys();
 
 /** The item the router renders when no pane item is selected. */
-export const DEFAULT_OVERVIEW_ITEM = ZONE_DEFAULT_ITEM.overview!;
+export const DEFAULT_OVERVIEW_ITEM = defaultZoneItem("overview")!;
 
 export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
   [DEFAULT_OVERVIEW_ITEM]: {

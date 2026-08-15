@@ -308,22 +308,21 @@ export const MANAGE_ITEMS: readonly PaneItem[] = [
 
 /* ── Zone item resolution ────────────────────────────────────────────── */
 
-/**
- * The item a zone falls back to when the URL names none. Absent = the zone's
- * no-item view is no menu row (Manage), or its default has no id at all
- * (Person — see ContextPane.PersonSectionsNav).
- */
-export const ZONE_DEFAULT_ITEM: Record<string, string> = {
-  overview: "at-a-glance",
-  aicost: "overview",
-  people: "roster",
-};
-
 /** Every pane item a zone lists, in display order, planned ones included. */
 export function zoneItems(zoneId: string): readonly PaneItem[] {
   if (zoneId === "people") return PEOPLE_ITEMS;
   if (zoneId === "manage") return MANAGE_ITEMS;
   return (ZONE_SECTIONS[zoneId] ?? []).flatMap((g) => g.items);
+}
+
+/**
+ * The item a zone falls back to when the URL names none: its first BUILT entry.
+ * Planned and unbuilt ones are skipped because the pane filters them out (see
+ * {@link partitionByReadiness}), and a default it filters out marks a row that
+ * is not on screen.
+ */
+export function defaultZoneItem(zoneId: string): string | null {
+  return zoneItems(zoneId).find((i) => i.readiness == null)?.id ?? null;
 }
 
 /**
@@ -335,5 +334,5 @@ export function zoneItems(zoneId: string): readonly PaneItem[] {
  */
 export function resolveZoneItem(zoneId: string, item: string | null): string | null {
   if (item && zoneItems(zoneId).some((i) => i.id === item)) return item;
-  return ZONE_DEFAULT_ITEM[zoneId] ?? null;
+  return defaultZoneItem(zoneId);
 }
