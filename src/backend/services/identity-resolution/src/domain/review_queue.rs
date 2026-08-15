@@ -55,6 +55,9 @@ pub struct QueueItem {
     pub email: Option<String>,
     pub username: Option<String>,
     pub description: AccountDescription,
+    /// The person holding this account right now, when one does. Absent means
+    /// unbound — which is itself the answer for a contested account.
+    pub bound_to: Option<Uuid>,
     pub candidates: Vec<Uuid>,
 }
 
@@ -117,13 +120,13 @@ pub fn build(
             Some(_) => rates.bound += 1,
             None if !has_matchable_evidence(account) => {
                 rates.no_evidence += 1;
-                items.push(item(ItemKind::NoEvidence, account, Vec::new()));
+                items.push(item(ItemKind::NoEvidence, account, None, Vec::new()));
             }
             None => {
                 let candidates = candidates_for(account, &by_email, bindings);
                 if candidates.len() > 1 {
                     rates.pending += 1;
-                    items.push(item(ItemKind::Contested, account, candidates));
+                    items.push(item(ItemKind::Contested, account, None, candidates));
                 } else {
                     // One candidate or none: the account has an e-mail, so
                     // automation will bind it on its next run — not the
@@ -179,7 +182,13 @@ fn binding_conflicts(
         }
 
         for account in group {
-            conflicts.push(item(ItemKind::BindingConflict, account, persons.clone()));
+            let bound_to = bindings.get(&account.account).map(|b| b.person_id);
+            conflicts.push(item(
+                ItemKind::BindingConflict,
+                account,
+                bound_to,
+                persons.clone(),
+            ));
         }
     }
 
@@ -217,13 +226,19 @@ fn has_matchable_evidence(account: &EvidenceAccount) -> bool {
     account.email.is_some()
 }
 
-fn item(kind: ItemKind, account: &EvidenceAccount, candidates: Vec<Uuid>) -> QueueItem {
+fn item(
+    kind: ItemKind,
+    account: &EvidenceAccount,
+    bound_to: Option<Uuid>,
+    candidates: Vec<Uuid>,
+) -> QueueItem {
     QueueItem {
         kind,
         account: account.account.clone(),
         email: account.email.clone(),
         username: account.username.clone(),
         description: account.description.clone(),
+        bound_to,
         candidates,
     }
 }
@@ -365,6 +380,41 @@ mod tests {
                 .any(|i| i.kind == ItemKind::BindingConflict),
             "a human already settled this split"
         );
+    }
+
+    #[test]
+    fn a_conflict_row_names_the_person_holding_that_account() {
+        // The candidates are the same for every row of the case; which of them
+        // holds THIS account is the fact each decision turns on.
+        let mut bindings = HashMap::new();
+        bindings.insert(account("hr", "1"), seed_bound(1));
+        bindings.insert(account("chat", "2"), seed_bound(2));
+
+        let review = build(
+            vec![
+                observed("hr", "1", Some("a@example.com")),
+                observed("chat", "2", Some("a@example.com")),
+            ],
+            &bindings,
+        );
+
+        let hr: Vec<&QueueItem> = review
+            .items
+            .iter()
+            .filter(|i| i.account.source_type == "hr")
+            .collect();
+
+        assert_eq!(hr.len(), 1, "one row for the hr account");
+        assert_eq!(hr[0].kind, ItemKind::BindingConflict);
+        assert_eq!(hr[0].bound_to, Some(Uuid::from_u128(1)));
+        assert_eq!(hr[0].candidates.len(), 2, "both sides stay listed");
+    }
+
+    #[test]
+    fn an_unbound_queue_item_is_bound_to_nobody() {
+        let review = build(vec![observed("jira", "jr-1", None)], &HashMap::new());
+
+        assert_eq!(review.items[0].bound_to, None);
     }
 
     #[test]

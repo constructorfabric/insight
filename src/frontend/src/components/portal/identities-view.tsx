@@ -53,6 +53,7 @@ import {
 } from "@/lib/portal/portal-search";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { itemKey } from "@/lib/identities/account-key";
+import { personDisplayName } from "@/lib/identities/person-display";
 import {
   filterQueue,
   groupIntoCases,
@@ -592,6 +593,13 @@ function CaseBlock({
             .map((s) => s?.trim())
             .filter(Boolean)
             .join(" · ");
+          // Which of the case's candidates holds THIS account: the candidates
+          // are stated once for the whole case, so without this the row asks
+          // an operator to decide between two people without saying which one
+          // they would be taking it from.
+          const boundTo = queueCase.candidates.find(
+            (c) => c.person_id === item.bound_to,
+          );
           return (
             <div
               key={key}
@@ -631,6 +639,13 @@ function CaseBlock({
                 >
                   {label}
                 </span>
+                {boundTo ? (
+                  <Badge variant="outline" className="shrink-0 font-normal">
+                    {t("identities.queue.bound_to", {
+                      name: personDisplayName(boundTo),
+                    })}
+                  </Badge>
+                ) : null}
                 <StatusBadge status={item.status} />
                 <span className="ms-auto shrink-0 font-mono text-xs text-muted-foreground">
                   {label === item.account_id ? item.source : `${item.source} · ${item.account_id}`}

@@ -347,6 +347,7 @@ class QueueItemResponse(BaseModel):
         extra='forbid',
     )
     account_id: str
+    bound_to: UUID | None = Field(None, description='Who holds the account right now. Absent = nobody, which is what an\nunbound account on the queue means; present, it names which of the\ncandidates below is the one being disagreed with.')
     candidates: list[PersonSummaryResponse] = Field(..., description='Persons this account could belong to, if any are known — hydrated into\ncards so the operator UI never has to resolve bare ids itself.')
     department: str | None = None
     display_name: str | None = Field(None, description='How the source describes the account. Nothing here is matchable — it is\nwhat lets an operator recognise whose account this is when automation\ncannot, which is exactly the case for the ones only they can bind.')

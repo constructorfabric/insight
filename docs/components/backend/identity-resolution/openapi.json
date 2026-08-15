@@ -1001,6 +1001,14 @@
           "account_id": {
             "type": "string"
           },
+          "bound_to": {
+            "description": "Who holds the account right now. Absent = nobody, which is what an\nunbound account on the queue means; present, it names which of the\ncandidates below is the one being disagreed with.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "candidates": {
             "description": "Persons this account could belong to, if any are known — hydrated into\ncards so the operator UI never has to resolve bare ids itself.",
             "items": {

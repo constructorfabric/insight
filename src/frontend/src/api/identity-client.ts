@@ -123,6 +123,9 @@ export interface AttentionItem {
   department?: string | null;
   status?: string | null;
   manager_email?: string | null;
+  /** Who holds the account right now; absent = nobody. Names which of the
+   *  candidates is the one being disagreed with. */
+  bound_to?: string | null;
   /** Hydrated person cards, not bare ids. */
   candidates: PersonSummary[];
 }

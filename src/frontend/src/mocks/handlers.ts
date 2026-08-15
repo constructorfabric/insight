@@ -532,6 +532,9 @@ export const handlers = [
           account_id: "dev-42",
           email: "dev42@example.com",
           username: "dev42",
+          // Contested means unbound: nobody holds it, which is why two people
+          // can claim it.
+          bound_to: null,
           candidates: [card(bob), card(carol)],
         },
         {
@@ -541,6 +544,7 @@ export const handlers = [
           account_id: "a.kim",
           email: alice?.email ?? "alice.kim@example.com",
           username: null,
+          bound_to: alice?.person_id,
           candidates: [card(alice)],
         },
         {

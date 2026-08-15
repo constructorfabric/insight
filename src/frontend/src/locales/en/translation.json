@@ -441,7 +441,8 @@
       "no_matches_description": "Clear the filter to see the whole queue.",
       "previous_case": "‹ Previous account",
       "next_case": "Next account ›",
-      "reports_to": "reports to {{manager}}"
+      "reports_to": "reports to {{manager}}",
+      "bound_to": "now {{name}}"
     },
     "detail": {
       "not_found": "This account is unknown — the link may be stale.",

@@ -184,9 +184,27 @@ describe("IdentitiesView", () => {
     ];
     attention.q.data = {
       items: [
-        item({ kind: "binding_conflict", account_id: "a1", source: "hr", candidates }),
-        item({ kind: "binding_conflict", account_id: "a2", source: "wiki", candidates }),
-        item({ kind: "binding_conflict", account_id: "a3", source: "chat", candidates }),
+        item({
+          kind: "binding_conflict",
+          account_id: "a1",
+          source: "hr",
+          candidates,
+          bound_to: candidates[0]?.person_id,
+        }),
+        item({
+          kind: "binding_conflict",
+          account_id: "a2",
+          source: "wiki",
+          candidates,
+          bound_to: candidates[1]?.person_id,
+        }),
+        item({
+          kind: "binding_conflict",
+          account_id: "a3",
+          source: "chat",
+          candidates,
+          bound_to: candidates[1]?.person_id,
+        }),
       ],
       rates: RATES,
     };
@@ -194,6 +212,10 @@ describe("IdentitiesView", () => {
 
     expect(screen.getAllByText("Ann Lee")).toHaveLength(1);
     expect(screen.getByText(/1 case · 3 accounts/i)).toBeInTheDocument();
+    // The candidates are stated once for the case, so each row has to say
+    // which of them it would be taking the account from.
+    expect(screen.getByText(/now Ann Lee/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/now Bob Park/i)).toHaveLength(2);
     // Each account still has its own row: a decision is taken per account.
     expect(screen.getAllByRole("button", { name: /dev42@example\.com/i })).toHaveLength(3);
   });

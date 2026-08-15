@@ -642,6 +642,10 @@ pub struct QueueItemResponse {
     pub department: Option<String>,
     pub status: Option<String>,
     pub manager_email: Option<String>,
+    /// Who holds the account right now. Absent = nobody, which is what an
+    /// unbound account on the queue means; present, it names which of the
+    /// candidates below is the one being disagreed with.
+    pub bound_to: Option<Uuid>,
     /// Persons this account could belong to, if any are known — hydrated into
     /// cards so the operator UI never has to resolve bare ids itself.
     pub candidates: Vec<PersonSummaryResponse>,
@@ -734,6 +738,7 @@ pub async fn attention(
             department: i.description.department,
             status: i.description.status,
             manager_email: i.description.manager_email,
+            bound_to: i.bound_to,
             candidates: person_card::in_requested_order(&i.candidates, &cards)
                 .into_iter()
                 .map(PersonSummaryResponse::from)
