@@ -100,6 +100,8 @@ export function ContextPane() {
   const zone = zoneById(activeZone);
   const title = zone?.label ?? "Insight";
   const active = resolveZoneItem(activeZone, usePortalItem());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const dismissDrawer = useDismissDrawer();
 
   return (
     <Sidebar collapsible={drawer ? "offcanvas" : "none"} className="border-e">
@@ -139,7 +141,7 @@ export function ContextPane() {
               menu on demand. */}
           <SidebarMenu>
             <SidebarMenuItem>
-              <Popover>
+              <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
                 <PopoverTrigger
                   render={
                     <SidebarMenuButton>
@@ -153,7 +155,15 @@ export function ContextPane() {
                   align="start"
                   className="w-60 gap-0 p-1"
                 >
-                  <AppSidebarFooter />
+                  {/* A leaf pick, so it dismisses the drawer as every other
+                      one here does — and the popover with it, which on a phone
+                      covers the surface just asked for. */}
+                  <AppSidebarFooter
+                    onNavigate={() => {
+                      setSettingsOpen(false);
+                      dismissDrawer();
+                    }}
+                  />
                 </PopoverContent>
               </Popover>
             </SidebarMenuItem>

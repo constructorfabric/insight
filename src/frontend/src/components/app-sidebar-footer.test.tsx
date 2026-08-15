@@ -7,6 +7,7 @@
  * (constructorfabric/insight#2569).
  */
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
@@ -22,11 +23,12 @@ vi.mock("@tanstack/react-router", () => ({
     to,
     search,
     children,
+    ...rest
   }: {
     to: string;
     search?: Record<string, unknown>;
     children?: React.ReactNode;
-  }) => (
+  } & Record<string, unknown>) => (
     <a
       data-testid="link"
       data-to={to}
@@ -35,6 +37,7 @@ vi.mock("@tanstack/react-router", () => ({
       data-search={Object.entries(search ?? {})
         .map(([k, v]) => `${k}=${String(v)}`)
         .join("&")}
+      {...rest}
     >
       {children}
     </a>
@@ -76,13 +79,17 @@ vi.mock("@/components/ui/avatar", () => ({
   ),
 }));
 
-vi.mock("@/components/ui/sidebar", () => {
+vi.mock("@/components/ui/sidebar", async () => {
+  const { cloneElement, isValidElement } = await import("react");
   const passthrough = ({ children }: { children?: React.ReactNode }) => (
     <div>{children}</div>
   );
   return {
     SidebarMenu: passthrough,
     SidebarMenuItem: passthrough,
+    // The real button MERGES into `render` — the label ends up inside the
+    // anchor. Rendering them as siblings would put the label outside the
+    // clickable element, so a click test would prove nothing.
     SidebarMenuButton: ({
       children,
       isActive,
@@ -93,8 +100,9 @@ vi.mock("@/components/ui/sidebar", () => {
       render?: React.ReactNode;
     }) => (
       <div data-testid="menu-button" data-active={String(Boolean(isActive))}>
-        {renderProp}
-        {children}
+        {isValidElement(renderProp)
+          ? cloneElement(renderProp, {}, children)
+          : children}
       </div>
     ),
   };
@@ -173,5 +181,29 @@ describe("AppSidebarFooter", () => {
 
     expect(entry("Metric catalog")).toHaveAttribute("data-active", "true");
     expect(entry("What's new")).toHaveAttribute("data-active", "false");
+  });
+
+  // The portal mounts this inside a popover, and the destination now renders
+  // behind that popover rather than replacing the shell it sits in. Whoever
+  // opened the menu closes it; the footer only says that it navigated.
+  it("reports a navigation from either destination", async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+    currentPath = "/portal";
+    render(<AppSidebarFooter onNavigate={onNavigate} />);
+
+    await user.click(screen.getByText("Metric catalog"));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByText("What's new"));
+    expect(onNavigate).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders without a caller that wants to know — the legacy sidebar does not", async () => {
+    const user = userEvent.setup();
+    render(<AppSidebarFooter />);
+
+    await user.click(screen.getByText("What's new"));
+    expect(entry("What's new")).toBeInTheDocument();
   });
 });

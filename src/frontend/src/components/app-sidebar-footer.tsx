@@ -25,8 +25,15 @@ import { useIcPerson } from "@/queries/ic-dashboard";
  * Both shells render it, so the first two entries name the surface the reader
  * is standing on: the portal's Manage zone from inside the portal, the
  * standalone screens outside it.
+ *
+ * `onNavigate` fires when one of those two is picked. The portal mounts this
+ * in a popover, and a Manage surface now renders BEHIND that popover instead
+ * of replacing the shell it lives in — so the menu has to be dismissed rather
+ * than destroyed. Whoever opened it owns closing it; the footer only reports.
+ * The toggles below are deliberately silent: flipping Portal or Focus is a
+ * setting, and a menu that shut on every flip would need reopening each time.
  */
-export function AppSidebarFooter() {
+export function AppSidebarFooter({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
   const { email: viewerEmail, personId: viewerPersonId } = useViewer();
   const viewerQ = useIcPerson(viewerPersonId ?? "");
@@ -60,9 +67,9 @@ export function AppSidebarFooter() {
             }
             render={
               inPortal ? (
-                <Link {...manage("metric-catalog")} />
+                <Link {...manage("metric-catalog")} onClick={onNavigate} />
               ) : (
-                <Link to="/metrics" />
+                <Link to="/metrics" onClick={onNavigate} />
               )
             }
           >
@@ -77,9 +84,9 @@ export function AppSidebarFooter() {
             }
             render={
               inPortal ? (
-                <Link {...manage("whats-new")} />
+                <Link {...manage("whats-new")} onClick={onNavigate} />
               ) : (
-                <Link to="/whats-new" />
+                <Link to="/whats-new" onClick={onNavigate} />
               )
             }
           >

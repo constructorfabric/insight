@@ -66,7 +66,15 @@ vi.mock("@/auth", () => ({ useViewer: () => ({ email: "boss@x" }) }));
 // The settings menu pulls in viewer/theme/i18n plumbing; its presence is what
 // matters here — on a phone it is only reachable through this drawer.
 vi.mock("@/components/app-sidebar-footer", () => ({
-  AppSidebarFooter: () => <div data-testid="settings-menu" />,
+  // Stands in for the real menu, but keeps the one thing the shell is
+  // responsible for: the footer reports that it sent the reader somewhere.
+  AppSidebarFooter: ({ onNavigate }: { onNavigate?: () => void }) => (
+    <div data-testid="settings-menu">
+      <button type="button" onClick={onNavigate}>
+        Go somewhere
+      </button>
+    </div>
+  ),
 }));
 
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -202,6 +210,18 @@ describe("shell layout: phone", () => {
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByTestId("settings-menu")).toBeInTheDocument();
+  });
+
+  it("shuts the settings menu once it has sent the reader somewhere", async () => {
+    // The destination now renders behind this menu instead of replacing the
+    // whole shell, so nothing dismisses it on the reader's behalf any more.
+    render(<Shell />);
+    const user = await openDrawer();
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    await user.click(screen.getByRole("button", { name: "Go somewhere" }));
+
+    expect(screen.queryByTestId("settings-menu")).not.toBeInTheDocument();
   });
 
   it("drops the header — the zone row already names the zone", async () => {

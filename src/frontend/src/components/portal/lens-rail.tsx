@@ -105,6 +105,7 @@ export function LensRail() {
   // Suppresses the hover until the pointer leaves. Only a pointer-driven click
   // sets it — see the note where it is set.
   const [dismissed, setDismissed] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancel = () => {
@@ -266,7 +267,10 @@ export function LensRail() {
           </SidebarMenu>
         </SidebarContent>
         <SidebarFooter className="relative z-10 items-start gap-1 ps-2">
-          <Popover>
+          {/* Controlled so a pick can shut it: its two destinations render in
+              the content area BEHIND this popover, which would otherwise sit
+              over the thing it was just asked for. */}
+          <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
             <PopoverTrigger
               render={
                 <button
@@ -280,7 +284,7 @@ export function LensRail() {
               }
             />
             <PopoverContent side="right" align="end" className="w-56 gap-0 p-1">
-              <AppSidebarFooter />
+              <AppSidebarFooter onNavigate={() => setSettingsOpen(false)} />
             </PopoverContent>
           </Popover>
         </SidebarFooter>
