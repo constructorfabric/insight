@@ -13,7 +13,7 @@
  * discussion — and that link answers whatever the queue looks like by then,
  * an emptied backlog included.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { AttentionItem, ResolutionRates } from "@/api/identity-client";
@@ -31,6 +31,7 @@ import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Collapsible,
   CollapsibleContent,
@@ -50,16 +51,30 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { usePortalSearch } from "@/lib/portal/portal-search";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import {
+  usePortalSearch,
+  useSetPortalSearch,
+} from "@/lib/portal/portal-search";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { itemKey, parseAccountKey } from "@/lib/identities/account-key";
-import { groupIntoCases, type QueueCase } from "@/lib/identities/cases";
+import {
+  filterQueue,
+  groupIntoCases,
+  type QueueCase,
+} from "@/lib/identities/cases";
 import { AccountDetail } from "@/components/portal/account-detail";
 import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import { ChevronDown, Info, PartyPopper, TriangleAlert } from "lucide-react";
+import {
+  ChevronDown,
+  Info,
+  PartyPopper,
+  Search,
+  TriangleAlert,
+} from "lucide-react";
 
 /** Queue groups in working order: conflicts first, then the unknowns. */
 const KIND_ORDER = ["contested", "binding_conflict", "no_evidence"] as const;
@@ -233,9 +248,14 @@ function AllResolved() {
   );
 }
 
-function Queue({ items }: { items: AttentionItem[] }) {
-  const { acct } = usePortalSearch();
+function Queue({ items: everything }: { items: AttentionItem[] }) {
+  const { t } = useTranslation();
+  const { acct, filter } = usePortalSearch();
   const { setAcct } = usePortalNavActions();
+  const items = useMemo(
+    () => filterQueue(everything, filter ?? ""),
+    [everything, filter],
+  );
   const groups: Array<{ kind: string; items: AttentionItem[] }> = KIND_ORDER.map(
     (kind) => ({ kind, items: items.filter((i) => i.kind === kind) }),
   ).filter((g) => g.items.length > 0);
@@ -250,20 +270,67 @@ function Queue({ items }: { items: AttentionItem[] }) {
   // colleague opens the link they were sent.
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      {items.length === 0 ? (
-        <AllResolved />
-      ) : (
-        groups.map((group) => (
-          <QueueGroup
-            key={group.kind}
-            kind={group.kind}
-            items={group.items}
-            selectedKey={acct}
-            onSelect={(key) => setAcct(key === acct ? null : key)}
-          />
-        ))
-      )}
-      <CaseDialog acct={acct} items={items} onClose={() => setAcct(null)} />
+      {everything.length > 0 ? <QueueFilter /> : null}
+      {/* A filter that matches nothing is not an emptied backlog. Celebrating
+          there would tell an operator the work is done because they mistyped. */}
+      {items.length === 0 && everything.length > 0 ? (
+        <Empty className="rounded-lg border">
+          <EmptyHeader>
+            <EmptyTitle>{t("identities.queue.no_matches")}</EmptyTitle>
+            <EmptyDescription>
+              {t("identities.queue.no_matches_description")}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : null}
+      {items.length === 0 && everything.length === 0 ? <AllResolved /> : null}
+      {groups.map((group) => (
+        <QueueGroup
+          key={group.kind}
+          kind={group.kind}
+          items={group.items}
+          selectedKey={acct}
+          onSelect={(key) => setAcct(key === acct ? null : key)}
+        />
+      ))}
+      {/* Fed from the unfiltered set: a link stays answerable even when the
+          reader's own filter hides the row it points at. */}
+      <CaseDialog acct={acct} items={everything} onClose={() => setAcct(null)} />
+    </div>
+  );
+}
+
+/**
+ * Narrow the queue by anything visible on a row — an address, a source, a
+ * candidate's name, a person id pasted back from a card.
+ *
+ * The query rides in the URL like every other portal state, so a narrowed
+ * queue is shareable; it is written on a pause in typing rather than per
+ * keystroke, and replaces rather than pushes, so Back leaves the surface
+ * instead of walking the operator backwards through their own typing.
+ */
+function QueueFilter() {
+  const { t } = useTranslation();
+  const { filter } = usePortalSearch();
+  const setSearch = useSetPortalSearch();
+  const [query, setQuery] = useState(filter ?? "");
+  const debounced = useDebouncedValue(query, FILTER_DEBOUNCE_MS);
+
+  useEffect(() => {
+    setSearch({ filter: debounced.trim() || undefined }, { replace: true });
+  }, [debounced, setSearch]);
+
+  return (
+    <div className="relative">
+      <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        type="search"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder={t("identities.queue.filter_placeholder")}
+        aria-label={t("identities.queue.filter_placeholder")}
+        className="ps-9"
+      />
     </div>
   );
 }
@@ -331,6 +398,8 @@ function CaseDialog({
 
 /** Cases rendered before the group asks to be expanded further. */
 const CASE_PAGE = 10;
+
+const FILTER_DEBOUNCE_MS = 250;
 
 function QueueGroup({
   kind,

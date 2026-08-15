@@ -8,7 +8,7 @@
  * and the strip leads with the queue's own size — the one figure the operator
  * can act on — over tenant-wide binding states.
  */
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -281,6 +281,51 @@ describe("IdentitiesView", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /close/i }));
     expect(portalRouter.search.acct).toBeUndefined();
+  });
+
+  it("narrows the queue by anything on a row, and carries the filter in the URL", async () => {
+    attention.q.data = {
+      items: [
+        item({ account_id: "a1", email: "ann@example.com" }),
+        item({ account_id: "a2", email: "bob@example.com" }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "ann@");
+    await waitFor(() => expect(portalRouter.search.filter).toBe("ann@"));
+    expect(screen.getByRole("button", { name: /ann@example\.com/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /bob@example\.com/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // Celebrating here would tell an operator the backlog is done because they
+  // mistyped a filter.
+  it("does not celebrate an empty result — a filter that matches nothing says so", () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    portalRouter.set({ zone: "manage", item: "identities", filter: "nobody" });
+    render(<IdentitiesView />);
+
+    expect(screen.getByText(/nothing matches those terms/i)).toBeInTheDocument();
+    expect(screen.queryByText(/everything is resolved/i)).not.toBeInTheDocument();
+  });
+
+  // A colleague's link points at a row the reader's own filter hides; the
+  // case must still open, or the link is only as good as the recipient's
+  // current view.
+  it("answers a shared ?acct= link even while a filter hides its row", () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    portalRouter.set({
+      zone: "manage",
+      item: "identities",
+      filter: "nobody",
+      acct: "github:01900000-0000-7000-8000-00000000aa01:dev-42",
+    });
+    render(<IdentitiesView />);
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("offers a retry on a failed load", async () => {
