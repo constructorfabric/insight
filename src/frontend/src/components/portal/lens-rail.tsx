@@ -145,10 +145,7 @@ export function LensRail() {
   return (
     <div
       data-testid="lens-rail"
-      // INVARIANT: above the sticky topbar's z-20. Below 1024px the pane is
-      // off-canvas and the topbar runs the full width beside the rail, so the
-      // open panel and the bar share ground; on a tie the bar wins for coming
-      // later in the DOM, and the top zone was being cut off mid-word by it.
+      // INVARIANT: above the sticky topbar's z-20, which it opens across.
       className="relative z-30 shrink-0"
       onPointerEnter={(e) => {
         // Touch fires enter at press and leave at release, so a tap would
@@ -325,10 +322,6 @@ function ZoneItem({
     <SidebarMenuItem className="relative z-10">
       <SidebarMenuButton
         isActive={active}
-        // The icon's only name while the rail is shut, and nothing while it is
-        // open: the browser draws the tooltip a beat after the labels appear,
-        // repeating the word already on the button and covering the zone below
-        // it. Dropped before that timer expires, so no tooltip is ever drawn.
         title={open ? undefined : zone.label}
         // 40px shut, the full open width while open — see note 2 above. The
         // icon does not move between the two: the button starts its content at
