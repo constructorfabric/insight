@@ -20,6 +20,17 @@ import type {
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { Button } from "@/components/ui/button";
+import {
+  BarChart,
+  CartesianGrid,
+  ChartBar,
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  XAxis,
+  YAxis,
+  type ChartConfig,
+} from "@/components/ui/chart";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -97,8 +108,12 @@ export function PlatformUsage() {
   const { totals, by_person, by_page, by_event } = summary.data;
   // The API returns only days that saw traffic; the chart is about the range,
   // so the quiet days have to be drawn as quiet rather than left out.
-  const by_day = fillRange(summary.data.by_day, range);
-  const busiest = by_day.reduce((top, day) => Math.max(top, day.visits), 0);
+  // The window the server actually filtered on, echoed back — the chart covers
+  // what the numbers cover, not what the controls asked for a moment ago.
+  const by_day = fillRange(summary.data.by_day, {
+    since: summary.data.since || range.since,
+    until: summary.data.until || range.until,
+  });
 
   return (
     <div className="flex w-full flex-col gap-6 p-6">
@@ -147,28 +162,50 @@ export function PlatformUsage() {
 
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-medium">Visits per day</h3>
-        {by_day.length === 0 ? (
-          <Empty />
-        ) : (
-          <div className="flex items-end gap-1" aria-label="Visits per day">
-            {by_day.map((day) => (
-              <div
-                key={day.day}
-                title={`${day.day}: ${day.visits} visits, ${day.visitors} people`}
-                className="min-h-px w-full rounded-t bg-primary/70"
-                style={{
-                  height: `${Math.round((day.visits / Math.max(busiest, 1)) * 96)}px`,
-                }}
-              />
-            ))}
-          </div>
-        )}
+        {by_day.length === 0 ? <Empty /> : <VisitsChart days={by_day} />}
       </section>
 
       <PeopleTable rows={by_person} />
       <PagesTable rows={by_page} />
       <EventsTable rows={by_event} />
     </div>
+  );
+}
+
+const CHART_CONFIG = {
+  visits: { label: "Visits", color: "var(--chart-1)" },
+} satisfies ChartConfig;
+
+/** A day reads as `08-14`; the year is already in the range above the chart. */
+function dayTick(day: string): string {
+  return day.slice(5);
+}
+
+function VisitsChart({ days }: { days: UsageDay[] }) {
+  return (
+    <ChartContainer config={CHART_CONFIG} className="w-full" style={{ height: 160 }}>
+      <BarChart data={days} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+        <XAxis
+          dataKey="day"
+          tickFormatter={dayTick}
+          tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+          tickLine={false}
+          axisLine={false}
+          interval="preserveStartEnd"
+          minTickGap={16}
+        />
+        <YAxis
+          allowDecimals={false}
+          width={28}
+          tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+          tickLine={false}
+          axisLine={false}
+        />
+        <ChartTooltip content={<ChartTooltipContent />} />
+        <ChartBar dataKey="visits" fill="var(--color-visits)" radius={[2, 2, 0, 0]} />
+      </BarChart>
+    </ChartContainer>
   );
 }
 
