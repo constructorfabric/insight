@@ -32,7 +32,16 @@ vi.mock("@/lib/portal/use-zone-nav", () => ({
   }),
 }));
 vi.mock("@/components/app-sidebar-footer", () => ({
-  AppSidebarFooter: () => null,
+  // Only the one thing the rail reacts to: the menu says it navigated.
+  AppSidebarFooter: ({
+    onNavigate,
+  }: {
+    onNavigate?: (viaPointer: boolean) => void;
+  }) => (
+    <button type="button" onClick={(e) => onNavigate?.(e.detail > 0)}>
+      Go somewhere
+    </button>
+  ),
 }));
 
 import { SidebarProvider } from "@/components/ui/sidebar";
@@ -96,6 +105,22 @@ describe("LensRail", () => {
 
     await user.click(screen.getByRole("button", { name: "People" }));
     expect(mocks.selected).toEqual(["people"]);
+    expect(labelOf("People")).toHaveClass("opacity-0");
+  });
+
+  it("collapses when the settings menu navigates, for the same reason", async () => {
+    // The menu's trigger lives in the rail's own footer, so reaching it leaves
+    // the rail expanded over the pane — and its destinations render in that
+    // pane. Closing the popover alone still hides the answer behind the rail.
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    rail();
+    await user.hover(screen.getByTestId("lens-rail"));
+    settle();
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    expect(labelOf("People")).toHaveClass("opacity-100");
+
+    await user.click(screen.getByRole("button", { name: "Go somewhere" }));
+
     expect(labelOf("People")).toHaveClass("opacity-0");
   });
 

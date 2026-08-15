@@ -26,14 +26,21 @@ import { useIcPerson } from "@/queries/ic-dashboard";
  * is standing on: the portal's Manage zone from inside the portal, the
  * standalone screens outside it.
  *
- * `onNavigate` fires when one of those two is picked. The portal mounts this
- * in a popover, and a Manage surface now renders BEHIND that popover instead
- * of replacing the shell it lives in — so the menu has to be dismissed rather
- * than destroyed. Whoever opened it owns closing it; the footer only reports.
- * The toggles below are deliberately silent: flipping Portal or Focus is a
- * setting, and a menu that shut on every flip would need reopening each time.
+ * `onNavigate` fires when one of those two is picked, carrying whether a
+ * POINTER made the pick (`detail` counts pointer clicks; keyboard activation
+ * reports 0) — the rail needs that to tell a pointer resting on it from a
+ * keyboard visit. The portal mounts this in a popover, and a Manage surface
+ * now renders BEHIND that popover instead of replacing the shell it lives in,
+ * so the menu has to be dismissed rather than destroyed. Whoever opened it
+ * owns closing it; the footer only reports. The toggles below are deliberately
+ * silent: flipping Portal or Focus is a setting, and a menu that shut on every
+ * flip would need reopening each time.
  */
-export function AppSidebarFooter({ onNavigate }: { onNavigate?: () => void }) {
+export function AppSidebarFooter({
+  onNavigate,
+}: {
+  onNavigate?: (viaPointer: boolean) => void;
+}) {
   const { t } = useTranslation();
   const { email: viewerEmail, personId: viewerPersonId } = useViewer();
   const viewerQ = useIcPerson(viewerPersonId ?? "");
@@ -67,9 +74,15 @@ export function AppSidebarFooter({ onNavigate }: { onNavigate?: () => void }) {
             }
             render={
               inPortal ? (
-                <Link {...manage("metric-catalog")} onClick={onNavigate} />
+                <Link
+                  {...manage("metric-catalog")}
+                  onClick={(e) => onNavigate?.(e.detail > 0)}
+                />
               ) : (
-                <Link to="/metrics" onClick={onNavigate} />
+                <Link
+                  to="/metrics"
+                  onClick={(e) => onNavigate?.(e.detail > 0)}
+                />
               )
             }
           >
@@ -84,9 +97,15 @@ export function AppSidebarFooter({ onNavigate }: { onNavigate?: () => void }) {
             }
             render={
               inPortal ? (
-                <Link {...manage("whats-new")} onClick={onNavigate} />
+                <Link
+                  {...manage("whats-new")}
+                  onClick={(e) => onNavigate?.(e.detail > 0)}
+                />
               ) : (
-                <Link to="/whats-new" onClick={onNavigate} />
+                <Link
+                  to="/whats-new"
+                  onClick={(e) => onNavigate?.(e.detail > 0)}
+                />
               )
             }
           >

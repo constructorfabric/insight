@@ -194,6 +194,8 @@ describe("AppSidebarFooter", () => {
 
     await user.click(screen.getByText("Metric catalog"));
     expect(onNavigate).toHaveBeenCalledTimes(1);
+    // The rail collapses only for a pointer, so the pick has to say which it was.
+    expect(onNavigate).toHaveBeenLastCalledWith(true);
 
     await user.click(screen.getByText("What's new"));
     expect(onNavigate).toHaveBeenCalledTimes(2);

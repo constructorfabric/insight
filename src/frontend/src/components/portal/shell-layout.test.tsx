@@ -68,9 +68,13 @@ vi.mock("@/auth", () => ({ useViewer: () => ({ email: "boss@x" }) }));
 vi.mock("@/components/app-sidebar-footer", () => ({
   // Stands in for the real menu, but keeps the one thing the shell is
   // responsible for: the footer reports that it sent the reader somewhere.
-  AppSidebarFooter: ({ onNavigate }: { onNavigate?: () => void }) => (
+  AppSidebarFooter: ({
+    onNavigate,
+  }: {
+    onNavigate?: (viaPointer: boolean) => void;
+  }) => (
     <div data-testid="settings-menu">
-      <button type="button" onClick={onNavigate}>
+      <button type="button" onClick={(e) => onNavigate?.(e.detail > 0)}>
         Go somewhere
       </button>
     </div>

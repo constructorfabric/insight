@@ -106,6 +106,10 @@ export function LensRail() {
   // sets it — see the note where it is set.
   const [dismissed, setDismissed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Whether a POINTER made the last settings pick — read when the popover
+  // decides where to hand focus back. A ref, not state: it is read during that
+  // handoff, and re-rendering for it would be pointless.
+  const pointerPick = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancel = () => {
@@ -270,7 +274,13 @@ export function LensRail() {
           {/* Controlled so a pick can shut it: its two destinations render in
               the content area BEHIND this popover, which would otherwise sit
               over the thing it was just asked for. */}
-          <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
+          <Popover
+            open={settingsOpen}
+            onOpenChange={(next) => {
+              if (next) pointerPick.current = false;
+              setSettingsOpen(next);
+            }}
+          >
             <PopoverTrigger
               render={
                 <button
@@ -283,8 +293,30 @@ export function LensRail() {
                 </button>
               }
             />
-            <PopoverContent side="right" align="end" className="w-56 gap-0 p-1">
-              <AppSidebarFooter onNavigate={() => setSettingsOpen(false)} />
+            <PopoverContent
+              side="right"
+              align="end"
+              className="w-56 gap-0 p-1"
+              // Closing normally hands focus back to the trigger — which lives
+              // in this rail, so `onFocusCapture` re-opened it over the surface
+              // the pick had just asked for. Collapsing it first does not help:
+              // the handoff happens after. A pointer pick has no focus to
+              // return; a keyboard one does, and still gets it.
+              finalFocus={() => !pointerPick.current}
+            >
+              <AppSidebarFooter
+                onNavigate={(viaPointer) => {
+                  pointerPick.current = viaPointer;
+                  setSettingsOpen(false);
+                  // Note 4 above, reached from the footer rather than a zone:
+                  // the pointer that got here crossed the rail, so the rail is
+                  // expanded over the pane the destination renders in.
+                  if (viaPointer) {
+                    setDismissed(true);
+                    close();
+                  }
+                }}
+              />
             </PopoverContent>
           </Popover>
         </SidebarFooter>
