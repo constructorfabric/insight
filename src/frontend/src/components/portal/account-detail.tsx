@@ -20,6 +20,7 @@ import type {
   BindingHistoryEntry,
   PersonSummary,
 } from "@/api/identity-client";
+import { CopyValueButton } from "@/components/copy-value-button";
 import { AccountActions } from "@/components/portal/account-actions";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
@@ -84,39 +85,43 @@ export function AccountDetail({
   );
 
   return (
-    // Decisions on the start side, the trail behind them on the end side —
-    // and the trail scrolls on its own, so a long-lived account cannot push
-    // the verbs out of reach.
-    <div className="grid gap-6 md:grid-cols-2">
-      <div className="flex min-w-0 flex-col gap-4">
-        <section>
-          <SectionLabel>{t("identities.detail.current_binding")}</SectionLabel>
-          {binding.data.person_id ? (
-            boundCard ? (
-              <PersonCell person={boundCard} />
-            ) : (
-              <PersonId id={binding.data.person_id} />
-            )
+    // One column, not two: the people are what an operator reads across, and
+    // splitting the window halved the width of the addresses and ids that
+    // tell two namesakes apart. The decision sits above the trail behind it,
+    // and only the trail scrolls — the verbs stay where they were.
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+      <section className="shrink-0">
+        <SectionLabel>{t("identities.detail.current_binding")}</SectionLabel>
+        {binding.data.person_id ? (
+          boundCard ? (
+            <PersonCell person={boundCard} />
           ) : (
-            <p className="text-sm text-muted-foreground">
-              {t("identities.detail.unbound")}
-            </p>
-          )}
-        </section>
+            <PersonId id={binding.data.person_id} />
+          )
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {t("identities.detail.unbound")}
+          </p>
+        )}
+      </section>
+      <div className="shrink-0">
         <AccountActions
           accountRef={accountRef}
           binding={binding.data}
           candidates={candidates}
         />
       </div>
-      <section className="flex min-w-0 flex-col">
+      <section className="flex min-h-0 flex-1 flex-col">
         <SectionLabel>{t("identities.detail.history")}</SectionLabel>
         {binding.data.history.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {t("identities.detail.no_history")}
           </p>
         ) : (
-          <ol className="flex max-h-[50vh] flex-col gap-2 overflow-y-auto pe-1">
+          // A floor under the trail: with a tall decision block above it the
+          // remaining space collapses to a sliver, and a one-line history is
+          // unreadable. Below the floor the window itself scrolls.
+          <ol className="flex min-h-48 flex-1 flex-col gap-2 overflow-y-auto pe-1">
             {binding.data.history.map((entry, index) => (
               <HistoryRow
                 key={`${entry.recorded_at}-${index}`}
@@ -151,22 +156,24 @@ function HistoryRow({
         <Badge variant={entry.by_operator ? "secondary" : "outline"}>
           {verbKey ? t(verbKey) : (reason ?? t("identities.history.automatic"))}
         </Badge>
-        <span
-          className="ms-auto text-xs text-muted-foreground"
-          title={formatUtcInstant(entry.recorded_at, "d MMM yyyy, HH:mm")}
-        >
-          {formatUtcAge(entry.recorded_at)}
+        {/* The instant is what an operator compares between entries and pastes
+            into a ticket; the age answers the question the trail is usually
+            opened for — how long this has stood. Neither replaces the other. */}
+        <span className="ms-auto text-xs text-muted-foreground">
+          {formatUtcInstant(entry.recorded_at, "d MMM yyyy, HH:mm")}
+          <span className="ms-1.5 opacity-70">
+            {formatUtcAge(entry.recorded_at)}
+          </span>
         </span>
       </div>
-      <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
         <span>{t("identities.history.to")}</span>
         {target ? (
           <span className="font-medium text-foreground">
             {personDisplayName(target)}
           </span>
-        ) : (
-          <PersonId id={entry.person_id} />
-        )}
+        ) : null}
+        <PersonId id={entry.person_id} />
         {entry.by_operator ? (
           <span className="ms-auto">{t("identities.history.by_operator")}</span>
         ) : null}
@@ -175,9 +182,25 @@ function HistoryRow({
   );
 }
 
-/** A bare person id, honest and copyable, when no card is known for it. */
+/**
+ * A person id, always shown and always copyable: a trail of decisions names
+ * the same handful of people over and over, and the id is what tells two of
+ * them apart when the names do not.
+ */
 function PersonId({ id }: { id: string }) {
-  return <span className="font-mono text-xs">{id}</span>;
+  const { t } = useTranslation();
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="font-mono text-xs select-text">{id}</span>
+      <CopyValueButton
+        value={id}
+        title={t("identities.person.copy_id")}
+        copyLabel={t("common.copy")}
+        copiedLabel={t("common.copied")}
+        errorMessage={t("common.copy_failed")}
+      />
+    </span>
+  );
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {

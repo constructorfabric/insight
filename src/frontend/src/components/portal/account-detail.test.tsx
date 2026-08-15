@@ -122,10 +122,13 @@ describe("AccountDetail", () => {
     expect(screen.getByText("Merged")).toBeInTheDocument();
     expect(screen.getByText("seed-backfill")).toBeInTheDocument();
     expect(screen.getByText(/by an operator/i)).toBeInTheDocument();
-    // How long a binding has stood is what the trail is read for; the exact
-    // instant stays beside the age rather than being replaced by it.
+    // Two different questions: when exactly (comparable between entries,
+    // pasteable into a ticket) and how long it has stood.
+    expect(screen.getByText(/1 Aug 2026, \d\d:\d\d/)).toBeInTheDocument();
     expect(screen.getAllByText(/ago$/i).length).toBeGreaterThan(0);
-    expect(screen.getByTitle(/1 Aug 2026, \d\d:\d\d/)).toBeInTheDocument();
+    // The same person appears over and over in a trail; the id is what tells
+    // two of them apart when the names do not.
+    expect(screen.getAllByText(BOB.person_id).length).toBeGreaterThan(0);
   });
 
   // The resolver writes no reason at all — as an empty string, which is not

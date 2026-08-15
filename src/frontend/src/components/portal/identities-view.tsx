@@ -427,7 +427,16 @@ function CaseDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-h-[85vh] gap-4 overflow-y-auto sm:max-w-3xl">
+      {/* A fixed height, not a fitted one: an operator walks from case to case
+          and a window that resizes to each one moves the verbs under their
+          cursor. The history takes the slack instead. */}
+      <DialogContent
+        className="flex h-[85vh] flex-col gap-4 sm:max-w-3xl"
+        // The window itself, not its first tabbable child — which is a copy
+        // control in the header, and opening a case reading "Copy dev-42"
+        // announces the wrong thing and rings the wrong element.
+        initialFocus={false}
+      >
         <DialogHeader>
           <DialogTitle className="truncate select-text">{heading}</DialogTitle>
           <DialogDescription
@@ -456,7 +465,7 @@ function CaseDialog({
         {/* Working a backlog is a conveyor: the next case is one press away,
             without a trip back through the list. */}
         {previous || next ? (
-          <div className="flex justify-between gap-2 border-t pt-3">
+          <div className="flex shrink-0 justify-between gap-2 border-t pt-3">
             <Button
               type="button"
               variant="ghost"
