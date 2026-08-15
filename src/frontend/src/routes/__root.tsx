@@ -1,4 +1,4 @@
-import { Outlet, createRootRoute } from "@tanstack/react-router";
+import { Outlet, createRootRoute, useRouterState } from "@tanstack/react-router";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { getPerson } from "@/api/identity-client";
@@ -10,7 +10,8 @@ import { MockBanner } from "@/components/mock-banner";
 import { ViewAsBanner } from "@/components/view-as-banner";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { PortalLayout } from "@/components/portal/portal-layout";
-import { useInPortalShell } from "@/lib/portal/use-portal-shell";
+import { isPortalShellPath } from "@/lib/portal/portal-routes";
+import { usePortalEnabled } from "@/lib/portal/portal-store";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { queryClient } from "@/query-client";
 import { MetricEvidenceDialogProvider } from "@/components/metric-evidence-dialog-provider";
@@ -53,10 +54,12 @@ function RootPending() {
 }
 
 function RootLayout() {
+  const portal = usePortalEnabled();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   // The portal is a ROUTE now, so it renders through the Outlet like anything
   // else — otherwise its navigation could never live in the URL. It still owns
-  // the whole shell on the routes it claims; `useInPortalShell` owns that list.
-  const inPortal = useInPortalShell();
+  // the whole shell on the routes it claims; `isPortalShellPath` owns that list.
+  const portalRoute = isPortalShellPath(pathname);
   return (
     <TooltipProvider>
       {/* Upstream's evidence-dialog provider wraps everything; the portal
@@ -64,7 +67,7 @@ function RootLayout() {
           finds the same provider the legacy screens use. */}
       <MetricEvidenceDialogProvider>
         <AuthGate>
-          {inPortal ? (
+          {portal && portalRoute ? (
             <PortalLayout />
           ) : (
             <SidebarProvider>

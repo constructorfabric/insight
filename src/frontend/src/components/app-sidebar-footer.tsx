@@ -56,14 +56,14 @@ export function AppSidebarFooter({
   return (
     <>
       <SidebarMenu>
-        <ChromeEntry
+        <MenuEntry
           surface="metric-catalog"
           screen="/metrics"
           icon={BookOpenText}
           label={t("metric_definitions.nav_label")}
           onNavigate={onNavigate}
         />
-        <ChromeEntry
+        <MenuEntry
           surface="whats-new"
           screen="/whats-new"
           icon={Megaphone}
@@ -109,7 +109,7 @@ export function AppSidebarFooter({
  * here while the pane marked the zone's default, and a `?zone=` left behind on
  * a person route marked a Manage entry the portal was not showing.
  */
-function ChromeEntry({
+function MenuEntry({
   surface,
   screen,
   icon: Icon,
