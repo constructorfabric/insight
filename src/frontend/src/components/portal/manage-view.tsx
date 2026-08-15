@@ -46,11 +46,7 @@ export function ManageView({ item }: { item: string | null }) {
   if (item === "whats-new") return <WhatsNewBody />;
   return (
     <div className="mx-auto w-full max-w-md p-8">
-      <ComingSoon
-        variant="card"
-        state="empty"
-        label="Not built yet"
-      />
+      <ComingSoon variant="card" state="empty" label="Not built yet" />
     </div>
   );
 }
@@ -104,9 +100,14 @@ function useFlatDefinitions() {
       (q.data ?? [])
         .flatMap((g) => g.metrics)
         .sort((a, b) => a.metric_key.localeCompare(b.metric_key)),
-    [q.data],
+    [q.data]
   );
-  return { metrics, isLoading: q.isLoading, isError: q.isError, refetch: q.refetch };
+  return {
+    metrics,
+    isLoading: q.isLoading,
+    isError: q.isError,
+    refetch: q.refetch,
+  };
 }
 
 const DIRECTION_LABEL: Record<MetricDefinition["direction"], string> = {
@@ -150,7 +151,9 @@ function MetricCatalogTable() {
           <TableBody>
             {metrics.map((m) => (
               <TableRow key={m.metric_key}>
-                <TableCell className="font-mono text-xs">{m.metric_key}</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {m.metric_key}
+                </TableCell>
                 <TableCell>{m.short_label ?? m.label}</TableCell>
                 <TableCell className="text-muted-foreground">
                   {m.unit || "—"}
@@ -219,7 +222,7 @@ function DataHealth() {
             <div
               className={cn(
                 "mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                STATUS_STYLE[s],
+                STATUS_STYLE[s]
               )}
             >
               {s}

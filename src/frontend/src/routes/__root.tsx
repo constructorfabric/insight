@@ -55,8 +55,7 @@ function RootPending() {
 function RootLayout() {
   // The portal is a ROUTE now, so it renders through the Outlet like anything
   // else — otherwise its navigation could never live in the URL. It still owns
-  // the whole shell on the routes it claims; `useInPortalShell` owns that list,
-  // and shared chrome asks it the same question to pick its link targets.
+  // the whole shell on the routes it claims; `useInPortalShell` owns that list.
   const inPortal = useInPortalShell();
   return (
     <TooltipProvider>

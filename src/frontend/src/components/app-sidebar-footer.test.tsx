@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 /**
- * The footer is rendered by BOTH shells — the legacy sidebar and the portal
- * rail — so its two entries have to name the surface the reader is standing
- * in. Sending a portal reader to /metrics or /whats-new drops the portal
- * chrome and lands them in the previous interface
- * (constructorfabric/insight#2569).
+ * The two entries follow the Portal toggle. They named /metrics and /whats-new
+ * unconditionally, which dropped a portal reader into the previous interface
+ * (constructorfabric/insight#2569); the toggle stays for now, so the old UI has
+ * to remain reachable while it is off.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -127,16 +126,7 @@ beforeEach(() => {
 });
 
 describe("AppSidebarFooter", () => {
-  it("names the legacy screens while the reader is outside the portal shell", () => {
-    render(<AppSidebarFooter />);
-
-    expect(linkOf("Metric catalog")).toHaveAttribute("data-to", "/metrics");
-    expect(linkOf("What's new")).toHaveAttribute("data-to", "/whats-new");
-  });
-
-  it("names the portal's Manage surfaces while the reader is inside the portal", () => {
-    currentPath = "/portal";
-    currentSearch = { zone: "overview" };
+  it("names the portal's Manage surfaces while the portal is on", () => {
     render(<AppSidebarFooter />);
 
     expect(linkOf("Metric catalog")).toHaveAttribute("data-to", "/portal");
@@ -151,23 +141,17 @@ describe("AppSidebarFooter", () => {
     );
   });
 
-  it("keeps the portal targets on a person route, which the portal shell also owns", () => {
-    currentPath = "/ic/019e2800-0000-7000-8000-00000000a11c/personal";
-    render(<AppSidebarFooter />);
-
-    expect(linkOf("What's new")).toHaveAttribute("data-to", "/portal");
-  });
-
-  it("falls back to the legacy screens when the reader turned the portal off", () => {
-    currentPath = "/portal";
+  it("names the standalone screens while the portal is off", () => {
+    // The toggle stays for now, so the old UI has to remain reachable from
+    // the menu that is the only thing linking to it.
     portalEnabled = false;
     render(<AppSidebarFooter />);
 
+    expect(linkOf("Metric catalog")).toHaveAttribute("data-to", "/metrics");
     expect(linkOf("What's new")).toHaveAttribute("data-to", "/whats-new");
   });
 
-  it("marks the Manage surface the portal is showing, not the pathname", () => {
-    currentPath = "/portal";
+  it("marks the Manage surface the portal is showing", () => {
     currentSearch = { zone: "manage", item: "whats-new" };
     render(<AppSidebarFooter />);
 
@@ -175,7 +159,27 @@ describe("AppSidebarFooter", () => {
     expect(entry("Metric catalog")).toHaveAttribute("data-active", "false");
   });
 
-  it("marks the legacy screen it is standing on outside the portal", () => {
+  it("marks the zone's default when the URL names no item", () => {
+    // `resolveZoneItem` falls back to the first built entry, which is what the
+    // context pane highlights — the menu must not disagree with it.
+    currentSearch = { zone: "manage" };
+    render(<AppSidebarFooter />);
+
+    expect(entry("Metric catalog")).toHaveAttribute("data-active", "true");
+  });
+
+  it("marks nothing from a zone the portal is not showing", () => {
+    // A person route drives the zone from the PATH, so a `?zone=manage` left
+    // behind in the URL names a surface that is not on screen.
+    currentPath = "/ic/019e2800-0000-7000-8000-00000000a11c/personal";
+    currentSearch = { zone: "manage", item: "whats-new" };
+    render(<AppSidebarFooter />);
+
+    expect(entry("What's new")).toHaveAttribute("data-active", "false");
+  });
+
+  it("marks the standalone screen it is standing on while the portal is off", () => {
+    portalEnabled = false;
     currentPath = "/metrics";
     render(<AppSidebarFooter />);
 
@@ -189,7 +193,6 @@ describe("AppSidebarFooter", () => {
   it("reports a navigation from either destination", async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
-    currentPath = "/portal";
     render(<AppSidebarFooter onNavigate={onNavigate} />);
 
     await user.click(screen.getByText("Metric catalog"));
@@ -199,13 +202,5 @@ describe("AppSidebarFooter", () => {
 
     await user.click(screen.getByText("What's new"));
     expect(onNavigate).toHaveBeenCalledTimes(2);
-  });
-
-  it("renders without a caller that wants to know — the legacy sidebar does not", async () => {
-    const user = userEvent.setup();
-    render(<AppSidebarFooter />);
-
-    await user.click(screen.getByText("What's new"));
-    expect(entry("What's new")).toBeInTheDocument();
   });
 });

@@ -74,7 +74,7 @@ vi.mock("@/components/app-sidebar-footer", () => ({
     onNavigate?: (viaPointer: boolean) => void;
   }) => (
     <div data-testid="settings-menu">
-      <button type="button" onClick={(e) => onNavigate?.(e.detail > 0)}>
+      <button type="button" onClick={() => onNavigate?.(true)}>
         Go somewhere
       </button>
     </div>

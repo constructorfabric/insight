@@ -36,6 +36,12 @@ vi.mock("@/auth", () => ({
   useViewer: () => ({ email: viewerEmail, personId: viewerPersonId }),
 }));
 
+// This sidebar IS the shell the toggle falls back to, so the footer's entries
+// name the standalone screens here rather than the portal's Manage surfaces.
+vi.mock("@/lib/portal/portal-store", () => ({
+  usePortalEnabled: () => false,
+}));
+
 vi.mock("@/queries/ic-dashboard", () => ({
   useIcPerson: () => ({ data: viewerData }),
 }));
