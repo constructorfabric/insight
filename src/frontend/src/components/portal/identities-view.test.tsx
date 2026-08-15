@@ -242,6 +242,21 @@ describe("IdentitiesView", () => {
     expect(portalRouter.search.acct).toBeUndefined();
   });
 
+  // The case is where every decision is taken, so it gets a window rather
+  // than the leftover column — and the window is opened by the URL, so a
+  // shared link lands a colleague on the same case rather than on a queue.
+  it("opens the case in a window, and closing it clears the shared link", async () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    render(<IdentitiesView />);
+
+    await userEvent.click(screen.getByRole("button", { name: /dev42@example\.com/i }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/github · dev-42/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /close/i }));
+    expect(portalRouter.search.acct).toBeUndefined();
+  });
+
   it("offers a retry on a failed load", async () => {
     attention.q.isError = true;
     render(<IdentitiesView />);

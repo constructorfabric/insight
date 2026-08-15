@@ -1,11 +1,11 @@
 /**
- * The detail panel for one selected account: what the resolver currently
- * thinks (the binding), who it could belong to (the queue's hydrated
- * candidates), and every decision ever recorded (the history — the journal is
- * append-only, so this trail is complete by construction).
+ * One account under review — the body of the case window: what the resolver
+ * currently thinks (the binding), who it could belong to (the queue's
+ * hydrated candidates), and every decision ever recorded (the history — the
+ * journal is append-only, so this trail is complete by construction).
  *
- * The panel answers a shared `?acct=` link even when the account is no longer
- * in the queue. The binding read never 404s: an account nobody ever observed
+ * It answers for an account no longer in the queue, which is what a shared
+ * link lands on. The binding read never 404s: an account nobody ever observed
  * or decided answers 200 with an empty journal, so "not in the queue, no
  * binding, no history" is the stale-link state — it says so instead of
  * offering verbs whose bind would pre-register a typo as a real account.
@@ -23,7 +23,6 @@ import type {
 import { AccountActions } from "@/components/portal/account-actions";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import type { AccountRef } from "@/lib/identities/account-key";
@@ -52,17 +51,15 @@ export function AccountDetail({
   const { t } = useTranslation();
   const binding = useAccountBinding(accountRef);
 
-  if (binding.isLoading) return <PanelShell><CenteredSpinner className="min-h-40" /></PanelShell>;
+  if (binding.isLoading) return <CenteredSpinner className="min-h-40" />;
   if (binding.isError) {
     return (
-      <PanelShell>
-        <ComingSoon
-          variant="card"
-          state="error"
-          label={t("identities.detail.load_failed")}
-          onRetry={() => void binding.refetch()}
-        />
-      </PanelShell>
+      <ComingSoon
+        variant="card"
+        state="error"
+        label={t("identities.detail.load_failed")}
+        onRetry={() => void binding.refetch()}
+      />
     );
   }
   if (!binding.data) return null;
@@ -73,13 +70,11 @@ export function AccountDetail({
     binding.data.history.length === 0;
   if (neverSeen) {
     return (
-      <PanelShell>
-        <ComingSoon
-          variant="card"
-          state="empty"
-          label={t("identities.detail.not_found")}
-        />
-      </PanelShell>
+      <ComingSoon
+        variant="card"
+        state="empty"
+        label={t("identities.detail.not_found")}
+      />
     );
   }
 
@@ -89,59 +84,50 @@ export function AccountDetail({
   );
 
   return (
-    <PanelShell>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">
-            {queueItem?.email?.trim() ||
-              queueItem?.username?.trim() ||
-              accountRef.account_id}
-          </CardTitle>
-          <div className="font-mono text-xs text-muted-foreground">
-            {accountRef.source} · {accountRef.account_id}
-          </div>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <section>
-            <SectionLabel>{t("identities.detail.current_binding")}</SectionLabel>
-            {binding.data.person_id ? (
-              boundCard ? (
-                <PersonCell person={boundCard} />
-              ) : (
-                <PersonId id={binding.data.person_id} />
-              )
+    // Decisions on the start side, the trail behind them on the end side —
+    // and the trail scrolls on its own, so a long-lived account cannot push
+    // the verbs out of reach.
+    <div className="grid gap-6 md:grid-cols-2">
+      <div className="flex min-w-0 flex-col gap-4">
+        <section>
+          <SectionLabel>{t("identities.detail.current_binding")}</SectionLabel>
+          {binding.data.person_id ? (
+            boundCard ? (
+              <PersonCell person={boundCard} />
             ) : (
-              <p className="text-sm text-muted-foreground">
-                {t("identities.detail.unbound")}
-              </p>
-            )}
-          </section>
-          <AccountActions
-            accountRef={accountRef}
-            binding={binding.data}
-            candidates={candidates}
-          />
-          <section>
-            <SectionLabel>{t("identities.detail.history")}</SectionLabel>
-            {binding.data.history.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                {t("identities.detail.no_history")}
-              </p>
-            ) : (
-              <ol className="flex flex-col gap-2">
-                {binding.data.history.map((entry, index) => (
-                  <HistoryRow
-                    key={`${entry.recorded_at}-${index}`}
-                    entry={entry}
-                    candidates={candidates}
-                  />
-                ))}
-              </ol>
-            )}
-          </section>
-        </CardContent>
-      </Card>
-    </PanelShell>
+              <PersonId id={binding.data.person_id} />
+            )
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {t("identities.detail.unbound")}
+            </p>
+          )}
+        </section>
+        <AccountActions
+          accountRef={accountRef}
+          binding={binding.data}
+          candidates={candidates}
+        />
+      </div>
+      <section className="flex min-w-0 flex-col">
+        <SectionLabel>{t("identities.detail.history")}</SectionLabel>
+        {binding.data.history.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {t("identities.detail.no_history")}
+          </p>
+        ) : (
+          <ol className="flex max-h-[50vh] flex-col gap-2 overflow-y-auto pe-1">
+            {binding.data.history.map((entry, index) => (
+              <HistoryRow
+                key={`${entry.recorded_at}-${index}`}
+                entry={entry}
+                candidates={candidates}
+              />
+            ))}
+          </ol>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -199,6 +185,3 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function PanelShell({ children }: { children: React.ReactNode }) {
-  return <div className="h-fit lg:sticky lg:top-4">{children}</div>;
-}

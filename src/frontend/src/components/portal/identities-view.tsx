@@ -1,21 +1,30 @@
 /**
- * The identity-resolution operator console (Manage → Identities), phase 1:
- * the review queue, read-only.
+ * The identity-resolution operator console (Manage → Identities): the review
+ * queue, and the window one case is decided in.
  *
  * A triage surface, not a roster: the operator lands in what NEEDS a
  * decision, grouped by why it does, and works the backlog to zero — the
- * empty queue is the goal state and renders as one. The tenant-wide rates
- * strip on top is honest about scale: it counts every observed account,
- * never just the visible page.
+ * empty queue is the goal state and renders as one. The rates strip on top
+ * counts binding states across the tenant; only its first figure, the queue's
+ * own size, is work the operator can do.
  *
- * Selection lives in `?acct=` so an operator can hand a colleague a link to
- * the exact account under discussion — and that link answers whatever the
- * queue looks like by then, an emptied backlog included.
+ * The queue picks a case; the window decides it. Selection lives in `?acct=`
+ * so an operator can hand a colleague a link to the exact account under
+ * discussion — and that link answers whatever the queue looks like by then,
+ * an emptied backlog included.
  */
 import { useTranslation } from "react-i18next";
 
 import type { AttentionItem, ResolutionRates } from "@/api/identity-client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { CopyValueButton } from "@/components/copy-value-button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
@@ -42,7 +51,7 @@ import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import { Info, PartyPopper, TriangleAlert, UserSearch } from "lucide-react";
+import { Info, PartyPopper, TriangleAlert } from "lucide-react";
 
 /** Queue groups in working order: conflicts first, then the unknowns. */
 const KIND_ORDER = ["contested", "binding_conflict", "no_evidence"] as const;
@@ -230,46 +239,86 @@ function Queue({ items }: { items: AttentionItem[] }) {
 
   // The worked-to-zero queue is the goal state — but a shared `?acct=` link
   // has to answer even then, and the backlog reaching zero is exactly when a
-  // colleague opens the link they were sent. So the celebration replaces the
-  // GROUP LIST, never the grid the detail panel lives in.
-  if (items.length === 0 && !acct) return <AllResolved />;
-
+  // colleague opens the link they were sent.
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
-      <div className="flex min-w-0 flex-col gap-4">
-        {items.length === 0 ? (
-          <AllResolved />
-        ) : (
-          groups.map((group) => (
-            <QueueGroup
-              key={group.kind}
-              kind={group.kind}
-              items={group.items}
-              selectedKey={acct}
-              onSelect={(key) => setAcct(key === acct ? null : key)}
-            />
-          ))
-        )}
-      </div>
-      <DetailPane acct={acct} items={items} />
+    <div className="flex min-w-0 flex-col gap-4">
+      {items.length === 0 ? (
+        <AllResolved />
+      ) : (
+        groups.map((group) => (
+          <QueueGroup
+            key={group.kind}
+            kind={group.kind}
+            items={group.items}
+            selectedKey={acct}
+            onSelect={(key) => setAcct(key === acct ? null : key)}
+          />
+        ))
+      )}
+      <CaseDialog acct={acct} items={items} onClose={() => setAcct(null)} />
     </div>
   );
 }
 
-function DetailPane({
+/**
+ * One account under review, in a window rather than a column: this is where
+ * every decision is taken, and a decision that re-attributes a person's work
+ * deserves the room to show what it acts on.
+ *
+ * Opened by the `?acct=` in the URL — never by click state alone — so a link
+ * an operator shares lands their colleague on the same case.
+ */
+function CaseDialog({
   acct,
   items,
+  onClose,
 }: {
   acct: string | undefined;
   items: AttentionItem[];
+  onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const ref = parseAccountKey(acct);
-  if (!ref) return <DetailPlaceholder />;
   const queueItem = items.find((i) => itemKey(i) === acct);
-  // Keyed by the account: the panel holds per-account state (a verb's outcome
-  // alert, an open dialog), and a cached binding renders the next selection
-  // synchronously — an unkeyed panel would carry that state across accounts.
-  return <AccountDetail key={acct} accountRef={ref} queueItem={queueItem} />;
+  const heading =
+    queueItem?.email?.trim() || queueItem?.username?.trim() || ref?.account_id;
+
+  return (
+    <Dialog
+      open={ref != null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="max-h-[85vh] gap-4 overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="truncate select-text">{heading}</DialogTitle>
+          <DialogDescription
+            render={<div className="flex items-center gap-1" />}
+          >
+            <span className="truncate font-mono text-xs select-text">
+              {ref?.source} · {ref?.account_id}
+            </span>
+            {ref ? (
+              <CopyValueButton
+                value={ref.account_id}
+                title={t("identities.detail.copy_account_id")}
+                copyLabel={t("common.copy")}
+                copiedLabel={t("common.copied")}
+                errorMessage={t("common.copy_failed")}
+              />
+            ) : null}
+          </DialogDescription>
+        </DialogHeader>
+        {/* Keyed by the account: the body holds per-account state (a verb's
+            outcome, an open confirmation), and a cached binding renders the
+            next case synchronously — unkeyed, that state would follow. */}
+        {ref ? (
+          <AccountDetail key={acct} accountRef={ref} queueItem={queueItem} />
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function QueueGroup({
@@ -296,6 +345,8 @@ function QueueGroup({
         {items.map((item) => {
           const key = itemKey(item);
           const selected = key === selectedKey;
+          const label =
+            item.email?.trim() || item.username?.trim() || item.account_id;
           return (
             <div
               key={key}
@@ -315,6 +366,10 @@ function QueueGroup({
                 onSelect(key);
               }}
               aria-pressed={selected}
+              // Without a label the name is computed from everything inside —
+              // both candidate cards, their ids and their copy controls read
+              // out as one sentence before the account is even named.
+              aria-label={`${label} ${item.source}`}
               className={cn(
                 "cursor-pointer rounded-md border p-3 text-start select-text",
                 selected
@@ -323,9 +378,7 @@ function QueueGroup({
               )}
             >
               <div className="flex items-baseline gap-2">
-                <span className="truncate text-sm font-medium">
-                  {item.email?.trim() || item.username?.trim() || item.account_id}
-                </span>
+                <span className="truncate text-sm font-medium">{label}</span>
                 <span className="ms-auto shrink-0 font-mono text-xs text-muted-foreground">
                   {item.source}
                 </span>
@@ -345,19 +398,3 @@ function QueueGroup({
   );
 }
 
-function DetailPlaceholder() {
-  const { t } = useTranslation();
-  return (
-    <Empty className="h-fit rounded-lg border lg:sticky lg:top-4">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <UserSearch />
-        </EmptyMedia>
-        <EmptyTitle>{t("identities.detail.no_selection")}</EmptyTitle>
-        <EmptyDescription>
-          {t("identities.detail.no_selection_description")}
-        </EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
-}

@@ -72,6 +72,8 @@ export function AccountActions({
     id: accountRef.account_id,
   };
   const boundId = binding.person_id ?? null;
+  const boundCard = candidates.find((c) => c.person_id === boundId);
+  const boundName = boundCard ? personDisplayName(boundCard) : boundId;
 
   const close = () => {
     setAction({ kind: "closed" });
@@ -167,9 +169,13 @@ export function AccountActions({
               ? t("identities.dialogs.confirm_title")
               : t("identities.dialogs.bind_title")
           }
-          description={t("identities.dialogs.bind_description", {
-            name: personDisplayName(action.person),
-          })}
+          description={
+            action.person.person_id === boundId
+              ? t("identities.dialogs.confirm_description")
+              : t("identities.dialogs.bind_description", {
+                  name: personDisplayName(action.person),
+                })
+          }
           confirmLabel={
             action.person.person_id === boundId
               ? t("identities.actions.confirm")
@@ -220,7 +226,16 @@ export function AccountActions({
           open
           onOpenChange={(open) => !open && close()}
           title={t("identities.dialogs.detach_title")}
-          description={t("identities.dialogs.detach_description")}
+          // Naming who it stops counting towards is the consequence; without
+          // the current holder the sentence would describe only the new row.
+          description={[
+            t("identities.dialogs.detach_description"),
+            boundName
+              ? t("identities.dialogs.detach_away_from", { name: boundName })
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" ")}
           confirmLabel={t("identities.actions.detach_confirm")}
           isPending={detach.isPending}
           error={
