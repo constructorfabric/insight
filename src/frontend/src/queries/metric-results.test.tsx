@@ -8,7 +8,6 @@ import type {
   MetricResultsResponse,
 } from "@/api/metric-results-client";
 import { queryMetricResults } from "@/api/metric-results-client";
-import { PLANNED_METRICS } from "@/lib/insight/groups";
 import type { MetricCollectionConfig } from "@/lib/metrics/collection";
 import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 import {
@@ -346,7 +345,7 @@ describe("a disabled collection has nothing to retry", () => {
 });
 
 describe("planned metrics", () => {
-  const planned = [...PLANNED_METRICS][0]!;
+  const planned = "collab.dm_ratio";
   const collection: MetricCollectionConfig = {
     metrics: [
       { key: "m", views: [{ view: "period" }] },

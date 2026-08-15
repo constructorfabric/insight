@@ -55,14 +55,16 @@ function canonicalEntityIds(entity: MetricCollectionEntity): string[] {
   return [...new Set(ids.filter(Boolean))].sort();
 }
 
-/** A planned metric is neither requested nor rendered until the reader asks for it. */
-function visibleCollection(
+/** What a hook may ask for: what the catalog offers, minus planned metrics the reader hid. */
+function askedCollection(
   collection: MetricCollectionConfig,
-  showPlanned: boolean
+  showPlanned: boolean,
+  available: ReadonlySet<string> | null
 ): MetricCollectionConfig {
-  return showPlanned
+  const gated = showPlanned
     ? collection
     : filterCollectionExcluding(collection, PLANNED_METRICS);
+  return filterCollectionToAvailable(gated, available);
 }
 
 function queryKeyFor(
@@ -96,10 +98,7 @@ export function useMetricCollection(
   // a tenant does not have would blank the screen instead of its own tile.
   const catalog = useAvailableMetricKeys();
   const showPlanned = usePortalShowPlanned();
-  const asked = filterCollectionToAvailable(
-    visibleCollection(collection, showPlanned),
-    catalog.keys,
-  );
+  const asked = askedCollection(collection, showPlanned, catalog.keys);
   const request = buildMetricCollectionRequest(
     asked,
     { type: entity.type, ids },
@@ -221,11 +220,8 @@ export function useMetricCollectionSet(
   // never exceeds the backend's all-or-nothing projected-row limit; chunk
   // results merge back into one collection result per key.
   const requests = collections.flatMap(({ key, collection: raw }) => {
-    // Same catalog and planned gates as `useMetricCollection` — see the notes there.
-    const collection = filterCollectionToAvailable(
-      visibleCollection(raw, showPlanned),
-      catalog.keys
-    );
+    // Same gates as `useMetricCollection` — see the note there.
+    const collection = askedCollection(raw, showPlanned, catalog.keys);
     const chunkSize = entityChunkSize(collection);
     const chunks = chunkSize === null ? [ids] : chunkEntityIds(ids, chunkSize);
     return chunks.map((chunkIds) => {

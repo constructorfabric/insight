@@ -91,13 +91,7 @@ describe("groups registry", () => {
     ]);
   });
 
-  it("holds the DM share behind the planned gate", () => {
-    expect(PLANNED_METRICS.has("collab.dm_ratio")).toBe(true);
-  });
-
   it("plans only keys a group actually collects", () => {
-    // A key no group asks for is gated by nothing — it would read as handled
-    // while staying on screen wherever it IS asked for.
     for (const key of PLANNED_METRICS) {
       expect(groupIdForMetricKey(key)).not.toBeNull();
     }

@@ -492,9 +492,7 @@ export const GROUPS: readonly MetricGroup[] = [
 /**
  * Metrics held behind the reader's "show planned sections" choice — the nav's
  * `planned` readiness (see `Readiness` in portal/nav-model) at metric grain,
- * for a number the product does not stand behind yet. A key here is dropped
- * from the collection before it is requested, so it leaves both the request
- * and the screen.
+ * for a number the product does not stand behind yet.
  */
 export const PLANNED_METRICS: ReadonlySet<string> = new Set(["collab.dm_ratio"]);
 

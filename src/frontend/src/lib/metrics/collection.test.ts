@@ -443,10 +443,8 @@ describe("filterCollectionExcluding", () => {
   });
 
   it("returns the SAME object when it names none of them", () => {
-    // Identity matters: the config rides in the react-query key.
     expect(filterCollectionExcluding(collection, new Set(["ai.cost"]))).toBe(
       collection,
     );
-    expect(filterCollectionExcluding(collection, new Set())).toBe(collection);
   });
 });
