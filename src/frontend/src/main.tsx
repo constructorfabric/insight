@@ -80,14 +80,9 @@ function bootstrap(): void {
 function startUsageCollection(): void {
   const { session } = authStore.getSnapshot();
   if (!session) return;
-  // Recorded before the instance has answered whether collection is on:
-  // telemetry holds these until it knows, and drops them if the answer is no.
-  recordPageView(
-    portalPath(
-      window.location.pathname,
-      Object.fromEntries(new URLSearchParams(window.location.search)),
-    ),
-  );
+  // Subscribed before the router mounts, so the first resolve is recorded like
+  // any other. Telemetry holds these until the instance says whether
+  // collection is on, and drops them if the answer is no.
   router.subscribe("onResolved", ({ toLocation }) => {
     recordPageView(
       portalPath(toLocation.pathname, toLocation.search as Record<string, unknown>),

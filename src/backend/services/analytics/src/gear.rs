@@ -108,9 +108,7 @@ impl Gear for AnalyticsApiGear {
         // product-operational rows, not modelled data. Not gating boot — a
         // ClickHouse that is briefly unreachable must not stop the API.
         tokio::spawn(async move {
-            if let Err(error) = api::usage::ensure_schema(&usage_ch).await {
-                tracing::warn!(error = %error, "usage events table not created");
-            }
+            api::usage::ensure_schema_with_retry(&usage_ch).await;
         });
 
         // INVARIANT: periodic and never gating boot — the stamp lands after

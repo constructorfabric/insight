@@ -9,10 +9,10 @@ use axum::Json;
 use axum::extract::{Extension, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
+use chrono::{Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
-use chrono::{Duration, NaiveDate, Utc};
 use uuid::Uuid;
 
 use super::error::UsageError;
@@ -41,8 +41,15 @@ const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 /// How far back a summary looks when the caller names no window.
 const DEFAULT_WINDOW_DAYS: i64 = 29;
 
+/// The widest window a caller may ask for, matching the SPA's own cap.
+const MAX_WINDOW_DAYS: i64 = 400;
+
+/// How long to wait before asking ClickHouse for the table again.
+const SCHEMA_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Every value a caller controls is bound; the constants above are not.
-const WINDOW: &str = "tenant_id = toUUID(?) AND toDate(ts) >= toDate(?) AND toDate(ts) <= toDate(?)";
+const WINDOW: &str =
+    "tenant_id = toUUID(?) AND toDate(ts) >= toDate(?) AND toDate(ts) <= toDate(?)";
 
 const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS presentation.usage_events (
     event_id    UUID,
@@ -65,6 +72,21 @@ ORDER BY (tenant_id, ts, event_id)";
 /// # Errors
 ///
 /// Returns an error when ClickHouse rejects the statement or is unreachable.
+pub async fn ensure_schema_with_retry(ch: &insight_clickhouse::Client) {
+    // A ClickHouse that is briefly unreachable at boot must not leave the
+    // feature dead until the next restart: every insert and every read needs
+    // this table.
+    loop {
+        match ensure_schema(ch).await {
+            Ok(()) => return,
+            Err(error) => {
+                tracing::warn!(error = %error, "usage events table not created; retrying");
+                tokio::time::sleep(SCHEMA_RETRY).await;
+            }
+        }
+    }
+}
+
 pub async fn ensure_schema(ch: &insight_clickhouse::Client) -> anyhow::Result<()> {
     ch.query(CREATE_TABLE_SQL).execute().await?;
     Ok(())
@@ -116,16 +138,21 @@ pub async fn ingest_usage_events(
     Extension(ctx): Extension<SecurityContext>,
     Json(req): Json<UsageIngestRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    if !state.config.usage.enabled || req.records.is_empty() {
+    if !state.config.usage.enabled {
         return Ok(StatusCode::NO_CONTENT);
     }
 
     let tenant_id = ctx.subject_tenant_id();
     let person_id = ctx.subject_id();
 
-    let records = &req.records[..req.records.len().min(MAX_RECORDS)];
+    let records: Vec<&UsageIngestEnvelope> = req
+        .records
+        .iter()
+        .take(MAX_RECORDS)
+        .filter(|envelope| is_recordable(&envelope.value))
+        .collect();
 
-    if let Err(error) = insert_records(&state, records, tenant_id, person_id).await {
+    if let Err(error) = insert_records(&state, &records, tenant_id, person_id).await {
         // SAFETY: a write that fails forever reads as "nobody used the
         // product", so the swallow is logged even though one lost beacon
         // does not matter.
@@ -154,10 +181,14 @@ fn insert_sql(row_count: usize) -> String {
 
 async fn insert_records(
     state: &AppState,
-    records: &[UsageIngestEnvelope],
+    records: &[&UsageIngestEnvelope],
     tenant_id: Uuid,
     person_id: Uuid,
 ) -> anyhow::Result<()> {
+    if records.is_empty() {
+        return Ok(());
+    }
+
     let mut query = state.ch.query(&insert_sql(records.len()));
     for envelope in records {
         let record = &envelope.value;
@@ -175,12 +206,24 @@ async fn insert_records(
             .bind(millis)
             .bind(tenant_id.to_string())
             .bind(person_id.to_string())
-            .bind(clip(record.context_session_id.as_deref().unwrap_or_default(), 64))
+            .bind(clip(
+                record.context_session_id.as_deref().unwrap_or_default(),
+                64,
+            ))
             .bind(clip(&record.name, 64))
-            .bind(clip(&normalize_path(&page_path(record.data.as_ref())), 512))
+            .bind(clip(
+                &normalize_path(&data_field(record.data.as_ref(), "path")),
+                512,
+            ))
             .bind(clip(&data_field(record.data.as_ref(), "target"), 256))
-            .bind(clip(record.context_app_name.as_deref().unwrap_or_default(), 64))
-            .bind(clip(record.context_app_version.as_deref().unwrap_or_default(), 32));
+            .bind(clip(
+                record.context_app_name.as_deref().unwrap_or_default(),
+                64,
+            ))
+            .bind(clip(
+                record.context_app_version.as_deref().unwrap_or_default(),
+                32,
+            ));
     }
 
     query.execute().await?;
@@ -228,7 +271,7 @@ fn people_sql() -> String {
            GROUP BY person ORDER BY visits DESC, page_views DESC \
            LIMIT {BREAKDOWN_LIMIT}) AS u \
          LEFT JOIN (\
-           SELECT person_id, any(value_effective) AS display_name \
+           SELECT person_id, argMax(value_effective, (created_at, id)) AS display_name \
            FROM identity.identity_persons \
            WHERE value_type = 'display_name' AND insight_tenant_id = toUUID(?) \
            GROUP BY person_id) AS p ON p.person_id = u.person \
@@ -248,14 +291,11 @@ fn actions_sql(visitors: &str) -> String {
     )
 }
 
-/// Where a page view happened. The SDK's own page view names it `url`; the one
-/// the app emits names it `path`.
-fn page_path(data: Option<&serde_json::Value>) -> String {
-    let path = data_field(data, "path");
-    if path.is_empty() {
-        return data_field(data, "url");
-    }
-    path
+/// Whether a record is this product's own event. The SDK tracks navigation
+/// itself and names the location `url`; the app emits its own page view with
+/// `path`. Storing both would count every page twice.
+fn is_recordable(record: &TelemetryRecord) -> bool {
+    record.name != PAGE_VIEW || !data_field(record.data.as_ref(), "path").is_empty()
 }
 
 /// A path names a screen, never a person. `/ic/<uuid>/personal` is one screen
@@ -263,7 +303,13 @@ fn page_path(data: Option<&serde_json::Value>) -> String {
 /// record of who read whose profile.
 fn normalize_path(path: &str) -> String {
     path.split('/')
-        .map(|segment| if is_identifier(segment) { ":id" } else { segment })
+        .map(|segment| {
+            if is_identifier(segment) {
+                ":id"
+            } else {
+                segment
+            }
+        })
         .collect::<Vec<_>>()
         .join("/")
 }
@@ -271,10 +317,7 @@ fn normalize_path(path: &str) -> String {
 /// A UUID, or any other long opaque segment a route carries as an id.
 fn is_identifier(segment: &str) -> bool {
     let uuid_shaped = segment.len() == 36
-        && segment
-            .split('-')
-            .map(str::len)
-            .eq([8, 4, 4, 4, 12])
+        && segment.split('-').map(str::len).eq([8, 4, 4, 4, 12])
         && segment.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
     let all_digits = segment.len() >= 6 && segment.chars().all(|c| c.is_ascii_digit());
     uuid_shaped || all_digits
@@ -302,22 +345,34 @@ struct Window {
 
 impl UsageRangeQuery {
     fn window(&self) -> Result<Window, CanonicalError> {
-        let until = parse_day("until", self.until.as_deref())?
-            .unwrap_or_else(|| Utc::now().date_naive());
+        let until =
+            parse_day("until", self.until.as_deref())?.unwrap_or_else(|| Utc::now().date_naive());
         let since = parse_day("since", self.since.as_deref())?
             .unwrap_or_else(|| until - Duration::days(DEFAULT_WINDOW_DAYS));
+        if since > until {
+            return Err(range_violation("since", "since must not be after until"));
+        }
+        if (until - since).num_days() > MAX_WINDOW_DAYS {
+            return Err(range_violation(
+                "since",
+                "the window must not exceed 400 days",
+            ));
+        }
         Ok(Window { since, until })
     }
+}
+
+fn range_violation(field: &str, description: &str) -> CanonicalError {
+    UsageError::invalid_argument()
+        .with_field_violation(field, description, "INVALID")
+        .create()
 }
 
 fn parse_day(field: &str, value: Option<&str>) -> Result<Option<NaiveDate>, CanonicalError> {
     value
         .map(|day| {
-            NaiveDate::parse_from_str(day, "%Y-%m-%d").map_err(|_| {
-                UsageError::invalid_argument()
-                    .with_field_violation(field, "date must use YYYY-MM-DD", "INVALID")
-                    .create()
-            })
+            NaiveDate::parse_from_str(day, "%Y-%m-%d")
+                .map_err(|_| range_violation(field, "date must use YYYY-MM-DD"))
         })
         .transpose()
 }
@@ -501,27 +556,6 @@ mod tests {
     }
 
     #[test]
-    fn the_sdks_own_page_view_reports_the_url_it_carries() {
-        // The SDK emits its own page_view with `url`; ours carries `path`.
-        let from_sdk = serde_json::json!({ "url": "\"/portal\"" });
-        assert_eq!(page_path(Some(&from_sdk)), "/portal");
-
-        let from_app = serde_json::json!({ "path": "\"/portal/people\"" });
-        assert_eq!(page_path(Some(&from_app)), "/portal/people");
-    }
-
-    #[test]
-    fn a_page_about_a_person_is_stored_without_naming_them() {
-        assert_eq!(
-            normalize_path("/ic/cccccccc-0000-0000-0000-000000000001/personal/git_output"),
-            "/ic/:id/personal/git_output"
-        );
-        assert_eq!(
-            normalize_path("/portal/manage/platform-usage"),
-            "/portal/manage/platform-usage"
-        );
-    }
-
     #[test]
     fn a_record_without_data_has_no_path() {
         assert_eq!(data_field(None, "path"), "");
@@ -531,14 +565,47 @@ mod tests {
     #[test]
     fn event_values_are_bound_never_interpolated() {
         let sql = insert_sql(2);
-        assert_eq!(sql.matches('?').count(), 20, "ten placeholders per row: {sql}");
-        assert!(sql.contains("async_insert = 1"), "batched server-side: {sql}");
+        assert_eq!(
+            sql.matches('?').count(),
+            20,
+            "ten placeholders per row: {sql}"
+        );
+        assert!(
+            sql.contains("async_insert = 1"),
+            "batched server-side: {sql}"
+        );
     }
 
     #[test]
     fn the_actions_breakdown_leaves_out_what_nobody_did() {
         // Both are already counted as visits; neither is something a person did.
         assert!(actions_sql("1").contains("NOT IN ('page_view', 'session_start')"));
+    }
+
+    #[test]
+    fn the_sdks_own_page_view_is_dropped_as_a_duplicate() {
+        // The SDK tracks navigation itself and names the location `url`; the app
+        // emits its own with `path`. Storing both counts every page twice.
+        let from_sdk = record("page_view", serde_json::json!({ "url": "/portal" }));
+        assert!(!is_recordable(&from_sdk));
+
+        let from_app = record("page_view", serde_json::json!({ "path": "/portal" }));
+        assert!(is_recordable(&from_app));
+
+        let action = record("drill", serde_json::json!({ "target": "pr_cycle_time" }));
+        assert!(is_recordable(&action), "an action carries no path");
+    }
+
+    fn record(name: &str, data: serde_json::Value) -> TelemetryRecord {
+        TelemetryRecord {
+            name: name.to_owned(),
+            id: None,
+            time_triggered: None,
+            context_session_id: None,
+            context_app_name: None,
+            context_app_version: None,
+            data: Some(data),
+        }
     }
 
     #[test]

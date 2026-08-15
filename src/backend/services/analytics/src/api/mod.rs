@@ -145,6 +145,8 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .summary("Usage summary for a date range")
         .authenticated()
         .no_license_required()
+        .query_param_typed("since", false, "Inclusive first day, YYYY-MM-DD", "string")
+        .query_param_typed("until", false, "Inclusive last day, YYYY-MM-DD", "string")
         .json_response_with_schema::<usage::UsageSummaryResponse>(
             openapi,
             StatusCode::OK,

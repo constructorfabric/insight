@@ -59,6 +59,10 @@ export async function startUsageTelemetry(session: Session): Promise<void> {
     appVersion: APP_VERSION,
     url: `${BASE}/usage/events`,
     autocapture: false,
+    // Per person: the SDK keeps its session in origin-wide storage, so two
+    // people signing in on one browser would otherwise share a session id and
+    // merge into one visit.
+    storagePrefix: `insight-usage:${session.personId}`,
   })
     .identify(session.personId)
     .start();

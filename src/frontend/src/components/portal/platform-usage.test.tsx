@@ -83,7 +83,7 @@ vi.mock("@/components/widgets/period-selector-bar", () => ({
   ),
 }));
 
-import { toISODate } from "@/api/period-to-date-range";
+import { resolveDateRange, toISODate } from "@/api/period-to-date-range";
 
 import { PlatformUsage } from "./platform-usage";
 
@@ -101,10 +101,17 @@ describe("PlatformUsage", () => {
     expect(mocks.asked.at(-1)?.since).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it("counts today, which the shared period window leaves out", () => {
+  it("counts today without stretching the period it names", () => {
     render(<PlatformUsage />);
 
-    expect(mocks.asked.at(-1)?.until).toBe(toISODate(new Date()));
+    const asked = mocks.asked.at(-1)!;
+    expect(asked.until).toBe(toISODate(new Date()));
+    // The shared window ends yesterday; moving only its end would make a
+    // 30-day month cover 31.
+    const shared = resolveDateRange("month", null);
+    const days = (range: { since: string; until: string }) =>
+      (Date.parse(range.until) - Date.parse(range.since)) / 86_400_000;
+    expect(days(asked)).toBe(days({ since: shared.from, until: shared.to }));
   });
 
   it("hands a long breakdown to the virtualizer instead of rendering all of it", () => {

@@ -8,7 +8,12 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { eachDayOfInterval, parseISO } from "date-fns";
+import {
+  addDays as addCalendarDays,
+  differenceInCalendarDays,
+  eachDayOfInterval,
+  parseISO,
+} from "date-fns";
 
 import type {
   UsageDay,
@@ -50,6 +55,14 @@ import { TEXT_FIGURE, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import type { CustomRange, PeriodValue } from "@/types/insight";
 
+function daysBetween(from: string, to: string): number {
+  return differenceInCalendarDays(parseISO(to), parseISO(from));
+}
+
+function addDays(day: string, days: number): string {
+  return toISODate(addCalendarDays(parseISO(day), days));
+}
+
 /** Every day in [since, until], with the API's counts where it had any. */
 function fillRange(days: UsageDay[], range: UsageRange): UsageDay[] {
   if (!range.since || !range.until) return days;
@@ -73,10 +86,11 @@ export function PlatformUsage() {
     // The shared window ends yesterday because the metric pipeline lands a day
     // late. Usage is written as it happens, and "is anyone using it" is a
     // question about today, so the end is carried forward.
-    return {
-      since: resolved.from,
-      until: customRange ? resolved.to : toISODate(new Date()),
-    };
+    if (customRange) return { since: resolved.from, until: resolved.to };
+    // Slide the whole window rather than stretching it: moving only the end
+    // would make a 30-day month cover 31.
+    const shift = daysBetween(resolved.to, toISODate(new Date()));
+    return { since: addDays(resolved.from, shift), until: addDays(resolved.to, shift) };
   }, [period, customRange]);
   const summary = useUsageSummary(range);
 
