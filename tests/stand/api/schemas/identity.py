@@ -353,7 +353,7 @@ class QueueItemResponse(BaseModel):
     display_name: str | None = Field(None, description='How the source describes the account. Nothing here is matchable — it is\nwhat lets an operator recognise whose account this is when automation\ncannot, which is exactly the case for the ones only they can bind.')
     email: str | None = None
     job_title: str | None = None
-    kind: str = Field(..., description='`contested` | `binding_conflict` | `no_evidence`.')
+    kind: str = Field(..., description='`contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.')
     manager_email: str | None = None
     source: str
     source_id: UUID

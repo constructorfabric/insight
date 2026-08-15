@@ -627,7 +627,7 @@ pub struct AttentionParams {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct QueueItemResponse {
-    /// `contested` | `binding_conflict` | `no_evidence`.
+    /// `contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.
     pub kind: String,
     pub source: String,
     pub source_id: Uuid,
@@ -894,6 +894,7 @@ fn kind_label(kind: ItemKind) -> &'static str {
     match kind {
         ItemKind::Contested => "contested",
         ItemKind::BindingConflict => "binding_conflict",
+        ItemKind::ProvisionedAtLogin => "provisioned_at_login",
         ItemKind::NoEvidence => "no_evidence",
     }
 }

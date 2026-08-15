@@ -72,7 +72,12 @@ import {
 } from "lucide-react";
 
 /** Queue groups in working order: conflicts first, then the unknowns. */
-const KIND_ORDER = ["contested", "binding_conflict", "no_evidence"] as const;
+const KIND_ORDER = [
+  "contested",
+  "binding_conflict",
+  "provisioned_at_login",
+  "no_evidence",
+] as const;
 
 // Binding states, not workloads: every one of these counts accounts the
 // resolver has already placed or will place by itself. The only number an

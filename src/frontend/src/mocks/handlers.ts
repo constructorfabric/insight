@@ -561,6 +561,19 @@ export const handlers = [
           candidates: [],
         },
         {
+          // Minted during a sign-in so its owner could get in: bound, and
+          // still nobody's decision. It may duplicate a person the roster
+          // already knows, which only an operator can settle.
+          kind: "provisioned_at_login",
+          source: "github",
+          source_id: "01900000-0000-7000-8000-00000000aa01",
+          account_id: "new-joiner",
+          email: null,
+          username: "new-joiner",
+          bound_to: carol?.person_id,
+          candidates: [card(carol)],
+        },
+        {
           // Neither address nor handle — nothing automation can match on. The
           // source still describes the human, which is what the fold reads for
           // the operator and what makes this row bindable by hand.

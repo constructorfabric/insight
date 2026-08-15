@@ -260,6 +260,7 @@ mod tests {
             KnownBinding {
                 person_id: Uuid::from_u128(7),
                 author_person_id: Uuid::nil(),
+                provisioned_at_login: false,
             },
         );
         let store = FakeStore {

@@ -22,6 +22,11 @@ pub enum ItemKind {
     /// The account's identity value is shared by accounts bound to different
     /// persons, with no operator decision explaining the divergence.
     BindingConflict,
+    /// The binding was minted during a sign-in so its owner could get in. The
+    /// person may duplicate one the roster already knows — nothing could join
+    /// them, since the account carries no address — and only an operator can
+    /// say whether it is its own person or the same human.
+    ProvisionedAtLogin,
     /// The account carries no identity evidence automation can match on —
     /// e-mail is the only matching key today, so a username-only account is
     /// here too (shown with its username). Visible, never hidden: nothing
@@ -117,7 +122,20 @@ pub fn build(
     for account in &active {
         match bindings.get(&account.account) {
             Some(binding) if binding.person_id == EXCLUDED_PERSON => rates.excluded += 1,
-            Some(_) => rates.bound += 1,
+            Some(binding) => {
+                rates.bound += 1;
+                // Bound, and still undecided: a login mint trades "cannot sign
+                // in" for "possibly a duplicate person", and the trade is only
+                // closed when a human says which it is.
+                if binding.provisioned_at_login && !binding.is_operator_authored() {
+                    items.push(item(
+                        ItemKind::ProvisionedAtLogin,
+                        account,
+                        Some(binding.person_id),
+                        vec![binding.person_id],
+                    ));
+                }
+            }
             None if !has_matchable_evidence(account) => {
                 rates.no_evidence += 1;
                 items.push(item(ItemKind::NoEvidence, account, None, Vec::new()));
@@ -280,6 +298,15 @@ mod tests {
         KnownBinding {
             person_id: Uuid::from_u128(person),
             author_person_id: Uuid::nil(),
+            provisioned_at_login: false,
+        }
+    }
+
+    fn login_bound(person: u128) -> KnownBinding {
+        KnownBinding {
+            person_id: Uuid::from_u128(person),
+            author_person_id: Uuid::nil(),
+            provisioned_at_login: true,
         }
     }
 
@@ -287,6 +314,7 @@ mod tests {
         KnownBinding {
             person_id: Uuid::from_u128(person),
             author_person_id: Uuid::from_u128(0xAD_1119),
+            provisioned_at_login: false,
         }
     }
 
@@ -411,6 +439,47 @@ mod tests {
     }
 
     #[test]
+    fn a_login_minted_binding_waits_for_a_human_to_say_whose_it_is() {
+        // It IS bound — that is the point, its owner can sign in — so it counts
+        // as resolved while still needing a decision.
+        let mut bindings = HashMap::new();
+        bindings.insert(account("github", "gh-1"), login_bound(7));
+
+        let review = build(vec![observed("github", "gh-1", None)], &bindings);
+
+        assert_eq!(review.items.len(), 1);
+        assert_eq!(review.items[0].kind, ItemKind::ProvisionedAtLogin);
+        assert_eq!(review.items[0].bound_to, Some(Uuid::from_u128(7)));
+        assert_eq!(
+            review.items[0].candidates,
+            vec![Uuid::from_u128(7)],
+            "the minted person is the one being confirmed"
+        );
+        assert_eq!(review.rates.bound, 1);
+        assert_eq!(review.rates.no_evidence, 0, "bound, so not unmatched");
+    }
+
+    #[test]
+    fn an_operator_decision_retires_the_login_mint() {
+        let mut bindings = HashMap::new();
+        bindings.insert(
+            account("github", "gh-1"),
+            KnownBinding {
+                person_id: Uuid::from_u128(7),
+                author_person_id: Uuid::from_u128(99),
+                provisioned_at_login: true,
+            },
+        );
+
+        let review = build(vec![observed("github", "gh-1", None)], &bindings);
+
+        assert!(
+            review.items.is_empty(),
+            "a human has said whose it is; nothing left to ask"
+        );
+    }
+
+    #[test]
     fn an_unbound_queue_item_is_bound_to_nobody() {
         let review = build(vec![observed("jira", "jr-1", None)], &HashMap::new());
 
@@ -480,6 +549,7 @@ mod tests {
             KnownBinding {
                 person_id: EXCLUDED_PERSON,
                 author_person_id: Uuid::from_u128(0xAD_1119),
+                provisioned_at_login: false,
             },
         );
 

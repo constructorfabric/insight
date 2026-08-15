@@ -250,6 +250,34 @@ describe("IdentitiesView", () => {
     expect(within(row).getByText(/github · 921/)).toBeInTheDocument();
   });
 
+  // First-login provisioning trades "cannot sign in" for "possibly a duplicate
+  // person". Bound is not decided: without a group of its own the trade would
+  // leave the queue silently, at the moment the account gained a live owner.
+  it("keeps a login-minted binding on the queue until a human decides it", () => {
+    attention.q.data = {
+      items: [
+        item({
+          kind: "provisioned_at_login",
+          account_id: "new-joiner",
+          email: null,
+          username: "new-joiner",
+          bound_to: "01900000-0000-7000-8000-0000000000c0",
+          candidates: [
+            {
+              person_id: "01900000-0000-7000-8000-0000000000c0",
+              display_name: "Carol Chen",
+            },
+          ],
+        }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    expect(screen.getByText(/given a person at first sign-in/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /new-joiner/i })).toBeInTheDocument();
+  });
+
   it("renders candidates as person cells", () => {
     attention.q.data = {
       items: [

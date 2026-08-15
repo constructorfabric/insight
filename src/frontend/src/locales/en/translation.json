@@ -421,6 +421,7 @@
     "kind": {
       "contested": "Contested — more than one person claims the account",
       "binding_conflict": "Binding conflicts — evidence disagrees with the current binding",
+      "provisioned_at_login": "Given a person at first sign-in — not yet confirmed",
       "no_evidence": "No address to match on — only a person can bind these",
       "other": "Needs review"
     },

@@ -1042,7 +1042,7 @@
             ]
           },
           "kind": {
-            "description": "`contested` | `binding_conflict` | `no_evidence`.",
+            "description": "`contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.",
             "type": "string"
           },
           "manager_email": {
