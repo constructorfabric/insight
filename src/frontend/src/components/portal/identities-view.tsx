@@ -564,8 +564,11 @@ function CaseBlock({
       {disputed ? (
         <div className="flex flex-col gap-2 p-1">
           <div className="text-xs text-muted-foreground">
-            {t("identities.queue.case_summary", {
-              people: queueCase.candidates.length,
+            {t("identities.queue.case_people", {
+              count: queueCase.candidates.length,
+            })}
+            {" · "}
+            {t("identities.queue.case_accounts", {
               count: queueCase.items.length,
             })}
           </div>

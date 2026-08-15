@@ -412,7 +412,23 @@ export const handlers = [
         history: [
           {
             person_id: bob?.person_id,
+            person: bob
+              ? {
+                  person_id: bob.person_id,
+                  email: bob.email,
+                  display_name: bob.name,
+                  job_title: bob.role,
+                }
+              : null,
             author_person_id: carol?.person_id,
+            author: carol
+              ? {
+                  person_id: carol.person_id,
+                  email: carol.email,
+                  display_name: carol.name,
+                  job_title: carol.role,
+                }
+              : null,
             by_operator: true,
             reason: "operator-bind",
             recorded_at: "2026-08-01T10:15:00.000000",
@@ -432,6 +448,27 @@ export const handlers = [
             by_operator: false,
             reason: "login-bootstrap",
             recorded_at: "2026-07-01T06:30:00.000000",
+          },
+        ],
+        // The call behind the operator's row above: who ran it, how far it
+        // reached, and the one thing no other record holds — why.
+        operations: [
+          {
+            operation_id: "01900000-0000-7000-8000-0000000000f1",
+            verb: "operator-bind",
+            author_person_id: carol?.person_id,
+            author: carol
+              ? {
+                  person_id: carol.person_id,
+                  email: carol.email,
+                  display_name: carol.name,
+                  job_title: carol.role,
+                }
+              : null,
+            comment: "Checked with HR — same person, the chat handle is theirs.",
+            accounts_touched: 3,
+            outcome: "applied",
+            recorded_at: "2026-08-01T10:15:00.000000",
           },
         ],
       });

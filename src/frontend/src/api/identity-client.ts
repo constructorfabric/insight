@@ -177,11 +177,34 @@ export async function getAttention(limit = 200): Promise<AttentionResponse> {
 /** One decision recorded for an account, newest first on the wire. */
 export interface BindingHistoryEntry {
   person_id: string;
+  /** The person it pointed at, as a card when the journal knows one. */
+  person?: PersonSummary | null;
   author_person_id: string;
+  /** The operator who decided it; absent for automation. */
+  author?: PersonSummary | null;
   /** True when a human recorded it; false = automation (seed/resolver). */
   by_operator: boolean;
   /** Verb code (`operator-bind`, …) or an automation reason. Open vocabulary. */
   reason?: string | null;
+  recorded_at: string;
+}
+
+/**
+ * One operator call that named this account. Separate from the binding journal
+ * by design: a call can move many accounts, and only the call knows why it was
+ * made.
+ */
+export interface AccountOperation {
+  operation_id: string;
+  verb: string;
+  author_person_id: string;
+  author?: PersonSummary | null;
+  /** What the operator typed, when they typed anything. */
+  comment?: string | null;
+  /** Accounts the call named, this one included. */
+  accounts_touched: number;
+  /** What it did to THIS account: `applied` | `already_decided` | `refused`. */
+  outcome?: string | null;
   recorded_at: string;
 }
 
@@ -192,6 +215,9 @@ export interface AccountBinding {
   /** Absent = the account is currently bound to nobody. */
   person_id?: string | null;
   history: BindingHistoryEntry[];
+  /** Operator calls naming this account, newest first. Optional so a client
+   *  deployed ahead of the backend keeps working. */
+  operations?: AccountOperation[];
 }
 
 /**

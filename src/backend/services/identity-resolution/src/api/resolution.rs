@@ -29,6 +29,10 @@ use crate::infra::identity_evidence::{
     AccountEvidence, ClickHouseEvidenceReader, EvidenceSnapshot,
 };
 
+/// A trail is read, not paged: enough calls to cover any account's history
+/// without letting one response grow without bound.
+const MAX_ACCOUNT_OPERATIONS: u64 = 50;
+
 /// How many accounts one bulk call may carry — a prepared matching table is
 /// pasted by a human, not streamed.
 const MAX_BULK_ITEMS: usize = 1_000;
@@ -764,10 +768,37 @@ pub async fn attention(
 #[derive(Debug, Serialize, ToSchema)]
 pub struct HistoryEntry {
     pub person_id: Uuid,
+    /// The person this decision pointed at, as a card when one is known.
+    pub person: Option<PersonSummaryResponse>,
     pub author_person_id: Uuid,
+    /// The operator who decided it; absent for automation, which has no card.
+    pub author: Option<PersonSummaryResponse>,
     /// `true` when a person made this decision, `false` for automation.
     pub by_operator: bool,
     pub reason: Option<String>,
+    pub recorded_at: String,
+}
+
+/// One operator call that named this account.
+///
+/// The binding journal says what a decision did; this says who ran it, the
+/// reason they gave, and how far it reached — a merge lands one row here and
+/// one in every other account it moved.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AccountOperationResponse {
+    pub operation_id: Uuid,
+    /// `operator-bind` | `operator-merge` | `operator-detach` | `operator-exclude`.
+    pub verb: String,
+    pub author_person_id: Uuid,
+    /// The author as a card, when the journal knows them by more than an id.
+    pub author: Option<PersonSummaryResponse>,
+    /// What the operator typed, when they typed anything.
+    pub comment: Option<String>,
+    /// Accounts the call named, this one included.
+    pub accounts_touched: usize,
+    /// What the call did to THIS account: `applied` | `already_decided` |
+    /// `refused`. A refusal changed nothing and still belongs in the trail.
+    pub outcome: Option<String>,
     pub recorded_at: String,
 }
 
@@ -779,6 +810,10 @@ pub struct AccountBindingResponse {
     /// The binding in force now, if the account has one.
     pub person_id: Option<Uuid>,
     pub history: Vec<HistoryEntry>,
+    /// Operator calls that named this account, newest first. Absent from the
+    /// binding journal by design: one call can move many accounts, and only
+    /// the call knows why it was made.
+    pub operations: Vec<AccountOperationResponse>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for AccountBindingResponse {}
 
@@ -806,15 +841,49 @@ pub async fn account_binding(
         .await
         .map_err(|e| internal(&e, "failed to read the binding history"))?;
 
+    let operations = ops_repo::corrections_for_account(
+        &state.db,
+        tenant,
+        RESOLUTION_OP,
+        &source,
+        source_id,
+        &account_id,
+        MAX_ACCOUNT_OPERATIONS,
+    )
+    .await
+    .map_err(|e| internal(&e, "failed to read the account's operations"))?;
+
+    // One hydration for every person the trail names — the people it points at
+    // and the operators who decided — so no consumer is left resolving ids.
+    let named: Vec<Uuid> = history
+        .iter()
+        .flat_map(|h| [h.person_id, h.author_person_id])
+        .chain(operations.iter().map(|o| o.author_person_id))
+        .filter(|id| !id.is_nil())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let cards = persons_repo::person_cards(&state.db, tenant, &named)
+        .await
+        .map_err(|e| internal(&e, "failed to read the persons named in the trail"))?;
+    let card_of = |id: Uuid| cards.get(&id).cloned().map(PersonSummaryResponse::from);
+
     let entries: Vec<HistoryEntry> = history
         .iter()
         .map(|h| HistoryEntry {
             person_id: h.person_id,
+            person: card_of(h.person_id),
             author_person_id: h.author_person_id,
+            author: card_of(h.author_person_id),
             by_operator: !h.author_person_id.is_nil(),
             reason: h.reason.clone(),
             recorded_at: super::seed::fmt_ts(h.created_at),
         })
+        .collect();
+
+    let calls = operations
+        .iter()
+        .map(|op| account_operation(op, &account, card_of(op.author_person_id)))
         .collect();
 
     Ok(Json(AccountBindingResponse {
@@ -823,7 +892,57 @@ pub async fn account_binding(
         account_id,
         person_id: history.first().map(|h| h.person_id),
         history: entries,
+        operations: calls,
     }))
+}
+
+/// Read one correction call as the trail shows it, from the payload it stored.
+fn account_operation(
+    op: &ops_repo::Operation,
+    account: &SourceAccountKey,
+    author: Option<PersonSummaryResponse>,
+) -> AccountOperationResponse {
+    let request: serde_json::Value = op
+        .request_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let accounts = request
+        .get("accounts")
+        .and_then(serde_json::Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+
+    AccountOperationResponse {
+        operation_id: op.operation_id,
+        verb: request
+            .get("verb")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        author_person_id: op.author_person_id,
+        author,
+        comment: request
+            .get("comment")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(str::to_owned),
+        accounts_touched: accounts.len(),
+        outcome: accounts
+            .iter()
+            .find(|entry| names_account(entry, account))
+            .and_then(|entry| entry.get("outcome"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        recorded_at: super::seed::fmt_ts(op.started_at),
+    }
+}
+
+fn names_account(entry: &serde_json::Value, account: &SourceAccountKey) -> bool {
+    entry.get("source").and_then(serde_json::Value::as_str) == Some(&account.source_type)
+        && entry.get("account_id").and_then(serde_json::Value::as_str) == Some(&account.account_id)
+        && entry.get("source_id").and_then(serde_json::Value::as_str)
+            == Some(&account.source_id.to_string())
 }
 
 #[derive(Debug, Serialize, ToSchema)]

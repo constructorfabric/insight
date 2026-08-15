@@ -45,6 +45,11 @@ const BOB = {
   display_name: "Bob Park",
   email: "bob.park@example.com",
 };
+const CAROL = {
+  person_id: "01900000-0000-7000-8000-0000000000c0",
+  display_name: "Carol Chen",
+  email: "carol.chen@example.com",
+};
 
 function queueItem(over: Partial<AttentionItem> = {}): AttentionItem {
   return {
@@ -169,6 +174,63 @@ describe("AccountDetail", () => {
 
     expect(screen.getByText(/first sign-in/i)).toBeInTheDocument();
     expect(screen.queryByText("login-bootstrap")).not.toBeInTheDocument();
+  });
+
+  // The comment is the one thing no other record holds — why a human did
+  // this — and it was written to the operations journal from the first verb,
+  // never read back. The reach matters beside it: a merge lands one row here
+  // and one in every other account it moved.
+  it("shows the operator call behind a decision: who, why and how far", () => {
+    binding.q.data = bound({
+      history: [
+        {
+          person_id: BOB.person_id,
+          author_person_id: CAROL.person_id,
+          by_operator: true,
+          reason: "operator-merge",
+          recorded_at: "2026-08-01T10:15:00.000000",
+        },
+      ],
+      operations: [
+        {
+          operation_id: "01900000-0000-7000-8000-0000000000f1",
+          verb: "operator-merge",
+          author_person_id: CAROL.person_id,
+          author: CAROL,
+          comment: "Same person — confirmed with HR.",
+          accounts_touched: 12,
+          outcome: "applied",
+          recorded_at: "2026-08-01T10:15:00.000000",
+        },
+      ],
+    });
+    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
+
+    expect(screen.getByText(/same person — confirmed with HR/i)).toBeInTheDocument();
+    expect(screen.getByText(/12 accounts in this call/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Carol Chen/).length).toBeGreaterThan(0);
+    expect(screen.getByText("applied")).toBeInTheDocument();
+  });
+
+  // The service resolves the people a trail names, so an entry pointing at
+  // somebody who is not a candidate stops being a bare id.
+  it("names the person an entry points at, candidate or not", () => {
+    binding.q.data = bound({
+      history: [
+        {
+          person_id: CAROL.person_id,
+          person: CAROL,
+          author_person_id: "00000000-0000-0000-0000-000000000000",
+          by_operator: false,
+          reason: "",
+          recorded_at: "2026-07-01T10:15:00.000000",
+        },
+      ],
+    });
+    // CAROL is not in the queue item's candidates.
+    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
+
+    expect(screen.getByText("Carol Chen")).toBeInTheDocument();
   });
 
   it("reads an off-queue empty journal as a stale link, offering no verbs", () => {
