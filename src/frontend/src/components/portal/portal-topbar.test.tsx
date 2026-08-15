@@ -66,6 +66,8 @@ vi.mock("@/components/portal/slice-select", () => ({
   ),
 }));
 
+import { portalRouter } from "@/test/portal-router";
+
 import { PortalTopBar } from "./portal-topbar";
 
 function bar() {
@@ -77,7 +79,7 @@ function bar() {
       <SidebarProvider>
         <PortalTopBar />
       </SidebarProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
 }
 
@@ -93,6 +95,7 @@ beforeEach(() => {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
   mocks.definitions = { metrics: [] };
+  portalRouter.reset();
 });
 
 describe("PortalTopBar", () => {
@@ -103,7 +106,7 @@ describe("PortalTopBar", () => {
     } as MetricDefinitionListResponse;
     bar();
     await waitFor(() =>
-      expect(screen.getByTestId("dims")).toHaveTextContent("job_title"),
+      expect(screen.getByTestId("dims")).toHaveTextContent("job_title")
     );
   });
 
@@ -116,14 +119,40 @@ describe("PortalTopBar", () => {
     } as MetricDefinitionListResponse;
     bar();
     await waitFor(() =>
-      expect(screen.getByTestId("dims")).not.toHaveTextContent("division"),
+      expect(screen.getByTestId("dims")).not.toHaveTextContent("division")
     );
   });
 
   it("falls back to the roster while no catalog exists", async () => {
     bar();
     await waitFor(() =>
-      expect(screen.getByTestId("dims")).toHaveTextContent("division"),
+      expect(screen.getByTestId("dims")).toHaveTextContent("division")
     );
+  });
+});
+
+const filters = () => screen.queryByRole("group", { name: "View filters" });
+
+/**
+ * Manage is a governance zone: a catalog, a schema report, an identity console
+ * and the release notes. None of them reads scope, cohort or period, so the
+ * bar would be offering filters that change nothing on screen.
+ */
+describe("PortalTopBar · zones that filter nothing", () => {
+  it("drops the whole filter group on Manage", async () => {
+    portalRouter.set({ zone: "manage" });
+    bar();
+
+    // Awaited, not read once: the catalog resolves after the first paint, and
+    // a group that appears only then would pass a synchronous check.
+    await waitFor(() => expect(screen.queryByTestId("dims")).toBeNull());
+    expect(filters()).toBeNull();
+  });
+
+  it("keeps it on a zone whose numbers the filters move", async () => {
+    portalRouter.set({ zone: "overview" });
+    bar();
+
+    await waitFor(() => expect(filters()).toBeInTheDocument());
   });
 });

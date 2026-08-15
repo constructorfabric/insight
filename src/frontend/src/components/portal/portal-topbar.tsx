@@ -13,6 +13,7 @@ import { PeriodSelectorBar } from "@/components/widgets/period-selector-bar";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useCohortOptions } from "@/lib/portal/use-cohort-options";
+import { cn } from "@/lib/utils";
 
 /**
  * Global portal bar — the two cross-cutting controls live here so every zone
@@ -29,6 +30,10 @@ export function PortalTopBar() {
   // numbers belonged to.
   const { activeZone } = useActiveZone();
   const scoped = activeZone !== "person";
+  // Manage is governance — a catalog, a schema report, an identity console and
+  // the release notes. Not one of them reads scope, cohort or period, so the
+  // bar was offering three filters that moved nothing on the screen behind it.
+  const filtered = activeZone !== "manage";
   // The server's catalog when it has one, the viewer's roster until then —
   // decided in `useCohortOptions`, which also owns which selection is in
   // effect so this control and the comparison cannot disagree.
@@ -39,7 +44,14 @@ export function PortalTopBar() {
     // slice and period apply to whatever is on screen, so they have to stay
     // reachable while reading down a long zone. Opaque background — content
     // scrolling underneath a translucent bar makes both unreadable.
-    <div className="sticky top-0 z-20 flex items-center gap-2 border-b bg-background px-4 py-2 md:px-6">
+    <div
+      className={cn(
+        "sticky top-0 z-20 flex items-center gap-2 border-b bg-background px-4 py-2 md:px-6",
+        // With no controls the trigger is the bar's only reason to exist, and
+        // it is hidden from lg up — leaving an empty strip above the content.
+        filtered || "lg:hidden"
+      )}
+    >
       {/* Opens the context pane wherever it is collapsed — the drawer is the
           only way to reach navigation on a phone (no rail at all), and the only
           way to reach sections on a tablet. Outside the scroller below, so it
@@ -51,47 +63,53 @@ export function PortalTopBar() {
       {/* `justify-end` only once there is room to wrap: inside a horizontal
           scroller it pushes the overflow off the START edge, where no scroll
           gesture can reach it — Scope and Slice became unreachable. */}
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto md:flex-wrap md:justify-end md:overflow-x-visible">
-        {scoped ? <ScopeSelect /> : null}
-        <span className="flex shrink-0 items-center gap-1.5">
-          <span className="hidden text-xs text-muted-foreground md:inline">
-            Cohort
-          </span>
-          {/* Every "vs median" on every screen is computed against whatever
+      {filtered ? (
+        <div
+          role="group"
+          aria-label="View filters"
+          className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto md:flex-wrap md:justify-end md:overflow-x-visible"
+        >
+          {scoped ? <ScopeSelect /> : null}
+          <span className="flex shrink-0 items-center gap-1.5">
+            <span className="hidden text-xs text-muted-foreground md:inline">
+              Cohort
+            </span>
+            {/* Every "vs median" on every screen is computed against whatever
               this names, and the word alone does not say so. */}
-          <TooltipProvider delay={200}>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    className="cursor-help text-muted-foreground"
-                    aria-label="What the cohort controls"
-                  >
-                    <HelpCircle className="size-3.5" />
-                  </button>
-                }
-              />
-              <TooltipContent
-                side="bottom"
-                className="max-w-xs text-xs leading-relaxed"
-              >
-                The people every comparison on screen is made against. "Team
-                (all)" compares within the org you are looking at; picking an
-                attribute compares each person with the people who share their
-                value for it.
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <SliceSelect dims={dims} />
-        </span>
-        <PeriodSelectorBar
-          period={period}
-          customRange={customRange}
-          onPeriodChange={setPeriod}
-          onRangeChange={setCustomRange}
-        />
-      </div>
+            <TooltipProvider delay={200}>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="cursor-help text-muted-foreground"
+                      aria-label="What the cohort controls"
+                    >
+                      <HelpCircle className="size-3.5" />
+                    </button>
+                  }
+                />
+                <TooltipContent
+                  side="bottom"
+                  className="max-w-xs text-xs leading-relaxed"
+                >
+                  The people every comparison on screen is made against. "Team
+                  (all)" compares within the org you are looking at; picking an
+                  attribute compares each person with the people who share their
+                  value for it.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <SliceSelect dims={dims} />
+          </span>
+          <PeriodSelectorBar
+            period={period}
+            customRange={customRange}
+            onPeriodChange={setPeriod}
+            onRangeChange={setCustomRange}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
