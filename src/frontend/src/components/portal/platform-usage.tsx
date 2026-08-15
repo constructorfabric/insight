@@ -19,7 +19,8 @@ import type {
 } from "@/api/usage-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { Button } from "@/components/ui/button";
+import { resolveDateRange } from "@/api/period-to-date-range";
+import { PeriodSelectorBar } from "@/components/widgets/period-selector-bar";
 import {
   BarChart,
   CartesianGrid,
@@ -31,7 +32,6 @@ import {
   YAxis,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -43,12 +43,7 @@ import {
 import { useIsAdmin } from "@/queries/identity-me";
 import { useUsageSummary } from "@/queries/usage";
 import { cn } from "@/lib/utils";
-
-const PERIODS = [
-  { days: 7, label: "7d" },
-  { days: 30, label: "30d" },
-  { days: 90, label: "90d" },
-] as const;
+import type { CustomRange, PeriodValue } from "@/types/insight";
 
 /** Names are resolved for what is on screen, not for the whole ranking. */
 const NAMED_ROWS = 25;
@@ -68,20 +63,19 @@ function fillRange(days: UsageDay[], range: UsageRange): UsageDay[] {
   return out;
 }
 
-function isoDay(daysBack: number): string {
-  const day = new Date();
-  day.setUTCDate(day.getUTCDate() - daysBack);
-  return day.toISOString().slice(0, 10);
-}
-
 export function PlatformUsage() {
-  const [days, setDays] = useState<number | null>(30);
-  const [custom, setCustom] = useState({ since: isoDay(29), until: isoDay(0) });
+  const [period, setPeriod] = useState<PeriodValue>("month");
+  const [customRange, setCustomRange] = useState<CustomRange | null>(null);
   const { isAdmin, isPending: adminPending } = useIsAdmin();
-  const range = useMemo(
-    () => (days == null ? custom : { since: isoDay(days - 1), until: isoDay(0) }),
-    [days, custom],
-  );
+  const range = useMemo(() => {
+    const resolved = resolveDateRange(period, customRange);
+    // The shared window ends yesterday because the metric pipeline lands a day
+    // late. Usage is written as it happens, and "is anyone using it" is a
+    // question about today, so the end is carried forward.
+    const today = new Date().toISOString().slice(0, 10);
+    const until = customRange ? resolved.to : today;
+    return { since: resolved.from, until: until < resolved.to ? resolved.to : until };
+  }, [period, customRange]);
   const summary = useUsageSummary(range, isAdmin);
 
   if (adminPending) return <CenteredSpinner />;
@@ -117,42 +111,12 @@ export function PlatformUsage() {
 
   return (
     <div className="flex w-full flex-col gap-6 p-6">
-      <div className="flex flex-wrap items-center gap-2">
-        {PERIODS.map((period) => (
-          <Button
-            key={period.days}
-            size="sm"
-            variant={period.days === days ? "default" : "outline"}
-            onClick={() => setDays(period.days)}
-          >
-            {period.label}
-          </Button>
-        ))}
-        <span className="ml-2 text-xs text-muted-foreground">from</span>
-        <Input
-          type="date"
-          aria-label="From"
-          className="h-8 w-40"
-          value={range.since}
-          max={range.until}
-          onChange={(e) => {
-            setCustom((c) => ({ ...c, since: e.target.value }));
-            setDays(null);
-          }}
-        />
-        <span className="text-xs text-muted-foreground">to</span>
-        <Input
-          type="date"
-          aria-label="To"
-          className="h-8 w-40"
-          value={range.until}
-          min={range.since}
-          onChange={(e) => {
-            setCustom((c) => ({ ...c, until: e.target.value }));
-            setDays(null);
-          }}
-        />
-      </div>
+      <PeriodSelectorBar
+        period={period}
+        customRange={customRange}
+        onPeriodChange={setPeriod}
+        onRangeChange={setCustomRange}
+      />
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Kpi label="visits" value={totals.visits} />

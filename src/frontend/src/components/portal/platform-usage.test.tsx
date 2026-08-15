@@ -53,12 +53,21 @@ const SUMMARY = {
   by_event: [],
 };
 
+const asked: Array<{ since?: string; until?: string }> = [];
+
 vi.mock("@/queries/usage", () => ({
-  useUsageSummary: () => ({
-    data: SUMMARY,
-    isPending: false,
-    isError: false,
-  }),
+  useUsageSummary: (range: { since?: string; until?: string }) => {
+    asked.push(range);
+    return { data: SUMMARY, isPending: false, isError: false };
+  },
+}));
+
+// The shared period control the rest of the portal uses; here it only has to
+// report what the page hands it.
+vi.mock("@/components/widgets/period-selector-bar", () => ({
+  PeriodSelectorBar: ({ period }: { period: string }) => (
+    <div data-testid="period-bar" data-period={period} />
+  ),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -68,6 +77,22 @@ vi.mock("@tanstack/react-query", () => ({
 import { PlatformUsage } from "./platform-usage";
 
 describe("PlatformUsage", () => {
+  it("asks for a period with the same control every other zone uses", () => {
+    render(<PlatformUsage />);
+
+    expect(screen.getByTestId("period-bar")).toHaveAttribute("data-period", "month");
+    const range = asked.at(-1);
+    expect(range?.since).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(range?.until).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("counts today, which the shared period window leaves out", () => {
+    render(<PlatformUsage />);
+
+    const today = new Date().toISOString().slice(0, 10);
+    expect(asked.at(-1)?.until).toBe(today);
+  });
+
   it("plots visits against the day they happened", () => {
     render(<PlatformUsage />);
 
