@@ -83,10 +83,6 @@ vi.mock("@/components/widgets/period-selector-bar", () => ({
   ),
 }));
 
-vi.mock("@tanstack/react-query", () => ({
-  useQueries: () => [],
-}));
-
 import { toISODate } from "@/api/period-to-date-range";
 
 import { PlatformUsage } from "./platform-usage";

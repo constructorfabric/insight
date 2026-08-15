@@ -9,9 +9,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { eachDayOfInterval, parseISO } from "date-fns";
-import { useQueries } from "@tanstack/react-query";
 
-import { getPerson } from "@/api/identity-client";
 import type {
   UsageDay,
   UsageEvent,
@@ -48,14 +46,9 @@ import {
 } from "@/components/ui/table";
 import { useUsageSummary } from "@/queries/usage";
 import { formatDate, formatMetricNumber, formatUtcInstant } from "@/lib/format";
-import { personDisplayName } from "@/lib/identities/person-display";
-import { normalizePersonId } from "@/lib/metrics/entity";
 import { TEXT_FIGURE, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import type { CustomRange, PeriodValue } from "@/types/insight";
-
-/** Names are resolved for what is on screen, not for the whole ranking. */
-const NAMED_ROWS = 25;
 
 /** Every day in [since, until], with the API's counts where it had any. */
 function fillRange(days: UsageDay[], range: UsageRange): UsageDay[] {
@@ -278,16 +271,6 @@ function Empty() {
 }
 
 function PeopleTable({ rows }: { rows: UsagePerson[] }) {
-  const named = rows.slice(0, NAMED_ROWS);
-  const profiles = useQueries({
-    queries: named.map((row) => ({
-      queryKey: ["identity", "person", normalizePersonId(row.person_id)],
-      queryFn: () => getPerson(row.person_id),
-      staleTime: 5 * 60 * 1000,
-      retry: false,
-    })),
-  });
-
   return (
     <section className="flex flex-col gap-2">
       <h3 className={TEXT_NAME}>Who opened it</h3>
@@ -301,13 +284,8 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
           columns={[
             {
               header: "Person",
-              cell: (row, index) => (
-                <span className="font-medium">
-                  {(() => {
-                    const person = profiles[index]?.data;
-                    return person ? personDisplayName(person) : row.person_id;
-                  })()}
-                </span>
+              cell: (row) => (
+                <span className="font-medium">{row.display_name || row.person_id}</span>
               ),
             },
             { header: "Visits", width: 6, align: "right", cell: (row) => row.visits },

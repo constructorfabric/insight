@@ -28,6 +28,7 @@ export interface UsageDay {
 
 export interface UsagePerson {
   person_id: string;
+  display_name: string;
   visits: number;
   page_views: number;
   last_seen: string;

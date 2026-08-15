@@ -208,6 +208,34 @@ fn data_field(data: Option<&serde_json::Value>, key: &str) -> String {
     }
 }
 
+/// Who opened the product, named.
+///
+/// The names come from the identity rows mirrored into ClickHouse rather than
+/// from a per-caller profile lookup: that lookup answers only for people inside
+/// the caller's visible set, and "who uses the product" is an org-wide question
+/// on an admin-only surface. A visitor identity has not mirrored yet keeps an
+/// empty name and is shown by id.
+fn people_sql() -> String {
+    format!(
+        "SELECT toString(u.person) AS person_id, \
+         coalesce(p.display_name, '') AS display_name, \
+         u.visits AS visits, u.page_views AS page_views, u.last_seen AS last_seen \
+         FROM (\
+           SELECT person_id AS person, uniqExact(session_id) AS visits, \
+           countIf(event_name = '{PAGE_VIEW}') AS page_views, \
+           toString(max(ts)) AS last_seen \
+           FROM {TABLE} WHERE {WINDOW} AND person_id != toUUID('{NIL_UUID}') \
+           GROUP BY person ORDER BY visits DESC, page_views DESC \
+           LIMIT {BREAKDOWN_LIMIT}) AS u \
+         LEFT JOIN (\
+           SELECT person_id, any(value_effective) AS display_name \
+           FROM identity.identity_persons \
+           WHERE value_type = 'display_name' AND insight_tenant_id = toUUID(?) \
+           GROUP BY person_id) AS p ON p.person_id = u.person \
+         ORDER BY u.visits DESC, u.page_views DESC"
+    )
+}
+
 /// Deliberate actions only: a page view has its own breakdown, and
 /// `session_start` is the SDK announcing a session rather than anyone doing
 /// something. Both are already counted as visits.
@@ -311,6 +339,8 @@ pub struct UsageDay {
 #[derive(Debug, Serialize, Deserialize, clickhouse::Row, utoipa::ToSchema)]
 pub struct UsagePerson {
     pub person_id: String,
+    /// Empty when the visitor has not been mirrored into the identity rows yet.
+    pub display_name: String,
     pub visits: u64,
     pub page_views: u64,
     pub last_seen: String,
@@ -402,19 +432,9 @@ pub async fn get_usage_summary(
              FROM {TABLE} WHERE {WINDOW} GROUP BY day ORDER BY day"
         ))
         .fetch_all::<UsageDay>(),
-        bound(format!(
-            // The id is stringified in an outer select: an alias that shadows
-            // `person_id` makes every other reference to it a String, and the
-            // UUID comparisons in the same query then have no common type.
-            "SELECT toString(person) AS person_id, visits, page_views, last_seen FROM (\
-               SELECT person_id AS person, uniqExact(session_id) AS visits, \
-               countIf(event_name = '{PAGE_VIEW}') AS page_views, \
-               toString(max(ts)) AS last_seen \
-               FROM {TABLE} WHERE {WINDOW} AND person_id != toUUID('{NIL_UUID}') \
-               GROUP BY person ORDER BY visits DESC, page_views DESC \
-               LIMIT {BREAKDOWN_LIMIT})"
-        ))
-        .fetch_all::<UsagePerson>(),
+        bound(people_sql())
+            .bind(tenant.clone())
+            .fetch_all::<UsagePerson>(),
         bound(format!(
             "SELECT path, count() AS views, {visitors} AS visitors \
              FROM {TABLE} WHERE {WINDOW} AND event_name = '{PAGE_VIEW}' AND path != '' \
@@ -519,6 +539,13 @@ mod tests {
     fn the_actions_breakdown_leaves_out_what_nobody_did() {
         // Both are already counted as visits; neither is something a person did.
         assert!(actions_sql("1").contains("NOT IN ('page_view', 'session_start')"));
+    }
+
+    #[test]
+    fn a_visitor_is_named_from_the_mirrored_identity_rows() {
+        let sql = people_sql();
+        assert!(sql.contains("identity.identity_persons"), "{sql}");
+        assert!(sql.contains("display_name"), "{sql}");
     }
 
     #[test]
