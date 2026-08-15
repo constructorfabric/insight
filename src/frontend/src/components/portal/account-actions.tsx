@@ -133,7 +133,9 @@ export function AccountActions({
 
       <section>
         <div className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          {t("identities.actions.assign_other")}
+          {boundId
+            ? t("identities.actions.assign_other")
+            : t("identities.actions.assign_person")}
         </div>
         <PersonPicker
           excludeIds={candidates.map((c) => c.person_id)}
@@ -201,6 +203,7 @@ export function AccountActions({
       {action.kind === "merge" ? (
         <MergeDialog
           sourceId={boundId ?? ""}
+          sourceName={boundName ?? ""}
           target={action.target}
           isPending={merge.isPending}
           error={
@@ -271,6 +274,7 @@ export function AccountActions({
 /** The merge preview: name what moves BEFORE anything happens. */
 function MergeDialog({
   sourceId,
+  sourceName,
   target,
   isPending,
   error,
@@ -278,6 +282,9 @@ function MergeDialog({
   onConfirm,
 }: {
   sourceId: string;
+  /** The absorbed person, named — the dialog must state both sides, or the
+   *  operator has to infer which person a wrong-direction merge erases. */
+  sourceName: string;
   target: PersonSummary;
   isPending: boolean;
   error: string | null;
@@ -293,7 +300,8 @@ function MergeDialog({
       onOpenChange={(open) => !open && onClose()}
       title={t("identities.dialogs.merge_title")}
       description={t("identities.dialogs.merge_description", {
-        name: personDisplayName(target),
+        source: sourceName,
+        target: personDisplayName(target),
       })}
       confirmLabel={t("identities.actions.merge_confirm")}
       destructive

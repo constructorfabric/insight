@@ -258,9 +258,11 @@ function Tile({
           {label}
         </span>
         <Tooltip>
+          {/* Focusable, or the hint — which carries the tile's actual
+              meaning — exists for mouse users only. */}
           <TooltipTrigger
-            render={<span className="inline-flex text-muted-foreground" />}
-            aria-label={label}
+            render={<span className="inline-flex text-muted-foreground" tabIndex={0} />}
+            aria-label={hint}
           >
             <Info className="size-3.5" />
           </TooltipTrigger>
@@ -650,8 +652,24 @@ function CaseBlock({
               }}
               aria-pressed={selected}
               // Without a label the name is computed from everything inside,
-              // which reads out before the account is even named.
-              aria-label={`${label} ${item.source}`}
+              // which reads out before the account is even named. With one,
+              // it must still carry what a sighted operator sees at a glance:
+              // who holds it, its status, what the source says it is.
+              aria-label={[
+                label,
+                item.source,
+                boundTo
+                  ? t("identities.queue.bound_to", {
+                      name: personDisplayName(boundTo),
+                    })
+                  : null,
+                item.status?.trim().toLowerCase() === "active"
+                  ? null
+                  : item.status,
+                description || null,
+              ]
+                .filter(Boolean)
+                .join(", ")}
               className={cn(
                 "cursor-pointer rounded-md border p-3 text-start select-text",
                 selected

@@ -1,6 +1,7 @@
 """The operator correction surface — the manual-resolution routes on the deployed path.
 
     GET  /v1/resolution/attention                         200 rates arithmetic · 403 realm admin
+    GET  /v1/resolution/accounts                          200 search + holder · 400 short q · 403 realm admin
     GET  /v1/resolution/accounts/{source}/{sid}/{aid}     200 binding + history (round trip)
     GET  /v1/resolution/persons/{id}/accounts             200 for a seeded person
     POST /v1/resolution/bind                              200 applied → already_decided (round trip) · 400 excluded sentinel
@@ -31,12 +32,14 @@ from insight_stand import ApiClient, Manifest, PersonaSession, identity_path
 from .. import scratch
 from ..schemas import (
     AccountBindingResponse,
+    AccountSearchResponse,
     AttentionResponse,
     CorrectionResponse,
     PersonAccountsResponse,
 )
 
 ATTENTION = identity_path("/v1/resolution/attention")
+ACCOUNT_SEARCH = identity_path("/v1/resolution/accounts")
 
 #: The reserved excluded-person sentinel (`Uuid::from_u128(u128::MAX)` in the
 #: service). Once any account was ever excluded it exists in the journal, so
@@ -71,6 +74,64 @@ def test_the_realm_admin_is_refused_the_queue(realm_admin_session: PersonaSessio
     the same boundary `test_admin.py` pins for the CRUD listings."""
     response = realm_admin_session.client.get(ATTENTION)
     assert response.status_code == 403, f"{response.status_code} {response.text[:300]}"
+
+
+@pytest.mark.requires_seed("ceo")
+@pytest.mark.security
+def test_the_realm_admin_is_refused_the_account_search(
+    realm_admin_session: PersonaSession,
+) -> None:
+    """The gate runs before `q` validation: a non-admin with no query at all
+    still learns nothing but 403 — a 400 would reveal the gate ran second."""
+    response = realm_admin_session.client.get(ACCOUNT_SEARCH)
+    assert response.status_code == 403, f"{response.status_code} {response.text[:300]}"
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_a_short_account_search_needle_is_refused(
+    admin_operator_session: PersonaSession,
+) -> None:
+    """Under three characters the needle would scan the whole fold to answer
+    with everything; the service refuses rather than obliging."""
+    response = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"q": "ab"})
+    assert response.status_code == 400, f"{response.status_code} {response.text[:300]}"
+
+
+@pytest.mark.requires_seed("admin_operator", "dev_lead")
+@pytest.mark.reliability
+def test_account_search_finds_a_seeded_account_and_names_its_holder(
+    admin_operator_session: PersonaSession, stand_manifest: Manifest
+) -> None:
+    """`GET /v1/resolution/accounts?q=` answers with the account AND whose it
+    is — the mode exists for an operator holding a value, not a person. The
+    seeded lead's address is observed by the roster connector and bound by the
+    seed, so searching it must return at least one account holding a hydrated
+    person; every match must echo the needle in one of its searched values.
+    """
+    lead = stand_manifest.fixture("dev_lead")
+    needle = lead.email
+
+    response = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"q": needle})
+    assert response.status_code == 200, f"{response.status_code} {response.text[:300]}"
+
+    found = response.parse(AccountSearchResponse)
+    assert found.items, f"a seeded stand finds no account for {needle!r}"
+    lowered = needle.lower()
+    for match in found.items:
+        carried = [
+            value
+            for value in (match.email, match.username, match.display_name, match.account_id)
+            if value is not None
+        ]
+        assert any(lowered in value.lower() for value in carried), (
+            f"match carries none of the searched values: {match!r}"
+        )
+    bound = [match for match in found.items if match.person is not None]
+    assert bound, "the seeded address resolves to a bound account, so a holder must appear"
+    assert any(
+        (match.person.email or "").lower() == lowered for match in bound
+    ), f"no holder card carries the searched address: {bound!r}"
 
 
 @pytest.mark.requires_seed("admin_operator")

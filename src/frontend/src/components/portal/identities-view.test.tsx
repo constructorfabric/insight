@@ -215,8 +215,8 @@ describe("IdentitiesView", () => {
     expect(screen.getByText(/1 case · 3 accounts/i)).toBeInTheDocument();
     // The candidates are stated once for the case, so each row has to say
     // which of them it would be taking the account from.
-    expect(screen.getByText(/now Ann Lee/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/now Bob Park/i)).toHaveLength(2);
+    expect(screen.getByText(/held by Ann Lee/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/held by Bob Park/i)).toHaveLength(2);
     // Each account still has its own row: a decision is taken per account.
     expect(screen.getAllByRole("button", { name: /dev42@example\.com/i })).toHaveLength(3);
   });

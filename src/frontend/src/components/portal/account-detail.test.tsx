@@ -129,8 +129,8 @@ describe("AccountDetail", () => {
     expect(screen.getByText(/by an operator/i)).toBeInTheDocument();
     // Two different questions: when exactly (comparable between entries,
     // pasteable into a ticket) and how long it has stood.
-    expect(screen.getByText(/1 Aug 2026, \d\d:\d\d/)).toBeInTheDocument();
-    expect(screen.getAllByText(/ago$/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/\d+ Aug 2026, \d\d:\d\d/)).toBeInTheDocument();
+    expect(screen.getAllByText(/ago\)$/i).length).toBeGreaterThan(0);
     // The same person appears over and over in a trail; the id is what tells
     // two of them apart when the names do not.
     expect(screen.getAllByText(BOB.person_id).length).toBeGreaterThan(0);
@@ -243,6 +243,49 @@ describe("AccountDetail", () => {
 
     expect(screen.queryByText(/link may be stale/i)).not.toBeInTheDocument();
     expect(screen.getByTestId("account-actions")).toBeInTheDocument();
+  });
+
+  // The two records interleave by instant, newest first — an audit trail
+  // that reads backwards, or shuffles a call away from its decision, tells a
+  // false story. Ties keep the decision above its own call.
+  it("interleaves decisions and calls newest-first", () => {
+    binding.q.data = bound({
+      history: [
+        {
+          person_id: BOB.person_id,
+          author_person_id: CAROL.person_id,
+          by_operator: true,
+          reason: "operator-bind",
+          recorded_at: "2026-08-10T10:00:00.000000",
+        },
+        {
+          person_id: BOB.person_id,
+          author_person_id: "00000000-0000-0000-0000-000000000000",
+          by_operator: false,
+          reason: "",
+          recorded_at: "2026-07-01T10:00:00.000000",
+        },
+      ],
+      operations: [
+        {
+          operation_id: "01900000-0000-7000-8000-0000000000f1",
+          verb: "operator-detach",
+          author_person_id: CAROL.person_id,
+          author: CAROL,
+          comment: null,
+          accounts_touched: 1,
+          outcome: "applied",
+          recorded_at: "2026-07-20T10:00:00.000000",
+        },
+      ],
+    });
+    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
+
+    const rows = screen.getAllByRole("listitem");
+    const texts = rows.map((row) => row.textContent ?? "");
+    expect(texts[0]).toMatch(/Bound/);
+    expect(texts[1]).toMatch(/Detached/);
+    expect(texts[2]).toMatch(/Automatic/);
   });
 
   it("reads an off-queue empty journal as a stale link, offering no verbs", () => {

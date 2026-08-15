@@ -403,10 +403,10 @@
   },
   "identities": {
     "title": "Identities",
-    "subtitle": "Accounts the resolver could not decide — review and resolve them.",
+    "subtitle": "Who each account belongs to — review what the resolver could not decide, and correct what it did.",
     "rates": {
       "decisions": "Needs a decision",
-      "decisions_hint": "Cases waiting for you. This is the queue below — the only number here you can act on.",
+      "decisions_hint": "Accounts waiting for you. This is the queue below — the only number here you can act on.",
       "observed": "Observed",
       "observed_hint": "Every account a connector currently reports, closed ones excluded.",
       "bound": "Bound to a person",
@@ -414,7 +414,7 @@
       "pending": "Unbound · has an address",
       "pending_hint": "Waiting for the resolver, not for you: an address is present, so the next run binds it. Only the contested ones reach the queue.",
       "no_evidence": "Unbound · nothing to match on",
-      "no_evidence_hint": "No address, so automation has no key to match on. Only a person can bind these — they are in the queue.",
+      "no_evidence_hint": "No address, so automation has no key to match on. Only an operator can bind these — they are in the queue.",
       "excluded": "Excluded",
       "excluded_hint": "Declared not a person — a bot, CI or service account. Dropped from every person metric."
     },
@@ -422,7 +422,7 @@
       "contested": "Contested — more than one person claims the account",
       "binding_conflict": "Binding conflicts — evidence disagrees with the current binding",
       "provisioned_at_login": "Given a person at first sign-in — not yet confirmed",
-      "no_evidence": "No address to match on — only a person can bind these",
+      "no_evidence": "No address to match on — only an operator can bind these",
       "other": "Needs review"
     },
     "queue": {
@@ -441,7 +441,7 @@
       "previous_case": "‹ Previous account",
       "next_case": "Next account ›",
       "reports_to": "reports to {{manager}}",
-      "bound_to": "now {{name}}",
+      "bound_to": "held by {{name}}",
       "case_people_one": "{{count}} person",
       "case_people_other": "{{count}} people",
       "case_accounts_one": "{{count}} account",
@@ -475,7 +475,8 @@
       "by": "by",
       "by_name": "by {{name}}",
       "accounts_touched_one": "{{count}} account in this call",
-      "accounts_touched_other": "{{count}} accounts in this call"
+      "accounts_touched_other": "{{count}} accounts in this call",
+      "call": "the call"
     },
     "actions": {
       "bind": "Bind",
@@ -486,14 +487,15 @@
       "detach_confirm": "Detach",
       "exclude": "Exclude (bot / CI)",
       "exclude_confirm": "Exclude",
-      "assign_other": "Assign to someone else"
+      "assign_other": "Assign to someone else",
+      "assign_person": "Assign to a person"
     },
     "dialogs": {
       "bind_title": "Bind this account?",
       "confirm_title": "Confirm the current binding?",
       "bind_description": "This account moves to {{name}}. Its activity counts towards them from here on — another bind moves it back.",
       "merge_title": "Merge two persons?",
-      "merge_description": "Every account of the currently bound person moves to {{name}}. Merging back is another merge — nothing is lost, but metrics re-attribute.",
+      "merge_description": "Every account of {{source}} moves to {{target}}. Merging back is another merge — nothing is lost, but metrics re-attribute.",
       "merge_preview_loading": "Counting the accounts that would move…",
       "merge_preview_failed": "Could not count the accounts that would move.",
       "merge_preview_one": "{{count}} account moves:",

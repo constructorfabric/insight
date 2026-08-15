@@ -191,6 +191,9 @@ function OperationRow({ operation }: { operation: AccountOperation }) {
         <span className="text-xs font-medium">
           {verbKey ? t(verbKey) : operation.verb}
         </span>
+        <Badge variant="outline" className="font-normal">
+          {t("identities.history.call")}
+        </Badge>
         {operation.accounts_touched > 1 ? (
           <Badge variant="outline" className="font-normal">
             {t("identities.history.accounts_touched", {
@@ -200,8 +203,8 @@ function OperationRow({ operation }: { operation: AccountOperation }) {
         ) : null}
         <span className="ms-auto text-xs text-muted-foreground">
           {formatUtcInstant(operation.recorded_at, "d MMM yyyy, HH:mm")}
-          <span className="ms-1.5 opacity-70">
-            {formatUtcAge(operation.recorded_at)}
+          <span className="opacity-70">
+            {` (${formatUtcAge(operation.recorded_at)})`}
           </span>
         </span>
       </div>
@@ -255,8 +258,8 @@ function HistoryRow({
             opened for — how long this has stood. Neither replaces the other. */}
         <span className="ms-auto text-xs text-muted-foreground">
           {formatUtcInstant(entry.recorded_at, "d MMM yyyy, HH:mm")}
-          <span className="ms-1.5 opacity-70">
-            {formatUtcAge(entry.recorded_at)}
+          <span className="opacity-70">
+            {` (${formatUtcAge(entry.recorded_at)})`}
           </span>
         </span>
       </div>
