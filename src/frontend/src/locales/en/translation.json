@@ -440,7 +440,8 @@
       "no_matches": "Nothing matches those terms",
       "no_matches_description": "Clear the filter to see the whole queue.",
       "previous_case": "‹ Previous account",
-      "next_case": "Next account ›"
+      "next_case": "Next account ›",
+      "reports_to": "reports to {{manager}}"
     },
     "detail": {
       "not_found": "This account is unknown — the link may be stale.",

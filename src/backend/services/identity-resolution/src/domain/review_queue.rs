@@ -29,6 +29,24 @@ pub enum ItemKind {
     NoEvidence,
 }
 
+/// What the connector says this account IS, beyond the values automation
+/// matches on.
+///
+/// The matcher needs an address and nothing else, so the fold used to read
+/// nothing else — which left the accounts it cannot match displayed as a bare
+/// id, exactly the ones only a human can bind. The source usually describes
+/// them perfectly well; a person recognises a name, a job title and a manager.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountDescription {
+    pub display_name: Option<String>,
+    pub job_title: Option<String>,
+    pub department: Option<String>,
+    /// Employment status as the source words it — a leaver is rarely worth an
+    /// operator's attention, and the queue should not hide that they are one.
+    pub status: Option<String>,
+    pub manager_email: Option<String>,
+}
+
 /// One account awaiting a decision, with the persons it could belong to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueItem {
@@ -36,6 +54,7 @@ pub struct QueueItem {
     pub account: SourceAccountKey,
     pub email: Option<String>,
     pub username: Option<String>,
+    pub description: AccountDescription,
     pub candidates: Vec<Uuid>,
 }
 
@@ -63,6 +82,7 @@ pub struct EvidenceAccount {
     pub account: SourceAccountKey,
     pub email: Option<String>,
     pub username: Option<String>,
+    pub description: AccountDescription,
     pub is_closed: bool,
 }
 
@@ -203,6 +223,7 @@ fn item(kind: ItemKind, account: &EvidenceAccount, candidates: Vec<Uuid>) -> Que
         account: account.account.clone(),
         email: account.email.clone(),
         username: account.username.clone(),
+        description: account.description.clone(),
         candidates,
     }
 }
@@ -224,7 +245,19 @@ mod tests {
             account: account(source_type, id),
             email: email.map(str::to_owned),
             username: None,
+            description: AccountDescription::default(),
             is_closed: false,
+        }
+    }
+
+    fn described(source_type: &str, id: &str, display_name: &str) -> EvidenceAccount {
+        EvidenceAccount {
+            description: AccountDescription {
+                display_name: Some(display_name.to_owned()),
+                job_title: Some("Engineer".to_owned()),
+                ..AccountDescription::default()
+            },
+            ..observed(source_type, id, None)
         }
     }
 
@@ -267,6 +300,26 @@ mod tests {
         assert_eq!(review.items[0].username.as_deref(), Some("octocat"));
         assert_eq!(review.rates.no_evidence, 1);
         assert_eq!(review.rates.pending, 0);
+    }
+
+    #[test]
+    fn a_no_evidence_item_carries_what_the_source_says_the_account_is() {
+        // Nothing here is matchable, which is the point: these accounts are
+        // bound by a person or by nobody, and a person needs to recognise one.
+        let review = build(
+            vec![described("bamboohr", "921", "Ann Lee")],
+            &HashMap::new(),
+        );
+
+        assert_eq!(review.items[0].kind, ItemKind::NoEvidence);
+        assert_eq!(
+            review.items[0].description.display_name.as_deref(),
+            Some("Ann Lee")
+        );
+        assert_eq!(
+            review.items[0].description.job_title.as_deref(),
+            Some("Engineer")
+        );
     }
 
     #[test]

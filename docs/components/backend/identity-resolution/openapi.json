@@ -1008,7 +1008,26 @@
             },
             "type": "array"
           },
+          "department": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_name": {
+            "description": "How the source describes the account. Nothing here is matchable — it is\nwhat lets an operator recognise whose account this is when automation\ncannot, which is exactly the case for the ones only they can bind.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "job_title": {
             "type": [
               "string",
               "null"
@@ -1018,12 +1037,24 @@
             "description": "`contested` | `binding_conflict` | `no_evidence`.",
             "type": "string"
           },
+          "manager_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "source": {
             "type": "string"
           },
           "source_id": {
             "format": "uuid",
             "type": "string"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "username": {
             "type": [

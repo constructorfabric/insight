@@ -634,6 +634,14 @@ pub struct QueueItemResponse {
     pub account_id: String,
     pub email: Option<String>,
     pub username: Option<String>,
+    /// How the source describes the account. Nothing here is matchable — it is
+    /// what lets an operator recognise whose account this is when automation
+    /// cannot, which is exactly the case for the ones only they can bind.
+    pub display_name: Option<String>,
+    pub job_title: Option<String>,
+    pub department: Option<String>,
+    pub status: Option<String>,
+    pub manager_email: Option<String>,
     /// Persons this account could belong to, if any are known — hydrated into
     /// cards so the operator UI never has to resolve bare ids itself.
     pub candidates: Vec<PersonSummaryResponse>,
@@ -721,6 +729,11 @@ pub async fn attention(
             account_id: i.account.account_id,
             email: i.email,
             username: i.username,
+            display_name: i.description.display_name,
+            job_title: i.description.job_title,
+            department: i.description.department,
+            status: i.description.status,
+            manager_email: i.description.manager_email,
             candidates: person_card::in_requested_order(&i.candidates, &cards)
                 .into_iter()
                 .map(PersonSummaryResponse::from)
@@ -902,6 +915,7 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), 
             account: e.account,
             email: e.email,
             username: e.username,
+            description: e.description,
             is_closed: e.is_closed,
         })
         .collect();

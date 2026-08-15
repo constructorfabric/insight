@@ -552,8 +552,25 @@ export const handlers = [
           username: "ci-bot-7",
           candidates: [],
         },
+        {
+          // Neither address nor handle — nothing automation can match on. The
+          // source still describes the human, which is what the fold reads for
+          // the operator and what makes this row bindable by hand.
+          kind: "no_evidence",
+          source: "hr",
+          source_id: "01900000-0000-7000-8000-00000000aa03",
+          account_id: "921",
+          email: null,
+          username: null,
+          display_name: "Nadia Orlov",
+          job_title: "Office Manager",
+          department: "Operations",
+          status: "Inactive",
+          manager_email: "carol.chen@example.com",
+          candidates: [],
+        },
       ],
-      rates: { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 },
+      rates: { observed: 60, bound: 55, pending: 3, no_evidence: 2, excluded: 1 },
       truncated: false,
       items_truncated: false,
     });

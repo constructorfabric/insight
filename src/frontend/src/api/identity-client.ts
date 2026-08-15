@@ -116,6 +116,13 @@ export interface AttentionItem {
   account_id: string;
   email?: string | null;
   username?: string | null;
+  /** How the source describes the account. None of it is matchable — it is
+   *  what lets an operator recognise an account automation cannot place. */
+  display_name?: string | null;
+  job_title?: string | null;
+  department?: string | null;
+  status?: string | null;
+  manager_email?: string | null;
   /** Hydrated person cards, not bare ids. */
   candidates: PersonSummary[];
 }

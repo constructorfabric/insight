@@ -569,6 +569,20 @@ function QueueGroup({
   );
 }
 
+/**
+ * Employment status, when the source says it is anything but active: an
+ * operator asked to resolve a leaver is usually being asked for nothing.
+ */
+function StatusBadge({ status }: { status?: string | null }) {
+  const value = status?.trim();
+  if (!value || value.toLowerCase() === "active") return null;
+  return (
+    <Badge variant="secondary" className="shrink-0 font-normal">
+      {value}
+    </Badge>
+  );
+}
+
 /** Which connectors this group's accounts came from, so a glance places it. */
 function SourceCounts({ items }: { items: AttentionItem[] }) {
   const counts = new Map<string, number>();
@@ -627,8 +641,26 @@ function CaseBlock({
         {queueCase.items.map((item) => {
           const key = itemKey(item);
           const selected = key === selectedKey;
+          // An account with nothing to match on has an id for a name, and an
+          // id names nobody. When the source described it, the person is the
+          // heading and the id moves beside the source, where the other rows
+          // carry theirs.
           const label =
-            item.email?.trim() || item.username?.trim() || item.account_id;
+            item.email?.trim() ||
+            item.username?.trim() ||
+            item.display_name?.trim() ||
+            item.account_id;
+          const description = [
+            item.display_name?.trim() === label ? null : item.display_name,
+            item.job_title,
+            item.department,
+            item.manager_email
+              ? t("identities.queue.reports_to", { manager: item.manager_email })
+              : null,
+          ]
+            .map((s) => s?.trim())
+            .filter(Boolean)
+            .join(" · ");
           return (
             <div
               key={key}
@@ -668,10 +700,16 @@ function CaseBlock({
                 >
                   {label}
                 </span>
+                <StatusBadge status={item.status} />
                 <span className="ms-auto shrink-0 font-mono text-xs text-muted-foreground">
-                  {item.source}
+                  {label === item.account_id ? item.source : `${item.source} · ${item.account_id}`}
                 </span>
               </div>
+              {description ? (
+                <div className="truncate text-xs text-muted-foreground">
+                  {description}
+                </div>
+              ) : null}
             </div>
           );
         })}

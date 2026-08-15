@@ -190,6 +190,36 @@ describe("IdentitiesView", () => {
     expect(screen.getAllByRole("button", { name: /dev42@example\.com/i })).toHaveLength(3);
   });
 
+  // Nothing here is matchable, which is exactly why it is on the queue: only
+  // a person can bind these, and an account id names nobody.
+  it("names an account with nothing to match on by what the source says it is", () => {
+    attention.q.data = {
+      items: [
+        item({
+          kind: "no_evidence",
+          account_id: "921",
+          email: null,
+          username: null,
+          display_name: "Ann Lee",
+          job_title: "Engineer",
+          department: "Platform",
+          status: "Inactive",
+          manager_email: "lead@example.com",
+        }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    const row = screen.getByRole("button", { name: /ann lee/i });
+    expect(within(row).getByText(/Engineer · Platform/)).toBeInTheDocument();
+    expect(within(row).getByText(/reports to lead@example\.com/)).toBeInTheDocument();
+    // A leaver is rarely the operator's work; the queue must not hide it.
+    expect(within(row).getByText("Inactive")).toBeInTheDocument();
+    // The id still identifies the account — beside its source, not as a name.
+    expect(within(row).getByText(/github · 921/)).toBeInTheDocument();
+  });
+
   it("renders candidates as person cells", () => {
     attention.q.data = {
       items: [
