@@ -150,11 +150,7 @@ export function WhatsNewScreen() {
   );
 }
 
-/**
- * The release notes alone. The portal's Manage zone renders these under its
- * own chrome, so the page title and the sidebar trigger stay with the screen
- * that owns a header of its own.
- */
+/** The release notes alone — the portal's Manage zone brings its own chrome. */
 export function WhatsNewBody() {
   const { t } = useTranslation();
 

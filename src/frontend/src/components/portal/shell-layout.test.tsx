@@ -66,15 +66,9 @@ vi.mock("@/auth", () => ({ useViewer: () => ({ email: "boss@x" }) }));
 // The settings menu pulls in viewer/theme/i18n plumbing; its presence is what
 // matters here — on a phone it is only reachable through this drawer.
 vi.mock("@/components/app-sidebar-footer", () => ({
-  // Stands in for the real menu, but keeps the one thing the shell is
-  // responsible for: the footer reports that it sent the reader somewhere.
-  AppSidebarFooter: ({
-    onNavigate,
-  }: {
-    onNavigate?: (viaPointer: boolean) => void;
-  }) => (
+  AppSidebarFooter: ({ onNavigate }: { onNavigate?: () => void }) => (
     <div data-testid="settings-menu">
-      <button type="button" onClick={() => onNavigate?.(true)}>
+      <button type="button" onClick={onNavigate}>
         Go somewhere
       </button>
     </div>
@@ -217,8 +211,6 @@ describe("shell layout: phone", () => {
   });
 
   it("shuts the settings menu once it has sent the reader somewhere", async () => {
-    // The destination now renders behind this menu instead of replacing the
-    // whole shell, so nothing dismisses it on the reader's behalf any more.
     render(<Shell />);
     const user = await openDrawer();
     await user.click(screen.getByRole("button", { name: "Settings" }));

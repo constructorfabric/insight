@@ -24,11 +24,7 @@ import { cn } from "@/lib/utils";
  */
 export function PortalTopBar() {
   const { activeZone } = useActiveZone();
-  // Manage is governance — a catalog, a schema report, an identity console and
-  // the release notes. Not one of them reads scope, cohort or period, so the
-  // bar was offering three filters that moved nothing on the screen behind it.
-  // The group is a child rather than a branch here so a zone that shows none of
-  // it also runs none of its queries.
+  // Nothing under Manage reads scope, cohort or period.
   const filtered = activeZone !== "manage";
 
   return (
@@ -39,8 +35,8 @@ export function PortalTopBar() {
     <div
       className={cn(
         "sticky top-0 z-20 flex items-center gap-2 border-b bg-background px-4 py-2 md:px-6",
-        // With no controls the trigger is the bar's only reason to exist, and
-        // it is hidden from lg up — leaving an empty strip above the content.
+        // Without the group the trigger is all that is left, and it is
+        // `lg:hidden` — an empty strip above the content.
         !filtered && "lg:hidden"
       )}
     >
@@ -55,9 +51,8 @@ export function PortalTopBar() {
 }
 
 /**
- * Scope, cohort and period. A component rather than a branch in the bar: it
- * owns the queries behind the cohort catalog, so a zone that does not render it
- * does not fire them either.
+ * A component rather than a branch in the bar: it owns the cohort-catalog
+ * query, so a zone that does not render it does not fire that query.
  */
 function ViewFilters() {
   const { period, customRange, setPeriod, setCustomRange } = usePortalPeriod();

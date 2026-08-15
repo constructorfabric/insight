@@ -32,13 +32,8 @@ vi.mock("@/lib/portal/use-zone-nav", () => ({
   }),
 }));
 vi.mock("@/components/app-sidebar-footer", () => ({
-  // Only the one thing the rail reacts to: the menu says it navigated.
-  AppSidebarFooter: ({
-    onNavigate,
-  }: {
-    onNavigate?: (viaPointer: boolean) => void;
-  }) => (
-    <button type="button" onClick={() => onNavigate?.(true)}>
+  AppSidebarFooter: ({ onNavigate }: { onNavigate?: () => void }) => (
+    <button type="button" onClick={onNavigate}>
       Go somewhere
     </button>
   ),
@@ -109,9 +104,8 @@ describe("LensRail", () => {
   });
 
   it("collapses when the settings menu navigates, for the same reason", async () => {
-    // The menu's trigger lives in the rail's own footer, so reaching it leaves
-    // the rail expanded over the pane — and its destinations render in that
-    // pane. Closing the popover alone still hides the answer behind the rail.
+    // The trigger lives in the rail's own footer, so reaching it expands the
+    // rail over the pane the destination renders in.
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     rail();
     await user.hover(screen.getByTestId("lens-rail"));

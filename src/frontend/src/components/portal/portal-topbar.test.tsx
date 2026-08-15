@@ -138,8 +138,7 @@ describe("PortalTopBar · zones that filter nothing", () => {
     portalRouter.set({ zone: "manage" });
     bar();
 
-    // Awaited, not read once: the catalog resolves after the first paint, and
-    // a group that appears only then would pass a synchronous check.
+    // Awaited: the catalog resolves after the first paint.
     await waitFor(() => expect(screen.queryByTestId("dims")).toBeNull());
     expect(filters()).toBeNull();
   });

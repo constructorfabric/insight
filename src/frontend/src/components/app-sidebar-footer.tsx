@@ -24,26 +24,12 @@ import { useIcPerson } from "@/queries/ic-dashboard";
  * identity block. Extracted from AppSidebar so the portal shell can surface
  * the same controls (from the rail's settings popover) without duplicating them.
  *
- * The first two entries follow the Portal toggle: the portal's Manage surfaces
- * while it is on, the standalone `/metrics` and `/whats-new` screens while it is
- * off. They used to name the standalone screens unconditionally, which dropped a
- * portal reader back into the previous interface. The toggle stays for now so
- * the old UI can still be looked at.
- *
- * `onNavigate` fires when one of those two is picked, carrying whether a
- * POINTER made the pick — the rail needs that to tell a pointer resting on it
- * from a keyboard visit. The portal mounts this in a popover, and a Manage
- * surface renders BEHIND that popover rather than replacing the shell it lives
- * in, so the menu has to be dismissed rather than destroyed. Whoever opened it
- * owns closing it; the footer only reports. The toggles below are deliberately
- * silent: flipping Portal or Focus is a setting, and a menu that shut on every
- * flip would need reopening each time.
+ * `onNavigate` fires for the first two entries only: their destination renders
+ * behind the popover the portal mounts this in, so the opener has to dismiss
+ * it. The toggles stay silent — a menu that shut on every flip would need
+ * reopening each time.
  */
-export function AppSidebarFooter({
-  onNavigate,
-}: {
-  onNavigate?: (viaPointer: boolean) => void;
-}) {
+export function AppSidebarFooter({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
   const { email: viewerEmail, personId: viewerPersonId } = useViewer();
   const viewerQ = useIcPerson(viewerPersonId ?? "");
@@ -101,13 +87,9 @@ export function AppSidebarFooter({
 }
 
 /**
- * One entry, pointing at its Manage surface in the portal.
- *
- * Active state comes from `resolveZoneItem` — the same resolver the context
- * pane and the zone content use — rather than a comparison of its own. A
- * private one disagreed with them twice: a bare `?zone=manage` marked nothing
- * here while the pane marked the zone's default, and a `?zone=` left behind on
- * a person route marked a Manage entry the portal was not showing.
+ * Active state resolves through `resolveZoneItem`, the resolver the context
+ * pane and the zone content use: a private comparison disagrees with them on a
+ * bare `?zone=manage` and on a `?zone=` stranded by a person route.
  */
 function MenuEntry({
   surface,
@@ -120,14 +102,12 @@ function MenuEntry({
   screen: "/metrics" | "/whats-new";
   icon: LucideIcon;
   label: string;
-  onNavigate?: (viaPointer: boolean) => void;
+  onNavigate?: () => void;
 }) {
   const portal = usePortalEnabled();
   const { activeZone } = useActiveZone();
   const item = resolveZoneItem(activeZone, usePortalItem());
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  // `detail` counts pointer clicks; keyboard activation reports 0.
-  const report = (e: { detail: number }) => onNavigate?.(e.detail > 0);
 
   return (
     <SidebarMenuItem>
@@ -139,16 +119,15 @@ function MenuEntry({
         }
         render={
           portal ? (
-            // `acct` belongs to the Identities console and means nothing on
-            // another surface. Cleared rather than omitted: `retainSearchParams`
-            // restores any portal key ABSENT from the target search.
+            // `acct` is cleared, not omitted: `retainSearchParams` restores
+            // any portal key ABSENT from the target search.
             <Link
               to="/portal"
               search={{ zone: "manage", item: surface, acct: undefined }}
-              onClick={report}
+              onClick={onNavigate}
             />
           ) : (
-            <Link to={screen} onClick={report} />
+            <Link to={screen} onClick={onNavigate} />
           )
         }
       >

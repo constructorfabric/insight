@@ -1,10 +1,4 @@
 // @vitest-environment jsdom
-/**
- * The two entries follow the Portal toggle. They named /metrics and /whats-new
- * unconditionally, which dropped a portal reader into the previous interface
- * (constructorfabric/insight#2569); the toggle stays for now, so the old UI has
- * to remain reachable while it is off.
- */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,8 +25,7 @@ vi.mock("@tanstack/react-router", () => ({
     <a
       data-testid="link"
       data-to={to}
-      // `undefined` is a value here (it CLEARS a key), so JSON would hide the
-      // very thing under test.
+      // `undefined` is a value here — it CLEARS a key — so JSON would hide it.
       data-search={Object.entries(search ?? {})
         .map(([k, v]) => `${k}=${String(v)}`)
         .join("&")}
@@ -86,9 +79,7 @@ vi.mock("@/components/ui/sidebar", async () => {
   return {
     SidebarMenu: passthrough,
     SidebarMenuItem: passthrough,
-    // The real button MERGES into `render` — the label ends up inside the
-    // anchor. Rendering them as siblings would put the label outside the
-    // clickable element, so a click test would prove nothing.
+    // The real button MERGES into `render`: the label lands inside the anchor.
     SidebarMenuButton: ({
       children,
       isActive,
@@ -142,8 +133,6 @@ describe("AppSidebarFooter", () => {
   });
 
   it("names the standalone screens while the portal is off", () => {
-    // The toggle stays for now, so the old UI has to remain reachable from
-    // the menu that is the only thing linking to it.
     portalEnabled = false;
     render(<AppSidebarFooter />);
 
@@ -160,8 +149,6 @@ describe("AppSidebarFooter", () => {
   });
 
   it("marks the zone's default when the URL names no item", () => {
-    // `resolveZoneItem` falls back to the first built entry, which is what the
-    // context pane highlights — the menu must not disagree with it.
     currentSearch = { zone: "manage" };
     render(<AppSidebarFooter />);
 
@@ -169,8 +156,7 @@ describe("AppSidebarFooter", () => {
   });
 
   it("marks nothing from a zone the portal is not showing", () => {
-    // A person route drives the zone from the PATH, so a `?zone=manage` left
-    // behind in the URL names a surface that is not on screen.
+    // A person route drives the zone from the PATH, not from `?zone=`.
     currentPath = "/ic/019e2800-0000-7000-8000-00000000a11c/personal";
     currentSearch = { zone: "manage", item: "whats-new" };
     render(<AppSidebarFooter />);
@@ -187,9 +173,6 @@ describe("AppSidebarFooter", () => {
     expect(entry("What's new")).toHaveAttribute("data-active", "false");
   });
 
-  // The portal mounts this inside a popover, and the destination now renders
-  // behind that popover rather than replacing the shell it sits in. Whoever
-  // opened the menu closes it; the footer only says that it navigated.
   it("reports a navigation from either destination", async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
@@ -197,8 +180,6 @@ describe("AppSidebarFooter", () => {
 
     await user.click(screen.getByText("Metric catalog"));
     expect(onNavigate).toHaveBeenCalledTimes(1);
-    // The rail collapses only for a pointer, so the pick has to say which it was.
-    expect(onNavigate).toHaveBeenLastCalledWith(true);
 
     await user.click(screen.getByText("What's new"));
     expect(onNavigate).toHaveBeenCalledTimes(2);
