@@ -57,14 +57,14 @@ export interface UsageSummary {
 }
 
 export interface UsageRange {
-  since?: string;
-  until?: string;
+  since: string;
+  until: string;
 }
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetchWithAuth(url);
   if (!res.ok) {
-    throw new AnalyticsApiError(res.status, await res.text().catch(() => null));
+    throw new AnalyticsApiError(res.status, await res.json().catch(() => null));
   }
   return (await res.json()) as T;
 }
@@ -74,9 +74,6 @@ export async function getUsageConfig(): Promise<UsageConfig> {
 }
 
 export async function getUsageSummary(range: UsageRange): Promise<UsageSummary> {
-  const params = new URLSearchParams();
-  if (range.since) params.set("since", range.since);
-  if (range.until) params.set("until", range.until);
-  const query = params.toString();
-  return getJson<UsageSummary>(`${BASE}/usage/summary${query ? `?${query}` : ""}`);
+  const params = new URLSearchParams({ since: range.since, until: range.until });
+  return getJson<UsageSummary>(`${BASE}/usage/summary?${params}`);
 }

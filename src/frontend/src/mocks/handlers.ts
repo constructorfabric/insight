@@ -599,9 +599,6 @@ export const handlers = [
 
 // ── Platform usage (`/v1/usage/*`) ─────────────────────────────
 
-/** Every beacon the SPA sent this session — the mock's observable side. */
-export const usageEventLog: unknown[] = [];
-
 function syntheticDays(count: number) {
   const days = [];
   for (let i = count - 1; i >= 0; i -= 1) {
@@ -621,10 +618,9 @@ function usageHandlers() {
     http.get("/api/analytics/v1/usage/config", () =>
       HttpResponse.json({ enabled: true }),
     ),
-    http.post("/api/analytics/v1/usage/events", async ({ request }) => {
-      usageEventLog.push(await request.json().catch(() => null));
-      return new HttpResponse(null, { status: 204 });
-    }),
+    http.post("/api/analytics/v1/usage/events", () =>
+      new HttpResponse(null, { status: 204 }),
+    ),
     http.get("/api/analytics/v1/usage/summary", () => {
       const by_day = syntheticDays(30);
       return HttpResponse.json({

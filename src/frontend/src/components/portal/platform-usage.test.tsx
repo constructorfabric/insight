@@ -37,7 +37,11 @@ vi.mock("@/components/ui/chart", () => ({
 
 // The house harness for a virtualized body: report every row, and record what
 // the page asked to virtualize.
-const mocks = vi.hoisted(() => ({ counts: [] as number[], summary: null as unknown }));
+const mocks = vi.hoisted(() => ({
+  counts: [] as number[],
+  summary: null as unknown,
+  asked: [] as Array<{ since: string; until: string }>,
+}));
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => {
     mocks.counts.push(count);
@@ -48,10 +52,6 @@ vi.mock("@tanstack/react-virtual", () => ({
       measureElement: () => {},
     };
   },
-}));
-
-vi.mock("@/queries/identity-me", () => ({
-  useIsAdmin: () => ({ isAdmin: true, isPending: false }),
 }));
 
 const SUMMARY = {
@@ -68,11 +68,9 @@ const SUMMARY = {
   by_event: [],
 };
 
-const asked: Array<{ since?: string; until?: string }> = [];
-
 vi.mock("@/queries/usage", () => ({
-  useUsageSummary: (range: { since?: string; until?: string }) => {
-    asked.push(range);
+  useUsageSummary: (range: { since: string; until: string }) => {
+    mocks.asked.push(range);
     return { data: mocks.summary ?? SUMMARY, isPending: false, isError: false };
   },
 }));
@@ -89,28 +87,28 @@ vi.mock("@tanstack/react-query", () => ({
   useQueries: () => [],
 }));
 
+import { toISODate } from "@/api/period-to-date-range";
+
 import { PlatformUsage } from "./platform-usage";
 
 describe("PlatformUsage", () => {
   beforeEach(() => {
     mocks.summary = null;
     mocks.counts.length = 0;
+    mocks.asked.length = 0;
   });
 
   it("asks for a period with the same control every other zone uses", () => {
     render(<PlatformUsage />);
 
     expect(screen.getByTestId("period-bar")).toHaveAttribute("data-period", "month");
-    const range = asked.at(-1);
-    expect(range?.since).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(range?.until).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(mocks.asked.at(-1)?.since).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   it("counts today, which the shared period window leaves out", () => {
     render(<PlatformUsage />);
 
-    const today = new Date().toISOString().slice(0, 10);
-    expect(asked.at(-1)?.until).toBe(today);
+    expect(mocks.asked.at(-1)?.until).toBe(toISODate(new Date()));
   });
 
   it("hands a long breakdown to the virtualizer instead of rendering all of it", () => {

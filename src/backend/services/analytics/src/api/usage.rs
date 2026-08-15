@@ -12,6 +12,7 @@ use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
+use chrono::{Duration, NaiveDate, Utc};
 use uuid::Uuid;
 
 use super::error::UsageError;
@@ -37,7 +38,13 @@ const SESSION_START: &str = "session_start";
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 
-pub const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS presentation.usage_events (
+/// How far back a summary looks when the caller names no window.
+const DEFAULT_WINDOW_DAYS: i64 = 29;
+
+/// Every value a caller controls is bound; the constants above are not.
+const WINDOW: &str = "tenant_id = toUUID(?) AND toDate(ts) >= toDate(?) AND toDate(ts) <= toDate(?)";
+
+const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS presentation.usage_events (
     event_id    UUID,
     ts          DateTime64(3, 'UTC'),
     tenant_id   UUID,
@@ -104,10 +111,6 @@ pub struct TelemetryRecord {
 /// cannot act on an error, and a tracking failure must never surface in the
 /// product. Identity comes from the gateway JWT; the body's own identity
 /// fields are ignored.
-///
-/// # Errors
-///
-/// Never — the signature keeps the handler shape uniform with its neighbours.
 pub async fn ingest_usage_events(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -155,10 +158,6 @@ async fn insert_records(
     tenant_id: Uuid,
     person_id: Uuid,
 ) -> anyhow::Result<()> {
-    if records.is_empty() {
-        return Ok(());
-    }
-
     let mut query = state.ch.query(&insert_sql(records.len()));
     for envelope in records {
         let record = &envelope.value;
@@ -209,20 +208,20 @@ fn data_field(data: Option<&serde_json::Value>, key: &str) -> String {
     }
 }
 
-/// Where a page view happened. The SDK's own page view names it `url`; the
-/// one the app emits names it `path`.
 /// Deliberate actions only: a page view has its own breakdown, and
 /// `session_start` is the SDK announcing a session rather than anyone doing
 /// something. Both are already counted as visits.
-fn actions_sql(window: &str, visitors: &str) -> String {
+fn actions_sql(visitors: &str) -> String {
     format!(
         "SELECT event_name, target, count() AS opens, {visitors} AS people \
-         FROM {TABLE} WHERE {window} \
+         FROM {TABLE} WHERE {WINDOW} \
          AND event_name NOT IN ('{PAGE_VIEW}', '{SESSION_START}') \
          GROUP BY event_name, target ORDER BY opens DESC LIMIT {BREAKDOWN_LIMIT}"
     )
 }
 
+/// Where a page view happened. The SDK's own page view names it `url`; the one
+/// the app emits names it `path`.
 fn page_path(data: Option<&serde_json::Value>) -> String {
     let path = data_field(data, "path");
     if path.is_empty() {
@@ -244,8 +243,11 @@ fn normalize_path(path: &str) -> String {
 /// A UUID, or any other long opaque segment a route carries as an id.
 fn is_identifier(segment: &str) -> bool {
     let uuid_shaped = segment.len() == 36
-        && segment.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
-        && segment.matches('-').count() == 4;
+        && segment
+            .split('-')
+            .map(str::len)
+            .eq([8, 4, 4, 4, 12])
+        && segment.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
     let all_digits = segment.len() >= 6 && segment.chars().all(|c| c.is_ascii_digit());
     uuid_shaped || all_digits
 }
@@ -262,6 +264,34 @@ pub struct UsageRangeQuery {
     pub since: Option<String>,
     /// Inclusive `YYYY-MM-DD` upper bound. Defaults to today.
     pub until: Option<String>,
+}
+
+/// The window a summary covers, as calendar days.
+struct Window {
+    since: NaiveDate,
+    until: NaiveDate,
+}
+
+impl UsageRangeQuery {
+    fn window(&self) -> Result<Window, CanonicalError> {
+        let until = parse_day("until", self.until.as_deref())?
+            .unwrap_or_else(|| Utc::now().date_naive());
+        let since = parse_day("since", self.since.as_deref())?
+            .unwrap_or_else(|| until - Duration::days(DEFAULT_WINDOW_DAYS));
+        Ok(Window { since, until })
+    }
+}
+
+fn parse_day(field: &str, value: Option<&str>) -> Result<Option<NaiveDate>, CanonicalError> {
+    value
+        .map(|day| {
+            NaiveDate::parse_from_str(day, "%Y-%m-%d").map_err(|_| {
+                UsageError::invalid_argument()
+                    .with_field_violation(field, "date must use YYYY-MM-DD", "INVALID")
+                    .create()
+            })
+        })
+        .transpose()
 }
 
 #[derive(Debug, Serialize, Deserialize, clickhouse::Row, utoipa::ToSchema)]
@@ -320,14 +350,8 @@ pub struct UsageConfigResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for UsageConfigResponse {}
 
-/// `GET /v1/usage/config` — whether the instance collects usage.
-///
-/// Any signed-in caller: the SPA reads it to decide whether to start the SDK,
-/// and it carries no usage data.
-///
-/// # Errors
-///
-/// Never — the signature keeps the handler shape uniform with its neighbours.
+/// `GET /v1/usage/config` — whether the instance collects usage. Any signed-in
+/// caller: the SPA reads it to decide whether to start the SDK.
 pub async fn get_usage_config(
     Extension(state): Extension<Arc<AppState>>,
 ) -> Result<impl IntoResponse, CanonicalError> {
@@ -349,38 +373,36 @@ pub async fn get_usage_summary(
 ) -> Result<impl IntoResponse, CanonicalError> {
     require_admin(&state, &headers).await?;
 
-    let tenant_id = ctx.subject_tenant_id();
-    let since = day_bound(range.since.as_deref(), "toDate(now()) - 29");
-    let until = day_bound(range.until.as_deref(), "toDate(now())");
-    let window =
-        format!("tenant_id = toUUID('{tenant_id}') AND toDate(ts) >= {since} AND toDate(ts) <= {until}");
+    let window = range.window()?;
+    let tenant = ctx.subject_tenant_id().to_string();
+    let since = window.since.to_string();
+    let until = window.until.to_string();
+    let bound = |sql: String| {
+        state
+            .ch
+            .query(&sql)
+            .bind(tenant.clone())
+            .bind(since.clone())
+            .bind(until.clone())
+    };
     let visitors = format!("uniqExactIf(person_id, person_id != toUUID('{NIL_UUID}'))");
 
-    let totals = state
-        .ch
-        .query(&format!(
+    // Five independent scans of one window; the handler waits for the slowest,
+    // not for their sum.
+    let (totals, by_day, by_person, by_page, by_event) = tokio::try_join!(
+        bound(format!(
             "SELECT uniqExact(session_id) AS visits, {visitors} AS visitors, \
              countIf(event_name = '{PAGE_VIEW}') AS page_views \
-             FROM {TABLE} WHERE {window}"
+             FROM {TABLE} WHERE {WINDOW}"
         ))
-        .fetch_one::<UsageTotals>()
-        .await
-        .map_err(read_error)?;
-
-    let by_day = state
-        .ch
-        .query(&format!(
+        .fetch_one::<UsageTotals>(),
+        bound(format!(
             "SELECT toString(toDate(ts)) AS day, uniqExact(session_id) AS visits, \
              {visitors} AS visitors \
-             FROM {TABLE} WHERE {window} GROUP BY day ORDER BY day"
+             FROM {TABLE} WHERE {WINDOW} GROUP BY day ORDER BY day"
         ))
-        .fetch_all::<UsageDay>()
-        .await
-        .map_err(read_error)?;
-
-    let by_person = state
-        .ch
-        .query(&format!(
+        .fetch_all::<UsageDay>(),
+        bound(format!(
             // The id is stringified in an outer select: an alias that shadows
             // `person_id` makes every other reference to it a String, and the
             // UUID comparisons in the same query then have no common type.
@@ -388,35 +410,24 @@ pub async fn get_usage_summary(
                SELECT person_id AS person, uniqExact(session_id) AS visits, \
                countIf(event_name = '{PAGE_VIEW}') AS page_views, \
                toString(max(ts)) AS last_seen \
-               FROM {TABLE} WHERE {window} AND person_id != toUUID('{NIL_UUID}') \
+               FROM {TABLE} WHERE {WINDOW} AND person_id != toUUID('{NIL_UUID}') \
                GROUP BY person ORDER BY visits DESC, page_views DESC \
                LIMIT {BREAKDOWN_LIMIT})"
         ))
-        .fetch_all::<UsagePerson>()
-        .await
-        .map_err(read_error)?;
-
-    let by_page = state
-        .ch
-        .query(&format!(
+        .fetch_all::<UsagePerson>(),
+        bound(format!(
             "SELECT path, count() AS views, {visitors} AS visitors \
-             FROM {TABLE} WHERE {window} AND event_name = '{PAGE_VIEW}' AND path != '' \
+             FROM {TABLE} WHERE {WINDOW} AND event_name = '{PAGE_VIEW}' AND path != '' \
              GROUP BY path ORDER BY views DESC LIMIT {BREAKDOWN_LIMIT}"
         ))
-        .fetch_all::<UsagePage>()
-        .await
-        .map_err(read_error)?;
-
-    let by_event = state
-        .ch
-        .query(&actions_sql(&window, &visitors))
-        .fetch_all::<UsageEvent>()
-        .await
-        .map_err(read_error)?;
+        .fetch_all::<UsagePage>(),
+        bound(actions_sql(&visitors)).fetch_all::<UsageEvent>(),
+    )
+    .map_err(read_error)?;
 
     Ok(Json(UsageSummaryResponse {
-        since: range.since.unwrap_or_default(),
-        until: range.until.unwrap_or_default(),
+        since,
+        until,
         totals,
         by_day,
         by_person,
@@ -425,24 +436,7 @@ pub async fn get_usage_summary(
     }))
 }
 
-/// A caller-supplied day, or the SQL expression that stands in for it. Anything
-/// that is not a plain `YYYY-MM-DD` falls back to the default rather than
-/// reaching the query.
-fn day_bound(value: Option<&str>, default_expr: &str) -> String {
-    match value {
-        Some(day) if is_iso_day(day) => format!("toDate('{day}')"),
-        _ => default_expr.to_owned(),
-    }
-}
-
-fn is_iso_day(value: &str) -> bool {
-    value.len() == 10
-        && value
-            .chars()
-            .enumerate()
-            .all(|(i, c)| if i == 4 || i == 7 { c == '-' } else { c.is_ascii_digit() })
-}
-
+#[expect(clippy::needless_pass_by_value, reason = "used directly as map_err")]
 fn read_error(error: clickhouse::error::Error) -> CanonicalError {
     tracing::error!(error = %error, "usage summary query failed");
     CanonicalError::internal("failed to read usage").create()
@@ -451,6 +445,11 @@ fn read_error(error: clickhouse::error::Error) -> CanonicalError {
 /// The usage surface is admin-only, and the check is server-side: the nav flag
 /// the SPA reads is a courtesy, not the boundary.
 async fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<(), CanonicalError> {
+    if !state.identity.is_configured() {
+        tracing::error!("identity service is not configured; admin access cannot be verified");
+        return Err(CanonicalError::internal("failed to verify caller permissions").create());
+    }
+
     let is_admin = state
         .identity
         .is_admin(forwarded_authorization(headers))
@@ -518,23 +517,25 @@ mod tests {
 
     #[test]
     fn the_actions_breakdown_leaves_out_what_nobody_did() {
-        // `page_view` is its own table and `session_start` is the SDK's
-        // lifecycle event — both are already counted as visits.
-        let sql = actions_sql("1", "2");
-        assert!(!sql.contains("event_name = 'page_view'"), "{sql}");
-        for lifecycle in ["'page_view'", "'session_start'"] {
-            assert!(
-                sql.contains(&format!("event_name != {lifecycle}"))
-                    || sql.contains(&format!("NOT IN ('page_view', 'session_start')")),
-                "excludes {lifecycle}: {sql}"
-            );
-        }
+        // Both are already counted as visits; neither is something a person did.
+        assert!(actions_sql("1").contains("NOT IN ('page_view', 'session_start')"));
     }
 
     #[test]
-    fn only_a_calendar_day_reaches_the_query() {
-        assert_eq!(day_bound(Some("2026-01-31"), "fallback"), "toDate('2026-01-31')");
-        assert_eq!(day_bound(Some("2026-01-31' OR 1=1"), "fallback"), "fallback");
-        assert_eq!(day_bound(None, "fallback"), "fallback");
+    fn a_malformed_day_is_refused_rather_than_queried() {
+        let query = UsageRangeQuery {
+            since: Some("2026-99-99".to_owned()),
+            until: None,
+        };
+        assert!(query.window().is_err(), "a date that cannot exist is a 400");
+
+        let ok = UsageRangeQuery {
+            since: Some("2026-01-31".to_owned()),
+            until: Some("2026-02-01".to_owned()),
+        };
+        assert_eq!(
+            ok.window().ok().map(|w| w.since.to_string()),
+            Some("2026-01-31".to_owned())
+        );
     }
 }

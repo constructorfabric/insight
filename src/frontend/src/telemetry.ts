@@ -32,7 +32,7 @@ export async function startUsageTelemetry(session: Session): Promise<void> {
   if (service || session.impersonatorEmail) return;
 
   const config = await getUsageConfig().catch(() => null);
-  if (!config?.enabled || service) return;
+  if (!config?.enabled) return;
 
   service = createTelemetry({
     appName: APP_NAME,
@@ -72,11 +72,6 @@ export function recordPageView(path: string): void {
  * Record anything else worth counting — a drill-down opened, an export taken.
  * `target` is what the action was aimed at, and is what the usage page ranks.
  */
-export function recordUsageEvent(name: string, target?: string): void {
-  service?.logEvent(name, target == null ? undefined : { target });
-}
-
-export function stopUsageTelemetry(): void {
-  service?.destroy();
-  service = null;
+export function recordUsageEvent(name: string, target: string): void {
+  service?.logEvent(name, { target });
 }

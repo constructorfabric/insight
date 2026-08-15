@@ -70,20 +70,11 @@ impl IdentityClient {
     ) -> anyhow::Result<HashSet<Uuid>> {
         let url = format!("{}/v1/visible-persons", self.base_url);
 
-        let mut req = self
+        let req = self
             .http
             .post(&url)
             .json(&VisiblePersonsRequest { person_ids });
-        if let Some(auth) = authorization {
-            req = req.header(reqwest::header::AUTHORIZATION, auth);
-        }
-        let resp = req.send().await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            tracing::warn!(status = %status, "identity visibility check failed");
-            anyhow::bail!("identity service returned {status}");
-        }
+        let resp = Self::send(req, authorization, "visibility check").await?;
 
         let checked: VisiblePersonsResponse = resp.json().await?;
         Ok(checked.visible.into_iter().collect())
@@ -97,20 +88,30 @@ impl IdentityClient {
     pub(crate) async fn is_admin(&self, authorization: Option<&str>) -> anyhow::Result<bool> {
         let url = format!("{}/v1/me", self.base_url);
 
-        let mut req = self.http.get(&url);
-        if let Some(auth) = authorization {
-            req = req.header(reqwest::header::AUTHORIZATION, auth);
-        }
-        let resp = req.send().await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            tracing::warn!(status = %status, "identity role lookup failed");
-            anyhow::bail!("identity service returned {status}");
-        }
+        let resp = Self::send(self.http.get(&url), authorization, "role lookup").await?;
 
         let me: MeResponse = resp.json().await?;
         Ok(me.roles.iter().any(|role| role.role_id == ADMIN_ROLE_ID))
+    }
+
+    /// Forward the caller's authorization, if the gateway supplied one, and
+    /// fail loudly on anything but success.
+    async fn send(
+        req: reqwest::RequestBuilder,
+        authorization: Option<&str>,
+        what: &str,
+    ) -> anyhow::Result<reqwest::Response> {
+        let req = match authorization {
+            Some(auth) => req.header(reqwest::header::AUTHORIZATION, auth),
+            None => req,
+        };
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            tracing::warn!(status = %status, what, "identity request failed");
+            anyhow::bail!("identity service returned {status}");
+        }
+        Ok(resp)
     }
 
     /// Check if the identity service is configured (URL is non-empty).

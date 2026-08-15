@@ -8,6 +8,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { eachDayOfInterval, parseISO } from "date-fns";
 import { useQueries } from "@tanstack/react-query";
 
 import { getPerson } from "@/api/identity-client";
@@ -20,7 +21,11 @@ import type {
 } from "@/api/usage-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { resolveDateRange } from "@/api/period-to-date-range";
+import {
+  MAX_DATE_RANGE_DAYS,
+  resolveDateRange,
+  toISODate,
+} from "@/api/period-to-date-range";
 import { PeriodSelectorBar } from "@/components/widgets/period-selector-bar";
 import {
   BarChart,
@@ -41,8 +46,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useIsAdmin } from "@/queries/identity-me";
 import { useUsageSummary } from "@/queries/usage";
+import { formatDate, formatMetricNumber, formatUtcInstant } from "@/lib/format";
+import { personDisplayName } from "@/lib/identities/person-display";
+import { normalizePersonId } from "@/lib/metrics/entity";
+import { TEXT_FIGURE, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import type { CustomRange, PeriodValue } from "@/types/insight";
 
@@ -53,44 +61,32 @@ const NAMED_ROWS = 25;
 function fillRange(days: UsageDay[], range: UsageRange): UsageDay[] {
   if (!range.since || !range.until) return days;
   const counted = new Map(days.map((d) => [d.day, d]));
-  const out: UsageDay[] = [];
-  const cursor = new Date(`${range.since}T00:00:00Z`);
-  const end = new Date(`${range.until}T00:00:00Z`);
-  while (cursor <= end && out.length < 400) {
-    const day = cursor.toISOString().slice(0, 10);
-    out.push(counted.get(day) ?? { day, visits: 0, visitors: 0 });
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return out;
+  return eachDayOfInterval({
+    start: parseISO(range.since),
+    end: parseISO(range.until),
+  })
+    .slice(0, MAX_DATE_RANGE_DAYS)
+    .map((date) => {
+      const day = toISODate(date);
+      return counted.get(day) ?? { day, visits: 0, visitors: 0 };
+    });
 }
 
 export function PlatformUsage() {
   const [period, setPeriod] = useState<PeriodValue>("month");
   const [customRange, setCustomRange] = useState<CustomRange | null>(null);
-  const { isAdmin, isPending: adminPending } = useIsAdmin();
   const range = useMemo(() => {
     const resolved = resolveDateRange(period, customRange);
     // The shared window ends yesterday because the metric pipeline lands a day
     // late. Usage is written as it happens, and "is anyone using it" is a
     // question about today, so the end is carried forward.
-    const today = new Date().toISOString().slice(0, 10);
-    const until = customRange ? resolved.to : today;
-    return { since: resolved.from, until: until < resolved.to ? resolved.to : until };
+    return {
+      since: resolved.from,
+      until: customRange ? resolved.to : toISODate(new Date()),
+    };
   }, [period, customRange]);
-  const summary = useUsageSummary(range, isAdmin);
+  const summary = useUsageSummary(range);
 
-  if (adminPending) return <CenteredSpinner />;
-  if (!isAdmin) {
-    return (
-      <div className="mx-auto w-full max-w-md p-8">
-        <ComingSoon
-          variant="card"
-          state="empty"
-          label="Platform usage is an admin surface"
-        />
-      </div>
-    );
-  }
   if (summary.isPending) return <CenteredSpinner />;
   if (summary.isError || !summary.data) {
     return (
@@ -126,7 +122,7 @@ export function PlatformUsage() {
       </div>
 
       <section className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium">Visits per day</h3>
+        <h3 className={TEXT_NAME}>Visits per day</h3>
         {by_day.length === 0 ? <Empty /> : <VisitsChart days={by_day} />}
       </section>
 
@@ -141,9 +137,8 @@ const CHART_CONFIG = {
   visits: { label: "Visits", color: "var(--chart-1)" },
 } satisfies ChartConfig;
 
-/** A day reads as `08-14`; the year is already in the range above the chart. */
 function dayTick(day: string): string {
-  return day.slice(5);
+  return formatDate(day, "d MMM");
 }
 
 function VisitsChart({ days }: { days: UsageDay[] }) {
@@ -272,23 +267,21 @@ function VirtualTable<T>({
 function Kpi({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-lg border p-4">
-      <div className="text-2xl font-semibold">{value.toLocaleString("en-US")}</div>
-      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={TEXT_FIGURE}>{formatMetricNumber(value, "integer")}</div>
+      <div className={TEXT_LABEL}>{label}</div>
     </div>
   );
 }
 
 function Empty() {
-  return (
-    <div className="text-sm text-muted-foreground">No usage in this period yet.</div>
-  );
+  return <ComingSoon variant="row" state="empty" label="No usage in this period yet" />;
 }
 
 function PeopleTable({ rows }: { rows: UsagePerson[] }) {
   const named = rows.slice(0, NAMED_ROWS);
   const profiles = useQueries({
     queries: named.map((row) => ({
-      queryKey: ["identity", "person", row.person_id],
+      queryKey: ["identity", "person", normalizePersonId(row.person_id)],
       queryFn: () => getPerson(row.person_id),
       staleTime: 5 * 60 * 1000,
       retry: false,
@@ -297,7 +290,7 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
 
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium">Who opened it</h3>
+      <h3 className={TEXT_NAME}>Who opened it</h3>
       {rows.length === 0 ? (
         <Empty />
       ) : (
@@ -310,13 +303,16 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
               header: "Person",
               cell: (row, index) => (
                 <span className="font-medium">
-                  {profiles[index]?.data?.display_name ?? row.person_id}
+                  {(() => {
+                    const person = profiles[index]?.data;
+                    return person ? personDisplayName(person) : row.person_id;
+                  })()}
                 </span>
               ),
             },
             { header: "Visits", width: 6, align: "right", cell: (row) => row.visits },
             { header: "Pages", width: 6, align: "right", cell: (row) => row.page_views },
-            { header: "Last seen", width: 11, cell: (row) => row.last_seen.slice(0, 16) },
+            { header: "Last seen", width: 11, cell: (row) => formatUtcInstant(row.last_seen, "d MMM HH:mm") },
           ]}
         />
       )}
@@ -327,7 +323,7 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
 function EventsTable({ rows }: { rows: UsageEvent[] }) {
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium">Drill-downs and other actions, by opens</h3>
+      <h3 className={TEXT_NAME}>Drill-downs and other actions, by opens</h3>
       {rows.length === 0 ? (
         <Empty />
       ) : (
@@ -353,7 +349,7 @@ function EventsTable({ rows }: { rows: UsageEvent[] }) {
 function PagesTable({ rows }: { rows: UsagePage[] }) {
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium">What they opened</h3>
+      <h3 className={TEXT_NAME}>What they opened</h3>
       {rows.length === 0 ? (
         <Empty />
       ) : (

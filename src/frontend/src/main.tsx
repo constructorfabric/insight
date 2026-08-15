@@ -18,6 +18,7 @@ import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { LoginError } from "@/components/login-error";
 import { ThemeProvider } from "@/components/theme-provider";
 import i18n from "@/i18n";
+import { validatePortalSearch } from "@/lib/portal/portal-search";
 import { queryClient } from "@/query-client";
 import { initSentry } from "@/sentry";
 import { recordPageView, startUsageTelemetry } from "@/telemetry";
@@ -74,24 +75,21 @@ function bootstrap(): void {
     });
 }
 
-/// Adoption events (#2573). Fire-and-forget: the instance may have collection
-/// off, and nothing here may delay or break the render.
+// Adoption events (#2573). Fire-and-forget: the instance may have collection
+// off, and nothing here may delay or break the render.
 function startUsageCollection(): void {
   const { session } = authStore.getSnapshot();
   if (!session) return;
   void startUsageTelemetry(session).then(() => {
-    recordPageView(portalPath(window.location.pathname, new URLSearchParams(window.location.search)));
+    recordPageView(
+      portalPath(
+        window.location.pathname,
+        Object.fromEntries(new URLSearchParams(window.location.search)),
+      ),
+    );
     router.subscribe("onResolved", ({ toLocation }) => {
-      const search = toLocation.search as Record<string, unknown>;
       recordPageView(
-        portalPath(
-          toLocation.pathname,
-          new URLSearchParams(
-            Object.entries(search)
-              .filter(([, v]) => typeof v === "string")
-              .map(([k, v]) => [k, v as string]),
-          ),
-        ),
+        portalPath(toLocation.pathname, toLocation.search as Record<string, unknown>),
       );
     });
   });
@@ -99,13 +97,11 @@ function startUsageCollection(): void {
 
 /**
  * The portal is a single route whose screen lives in `zone`/`item`, so the
- * path alone would report every portal page as one. Only those two are read —
- * the rest of the query carries scope and person ids.
+ * path alone would report every portal page as one.
  */
-function portalPath(pathname: string, search: URLSearchParams): string {
-  const parts = ["zone", "item"]
-    .map((key) => search.get(key))
-    .filter((value): value is string => Boolean(value));
+function portalPath(pathname: string, search: Record<string, unknown>): string {
+  const { zone, item } = validatePortalSearch(search);
+  const parts = [zone, item].filter((value): value is string => Boolean(value));
   return parts.length ? `${pathname}/${parts.join("/")}` : pathname;
 }
 

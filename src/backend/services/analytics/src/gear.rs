@@ -91,7 +91,7 @@ impl Gear for AnalyticsApiGear {
             );
 
         let contract_ch = ch.clone();
-        let ch_for_usage = ch.clone();
+        let usage_ch = ch.clone();
 
         let state = api::AppState {
             db,
@@ -108,7 +108,7 @@ impl Gear for AnalyticsApiGear {
         // product-operational rows, not modelled data. Not gating boot — a
         // ClickHouse that is briefly unreachable must not stop the API.
         tokio::spawn(async move {
-            if let Err(error) = api::usage::ensure_schema(&ch_for_usage).await {
+            if let Err(error) = api::usage::ensure_schema(&usage_ch).await {
                 tracing::warn!(error = %error, "usage events table not created");
             }
         });
