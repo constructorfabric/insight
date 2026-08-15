@@ -13,7 +13,7 @@
  * discussion — and that link answers whatever the queue looks like by then,
  * an emptied backlog included.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { AttentionItem, ResolutionRates } from "@/api/identity-client";
@@ -252,6 +252,10 @@ function Queue({ items: everything }: { items: AttentionItem[] }) {
   const { t } = useTranslation();
   const { acct, filter } = usePortalSearch();
   const { setAcct } = usePortalNavActions();
+  const listRef = useRef<HTMLDivElement>(null);
+  // Session-scoped on purpose: "have I looked at this one" is about the sitting
+  // an operator is in, not a preference worth outliving it.
+  const [visited, setVisited] = useState<ReadonlySet<string>>(new Set());
   const items = useMemo(
     () => filterQueue(everything, filter ?? ""),
     [everything, filter],
@@ -265,11 +269,50 @@ function Queue({ items: everything }: { items: AttentionItem[] }) {
   const other = items.filter((i) => !known.has(i.kind));
   if (other.length > 0) groups.push({ kind: "other", items: other });
 
+  // The rendered order, flattened: what "the next case" means to someone
+  // working down the queue, and it must not be re-derived differently here.
+  const ordered = groups.flatMap((group) =>
+    groupIntoCases(group.items).flatMap((c) => c.items.map(itemKey)),
+  );
+
+  const select = (key: string | null) => {
+    if (key) setVisited((seen) => new Set(seen).add(key));
+    setAcct(key);
+  };
+
+  // Closing the window puts the operator back on the row they opened, not at
+  // the top of the page — the queue is worked in one pass.
+  const returnFocus = (key: string) => {
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-queue-row="${CSS.escape(key)}"]`)
+      ?.focus();
+  };
+
+  // The queue is a list, so it moves like one. Enter and Space open a row;
+  // those stay on the row itself.
+  const onArrow = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    const rows = [
+      ...(listRef.current?.querySelectorAll<HTMLElement>("[data-queue-row]") ??
+        []),
+    ];
+    const at = rows.indexOf(document.activeElement as HTMLElement);
+    if (at === -1) return;
+    const next = rows[at + (event.key === "ArrowDown" ? 1 : -1)];
+    if (!next) return;
+    event.preventDefault();
+    next.focus();
+  };
+
   // The worked-to-zero queue is the goal state — but a shared `?acct=` link
   // has to answer even then, and the backlog reaching zero is exactly when a
   // colleague opens the link they were sent.
   return (
-    <div className="flex min-w-0 flex-col gap-4">
+    <div
+      ref={listRef}
+      onKeyDown={onArrow}
+      className="flex min-w-0 flex-col gap-4"
+    >
       {everything.length > 0 ? <QueueFilter /> : null}
       {/* A filter that matches nothing is not an emptied backlog. Celebrating
           there would tell an operator the work is done because they mistyped. */}
@@ -290,12 +333,23 @@ function Queue({ items: everything }: { items: AttentionItem[] }) {
           kind={group.kind}
           items={group.items}
           selectedKey={acct}
-          onSelect={(key) => setAcct(key === acct ? null : key)}
+          visited={visited}
+          onSelect={(key) => select(key === acct ? null : key)}
         />
       ))}
       {/* Fed from the unfiltered set: a link stays answerable even when the
           reader's own filter hides the row it points at. */}
-      <CaseDialog acct={acct} items={everything} onClose={() => setAcct(null)} />
+      <CaseDialog
+        acct={acct}
+        items={everything}
+        ordered={ordered}
+        onSelect={select}
+        onClose={() => {
+          const opened = acct;
+          setAcct(null);
+          if (opened) returnFocus(opened);
+        }}
+      />
     </div>
   );
 }
@@ -346,10 +400,15 @@ function QueueFilter() {
 function CaseDialog({
   acct,
   items,
+  ordered,
+  onSelect,
   onClose,
 }: {
   acct: string | undefined;
   items: AttentionItem[];
+  /** Account keys in the order the queue renders them. */
+  ordered: string[];
+  onSelect: (key: string) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -357,6 +416,9 @@ function CaseDialog({
   const queueItem = items.find((i) => itemKey(i) === acct);
   const heading =
     queueItem?.email?.trim() || queueItem?.username?.trim() || ref?.account_id;
+  const at = acct ? ordered.indexOf(acct) : -1;
+  const previous = at > 0 ? ordered[at - 1] : undefined;
+  const next = at >= 0 ? ordered[at + 1] : undefined;
 
   return (
     <Dialog
@@ -391,6 +453,30 @@ function CaseDialog({
         {ref ? (
           <AccountDetail key={acct} accountRef={ref} queueItem={queueItem} />
         ) : null}
+        {/* Working a backlog is a conveyor: the next case is one press away,
+            without a trip back through the list. */}
+        {previous || next ? (
+          <div className="flex justify-between gap-2 border-t pt-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={!previous}
+              onClick={() => previous && onSelect(previous)}
+            >
+              {t("identities.queue.previous_case")}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={!next}
+              onClick={() => next && onSelect(next)}
+            >
+              {t("identities.queue.next_case")}
+            </Button>
+          </div>
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -405,11 +491,13 @@ function QueueGroup({
   kind,
   items,
   selectedKey,
+  visited,
   onSelect,
 }: {
   kind: string;
   items: AttentionItem[];
   selectedKey: string | undefined;
+  visited: ReadonlySet<string>;
   onSelect: (key: string) => void;
 }) {
   const { t } = useTranslation();
@@ -425,7 +513,7 @@ function QueueGroup({
           render={
             <button
               type="button"
-              className="group flex w-full cursor-pointer items-center gap-2 px-6 py-4 text-start hover:bg-accent/40"
+              className="group sticky top-0 z-10 flex w-full cursor-pointer items-center gap-2 bg-card px-6 py-4 text-start hover:bg-accent/40"
             />
           }
         >
@@ -450,6 +538,7 @@ function QueueGroup({
                 key={queueCase.key}
                 queueCase={queueCase}
                 selectedKey={selectedKey}
+                visited={visited}
                 onSelect={onSelect}
               />
             ))}
@@ -500,10 +589,12 @@ function SourceCounts({ items }: { items: AttentionItem[] }) {
 function CaseBlock({
   queueCase,
   selectedKey,
+  visited,
   onSelect,
 }: {
   queueCase: QueueCase;
   selectedKey: string | undefined;
+  visited: ReadonlySet<string>;
   onSelect: (key: string) => void;
 }) {
   const { t } = useTranslation();
@@ -538,6 +629,7 @@ function CaseBlock({
               // a card carries.
               role="button"
               tabIndex={0}
+              data-queue-row={key}
               onClick={(event) => {
                 if (opensTheCase(event)) onSelect(key);
               }}
@@ -559,7 +651,14 @@ function CaseBlock({
               )}
             >
               <div className="flex items-baseline gap-2">
-                <span className="truncate text-sm font-medium">{label}</span>
+                <span
+                  className={cn(
+                    "truncate text-sm font-medium",
+                    visited.has(key) && !selected && "text-muted-foreground",
+                  )}
+                >
+                  {label}
+                </span>
                 <span className="ms-auto shrink-0 font-mono text-xs text-muted-foreground">
                   {item.source}
                 </span>

@@ -328,6 +328,54 @@ describe("IdentitiesView", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
+  // A backlog is worked in one pass: the list moves like a list, and closing
+  // a case puts the operator back where they were rather than at the top.
+  it("moves between rows with the arrow keys", async () => {
+    attention.q.data = {
+      items: [
+        item({ account_id: "a1", email: "ann@example.com" }),
+        item({ account_id: "a2", email: "bob@example.com" }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    const first = screen.getByRole("button", { name: /ann@example\.com/i });
+    first.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.getByRole("button", { name: /bob@example\.com/i })).toHaveFocus();
+
+    await userEvent.keyboard("{ArrowUp}");
+    expect(first).toHaveFocus();
+  });
+
+  it("returns focus to the row when the case window closes", async () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    render(<IdentitiesView />);
+
+    const row = screen.getByRole("button", { name: /dev42@example\.com/i });
+    await userEvent.click(row);
+    await userEvent.click(screen.getByRole("button", { name: /close/i }));
+
+    expect(row).toHaveFocus();
+  });
+
+  it("offers the next account without a trip back to the list", async () => {
+    attention.q.data = {
+      items: [
+        item({ account_id: "a1", email: "ann@example.com" }),
+        item({ account_id: "a2", email: "bob@example.com" }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    await userEvent.click(screen.getByRole("button", { name: /ann@example\.com/i }));
+    await userEvent.click(screen.getByRole("button", { name: /next account/i }));
+
+    expect(portalRouter.search.acct).toContain("a2");
+  });
+
   it("offers a retry on a failed load", async () => {
     attention.q.isError = true;
     render(<IdentitiesView />);

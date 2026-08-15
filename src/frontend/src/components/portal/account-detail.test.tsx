@@ -122,7 +122,10 @@ describe("AccountDetail", () => {
     expect(screen.getByText("Merged")).toBeInTheDocument();
     expect(screen.getByText("seed-backfill")).toBeInTheDocument();
     expect(screen.getByText(/by an operator/i)).toBeInTheDocument();
-    expect(screen.getByText(/1 Aug 2026/)).toBeInTheDocument();
+    // How long a binding has stood is what the trail is read for; the exact
+    // instant stays beside the age rather than being replaced by it.
+    expect(screen.getAllByText(/ago$/i).length).toBeGreaterThan(0);
+    expect(screen.getByTitle(/1 Aug 2026, \d\d:\d\d/)).toBeInTheDocument();
   });
 
   // The resolver writes no reason at all — as an empty string, which is not

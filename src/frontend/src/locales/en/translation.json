@@ -438,7 +438,9 @@
       "case_count_other": "{{count}} cases · {{accounts}} accounts",
       "filter_placeholder": "Filter by address, source, person or person id…",
       "no_matches": "Nothing matches those terms",
-      "no_matches_description": "Clear the filter to see the whole queue."
+      "no_matches_description": "Clear the filter to see the whole queue.",
+      "previous_case": "‹ Previous account",
+      "next_case": "Next account ›"
     },
     "detail": {
       "not_found": "This account is unknown — the link may be stale.",

@@ -29,6 +29,7 @@ import {
   type PersonSearchResponse,
 } from "@/api/identity-client";
 import type { AccountRef } from "@/lib/identities/account-key";
+import { dropDecided } from "@/lib/identities/cases";
 import { useAuth } from "@/auth/use-auth";
 import { sessionAuthorizationScope } from "@/auth/session-scope";
 
@@ -87,10 +88,20 @@ function useCorrection<TArgs>(
   const client = useQueryClient();
   return useMutation({
     mutationFn: run,
-    // Invalidate-only, the house style: the journal is the truth and a verb
-    // may land as `already_decided`/`refused`, so guessing the new state
-    // client-side would lie exactly when it matters.
-    onSuccess: () => {
+    // The journal stays the truth, and the refetch below is what reconciles
+    // to it — but the attention read folds every observed account, so on a
+    // real tenant it takes seconds, and until it lands the operator is still
+    // looking at the row they just decided. Dropping the accounts the SERVER
+    // reported as decided is not a guess about the new state; a `refused`
+    // account keeps its row, and everything else follows from the refetch.
+    onSuccess: (result) => {
+      client.setQueriesData<AttentionResponse>(
+        { queryKey: [...RESOLUTION_KEY, "attention"] },
+        (previous) =>
+          previous
+            ? { ...previous, items: dropDecided(previous.items, result.items) }
+            : previous,
+      );
       void client.invalidateQueries({ queryKey: RESOLUTION_KEY });
       void client.invalidateQueries({ queryKey: PERSON_SEARCH_KEY });
     },

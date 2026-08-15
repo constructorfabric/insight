@@ -27,7 +27,7 @@ import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import type { AccountRef } from "@/lib/identities/account-key";
 import { personDisplayName } from "@/lib/identities/person-display";
-import { formatUtcInstant } from "@/lib/format";
+import { formatUtcAge, formatUtcInstant } from "@/lib/format";
 import { useAccountBinding } from "@/queries/identity-resolution";
 
 /** Known reason codes → i18n keys; anything else renders as-is (open vocabulary). */
@@ -151,8 +151,11 @@ function HistoryRow({
         <Badge variant={entry.by_operator ? "secondary" : "outline"}>
           {verbKey ? t(verbKey) : (reason ?? t("identities.history.automatic"))}
         </Badge>
-        <span className="ms-auto text-xs text-muted-foreground">
-          {formatUtcInstant(entry.recorded_at, "d MMM yyyy, HH:mm")}
+        <span
+          className="ms-auto text-xs text-muted-foreground"
+          title={formatUtcInstant(entry.recorded_at, "d MMM yyyy, HH:mm")}
+        >
+          {formatUtcAge(entry.recorded_at)}
         </span>
       </div>
       <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AttentionItem } from "@/api/identity-client";
 
-import { filterQueue, groupIntoCases } from "./cases";
+import { dropDecided, filterQueue, groupIntoCases } from "./cases";
 
 const ANN = { person_id: "01900000-0000-7000-8000-0000000000a0", display_name: "Ann Lee" };
 const BOB = { person_id: "01900000-0000-7000-8000-0000000000b0", display_name: "Bob Park" };
@@ -108,5 +108,45 @@ describe("filterQueue", () => {
     const items = [item({ account_id: "a1" })];
 
     expect(filterQueue(items, "   ")).toHaveLength(1);
+  });
+});
+
+describe("dropDecided", () => {
+  const ref = { source: "github", source_id: "01900000-0000-7000-8000-00000000aa01" };
+
+  it("removes the accounts the server reported as decided", () => {
+    const items = [item({ account_id: "a1" }), item({ account_id: "a2" })];
+
+    const left = dropDecided(items, [
+      { ...ref, account_id: "a1", outcome: "applied" },
+    ]);
+
+    expect(left.map((i) => i.account_id)).toEqual(["a2"]);
+  });
+
+  it("treats an already-decided account as decided too", () => {
+    const items = [item({ account_id: "a1" })];
+
+    expect(
+      dropDecided(items, [{ ...ref, account_id: "a1", outcome: "already_decided" }]),
+    ).toHaveLength(0);
+  });
+
+  // A refusal changed nothing, so the row must stay: removing it would show a
+  // queue that dealt with something the server declined.
+  it("keeps a refused account in the queue", () => {
+    const items = [item({ account_id: "a1" })];
+
+    expect(
+      dropDecided(items, [{ ...ref, account_id: "a1", outcome: "refused" }]),
+    ).toHaveLength(1);
+  });
+
+  it("matches on the whole account triple, not the id alone", () => {
+    const items = [item({ account_id: "a1", source: "gitlab" })];
+
+    expect(
+      dropDecided(items, [{ ...ref, account_id: "a1", outcome: "applied" }]),
+    ).toHaveLength(1);
   });
 });
