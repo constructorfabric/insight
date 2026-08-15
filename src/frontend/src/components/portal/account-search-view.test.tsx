@@ -66,6 +66,15 @@ beforeEach(() => {
 });
 
 describe("AccountSearchView", () => {
+  // An empty surface reads as one that failed to load; the mode says what it
+  // is for instead.
+  it("says what to search for before anything is asked", () => {
+    render(<AccountSearchView />);
+
+    expect(screen.getByText(/nothing searched yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/at least three characters/i)).toBeInTheDocument();
+  });
+
   it("answers whose an account is", async () => {
     hooks.search.data = { items: [match()], truncated: false };
     render(<AccountSearchView />);

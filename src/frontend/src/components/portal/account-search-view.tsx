@@ -8,7 +8,7 @@
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Search } from "lucide-react";
+import { ScanSearch, Search } from "lucide-react";
 
 import type { AccountMatch } from "@/api/identity-client";
 import { CaseDialog } from "@/components/portal/case-dialog";
@@ -16,6 +16,13 @@ import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -67,10 +74,31 @@ export function AccountSearchView() {
         />
       ) : null}
 
+      {/* Before anything is asked the mode has nothing to show, and a bare
+          gap reads as a surface that failed to load. */}
+      {!asked && !search.isError ? (
+        <Empty className="rounded-lg border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <ScanSearch />
+            </EmptyMedia>
+            <EmptyTitle>{t("identities.accounts.no_query")}</EmptyTitle>
+            <EmptyDescription>
+              {t("identities.accounts.no_query_description")}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : null}
+
       {asked && !search.isFetching && items.length === 0 && !search.isError ? (
-        <p className="p-3 text-sm text-muted-foreground">
-          {t("identities.accounts.no_matches")}
-        </p>
+        <Empty className="rounded-lg border">
+          <EmptyHeader>
+            <EmptyTitle>{t("identities.accounts.no_matches")}</EmptyTitle>
+            <EmptyDescription>
+              {t("identities.accounts.no_matches_description")}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : null}
 
       {items.length > 0 ? (
