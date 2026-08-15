@@ -2,8 +2,6 @@
 //!
 //! Adoption events emitted by the SPA telemetry SDK, and the admin read model
 //! over them: who opened the product, how many visits per day, which pages.
-//! Events land in a ClickHouse table of their own, outside the presentation
-//! database, so a metric export never carries them.
 
 use std::sync::Arc;
 
@@ -19,7 +17,10 @@ use uuid::Uuid;
 use super::error::UsageError;
 use super::{AppState, forwarded_authorization};
 
-const TABLE: &str = "usage_events";
+/// The writable namespace of the presentation query path: `presentation_ro`
+/// grants SELECT/INSERT/CREATE there and read-only everywhere else, so a
+/// service-owned table has exactly one place it can live.
+const TABLE: &str = "presentation.usage_events";
 
 /// Bound on one beacon payload. The SDK batches on a flush timer, so a larger
 /// body is a client that is not the SDK.
@@ -33,7 +34,7 @@ const PAGE_VIEW: &str = "page_view";
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 
-pub const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS usage_events (
+pub const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS presentation.usage_events (
     event_id    UUID,
     ts          DateTime64(3, 'UTC'),
     tenant_id   UUID,
@@ -41,6 +42,7 @@ pub const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS usage_events (
     session_id  String,
     event_name  LowCardinality(String),
     path        String,
+    target      String,
     app_name    LowCardinality(String),
     app_version String
 ) ENGINE = MergeTree
@@ -130,7 +132,7 @@ pub async fn ingest_usage_events(
 /// One row's worth of placeholders. Values are bound, never interpolated: the
 /// SDK's payload is caller-controlled and reaches ClickHouse verbatim.
 const ROW_PLACEHOLDERS: &str = "(toUUID(?), fromUnixTimestamp64Milli(toInt64(?)), \
-     toUUID(?), toUUID(?), ?, ?, ?, ?, ?)";
+     toUUID(?), toUUID(?), ?, ?, ?, ?, ?, ?)";
 
 fn insert_sql(row_count: usize) -> String {
     let rows = vec![ROW_PLACEHOLDERS; row_count].join(", ");
@@ -138,7 +140,8 @@ fn insert_sql(row_count: usize) -> String {
     // burst of them from becoming a part each.
     format!(
         "INSERT INTO {TABLE} \
-         (event_id, ts, tenant_id, person_id, session_id, event_name, path, app_name, app_version) \
+         (event_id, ts, tenant_id, person_id, session_id, event_name, path, target, \
+          app_name, app_version) \
          SETTINGS async_insert = 1 VALUES {rows}"
     )
 }
@@ -172,7 +175,8 @@ async fn insert_records(
             .bind(person_id.to_string())
             .bind(clip(record.context_session_id.as_deref().unwrap_or_default(), 64))
             .bind(clip(&record.name, 64))
-            .bind(clip(&extract_path(record.data.as_ref()), 512))
+            .bind(clip(&page_path(record.data.as_ref()), 512))
+            .bind(clip(&data_field(record.data.as_ref(), "target"), 256))
             .bind(clip(record.context_app_name.as_deref().unwrap_or_default(), 64))
             .bind(clip(record.context_app_version.as_deref().unwrap_or_default(), 32));
     }
@@ -181,9 +185,9 @@ async fn insert_records(
     Ok(())
 }
 
-/// The SDK stringifies each nested `data` field before sending, so a path
+/// The SDK stringifies each nested `data` field before sending, so a value
 /// arrives either as a plain string or as a JSON-encoded one.
-fn extract_path(data: Option<&serde_json::Value>) -> String {
+fn data_field(data: Option<&serde_json::Value>, key: &str) -> String {
     let Some(value) = data else {
         return String::new();
     };
@@ -194,12 +198,22 @@ fn extract_path(data: Option<&serde_json::Value>) -> String {
     let Some(serde_json::Value::Object(map)) = object else {
         return String::new();
     };
-    match map.get("path") {
+    match map.get(key) {
         Some(serde_json::Value::String(raw)) => {
             serde_json::from_str::<String>(raw).unwrap_or_else(|_| raw.clone())
         }
         _ => String::new(),
     }
+}
+
+/// Where a page view happened. The SDK's own page view names it `url`; the
+/// one the app emits names it `path`.
+fn page_path(data: Option<&serde_json::Value>) -> String {
+    let path = data_field(data, "path");
+    if path.is_empty() {
+        return data_field(data, "url");
+    }
+    path
 }
 
 fn clip(value: &str, max: usize) -> String {
@@ -239,6 +253,14 @@ pub struct UsagePerson {
 }
 
 #[derive(Debug, Serialize, Deserialize, clickhouse::Row, utoipa::ToSchema)]
+pub struct UsageEvent {
+    pub event_name: String,
+    pub target: String,
+    pub opens: u64,
+    pub people: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, clickhouse::Row, utoipa::ToSchema)]
 pub struct UsagePage {
     pub path: String,
     pub views: u64,
@@ -253,6 +275,7 @@ pub struct UsageSummaryResponse {
     pub by_day: Vec<UsageDay>,
     pub by_person: Vec<UsagePerson>,
     pub by_page: Vec<UsagePage>,
+    pub by_event: Vec<UsageEvent>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for UsageSummaryResponse {}
 
@@ -324,10 +347,16 @@ pub async fn get_usage_summary(
     let by_person = state
         .ch
         .query(&format!(
-            "SELECT toString(person_id) AS person_id, uniqExact(session_id) AS visits, \
-             countIf(event_name = '{PAGE_VIEW}') AS page_views, toString(max(ts)) AS last_seen \
-             FROM {TABLE} WHERE {window} AND person_id != toUUID('{NIL_UUID}') \
-             GROUP BY person_id ORDER BY visits DESC, page_views DESC LIMIT {BREAKDOWN_LIMIT}"
+            // The id is stringified in an outer select: an alias that shadows
+            // `person_id` makes every other reference to it a String, and the
+            // UUID comparisons in the same query then have no common type.
+            "SELECT toString(person) AS person_id, visits, page_views, last_seen FROM (\
+               SELECT person_id AS person, uniqExact(session_id) AS visits, \
+               countIf(event_name = '{PAGE_VIEW}') AS page_views, \
+               toString(max(ts)) AS last_seen \
+               FROM {TABLE} WHERE {window} AND person_id != toUUID('{NIL_UUID}') \
+               GROUP BY person ORDER BY visits DESC, page_views DESC \
+               LIMIT {BREAKDOWN_LIMIT})"
         ))
         .fetch_all::<UsagePerson>()
         .await
@@ -344,6 +373,17 @@ pub async fn get_usage_summary(
         .await
         .map_err(read_error)?;
 
+    let by_event = state
+        .ch
+        .query(&format!(
+            "SELECT event_name, target, count() AS opens, {visitors} AS people \
+             FROM {TABLE} WHERE {window} AND event_name != '{PAGE_VIEW}' \
+             GROUP BY event_name, target ORDER BY opens DESC LIMIT {BREAKDOWN_LIMIT}"
+        ))
+        .fetch_all::<UsageEvent>()
+        .await
+        .map_err(read_error)?;
+
     Ok(Json(UsageSummaryResponse {
         since: range.since.unwrap_or_default(),
         until: range.until.unwrap_or_default(),
@@ -351,6 +391,7 @@ pub async fn get_usage_summary(
         by_day,
         by_person,
         by_page,
+        by_event,
     }))
 }
 
@@ -402,24 +443,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_path_survives_the_sdk_field_stringification() {
+    fn a_value_survives_the_sdk_field_stringification() {
         let stringified = serde_json::json!({ "path": "\"/people\"" });
-        assert_eq!(extract_path(Some(&stringified)), "/people");
+        assert_eq!(data_field(Some(&stringified), "path"), "/people");
 
-        let plain = serde_json::json!({ "path": "/people" });
-        assert_eq!(extract_path(Some(&plain)), "/people");
+        let plain = serde_json::json!({ "target": "pr_cycle_time" });
+        assert_eq!(data_field(Some(&plain), "target"), "pr_cycle_time");
+    }
+
+    #[test]
+    fn the_sdks_own_page_view_reports_the_url_it_carries() {
+        // The SDK emits its own page_view with `url`; ours carries `path`.
+        let from_sdk = serde_json::json!({ "url": "\"/portal\"" });
+        assert_eq!(page_path(Some(&from_sdk)), "/portal");
+
+        let from_app = serde_json::json!({ "path": "\"/portal/people\"" });
+        assert_eq!(page_path(Some(&from_app)), "/portal/people");
     }
 
     #[test]
     fn a_record_without_data_has_no_path() {
-        assert_eq!(extract_path(None), "");
-        assert_eq!(extract_path(Some(&serde_json::json!({}))), "");
+        assert_eq!(data_field(None, "path"), "");
+        assert_eq!(data_field(Some(&serde_json::json!({})), "path"), "");
     }
 
     #[test]
     fn event_values_are_bound_never_interpolated() {
         let sql = insert_sql(2);
-        assert_eq!(sql.matches('?').count(), 18, "nine placeholders per row: {sql}");
+        assert_eq!(sql.matches('?').count(), 20, "ten placeholders per row: {sql}");
         assert!(sql.contains("async_insert = 1"), "batched server-side: {sql}");
     }
 

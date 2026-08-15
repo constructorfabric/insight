@@ -80,11 +80,33 @@ function startUsageCollection(): void {
   const { session } = authStore.getSnapshot();
   if (!session) return;
   void startUsageTelemetry(session).then(() => {
-    recordPageView(window.location.pathname);
+    recordPageView(portalPath(window.location.pathname, new URLSearchParams(window.location.search)));
     router.subscribe("onResolved", ({ toLocation }) => {
-      recordPageView(toLocation.pathname);
+      const search = toLocation.search as Record<string, unknown>;
+      recordPageView(
+        portalPath(
+          toLocation.pathname,
+          new URLSearchParams(
+            Object.entries(search)
+              .filter(([, v]) => typeof v === "string")
+              .map(([k, v]) => [k, v as string]),
+          ),
+        ),
+      );
     });
   });
+}
+
+/**
+ * The portal is a single route whose screen lives in `zone`/`item`, so the
+ * path alone would report every portal page as one. Only those two are read —
+ * the rest of the query carries scope and person ids.
+ */
+function portalPath(pathname: string, search: URLSearchParams): string {
+  const parts = ["zone", "item"]
+    .map((key) => search.get(key))
+    .filter((value): value is string => Boolean(value));
+  return parts.length ? `${pathname}/${parts.join("/")}` : pathname;
 }
 
 function renderApp(): void {

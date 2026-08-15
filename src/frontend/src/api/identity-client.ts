@@ -417,32 +417,6 @@ function toIdentityPerson(p: ProfileResponse): IdentityPerson {
   };
 }
 
-/** One active role assignment of the caller. */
-export interface IdentityRole {
-  role_id: string;
-  name: string;
-}
-
-/** `GET /v1/me` — who the gateway says the caller is, and their roles. */
-export interface MeResponse {
-  person_id: string;
-  insight_tenant_id: string;
-  roles: IdentityRole[];
-}
-
-/**
- * The caller's own identity roles. Not admin-gated: an empty `roles` list is
- * the "not an admin" answer, so the SPA can gate its admin surfaces without
- * probing for a 403.
- */
-export async function getMe(): Promise<MeResponse> {
-  const res = await fetchWithAuth(`${BASE}/me`);
-  if (!res.ok) {
-    throw new Error(`Identity API ${res.status}`);
-  }
-  return (await res.json()) as MeResponse;
-}
-
 /**
  * Resolve one profile by canonical person id — the key the SPA routes on and
  * the metrics API filters by since the identity cutover. Identity applies the

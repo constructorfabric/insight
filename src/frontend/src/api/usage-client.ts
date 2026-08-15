@@ -39,6 +39,13 @@ export interface UsagePage {
   visitors: number;
 }
 
+export interface UsageEvent {
+  event_name: string;
+  target: string;
+  opens: number;
+  people: number;
+}
+
 export interface UsageSummary {
   since: string;
   until: string;
@@ -46,6 +53,7 @@ export interface UsageSummary {
   by_day: UsageDay[];
   by_person: UsagePerson[];
   by_page: UsagePage[];
+  by_event: UsageEvent[];
 }
 
 export interface UsageRange {

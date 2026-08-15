@@ -48,6 +48,14 @@ export function recordPageView(path: string): void {
   service?.logEvent("page_view", { path });
 }
 
+/**
+ * Record anything else worth counting — a drill-down opened, an export taken.
+ * `target` is what the action was aimed at, and is what the usage page ranks.
+ */
+export function recordUsageEvent(name: string, target?: string): void {
+  service?.logEvent(name, target == null ? undefined : { target });
+}
+
 export function stopUsageTelemetry(): void {
   service?.destroy();
   service = null;

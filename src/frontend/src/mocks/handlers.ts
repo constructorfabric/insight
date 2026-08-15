@@ -656,6 +656,12 @@ function usageHandlers() {
             last_seen: `${by_day.at(-2)?.day ?? ""} 17:05`,
           },
         ],
+        by_event: [
+          { event_name: "drill", target: "pr_cycle_time", opens: 34, people: 3 },
+          { event_name: "drill", target: "review_load", opens: 21, people: 3 },
+          { event_name: "drill", target: "ai_share", opens: 12, people: 2 },
+          { event_name: "session_start", target: "", opens: 57, people: 4 },
+        ],
         by_page: [
           { path: "/portal/overview", views: 88, visitors: 4 },
           { path: "/portal/people", views: 61, visitors: 3 },

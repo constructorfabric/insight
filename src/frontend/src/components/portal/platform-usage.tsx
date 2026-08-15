@@ -10,7 +10,13 @@ import { useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 
 import { getPerson } from "@/api/identity-client";
-import type { UsagePage, UsagePerson } from "@/api/usage-client";
+import type {
+  UsageDay,
+  UsageEvent,
+  UsagePage,
+  UsagePerson,
+  UsageRange,
+} from "@/api/usage-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { Button } from "@/components/ui/button";
@@ -35,6 +41,21 @@ const PERIODS = [
 
 /** Names are resolved for what is on screen, not for the whole ranking. */
 const NAMED_ROWS = 25;
+
+/** Every day in [since, until], with the API's counts where it had any. */
+function fillRange(days: UsageDay[], range: UsageRange): UsageDay[] {
+  if (!range.since || !range.until) return days;
+  const counted = new Map(days.map((d) => [d.day, d]));
+  const out: UsageDay[] = [];
+  const cursor = new Date(`${range.since}T00:00:00Z`);
+  const end = new Date(`${range.until}T00:00:00Z`);
+  while (cursor <= end && out.length < 400) {
+    const day = cursor.toISOString().slice(0, 10);
+    out.push(counted.get(day) ?? { day, visits: 0, visitors: 0 });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return out;
+}
 
 function isoDay(daysBack: number): string {
   const day = new Date();
@@ -73,11 +94,11 @@ export function PlatformUsage() {
     );
   }
 
-  const { totals, by_day, by_person, by_page } = summary.data;
-  const busiestDay = by_day.reduce(
-    (top, day) => (day.visits > (top?.visits ?? 0) ? day : top),
-    by_day[0],
-  );
+  const { totals, by_person, by_page, by_event } = summary.data;
+  // The API returns only days that saw traffic; the chart is about the range,
+  // so the quiet days have to be drawn as quiet rather than left out.
+  const by_day = fillRange(summary.data.by_day, range);
+  const busiest = by_day.reduce((top, day) => Math.max(top, day.visits), 0);
 
   return (
     <div className="flex w-full flex-col gap-6 p-6">
@@ -136,7 +157,7 @@ export function PlatformUsage() {
                 title={`${day.day}: ${day.visits} visits, ${day.visitors} people`}
                 className="min-h-px w-full rounded-t bg-primary/70"
                 style={{
-                  height: `${Math.round((day.visits / Math.max(busiestDay?.visits ?? 1, 1)) * 96)}px`,
+                  height: `${Math.round((day.visits / Math.max(busiest, 1)) * 96)}px`,
                 }}
               />
             ))}
@@ -146,6 +167,7 @@ export function PlatformUsage() {
 
       <PeopleTable rows={by_person} />
       <PagesTable rows={by_page} />
+      <EventsTable rows={by_event} />
     </div>
   );
 }
@@ -200,6 +222,38 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
                 <TableCell className="text-right">{row.visits}</TableCell>
                 <TableCell className="text-right">{row.page_views}</TableCell>
                 <TableCell>{row.last_seen.slice(0, 16)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </section>
+  );
+}
+
+function EventsTable({ rows }: { rows: UsageEvent[] }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">Drill-downs and other actions, by opens</h3>
+      {rows.length === 0 ? (
+        <Empty />
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Action</TableHead>
+              <TableHead>Target</TableHead>
+              <TableHead className="text-right">Opens</TableHead>
+              <TableHead className="text-right">People</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow key={`${row.event_name}:${row.target}`}>
+                <TableCell className="font-medium">{row.event_name}</TableCell>
+                <TableCell className="font-mono text-xs">{row.target || "—"}</TableCell>
+                <TableCell className="text-right">{row.opens}</TableCell>
+                <TableCell className="text-right">{row.people}</TableCell>
               </TableRow>
             ))}
           </TableBody>

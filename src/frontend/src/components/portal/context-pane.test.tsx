@@ -155,6 +155,8 @@ describe("ContextPane", () => {
     mocks.zone = { activeZone: "scorecard", activePerson: "boss@x" };
     pane();
     expect(document.querySelectorAll("[data-active]")).toHaveLength(0);
+  });
+
   it("keeps admin-only Manage items away from a non-admin", () => {
     mocks.zone = { activeZone: "manage", activePerson: "boss@x" };
     mocks.isAdmin = false;
