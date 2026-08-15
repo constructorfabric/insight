@@ -232,7 +232,6 @@ const COLLABORATION_COLLECTION: MetricCollectionConfig = {
       key: "collab.channel_posts",
       views: [{ view: "period" }, { view: "peer" }],
     },
-    { key: "collab.dm_ratio", views: [{ view: "period" }, { view: "peer" }] },
     {
       key: "collab.msgs_per_active_day",
       views: [{ view: "period" }, { view: "peer" }],
@@ -488,13 +487,6 @@ export const GROUPS: readonly MetricGroup[] = [
     ],
   },
 ];
-
-/**
- * Metrics held behind the reader's "show planned sections" choice — the nav's
- * `planned` readiness (see `Readiness` in portal/nav-model) at metric grain,
- * for a number the product does not stand behind yet.
- */
-export const PLANNED_METRICS: ReadonlySet<string> = new Set(["collab.dm_ratio"]);
 
 /**
  * The members heatmap's fixed cross-family column set: one metric key per

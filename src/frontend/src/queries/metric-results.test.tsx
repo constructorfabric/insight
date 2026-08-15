@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   MetricResultsRequest,
@@ -9,7 +9,6 @@ import type {
 } from "@/api/metric-results-client";
 import { queryMetricResults } from "@/api/metric-results-client";
 import type { MetricCollectionConfig } from "@/lib/metrics/collection";
-import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 import {
   collectionSetPending,
   useMetricCollection,
@@ -341,55 +340,5 @@ describe("a disabled collection has nothing to retry", () => {
     );
     rerender({ ids: ["a@x", "b@x"] });
     await waitFor(() => expect(result.current.isError).toBe(false));
-  });
-});
-
-describe("planned metrics", () => {
-  const planned = "collab.dm_ratio";
-  const collection: MetricCollectionConfig = {
-    metrics: [
-      { key: "m", views: [{ view: "period" }] },
-      { key: planned, views: [{ view: "period" }] },
-    ],
-  };
-
-  beforeEach(() => {
-    mock.mockReset();
-    mock.mockImplementation(async (req) => respond(req));
-    offers("m", planned);
-  });
-
-  afterEach(() => setPortalShowPlanned(true));
-
-  it("drops them from the request when the reader hid planned sections", async () => {
-    setPortalShowPlanned(false);
-    const { result } = renderHook(
-      () => useMetricCollection(collection, ENTITY, RANGE),
-      { wrapper: wrapper() },
-    );
-    await waitFor(() => expect(result.current.isPending).toBe(false));
-    expect(mock.mock.calls[0]![0].metrics.map((m) => m.metric_key)).toEqual(["m"]);
-    expect(result.current.byKey.get(planned)).toBeUndefined();
-  });
-
-  it("keeps them while planned sections are shown", async () => {
-    setPortalShowPlanned(true);
-    const { result } = renderHook(
-      () => useMetricCollection(collection, ENTITY, RANGE),
-      { wrapper: wrapper() },
-    );
-    await waitFor(() => expect(result.current.isPending).toBe(false));
-    expect(result.current.byKey.get(planned)).toBeDefined();
-  });
-
-  it("drops them from a collection set too", async () => {
-    setPortalShowPlanned(false);
-    const { result } = renderHook(
-      () =>
-        useMetricCollectionSet([{ key: "g", collection }], ENTITY, RANGE),
-      { wrapper: wrapper() },
-    );
-    await waitFor(() => expect(collectionSetPending(result.current)).toBe(false));
-    expect(mock.mock.calls[0]![0].metrics.map((m) => m.metric_key)).toEqual(["m"]);
   });
 });

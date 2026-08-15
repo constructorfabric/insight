@@ -75,22 +75,7 @@ export function filterCollectionToAvailable(
   available: ReadonlySet<string> | null,
 ): MetricCollectionConfig {
   if (!available) return collection;
-  return filterCollection(collection, (key) => available.has(key));
-}
-
-/** Drop named metrics from a collection. */
-export function filterCollectionExcluding(
-  collection: MetricCollectionConfig,
-  excluded: ReadonlySet<string>,
-): MetricCollectionConfig {
-  return filterCollection(collection, (key) => !excluded.has(key));
-}
-
-function filterCollection(
-  collection: MetricCollectionConfig,
-  keep: (key: string) => boolean,
-): MetricCollectionConfig {
-  const kept = collection.metrics.filter((m) => keep(m.key));
+  const kept = collection.metrics.filter((m) => available.has(m.key));
   return kept.length === collection.metrics.length ? collection : { metrics: kept };
 }
 

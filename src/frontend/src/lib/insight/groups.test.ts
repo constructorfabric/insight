@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   GROUPS,
-  PLANNED_METRICS,
   groupIdForMetricKey,
   type DrilldownBlock,
   type GroupId,
@@ -89,11 +88,5 @@ describe("groups registry", () => {
         ],
       },
     ]);
-  });
-
-  it("plans only keys a group actually collects", () => {
-    for (const key of PLANNED_METRICS) {
-      expect(groupIdForMetricKey(key)).not.toBeNull();
-    }
   });
 });
