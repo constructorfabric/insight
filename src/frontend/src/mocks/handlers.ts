@@ -447,9 +447,13 @@ export const handlers = [
       );
     }
     const terms = q.toLowerCase().split(/\s+/);
+    // A term that parses as an id names a person, mirroring the service: it is
+    // the only way to reach someone the journal holds no values for.
     const items = PEOPLE.filter((p) =>
       terms.every((term) =>
-        [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(term)),
+        isPersonId(term)
+          ? p.person_id.toLowerCase() === term
+          : [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(term)),
       ),
     )
       .slice(0, 20)

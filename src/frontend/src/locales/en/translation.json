@@ -509,7 +509,7 @@
       "new_person": "New person:"
     },
     "picker": {
-      "placeholder": "Search people by name, email or handle…",
+      "placeholder": "Search people by name, email, handle or person id…",
       "no_matches": "Nobody matches those terms.",
       "truncated": "More people matched than shown — narrow the terms.",
       "failed": "Search failed. Try again."
