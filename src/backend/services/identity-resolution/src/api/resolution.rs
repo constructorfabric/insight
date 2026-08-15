@@ -23,11 +23,17 @@ use super::gate::require_admin;
 use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
-use crate::domain::seed::SourceAccountKey;
+use crate::domain::seed::{KnownBinding, SourceAccountKey};
 use crate::infra::db::{ops_repo, persons_repo, resolution_repo};
 use crate::infra::identity_evidence::{
     AccountEvidence, ClickHouseEvidenceReader, EvidenceSnapshot,
 };
+
+/// A handle or an address, not a prefix of one: a one-character needle scans
+/// the whole fold to answer with everything.
+const MIN_ACCOUNT_SEARCH_CHARS: usize = 3;
+const DEFAULT_ACCOUNT_SEARCH_LIMIT: u64 = 20;
+const MAX_ACCOUNT_SEARCH_LIMIT: u64 = 100;
 
 /// A trail is read, not paged: enough calls to cover any account's history
 /// without letting one response grow without bound.
@@ -860,6 +866,117 @@ pub struct AccountBindingResponse {
     pub operations: Vec<AccountOperationResponse>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for AccountBindingResponse {}
+
+/// One account as a search answers for it: what it is, and whose it is.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AccountMatchResponse {
+    pub source: String,
+    pub source_id: Uuid,
+    pub account_id: String,
+    pub email: Option<String>,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    /// The person holding it, hydrated. Absent means nobody holds it yet.
+    pub person: Option<PersonSummaryResponse>,
+    /// `true` when a person decided this binding rather than automation.
+    pub bound_by_operator: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AccountSearchResponse {
+    pub items: Vec<AccountMatchResponse>,
+    /// More accounts matched than `limit` allowed — narrow the terms.
+    pub truncated: bool,
+}
+impl toolkit::api::api_dto::ResponseApiDto for AccountSearchResponse {}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountSearchParams {
+    pub q: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// `GET /v1/resolution/accounts?q=` — find an account by a value it carries,
+/// and say whose it is.
+///
+/// The person search answers "which person is this"; this answers the question
+/// an operator arrives with when they hold an account instead: a git handle
+/// from a review, an address from a ticket.
+pub async fn search_accounts(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    axum::extract::Query(params): axum::extract::Query<AccountSearchParams>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    require_admin(&state.db, &ctx).await?;
+    let tenant = ctx.subject_tenant_id();
+
+    let needle = params.q.unwrap_or_default().trim().to_owned();
+    if needle.chars().count() < MIN_ACCOUNT_SEARCH_CHARS {
+        return Err(invalid(
+            "q",
+            &format!("at least {MIN_ACCOUNT_SEARCH_CHARS} characters are required"),
+        ));
+    }
+    let limit = super::listing::clamp_limit(
+        params.limit,
+        DEFAULT_ACCOUNT_SEARCH_LIMIT,
+        MAX_ACCOUNT_SEARCH_LIMIT,
+    );
+
+    let reader = evidence_reader(&state);
+    // Over-fetch by one: the extra row is the truncation probe, never served.
+    let mut found = reader
+        .search(&needle, limit + 1)
+        .await
+        .map_err(|e| internal(&e, "failed to search the observed accounts"))?;
+    let truncated = found.len() > usize::try_from(limit).unwrap_or(usize::MAX);
+    if truncated {
+        found.pop();
+    }
+
+    let keys: Vec<SourceAccountKey> = found.iter().map(|e| e.account.clone()).collect();
+    let bindings = resolution_repo::current_bindings(&state.db, tenant, &keys)
+        .await
+        .map_err(|e| internal(&e, "failed to read current bindings"))?;
+
+    let person_ids: Vec<Uuid> = bindings
+        .values()
+        .map(|b| b.person_id)
+        .filter(|id| *id != EXCLUDED_PERSON)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let cards = persons_repo::person_cards(&state.db, tenant, &person_ids)
+        .await
+        .map_err(|e| internal(&e, "failed to hydrate the holders"))?;
+    let provisional = persons_repo::provisional_persons(&state.db, tenant, &person_ids)
+        .await
+        .map_err(|e| internal(&e, "failed to read which persons are provisional"))?;
+
+    let items = found
+        .into_iter()
+        .map(|account| {
+            let binding = bindings.get(&account.account);
+            AccountMatchResponse {
+                source: account.account.source_type,
+                source_id: account.account.source_id,
+                account_id: account.account.account_id,
+                email: account.email,
+                username: account.username,
+                display_name: account.description.display_name,
+                person: binding
+                    .and_then(|b| cards.get(&b.person_id).cloned())
+                    .map(|card| PersonSummaryResponse {
+                        provisional: provisional.contains(&card.person_id),
+                        ..PersonSummaryResponse::from(card)
+                    }),
+                bound_by_operator: binding.is_some_and(KnownBinding::is_operator_authored),
+            }
+        })
+        .collect();
+
+    Ok(Json(AccountSearchResponse { items, truncated }))
+}
 
 /// `GET /v1/resolution/accounts/{source}/{source_id}/{account_id}` — why this
 /// account belongs to this person: the binding in force and every decision

@@ -30,6 +30,7 @@ const attention = vi.hoisted(() => ({
 }));
 vi.mock("@/queries/identity-resolution", () => ({
   useAttention: () => attention.q,
+  useAccountSearch: () => ({ data: undefined, isFetching: false, isError: false }),
   // The people mode has its own test file; here it only has to mount.
   usePersonSearch: () => ({ data: undefined, isFetching: false, isError: false }),
   usePersonAccounts: () => ({

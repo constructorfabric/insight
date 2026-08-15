@@ -21,8 +21,10 @@ import {
   getAttention,
   getPersonAccounts,
   mergePersons,
+  searchAccounts,
   searchPersons,
   type AccountBinding,
+  type AccountSearchResponse,
   type AttentionResponse,
   type CorrectionResponse,
   type PersonAccountEntry,
@@ -123,6 +125,19 @@ export function usePersonSearch(q: string): UseQueryResult<PersonSearchResponse>
     queryFn: () => searchPersons(trimmed),
     staleTime: ATTENTION_STALE_TIME,
     enabled: sessionScope != null && trimmed.length >= 2,
+  });
+}
+
+/** Live account search for the account mode; the component debounces. */
+export function useAccountSearch(q: string): UseQueryResult<AccountSearchResponse> {
+  const { session } = useAuth();
+  const sessionScope = sessionAuthorizationScope(session);
+  const trimmed = q.trim();
+  return useQuery({
+    queryKey: [...RESOLUTION_KEY, "account-search", sessionScope, trimmed],
+    queryFn: () => searchAccounts(trimmed),
+    staleTime: ATTENTION_STALE_TIME,
+    enabled: sessionScope != null && trimmed.length >= 3,
   });
 }
 

@@ -464,6 +464,23 @@ class VisiblePersonsResponse(BaseModel):
     visible: list[UUID]
 
 
+class AccountMatchResponse(BaseModel):
+    """
+    One account as a search answers for it: what it is, and whose it is.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    account_id: str
+    bound_by_operator: bool = Field(..., description='`true` when a person decided this binding rather than automation.')
+    display_name: str | None = None
+    email: str | None = None
+    person: PersonSummaryResponse | None = None
+    source: str
+    source_id: UUID
+    username: str | None = None
+
+
 class AccountOperationResponse(BaseModel):
     """
     One operator call that named this account.
@@ -483,6 +500,14 @@ class AccountOperationResponse(BaseModel):
     outcome: str | None = Field(None, description='What the call did to THIS account: `applied` | `already_decided` |\n`refused`. A refusal changed nothing and still belongs in the trail.')
     recorded_at: str
     verb: str = Field(..., description='`operator-bind` | `operator-merge` | `operator-detach` | `operator-exclude`.')
+
+
+class AccountSearchResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[AccountMatchResponse]
+    truncated: bool = Field(..., description='More accounts matched than `limit` allowed — narrow the terms.')
 
 
 class AttentionResponse(BaseModel):

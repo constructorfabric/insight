@@ -97,6 +97,22 @@ const FOLD_SQL: &str = r"
     ORDER BY source_type, source_id, account_id
 ";
 
+/// Accounts whose current values contain the needle, for the operator who has
+/// an account in hand and no idea whose it is. The fold is the same one the
+/// queue reads; only the filter and the ceiling differ.
+const SEARCH_SQL: &str = r"
+    SELECT source_type, source_id, account_id, latest_op, email, username,
+           display_name, first_name, last_name, job_title, department, status,
+           manager_email
+    FROM ({FOLD})
+    WHERE latest_op != 'DELETE'
+      AND (positionCaseInsensitive(email, ?) > 0
+           OR positionCaseInsensitive(username, ?) > 0
+           OR positionCaseInsensitive(account_id, ?) > 0
+           OR positionCaseInsensitive(display_name, ?) > 0)
+    LIMIT ?
+";
+
 /// Ceiling on the fold, which is read whole into memory. The queue's rates are
 /// meant to cover every observed account, so this is a safety valve against an
 /// unbounded read rather than a pagination knob: reaching it truncates what the
@@ -297,6 +313,37 @@ fn compose_name(first: Option<String>, last: Option<String>) -> Option<String> {
 }
 
 impl ClickHouseEvidenceReader {
+    /// Accounts whose current values contain `needle`, newest-agnostic.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails or a stored source id is not a UUID.
+    pub async fn search(&self, needle: &str, limit: u64) -> anyhow::Result<Vec<AccountEvidence>> {
+        let sql = SEARCH_SQL.replace("{FOLD}", FOLD_SQL);
+        let rows: Vec<FoldedRow> = match self
+            .client
+            .query(&sql)
+            .bind(needle)
+            .bind(needle)
+            .bind(needle)
+            .bind(needle)
+            .bind(limit)
+            .fetch_all()
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) if is_missing_relation(&e) => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+
+        // A row with an unreadable source id is one unusable account, not a
+        // reason to answer nothing — the same rule the full fold applies.
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| map_row(row).ok())
+            .collect())
+    }
+
     /// Whether the evidence knows this account.
     ///
     /// # Errors

@@ -19,6 +19,7 @@ import { useTranslation } from "react-i18next";
 import type { AttentionItem, ResolutionRates } from "@/api/identity-client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import { AccountSearchView } from "@/components/portal/account-search-view";
 import { CaseDialog } from "@/components/portal/case-dialog";
 import { PersonAccountsView } from "@/components/portal/person-accounts-view";
 import { PersonCell } from "@/components/portal/person-cell";
@@ -105,7 +106,7 @@ function opensTheCase(event: React.MouseEvent<HTMLElement>): boolean {
  * the queue arrives at them from a problem, the person view from a name — so
  * adding one is an entry here and a component, nothing else.
  */
-const MODES = ["queue", "people"] as const;
+const MODES = ["queue", "people", "accounts"] as const;
 const DEFAULT_MODE = MODES[0];
 
 export function IdentitiesView() {
@@ -141,7 +142,9 @@ export function IdentitiesView() {
           ))}
         </TabsList>
       </Tabs>
-      {active === "people" ? <PersonAccountsView /> : <ReviewQueue />}
+      {active === "people" ? <PersonAccountsView /> : null}
+      {active === "accounts" ? <AccountSearchView /> : null}
+      {active === "queue" ? <ReviewQueue /> : null}
     </div>
   );
 }

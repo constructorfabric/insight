@@ -1,0 +1,117 @@
+// @vitest-environment jsdom
+/**
+ * The account mode. What matters: an operator holding a handle or an address
+ * learns whose it is — the question neither other mode can answer, since both
+ * are entered through a person; unbound is stated as an answer rather than
+ * left blank; and the account opens in the same case window, so the verbs are
+ * one click from the search.
+ */
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import "@/i18n";
+import type { AccountMatch } from "@/api/identity-client";
+
+vi.mock("@tanstack/react-router", async () => {
+  const { portalRouterMock } = await import("@/test/portal-router");
+  return portalRouterMock();
+});
+
+const hooks = vi.hoisted(() => ({
+  search: {
+    data: undefined as { items: AccountMatch[]; truncated: boolean } | undefined,
+    isFetching: false,
+    isError: false,
+  },
+}));
+vi.mock("@/queries/identity-resolution", () => ({
+  useAccountSearch: () => hooks.search,
+  useAccountBinding: () => ({
+    data: undefined,
+    isLoading: true,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
+
+import { portalRouter } from "@/test/portal-router";
+
+import { AccountSearchView } from "./account-search-view";
+
+function match(over: Partial<AccountMatch> = {}): AccountMatch {
+  return {
+    source: "github",
+    source_id: "01900000-0000-7000-8000-00000000aa01",
+    account_id: "gh-main",
+    email: null,
+    username: "octocat",
+    display_name: null,
+    person: {
+      person_id: "01900000-0000-7000-8000-0000000000a0",
+      display_name: "Ann Lee",
+    },
+    bound_by_operator: false,
+    ...over,
+  };
+}
+
+beforeEach(() => {
+  hooks.search.data = undefined;
+  hooks.search.isFetching = false;
+  hooks.search.isError = false;
+  portalRouter.reset();
+  portalRouter.set({ zone: "manage", item: "identities", mode: "accounts" });
+});
+
+describe("AccountSearchView", () => {
+  it("answers whose an account is", async () => {
+    hooks.search.data = { items: [match()], truncated: false };
+    render(<AccountSearchView />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "octocat");
+
+    expect(screen.getByText("octocat")).toBeInTheDocument();
+    expect(screen.getByText(/github · gh-main/)).toBeInTheDocument();
+    expect(screen.getByText("Ann Lee")).toBeInTheDocument();
+  });
+
+  // Nobody holding it is an answer, and a different one from "nobody has
+  // decided yet" — leaving the column blank would read as neither.
+  it("states an account bound to nobody rather than leaving a gap", () => {
+    hooks.search.data = { items: [match({ person: null })], truncated: false };
+    render(<AccountSearchView />);
+
+    expect(screen.getByText(/bound to nobody/i)).toBeInTheDocument();
+  });
+
+  it("says who decided each binding", () => {
+    hooks.search.data = {
+      items: [match({ bound_by_operator: true })],
+      truncated: false,
+    };
+    render(<AccountSearchView />);
+
+    expect(screen.getByText(/decided by an operator/i)).toBeInTheDocument();
+  });
+
+  it("opens a match in the same case window", async () => {
+    hooks.search.data = { items: [match()], truncated: false };
+    render(<AccountSearchView />);
+
+    await userEvent.click(screen.getByRole("button", { name: /^open$/i }));
+
+    expect(portalRouter.search.acct).toContain("gh-main");
+    expect(
+      within(screen.getByRole("dialog")).getByText(/github · gh-main/),
+    ).toBeInTheDocument();
+  });
+
+  it("says a cut list was cut", () => {
+    hooks.search.data = { items: [match()], truncated: true };
+    render(<AccountSearchView />);
+
+    expect(screen.getByText(/narrow the terms/i)).toBeInTheDocument();
+  });
+});

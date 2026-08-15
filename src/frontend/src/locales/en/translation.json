@@ -529,7 +529,8 @@
     },
     "modes": {
       "queue": "Review queue",
-      "people": "A person and their accounts"
+      "people": "A person and their accounts",
+      "accounts": "An account and whose it is"
     },
     "people": {
       "no_person": "Nobody chosen yet",
@@ -540,6 +541,13 @@
       "by_automation": "bound automatically",
       "open": "Open",
       "load_failed": "Unable to load this person’s accounts"
+    },
+    "accounts": {
+      "placeholder": "Find an account by address, handle, id or observed name…",
+      "no_matches": "No observed account carries that.",
+      "truncated": "More accounts matched than shown — narrow the terms.",
+      "unbound": "bound to nobody",
+      "failed": "Account search failed. Try again."
     }
   }
 }

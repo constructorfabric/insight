@@ -504,6 +504,35 @@ export const handlers = [
       }));
     return HttpResponse.json({ items, truncated: false, next_cursor: null });
   }),
+  // Account search: the same roster, matched by what an account carries.
+  http.get("/api/identity/v1/resolution/accounts", ({ request }) => {
+    const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+    if (q.length < 3) {
+      return HttpResponse.json(
+        { type: "urn:insight:error:invalid_argument" },
+        { status: 400 },
+      );
+    }
+    const needle = q.toLowerCase();
+    const items = PEOPLE.filter((p) =>
+      [p.name, p.email].some((v) => v.toLowerCase().includes(needle)),
+    ).map((p, index) => ({
+      source: index % 2 === 0 ? "github" : "gitlab",
+      source_id: "01900000-0000-7000-8000-00000000aa01",
+      account_id: `acct-${index + 1}`,
+      email: p.email,
+      username: null,
+      display_name: p.name,
+      person: {
+        person_id: p.person_id,
+        email: p.email,
+        display_name: p.name,
+        job_title: p.role,
+      },
+      bound_by_operator: index % 3 === 0,
+    }));
+    return HttpResponse.json({ items, truncated: false });
+  }),
   // A merge preview's substance: two synthetic accounts for anyone.
   http.get(
     "/api/identity/v1/resolution/persons/:personId/accounts",

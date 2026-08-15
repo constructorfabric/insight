@@ -178,6 +178,44 @@ export async function getAttention(limit = 200): Promise<AttentionResponse> {
   return attention;
 }
 
+/** One account a search matched, with whose it is. */
+export interface AccountMatch {
+  source: string;
+  source_id: string;
+  account_id: string;
+  email?: string | null;
+  username?: string | null;
+  display_name?: string | null;
+  /** The person holding it; absent = nobody holds it yet. */
+  person?: PersonSummary | null;
+  bound_by_operator: boolean;
+}
+
+export interface AccountSearchResponse {
+  items: AccountMatch[];
+  /** More matched than the limit allowed — narrow the terms. */
+  truncated: boolean;
+}
+
+/**
+ * Find an observed account by a value it carries (`GET /resolution/accounts`).
+ * The person search answers "which person is this"; this answers the question
+ * an operator arrives with when they hold an account instead.
+ */
+export async function searchAccounts(
+  q: string,
+  limit = 20,
+): Promise<AccountSearchResponse> {
+  const res = await fetchWithAuth(
+    `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}&limit=${limit}`,
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  return (await res.json()) as AccountSearchResponse;
+}
+
 /** One decision recorded for an account, newest first on the wire. */
 export interface BindingHistoryEntry {
   person_id: string;
