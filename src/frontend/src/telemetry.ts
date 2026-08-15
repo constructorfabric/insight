@@ -100,6 +100,21 @@ export function recordPageView(path: string): void {
  * Record anything else worth counting — a drill-down opened, an export taken.
  * `target` is what the action was aimed at, and is what the usage page ranks.
  */
+/**
+ * How a scope was narrowed, without saying whose subtree it is: `root` is a
+ * person id, and which pages someone opens must not become a record of whose
+ * org they were reading.
+ */
+export function scopeLabel(scope: {
+  root: string | null;
+  directOnly: boolean;
+  attrFilter?: { key: string; value: string };
+}): string {
+  if (scope.attrFilter) return `attr:${scope.attrFilter.key}`;
+  if (!scope.root) return "whole-org";
+  return scope.directOnly ? "subtree-direct" : "subtree";
+}
+
 export function recordUsageEvent(name: string, target: string): void {
   emit(name, { target });
 }

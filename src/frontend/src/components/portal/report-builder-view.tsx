@@ -35,6 +35,7 @@ import { unavailableReason } from "@/lib/reports/availability";
 import { byFamily } from "@/lib/reports/families";
 import { buildReportTable, type ReportTable } from "@/lib/reports/report-table";
 import { collectReportPeople } from "@/lib/reports/roster-columns";
+import { recordUsageEvent } from "@/telemetry";
 import {
   bucketsInRange,
   needsRollup,
@@ -174,6 +175,11 @@ export function ReportBuilderView() {
           timeStyle: "short",
         }),
       );
+      // Which columns a report is actually built with — the metric keys, not
+      // the people in it.
+      for (const metric of selectedMetrics) {
+        recordUsageEvent("report_column", metric.metric_key);
+      }
       setPreviewOpen(true);
       setTable(
         buildReportTable({

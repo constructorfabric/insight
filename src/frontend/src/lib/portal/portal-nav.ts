@@ -3,6 +3,7 @@ import { useMemo } from "react";
 
 import { normalizePersonId } from "@/lib/metrics/entity";
 import type { OrgScope } from "@/lib/portal/portal-store";
+import { recordUsageEvent, scopeLabel } from "@/telemetry";
 import { usePortalSearch, useSetPortalSearch } from "@/lib/portal/portal-search";
 
 /**
@@ -101,11 +102,22 @@ export function usePortalNavActions(): PortalNavActions {
       setAcct: (acct) => setSearch({ acct: acct ?? undefined }),
       setDir: (dir) => setSearch({ dir: dir || undefined }),
       setLens: (lens) => setSearch({ lens: lens || undefined }),
-      setSlice: (slice) => setSearch({ slice: slice || undefined }),
-      setScope: (patch) =>
+      setSlice: (slice) => {
+        recordUsageEvent("cohort", slice || "none");
+        setSearch({ slice: slice || undefined });
+      },
+      setScope: (patch) => {
+        recordUsageEvent(
+          "scope",
+          scopeLabel({
+            root: patch.root ?? null,
+            directOnly: patch.directOnly ?? false,
+            attrFilter: patch.attrFilter,
+          }),
+        );
         // Derived from the PREVIOUS search rather than a captured render value,
         // which is what keeps this callback stable.
-        setSearch((prev) => ({
+        return setSearch((prev) => ({
           ...("root" in patch ? { scope: patch.root ?? undefined } : {}),
           ...("directOnly" in patch ? { direct: patch.directOnly } : {}),
           // A direct-only narrowing rarely survives a new root: reset it when
@@ -116,7 +128,8 @@ export function usePortalNavActions(): PortalNavActions {
             normalizePersonId(prev.scope ?? "")
             ? { direct: undefined }
             : {}),
-        })),
+        }));
+      },
     }),
     [setSearch],
   );

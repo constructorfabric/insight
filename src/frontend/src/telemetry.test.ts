@@ -20,7 +20,12 @@ vi.mock("@/api/usage-client", () => ({
   getUsageConfig: () => Promise.resolve({ enabled: true }),
 }));
 
-import { recordPageView, screenPath, startUsageTelemetry } from "./telemetry";
+import {
+  recordPageView,
+  screenPath,
+  scopeLabel,
+  startUsageTelemetry,
+} from "./telemetry";
 
 const SESSION = {
   personId: "p1",
@@ -53,5 +58,24 @@ describe("startUsageTelemetry", () => {
     await startUsageTelemetry(SESSION);
 
     expect(mocks.logEvent).toHaveBeenCalledWith("page_view", { path: "/portal/people" });
+  });
+});
+
+describe("scopeLabel", () => {
+  it("reports the shape of a scope, never who it is rooted at", () => {
+    const person = "cccccccc-0000-0000-0000-000000000001";
+    expect(scopeLabel({ root: person, directOnly: false })).toBe("subtree");
+    expect(scopeLabel({ root: person, directOnly: true })).toBe("subtree-direct");
+    expect(scopeLabel({ root: null, directOnly: false })).toBe("whole-org");
+  });
+
+  it("names the attribute a filter is on, not the person behind it", () => {
+    expect(
+      scopeLabel({
+        root: null,
+        directOnly: false,
+        attrFilter: { key: "department", value: "Engineering" },
+      }),
+    ).toBe("attr:department");
   });
 });
