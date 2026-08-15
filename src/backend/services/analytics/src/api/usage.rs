@@ -178,7 +178,7 @@ async fn insert_records(
             .bind(person_id.to_string())
             .bind(clip(record.context_session_id.as_deref().unwrap_or_default(), 64))
             .bind(clip(&record.name, 64))
-            .bind(clip(&page_path(record.data.as_ref()), 512))
+            .bind(clip(&normalize_path(&page_path(record.data.as_ref())), 512))
             .bind(clip(&data_field(record.data.as_ref(), "target"), 256))
             .bind(clip(record.context_app_name.as_deref().unwrap_or_default(), 64))
             .bind(clip(record.context_app_version.as_deref().unwrap_or_default(), 32));
@@ -229,6 +229,25 @@ fn page_path(data: Option<&serde_json::Value>) -> String {
         return data_field(data, "url");
     }
     path
+}
+
+/// A path names a screen, never a person. `/ic/<uuid>/personal` is one screen
+/// whoever it is about, and storing the id would turn adoption counting into a
+/// record of who read whose profile.
+fn normalize_path(path: &str) -> String {
+    path.split('/')
+        .map(|segment| if is_identifier(segment) { ":id" } else { segment })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// A UUID, or any other long opaque segment a route carries as an id.
+fn is_identifier(segment: &str) -> bool {
+    let uuid_shaped = segment.len() == 36
+        && segment.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+        && segment.matches('-').count() == 4;
+    let all_digits = segment.len() >= 6 && segment.chars().all(|c| c.is_ascii_digit());
+    uuid_shaped || all_digits
 }
 
 fn clip(value: &str, max: usize) -> String {
@@ -470,6 +489,18 @@ mod tests {
 
         let from_app = serde_json::json!({ "path": "\"/portal/people\"" });
         assert_eq!(page_path(Some(&from_app)), "/portal/people");
+    }
+
+    #[test]
+    fn a_page_about_a_person_is_stored_without_naming_them() {
+        assert_eq!(
+            normalize_path("/ic/cccccccc-0000-0000-0000-000000000001/personal/git_output"),
+            "/ic/:id/personal/git_output"
+        );
+        assert_eq!(
+            normalize_path("/portal/manage/platform-usage"),
+            "/portal/manage/platform-usage"
+        );
     }
 
     #[test]

@@ -44,8 +44,28 @@ export async function startUsageTelemetry(session: Session): Promise<void> {
     .start();
 }
 
+/**
+ * The screen a path names, with the person it is about removed: `/ic/<id>/…`
+ * is one screen whoever it belongs to, and counting adoption must not become a
+ * record of who read whose profile. The server does this too — this keeps the
+ * id out of the request in the first place.
+ */
+export function screenPath(path: string): string {
+  return path
+    .split("/")
+    .map((segment) => (isIdentifier(segment) ? ":id" : segment))
+    .join("/");
+}
+
+function isIdentifier(segment: string): boolean {
+  return (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(segment) ||
+    /^\d{6,}$/.test(segment)
+  );
+}
+
 export function recordPageView(path: string): void {
-  service?.logEvent("page_view", { path });
+  service?.logEvent("page_view", { path: screenPath(path) });
 }
 
 /**
