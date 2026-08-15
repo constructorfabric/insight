@@ -167,6 +167,19 @@ describe("AccountSearchView", () => {
     ).toBeInTheDocument();
   });
 
+  // An exclusion is an operator's recorded decision; presenting it as
+  // "bound to nobody" invites binding the bot and undoing that decision.
+  it("shows an excluded account as excluded, not as unbound", () => {
+    hooks.search.data = {
+      items: [match({ person: null, excluded: true, bound_by_operator: true })],
+      truncated: false,
+    };
+    render(<AccountSearchView />);
+
+    expect(screen.getByText(/excluded — bot \/ CI/i)).toBeInTheDocument();
+    expect(screen.queryByText(/bound to nobody/i)).not.toBeInTheDocument();
+  });
+
   it("says a cut list was cut", () => {
     hooks.search.data = { items: [match()], truncated: true };
     render(<AccountSearchView />);

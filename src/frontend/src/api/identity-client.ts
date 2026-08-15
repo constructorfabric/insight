@@ -186,8 +186,13 @@ export interface AccountMatch {
   email?: string | null;
   username?: string | null;
   display_name?: string | null;
-  /** The person holding it; absent = nobody holds it yet. */
+  /** The person holding it; absent = nobody holds it yet — unless
+   *  `excluded` is set, which is a different fact entirely. */
   person?: PersonSummary | null;
+  /** Deliberately excluded from person metrics (bot / CI). An operator's
+   *  recorded decision — not "bound to nobody", and not an invitation to
+   *  bind. Optional so an older backend reads as never-excluded. */
+  excluded?: boolean;
   bound_by_operator: boolean;
 }
 

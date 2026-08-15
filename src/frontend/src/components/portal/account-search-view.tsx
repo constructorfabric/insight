@@ -174,9 +174,14 @@ function AccountRow({
         </div>
       </div>
       {/* Whose it is — the answer the mode exists for. Unbound is an answer
-          too, and a different one from "nobody has decided yet". */}
+          too, and exclusion is a third one: an operator's recorded decision,
+          which "bound to nobody" would invite undoing. */}
       {item.person ? (
         <PersonCell person={item.person} className="ms-auto max-w-xs" />
+      ) : item.excluded ? (
+        <Badge variant="secondary" className="ms-auto font-normal">
+          {t("identities.accounts.excluded")}
+        </Badge>
       ) : (
         <span className="ms-auto text-xs text-muted-foreground">
           {t("identities.accounts.unbound")}

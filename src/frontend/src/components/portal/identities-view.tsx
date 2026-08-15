@@ -710,4 +710,3 @@ function CaseBlock({
     </div>
   );
 }
-

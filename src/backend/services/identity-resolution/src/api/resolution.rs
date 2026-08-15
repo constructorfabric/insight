@@ -882,8 +882,13 @@ pub struct AccountMatchResponse {
     pub email: Option<String>,
     pub username: Option<String>,
     pub display_name: Option<String>,
-    /// The person holding it, hydrated. Absent means nobody holds it yet.
+    /// The person holding it, hydrated. Absent means nobody holds it yet —
+    /// except when `excluded` is set, which is a different fact entirely.
     pub person: Option<PersonSummaryResponse>,
+    /// The account is deliberately excluded from person metrics (a bot, CI, a
+    /// service account). Without this an exclusion — an operator's recorded
+    /// decision — would read as "bound to nobody" and invite undoing it.
+    pub excluded: bool,
     /// `true` when a person decided this binding rather than automation.
     pub bound_by_operator: bool,
 }
@@ -970,12 +975,20 @@ pub async fn search_accounts(
                 email: account.email,
                 username: account.username,
                 display_name: account.description.display_name,
-                person: binding
-                    .and_then(|b| cards.get(&b.person_id).cloned())
-                    .map(|card| PersonSummaryResponse {
-                        provisional: provisional.contains(&card.person_id),
+                // A holder with no card attributes (a login-minted stub) is
+                // still a holder: back-fill an id-only card rather than
+                // presenting a bound account as unbound.
+                person: binding.filter(|b| b.person_id != EXCLUDED_PERSON).map(|b| {
+                    let card = cards
+                        .get(&b.person_id)
+                        .cloned()
+                        .unwrap_or_else(|| PersonCard::empty(b.person_id));
+                    PersonSummaryResponse {
+                        provisional: provisional.contains(&b.person_id),
                         ..PersonSummaryResponse::from(card)
-                    }),
+                    }
+                }),
+                excluded: binding.is_some_and(|b| b.person_id == EXCLUDED_PERSON),
                 bound_by_operator: binding.is_some_and(KnownBinding::is_operator_authored),
             }
         })

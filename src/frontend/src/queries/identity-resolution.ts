@@ -91,11 +91,11 @@ function useCorrection<TArgs>(
   return useMutation({
     mutationFn: run,
     // The journal stays the truth, and the refetch below is what reconciles
-    // to it — but the attention read folds every observed account, so on a
-    // real tenant it takes seconds, and until it lands the operator is still
-    // looking at the row they just decided. Dropping the accounts the SERVER
-    // reported as decided is not a guess about the new state; a `refused`
-    // account keeps its row, and everything else follows from the refetch.
+    // to it — but the attention read folds every observed account, so its
+    // latency grows with the dataset, and until it lands the operator is
+    // still looking at the row they just decided. Dropping the accounts the
+    // SERVER reported as decided is not a guess about the new state; a
+    // `refused` account keeps its row, and the rest follows from the refetch.
     onSuccess: (result) => {
       client.setQueriesData<AttentionResponse>(
         { queryKey: [...RESOLUTION_KEY, "attention"] },

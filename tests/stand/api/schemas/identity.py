@@ -475,6 +475,7 @@ class AccountMatchResponse(BaseModel):
     bound_by_operator: bool = Field(..., description='`true` when a person decided this binding rather than automation.')
     display_name: str | None = None
     email: str | None = None
+    excluded: bool = Field(..., description='The account is deliberately excluded from person metrics (a bot, CI, a\nservice account). Without this an exclusion — an operator\'s recorded\ndecision — would read as "bound to nobody" and invite undoing it.')
     person: PersonSummaryResponse | None = None
     source: str
     source_id: UUID

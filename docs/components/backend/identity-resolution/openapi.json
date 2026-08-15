@@ -66,6 +66,10 @@
               "null"
             ]
           },
+          "excluded": {
+            "description": "The account is deliberately excluded from person metrics (a bot, CI, a\nservice account). Without this an exclusion — an operator's recorded\ndecision — would read as \"bound to nobody\" and invite undoing it.",
+            "type": "boolean"
+          },
           "person": {
             "oneOf": [
               {
@@ -73,7 +77,7 @@
               },
               {
                 "$ref": "#/components/schemas/PersonSummaryResponse",
-                "description": "The person holding it, hydrated. Absent means nobody holds it yet."
+                "description": "The person holding it, hydrated. Absent means nobody holds it yet —\nexcept when `excluded` is set, which is a different fact entirely."
               }
             ]
           },
@@ -95,6 +99,7 @@
           "source",
           "source_id",
           "account_id",
+          "excluded",
           "bound_by_operator"
         ],
         "type": "object"
