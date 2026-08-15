@@ -18,22 +18,44 @@ vi.mock("@tanstack/react-router", async () => {
   return portalRouterMock();
 });
 
-const hooks = vi.hoisted(() => ({
-  search: {
-    data: undefined as { items: AccountMatch[]; truncated: boolean } | undefined,
-    isFetching: false,
+const hooks = vi.hoisted(() => {
+  const verb = () => ({
+    mutate: vi.fn(),
+    reset: vi.fn(),
+    isPending: false,
     isError: false,
-  },
-}));
+    error: null as unknown,
+  });
+  return {
+    search: {
+      data: undefined as { items: AccountMatch[]; truncated: boolean } | undefined,
+      isFetching: false,
+      isError: false,
+    },
+    binding: {
+      data: undefined as unknown,
+      isLoading: true,
+      isError: false,
+      error: null as unknown,
+      refetch: vi.fn(),
+    },
+    verb,
+  };
+});
 vi.mock("@/queries/identity-resolution", () => ({
   useAccountSearch: () => hooks.search,
-  useAccountBinding: () => ({
+  useAccountBinding: () => hooks.binding,
+  useBindAccount: () => hooks.verb(),
+  useMergePersons: () => hooks.verb(),
+  useDetachAccount: () => hooks.verb(),
+  useExcludeAccount: () => hooks.verb(),
+  usePersonAccounts: () => ({
     data: undefined,
-    isLoading: true,
+    isLoading: false,
     isError: false,
-    error: null,
     refetch: vi.fn(),
   }),
+  usePersonSearch: () => ({ data: undefined, isFetching: false, isError: false }),
 }));
 
 import { portalRouter } from "@/test/portal-router";
@@ -61,6 +83,8 @@ beforeEach(() => {
   hooks.search.data = undefined;
   hooks.search.isFetching = false;
   hooks.search.isError = false;
+  hooks.binding.data = undefined;
+  hooks.binding.isLoading = true;
   portalRouter.reset();
   portalRouter.set({ zone: "manage", item: "identities", mode: "accounts" });
 });
@@ -114,6 +138,32 @@ describe("AccountSearchView", () => {
     expect(portalRouter.search.acct).toContain("gh-main");
     expect(
       within(screen.getByRole("dialog")).getByText(/github · gh-main/),
+    ).toBeInTheDocument();
+  });
+
+  // The search itself proves the account exists — an unbound, never-decided
+  // one must open ready to bind, not as "the link may be stale" with no verbs.
+  // Binding an unplaced account is this mode's central use case.
+  it("opens an unbound, never-decided search hit with the verbs offered", async () => {
+    hooks.search.data = { items: [match({ person: null })], truncated: false };
+    hooks.binding.data = {
+      source: "github",
+      source_id: "01900000-0000-7000-8000-00000000aa01",
+      account_id: "gh-main",
+      person_id: null,
+      history: [],
+    };
+    hooks.binding.isLoading = false;
+    render(<AccountSearchView />);
+
+    await userEvent.click(screen.getByRole("button", { name: /^open$/i }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).queryByText(/link may be stale/i),
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: /detach into a new person/i }),
     ).toBeInTheDocument();
   });
 

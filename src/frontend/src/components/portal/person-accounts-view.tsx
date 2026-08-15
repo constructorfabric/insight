@@ -15,7 +15,11 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { UserSearch } from "lucide-react";
 
-import type { PersonAccountEntry, PersonSummary } from "@/api/identity-client";
+import type {
+  AttentionItem,
+  PersonAccountEntry,
+  PersonSummary,
+} from "@/api/identity-client";
 import { CaseDialog } from "@/components/portal/case-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
 import { PersonPicker } from "@/components/portal/person-picker";
@@ -105,6 +109,18 @@ function PersonAccounts({
 
   const entries = accounts.data.accounts;
   const ordered = entries.map((entry) => accountKey(entry));
+  // Queue-shaped rows for the window: the voucher that each account exists
+  // (they are read from the person's own bindings), plus the person as the
+  // one candidate so the current binding renders as a card, not a bare id.
+  const asCases: AttentionItem[] = entries.map((entry) => ({
+    kind: "member",
+    source: entry.source,
+    source_id: entry.source_id,
+    account_id: entry.account_id,
+    email: entry.email,
+    username: entry.username,
+    candidates: [card ?? { person_id: personId }],
+  }));
 
   return (
     <Card>
@@ -133,7 +149,7 @@ function PersonAccounts({
       </CardContent>
       <CaseDialog
         acct={acct}
-        items={[]}
+        items={asCases}
         ordered={ordered}
         onSelect={setAcct}
         onClose={() => setAcct(null)}

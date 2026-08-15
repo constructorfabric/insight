@@ -10,7 +10,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ScanSearch, Search } from "lucide-react";
 
-import type { AccountMatch } from "@/api/identity-client";
+import type { AccountMatch, AttentionItem } from "@/api/identity-client";
 import { CaseDialog } from "@/components/portal/case-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +48,19 @@ export function AccountSearchView() {
   const items = search.data?.items ?? [];
   const ordered = items.map((item) => accountKey(item));
   const asked = debounced.trim().length >= MIN_QUERY_CHARS;
+  // The window takes queue-shaped rows; a search hit adapts. This is also the
+  // voucher that the account exists — without it an unbound, never-decided
+  // account the search just FOUND would open as a stale link with no verbs.
+  const asCases: AttentionItem[] = items.map((m) => ({
+    kind: "match",
+    source: m.source,
+    source_id: m.source_id,
+    account_id: m.account_id,
+    email: m.email,
+    username: m.username,
+    display_name: m.display_name,
+    candidates: m.person ? [m.person] : [],
+  }));
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -123,7 +136,7 @@ export function AccountSearchView() {
 
       <CaseDialog
         acct={acct}
-        items={[]}
+        items={asCases}
         ordered={ordered}
         onSelect={setAcct}
         onClose={() => setAcct(null)}

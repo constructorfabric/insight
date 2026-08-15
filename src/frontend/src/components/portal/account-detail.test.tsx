@@ -233,6 +233,18 @@ describe("AccountDetail", () => {
     expect(screen.getByText("Carol Chen")).toBeInTheDocument();
   });
 
+  // The voucher: a caller who can prove the account is observed (a search
+  // hit, a person's own account list) gets the verbs even with an empty
+  // journal — the stale-link guard exists for mistyped links, not for the
+  // accounts an operator just found.
+  it("offers the verbs on an empty journal when the caller vouches the account exists", () => {
+    binding.q.data = bound({ person_id: null, history: [] });
+    render(<AccountDetail accountRef={REF} queueItem={undefined} observed />);
+
+    expect(screen.queryByText(/link may be stale/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId("account-actions")).toBeInTheDocument();
+  });
+
   it("reads an off-queue empty journal as a stale link, offering no verbs", () => {
     binding.q.data = bound({ person_id: null, history: [] });
     render(<AccountDetail accountRef={REF} queueItem={undefined} />);

@@ -465,6 +465,37 @@ describe("IdentitiesView", () => {
     expect(portalRouter.search.acct).toContain("a2");
   });
 
+  // A decision prunes its row from the list at once. The window must hold
+  // what it knew — the case and its position — or the operator's own success
+  // kills the outcome they are reading and the Next button they are about to
+  // press.
+  it("keeps the open case and the conveyor when the decided row is pruned", async () => {
+    attention.q.data = {
+      items: [
+        item({ account_id: "a1", email: "ann@example.com" }),
+        item({ account_id: "a2", email: "bob@example.com" }),
+      ],
+      rates: RATES,
+    };
+    const view = render(<IdentitiesView />);
+
+    await userEvent.click(screen.getByRole("button", { name: /ann@example\.com/i }));
+    // The verb landed: the server said "decided", the cache dropped the row.
+    attention.q.data = {
+      items: [item({ account_id: "a2", email: "bob@example.com" })],
+      rates: RATES,
+    };
+    view.rerender(<IdentitiesView />);
+
+    const dialog = screen.getByRole("dialog");
+    // The case still names what was decided, not a stale-link apology.
+    expect(within(dialog).getByText(/ann@example\.com/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/link may be stale/i)).not.toBeInTheDocument();
+    // And the conveyor still moves: the row that shifted into this slot is next.
+    await userEvent.click(within(dialog).getByRole("button", { name: /next account/i }));
+    expect(portalRouter.search.acct).toContain("a2");
+  });
+
   // Modes are ways IN to the same decisions; the mode rides in the URL so a
   // link opens the one it was sent from.
   it("switches modes through the URL, dropping the account selected in the old one", async () => {

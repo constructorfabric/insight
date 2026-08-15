@@ -45,11 +45,17 @@ const VERB_KEYS: Record<string, string> = {
 export function AccountDetail({
   accountRef,
   queueItem,
+  observed = false,
 }: {
   accountRef: AccountRef;
   /** The queue row for this account, when it is still in the queue — the
    *  source of hydrated candidate cards and observed evidence. */
   queueItem: AttentionItem | undefined;
+  /** The caller vouches the account exists (a queue row, a search hit, a
+   *  person's account list). Without a voucher, an account with no binding
+   *  and no history reads as a stale link — offering verbs there would let a
+   *  mistyped `?acct=` pre-register a typo as a real account. */
+  observed?: boolean;
 }) {
   const { t } = useTranslation();
   const binding = useAccountBinding(accountRef);
@@ -68,6 +74,7 @@ export function AccountDetail({
   if (!binding.data) return null;
 
   const neverSeen =
+    !observed &&
     queueItem == null &&
     binding.data.person_id == null &&
     binding.data.history.length === 0;

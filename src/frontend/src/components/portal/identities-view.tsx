@@ -324,9 +324,14 @@ function Queue({ items: everything }: { items: AttentionItem[] }) {
   // Closing the window puts the operator back on the row they opened, not at
   // the top of the page — the queue is worked in one pass.
   const returnFocus = (key: string) => {
-    listRef.current
-      ?.querySelector<HTMLElement>(`[data-queue-row="${CSS.escape(key)}"]`)
-      ?.focus();
+    const row =
+      listRef.current?.querySelector<HTMLElement>(
+        `[data-queue-row="${CSS.escape(key)}"]`,
+      ) ??
+      // The row an operator just decided is pruned by the time the window
+      // closes — fall to the top of the list rather than to nowhere.
+      listRef.current?.querySelector<HTMLElement>("[data-queue-row]");
+    row?.focus();
   };
 
   // The queue is a list, so it moves like one. Enter and Space open a row;
@@ -410,10 +415,23 @@ function QueueFilter() {
   const setSearch = useSetPortalSearch();
   const [query, setQuery] = useState(filter ?? "");
   const debounced = useDebouncedValue(query, FILTER_DEBOUNCE_MS);
+  // What this component last wrote to the URL. Distinguishes its own write
+  // landing (ignore) from an external change — Back, a pasted link — which
+  // must reach the input, or the box shows a filter the list stopped using.
+  const lastWritten = useRef(filter ?? "");
 
   useEffect(() => {
+    lastWritten.current = debounced.trim();
     setSearch({ filter: debounced.trim() || undefined }, { replace: true });
   }, [debounced, setSearch]);
+
+  useEffect(() => {
+    const external = filter ?? "";
+    if (external !== lastWritten.current) {
+      lastWritten.current = external;
+      setQuery(external);
+    }
+  }, [filter]);
 
   return (
     <div className="relative">
