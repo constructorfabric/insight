@@ -17,6 +17,7 @@ import type {
   MetricDefinition,
 } from "@/api/metric-definitions-client";
 import { IdentitiesView } from "@/components/portal/identities-view";
+import { PlatformUsage } from "@/components/portal/platform-usage";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
 import { WhatsNewBody } from "@/screens/whats-new";
@@ -43,6 +44,7 @@ export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
   if (item === "data-health") return <DataHealth />;
   if (item === "identities") return <IdentitiesGate />;
+  if (item === "platform-usage") return <PlatformUsage />;
   if (item === "whats-new") return <WhatsNewBody />;
   return (
     <div className="mx-auto w-full max-w-md p-8">

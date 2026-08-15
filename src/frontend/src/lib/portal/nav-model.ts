@@ -291,7 +291,7 @@ export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "group-mgmt", label: "Group management", icon: Users, readiness: "unbuilt" },
   { id: "scorecard-mgmt", label: "Scorecard management", icon: BarChart3, readiness: "unbuilt" },
   { id: "data-health", label: "Data health", icon: ShieldCheck },
-  { id: "platform-usage", label: "Platform usage", icon: Activity, readiness: "unbuilt" },
+  { id: "platform-usage", label: "Platform usage", icon: Activity, adminOnly: true },
   { id: "mcp", label: "MCP servers", icon: Server, readiness: "unbuilt" },
   { id: "config", label: "Config & setup", icon: Settings2, readiness: "unbuilt" },
   { id: "whats-new", label: "What's new", icon: Megaphone },

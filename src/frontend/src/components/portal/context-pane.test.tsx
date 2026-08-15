@@ -5,9 +5,6 @@
  * items for People, catalog items for Manage), and clicking writes the
  * portal-store selection the content area renders from.
  */
-vi.mock("@/queries/identity-me", () => ({
-  useIsAdmin: () => ({ isAdmin: false, isPending: false }),
-}));
 vi.mock("@tanstack/react-router", async () => {
   const { portalRouterMock } = await import("@/test/portal-router");
   return portalRouterMock();
@@ -30,11 +27,15 @@ const mocks = vi.hoisted(() => ({
     peersHaveData: boolean;
     isPending: boolean;
   }>,
+  isAdmin: false,
 }));
 
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
 vi.mock("@/components/org-tree", () => ({
   OrgTree: () => <div data-testid="org-tree" />,
+}));
+vi.mock("@/queries/identity-me", () => ({
+  useIsAdmin: () => ({ isAdmin: mocks.isAdmin, isPending: false }),
 }));
 
 import {
@@ -154,6 +155,18 @@ describe("ContextPane", () => {
     mocks.zone = { activeZone: "scorecard", activePerson: "boss@x" };
     pane();
     expect(document.querySelectorAll("[data-active]")).toHaveLength(0);
+  it("keeps admin-only Manage items away from a non-admin", () => {
+    mocks.zone = { activeZone: "manage", activePerson: "boss@x" };
+    mocks.isAdmin = false;
+    pane();
+    expect(screen.queryByText(/Platform usage/i)).not.toBeInTheDocument();
+  });
+
+  it("shows admin-only Manage items to an admin", () => {
+    mocks.zone = { activeZone: "manage", activePerson: "boss@x" };
+    mocks.isAdmin = true;
+    pane();
+    expect(screen.getByText(/Platform usage/i)).toBeInTheDocument();
   });
 
   it("renders the person's sections nav in the Person zone", () => {

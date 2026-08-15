@@ -125,6 +125,7 @@ describe("nav classification invariants", () => {
       "metric-catalog",
       "identities",
       "data-health",
+      "platform-usage",
       "whats-new",
     ]);
   });

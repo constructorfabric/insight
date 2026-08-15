@@ -6,6 +6,7 @@ import { I18nextProvider } from "react-i18next";
 
 import "./index.css";
 import {
+  authStore,
   clearAuthErrorAttempts,
   consumeAuthErrorParam,
   consumeOverrideParam,
@@ -19,6 +20,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import i18n from "@/i18n";
 import { queryClient } from "@/query-client";
 import { initSentry } from "@/sentry";
+import { recordPageView, startUsageTelemetry } from "@/telemetry";
 import { router } from "./router";
 
 async function enableMocking(): Promise<void> {
@@ -50,6 +52,7 @@ function bootstrap(): void {
         // The session is non-sliding — without the refresh driver it dies
         // session_ttl (~10 min) after login regardless of activity (#1854).
         startSessionRefresh();
+        startUsageCollection();
         renderApp();
         return;
       }
@@ -69,6 +72,19 @@ function bootstrap(): void {
       // into the login flow.
       renderApp();
     });
+}
+
+/// Adoption events (#2573). Fire-and-forget: the instance may have collection
+/// off, and nothing here may delay or break the render.
+function startUsageCollection(): void {
+  const { session } = authStore.getSnapshot();
+  if (!session) return;
+  void startUsageTelemetry(session).then(() => {
+    recordPageView(window.location.pathname);
+    router.subscribe("onResolved", ({ toLocation }) => {
+      recordPageView(toLocation.pathname);
+    });
+  });
 }
 
 function renderApp(): void {

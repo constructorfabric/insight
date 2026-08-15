@@ -60,6 +60,7 @@ import {
   usePortalNavActions,
 } from "@/lib/portal/portal-nav";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
+import { useIsAdmin } from "@/queries/identity-me";
 import { cn } from "@/lib/utils";
 import { useIsAdmin } from "@/queries/identity-me";
 
