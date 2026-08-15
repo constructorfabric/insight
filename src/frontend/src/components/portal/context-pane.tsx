@@ -104,7 +104,15 @@ export function ContextPane() {
   const dismissDrawer = useDismissDrawer();
 
   return (
-    <Sidebar collapsible={drawer ? "offcanvas" : "none"} className="border-e">
+    <Sidebar
+      collapsible={drawer ? "offcanvas" : "none"}
+      className={cn(
+        "border-e",
+        // The drawer is positioned from the viewport edge, which on a tablet is
+        // where the rail is.
+        drawer && !isPhone && "data-[side=left]:left-14"
+      )}
+    >
       {/* The drawer's zone row already names the zone, so repeating it in a
           header would cost two of the ~14 rows a phone has. */}
       {isPhone ? null : (
