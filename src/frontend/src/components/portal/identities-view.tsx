@@ -13,6 +13,7 @@
  * discussion — and that link answers whatever the queue looks like by then,
  * an emptied backlog included.
  */
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { AttentionItem, ResolutionRates } from "@/api/identity-client";
@@ -28,7 +29,13 @@ import {
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Empty,
   EmptyDescription,
@@ -46,12 +53,13 @@ import { ComingSoon } from "@/components/widgets/coming-soon";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { itemKey, parseAccountKey } from "@/lib/identities/account-key";
+import { groupIntoCases, type QueueCase } from "@/lib/identities/cases";
 import { AccountDetail } from "@/components/portal/account-detail";
 import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import { Info, PartyPopper, TriangleAlert } from "lucide-react";
+import { ChevronDown, Info, PartyPopper, TriangleAlert } from "lucide-react";
 
 /** Queue groups in working order: conflicts first, then the unknowns. */
 const KIND_ORDER = ["contested", "binding_conflict", "no_evidence"] as const;
@@ -321,6 +329,9 @@ function CaseDialog({
   );
 }
 
+/** Cases rendered before the group asks to be expanded further. */
+const CASE_PAGE = 10;
+
 function QueueGroup({
   kind,
   items,
@@ -333,16 +344,118 @@ function QueueGroup({
   onSelect: (key: string) => void;
 }) {
   const { t } = useTranslation();
+  const [shownCases, setShownCases] = useState(CASE_PAGE);
+  const cases = useMemo(() => groupIntoCases(items), [items]);
+  const visible = cases.slice(0, shownCases);
+  const hidden = cases.length - visible.length;
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm">
-          {t(`identities.kind.${kind}`, { defaultValue: kind })}
-          <Badge variant="secondary">{items.length}</Badge>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-1 p-2 pt-0">
-        {items.map((item) => {
+    <Card className="overflow-hidden">
+      <Collapsible defaultOpen>
+        <CollapsibleTrigger
+          render={
+            <button
+              type="button"
+              className="group flex w-full cursor-pointer items-center gap-2 px-6 py-4 text-start hover:bg-accent/40"
+            />
+          }
+        >
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[panel-open]:rotate-180" />
+          <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+            {t(`identities.kind.${kind}`, { defaultValue: kind })}
+            <Badge variant="secondary">
+              {cases.length === items.length
+                ? items.length
+                : t("identities.queue.case_count", {
+                    count: cases.length,
+                    accounts: items.length,
+                  })}
+            </Badge>
+          </CardTitle>
+          <SourceCounts items={items} />
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent className="flex flex-col gap-2 p-2 pt-0">
+            {visible.map((queueCase) => (
+              <CaseBlock
+                key={queueCase.key}
+                queueCase={queueCase}
+                selectedKey={selectedKey}
+                onSelect={onSelect}
+              />
+            ))}
+            {hidden > 0 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="self-start"
+                onClick={() => setShownCases((n) => n + CASE_PAGE)}
+              >
+                {t("identities.queue.show_more", { count: hidden })}
+              </Button>
+            ) : null}
+          </CardContent>
+        </CollapsibleContent>
+      </Collapsible>
+    </Card>
+  );
+}
+
+/** Which connectors this group's accounts came from, so a glance places it. */
+function SourceCounts({ items }: { items: AttentionItem[] }) {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    counts.set(item.source, (counts.get(item.source) ?? 0) + 1);
+  }
+  return (
+    <span className="ms-auto flex flex-wrap items-center gap-1">
+      {[...counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([source, count]) => (
+          <span
+            key={source}
+            className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
+          >
+            {source} {count}
+          </span>
+        ))}
+    </span>
+  );
+}
+
+/**
+ * One argument, however many accounts it spans: the people under discussion
+ * once at the top, then the accounts each decision is taken on.
+ */
+function CaseBlock({
+  queueCase,
+  selectedKey,
+  onSelect,
+}: {
+  queueCase: QueueCase;
+  selectedKey: string | undefined;
+  onSelect: (key: string) => void;
+}) {
+  const { t } = useTranslation();
+  const disputed = queueCase.candidates.length > 0;
+  return (
+    <div className={cn(disputed && "rounded-lg border bg-muted/20 p-2")}>
+      {disputed ? (
+        <div className="flex flex-col gap-2 p-1">
+          <div className="text-xs text-muted-foreground">
+            {t("identities.queue.case_summary", {
+              people: queueCase.candidates.length,
+              count: queueCase.items.length,
+            })}
+          </div>
+          {queueCase.candidates.map((candidate) => (
+            <PersonCell key={candidate.person_id} person={candidate} />
+          ))}
+        </div>
+      ) : null}
+      <div className="flex flex-col gap-1">
+        {queueCase.items.map((item) => {
           const key = itemKey(item);
           const selected = key === selectedKey;
           const label =
@@ -353,7 +466,7 @@ function QueueGroup({
               // Not a <button>: its text is what an operator copies out — an
               // address, an account id, a person id — and a button neither
               // lets that text be selected nor may contain the copy controls
-              // the cards carry.
+              // a card carries.
               role="button"
               tabIndex={0}
               onClick={(event) => {
@@ -366,9 +479,8 @@ function QueueGroup({
                 onSelect(key);
               }}
               aria-pressed={selected}
-              // Without a label the name is computed from everything inside —
-              // both candidate cards, their ids and their copy controls read
-              // out as one sentence before the account is even named.
+              // Without a label the name is computed from everything inside,
+              // which reads out before the account is even named.
               aria-label={`${label} ${item.source}`}
               className={cn(
                 "cursor-pointer rounded-md border p-3 text-start select-text",
@@ -383,18 +495,11 @@ function QueueGroup({
                   {item.source}
                 </span>
               </div>
-              {item.candidates.length > 0 ? (
-                <div className="mt-2 flex flex-col gap-2">
-                  {item.candidates.map((candidate) => (
-                    <PersonCell key={candidate.person_id} person={candidate} />
-                  ))}
-                </div>
-              ) : null}
             </div>
           );
         })}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 

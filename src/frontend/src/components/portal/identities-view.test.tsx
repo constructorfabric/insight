@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 /**
- * The review queue, phase 1. What matters: the empty queue is a celebrated
- * goal state, not a blank table; groups come in working order with honest
- * counts and an unknown kind still shows up (the vocabulary is open by
- * contract); selection lives in the URL so an operator can share a link; and
- * the rates strip shows the tenant-wide counts, not the page's.
+ * The review queue. What matters: the empty queue is a celebrated goal state,
+ * not a blank table; groups come in working order with honest counts and an
+ * unknown kind still shows up (the vocabulary is open by contract); accounts
+ * arguing over the same people are ONE case rather than as many rows as the
+ * server sends; selection lives in the URL so an operator can share a link;
+ * and the strip leads with the queue's own size — the one figure the operator
+ * can act on — over tenant-wide binding states.
  */
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -162,6 +164,30 @@ describe("IdentitiesView", () => {
     expect(screen.getByText(/no address to match on/i)).toBeInTheDocument();
     // Unknown kind lands in the catch-all group rather than vanishing.
     expect(screen.getByText("q-1")).toBeInTheDocument();
+  });
+
+  // Five rows repeating the same two candidates read as five problems. The
+  // people are stated once for the case; the rows underneath are the accounts
+  // each decision is taken on.
+  it("shows one case for the accounts arguing over the same people", () => {
+    const candidates = [
+      { person_id: "01900000-0000-7000-8000-0000000000a0", display_name: "Ann Lee" },
+      { person_id: "01900000-0000-7000-8000-0000000000b0", display_name: "Bob Park" },
+    ];
+    attention.q.data = {
+      items: [
+        item({ kind: "binding_conflict", account_id: "a1", source: "hr", candidates }),
+        item({ kind: "binding_conflict", account_id: "a2", source: "wiki", candidates }),
+        item({ kind: "binding_conflict", account_id: "a3", source: "chat", candidates }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    expect(screen.getAllByText("Ann Lee")).toHaveLength(1);
+    expect(screen.getByText(/1 case · 3 accounts/i)).toBeInTheDocument();
+    // Each account still has its own row: a decision is taken per account.
+    expect(screen.getAllByRole("button", { name: /dev42@example\.com/i })).toHaveLength(3);
   });
 
   it("renders candidates as person cells", () => {

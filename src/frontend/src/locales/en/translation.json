@@ -429,7 +429,13 @@
       "items_truncated": "Only the first accounts needing review are listed — resolve these and reload to see the rest.",
       "truncated": "The evidence read hit its cap — these counts and this queue cover only part of the observed accounts, not the whole tenant.",
       "empty_title": "Everything is resolved",
-      "empty_description": "Every observed account is bound to a person. New conflicts will appear here."
+      "empty_description": "Every observed account is bound to a person. New conflicts will appear here.",
+      "case_summary_one": "{{people}} people, {{count}} account",
+      "case_summary_other": "{{people}} people, {{count}} accounts",
+      "show_more_one": "Show {{count}} more case",
+      "show_more_other": "Show {{count}} more cases",
+      "case_count_one": "{{count}} case · {{accounts}} accounts",
+      "case_count_other": "{{count}} cases · {{accounts}} accounts"
     },
     "detail": {
       "not_found": "This account is unknown — the link may be stale.",
