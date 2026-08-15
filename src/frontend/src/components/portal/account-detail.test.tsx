@@ -125,6 +125,46 @@ describe("AccountDetail", () => {
     expect(screen.getByText(/1 Aug 2026/)).toBeInTheDocument();
   });
 
+  // The resolver writes no reason at all — as an empty string, which is not
+  // null, so a nullish fallback left the badge blank on every automatic entry.
+  // Machine decision versus human decision is the one thing the badge carries.
+  it("says a reasonless entry was automatic instead of rendering a blank badge", () => {
+    binding.q.data = bound({
+      history: [
+        {
+          person_id: BOB.person_id,
+          author_person_id: "00000000-0000-0000-0000-000000000000",
+          by_operator: false,
+          reason: "",
+          recorded_at: "2026-08-01T10:15:00.000000",
+        },
+      ],
+    });
+    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
+
+    expect(screen.getByText(/automatic/i)).toBeInTheDocument();
+  });
+
+  // First-login provisioning mints the binding during the sign-in itself; an
+  // operator meeting a raw `login-bootstrap` learns nothing from it.
+  it("names the first-sign-in provisioning reason", () => {
+    binding.q.data = bound({
+      history: [
+        {
+          person_id: BOB.person_id,
+          author_person_id: "00000000-0000-0000-0000-000000000000",
+          by_operator: false,
+          reason: "login-bootstrap",
+          recorded_at: "2026-08-01T10:15:00.000000",
+        },
+      ],
+    });
+    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
+
+    expect(screen.getByText(/first sign-in/i)).toBeInTheDocument();
+    expect(screen.queryByText("login-bootstrap")).not.toBeInTheDocument();
+  });
+
   it("reads an off-queue empty journal as a stale link, offering no verbs", () => {
     binding.q.data = bound({ person_id: null, history: [] });
     render(<AccountDetail accountRef={REF} queueItem={undefined} />);

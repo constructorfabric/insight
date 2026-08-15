@@ -84,7 +84,10 @@
       "team_summary": "Team summary",
       "attention": "Attention needed",
       "members": "Members"
-    }
+    },
+    "copy": "Copy",
+    "copied": "Copied",
+    "copy_failed": "Unable to copy"
   },
   "theme": {
     "light": "Light",
@@ -402,16 +405,23 @@
     "title": "Identities",
     "subtitle": "Accounts the resolver could not decide — review and resolve them.",
     "rates": {
+      "decisions": "Needs a decision",
+      "decisions_hint": "Cases waiting for you. This is the queue below — the only number here you can act on.",
       "observed": "Observed",
-      "bound": "Resolved",
-      "pending": "Pending review",
-      "no_evidence": "No evidence",
-      "excluded": "Excluded"
+      "observed_hint": "Every account a connector currently reports, closed ones excluded.",
+      "bound": "Bound to a person",
+      "bound_hint": "The account belongs to a person. Its activity counts towards them.",
+      "pending": "Unbound · has an address",
+      "pending_hint": "Waiting for the resolver, not for you: an address is present, so the next run binds it. Only the contested ones reach the queue.",
+      "no_evidence": "Unbound · nothing to match on",
+      "no_evidence_hint": "No address, so automation has no key to match on. Only a person can bind these — they are in the queue.",
+      "excluded": "Excluded",
+      "excluded_hint": "Declared not a person — a bot, CI or service account. Dropped from every person metric."
     },
     "kind": {
       "contested": "Contested — more than one person claims the account",
       "binding_conflict": "Binding conflicts — evidence disagrees with the current binding",
-      "no_evidence": "No evidence — nothing links the account to anyone",
+      "no_evidence": "No address to match on — only a person can bind these",
       "other": "Needs review"
     },
     "queue": {
@@ -433,7 +443,9 @@
       "no_history": "No decisions recorded yet."
     },
     "person": {
-      "terminated": "terminated"
+      "terminated": "terminated",
+      "unnamed": "Unnamed person",
+      "copy_id": "Copy the person id"
     },
     "history": {
       "bind": "Bound",
@@ -442,7 +454,8 @@
       "exclude": "Excluded",
       "automatic": "Automatic",
       "to": "to",
-      "by_operator": "by an operator"
+      "by_operator": "by an operator",
+      "login_bootstrap": "First sign-in"
     },
     "actions": {
       "bind": "Bind",

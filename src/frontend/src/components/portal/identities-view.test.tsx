@@ -159,7 +159,7 @@ describe("IdentitiesView", () => {
 
     const contested = screen.getByText(/contested/i).closest("[data-slot=card]");
     expect(within(contested as HTMLElement).getByText("2")).toBeInTheDocument();
-    expect(screen.getByText(/nothing links the account/i)).toBeInTheDocument();
+    expect(screen.getByText(/no address to match on/i)).toBeInTheDocument();
     // Unknown kind lands in the catch-all group rather than vanishing.
     expect(screen.getByText("q-1")).toBeInTheDocument();
   });
@@ -194,6 +194,51 @@ describe("IdentitiesView", () => {
     expect(row).toHaveAttribute("aria-pressed", "true");
 
     await userEvent.click(row);
+    expect(portalRouter.search.acct).toBeUndefined();
+  });
+
+  // The tiles count binding states; only the queue is work. A tile promising
+  // "review" for accounts the resolver binds by itself sent an operator
+  // looking for something they cannot do.
+  it("leads with the number the operator can act on — the queue's own size", () => {
+    attention.q.data = { items: [item({}), item({ account_id: "a2" })], rates: RATES };
+    render(<IdentitiesView />);
+
+    const tile = screen
+      .getByText(/needs a decision/i)
+      .closest("div")?.parentElement;
+    expect(within(tile as HTMLElement).getByText("2")).toBeInTheDocument();
+    // The state tiles say what they count, never "review".
+    expect(screen.getByText(/unbound · has an address/i)).toBeInTheDocument();
+    expect(screen.queryByText(/pending review/i)).not.toBeInTheDocument();
+  });
+
+  it("marks the decision count as a floor when the server cut the list", () => {
+    attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
+    render(<IdentitiesView />);
+
+    expect(screen.getByText("1+")).toBeInTheDocument();
+  });
+
+  // The row carries the values an operator copies out, so it cannot be a
+  // <button>: its text would not be selectable and the cards' copy controls
+  // would be interactive content nested inside a control.
+  it("keeps a copy press inside a row from selecting the case", async () => {
+    attention.q.data = {
+      items: [
+        item({
+          candidates: [
+            { person_id: "01900000-0000-7000-8000-000000000001", display_name: "Bob Park" },
+          ],
+        }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /copy 01900000-0000-7000-8000-000000000001/i }),
+    );
     expect(portalRouter.search.acct).toBeUndefined();
   });
 

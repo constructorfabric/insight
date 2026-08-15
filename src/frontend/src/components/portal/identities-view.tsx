@@ -27,6 +27,12 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
@@ -36,18 +42,31 @@ import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import { PartyPopper, TriangleAlert, UserSearch } from "lucide-react";
+import { Info, PartyPopper, TriangleAlert, UserSearch } from "lucide-react";
 
 /** Queue groups in working order: conflicts first, then the unknowns. */
 const KIND_ORDER = ["contested", "binding_conflict", "no_evidence"] as const;
 
+// Binding states, not workloads: every one of these counts accounts the
+// resolver has already placed or will place by itself. The only number an
+// operator can act on is the queue's own size, which is why it leads the strip
+// and is the only one carrying a status colour.
 const RATE_TILES: ReadonlyArray<{ key: keyof ResolutionRates; status: Status }> = [
   { key: "observed", status: "neutral" },
   { key: "bound", status: "good" },
-  { key: "pending", status: "warn" },
-  { key: "no_evidence", status: "bad" },
+  { key: "pending", status: "neutral" },
+  { key: "no_evidence", status: "neutral" },
   { key: "excluded", status: "neutral" },
 ];
+
+/** A click selects the case — unless it pressed a control or ended a selection. */
+function opensTheCase(event: React.MouseEvent<HTMLElement>): boolean {
+  if (event.target instanceof Element && event.target.closest("button, a")) {
+    return false;
+  }
+  const selection = window.getSelection();
+  return !selection || selection.isCollapsed;
+}
 
 export function IdentitiesView() {
   const { t } = useTranslation();
@@ -96,30 +115,85 @@ export function IdentitiesView() {
           </AlertDescription>
         </Alert>
       ) : null}
-      <RatesStrip rates={rates} />
+      <RatesStrip
+        rates={rates}
+        decisions={items.length}
+        decisionsCapped={Boolean(itemsTruncated)}
+      />
       <Queue items={items} />
     </div>
   );
 }
 
-function RatesStrip({ rates }: { rates: ResolutionRates }) {
+function RatesStrip({
+  rates,
+  decisions,
+  decisionsCapped,
+}: {
+  rates: ResolutionRates;
+  /** Cases in the queue — the only figure here that is the operator's work. */
+  decisions: number;
+  /** The server cut the list, so the queue size is a floor, not the total. */
+  decisionsCapped: boolean;
+}) {
   const { t } = useTranslation();
   return (
-    <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
-      {RATE_TILES.map(({ key, status }) => (
-        <div key={key} className="rounded-lg border bg-card p-4">
-          <div className={TEXT_FIGURE}>{rates[key]}</div>
-          <span
-            className={cn(
-              TEXT_LABEL,
-              "mt-1 inline-block rounded px-1.5 py-0.5",
-              STATUS_SURFACE_CLASS[status],
-            )}
+    <TooltipProvider>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
+        <Tile
+          figure={decisionsCapped ? `${decisions}+` : String(decisions)}
+          label={t("identities.rates.decisions")}
+          hint={t("identities.rates.decisions_hint")}
+          status="warn"
+        />
+        {RATE_TILES.map(({ key, status }) => (
+          <Tile
+            key={key}
+            figure={String(rates[key])}
+            label={t(`identities.rates.${key}`)}
+            hint={t(`identities.rates.${key}_hint`)}
+            status={status}
+          />
+        ))}
+      </div>
+    </TooltipProvider>
+  );
+}
+
+function Tile({
+  figure,
+  label,
+  hint,
+  status,
+}: {
+  figure: string;
+  label: string;
+  hint: string;
+  status: Status;
+}) {
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <div className={TEXT_FIGURE}>{figure}</div>
+      <span className="mt-1 inline-flex items-center gap-1">
+        <span
+          className={cn(
+            TEXT_LABEL,
+            "inline-block rounded px-1.5 py-0.5",
+            STATUS_SURFACE_CLASS[status],
+          )}
+        >
+          {label}
+        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={<span className="inline-flex text-muted-foreground" />}
+            aria-label={label}
           >
-            {t(`identities.rates.${key}`)}
-          </span>
-        </div>
-      ))}
+            <Info className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">{hint}</TooltipContent>
+        </Tooltip>
+      </span>
     </div>
   );
 }
@@ -223,13 +297,26 @@ function QueueGroup({
           const key = itemKey(item);
           const selected = key === selectedKey;
           return (
-            <button
+            <div
               key={key}
-              type="button"
-              onClick={() => onSelect(key)}
+              // Not a <button>: its text is what an operator copies out — an
+              // address, an account id, a person id — and a button neither
+              // lets that text be selected nor may contain the copy controls
+              // the cards carry.
+              role="button"
+              tabIndex={0}
+              onClick={(event) => {
+                if (opensTheCase(event)) onSelect(key);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                if (event.target !== event.currentTarget) return;
+                event.preventDefault();
+                onSelect(key);
+              }}
               aria-pressed={selected}
               className={cn(
-                "rounded-md border p-3 text-start",
+                "cursor-pointer rounded-md border p-3 text-start select-text",
                 selected
                   ? "border-ring bg-muted"
                   : "border-transparent hover:bg-muted/60",
@@ -244,13 +331,13 @@ function QueueGroup({
                 </span>
               </div>
               {item.candidates.length > 0 ? (
-                <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
+                <div className="mt-2 flex flex-col gap-2">
                   {item.candidates.map((candidate) => (
                     <PersonCell key={candidate.person_id} person={candidate} />
                   ))}
                 </div>
               ) : null}
-            </button>
+            </div>
           );
         })}
       </CardContent>

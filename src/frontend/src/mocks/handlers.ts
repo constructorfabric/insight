@@ -421,8 +421,17 @@ export const handlers = [
             person_id: carol?.person_id,
             author_person_id: "00000000-0000-0000-0000-000000000000",
             by_operator: false,
-            reason: null,
+            // The resolver's own rows carry an EMPTY reason, never null —
+            // mirroring the real column, which a nullish fallback misses.
+            reason: "",
             recorded_at: "2026-07-15T08:00:00.000000",
+          },
+          {
+            person_id: carol?.person_id,
+            author_person_id: "00000000-0000-0000-0000-000000000000",
+            by_operator: false,
+            reason: "login-bootstrap",
+            recorded_at: "2026-07-01T06:30:00.000000",
           },
         ],
       });

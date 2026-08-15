@@ -31,12 +31,13 @@ import { personDisplayName } from "@/lib/identities/person-display";
 import { formatUtcInstant } from "@/lib/format";
 import { useAccountBinding } from "@/queries/identity-resolution";
 
-/** Known verb codes → i18n keys; anything else renders as-is (open vocabulary). */
+/** Known reason codes → i18n keys; anything else renders as-is (open vocabulary). */
 const VERB_KEYS: Record<string, string> = {
   "operator-bind": "identities.history.bind",
   "operator-merge": "identities.history.merge",
   "operator-detach": "identities.history.detach",
   "operator-exclude": "identities.history.exclude",
+  "login-bootstrap": "identities.history.login_bootstrap",
 };
 
 export function AccountDetail({
@@ -152,13 +153,17 @@ function HistoryRow({
   candidates: PersonSummary[];
 }) {
   const { t } = useTranslation();
-  const verbKey = entry.reason ? VERB_KEYS[entry.reason] : undefined;
+  // The resolver stores no reason for its own rows — as an empty string, not
+  // as null, so a nullish fallback leaves the badge blank on every automatic
+  // entry, which is most of them.
+  const reason = entry.reason?.trim() || undefined;
+  const verbKey = reason ? VERB_KEYS[reason] : undefined;
   const target = candidates.find((c) => c.person_id === entry.person_id);
   return (
     <li className="rounded-md border p-2">
       <div className="flex items-center gap-2">
         <Badge variant={entry.by_operator ? "secondary" : "outline"}>
-          {verbKey ? t(verbKey) : (entry.reason ?? t("identities.history.automatic"))}
+          {verbKey ? t(verbKey) : (reason ?? t("identities.history.automatic"))}
         </Badge>
         <span className="ms-auto text-xs text-muted-foreground">
           {formatUtcInstant(entry.recorded_at, "d MMM yyyy, HH:mm")}
