@@ -32,6 +32,9 @@ const BREAKDOWN_LIMIT: u32 = 200;
 /// The event the SPA emits on every resolved route.
 const PAGE_VIEW: &str = "page_view";
 
+/// The SDK's own lifecycle event, emitted once per session.
+const SESSION_START: &str = "session_start";
+
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 
 pub const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS presentation.usage_events (
@@ -208,6 +211,18 @@ fn data_field(data: Option<&serde_json::Value>, key: &str) -> String {
 
 /// Where a page view happened. The SDK's own page view names it `url`; the
 /// one the app emits names it `path`.
+/// Deliberate actions only: a page view has its own breakdown, and
+/// `session_start` is the SDK announcing a session rather than anyone doing
+/// something. Both are already counted as visits.
+fn actions_sql(window: &str, visitors: &str) -> String {
+    format!(
+        "SELECT event_name, target, count() AS opens, {visitors} AS people \
+         FROM {TABLE} WHERE {window} \
+         AND event_name NOT IN ('{PAGE_VIEW}', '{SESSION_START}') \
+         GROUP BY event_name, target ORDER BY opens DESC LIMIT {BREAKDOWN_LIMIT}"
+    )
+}
+
 fn page_path(data: Option<&serde_json::Value>) -> String {
     let path = data_field(data, "path");
     if path.is_empty() {
@@ -375,11 +390,7 @@ pub async fn get_usage_summary(
 
     let by_event = state
         .ch
-        .query(&format!(
-            "SELECT event_name, target, count() AS opens, {visitors} AS people \
-             FROM {TABLE} WHERE {window} AND event_name != '{PAGE_VIEW}' \
-             GROUP BY event_name, target ORDER BY opens DESC LIMIT {BREAKDOWN_LIMIT}"
-        ))
+        .query(&actions_sql(&window, &visitors))
         .fetch_all::<UsageEvent>()
         .await
         .map_err(read_error)?;
@@ -472,6 +483,21 @@ mod tests {
         let sql = insert_sql(2);
         assert_eq!(sql.matches('?').count(), 20, "ten placeholders per row: {sql}");
         assert!(sql.contains("async_insert = 1"), "batched server-side: {sql}");
+    }
+
+    #[test]
+    fn the_actions_breakdown_leaves_out_what_nobody_did() {
+        // `page_view` is its own table and `session_start` is the SDK's
+        // lifecycle event — both are already counted as visits.
+        let sql = actions_sql("1", "2");
+        assert!(!sql.contains("event_name = 'page_view'"), "{sql}");
+        for lifecycle in ["'page_view'", "'session_start'"] {
+            assert!(
+                sql.contains(&format!("event_name != {lifecycle}"))
+                    || sql.contains(&format!("NOT IN ('page_view', 'session_start')")),
+                "excludes {lifecycle}: {sql}"
+            );
+        }
     }
 
     #[test]
