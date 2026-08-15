@@ -18,7 +18,11 @@ import {
 import { GROUPS } from "@/lib/insight/groups";
 import { usePersonSectionStandings } from "@/lib/portal/use-person-sections";
 import { STATUS_BG_CLASS } from "@/lib/status";
-import { lensEntry } from "@/lib/portal/lens-configs";
+import {
+  lensEntry,
+  visibleDirections,
+  visibleLenses,
+} from "@/lib/portal/lens-configs";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
 import { useZoneNav } from "@/lib/portal/use-zone-nav";
 import {
@@ -38,7 +42,6 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import {
-  DIRECTIONS,
   manageItemsFor,
   PEOPLE_ITEMS,
   PLANNED_GROUP_LABEL,
@@ -395,17 +398,19 @@ function ItemButton({
 /* ── Directions zone ─────────────────────────────────────────────────── */
 
 function DirectionsNav() {
+  const showPlanned = usePortalShowPlanned();
+  const directions = visibleDirections(showPlanned);
   return (
     <SidebarGroup>
       <SidebarGroupLabel>
         Directions
         <span className="ml-1 text-xs font-normal text-muted-foreground">
-          · catalog · {DIRECTIONS.length}
+          · catalog · {directions.length}
         </span>
       </SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
-          {DIRECTIONS.map((d) => (
+          {directions.map((d) => (
             <DirectionItem key={d.id} direction={d} />
           ))}
         </SidebarMenu>
@@ -422,14 +427,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
   const showPlanned = usePortalShowPlanned();
   const expanded = activeDir === direction.id;
   const Icon = direction.icon;
-  // A lens we simply have not built yet is hidden unless the viewer asked for
-  // planned work; a lens waiting on the product stays listed (dimmed) because
-  // it tells the reader the domain exists in our model.
-  const lenses = direction.lenses.filter((lens) => {
-    const entry = lensEntry(direction.id, lens);
-    if (!entry || !("comingSoon" in entry)) return true;
-    return entry.readiness === "planned" || showPlanned;
-  });
+  const lenses = visibleLenses(direction, showPlanned);
 
   function toggle() {
     if (expanded) {
@@ -499,16 +497,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
 function PeopleNav({ active }: { active: string | null }) {
   return (
     <>
-      <SidebarGroup>
-        <SidebarGroupLabel>Views</SidebarGroupLabel>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {PEOPLE_ITEMS.map((it) => (
-              <ItemButton key={it.id} item={it} active={active === it.id} />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
+      <ItemsNav items={PEOPLE_ITEMS} groupLabel="Views" active={active} />
       <WorkChart />
     </>
   );

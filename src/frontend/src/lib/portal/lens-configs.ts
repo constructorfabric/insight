@@ -1,4 +1,4 @@
-import type { Readiness } from "@/lib/portal/nav-model";
+import { DIRECTIONS, type Direction, type Readiness } from "@/lib/portal/nav-model";
 
 /**
  * The Directions registry: every direction × lens maps to either a LensConfig
@@ -57,6 +57,25 @@ export type LensEntry = LensConfig | LensRoadmap;
 /** The registry entry for a direction's lens — a config, a roadmap note, or nothing. */
 export function lensEntry(dir: string, lens: string): LensEntry | undefined {
   return DIRECTION_LENSES[dir]?.[lens];
+}
+
+/** A direction's lenses in pane order, minus the roadmap ones a reader opted out of. */
+export function visibleLenses(
+  direction: Direction,
+  showPlanned: boolean,
+): string[] {
+  return direction.lenses.filter((lens) => {
+    const entry = lensEntry(direction.id, lens);
+    return !entry || !("comingSoon" in entry) || showPlanned;
+  });
+}
+
+/**
+ * Directions worth listing: a branch whose every lens is filtered out expands
+ * into nothing, so it is a dead end rather than a place to look.
+ */
+export function visibleDirections(showPlanned: boolean): Direction[] {
+  return DIRECTIONS.filter((d) => visibleLenses(d, showPlanned).length > 0);
 }
 
 /** Unique metric keys a config needs in its period+peer grid. */
