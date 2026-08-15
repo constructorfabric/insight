@@ -321,7 +321,7 @@ function ZoneItem({
     <SidebarMenuItem className="relative z-10">
       <SidebarMenuButton
         isActive={active}
-        title={open ? undefined : zone.label}
+        title={zone.label}
         // 40px shut, the full open width while open — see note 2 above. The
         // icon does not move between the two: the button starts its content at
         // the same offset either way.

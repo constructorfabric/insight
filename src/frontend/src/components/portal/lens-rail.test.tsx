@@ -134,21 +134,6 @@ describe("LensRail", () => {
     expect(labelOf("People")).toHaveClass("opacity-100");
   });
 
-  it("drops the icon's tooltip once the label is readable", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    rail();
-    expect(screen.getByRole("button", { name: "People" })).toHaveAttribute(
-      "title",
-      "People",
-    );
-
-    await user.hover(screen.getByTestId("lens-rail"));
-    settle();
-    expect(screen.getByRole("button", { name: "People" })).not.toHaveAttribute(
-      "title",
-    );
-  });
-
   it("renders nothing on a phone", () => {
     // 56px of rail plus a 256px pane left a phone with almost no content; the
     // zones live in the context pane's drawer there instead.
