@@ -232,6 +232,9 @@ const COLLABORATION_COLLECTION: MetricCollectionConfig = {
       key: "collab.channel_posts",
       views: [{ view: "period" }, { view: "peer" }],
     },
+    // DM Ratio is off until #2577: the ratio sums both halves across every chat
+    // tool, so a tool with no DM split feeds the denominator only.
+    // { key: "collab.dm_ratio", views: [{ view: "period" }, { view: "peer" }] },
     {
       key: "collab.msgs_per_active_day",
       views: [{ view: "period" }, { view: "peer" }],
