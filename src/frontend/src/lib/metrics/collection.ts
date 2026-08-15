@@ -79,6 +79,19 @@ export function filterCollectionToAvailable(
   return kept.length === collection.metrics.length ? collection : { metrics: kept };
 }
 
+/**
+ * Drop named metrics from a collection. Returns the config unchanged when it
+ * names none of them, so query keys stay stable.
+ */
+export function filterCollectionExcluding(
+  collection: MetricCollectionConfig,
+  excluded: ReadonlySet<string>,
+): MetricCollectionConfig {
+  if (excluded.size === 0) return collection;
+  const kept = collection.metrics.filter((m) => !excluded.has(m.key));
+  return kept.length === collection.metrics.length ? collection : { metrics: kept };
+}
+
 export interface MetricCollectionEntity {
   type: MetricEntityType;
   ids: string[];

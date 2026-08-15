@@ -8,6 +8,7 @@ import {
 import {
   buildMetricCollectionRequest,
   entityObserved,
+  filterCollectionExcluding,
   filterCollectionToAvailable,
   type NormalizedMetricResult,
   chunkEntityIds,
@@ -425,5 +426,27 @@ describe("filterCollectionToAvailable", () => {
     // The caller disables the query on an empty metric list; an empty
     // `metrics: []` is itself a 400.
     expect(filterCollectionToAvailable(collection, new Set()).metrics).toEqual([]);
+  });
+});
+
+describe("filterCollectionExcluding", () => {
+  const collection: MetricCollectionConfig = {
+    metrics: [
+      { key: "git.commits", views: [{ view: "period" }] },
+      { key: "collab.dm_ratio", views: [{ view: "period" }] },
+    ],
+  };
+
+  it("drops an excluded key, keeping the rest", () => {
+    const out = filterCollectionExcluding(collection, new Set(["collab.dm_ratio"]));
+    expect(out.metrics.map((m) => m.key)).toEqual(["git.commits"]);
+  });
+
+  it("returns the SAME object when it names none of them", () => {
+    // Identity matters: the config rides in the react-query key.
+    expect(filterCollectionExcluding(collection, new Set(["ai.cost"]))).toBe(
+      collection,
+    );
+    expect(filterCollectionExcluding(collection, new Set())).toBe(collection);
   });
 });

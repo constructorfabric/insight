@@ -9,9 +9,11 @@ import {
   previousPeriodRange,
   type DateRange,
 } from "@/api/period-to-date-range";
+import { PLANNED_METRICS } from "@/lib/insight/groups";
 import {
   buildMetricCollectionRequest,
   chunkEntityIds,
+  filterCollectionExcluding,
   filterCollectionToAvailable,
   entityChunkSize,
   mergeNormalizedResults,
@@ -21,6 +23,7 @@ import {
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useAvailableMetricKeys } from "@/queries/metric-definitions";
 import type { PeriodValue } from "@/types/insight";
 
@@ -50,6 +53,16 @@ function canonicalEntityIds(entity: MetricCollectionEntity): string[] {
       ? entity.ids.map(normalizePersonId)
       : entity.ids.map((id) => id.trim());
   return [...new Set(ids.filter(Boolean))].sort();
+}
+
+/** A planned metric is neither requested nor rendered until the reader asks for it. */
+function visibleCollection(
+  collection: MetricCollectionConfig,
+  showPlanned: boolean
+): MetricCollectionConfig {
+  return showPlanned
+    ? collection
+    : filterCollectionExcluding(collection, PLANNED_METRICS);
 }
 
 function queryKeyFor(
@@ -82,7 +95,11 @@ export function useMetricCollection(
   // rejects the WHOLE request over one unknown key, so a compiled-in key that
   // a tenant does not have would blank the screen instead of its own tile.
   const catalog = useAvailableMetricKeys();
-  const asked = filterCollectionToAvailable(collection, catalog.keys);
+  const showPlanned = usePortalShowPlanned();
+  const asked = filterCollectionToAvailable(
+    visibleCollection(collection, showPlanned),
+    catalog.keys,
+  );
   const request = buildMetricCollectionRequest(
     asked,
     { type: entity.type, ids },
@@ -196,6 +213,7 @@ export function useMetricCollectionSet(
 ): Map<string, MetricCollectionResult> {
   const ids = canonicalEntityIds(entity);
   const catalog = useAvailableMetricKeys();
+  const showPlanned = usePortalShowPlanned();
   const enabled =
     ids.length > 0 && !catalog.isPending && Boolean(range.from && range.to);
 
@@ -203,8 +221,11 @@ export function useMetricCollectionSet(
   // never exceeds the backend's all-or-nothing projected-row limit; chunk
   // results merge back into one collection result per key.
   const requests = collections.flatMap(({ key, collection: raw }) => {
-    // Same catalog gate as `useMetricCollection` — see the note there.
-    const collection = filterCollectionToAvailable(raw, catalog.keys);
+    // Same catalog and planned gates as `useMetricCollection` — see the notes there.
+    const collection = filterCollectionToAvailable(
+      visibleCollection(raw, showPlanned),
+      catalog.keys
+    );
     const chunkSize = entityChunkSize(collection);
     const chunks = chunkSize === null ? [ids] : chunkEntityIds(ids, chunkSize);
     return chunks.map((chunkIds) => {

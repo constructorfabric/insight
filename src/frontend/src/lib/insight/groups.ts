@@ -490,6 +490,15 @@ export const GROUPS: readonly MetricGroup[] = [
 ];
 
 /**
+ * Metrics held behind the reader's "show planned sections" choice — the nav's
+ * `planned` readiness (see `Readiness` in portal/nav-model) at metric grain,
+ * for a number the product does not stand behind yet. A key here is dropped
+ * from the collection before it is requested, so it leaves both the request
+ * and the screen.
+ */
+export const PLANNED_METRICS: ReadonlySet<string> = new Set(["collab.dm_ratio"]);
+
+/**
  * The members heatmap's fixed cross-family column set: one metric key per
  * column, in display order. Every key exists in a group collection above.
  * The FE owns only the key list and order — each column's label, unit,
