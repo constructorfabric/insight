@@ -556,7 +556,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn a_record_without_data_has_no_path() {
         assert_eq!(data_field(None, "path"), "");
         assert_eq!(data_field(Some(&serde_json::json!({})), "path"), "");
