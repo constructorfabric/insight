@@ -42,7 +42,12 @@ pub async fn read(
     creds: &GitCredentials,
     since: Option<&str>,
 ) -> Result<Vec<AuthorRow>, GitError> {
-    let format = format!("--pretty=format:%H{FIELD}%cI{FIELD}%an{FIELD}%ae");
+    // The NAME goes last, so it is the field that absorbs whatever a record
+    // has left over. Git strips newlines out of an ident, so no field here can
+    // carry the separator — but the e-mail is the identity every row is keyed
+    // and grouped on, and it costs nothing to keep it fully delimited rather
+    // than resting that on git's behaviour.
+    let format = format!("--pretty=format:%H{FIELD}%cI{FIELD}%ae{FIELD}%an");
     // `--branches` for the same reason the commit walk uses it: reachability
     // from a branch is the contract, and tags outlive the branch they were cut
     // from.
@@ -74,7 +79,7 @@ fn fold(text: &str, since: Option<&str>) -> Vec<AuthorRow> {
         if !is_object_id(sha) {
             continue;
         }
-        let (Some(committed_date), Some(author_name), Some(author_email)) =
+        let (Some(committed_date), Some(author_email), Some(author_name)) =
             (fields.next(), fields.next(), fields.next())
         else {
             continue;
@@ -123,7 +128,7 @@ mod tests {
     const SHA_C: &str = "cccccccccccccccccccccccccccccccccccccccc";
 
     fn record(sha: &str, date: &str, name: &str, email: &str) -> String {
-        format!("{sha}\n{date}\n{name}\n{email}\0")
+        format!("{sha}\n{date}\n{email}\n{name}\0")
     }
 
     #[test]
@@ -198,19 +203,43 @@ mod tests {
 
     #[test]
     fn an_ident_carrying_the_separator_cannot_shift_another_authors_row() {
-        // The name is attacker-written; a newline in it would take the e-mail
-        // field's place were records not NUL-terminated and fields scrubbed.
-        let text = format!("{SHA_A}\n2026-08-01T10:00:00+00:00\nEve\nevil\nfake@example.com\0")
+        // The name is attacker-written and goes last, so a separator inside it
+        // is absorbed by the name itself: the row still keys on the real
+        // e-mail, and no forged value becomes an author of its own.
+        let text =
+            format!("{SHA_A}\n2026-08-01T10:00:00+00:00\neve@example.com\nEve\nfake@example.com\0")
+                + &record(SHA_B, "2026-08-02T10:00:00+00:00", "Bo", "bo@example.com");
+
+        let rows = fold(&text, None);
+
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.author_email.as_str())
+                .collect::<Vec<_>>(),
+            vec!["bo@example.com", "eve@example.com"],
+            "a forged trailing field must not become another author: {rows:?}"
+        );
+        let eve = rows
+            .iter()
+            .find(|row| row.author_email == "eve@example.com");
+        assert!(
+            eve.is_some_and(|row| row.author_name == "Evefake@example.com"),
+            "the overflow lands in the name, scrubbed of the separator: {eve:?}"
+        );
+    }
+
+    #[test]
+    fn an_author_with_no_email_claims_no_row_and_disturbs_no_other() {
+        // Git records an empty ident e-mail as `<>`; the row has no identity to
+        // key on, and dropping it must not shift the record that follows.
+        let text = record(SHA_A, "2026-08-01T10:00:00+00:00", "No Address", "")
             + &record(SHA_B, "2026-08-02T10:00:00+00:00", "Bo", "bo@example.com");
 
         let rows = fold(&text, None);
 
-        assert!(
-            rows.iter()
-                .all(|row| row.author_email != "fake@example.com"),
-            "a forged trailing field must not become another author"
-        );
-        assert!(rows.iter().any(|row| row.author_email == "bo@example.com"));
+        assert_eq!(rows.len(), 1, "the e-mail-less author claims nothing");
+        assert_eq!(rows[0].author_email, "bo@example.com");
+        assert_eq!(rows[0].author_name, "Bo", "the next record parses intact");
     }
 
     #[test]
