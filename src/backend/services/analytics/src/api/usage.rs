@@ -165,6 +165,46 @@ fn data_field(data: Option<&serde_json::Value>, key: &str) -> String {
     }
 }
 
+fn totals_sql(visitors: &str) -> String {
+    format!(
+        "SELECT uniqExact(session_id) AS visits, {visitors} AS visitors, \
+         countIf(event_name = '{PAGE_VIEW}') AS page_views \
+         FROM {TABLE} WHERE {WINDOW}"
+    )
+}
+
+fn by_day_sql(visitors: &str) -> String {
+    format!(
+        "SELECT toString(toDate(ts)) AS day, uniqExact(session_id) AS visits, \
+         {visitors} AS visitors \
+         FROM {TABLE} WHERE {WINDOW} GROUP BY day ORDER BY day"
+    )
+}
+
+fn by_page_sql(visitors: &str) -> String {
+    format!(
+        "SELECT path, count() AS views, {visitors} AS visitors \
+         FROM {TABLE} WHERE {WINDOW} AND event_name = '{PAGE_VIEW}' AND path != '' \
+         GROUP BY path ORDER BY views DESC LIMIT {BREAKDOWN_LIMIT}"
+    )
+}
+
+/// The one read whose binds do not match the shared window: the identity join
+/// scopes by tenant again, so the fourth value is bound here beside the `?`
+/// that needs it rather than by the caller.
+fn people_query(
+    ch: &insight_clickhouse::Client,
+    tenant: &str,
+    since: &str,
+    until: &str,
+) -> clickhouse::query::Query {
+    ch.query(&people_sql())
+        .bind(tenant)
+        .bind(since)
+        .bind(until)
+        .bind(tenant)
+}
+
 /// Names come from the mirrored identity rows; a per-caller profile lookup
 /// answers only for the caller's visible set, and this surface is org-wide.
 fn people_sql() -> String {
@@ -367,27 +407,10 @@ pub async fn get_usage_summary(
     let visitors = format!("uniqExactIf(person_id, person_id != toUUID('{NIL_UUID}'))");
 
     let (totals, by_day, by_person, by_page, by_event) = tokio::try_join!(
-        bound(format!(
-            "SELECT uniqExact(session_id) AS visits, {visitors} AS visitors, \
-             countIf(event_name = '{PAGE_VIEW}') AS page_views \
-             FROM {TABLE} WHERE {WINDOW}"
-        ))
-        .fetch_one::<UsageTotals>(),
-        bound(format!(
-            "SELECT toString(toDate(ts)) AS day, uniqExact(session_id) AS visits, \
-             {visitors} AS visitors \
-             FROM {TABLE} WHERE {WINDOW} GROUP BY day ORDER BY day"
-        ))
-        .fetch_all::<UsageDay>(),
-        bound(people_sql())
-            .bind(tenant.clone())
-            .fetch_all::<UsagePerson>(),
-        bound(format!(
-            "SELECT path, count() AS views, {visitors} AS visitors \
-             FROM {TABLE} WHERE {WINDOW} AND event_name = '{PAGE_VIEW}' AND path != '' \
-             GROUP BY path ORDER BY views DESC LIMIT {BREAKDOWN_LIMIT}"
-        ))
-        .fetch_all::<UsagePage>(),
+        bound(totals_sql(&visitors)).fetch_one::<UsageTotals>(),
+        bound(by_day_sql(&visitors)).fetch_all::<UsageDay>(),
+        people_query(&state.ch, &tenant, &since, &until).fetch_all::<UsagePerson>(),
+        bound(by_page_sql(&visitors)).fetch_all::<UsagePage>(),
         bound(actions_sql(&visitors)).fetch_all::<UsageEvent>(),
     )
     .map_err(read_error)?;

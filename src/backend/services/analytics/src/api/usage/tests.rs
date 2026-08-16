@@ -138,6 +138,29 @@ fn the_sdks_own_page_view_is_dropped_as_a_duplicate() {
 }
 
 #[test]
+fn every_caller_value_in_a_read_is_a_placeholder() {
+    let visitors = "V";
+    assert_eq!(WINDOW.matches('?').count(), 3);
+    for sql in [
+        totals_sql(visitors),
+        by_day_sql(visitors),
+        by_page_sql(visitors),
+        actions_sql(visitors),
+    ] {
+        assert_eq!(
+            sql.matches('?').count(),
+            3,
+            "a read that does not bind exactly the window has interpolated a value: {sql}"
+        );
+    }
+    assert_eq!(
+        people_sql().matches('?').count(),
+        4,
+        "people_query binds the tenant a second time for the identity join"
+    );
+}
+
+#[test]
 fn a_visitor_is_named_from_the_mirrored_identity_rows() {
     let sql = people_sql();
     assert!(sql.contains("identity.identity_persons"), "{sql}");
