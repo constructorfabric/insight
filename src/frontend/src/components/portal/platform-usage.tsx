@@ -305,9 +305,7 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
           columns={[
             {
               header: "Person",
-              cell: (row) => (
-                <span className="font-medium">{row.display_name || row.person_id}</span>
-              ),
+              cell: (row) => row.display_name || row.person_id,
             },
             { header: "Visits", width: 6, align: "right", cell: (row) => row.visits },
             { header: "Pages", width: 6, align: "right", cell: (row) => row.page_views },
@@ -331,10 +329,14 @@ function EventsTable({ rows }: { rows: UsageEvent[] }) {
           rows={rows}
           rowKey={(row) => `${row.event_name}:${row.target}`}
           columns={[
-            { header: "Action", cell: (row) => <span className="font-medium">{row.event_name}</span> },
+            { header: "Action", cell: (row) => row.event_name },
             {
               header: "Target",
-              cell: (row) => <span className="font-mono text-xs">{row.target || "—"}</span>,
+              cell: (row) => (
+                <span className="font-mono text-xs text-muted-foreground">
+                  {row.target || "—"}
+                </span>
+              ),
             },
             { header: "Opens", width: 6, align: "right", cell: (row) => row.opens },
             { header: "People", width: 6, align: "right", cell: (row) => row.people },
