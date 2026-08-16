@@ -75,27 +75,23 @@ function bootstrap(): void {
     });
 }
 
-// Adoption events (#2573). Fire-and-forget: the instance may have collection
-// off, and nothing here may delay or break the render.
 function startUsageCollection(): void {
   const { session } = authStore.getSnapshot();
   if (!session) return;
-  // Subscribed before the router mounts, so the first resolve is recorded like
-  // any other. Telemetry holds these until the instance says whether
-  // collection is on, and drops them if the answer is no.
-  router.subscribe("onResolved", () => {
-    // Read the URL as it stands rather than the resolved location: the portal
-    // resolves `/portal` first and applies `zone`/`item` after, so the
-    // location handed to this callback names no screen yet.
-    recordPageView(currentScreen());
-  });
+  // History, not `onResolved`: the portal is one route, so moving between its
+  // screens changes only `zone`/`item` and resolves nothing.
+  let recorded: string | null = null;
+  const recordScreen = () => {
+    const screen = currentScreen();
+    if (screen === recorded) return;
+    recorded = screen;
+    recordPageView(screen);
+  };
+  router.history.subscribe(recordScreen);
+  recordScreen();
   void startUsageTelemetry(session);
 }
 
-/**
- * The screen the browser is on. The portal is a single route whose screen lives
- * in `zone`/`item`, so the path alone would report every portal page as one.
- */
 function currentScreen(): string {
   const { zone, item } = validatePortalSearch(
     Object.fromEntries(new URLSearchParams(window.location.search)),
