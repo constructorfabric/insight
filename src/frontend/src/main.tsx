@@ -83,22 +83,27 @@ function startUsageCollection(): void {
   // Subscribed before the router mounts, so the first resolve is recorded like
   // any other. Telemetry holds these until the instance says whether
   // collection is on, and drops them if the answer is no.
-  router.subscribe("onResolved", ({ toLocation }) => {
-    recordPageView(
-      portalPath(toLocation.pathname, toLocation.search as Record<string, unknown>),
-    );
+  router.subscribe("onResolved", () => {
+    // Read the URL as it stands rather than the resolved location: the portal
+    // resolves `/portal` first and applies `zone`/`item` after, so the
+    // location handed to this callback names no screen yet.
+    recordPageView(currentScreen());
   });
   void startUsageTelemetry(session);
 }
 
 /**
- * The portal is a single route whose screen lives in `zone`/`item`, so the
- * path alone would report every portal page as one.
+ * The screen the browser is on. The portal is a single route whose screen lives
+ * in `zone`/`item`, so the path alone would report every portal page as one.
  */
-function portalPath(pathname: string, search: Record<string, unknown>): string {
-  const { zone, item } = validatePortalSearch(search);
+function currentScreen(): string {
+  const { zone, item } = validatePortalSearch(
+    Object.fromEntries(new URLSearchParams(window.location.search)),
+  );
   const parts = [zone, item].filter((value): value is string => Boolean(value));
-  return parts.length ? `${pathname}/${parts.join("/")}` : pathname;
+  return parts.length
+    ? `${window.location.pathname}/${parts.join("/")}`
+    : window.location.pathname;
 }
 
 function renderApp(): void {

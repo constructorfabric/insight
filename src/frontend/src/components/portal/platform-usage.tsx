@@ -51,6 +51,13 @@ import {
 } from "@/components/ui/table";
 import { useUsageSummary } from "@/queries/usage";
 import { formatDate, formatMetricNumber, formatUtcInstant } from "@/lib/format";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { screenLabel } from "@/lib/portal/screen-label";
 import { TEXT_FIGURE, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import type { CustomRange, PeriodValue } from "@/types/insight";
@@ -352,7 +359,20 @@ function PagesTable({ rows }: { rows: UsagePage[] }) {
           columns={[
             {
               header: "Page",
-              cell: (row) => <span className="font-mono text-xs">{row.path}</span>,
+              // The path is what distinguishes two screens that read alike; it
+              // is one hover away rather than on every row.
+              cell: (row) => (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="truncate" />}>
+                      {screenLabel(row.path)}
+                    </TooltipTrigger>
+                    <TooltipContent className="font-mono text-xs">
+                      {row.path}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ),
             },
             { header: "Views", width: 6, align: "right", cell: (row) => row.views },
             { header: "People", width: 6, align: "right", cell: (row) => row.visitors },
