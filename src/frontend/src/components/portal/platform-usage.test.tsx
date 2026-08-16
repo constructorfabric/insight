@@ -3,7 +3,7 @@
  * Platform usage. The load-bearing part is that every number on it is dated:
  * a bar the reader cannot put a day against says traffic happened, not when.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Recharts needs a real layout; the assertions here are about what the page
@@ -78,8 +78,22 @@ vi.mock("@/queries/usage", () => ({
 // The shared period control the rest of the portal uses; here it only has to
 // report what the page hands it.
 vi.mock("@/components/widgets/period-selector-bar", () => ({
-  PeriodSelectorBar: ({ period }: { period: string }) => (
-    <div data-testid="period-bar" data-period={period} />
+  PeriodSelectorBar: ({
+    period,
+    onPeriodChange,
+    onRangeChange,
+  }: {
+    period: string;
+    onPeriodChange: (next: string) => void;
+    onRangeChange: (range: { from: string; to: string } | null) => void;
+  }) => (
+    <div data-testid="period-bar" data-period={period}>
+      <button
+        data-testid="pick-custom"
+        onClick={() => onRangeChange({ from: "2026-01-01", to: "2026-01-07" })}
+      />
+      <button data-testid="pick-week" onClick={() => onPeriodChange("week")} />
+    </div>
   ),
 }));
 
@@ -115,6 +129,21 @@ describe("PlatformUsage", () => {
     const days = (range: { since: string; until: string }) =>
       (Date.parse(range.until) - Date.parse(range.since)) / 86_400_000;
     expect(days(asked)).toBe(days({ since: shared.from, until: shared.to }));
+  });
+
+  it("returns to a preset after a custom range", () => {
+    render(<PlatformUsage />);
+
+    fireEvent.click(screen.getByTestId("pick-custom"));
+    expect(mocks.asked.at(-1)).toEqual({ since: "2026-01-01", until: "2026-01-07" });
+
+    fireEvent.click(screen.getByTestId("pick-week"));
+    const asked = mocks.asked.at(-1)!;
+    // A custom range outranks the period in resolveDateRange, so a preset that
+    // did not clear it would still be serving January.
+    expect(asked.since).not.toBe("2026-01-01");
+    const days = (Date.parse(asked.until) - Date.parse(asked.since)) / 86_400_000 + 1;
+    expect(days).toBe(7);
   });
 
   it("hands a long breakdown to the virtualizer instead of rendering all of it", () => {

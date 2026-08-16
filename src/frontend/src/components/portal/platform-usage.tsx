@@ -93,6 +93,13 @@ export function PlatformUsage() {
   }, [period, customRange]);
   const summary = useUsageSummary(range);
 
+  // A custom range outranks the period in `resolveDateRange`, so leaving it set
+  // makes every preset inert.
+  const choosePeriod = (next: PeriodValue) => {
+    setPeriod(next);
+    setCustomRange(null);
+  };
+
   if (summary.isPending) return <CenteredSpinner />;
   if (summary.isError || !summary.data) {
     return (
@@ -113,7 +120,7 @@ export function PlatformUsage() {
       <PeriodSelectorBar
         period={period}
         customRange={customRange}
-        onPeriodChange={setPeriod}
+        onPeriodChange={choosePeriod}
         onRangeChange={setCustomRange}
       />
 
