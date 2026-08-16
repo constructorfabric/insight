@@ -93,7 +93,7 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 17 operations.
+#: analytics — 20 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/queries"),
     _a("POST", "/v1/queries"),
@@ -119,6 +119,12 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", f"/v1/metrics/{SOME_METRIC_KEY}"),
     _a("PUT", f"/v1/metrics/{SOME_METRIC_KEY}"),
     _a("DELETE", f"/v1/metrics/{SOME_METRIC_KEY}"),
+    # Usage monitoring. All three are `.authenticated()` at the edge; the
+    # summary's admin gate lives inside the handler, so it is invisible here and
+    # asserted in test_usage.py instead.
+    _a("POST", "/v1/usage/events"),
+    _a("GET", "/v1/usage/config"),
+    _a("GET", "/v1/usage/summary"),
 )
 
 #: identity-resolution — 26 operations. `/health` and `/healthz` are the host

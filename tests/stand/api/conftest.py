@@ -66,9 +66,10 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 def api(lead_session: PersonaSession) -> ApiClient:
     """An authenticated client, for cases that are not about who is calling.
 
-    A lead rather than an admin on purpose: analytics has no admin gate at all
-    (`require_admin` appears nowhere in it, and `/v1/admin/*` is admin by name
-    only), so an ordinary persona is what the endpoints actually face.
+    A lead rather than an admin on purpose: every analytics operation but
+    `/v1/usage/summary` is open to any authenticated caller, so an ordinary
+    persona is what those endpoints actually face. The usage summary takes
+    `admin_operator_session` directly, and uses this client for its refusal case.
     """
     return lead_session.client
 

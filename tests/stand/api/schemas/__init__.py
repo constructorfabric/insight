@@ -53,6 +53,8 @@ from .analytics import (
     RunResponse,
     SavedQuery,
     SavedQueryListResponse,
+    UsageConfigResponse,
+    UsageSummaryResponse,
 )
 from .analytics import (
     MetricResultViewDto1 as PeriodView,
@@ -149,6 +151,8 @@ __all__: Sequence[str] = (
     "SubchartForest",
     "SubchartNode",
     "SyncOperationList",
+    "UsageConfigResponse",
+    "UsageSummaryResponse",
     "Visibility",
     "VisibilityList",
     "VisiblePersons",
