@@ -73,9 +73,16 @@ fn a_records_own_value_beats_the_hoisted_one() {
 }
 
 #[test]
-fn the_low_cardinality_column_stays_bounded() {
-    let mut sent = record("page_view", serde_json::json!({ "path": "/portal" }));
-    sent.name = Some("x".repeat(1024));
+fn every_field_the_caller_controls_is_bounded() {
+    let long = "x".repeat(4096);
+    let mut sent = record(
+        "page_view",
+        serde_json::json!({ "path": long.clone(), "target": long.clone() }),
+    );
+    sent.name = Some(long.clone());
+    sent.context_session_id = Some(long.clone());
+    sent.context_app_name = Some(long.clone());
+    sent.context_app_version = Some(long);
 
     let row = to_row(
         &sent,
@@ -83,7 +90,43 @@ fn the_low_cardinality_column_stays_bounded() {
         Uuid::now_v7(),
         Uuid::now_v7(),
     );
-    assert_eq!(row.event_name.chars().count(), 64);
+    assert_eq!(row.event_name.chars().count(), MAX_NAME);
+    assert_eq!(row.app_name.chars().count(), MAX_NAME);
+    assert_eq!(row.session_id.chars().count(), MAX_FIELD);
+    assert_eq!(row.app_version.chars().count(), MAX_FIELD);
+    assert_eq!(row.path.chars().count(), MAX_PATH);
+    assert_eq!(row.target.chars().count(), MAX_PATH);
+}
+
+#[test]
+fn a_hoisted_field_is_bounded_before_the_batch_multiplies_it() {
+    // `meta` is one object cloned into every record, so an unclipped field
+    // there costs MAX_RECORDS times its own size.
+    let hoisted = TelemetryRecord {
+        context_app_name: Some("x".repeat(4096)),
+        ..TelemetryRecord::default()
+    };
+    let row = to_row(
+        &TelemetryRecord::default(),
+        &hoisted,
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+    );
+    assert_eq!(row.app_name.chars().count(), MAX_NAME);
+}
+
+#[test]
+fn the_widest_window_is_the_one_the_message_promises() {
+    let window = |since: &str, until: &str| {
+        UsageRangeQuery {
+            since: Some(since.to_owned()),
+            until: Some(until.to_owned()),
+        }
+        .window()
+    };
+    // Both bounds are inclusive, so 400 days spans since..=since+399.
+    assert!(window("2026-01-01", "2027-02-04").is_ok(), "400 days");
+    assert!(window("2026-01-01", "2027-02-05").is_err(), "401 days");
 }
 
 #[test]

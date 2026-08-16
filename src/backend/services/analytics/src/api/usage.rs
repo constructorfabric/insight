@@ -19,6 +19,13 @@ const TABLE: &str = "product_usage.usage_events";
 
 const MAX_RECORDS: usize = 200;
 
+/// The two `LowCardinality` columns, where an unbounded value blows the dictionary.
+const MAX_NAME: usize = 64;
+
+const MAX_FIELD: usize = 128;
+
+const MAX_PATH: usize = 512;
+
 const BREAKDOWN_LIMIT: u32 = 200;
 
 const PAGE_VIEW: &str = "page_view";
@@ -104,8 +111,10 @@ struct UsageEventRow {
     app_version: String,
 }
 
-fn shared(own: Option<&str>, meta: Option<&str>) -> String {
-    own.or(meta).unwrap_or_default().to_owned()
+/// A field the SDK hoists into `meta` is cloned into every record of the batch,
+/// so an unclipped one costs `MAX_RECORDS` times its own size.
+fn shared(own: Option<&str>, meta: Option<&str>, max: usize) -> String {
+    clip(own.or(meta).unwrap_or_default(), max)
 }
 
 fn to_row(
@@ -121,18 +130,20 @@ fn to_row(
         session_id: shared(
             record.context_session_id.as_deref(),
             meta.context_session_id.as_deref(),
+            MAX_FIELD,
         ),
-        // LowCardinality column — an unbounded value blows the dictionary.
-        event_name: clip(&shared(record.name.as_deref(), meta.name.as_deref()), 64),
-        path: data_field(data, "path"),
-        target: data_field(data, "target"),
+        event_name: shared(record.name.as_deref(), meta.name.as_deref(), MAX_NAME),
+        path: clip(&data_field(data, "path"), MAX_PATH),
+        target: clip(&data_field(data, "target"), MAX_PATH),
         app_name: shared(
             record.context_app_name.as_deref(),
             meta.context_app_name.as_deref(),
+            MAX_NAME,
         ),
         app_version: shared(
             record.context_app_version.as_deref(),
             meta.context_app_version.as_deref(),
+            MAX_FIELD,
         ),
     }
 }
@@ -270,7 +281,7 @@ impl UsageRangeQuery {
         if since > until {
             return Err(range_violation("since", "since must not be after until"));
         }
-        if (until - since).num_days() > MAX_WINDOW_DAYS {
+        if (until - since).num_days() >= MAX_WINDOW_DAYS {
             return Err(range_violation(
                 "since",
                 "the window must not exceed 400 days",
