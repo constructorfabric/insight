@@ -83,7 +83,7 @@ vi.mock("@/components/widgets/period-selector-bar", () => ({
   ),
 }));
 
-import { resolveDateRange, toISODate } from "@/api/period-to-date-range";
+import { resolveDateRange } from "@/api/period-to-date-range";
 
 import { PlatformUsage } from "./platform-usage";
 
@@ -105,7 +105,10 @@ describe("PlatformUsage", () => {
     render(<PlatformUsage />);
 
     const asked = mocks.asked.at(-1)!;
-    expect(asked.until).toBe(toISODate(new Date()));
+    // The UTC day, not the reader's. The server buckets by UTC, so east of
+    // Greenwich the reader's date names a day ClickHouse has no rows for yet,
+    // and the chart draws it as a zero.
+    expect(asked.until).toBe(new Date().toISOString().slice(0, 10));
     // The shared window ends yesterday; moving only its end would make a
     // 30-day month cover 31.
     const shared = resolveDateRange("month", null);

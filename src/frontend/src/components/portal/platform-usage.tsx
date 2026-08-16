@@ -1,11 +1,3 @@
-/**
- * Manage → Platform usage: who opened the product, how often, and what they
- * viewed (#2573).
- *
- * A view-as session records nothing, so no row here is an operator browsing as
- * someone else.
- */
-
 import { useMemo, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -50,7 +42,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useUsageSummary } from "@/queries/usage";
-import { formatDate, formatMetricNumber, formatUtcInstant } from "@/lib/format";
+import { formatDate, formatMetricNumber, formatUtcClock } from "@/lib/format";
 import {
   Tooltip,
   TooltipContent,
@@ -70,7 +62,10 @@ function addDays(day: string, days: number): string {
   return toISODate(addCalendarDays(parseISO(day), days));
 }
 
-/** Every day in [since, until], with the API's counts where it had any. */
+function utcToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function fillRange(days: UsageDay[], range: UsageRange): UsageDay[] {
   if (!range.since || !range.until) return days;
   const counted = new Map(days.map((d) => [d.day, d]));
@@ -90,13 +85,10 @@ export function PlatformUsage() {
   const [customRange, setCustomRange] = useState<CustomRange | null>(null);
   const range = useMemo(() => {
     const resolved = resolveDateRange(period, customRange);
-    // The shared window ends yesterday because the metric pipeline lands a day
-    // late. Usage is written as it happens, and "is anyone using it" is a
-    // question about today, so the end is carried forward.
     if (customRange) return { since: resolved.from, until: resolved.to };
-    // Slide the whole window rather than stretching it: moving only the end
-    // would make a 30-day month cover 31.
-    const shift = daysBetween(resolved.to, toISODate(new Date()));
+    // Slid whole, not stretched, or a 30-day month covers 31. To the UTC day:
+    // the reader's own date names a day the server has no rows for yet.
+    const shift = daysBetween(resolved.to, utcToday());
     return { since: addDays(resolved.from, shift), until: addDays(resolved.to, shift) };
   }, [period, customRange]);
   const summary = useUsageSummary(range);
@@ -111,10 +103,6 @@ export function PlatformUsage() {
   }
 
   const { totals, by_person, by_page, by_event } = summary.data;
-  // The API returns only days that saw traffic; the chart is about the range,
-  // so the quiet days have to be drawn as quiet rather than left out.
-  // The window the server actually filtered on, echoed back — the chart covers
-  // what the numbers cover, not what the controls asked for a moment ago.
   const by_day = fillRange(summary.data.by_day, {
     since: summary.data.since || range.since,
     until: summary.data.until || range.until,
@@ -190,16 +178,11 @@ const MAX_BODY_HEIGHT = 360;
 
 interface Column<T> {
   header: string;
-  /** Flex basis in rem — the row is a flex line, not a grid. */
   width?: number;
   align?: "left" | "right";
   cell: (row: T, index: number) => ReactNode;
 }
 
-/**
- * A ranked breakdown. Rows are virtualized because a busy install has a row per
- * person and per page, and all three tables sit on one screen.
- */
 function VirtualTable<T>({
   rows,
   columns,
@@ -211,8 +194,8 @@ function VirtualTable<T>({
   rowKey: (row: T, index: number) => string;
   label: string;
 }) {
-  // State, not a ref: the virtualizer has to re-read the scroll element once
-  // it exists, and a ref never re-renders to tell it.
+  // State, not a ref: the virtualizer re-reads the scroll element once it
+  // exists, and a ref never re-renders to tell it.
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -309,7 +292,7 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
             },
             { header: "Visits", width: 6, align: "right", cell: (row) => row.visits },
             { header: "Pages", width: 6, align: "right", cell: (row) => row.page_views },
-            { header: "Last seen", width: 11, cell: (row) => formatUtcInstant(row.last_seen, "d MMM HH:mm") },
+            { header: "Last seen", width: 11, cell: (row) => formatUtcClock(row.last_seen, "d MMM HH:mm") },
           ]}
         />
       )}
@@ -361,8 +344,6 @@ function PagesTable({ rows }: { rows: UsagePage[] }) {
           columns={[
             {
               header: "Page",
-              // The path is what distinguishes two screens that read alike; it
-              // is one hover away rather than on every row.
               cell: (row) => (
                 <TooltipProvider>
                   <Tooltip>
