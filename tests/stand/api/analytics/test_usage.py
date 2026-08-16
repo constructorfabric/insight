@@ -23,6 +23,8 @@ The 401 half is in `test_gateway.py`, swept over every operation at once.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from insight_stand import ApiClient, PersonaSession, analytics_path, wait_until
 from insight_stand.api import JsonValue
@@ -44,20 +46,31 @@ BEACON_PATH = f"/ic/{scratch.UNKNOWN_ID}/{scratch.SCRATCH_PREFIX}-{scratch.RUN_T
 STORED_PATH = f"/ic/:id/{scratch.SCRATCH_PREFIX}-{scratch.RUN_TAG}"
 
 
+#: What the SDK labels its body. Not `application/json` — the transport speaks a
+#: Kafka REST Proxy media type, and the extractor accepts it only because the
+#: mime suffix is `+json`. Sending the real one is the point: a proxy or an
+#: extractor change that stopped accepting it would take usage down silently.
+SDK_CONTENT_TYPE = "application/vnd.kafka.json.v2+json"
+
+
 def _beacon(path: str) -> JsonValue:
-    """One SDK envelope carrying one page view, in the wire form ingest takes."""
+    """One SDK v2 body carrying one page view, in the wire form ingest takes.
+
+    `meta` is empty here on purpose: the SDK only hoists shared fields when a
+    batch holds more than one record, so a single beacon carries everything
+    inline. The hoisted case is covered by the service's own unit tests.
+    """
     return {
+        "meta": {},
         "records": [
             {
-                "value": {
-                    "name": "page_view",
-                    "context_session_id": f"{scratch.SCRATCH_PREFIX}-{scratch.RUN_TAG}",
-                    "context_app_name": "insight-stand-tests",
-                    "context_app_version": "0",
-                    "data": {"path": path},
-                }
+                "name": "page_view",
+                "context_session_id": f"{scratch.SCRATCH_PREFIX}-{scratch.RUN_TAG}",
+                "context_app_name": "insight-stand-tests",
+                "context_app_version": "0",
+                "data": {"path": path},
             }
-        ]
+        ],
     }
 
 
@@ -90,7 +103,11 @@ def summary_after_a_beacon(
     if not _config(lead_session.client).enabled:
         pytest.skip("this instance does not record usage, so no beacon can reach the summary")
 
-    accepted = lead_session.client.post(EVENTS, json_body=_beacon(BEACON_PATH))
+    accepted = lead_session.client.post(
+        EVENTS,
+        content=json.dumps(_beacon(BEACON_PATH)),
+        headers={"Content-Type": SDK_CONTENT_TYPE},
+    )
     assert accepted.status_code == 204, (
         f"ingest answered {accepted.status_code}, expected 204: {accepted.text[:300]}"
     )

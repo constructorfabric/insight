@@ -1610,7 +1610,6 @@
         "type": "string"
       },
       "TelemetryRecord": {
-        "description": "The subset of the SDK's record this service stores. Everything else it\nsends — device, OS, viewport, locale — is dropped at ingest.",
         "properties": {
           "context_app_name": {
             "type": [
@@ -1631,26 +1630,13 @@
             ]
           },
           "data": {},
-          "id": {
+          "name": {
             "type": [
               "string",
               "null"
             ]
-          },
-          "name": {
-            "type": "string"
-          },
-          "time_triggered": {
-            "format": "int64",
-            "type": [
-              "integer",
-              "null"
-            ]
           }
         },
-        "required": [
-          "name"
-        ],
         "type": "object"
       },
       "TimeseriesDto": {
@@ -1810,23 +1796,15 @@
         ],
         "type": "object"
       },
-      "UsageIngestEnvelope": {
-        "properties": {
-          "value": {
-            "$ref": "#/components/schemas/TelemetryRecord"
-          }
-        },
-        "required": [
-          "value"
-        ],
-        "type": "object"
-      },
       "UsageIngestRequest": {
-        "description": "The SDK's transport envelope: a Kafka REST Proxy body, accepted as it\nstands so the published SDK needs no fork.",
+        "description": "SDK v2 body. Fields shared by every record are hoisted out of them into\n`meta`, so a record carries only what differs.",
         "properties": {
+          "meta": {
+            "$ref": "#/components/schemas/TelemetryRecord"
+          },
           "records": {
             "items": {
-              "$ref": "#/components/schemas/UsageIngestEnvelope"
+              "$ref": "#/components/schemas/TelemetryRecord"
             },
             "type": "array"
           }

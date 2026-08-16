@@ -1,8 +1,3 @@
-//! Usage monitoring — `/v1/usage/*`.
-//!
-//! Adoption events emitted by the SPA telemetry SDK, and the admin read model
-//! over them: who opened the product, how many visits per day, which pages.
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -18,42 +13,31 @@ use uuid::Uuid;
 use super::error::UsageError;
 use super::{AppState, forwarded_authorization};
 
-/// The writable namespace of the presentation query path: `presentation_ro`
-/// grants SELECT/INSERT/CREATE there and read-only everywhere else, so a
-/// service-owned table has exactly one place it can live.
+/// `presentation_ro` is granted INSERT/CREATE only in this namespace.
 const TABLE: &str = "presentation.usage_events";
 
-/// Bound on one beacon payload. The SDK batches on a flush timer, so a larger
-/// body is a client that is not the SDK.
 const MAX_RECORDS: usize = 200;
 
-/// Rows returned per breakdown. The page shows a ranked table, not an export.
 const BREAKDOWN_LIMIT: u32 = 200;
 
-/// The event the SPA emits on every resolved route.
 const PAGE_VIEW: &str = "page_view";
 
-/// The SDK's own lifecycle event, emitted once per session.
 const SESSION_START: &str = "session_start";
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 
-/// How far back a summary looks when the caller names no window.
 const DEFAULT_WINDOW_DAYS: i64 = 29;
 
-/// The widest window a caller may ask for, matching the SPA's own cap.
 const MAX_WINDOW_DAYS: i64 = 400;
 
-/// How long to wait before asking ClickHouse for the table again.
 const SCHEMA_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Every value a caller controls is bound; the constants above are not.
 const WINDOW: &str =
     "tenant_id = toUUID(?) AND toDate(ts) >= toDate(?) AND toDate(ts) <= toDate(?)";
 
 const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS presentation.usage_events (
-    event_id    UUID,
-    ts          DateTime64(3, 'UTC'),
+    event_id    UUID DEFAULT generateUUIDv4(),
+    ts          DateTime64(3, 'UTC') DEFAULT now64(3),
     tenant_id   UUID,
     person_id   UUID,
     session_id  String,
@@ -66,16 +50,7 @@ const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS presentation.usage_ev
 PARTITION BY toYYYYMM(ts)
 ORDER BY (tenant_id, ts, event_id)";
 
-/// Create the events table if it is absent. Idempotent, and safe to run on
-/// every boot.
-///
-/// # Errors
-///
-/// Returns an error when ClickHouse rejects the statement or is unreachable.
 pub async fn ensure_schema_with_retry(ch: &insight_clickhouse::Client) {
-    // A ClickHouse that is briefly unreachable at boot must not leave the
-    // feature dead until the next restart: every insert and every read needs
-    // this table.
     loop {
         match ensure_schema(ch).await {
             Ok(()) => return,
@@ -92,31 +67,21 @@ pub async fn ensure_schema(ch: &insight_clickhouse::Client) -> anyhow::Result<()
     Ok(())
 }
 
-// ── Ingest ──────────────────────────────────────────────────
-
-/// The SDK's transport envelope: a Kafka REST Proxy body, accepted as it
-/// stands so the published SDK needs no fork.
+/// SDK v2 body. Fields shared by every record are hoisted out of them into
+/// `meta`, so a record carries only what differs.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UsageIngestRequest {
     #[serde(default)]
-    pub records: Vec<UsageIngestEnvelope>,
+    pub meta: TelemetryRecord,
+    #[serde(default)]
+    pub records: Vec<TelemetryRecord>,
 }
 impl toolkit::api::api_dto::RequestApiDto for UsageIngestRequest {}
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct UsageIngestEnvelope {
-    pub value: TelemetryRecord,
-}
-
-/// The subset of the SDK's record this service stores. Everything else it
-/// sends — device, OS, viewport, locale — is dropped at ingest.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 pub struct TelemetryRecord {
-    pub name: String,
     #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default)]
-    pub time_triggered: Option<i64>,
+    pub name: Option<String>,
     #[serde(default)]
     pub context_session_id: Option<String>,
     #[serde(default)]
@@ -127,12 +92,6 @@ pub struct TelemetryRecord {
     pub data: Option<serde_json::Value>,
 }
 
-/// `POST /v1/usage/events` — the SPA's beacon.
-///
-/// Answers 204 whatever happens: the caller is a fire-and-forget beacon that
-/// cannot act on an error, and a tracking failure must never surface in the
-/// product. Identity comes from the gateway JWT; the body's own identity
-/// fields are ignored.
 pub async fn ingest_usage_events(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -145,14 +104,15 @@ pub async fn ingest_usage_events(
     let tenant_id = ctx.subject_tenant_id();
     let person_id = ctx.subject_id();
 
-    let records: Vec<&UsageIngestEnvelope> = req
+    let rows: Vec<UsageEventRow> = req
         .records
         .iter()
         .take(MAX_RECORDS)
-        .filter(|envelope| is_recordable(&envelope.value))
+        .map(|record| to_row(record, &req.meta, tenant_id, person_id))
+        .filter(is_recordable)
         .collect();
 
-    if let Err(error) = insert_records(&state, &records, tenant_id, person_id).await {
+    if let Err(error) = insert_records(&state, &rows).await {
         // SAFETY: a write that fails forever reads as "nobody used the
         // product", so the swallow is logged even though one lost beacon
         // does not matter.
@@ -162,76 +122,71 @@ pub async fn ingest_usage_events(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// One row's worth of placeholders. Values are bound, never interpolated: the
-/// SDK's payload is caller-controlled and reaches ClickHouse verbatim.
-const ROW_PLACEHOLDERS: &str = "(toUUID(?), fromUnixTimestamp64Milli(toInt64(?)), \
-     toUUID(?), toUUID(?), ?, ?, ?, ?, ?, ?)";
-
-fn insert_sql(row_count: usize) -> String {
-    let rows = vec![ROW_PLACEHOLDERS; row_count].join(", ");
-    // Beacons arrive one browser tab at a time; server-side batching keeps a
-    // burst of them from becoming a part each.
-    format!(
-        "INSERT INTO {TABLE} \
-         (event_id, ts, tenant_id, person_id, session_id, event_name, path, target, \
-          app_name, app_version) \
-         SETTINGS async_insert = 1 VALUES {rows}"
-    )
+/// INVARIANT: `event_id` and `ts` are omitted so the table's DEFAULTs apply.
+#[derive(Debug, Serialize, clickhouse::Row)]
+struct UsageEventRow {
+    #[serde(with = "clickhouse::serde::uuid")]
+    tenant_id: Uuid,
+    #[serde(with = "clickhouse::serde::uuid")]
+    person_id: Uuid,
+    session_id: String,
+    event_name: String,
+    path: String,
+    target: String,
+    app_name: String,
+    app_version: String,
 }
 
-async fn insert_records(
-    state: &AppState,
-    records: &[&UsageIngestEnvelope],
+fn shared(own: Option<&str>, meta: Option<&str>) -> String {
+    own.or(meta).unwrap_or_default().to_owned()
+}
+
+fn to_row(
+    record: &TelemetryRecord,
+    meta: &TelemetryRecord,
     tenant_id: Uuid,
     person_id: Uuid,
-) -> anyhow::Result<()> {
-    if records.is_empty() {
+) -> UsageEventRow {
+    let data = record.data.as_ref().or(meta.data.as_ref());
+    UsageEventRow {
+        tenant_id,
+        person_id,
+        session_id: shared(
+            record.context_session_id.as_deref(),
+            meta.context_session_id.as_deref(),
+        ),
+        // LowCardinality column — an unbounded value blows the dictionary.
+        event_name: clip(&shared(record.name.as_deref(), meta.name.as_deref()), 64),
+        path: normalize_path(&data_field(data, "path")),
+        target: data_field(data, "target"),
+        app_name: shared(
+            record.context_app_name.as_deref(),
+            meta.context_app_name.as_deref(),
+        ),
+        app_version: shared(
+            record.context_app_version.as_deref(),
+            meta.context_app_version.as_deref(),
+        ),
+    }
+}
+
+async fn insert_records(state: &AppState, rows: &[UsageEventRow]) -> anyhow::Result<()> {
+    if rows.is_empty() {
         return Ok(());
     }
 
-    let mut query = state.ch.query(&insert_sql(records.len()));
-    for envelope in records {
-        let record = &envelope.value;
-        let event_id = record
-            .id
-            .as_deref()
-            .and_then(|id| Uuid::parse_str(id).ok())
-            .unwrap_or_else(Uuid::now_v7);
-        let millis = record
-            .time_triggered
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-
-        query = query
-            .bind(event_id.to_string())
-            .bind(millis)
-            .bind(tenant_id.to_string())
-            .bind(person_id.to_string())
-            .bind(clip(
-                record.context_session_id.as_deref().unwrap_or_default(),
-                64,
-            ))
-            .bind(clip(&record.name, 64))
-            .bind(clip(
-                &normalize_path(&data_field(record.data.as_ref(), "path")),
-                512,
-            ))
-            .bind(clip(&data_field(record.data.as_ref(), "target"), 256))
-            .bind(clip(
-                record.context_app_name.as_deref().unwrap_or_default(),
-                64,
-            ))
-            .bind(clip(
-                record.context_app_version.as_deref().unwrap_or_default(),
-                32,
-            ));
+    let client = state.ch.inner().clone().with_setting("async_insert", "1");
+    // Not `insert`: it escapes the name as one identifier, and `TABLE` is qualified.
+    let mut insert = client.insert_unescaped::<UsageEventRow>(TABLE).await?;
+    for row in rows {
+        insert.write(row).await?;
     }
-
-    query.execute().await?;
+    insert.end().await?;
     Ok(())
 }
 
-/// The SDK stringifies each nested `data` field before sending, so a value
-/// arrives either as a plain string or as a JSON-encoded one.
+/// The SDK stringifies each nested `data` value, so it arrives either plain or
+/// JSON-encoded.
 fn data_field(data: Option<&serde_json::Value>, key: &str) -> String {
     let Some(value) = data else {
         return String::new();
@@ -251,13 +206,8 @@ fn data_field(data: Option<&serde_json::Value>, key: &str) -> String {
     }
 }
 
-/// Who opened the product, named.
-///
-/// The names come from the identity rows mirrored into ClickHouse rather than
-/// from a per-caller profile lookup: that lookup answers only for people inside
-/// the caller's visible set, and "who uses the product" is an org-wide question
-/// on an admin-only surface. A visitor identity has not mirrored yet keeps an
-/// empty name and is shown by id.
+/// Names come from the mirrored identity rows; a per-caller profile lookup
+/// answers only for the caller's visible set, and this surface is org-wide.
 fn people_sql() -> String {
     format!(
         "SELECT toString(u.person) AS person_id, \
@@ -279,9 +229,7 @@ fn people_sql() -> String {
     )
 }
 
-/// Deliberate actions only: a page view has its own breakdown, and
-/// `session_start` is the SDK announcing a session rather than anyone doing
-/// something. Both are already counted as visits.
+/// Excludes the two events already counted as visits.
 fn actions_sql(visitors: &str) -> String {
     format!(
         "SELECT event_name, target, count() AS opens, {visitors} AS people \
@@ -291,16 +239,14 @@ fn actions_sql(visitors: &str) -> String {
     )
 }
 
-/// Whether a record is this product's own event. The SDK tracks navigation
-/// itself and names the location `url`; the app emits its own page view with
-/// `path`. Storing both would count every page twice.
-fn is_recordable(record: &TelemetryRecord) -> bool {
-    record.name != PAGE_VIEW || !data_field(record.data.as_ref(), "path").is_empty()
+/// The SDK emits its own page view naming the location `url`; the app emits one
+/// with `path`. Keeping both counts every page twice.
+fn is_recordable(row: &UsageEventRow) -> bool {
+    row.event_name != PAGE_VIEW || !row.path.is_empty()
 }
 
-/// A path names a screen, never a person. `/ic/<uuid>/personal` is one screen
-/// whoever it is about, and storing the id would turn adoption counting into a
-/// record of who read whose profile.
+/// Storing the id would turn adoption counting into a record of who read whose
+/// profile.
 fn normalize_path(path: &str) -> String {
     path.split('/')
         .map(|segment| {
@@ -314,7 +260,6 @@ fn normalize_path(path: &str) -> String {
         .join("/")
 }
 
-/// A UUID, or any other long opaque segment a route carries as an id.
 fn is_identifier(segment: &str) -> bool {
     let uuid_shaped = segment.len() == 36
         && segment.split('-').map(str::len).eq([8, 4, 4, 4, 12])
@@ -327,8 +272,6 @@ fn clip(value: &str, max: usize) -> String {
     value.chars().take(max).collect()
 }
 
-// ── Read model ──────────────────────────────────────────────
-
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UsageRangeQuery {
     /// Inclusive `YYYY-MM-DD` lower bound. Defaults to 30 days back.
@@ -337,7 +280,6 @@ pub struct UsageRangeQuery {
     pub until: Option<String>,
 }
 
-/// The window a summary covers, as calendar days.
 struct Window {
     since: NaiveDate,
     until: NaiveDate,
@@ -435,8 +377,6 @@ pub struct UsageConfigResponse {
 }
 impl toolkit::api::api_dto::ResponseApiDto for UsageConfigResponse {}
 
-/// `GET /v1/usage/config` — whether the instance collects usage. Any signed-in
-/// caller: the SPA reads it to decide whether to start the SDK.
 pub async fn get_usage_config(
     Extension(state): Extension<Arc<AppState>>,
 ) -> Result<impl IntoResponse, CanonicalError> {
@@ -445,11 +385,6 @@ pub async fn get_usage_config(
     }))
 }
 
-/// `GET /v1/usage/summary` — the admin read model.
-///
-/// # Errors
-///
-/// 403 when the caller holds no admin role, 500 when ClickHouse fails.
 pub async fn get_usage_summary(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -472,8 +407,6 @@ pub async fn get_usage_summary(
     };
     let visitors = format!("uniqExactIf(person_id, person_id != toUUID('{NIL_UUID}'))");
 
-    // Five independent scans of one window; the handler waits for the slowest,
-    // not for their sum.
     let (totals, by_day, by_person, by_page, by_event) = tokio::try_join!(
         bound(format!(
             "SELECT uniqExact(session_id) AS visits, {visitors} AS visitors, \
@@ -517,8 +450,6 @@ fn read_error(error: clickhouse::error::Error) -> CanonicalError {
     CanonicalError::internal("failed to read usage").create()
 }
 
-/// The usage surface is admin-only, and the check is server-side: the nav flag
-/// the SPA reads is a courtesy, not the boundary.
 async fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<(), CanonicalError> {
     if !state.identity.is_configured() {
         tracing::error!("identity service is not configured; admin access cannot be verified");
@@ -543,92 +474,4 @@ async fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<(), Cano
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_value_survives_the_sdk_field_stringification() {
-        let stringified = serde_json::json!({ "path": "\"/people\"" });
-        assert_eq!(data_field(Some(&stringified), "path"), "/people");
-
-        let plain = serde_json::json!({ "target": "pr_cycle_time" });
-        assert_eq!(data_field(Some(&plain), "target"), "pr_cycle_time");
-    }
-
-    #[test]
-    fn a_record_without_data_has_no_path() {
-        assert_eq!(data_field(None, "path"), "");
-        assert_eq!(data_field(Some(&serde_json::json!({})), "path"), "");
-    }
-
-    #[test]
-    fn event_values_are_bound_never_interpolated() {
-        let sql = insert_sql(2);
-        assert_eq!(
-            sql.matches('?').count(),
-            20,
-            "ten placeholders per row: {sql}"
-        );
-        assert!(
-            sql.contains("async_insert = 1"),
-            "batched server-side: {sql}"
-        );
-    }
-
-    #[test]
-    fn the_actions_breakdown_leaves_out_what_nobody_did() {
-        // Both are already counted as visits; neither is something a person did.
-        assert!(actions_sql("1").contains("NOT IN ('page_view', 'session_start')"));
-    }
-
-    #[test]
-    fn the_sdks_own_page_view_is_dropped_as_a_duplicate() {
-        // The SDK tracks navigation itself and names the location `url`; the app
-        // emits its own with `path`. Storing both counts every page twice.
-        let from_sdk = record("page_view", serde_json::json!({ "url": "/portal" }));
-        assert!(!is_recordable(&from_sdk));
-
-        let from_app = record("page_view", serde_json::json!({ "path": "/portal" }));
-        assert!(is_recordable(&from_app));
-
-        let action = record("drill", serde_json::json!({ "target": "pr_cycle_time" }));
-        assert!(is_recordable(&action), "an action carries no path");
-    }
-
-    fn record(name: &str, data: serde_json::Value) -> TelemetryRecord {
-        TelemetryRecord {
-            name: name.to_owned(),
-            id: None,
-            time_triggered: None,
-            context_session_id: None,
-            context_app_name: None,
-            context_app_version: None,
-            data: Some(data),
-        }
-    }
-
-    #[test]
-    fn a_visitor_is_named_from_the_mirrored_identity_rows() {
-        let sql = people_sql();
-        assert!(sql.contains("identity.identity_persons"), "{sql}");
-        assert!(sql.contains("display_name"), "{sql}");
-    }
-
-    #[test]
-    fn a_malformed_day_is_refused_rather_than_queried() {
-        let query = UsageRangeQuery {
-            since: Some("2026-99-99".to_owned()),
-            until: None,
-        };
-        assert!(query.window().is_err(), "a date that cannot exist is a 400");
-
-        let ok = UsageRangeQuery {
-            since: Some("2026-01-31".to_owned()),
-            until: Some("2026-02-01".to_owned()),
-        };
-        assert_eq!(
-            ok.window().ok().map(|w| w.since.to_string()),
-            Some("2026-01-31".to_owned())
-        );
-    }
-}
+mod tests;

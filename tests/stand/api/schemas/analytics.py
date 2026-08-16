@@ -549,10 +549,6 @@ class SchemaStatus(StrEnum):
 
 
 class TelemetryRecord(BaseModel):
-    """
-    The subset of the SDK's record this service stores. Everything else it
-    sends — device, OS, viewport, locale — is dropped at ingest.
-    """
     model_config = ConfigDict(
         extra='forbid',
     )
@@ -560,9 +556,7 @@ class TelemetryRecord(BaseModel):
     context_app_version: str | None = None
     context_session_id: str | None = None
     data: Any | None = None
-    id: str | None = None
-    name: str
-    time_triggered: int | None = None
+    name: str | None = None
 
 
 class TimeseriesPointDto(BaseModel):
@@ -614,22 +608,16 @@ class UsageEvent(BaseModel):
     target: str
 
 
-class UsageIngestEnvelope(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    value: TelemetryRecord
-
-
 class UsageIngestRequest(BaseModel):
     """
-    The SDK's transport envelope: a Kafka REST Proxy body, accepted as it
-    stands so the published SDK needs no fork.
+    SDK v2 body. Fields shared by every record are hoisted out of them into
+    `meta`, so a record carries only what differs.
     """
     model_config = ConfigDict(
         extra='forbid',
     )
-    records: list[UsageIngestEnvelope] | None = None
+    meta: TelemetryRecord | None = None
+    records: list[TelemetryRecord] | None = None
 
 
 class UsagePage(BaseModel):
