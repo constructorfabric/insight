@@ -123,6 +123,7 @@ export default defineConfig({
             "@base-ui/react/toggle-group",
             "@base-ui/react/tooltip",
             "@base-ui/react/use-render",
+            "@gears-frontx/telemetry",
             "@sentry/react",
             "@tanstack/react-virtual",
             // `await import("exceljs")` inside the export path: the scan cannot
