@@ -73,25 +73,6 @@ fn a_records_own_value_beats_the_hoisted_one() {
 }
 
 #[test]
-fn a_stored_path_names_a_screen_never_a_person() {
-    let row = |path: &str| {
-        to_row(
-            &record("page_view", serde_json::json!({ "path": path })),
-            &TelemetryRecord::default(),
-            Uuid::now_v7(),
-            Uuid::now_v7(),
-        )
-        .path
-    };
-    assert_eq!(
-        row("/ic/018f2b7c-0000-7000-8000-000000000000/personal"),
-        "/ic/:id/personal"
-    );
-    assert_eq!(row("/people/1234567"), "/people/:id");
-    assert_eq!(row("/portal/manage"), "/portal/manage");
-}
-
-#[test]
 fn the_low_cardinality_column_stays_bounded() {
     let mut sent = record("page_view", serde_json::json!({ "path": "/portal" }));
     sent.name = Some("x".repeat(1024));

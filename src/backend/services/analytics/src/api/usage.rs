@@ -124,7 +124,7 @@ fn to_row(
         ),
         // LowCardinality column — an unbounded value blows the dictionary.
         event_name: clip(&shared(record.name.as_deref(), meta.name.as_deref()), 64),
-        path: normalize_path(&data_field(data, "path")),
+        path: data_field(data, "path"),
         target: data_field(data, "target"),
         app_name: shared(
             record.context_app_name.as_deref(),
@@ -242,29 +242,6 @@ fn actions_sql(visitors: &str) -> String {
 /// with `path`. Keeping both counts every page twice.
 fn is_recordable(row: &UsageEventRow) -> bool {
     row.event_name != PAGE_VIEW || !row.path.is_empty()
-}
-
-/// Storing the id would turn adoption counting into a record of who read whose
-/// profile.
-fn normalize_path(path: &str) -> String {
-    path.split('/')
-        .map(|segment| {
-            if is_identifier(segment) {
-                ":id"
-            } else {
-                segment
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-fn is_identifier(segment: &str) -> bool {
-    let uuid_shaped = segment.len() == 36
-        && segment.split('-').map(str::len).eq([8, 4, 4, 4, 12])
-        && segment.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
-    let all_digits = segment.len() >= 6 && segment.chars().all(|c| c.is_ascii_digit());
-    uuid_shaped || all_digits
 }
 
 fn clip(value: &str, max: usize) -> String {

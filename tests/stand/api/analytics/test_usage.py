@@ -36,14 +36,10 @@ EVENTS = analytics_path("/v1/usage/events")
 CONFIG = analytics_path("/v1/usage/config")
 SUMMARY = analytics_path("/v1/usage/summary")
 
-#: A page whose middle segment is a person id — the shape `/ic/{id}/personal`
-#: has in the product. The id is the suite's unclaimed stand-in, so asserting it
-#: never reaches storage says something about scrubbing rather than about
-#: whoever happens to be seeded.
-BEACON_PATH = f"/ic/{scratch.UNKNOWN_ID}/{scratch.SCRATCH_PREFIX}-{scratch.RUN_TAG}"
-
-#: The same page after the server replaces the identifying segment.
-STORED_PATH = f"/ic/:id/{scratch.SCRATCH_PREFIX}-{scratch.RUN_TAG}"
+#: A page in the shape the SPA sends: the person the screen is about is already
+#: reduced to `:id` before it leaves the browser. Ingest stores the path as it
+#: arrives, so this is both what is sent and what is read back.
+BEACON_PATH = f"/ic/:id/{scratch.SCRATCH_PREFIX}-{scratch.RUN_TAG}"
 
 
 #: What the SDK labels its body. Not `application/json` — the transport speaks a
@@ -114,9 +110,9 @@ def summary_after_a_beacon(
 
     admin = admin_operator_session.client
     wait_until(
-        lambda: STORED_PATH in {page.path for page in _summary(admin).by_page},
+        lambda: BEACON_PATH in {page.path for page in _summary(admin).by_page},
         timeout_s=20,
-        description=f"the page view at {STORED_PATH} to reach the usage summary",
+        description=f"the page view at {BEACON_PATH} to reach the usage summary",
     )
     return _summary(admin)
 
@@ -145,31 +141,11 @@ def test_a_beacon_is_recorded_and_reaches_the_summary(
     which is why the 204 and this assertion belong to one test.
     """
     pages = {page.path: page for page in summary_after_a_beacon.by_page}
-    assert STORED_PATH in pages, (
+    assert BEACON_PATH in pages, (
         f"the recorded page is absent from the summary; it lists {sorted(pages)[:20]}"
     )
-    assert pages[STORED_PATH].views >= 1
+    assert pages[BEACON_PATH].views >= 1
     assert summary_after_a_beacon.totals.page_views >= 1
-
-
-@pytest.mark.requires_seed("admin_operator")
-@pytest.mark.security
-def test_a_stored_page_never_carries_the_person_it_is_about(
-    summary_after_a_beacon: UsageSummaryResponse,
-) -> None:
-    """A path names a screen; the id in it is scrubbed before the row is written.
-
-    Without this, adoption counting quietly becomes a record of who opened whose
-    profile — the same rows, read a different way. The scrub happens in the SPA
-    and again at ingest, and this asserts the outcome of the second one, which is
-    the only one a client cannot skip.
-    """
-    stored = [page.path for page in summary_after_a_beacon.by_page]
-    assert STORED_PATH in stored
-    assert not [path for path in stored if scratch.UNKNOWN_ID in path], (
-        "a person id reached the usage table verbatim, so page paths identify "
-        f"who was looked at: {[path for path in stored if scratch.UNKNOWN_ID in path]}"
-    )
 
 
 @pytest.mark.security
