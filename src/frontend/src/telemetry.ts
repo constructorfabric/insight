@@ -53,9 +53,13 @@ export async function startUsageTelemetry(session: Session): Promise<void> {
 
 /** Adoption counting must not become a record of who read whose profile. */
 export function screenPath(path: string): string {
-  return path
-    .split("/")
-    .map((segment) => (isIdentifier(segment) ? ":id" : segment))
+  const segments = path.split("/");
+  return segments
+    .map((segment, i) =>
+      // The segment after `/ic` is a person key whatever shape it arrives in;
+      // matching on shape alone lets an email through.
+      segments[i - 1] === "ic" || isIdentifier(segment) ? ":id" : segment,
+    )
     .join("/");
 }
 

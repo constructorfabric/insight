@@ -1,7 +1,3 @@
-/**
- * A recorded path names a screen, never a person: `/ic/<id>/personal` is one
- * screen whoever it is about.
- */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ logEvent: vi.fn() }));
@@ -39,6 +35,11 @@ describe("screenPath", () => {
     ).toBe("/ic/:id/personal/git_output");
   });
 
+  it("drops a person key whatever shape it arrives in", () => {
+    expect(screenPath("/ic/alice.kim@example.com/personal")).toBe("/ic/:id/personal");
+    expect(screenPath("/ic/alice.kim%40example.com/team")).toBe("/ic/:id/team");
+  });
+
   it("leaves a path that names no one alone", () => {
     expect(screenPath("/portal/manage/platform-usage")).toBe(
       "/portal/manage/platform-usage",
@@ -52,8 +53,6 @@ describe("startUsageTelemetry", () => {
   });
 
   it("keeps the page views that happen while it is still starting", async () => {
-    // The SDK cannot start until the instance says collection is on, and the
-    // reader has already opened a page by then.
     recordPageView("/portal/people");
     await startUsageTelemetry(SESSION);
 
