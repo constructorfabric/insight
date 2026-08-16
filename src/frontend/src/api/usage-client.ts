@@ -1,8 +1,3 @@
-/**
- * Wire types + fetch wrappers for `/v1/usage/*` — adoption events and the
- * admin read model over them.
- */
-
 import { AnalyticsApiError } from "@/api/analytics-client";
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 
@@ -10,7 +5,6 @@ const BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api/analytics/v1";
 
 export interface UsageConfig {
-  /** Whether this instance records usage at all. */
   enabled: boolean;
 }
 
