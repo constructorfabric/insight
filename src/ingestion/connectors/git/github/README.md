@@ -30,6 +30,7 @@ feeds the shared `class_git_*` silver models.
 | deployment_statuses | `/deployments/{id}/statuses` | windowed deployments parent |
 | pull_request_timeline_events | GraphQL `pullRequest.timelineItems` | windowed PR parent, per PR |
 | issue_timeline_events | GraphQL `issue.timelineItems` | updated_at issues parent, per issue |
+| commit_authors | proxy `/v1/authors` → `/repos/{r}/commits/{sha}` | last_committed_date authors parent, one lookup per author |
 
 **org_members is deliberately absent**: the deployed `git/github-directory`
 connector already syncs the org roster for identity resolution. Folding it in
@@ -42,11 +43,13 @@ has no concept of one. Gold attributes activity to a person by e-mail, and the
 roster can only claim an e-mail for a member who publishes one — so a member who
 keeps their address private gets no commit attribution from the roster alone.
 
-`pull_request_commits` closes that gap: its response carries the commit's e-mail
-and the account GitHub matched it to side by side, including for addresses that
-are not public. `github__account_emails` collects those pairs, adds the ones a
-noreply address names by construction, and `github__identity_inputs` publishes
-them as e-mail claims against the account.
+Two streams close that gap. `commit_authors` asks GitHub who each distinct
+commit author is — the proxy enumerates them from the clone, one vendor lookup
+per author — and reaches authors who never open a pull request.
+`pull_request_commits` carries the same match inline on every PR commit,
+including for addresses that are not public. `github__account_emails` collects
+the pairs from both, adds the ones a noreply address names by construction, and
+`github__identity_inputs` publishes them as e-mail claims against the account.
 
 The claims feed the identity service's persons-seed, which decides what an
 account is. No roster connector is required for attribution to work: an
