@@ -91,7 +91,6 @@ impl Gear for AnalyticsApiGear {
             );
 
         let contract_ch = ch.clone();
-        let usage_ch = ch.clone();
 
         let state = api::AppState {
             db,
@@ -103,13 +102,6 @@ impl Gear for AnalyticsApiGear {
         self.state
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;
-
-        // The usage table is created on boot rather than by dbt: it holds
-        // product-operational rows, not modelled data. Not gating boot — a
-        // ClickHouse that is briefly unreachable must not stop the API.
-        tokio::spawn(async move {
-            api::usage::ensure_schema_with_retry(&usage_ch).await;
-        });
 
         // INVARIANT: periodic and never gating boot — the stamp lands after
         // boot (post-install migrate hook) and a later in-place bump must

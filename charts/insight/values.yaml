@@ -282,6 +282,9 @@ clickhouse:
     # user are provisioned by the clickhouse-migrate Hook (apply-ch-migrations
     # -> provision-presentation-access.sh).
     - presentation
+    # Adoption events (#2573). Here rather than in the migration alone because
+    # the presentation_ro grant references it before that migration runs.
+    - product_usage
   # When true (default), a post-install/post-upgrade Hook Job
   # (clickhouse-migrate-job) applies the gold-view migrations
   # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against

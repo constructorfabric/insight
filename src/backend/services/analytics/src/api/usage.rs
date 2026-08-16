@@ -13,8 +13,9 @@ use uuid::Uuid;
 use super::error::UsageError;
 use super::{AppState, forwarded_authorization};
 
-/// `presentation_ro` is granted INSERT/CREATE only in this namespace.
-const TABLE: &str = "presentation.usage_events";
+/// DDL owned by `scripts/migrations/20260816000000_usage-events.sql`; the
+/// service holds INSERT and SELECT here, never CREATE.
+const TABLE: &str = "product_usage.usage_events";
 
 const MAX_RECORDS: usize = 200;
 
@@ -30,42 +31,8 @@ const DEFAULT_WINDOW_DAYS: i64 = 29;
 
 const MAX_WINDOW_DAYS: i64 = 400;
 
-const SCHEMA_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
-
 const WINDOW: &str =
     "tenant_id = toUUID(?) AND toDate(ts) >= toDate(?) AND toDate(ts) <= toDate(?)";
-
-const CREATE_TABLE_SQL: &str = "CREATE TABLE IF NOT EXISTS presentation.usage_events (
-    event_id    UUID DEFAULT generateUUIDv4(),
-    ts          DateTime64(3, 'UTC') DEFAULT now64(3),
-    tenant_id   UUID,
-    person_id   UUID,
-    session_id  String,
-    event_name  LowCardinality(String),
-    path        String,
-    target      String,
-    app_name    LowCardinality(String),
-    app_version String
-) ENGINE = MergeTree
-PARTITION BY toYYYYMM(ts)
-ORDER BY (tenant_id, ts, event_id)";
-
-pub async fn ensure_schema_with_retry(ch: &insight_clickhouse::Client) {
-    loop {
-        match ensure_schema(ch).await {
-            Ok(()) => return,
-            Err(error) => {
-                tracing::warn!(error = %error, "usage events table not created; retrying");
-                tokio::time::sleep(SCHEMA_RETRY).await;
-            }
-        }
-    }
-}
-
-pub async fn ensure_schema(ch: &insight_clickhouse::Client) -> anyhow::Result<()> {
-    ch.query(CREATE_TABLE_SQL).execute().await?;
-    Ok(())
-}
 
 /// SDK v2 body. Fields shared by every record are hoisted out of them into
 /// `meta`, so a record carries only what differs.
