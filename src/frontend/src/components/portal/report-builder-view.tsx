@@ -175,8 +175,6 @@ export function ReportBuilderView() {
           timeStyle: "short",
         }),
       );
-      // Which columns a report is actually built with — the metric keys, not
-      // the people in it.
       for (const metric of selectedMetrics) {
         recordUsageEvent("report_column", metric.metric_key);
       }

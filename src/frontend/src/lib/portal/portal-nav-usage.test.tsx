@@ -1,9 +1,4 @@
 // @vitest-environment jsdom
-/**
- * The filter writers report what a reader narrowed by. Scope is the careful
- * one: it is rooted at a person, and which filters get used must not become a
- * record of whose org was being read.
- */
 vi.mock("@tanstack/react-router", async () => {
   const { portalRouterMock } = await import("@/test/portal-router");
   return portalRouterMock();
@@ -44,4 +39,5 @@ describe("filter usage", () => {
     const reported = mocks.recordUsageEvent.mock.calls.flat().join(" ");
     expect(reported).not.toContain(person);
   });
+
 });

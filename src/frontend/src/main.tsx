@@ -78,8 +78,8 @@ function bootstrap(): void {
 function startUsageCollection(): void {
   const { session } = authStore.getSnapshot();
   if (!session) return;
-  // History, not `onResolved`: the portal is one route, so moving between its
-  // screens changes only `zone`/`item` and resolves nothing.
+  // INVARIANT: portal screens differ only by the zone/item search params, so
+  // only a history subscription sees them change.
   let recorded: string | null = null;
   const recordScreen = () => {
     const screen = currentScreen();

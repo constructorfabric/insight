@@ -79,9 +79,7 @@ export default defineConfig([
     },
   },
   {
-    // The two virtualized tables. TanStack Virtual returns functions the React
-    // Compiler will not memoize, and a virtualized body is the reason both
-    // files exist.
+    // TanStack Virtual returns functions the React Compiler will not memoize.
     files: [
       "src/components/metric-evidence-table.tsx",
       "src/components/portal/platform-usage.tsx",
