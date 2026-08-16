@@ -1,1970 +1,106 @@
 {
-  "openapi": "3.1.0",
-  "info": {
-    "title": "Analytics API",
-    "description": "Read-only query service over ClickHouse. Serves declarative metric definitions, computed metric results and their evidence, plus tenant-authored saved queries. The API Gateway mounts this service at /api/analytics.",
-    "version": "1.0.0"
-  },
-  "paths": {
-    "/v1/metric-definitions": {
-      "get": {
-        "summary": "List unified metric definitions",
-        "operationId": "analytics_api.metric_definitions.list",
-        "responses": {
-          "200": {
-            "description": "Metric definitions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MetricDefinitionListResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/metric-drilldown": {
-      "post": {
-        "summary": "List metric evidence",
-        "operationId": "analytics_api.metric_drilldown.create",
-        "requestBody": {
-          "description": "Metric evidence selection",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MetricDrilldownRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Metric evidence",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MetricDrilldownResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "Unsupported Media Type",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/metric-drilldown/export": {
-      "post": {
-        "summary": "Export metric evidence",
-        "operationId": "analytics_api.metric_drilldown.export",
-        "requestBody": {
-          "description": "Metric evidence export selection",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MetricDrilldownExportRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Complete metric evidence export",
-            "headers": {
-              "Content-Disposition": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Attachment filename"
-              }
-            },
-            "content": {
-              "text/csv": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              },
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/metric-results": {
-      "post": {
-        "summary": "Compute metric results",
-        "operationId": "analytics_api.metric_results.create",
-        "requestBody": {
-          "description": "Metric result request",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MetricResultsRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Metric results",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MetricResultsResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "Unsupported Media Type",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/metrics": {
-      "get": {
-        "summary": "List custom metrics",
-        "operationId": "analytics_api.metrics.list",
-        "responses": {
-          "200": {
-            "description": "List of custom metrics",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CustomMetricListResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "post": {
-        "summary": "Create a custom metric",
-        "operationId": "analytics_api.metrics.create",
-        "requestBody": {
-          "description": "Custom metric to create",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CustomMetric"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Created custom metric",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CustomMetric"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/metrics/export": {
-      "get": {
-        "summary": "Export custom metrics",
-        "operationId": "analytics_api.metrics.export",
-        "responses": {
-          "200": {
-            "description": "Portable custom metric graphs",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExportCustomMetricsResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/metrics/import": {
-      "post": {
-        "summary": "Import custom metrics",
-        "operationId": "analytics_api.metrics.import",
-        "requestBody": {
-          "description": "Custom metric graphs to import",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ImportCustomMetricsRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Import result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ImportCustomMetricsResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/metrics/{metric_key}": {
-      "get": {
-        "summary": "Get a custom metric by key",
-        "operationId": "analytics_api.metrics.get",
-        "responses": {
-          "200": {
-            "description": "Custom metric",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CustomMetric"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "put": {
-        "summary": "Update a custom metric",
-        "operationId": "analytics_api.metrics.update",
-        "requestBody": {
-          "description": "Custom metric fields to replace",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CustomMetric"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Updated custom metric",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CustomMetric"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "delete": {
-        "summary": "Delete a custom metric",
-        "operationId": "analytics_api.metrics.delete",
-        "responses": {
-          "204": {
-            "description": "Custom metric deleted"
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/queries": {
-      "get": {
-        "summary": "List saved queries",
-        "operationId": "analytics_api.queries.list",
-        "responses": {
-          "200": {
-            "description": "List of saved queries",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SavedQueryListResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "post": {
-        "summary": "Create a saved query",
-        "operationId": "analytics_api.queries.create",
-        "requestBody": {
-          "description": "Saved query to create",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateSavedQueryRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Created saved query",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SavedQuery"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/queries/{id}": {
-      "get": {
-        "summary": "Get a saved query by id",
-        "operationId": "analytics_api.queries.get",
-        "responses": {
-          "200": {
-            "description": "Saved query",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SavedQuery"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "put": {
-        "summary": "Update a saved query",
-        "operationId": "analytics_api.queries.update",
-        "requestBody": {
-          "description": "Saved query fields to update",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateSavedQueryRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Updated saved query",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SavedQuery"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "delete": {
-        "summary": "Delete a saved query",
-        "operationId": "analytics_api.queries.delete",
-        "responses": {
-          "204": {
-            "description": "Saved query deleted"
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/queries/{id}/run": {
-      "post": {
-        "summary": "Run a saved query",
-        "operationId": "analytics_api.queries.run",
-        "requestBody": {
-          "description": "Optional named parameters (`period`); `tenant` is always injected from context",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RunSavedQueryRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Query result rows",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RunResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/usage/config": {
-      "get": {
-        "summary": "Whether this instance records usage",
-        "operationId": "analytics_api.usage.config",
-        "responses": {
-          "200": {
-            "description": "Usage collection state",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UsageConfigResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/usage/events": {
-      "post": {
-        "summary": "Record usage events",
-        "operationId": "analytics_api.usage.ingest",
-        "requestBody": {
-          "description": "Telemetry SDK records",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UsageIngestRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Accepted"
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "Unsupported Media Type",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/v1/usage/summary": {
-      "get": {
-        "summary": "Usage summary for a date range",
-        "operationId": "analytics_api.usage.summary",
-        "parameters": [
-          {
-            "name": "since",
-            "in": "query",
-            "description": "Inclusive first day, YYYY-MM-DD",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "until",
-            "in": "query",
-            "description": "Inclusive last day, YYYY-MM-DD",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Usage summary",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UsageSummaryResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad Request",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Forbidden",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not Found",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Too Many Requests",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    }
-  },
   "components": {
     "schemas": {
       "BreakdownValueDto": {
-        "type": "object",
-        "required": [
-          "entity_id",
-          "dimensions"
-        ],
         "properties": {
           "dimensions": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricDimensionDto"
-            }
+            },
+            "type": "array"
           },
           "entity_id": {
             "type": "string"
           },
           "value": {
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double"
+            ]
           }
-        }
+        },
+        "required": [
+          "entity_id",
+          "dimensions"
+        ],
+        "type": "object"
       },
       "Bucket": {
-        "type": "string",
         "enum": [
           "day",
           "week",
           "month"
-        ]
+        ],
+        "type": "string"
       },
       "ComputationDto": {
         "oneOf": [
           {
-            "type": "object",
+            "properties": {
+              "computation": {
+                "enum": [
+                  "sum"
+                ],
+                "type": "string"
+              }
+            },
             "required": [
               "computation"
             ],
-            "properties": {
-              "computation": {
-                "type": "string",
-                "enum": [
-                  "sum"
-                ]
-              }
-            }
+            "type": "object"
           },
           {
-            "type": "object",
+            "properties": {
+              "computation": {
+                "enum": [
+                  "ratio"
+                ],
+                "type": "string"
+              },
+              "scale": {
+                "format": "double",
+                "type": "number"
+              }
+            },
             "required": [
               "scale",
               "computation"
             ],
-            "properties": {
-              "computation": {
-                "type": "string",
-                "enum": [
-                  "ratio"
-                ]
-              },
-              "scale": {
-                "type": "number",
-                "format": "double"
-              }
-            }
+            "type": "object"
           },
           {
-            "type": "object",
-            "required": [
-              "computation"
-            ],
             "properties": {
               "computation": {
-                "type": "string",
                 "enum": [
                   "median"
-                ]
+                ],
+                "type": "string"
               }
-            }
-          },
-          {
-            "type": "object",
+            },
             "required": [
               "computation"
             ],
+            "type": "object"
+          },
+          {
             "properties": {
               "computation": {
-                "type": "string",
                 "enum": [
                   "distinct_count"
-                ]
+                ],
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "computation"
+            ],
+            "type": "object"
           }
         ]
       },
       "CreateSavedQueryRequest": {
-        "type": "object",
         "description": "Request to create a saved query.",
-        "required": [
-          "name",
-          "sql"
-        ],
         "properties": {
           "description": {
             "type": [
@@ -1978,24 +114,15 @@
           "sql": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "name",
+          "sql"
+        ],
+        "type": "object"
       },
       "CustomMetric": {
-        "type": "object",
         "description": "A portable custom-metric graph — the create/update body, the export item,\nand the get/list detail shape. `origin` is response-only: always `\"custom\"`\non output, omitted from exports, and ignored on input (writes force\n`custom`).",
-        "required": [
-          "metric_key",
-          "label",
-          "entity_type",
-          "format",
-          "direction",
-          "computation",
-          "source_key",
-          "observation_sql",
-          "measures",
-          "dimensions",
-          "inputs"
-        ],
         "properties": {
           "computation": {
             "$ref": "#/components/schemas/MetricComputation"
@@ -2007,10 +134,10 @@
             ]
           },
           "dimensions": {
-            "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "type": "array"
           },
           "direction": {
             "$ref": "#/components/schemas/MetricDirection"
@@ -2028,19 +155,19 @@
             "$ref": "#/components/schemas/MetricFormat"
           },
           "inputs": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/CustomMetricInput"
-            }
+            },
+            "type": "array"
           },
           "label": {
             "type": "string"
           },
           "measures": {
-            "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "type": "array"
           },
           "metric_key": {
             "type": "string"
@@ -2061,11 +188,11 @@
             ]
           },
           "scale": {
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double"
+            ]
           },
           "short_label": {
             "type": [
@@ -2077,18 +204,18 @@
             "type": "string"
           },
           "subject": {
+            "description": "The single topic this metric groups under within its family; a\nlowercase snake-case slug. Optional for custom metrics.",
             "type": [
               "string",
               "null"
-            ],
-            "description": "The single topic this metric groups under within its family; a\nlowercase snake-case slug. Optional for custom metrics."
+            ]
           },
           "tags": {
-            "type": "array",
+            "description": "Cross-cutting filter labels; lowercase snake-case slugs, unique per\nmetric. Optional — defaults to empty.",
             "items": {
               "type": "string"
             },
-            "description": "Cross-cutting filter labels; lowercase snake-case slugs, unique per\nmetric. Optional — defaults to empty."
+            "type": "array"
           },
           "transform": {
             "oneOf": [
@@ -2106,15 +233,24 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "metric_key",
+          "label",
+          "entity_type",
+          "format",
+          "direction",
+          "computation",
+          "source_key",
+          "observation_sql",
+          "measures",
+          "dimensions",
+          "inputs"
+        ],
+        "type": "object"
       },
       "CustomMetricInput": {
-        "type": "object",
         "description": "One role→measure binding of a custom metric.",
-        "required": [
-          "role",
-          "measure_key"
-        ],
         "properties": {
           "measure_key": {
             "type": "string"
@@ -2122,32 +258,30 @@
           "role": {
             "$ref": "#/components/schemas/MetricInputRole"
           }
-        }
+        },
+        "required": [
+          "role",
+          "measure_key"
+        ],
+        "type": "object"
       },
       "CustomMetricListResponse": {
-        "type": "object",
         "description": "`GET /v1/metrics` envelope.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CustomMetricSummary"
+            },
+            "type": "array"
+          }
+        },
         "required": [
           "items"
         ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/CustomMetricSummary"
-            }
-          }
-        }
+        "type": "object"
       },
       "CustomMetricSummary": {
-        "type": "object",
         "description": "List item — display fields only, no SQL body.",
-        "required": [
-          "metric_key",
-          "label",
-          "computation",
-          "entity_type"
-        ],
         "properties": {
           "computation": {
             "$ref": "#/components/schemas/MetricComputation"
@@ -2162,152 +296,147 @@
             "type": "string"
           },
           "subject": {
+            "description": "Grouping subject, so the management list can partition custom metrics\nby topic like the definitions listing; absent when none is declared.",
             "type": [
               "string",
               "null"
-            ],
-            "description": "Grouping subject, so the management list can partition custom metrics\nby topic like the definitions listing; absent when none is declared."
+            ]
           }
-        }
+        },
+        "required": [
+          "metric_key",
+          "label",
+          "computation",
+          "entity_type"
+        ],
+        "type": "object"
       },
       "EvidenceGranularity": {
-        "type": "string",
         "enum": [
           "event",
           "source_summary",
           "derived_population"
-        ]
+        ],
+        "type": "string"
       },
       "ExportCustomMetricsResponse": {
-        "type": "object",
         "description": "`GET /v1/metrics/export` envelope — the tenant's custom metric graphs.",
+        "properties": {
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/CustomMetric"
+            },
+            "type": "array"
+          }
+        },
         "required": [
           "metrics"
         ],
-        "properties": {
-          "metrics": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/CustomMetric"
-            }
-          }
-        }
+        "type": "object"
       },
       "HistogramBinDto": {
-        "type": "object",
+        "properties": {
+          "count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "hi": {
+            "format": "double",
+            "type": "number"
+          },
+          "lo": {
+            "format": "double",
+            "type": "number"
+          }
+        },
         "required": [
           "lo",
           "hi",
           "count"
         ],
-        "properties": {
-          "count": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "hi": {
-            "type": "number",
-            "format": "double"
-          },
-          "lo": {
-            "type": "number",
-            "format": "double"
-          }
-        }
+        "type": "object"
       },
       "HistogramValueDto": {
-        "type": "object",
-        "required": [
-          "entity_id",
-          "bins"
-        ],
         "properties": {
           "bins": {
-            "type": "array",
+            "description": "Empty when the entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.",
             "items": {
               "$ref": "#/components/schemas/HistogramBinDto"
             },
-            "description": "Empty when the entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule."
+            "type": "array"
           },
           "entity_id": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "entity_id",
+          "bins"
+        ],
+        "type": "object"
       },
       "ImportCustomMetricsRequest": {
-        "type": "object",
         "description": "`POST /v1/metrics/import` body.",
+        "properties": {
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/CustomMetric"
+            },
+            "type": "array"
+          }
+        },
         "required": [
           "metrics"
         ],
-        "properties": {
-          "metrics": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/CustomMetric"
-            }
-          }
-        }
+        "type": "object"
       },
       "ImportCustomMetricsResponse": {
-        "type": "object",
         "description": "`POST /v1/metrics/import` result — counts landed and the `metric_key`s\nskipped because they already existed for the tenant.",
+        "properties": {
+          "imported": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
         "required": [
           "imported",
           "skipped"
         ],
-        "properties": {
-          "imported": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "skipped": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
+        "type": "object"
       },
       "MetricComputation": {
-        "type": "string",
         "enum": [
           "sum",
           "ratio",
           "median",
           "distinct_count"
-        ]
+        ],
+        "type": "string"
       },
       "MetricDefinitionListResponse": {
-        "type": "object",
         "description": "Response body for `GET /v1/metric-definitions`. Metrics are sorted by\n`metric_key` ascending so the payload is byte-stable for caching and\ndiff tooling.",
+        "properties": {
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDefinitionView"
+            },
+            "type": "array"
+          }
+        },
         "required": [
           "metrics"
         ],
-        "properties": {
-          "metrics": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MetricDefinitionView"
-            }
-          }
-        }
+        "type": "object"
       },
       "MetricDefinitionView": {
-        "type": "object",
         "description": "One metric definition, display fields only.",
-        "required": [
-          "metric_key",
-          "label",
-          "format",
-          "direction",
-          "dimensions",
-          "tags",
-          "is_enabled",
-          "origin",
-          "schema_status"
-        ],
         "properties": {
           "description": {
             "type": [
@@ -2316,10 +445,10 @@
             ]
           },
           "dimensions": {
-            "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "type": "array"
           },
           "direction": {
             "$ref": "#/components/schemas/MetricDirection"
@@ -2350,12 +479,12 @@
             "type": "string"
           },
           "last_observed_date": {
+            "description": "Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`. Not maintained for `custom`\nmetrics (see `origin`).",
+            "format": "date",
             "type": [
               "string",
               "null"
-            ],
-            "format": "date",
-            "description": "Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`. Not maintained for `custom`\nmetrics (see `origin`)."
+            ]
           },
           "metric_key": {
             "type": "string"
@@ -2379,25 +508,25 @@
             "$ref": "#/components/schemas/SchemaStatus"
           },
           "short_label": {
+            "description": "Compact label for dense surfaces; absent when the full label is\nalready compact enough.",
             "type": [
               "string",
               "null"
-            ],
-            "description": "Compact label for dense surfaces; absent when the full label is\nalready compact enough."
+            ]
           },
           "subject": {
+            "description": "The single topic this metric belongs to within its family, so a surface\nlisting a family can partition it into topics rather than only sorting\nby name. Exactly one per metric; absent only for metrics that declare\nnone.",
             "type": [
               "string",
               "null"
-            ],
-            "description": "The single topic this metric belongs to within its family, so a surface\nlisting a family can partition it into topics rather than only sorting\nby name. Exactly one per metric; absent only for metrics that declare\nnone."
+            ]
           },
           "tags": {
-            "type": "array",
+            "description": "Cross-cutting labels a surface can filter or search by; many per metric,\nunlike the singular `subject`. Empty when the metric declares none.",
             "items": {
               "type": "string"
             },
-            "description": "Cross-cutting labels a surface can filter or search by; many per metric,\nunlike the singular `subject`. Empty when the metric declares none."
+            "type": "array"
           },
           "unit": {
             "type": [
@@ -2405,14 +534,21 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "metric_key",
+          "label",
+          "format",
+          "direction",
+          "dimensions",
+          "tags",
+          "is_enabled",
+          "origin",
+          "schema_status"
+        ],
+        "type": "object"
       },
       "MetricDimensionDto": {
-        "type": "object",
-        "required": [
-          "key",
-          "value"
-        ],
         "properties": {
           "key": {
             "type": "string"
@@ -2426,73 +562,72 @@
           "value": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "type": "object"
       },
       "MetricDimensionFilterDto": {
-        "type": "object",
-        "required": [
-          "dimension",
-          "values"
-        ],
         "properties": {
           "dimension": {
             "type": "string"
           },
           "values": {
-            "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "type": "array"
           }
-        }
+        },
+        "required": [
+          "dimension",
+          "values"
+        ],
+        "type": "object"
       },
       "MetricDimensionFilterRequest": {
-        "type": "object",
-        "required": [
-          "dimension",
-          "values"
-        ],
         "properties": {
           "dimension": {
             "type": "string"
           },
           "values": {
-            "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "type": "array"
           }
-        }
+        },
+        "required": [
+          "dimension",
+          "values"
+        ],
+        "type": "object"
       },
       "MetricDirection": {
-        "type": "string",
         "enum": [
           "higher_is_better",
           "lower_is_better",
           "neutral"
-        ]
+        ],
+        "type": "string"
       },
       "MetricDrilldownCapability": {
-        "type": "object",
+        "properties": {
+          "granularity": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceGranularity"
+            },
+            "type": "array"
+          }
+        },
         "required": [
           "granularity"
         ],
-        "properties": {
-          "granularity": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EvidenceGranularity"
-            }
-          }
-        }
+        "type": "object"
       },
       "MetricDrilldownColumn": {
-        "type": "object",
-        "required": [
-          "key",
-          "label",
-          "type"
-        ],
         "properties": {
           "key": {
             "type": "string"
@@ -2503,22 +638,23 @@
           "type": {
             "$ref": "#/components/schemas/MetricDrilldownColumnType"
           }
-        }
+        },
+        "required": [
+          "key",
+          "label",
+          "type"
+        ],
+        "type": "object"
       },
       "MetricDrilldownColumnType": {
-        "type": "string",
         "enum": [
           "string",
           "date",
           "number"
-        ]
+        ],
+        "type": "string"
       },
       "MetricDrilldownEntity": {
-        "type": "object",
-        "required": [
-          "type",
-          "id"
-        ],
         "properties": {
           "id": {
             "type": "string"
@@ -2526,38 +662,36 @@
           "type": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "type": "object"
       },
       "MetricDrilldownExportFormat": {
-        "type": "string",
         "enum": [
           "csv",
           "xlsx"
-        ]
+        ],
+        "type": "string"
       },
       "MetricDrilldownExportRequest": {
-        "type": "object",
-        "required": [
-          "metric_key",
-          "entity",
-          "period",
-          "format"
-        ],
         "properties": {
           "display_dimensions": {
-            "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "type": "array"
           },
           "entity": {
             "$ref": "#/components/schemas/MetricDrilldownEntity"
           },
           "filters": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricDrilldownFilter"
-            }
+            },
+            "type": "array"
           },
           "format": {
             "$ref": "#/components/schemas/MetricDrilldownExportFormat"
@@ -2568,32 +702,34 @@
           "period": {
             "$ref": "#/components/schemas/MetricDrilldownPeriod"
           }
-        }
+        },
+        "required": [
+          "metric_key",
+          "entity",
+          "period",
+          "format"
+        ],
+        "type": "object"
       },
       "MetricDrilldownFilter": {
-        "type": "object",
-        "required": [
-          "dimension",
-          "values"
-        ],
         "properties": {
           "dimension": {
             "type": "string"
           },
           "values": {
-            "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "type": "array"
           }
-        }
+        },
+        "required": [
+          "dimension",
+          "values"
+        ],
+        "type": "object"
       },
       "MetricDrilldownPeriod": {
-        "type": "object",
-        "required": [
-          "from",
-          "to"
-        ],
         "properties": {
           "from": {
             "type": "string"
@@ -2601,15 +737,14 @@
           "to": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
       },
       "MetricDrilldownRequest": {
-        "type": "object",
-        "required": [
-          "metric_key",
-          "entity",
-          "period"
-        ],
         "properties": {
           "cursor": {
             "type": [
@@ -2618,26 +753,26 @@
             ]
           },
           "display_dimensions": {
-            "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "type": "array"
           },
           "entity": {
             "$ref": "#/components/schemas/MetricDrilldownEntity"
           },
           "filters": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricDrilldownFilter"
-            }
+            },
+            "type": "array"
           },
           "limit": {
+            "minimum": 0,
             "type": [
               "integer",
               "null"
-            ],
-            "minimum": 0
+            ]
           },
           "metric_key": {
             "type": "string"
@@ -2645,21 +780,21 @@
           "period": {
             "$ref": "#/components/schemas/MetricDrilldownPeriod"
           }
-        }
+        },
+        "required": [
+          "metric_key",
+          "entity",
+          "period"
+        ],
+        "type": "object"
       },
       "MetricDrilldownResponse": {
-        "type": "object",
-        "required": [
-          "selection",
-          "columns",
-          "rows"
-        ],
         "properties": {
           "columns": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricDrilldownColumn"
-            }
+            },
+            "type": "array"
           },
           "next_cursor": {
             "type": [
@@ -2668,55 +803,53 @@
             ]
           },
           "rows": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricDrilldownRow"
-            }
+            },
+            "type": "array"
           },
           "selection": {
             "$ref": "#/components/schemas/MetricDrilldownSelection"
           }
-        }
+        },
+        "required": [
+          "selection",
+          "columns",
+          "rows"
+        ],
+        "type": "object"
       },
       "MetricDrilldownRow": {
-        "type": "object",
-        "required": [
-          "values"
-        ],
         "properties": {
           "values": {
-            "type": "object",
             "additionalProperties": {},
             "propertyNames": {
               "type": "string"
-            }
+            },
+            "type": "object"
           }
-        }
+        },
+        "required": [
+          "values"
+        ],
+        "type": "object"
       },
       "MetricDrilldownSelection": {
-        "type": "object",
-        "required": [
-          "metric_key",
-          "entity",
-          "period",
-          "filters",
-          "display_dimensions"
-        ],
         "properties": {
           "display_dimensions": {
-            "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "type": "array"
           },
           "entity": {
             "$ref": "#/components/schemas/MetricDrilldownEntity"
           },
           "filters": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricDrilldownFilter"
-            }
+            },
+            "type": "array"
           },
           "metric_key": {
             "type": "string"
@@ -2724,27 +857,30 @@
           "period": {
             "$ref": "#/components/schemas/MetricDrilldownPeriod"
           }
-        }
+        },
+        "required": [
+          "metric_key",
+          "entity",
+          "period",
+          "filters",
+          "display_dimensions"
+        ],
+        "type": "object"
       },
       "MetricFormat": {
-        "type": "string",
         "enum": [
           "integer",
           "decimal",
           "currency",
           "percent"
-        ]
+        ],
+        "type": "string"
       },
       "MetricGroupLimitRequest": {
-        "type": "object",
-        "required": [
-          "count",
-          "include_remainder"
-        ],
         "properties": {
           "count": {
-            "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "type": "integer"
           },
           "include_remainder": {
             "type": "boolean"
@@ -2755,46 +891,51 @@
               "null"
             ]
           }
-        }
+        },
+        "required": [
+          "count",
+          "include_remainder"
+        ],
+        "type": "object"
       },
       "MetricInputRole": {
-        "type": "string",
         "enum": [
           "value",
           "numerator",
           "denominator"
-        ]
+        ],
+        "type": "string"
       },
       "MetricOrigin": {
-        "type": "string",
         "enum": [
           "builtin",
           "custom"
-        ]
+        ],
+        "type": "string"
       },
       "MetricRequest": {
-        "type": "object",
-        "required": [
-          "metric_key",
-          "views"
-        ],
         "properties": {
           "filters": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricDimensionFilterRequest"
-            }
+            },
+            "type": "array"
           },
           "metric_key": {
             "type": "string"
           },
           "views": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricViewRequest"
-            }
+            },
+            "type": "array"
           }
-        }
+        },
+        "required": [
+          "metric_key",
+          "views"
+        ],
+        "type": "object"
       },
       "MetricResultDto": {
         "allOf": [
@@ -2802,15 +943,6 @@
             "$ref": "#/components/schemas/ComputationDto"
           },
           {
-            "type": "object",
-            "required": [
-              "metric_key",
-              "label",
-              "format",
-              "direction",
-              "views",
-              "selection"
-            ],
             "properties": {
               "description": {
                 "type": [
@@ -2862,32 +994,34 @@
                 ]
               },
               "views": {
-                "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/MetricResultViewDto"
-                }
+                },
+                "type": "array"
               }
-            }
+            },
+            "required": [
+              "metric_key",
+              "label",
+              "format",
+              "direction",
+              "views",
+              "selection"
+            ],
+            "type": "object"
           }
         ]
       },
       "MetricResultSelectionDto": {
-        "type": "object",
-        "required": [
-          "metric_key",
-          "entity",
-          "period",
-          "filters"
-        ],
         "properties": {
           "entity": {
             "$ref": "#/components/schemas/MetricResultsEntityDto"
           },
           "filters": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricDimensionFilterDto"
-            }
+            },
+            "type": "array"
           },
           "metric_key": {
             "type": "string"
@@ -2895,172 +1029,174 @@
           "period": {
             "$ref": "#/components/schemas/MetricResultsPeriodDto"
           }
-        }
+        },
+        "required": [
+          "metric_key",
+          "entity",
+          "period",
+          "filters"
+        ],
+        "type": "object"
       },
       "MetricResultViewDto": {
         "oneOf": [
           {
-            "type": "object",
+            "properties": {
+              "values": {
+                "items": {
+                  "$ref": "#/components/schemas/PeriodValueDto"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "period"
+                ],
+                "type": "string"
+              }
+            },
             "required": [
               "values",
               "view"
             ],
-            "properties": {
-              "values": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/PeriodValueDto"
-                }
-              },
-              "view": {
-                "type": "string",
-                "enum": [
-                  "period"
-                ]
-              }
-            }
+            "type": "object"
           },
           {
-            "type": "object",
-            "required": [
-              "bucket",
-              "series",
-              "view"
-            ],
             "properties": {
               "bucket": {
                 "$ref": "#/components/schemas/Bucket"
               },
               "series": {
-                "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/TimeseriesDto"
-                }
+                },
+                "type": "array"
               },
               "view": {
-                "type": "string",
                 "enum": [
                   "timeseries"
-                ]
+                ],
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "bucket",
+              "series",
+              "view"
+            ],
+            "type": "object"
           },
           {
-            "type": "object",
+            "properties": {
+              "values": {
+                "items": {
+                  "$ref": "#/components/schemas/PeerValueDto"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "peer"
+                ],
+                "type": "string"
+              }
+            },
             "required": [
               "values",
               "view"
             ],
-            "properties": {
-              "values": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/PeerValueDto"
-                }
-              },
-              "view": {
-                "type": "string",
-                "enum": [
-                  "peer"
-                ]
-              }
-            }
+            "type": "object"
           },
           {
-            "type": "object",
+            "properties": {
+              "dimensions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "values": {
+                "items": {
+                  "$ref": "#/components/schemas/BreakdownValueDto"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "breakdown"
+                ],
+                "type": "string"
+              }
+            },
             "required": [
               "dimensions",
               "values",
               "view"
             ],
-            "properties": {
-              "dimensions": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "values": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/BreakdownValueDto"
-                }
-              },
-              "view": {
-                "type": "string",
-                "enum": [
-                  "breakdown"
-                ]
-              }
-            }
+            "type": "object"
           },
           {
-            "type": "object",
+            "properties": {
+              "values": {
+                "items": {
+                  "$ref": "#/components/schemas/HistogramValueDto"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "histogram"
+                ],
+                "type": "string"
+              }
+            },
             "required": [
               "values",
               "view"
             ],
-            "properties": {
-              "values": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/HistogramValueDto"
-                }
-              },
-              "view": {
-                "type": "string",
-                "enum": [
-                  "histogram"
-                ]
-              }
-            }
+            "type": "object"
           }
         ]
       },
       "MetricResultsEntity": {
-        "type": "object",
-        "required": [
-          "type",
-          "ids"
-        ],
         "properties": {
           "ids": {
-            "type": "array",
+            "description": "Canonical person UUIDs (since the identity cutover; the\npre-cutover email shape is rejected with a 400).",
             "items": {
               "type": "string"
             },
-            "description": "Canonical person UUIDs (since the identity cutover; the\npre-cutover email shape is rejected with a 400)."
+            "type": "array"
           },
           "type": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "type",
+          "ids"
+        ],
+        "type": "object"
       },
       "MetricResultsEntityDto": {
-        "type": "object",
-        "required": [
-          "type",
-          "ids"
-        ],
         "properties": {
           "ids": {
-            "type": "array",
+            "description": "Canonical person UUIDs (since the identity cutover; the\npre-cutover email shape is rejected with a 400).",
             "items": {
               "type": "string"
             },
-            "description": "Canonical person UUIDs (since the identity cutover; the\npre-cutover email shape is rejected with a 400)."
+            "type": "array"
           },
           "type": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "type",
+          "ids"
+        ],
+        "type": "object"
       },
       "MetricResultsPeriod": {
-        "type": "object",
-        "required": [
-          "from",
-          "to"
-        ],
         "properties": {
           "from": {
             "type": "string"
@@ -3068,14 +1204,14 @@
           "to": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
       },
       "MetricResultsPeriodDto": {
-        "type": "object",
-        "required": [
-          "from",
-          "to"
-        ],
         "properties": {
           "from": {
             "type": "string"
@@ -3083,74 +1219,75 @@
           "to": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
       },
       "MetricResultsRequest": {
-        "type": "object",
-        "required": [
-          "entity",
-          "period",
-          "metrics"
-        ],
         "properties": {
           "entity": {
             "$ref": "#/components/schemas/MetricResultsEntity"
           },
           "metrics": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricRequest"
-            }
+            },
+            "type": "array"
           },
           "period": {
             "$ref": "#/components/schemas/MetricResultsPeriod"
           }
-        }
+        },
+        "required": [
+          "entity",
+          "period",
+          "metrics"
+        ],
+        "type": "object"
       },
       "MetricResultsResponse": {
-        "type": "object",
+        "properties": {
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/MetricResultDto"
+            },
+            "type": "array"
+          }
+        },
         "required": [
           "metrics"
         ],
-        "properties": {
-          "metrics": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MetricResultDto"
-            }
-          }
-        }
+        "type": "object"
       },
       "MetricSchemaErrorCode": {
-        "type": "string",
         "enum": [
           "table_not_found",
           "column_not_found",
           "dimension_not_covered",
           "unknown"
-        ]
+        ],
+        "type": "string"
       },
       "MetricViewRequest": {
         "oneOf": [
           {
-            "type": "object",
-            "required": [
-              "view"
-            ],
             "properties": {
               "view": {
-                "type": "string",
                 "enum": [
                   "period"
-                ]
+                ],
+                "type": "string"
               }
-            }
-          },
-          {
-            "type": "object",
+            },
             "required": [
               "view"
             ],
+            "type": "object"
+          },
+          {
             "properties": {
               "cohort_key": {
                 "type": [
@@ -3159,18 +1296,18 @@
                 ]
               },
               "view": {
-                "type": "string",
                 "enum": [
                   "peer"
-                ]
+                ],
+                "type": "string"
               }
-            }
-          },
-          {
-            "type": "object",
+            },
             "required": [
               "view"
             ],
+            "type": "object"
+          },
+          {
             "properties": {
               "bucket": {
                 "oneOf": [
@@ -3183,10 +1320,10 @@
                 ]
               },
               "dimensions": {
-                "type": "array",
                 "items": {
                   "type": "string"
-                }
+                },
+                "type": "array"
               },
               "group_limit": {
                 "oneOf": [
@@ -3199,137 +1336,133 @@
                 ]
               },
               "view": {
-                "type": "string",
                 "enum": [
                   "timeseries"
-                ]
+                ],
+                "type": "string"
               }
-            }
+            },
+            "required": [
+              "view"
+            ],
+            "type": "object"
           },
           {
-            "type": "object",
+            "properties": {
+              "dimensions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "breakdown"
+                ],
+                "type": "string"
+              }
+            },
             "required": [
               "dimensions",
               "view"
             ],
-            "properties": {
-              "dimensions": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "view": {
-                "type": "string",
-                "enum": [
-                  "breakdown"
-                ]
-              }
-            }
+            "type": "object"
           },
           {
-            "type": "object",
+            "properties": {
+              "view": {
+                "enum": [
+                  "histogram"
+                ],
+                "type": "string"
+              }
+            },
             "required": [
               "view"
             ],
-            "properties": {
-              "view": {
-                "type": "string",
-                "enum": [
-                  "histogram"
-                ]
-              }
-            }
+            "type": "object"
           }
         ]
       },
       "PeerValueDto": {
-        "type": "object",
-        "required": [
-          "entity_id",
-          "n"
-        ],
         "properties": {
           "entity_id": {
             "type": "string"
           },
           "max": {
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double"
+            ]
           },
           "median": {
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double"
+            ]
           },
           "min": {
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double"
+            ]
           },
           "n": {
-            "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "type": "integer"
           },
           "p25": {
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double"
+            ]
           },
           "p75": {
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double"
+            ]
           },
           "target_value": {
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double"
+            ]
           }
-        }
+        },
+        "required": [
+          "entity_id",
+          "n"
+        ],
+        "type": "object"
       },
       "PeriodValueDto": {
-        "type": "object",
-        "required": [
-          "entity_id"
-        ],
         "properties": {
           "entity_id": {
             "type": "string"
           },
           "value": {
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double"
+            ]
           }
-        }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
       },
       "Problem": {
-        "type": "object",
         "description": "RFC 9457 problem+json. `context` varies by error category.",
-        "required": [
-          "type",
-          "title",
-          "status",
-          "detail",
-          "context"
-        ],
         "properties": {
           "context": {
             "type": "object"
@@ -3341,8 +1474,8 @@
             "type": "string"
           },
           "status": {
-            "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "type": "integer"
           },
           "title": {
             "type": "string"
@@ -3353,23 +1486,30 @@
           "type": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail",
+          "context"
+        ],
+        "type": "object"
       },
       "RunResponse": {
-        "type": "object",
         "description": "Result of `POST /v1/queries/{id}/run`.\n\n`rows` carry a per-query dynamic schema (the `SELECT` columns vary), so each\nrow is an untyped JSON object — the same shape as the metric query path.",
+        "properties": {
+          "rows": {
+            "items": {},
+            "type": "array"
+          }
+        },
         "required": [
           "rows"
         ],
-        "properties": {
-          "rows": {
-            "type": "array",
-            "items": {}
-          }
-        }
+        "type": "object"
       },
       "RunSavedQueryRequest": {
-        "type": "object",
         "description": "Optional parameters for `POST /v1/queries/{id}/run` (#1966).\n\nThe `{tenant}` parameter is always injected from the session context and is\nnever client-settable, so it is absent here. `period` is the first optional\nnamed parameter an author can reference as `{period:<Type>}`; it is bound as\na ClickHouse server-side parameter, never interpolated into the SQL text.",
         "properties": {
           "period": {
@@ -3378,23 +1518,15 @@
               "null"
             ]
           }
-        }
+        },
+        "type": "object"
       },
       "SavedQuery": {
-        "type": "object",
         "description": "A saved query row.",
-        "required": [
-          "id",
-          "insight_tenant_id",
-          "name",
-          "sql",
-          "created_at",
-          "updated_at"
-        ],
         "properties": {
           "created_at": {
-            "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "type": "string"
           },
           "description": {
             "type": [
@@ -3403,12 +1535,12 @@
             ]
           },
           "id": {
-            "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "type": "string"
           },
           "insight_tenant_id": {
-            "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "type": "string"
           },
           "name": {
             "type": "string"
@@ -3417,33 +1549,37 @@
             "type": "string"
           },
           "updated_at": {
-            "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "type": "string"
           }
-        }
+        },
+        "required": [
+          "id",
+          "insight_tenant_id",
+          "name",
+          "sql",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
       },
       "SavedQueryListResponse": {
-        "type": "object",
         "description": "Response envelope for `GET /v1/queries` (`{ \"items\": [SavedQuerySummary] }`).",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SavedQuerySummary"
+            },
+            "type": "array"
+          }
+        },
         "required": [
           "items"
         ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SavedQuerySummary"
-            }
-          }
-        }
+        "type": "object"
       },
       "SavedQuerySummary": {
-        "type": "object",
         "description": "Summary returned by the list endpoint (no `sql` body).",
-        "required": [
-          "id",
-          "name"
-        ],
         "properties": {
           "description": {
             "type": [
@@ -3452,28 +1588,29 @@
             ]
           },
           "id": {
-            "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "type": "string"
           },
           "name": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
       },
       "SchemaStatus": {
-        "type": "string",
         "enum": [
           "ok",
           "error",
           "unchecked"
-        ]
+        ],
+        "type": "string"
       },
       "TelemetryRecord": {
-        "type": "object",
         "description": "The subset of the SDK's record this service stores. Everything else it\nsends — device, OS, viewport, locale — is dropped at ingest.",
-        "required": [
-          "name"
-        ],
         "properties": {
           "context_app_name": {
             "type": [
@@ -3504,28 +1641,25 @@
             "type": "string"
           },
           "time_triggered": {
+            "format": "int64",
             "type": [
               "integer",
               "null"
-            ],
-            "format": "int64"
+            ]
           }
-        }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
       },
       "TimeseriesDto": {
-        "type": "object",
-        "required": [
-          "entity_id",
-          "dimensions",
-          "total",
-          "points"
-        ],
         "properties": {
           "dimensions": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/MetricDimensionDto"
-            }
+            },
+            "type": "array"
           },
           "entity_id": {
             "type": "string"
@@ -3537,18 +1671,18 @@
             ]
           },
           "points": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/TimeseriesPointDto"
-            }
+            },
+            "type": "array"
           },
           "rank": {
+            "format": "int32",
+            "minimum": 0,
             "type": [
               "integer",
               "null"
-            ],
-            "format": "int32",
-            "minimum": 0
+            ]
           },
           "remainder": {
             "type": [
@@ -3557,34 +1691,40 @@
             ]
           },
           "total": {
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double"
+            ]
           }
-        }
+        },
+        "required": [
+          "entity_id",
+          "dimensions",
+          "total",
+          "points"
+        ],
+        "type": "object"
       },
       "TimeseriesPointDto": {
-        "type": "object",
-        "required": [
-          "bucket_start"
-        ],
         "properties": {
           "bucket_start": {
             "type": "string"
           },
           "value": {
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double"
+            ]
           }
-        }
+        },
+        "required": [
+          "bucket_start"
+        ],
+        "type": "object"
       },
       "UpdateSavedQueryRequest": {
-        "type": "object",
         "description": "Request to update a saved query.\n\n`description` uses double-Option (absent → unchanged, `null` → clear,\nvalue → set), matching [`super::metric::UpdateMetricRequest`].",
         "properties": {
           "description": {
@@ -3605,118 +1745,140 @@
               "null"
             ]
           }
-        }
+        },
+        "type": "object"
       },
       "UsageConfigResponse": {
-        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Whether this instance records usage at all.",
+            "type": "boolean"
+          }
+        },
         "required": [
           "enabled"
         ],
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "description": "Whether this instance records usage at all."
-          }
-        }
+        "type": "object"
       },
       "UsageDay": {
-        "type": "object",
-        "required": [
-          "day",
-          "visits",
-          "visitors"
-        ],
         "properties": {
           "day": {
             "type": "string"
           },
           "visitors": {
-            "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "type": "integer"
           },
           "visits": {
-            "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "type": "integer"
           }
-        }
+        },
+        "required": [
+          "day",
+          "visits",
+          "visitors"
+        ],
+        "type": "object"
       },
       "UsageEvent": {
-        "type": "object",
+        "properties": {
+          "event_name": {
+            "type": "string"
+          },
+          "opens": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "people": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
         "required": [
           "event_name",
           "target",
           "opens",
           "people"
         ],
-        "properties": {
-          "event_name": {
-            "type": "string"
-          },
-          "opens": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "people": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "target": {
-            "type": "string"
-          }
-        }
+        "type": "object"
       },
       "UsageIngestEnvelope": {
-        "type": "object",
-        "required": [
-          "value"
-        ],
         "properties": {
           "value": {
             "$ref": "#/components/schemas/TelemetryRecord"
           }
-        }
+        },
+        "required": [
+          "value"
+        ],
+        "type": "object"
       },
       "UsageIngestRequest": {
-        "type": "object",
         "description": "The SDK's transport envelope: a Kafka REST Proxy body, accepted as it\nstands so the published SDK needs no fork.",
         "properties": {
           "records": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/UsageIngestEnvelope"
-            }
+            },
+            "type": "array"
           }
-        }
+        },
+        "type": "object"
       },
       "UsagePage": {
-        "type": "object",
-        "required": [
-          "path",
-          "views",
-          "visitors"
-        ],
         "properties": {
           "path": {
             "type": "string"
           },
           "views": {
-            "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "type": "integer"
           },
           "visitors": {
-            "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "type": "integer"
           }
-        }
+        },
+        "required": [
+          "path",
+          "views",
+          "visitors"
+        ],
+        "type": "object"
       },
       "UsagePerson": {
-        "type": "object",
+        "properties": {
+          "display_name": {
+            "description": "Empty when the visitor has not been mirrored into the identity rows yet.",
+            "type": "string"
+          },
+          "last_seen": {
+            "type": "string"
+          },
+          "page_views": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "person_id": {
+            "type": "string"
+          },
+          "visits": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
         "required": [
           "person_id",
           "display_name",
@@ -3724,64 +1886,33 @@
           "page_views",
           "last_seen"
         ],
-        "properties": {
-          "display_name": {
-            "type": "string",
-            "description": "Empty when the visitor has not been mirrored into the identity rows yet."
-          },
-          "last_seen": {
-            "type": "string"
-          },
-          "page_views": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "person_id": {
-            "type": "string"
-          },
-          "visits": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
+        "type": "object"
       },
       "UsageSummaryResponse": {
-        "type": "object",
-        "required": [
-          "since",
-          "until",
-          "totals",
-          "by_day",
-          "by_person",
-          "by_page",
-          "by_event"
-        ],
         "properties": {
           "by_day": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/UsageDay"
-            }
+            },
+            "type": "array"
           },
           "by_event": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/UsageEvent"
-            }
+            },
+            "type": "array"
           },
           "by_page": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/UsagePage"
-            }
+            },
+            "type": "array"
           },
           "by_person": {
-            "type": "array",
             "items": {
               "$ref": "#/components/schemas/UsagePerson"
-            }
+            },
+            "type": "array"
           },
           "since": {
             "type": "string"
@@ -3792,78 +1923,1947 @@
           "until": {
             "type": "string"
           }
-        }
+        },
+        "required": [
+          "since",
+          "until",
+          "totals",
+          "by_day",
+          "by_person",
+          "by_page",
+          "by_event"
+        ],
+        "type": "object"
       },
       "UsageTotals": {
-        "type": "object",
+        "properties": {
+          "page_views": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "visitors": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "visits": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
         "required": [
           "visits",
           "visitors",
           "page_views"
         ],
-        "properties": {
-          "page_views": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "visitors": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "visits": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          }
-        }
+        "type": "object"
       },
       "ValueTransform": {
-        "type": "object",
+        "additionalProperties": false,
         "description": "Affine + clamp shaping for a computed metric value:\n`y = clamp(clamp_min, clamp_max, multiplier * x + offset)`.\nAbsent fields are identity (multiplier 1, offset 0, no bound).",
         "properties": {
           "clamp_max": {
+            "default": null,
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double",
-            "default": null
+            ]
           },
           "clamp_min": {
+            "default": null,
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double",
-            "default": null
+            ]
           },
           "multiplier": {
+            "default": null,
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double",
-            "default": null
+            ]
           },
           "offset": {
+            "default": null,
+            "format": "double",
             "type": [
               "number",
               "null"
-            ],
-            "format": "double",
-            "default": null
+            ]
           }
         },
-        "additionalProperties": false
+        "type": "object"
       }
     },
     "securitySchemes": {
       "bearerAuth": {
-        "type": "http",
+        "bearerFormat": "JWT",
         "scheme": "bearer",
-        "bearerFormat": "JWT"
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Read-only query service over ClickHouse. Serves declarative metric definitions, computed metric results and their evidence, plus tenant-authored saved queries. The API Gateway mounts this service at /api/analytics.",
+    "title": "Analytics API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/metric-definitions": {
+      "get": {
+        "operationId": "analytics_api.metric_definitions.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricDefinitionListResponse"
+                }
+              }
+            },
+            "description": "Metric definitions"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List unified metric definitions"
+      }
+    },
+    "/v1/metric-drilldown": {
+      "post": {
+        "operationId": "analytics_api.metric_drilldown.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricDrilldownRequest"
+              }
+            }
+          },
+          "description": "Metric evidence selection",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricDrilldownResponse"
+                }
+              }
+            },
+            "description": "Metric evidence"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List metric evidence"
+      }
+    },
+    "/v1/metric-drilldown/export": {
+      "post": {
+        "operationId": "analytics_api.metric_drilldown.export",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricDrilldownExportRequest"
+              }
+            }
+          },
+          "description": "Metric evidence export selection",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Complete metric evidence export",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Attachment filename",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Export metric evidence"
+      }
+    },
+    "/v1/metric-results": {
+      "post": {
+        "operationId": "analytics_api.metric_results.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricResultsRequest"
+              }
+            }
+          },
+          "description": "Metric result request",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricResultsResponse"
+                }
+              }
+            },
+            "description": "Metric results"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Compute metric results"
+      }
+    },
+    "/v1/metrics": {
+      "get": {
+        "operationId": "analytics_api.metrics.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomMetricListResponse"
+                }
+              }
+            },
+            "description": "List of custom metrics"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List custom metrics"
+      },
+      "post": {
+        "operationId": "analytics_api.metrics.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomMetric"
+              }
+            }
+          },
+          "description": "Custom metric to create",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomMetric"
+                }
+              }
+            },
+            "description": "Created custom metric"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a custom metric"
+      }
+    },
+    "/v1/metrics/export": {
+      "get": {
+        "operationId": "analytics_api.metrics.export",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportCustomMetricsResponse"
+                }
+              }
+            },
+            "description": "Portable custom metric graphs"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Export custom metrics"
+      }
+    },
+    "/v1/metrics/import": {
+      "post": {
+        "operationId": "analytics_api.metrics.import",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportCustomMetricsRequest"
+              }
+            }
+          },
+          "description": "Custom metric graphs to import",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportCustomMetricsResponse"
+                }
+              }
+            },
+            "description": "Import result"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Import custom metrics"
+      }
+    },
+    "/v1/metrics/{metric_key}": {
+      "delete": {
+        "operationId": "analytics_api.metrics.delete",
+        "responses": {
+          "204": {
+            "description": "Custom metric deleted"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Delete a custom metric"
+      },
+      "get": {
+        "operationId": "analytics_api.metrics.get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomMetric"
+                }
+              }
+            },
+            "description": "Custom metric"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get a custom metric by key"
+      },
+      "put": {
+        "operationId": "analytics_api.metrics.update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomMetric"
+              }
+            }
+          },
+          "description": "Custom metric fields to replace",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomMetric"
+                }
+              }
+            },
+            "description": "Updated custom metric"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update a custom metric"
+      }
+    },
+    "/v1/queries": {
+      "get": {
+        "operationId": "analytics_api.queries.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedQueryListResponse"
+                }
+              }
+            },
+            "description": "List of saved queries"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List saved queries"
+      },
+      "post": {
+        "operationId": "analytics_api.queries.create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSavedQueryRequest"
+              }
+            }
+          },
+          "description": "Saved query to create",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedQuery"
+                }
+              }
+            },
+            "description": "Created saved query"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a saved query"
+      }
+    },
+    "/v1/queries/{id}": {
+      "delete": {
+        "operationId": "analytics_api.queries.delete",
+        "responses": {
+          "204": {
+            "description": "Saved query deleted"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Delete a saved query"
+      },
+      "get": {
+        "operationId": "analytics_api.queries.get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedQuery"
+                }
+              }
+            },
+            "description": "Saved query"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get a saved query by id"
+      },
+      "put": {
+        "operationId": "analytics_api.queries.update",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSavedQueryRequest"
+              }
+            }
+          },
+          "description": "Saved query fields to update",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedQuery"
+                }
+              }
+            },
+            "description": "Updated saved query"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update a saved query"
+      }
+    },
+    "/v1/queries/{id}/run": {
+      "post": {
+        "operationId": "analytics_api.queries.run",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunSavedQueryRequest"
+              }
+            }
+          },
+          "description": "Optional named parameters (`period`); `tenant` is always injected from context"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            },
+            "description": "Query result rows"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Run a saved query"
+      }
+    },
+    "/v1/usage/config": {
+      "get": {
+        "operationId": "analytics_api.usage.config",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageConfigResponse"
+                }
+              }
+            },
+            "description": "Usage collection state"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Whether this instance records usage"
+      }
+    },
+    "/v1/usage/events": {
+      "post": {
+        "operationId": "analytics_api.usage.ingest",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UsageIngestRequest"
+              }
+            }
+          },
+          "description": "Telemetry SDK records",
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Accepted"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Record usage events"
+      }
+    },
+    "/v1/usage/summary": {
+      "get": {
+        "operationId": "analytics_api.usage.summary",
+        "parameters": [
+          {
+            "description": "Inclusive first day, YYYY-MM-DD",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive last day, YYYY-MM-DD",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageSummaryResponse"
+                }
+              }
+            },
+            "description": "Usage summary"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Usage summary for a date range"
       }
     }
   }
