@@ -152,17 +152,9 @@ async fn insert_records(state: &AppState, rows: &[UsageEventRow]) -> anyhow::Res
     Ok(())
 }
 
-/// The SDK stringifies each nested `data` value, so it arrives either plain or
-/// JSON-encoded.
+/// The SDK stringifies each nested `data` value, so it arrives JSON-encoded.
 fn data_field(data: Option<&serde_json::Value>, key: &str) -> String {
-    let Some(value) = data else {
-        return String::new();
-    };
-    let object = match value {
-        serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw).ok(),
-        other => Some(other.clone()),
-    };
-    let Some(serde_json::Value::Object(map)) = object else {
+    let Some(serde_json::Value::Object(map)) = data else {
         return String::new();
     };
     match map.get(key) {
