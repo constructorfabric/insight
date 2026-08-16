@@ -173,9 +173,6 @@ function VisitsChart({ days }: { days: UsageDay[] }) {
 
 const ROW_HEIGHT = 40;
 
-/** Above this the body scrolls rather than growing the page. */
-const MAX_BODY_HEIGHT = 360;
-
 interface Column<T> {
   header: string;
   width?: number;
@@ -212,52 +209,55 @@ function VirtualTable<T>({
   });
 
   return (
-    <div
-      ref={setViewport}
-      className="overflow-auto rounded-md border"
-      style={{ maxHeight: MAX_BODY_HEIGHT }}
+    <Table
+      aria-label={label}
+      containerRef={setViewport}
+      containerClassName="max-h-90 overflow-auto rounded-md border"
+      className="grid min-w-full"
+      style={{
+        height: bodyHeight + ROW_HEIGHT,
+        gridTemplateRows: `${ROW_HEIGHT}px 1fr`,
+      }}
     >
-      <Table aria-label={label}>
-        <TableHeader className="sticky top-0 z-10 bg-background">
-          <TableRow className="flex w-full">
-            {columns.map((column) => (
-              <TableHead
-                key={column.header}
-                className={cellClass(column)}
-                style={cellStyle(column)}
-              >
-                {column.header}
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody className="relative grid" style={{ height: bodyHeight }}>
-          {virtualizer.getVirtualItems().map((virtualRow) => {
-            const row = rows[virtualRow.index];
-            if (!row) return null;
-            return (
-              <TableRow
-                key={rowKey(row, virtualRow.index)}
-                data-index={virtualRow.index}
-                ref={virtualizer.measureElement}
-                className="absolute top-0 left-0 flex w-full"
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
-              >
-                {columns.map((column) => (
-                  <TableCell
-                    key={column.header}
-                    className={cellClass(column)}
-                    style={cellStyle(column)}
-                  >
-                    {column.cell(row, virtualRow.index)}
-                  </TableCell>
-                ))}
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </div>
+      <TableHeader className="sticky top-0 z-10 grid bg-background">
+        <TableRow className="flex w-full">
+          {columns.map((column) => (
+            <TableHead
+              key={column.header}
+              className={cn(cellClass(column), "flex h-10 items-center")}
+              style={cellStyle(column)}
+            >
+              {column.header}
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody className="relative grid" style={{ height: bodyHeight }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const row = rows[virtualRow.index];
+          if (!row) return null;
+          return (
+            <TableRow
+              key={rowKey(row, virtualRow.index)}
+              data-index={virtualRow.index}
+              ref={virtualizer.measureElement}
+              className="absolute top-0 left-0 flex w-full"
+              style={{ transform: `translateY(${virtualRow.start}px)` }}
+            >
+              {columns.map((column) => (
+                <TableCell
+                  key={column.header}
+                  className={cn(cellClass(column), "flex items-center")}
+                  style={cellStyle(column)}
+                >
+                  {column.cell(row, virtualRow.index)}
+                </TableCell>
+              ))}
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }
 
@@ -292,7 +292,7 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
             },
             { header: "Visits", width: 6, align: "right", cell: (row) => row.visits },
             { header: "Pages", width: 6, align: "right", cell: (row) => row.page_views },
-            { header: "Last seen", width: 11, cell: (row) => formatUtcClock(row.last_seen, "d MMM HH:mm") },
+            { header: "Last seen (UTC)", width: 11, cell: (row) => formatUtcClock(row.last_seen, "d MMM HH:mm") },
           ]}
         />
       )}
