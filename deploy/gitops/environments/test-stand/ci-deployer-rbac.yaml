@@ -34,12 +34,6 @@ rules:
   - apiGroups: [""]
     resources: [persistentvolumeclaims]
     verbs: [get, list, watch, create, update, patch]
-  # Ingress restrictions the authenticator and git-cli-proxy render when a
-  # deployment enables them. Both default off, so a stand that turns one on
-  # would otherwise fail its next upgrade the way the claim above did.
-  - apiGroups: ["networking.k8s.io"]
-    resources: [networkpolicies]
-    verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: ["apps"]
     resources: [deployments]
     verbs: [get, list, watch, create, update, patch, delete]

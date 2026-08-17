@@ -151,7 +151,6 @@ make -C deploy/gitops verify-ci-credential ENV=test-stand
 | `update httproutes.gateway.networking.k8s.io -n insight` | the umbrella renders both edge routes from `gateway.route` / `keycloak.route`, so `helm upgrade` writes them on every run |
 | `get persistentvolumeclaims -n insight` | the git-cli-proxy renders a claim for its clone cache, and `helm upgrade` reads it before patching |
 | `update persistentvolumeclaims -n insight` | its chart and version labels change on every bump |
-| `update networkpolicies.networking.k8s.io -n insight` | the authenticator and git-cli-proxy render one where a stand restricts ingress |
 | `create roles.rbac.authorization.k8s.io -n airbyte` | the chart renders `insight-airbyte-auth-reader` into the Airbyte namespace, not the release one |
 | `create rolebindings.rbac.authorization.k8s.io -n airbyte` | same object, the binding half |
 
