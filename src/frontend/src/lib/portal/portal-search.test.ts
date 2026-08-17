@@ -87,7 +87,9 @@ describe("applySearchPatch", () => {
     const middleware = retainSearchParams(PORTAL_SEARCH_KEYS);
     return middleware({
       search: prev as never,
-      next: (() => patched) as never,
+      // retainSearchParams reads next()'s meta unguarded, so the double must
+      // return it alongside the search.
+      next: (() => ({ search: patched, meta: {} })) as never,
     }) as unknown as Record<string, unknown>;
   }
 
