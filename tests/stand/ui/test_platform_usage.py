@@ -39,7 +39,7 @@ from insight_stand import PersonaSession, wait_until
 from playwright.sync_api import Browser, Page, expect
 
 from .conftest import apply_portal_prefs
-from .flows import collect_page_rows, collect_rows, sign_in, sweep_portal
+from .flows import collect_page_rows, collect_rows, revisit_usage, sign_in, sweep_portal
 from .pages.platform_usage_page import PAGES_TABLE, PEOPLE_TABLE, PlatformUsagePage
 from .pages.portal_shell import PortalShell
 
@@ -130,9 +130,17 @@ def swept(
 
 
 def _pages_recorded_for(usage: PlatformUsagePage, display_name: str) -> int:
-    """That person's Pages figure, re-read from the page. 0 when absent yet."""
-    usage.page.reload(wait_until="domcontentloaded")
-    expect(usage.chart_heading()).to_be_visible()
+    """That person's Pages figure, re-read from the page. 0 when absent yet.
+
+    Re-read by LEAVING the screen and coming back, not by reloading the document.
+    Two reasons, and the second one bit: a client-side round trip is what a reader
+    actually does, and it exercises the query's `refetchOnMount: "always"`; a
+    reload re-boots the SPA and re-asks `/auth/me`, and a poll that does that
+    every 500ms walks straight into the gateway's `auth_per_ip` limiter — which
+    answers 503 and reads as a broken backend (measured: `excess: 120` in the
+    gateway log, and every sign-in on the stand refused for minutes afterwards).
+    """
+    revisit_usage(usage.page)
     for row in collect_rows(usage.table(PEOPLE_TABLE)):
         if row[PERSON] == display_name:
             return int(row[PAGES])

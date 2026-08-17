@@ -22,7 +22,7 @@ from playwright.sync_api import Locator, Page, expect
 from .pages.keycloak_login_page import KeycloakLoginPage
 from .pages.login_page import LoginPage
 from .pages.platform_usage_page import PAGES_TABLE, TABLE_ROW, PlatformUsagePage
-from .pages.portal_shell import PortalShell
+from .pages.portal_shell import ContextPane, PortalShell
 
 
 def sign_in(page: Page, base_url: str, persona: PersonaSession) -> None:
@@ -56,6 +56,7 @@ def sweep_portal(page: Page) -> list[str]:
     """
     portal = PortalShell(page)
     portal.go()
+    portal.wait_url_settled()
     # `all_inner_texts()` reports what is there NOW rather than waiting for it, so
     # a sweep that read the rail straight after `goto` enumerated an empty shell
     # and passed by finding nothing. Every read of a set is gated on its first
@@ -64,12 +65,43 @@ def sweep_portal(page: Page) -> list[str]:
     seen: list[str] = []
     for zone in [label.strip() for label in portal.rail.zones().all_inner_texts()]:
         portal.rail.open_zone(zone)
+        portal.wait_url_settled()
         _record(portal, seen)
         expect(portal.pane.views().first).to_be_visible()
-        for item in portal.pane.view_labels():
-            portal.pane.open_item(item)
-            _record(portal, seen)
+        _walk_pane(portal, seen)
     return seen
+
+
+#: Long enough for a pane entry on a dev-server-backed stand, where a zone's data
+#: arrival re-renders the pane repeatedly, and short enough that an entry which has
+#: been re-rendered away costs seconds rather than the default 30.
+_ITEM_CLICK_MS = 20_000
+
+
+def _walk_pane(portal: PortalShell, seen: list[str]) -> None:
+    """Open each of this zone's views, re-reading the pane between clicks.
+
+    A snapshot of labels taken once goes stale: some zones re-render their pane as
+    their data arrives, which detaches the very button a later iteration holds
+    ("element was detached from the DOM, retrying", then a 30s timeout). So the
+    pane is asked again each time, and an entry that is no longer THERE is
+    skipped as a reshape rather than waited for.
+
+    An entry that IS there and still will not open is left to fail loudly: that is
+    a broken navigation entry, which is exactly what a sweep should catch.
+    """
+    opened: set[str] = set()
+    while True:
+        portal.pane.wait_settled()
+        remaining = [label for label in portal.pane.view_labels() if label not in opened]
+        if not remaining:
+            return
+        label = remaining[0]
+        opened.add(label)
+        if portal.pane.item(label).count() == 0:
+            continue
+        portal.pane.open_item(label, timeout_ms=_ITEM_CLICK_MS)
+        _record(portal, seen)
 
 
 def _record(portal: PortalShell, seen: list[str]) -> None:
@@ -78,6 +110,27 @@ def _record(portal: PortalShell, seen: list[str]) -> None:
     recorded = portal.recorded_path()
     if recorded not in seen:
         seen.append(recorded)
+
+
+def revisit_usage(page: Page) -> None:
+    """Leave the usage screen and come back, the way a reader does.
+
+    A client-side round trip, not `reload()`: it unmounts the screen and mounts
+    it again, which is what makes the query refetch (`refetchOnMount: "always"`
+    in queries/usage.ts) — and it is the exact gesture the 2026-08-16 defect was
+    about, where returning to the screen showed stale numbers.
+
+    Waiting for the chart to GO before coming back is the load-bearing half. A
+    click that never unmounted would leave the old numbers on screen and this
+    would read them again, mistaking staleness for arrival.
+    """
+    pane = ContextPane(page)
+    usage = PlatformUsagePage(page)
+    elsewhere = next(label for label in pane.view_labels() if label != PlatformUsagePage.ITEM)
+    pane.open_item(elsewhere)
+    expect(usage.chart_heading()).not_to_be_visible()
+    pane.open_item(PlatformUsagePage.ITEM)
+    expect(usage.chart_heading()).to_be_visible()
 
 
 #: Which rows exist at the current scroll position, read in one evaluation.

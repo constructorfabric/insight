@@ -133,8 +133,37 @@ class ContextPane:
     def view_labels(self) -> list[str]:
         return [text.strip() for text in self.views().all_inner_texts()]
 
-    def open_item(self, label: str) -> None:
-        self.item(label).click()
+    def open_item(self, label: str, timeout_ms: float | None = None) -> None:
+        self.item(label).click(timeout=timeout_ms)
+
+    def wait_settled(self, timeout_ms: float = 15_000) -> None:
+        """Wait until the pane stops re-rendering, then let the caller click.
+
+        Measured on a compose stand whose SPA is served by a dev server: a zone
+        re-renders its pane as its data arrives, and each re-render detaches the
+        button a click is aiming at — Playwright reports "element was detached
+        from the DOM, retrying" until the whole timeout is gone, on an entry that
+        is plainly on screen the entire time.
+
+        A condition, not a sleep: the entries' text is sampled on `window` and
+        settled means unchanged for a beat.
+        """
+        self.page.wait_for_function(
+            """(selector) => {
+                const signature = [...document.querySelectorAll(selector)]
+                    .map((entry) => entry.textContent.trim())
+                    .join('|');
+                const now = performance.now();
+                if (window.__paneSignature !== signature) {
+                    window.__paneSignature = signature;
+                    window.__paneSettledAt = now;
+                    return false;
+                }
+                return now - window.__paneSettledAt > 250;
+            }""",
+            arg=PANE_ITEM,
+            timeout=timeout_ms,
+        )
 
 
 class PortalShell:
@@ -149,6 +178,29 @@ class PortalShell:
 
     def go(self) -> None:
         self.page.goto(self.PATH, wait_until="domcontentloaded")
+
+    def wait_url_settled(self, timeout_ms: float = 20_000) -> None:
+        """Wait until the app stops changing its own URL.
+
+        `PortalLayout` pins a landing zone once the viewer's shape resolves and
+        `replaceZone` rewrites the search params to do it. On a slow stand that
+        resolution can land AFTER a zone has been opened by hand, so the zone
+        switches under the pointer and every pane entry detaches mid-click. This
+        waits for the app to stop steering before a caller clicks anything.
+        """
+        self.page.wait_for_function(
+            """() => {
+                const here = location.href;
+                const now = performance.now();
+                if (window.__urlSeen !== here) {
+                    window.__urlSeen = here;
+                    window.__urlSeenAt = now;
+                    return false;
+                }
+                return now - window.__urlSeenAt > 300;
+            }""",
+            timeout=timeout_ms,
+        )
 
     def content(self) -> Locator:
         """The screen's own content area.
