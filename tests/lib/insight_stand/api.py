@@ -28,7 +28,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from . import coverage
+from . import coverage, edge_retry
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from pydantic import BaseModel
@@ -67,6 +67,10 @@ GATEWAY_API_PREFIXES: tuple[str, ...] = (ANALYTICS_PREFIX, IDENTITY_PREFIX)
 # Served by the edge itself rather than routed to a backend: the SPA at `/` and
 # the authenticator's browser endpoints under `/auth/`.
 EDGE_PATH_PREFIXES: tuple[str, ...] = ("/auth/",)
+
+# Repeating one of these cannot have run anything twice, so an edge error that
+# admits the origin may have answered is still safe to retry for them.
+_METHODS_WITHOUT_EFFECT = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 def analytics_path(suffix: str) -> str:
@@ -208,15 +212,26 @@ class ApiClient:
         if headers:
             merged.update(headers)
 
-        with httpx.Client(timeout=self.timeout_s, follow_redirects=False) as client:
-            response = client.request(
-                method,
-                url,
-                params=params,
-                json=json_body,
-                content=content,
-                headers=merged,
-            )
+        def attempt() -> httpx.Response:
+            with httpx.Client(timeout=self.timeout_s, follow_redirects=False) as client:
+                return client.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json_body,
+                    content=content,
+                    headers=merged,
+                )
+
+        response = edge_retry.send(
+            attempt,
+            lambda r: r.status_code,
+            repeatable_on=(
+                edge_retry.ANY_EDGE_ERROR
+                if method.upper() in _METHODS_WITHOUT_EFFECT
+                else edge_retry.NEVER_ANSWERED
+            ),
+        )
         # Every request the suite makes passes through here, which is what lets
         # the coverage ledger be a byproduct of the tests rather than a list
         # somebody maintains. Metadata only — never the body.

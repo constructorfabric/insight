@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from . import edge_retry
 from .errors import LoginNotCompletedError
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -146,7 +147,11 @@ class LoginSession:
             self._acquired_at = time.monotonic()
 
     def _start(self, client: httpx.Client) -> str:
-        response = client.get(self.login_path)
+        response = edge_retry.send(
+            lambda: client.get(self.login_path),
+            lambda r: r.status_code,
+            repeatable_on=edge_retry.ANY_EDGE_ERROR,
+        )
         location = response.headers.get("location")
         if response.status_code not in (301, 302, 303, 307, 308) or not location:
             raise LoginNotCompletedError(
@@ -157,7 +162,11 @@ class LoginSession:
         return str(location)
 
     def _fetch_login_form(self, client: httpx.Client, authorize_url: str) -> tuple[str, str]:
-        response = client.get(authorize_url)
+        response = edge_retry.send(
+            lambda: client.get(authorize_url),
+            lambda r: r.status_code,
+            repeatable_on=edge_retry.ANY_EDGE_ERROR,
+        )
         if response.status_code != 200:
             raise LoginNotCompletedError(
                 f"the IdP authorize endpoint answered {response.status_code}, not a login form",
@@ -185,10 +194,13 @@ class LoginSession:
         return action, response.text
 
     def _submit_credentials(self, client: httpx.Client, action: str, page: str) -> str:
-        response = client.post(
-            action,
-            data={"username": self.email, "password": self.password},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        response = edge_retry.send(
+            lambda: client.post(
+                action,
+                data={"username": self.email, "password": self.password},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            ),
+            lambda r: r.status_code,
         )
         location = response.headers.get("location")
         if response.status_code in (301, 302, 303, 307, 308) and location:
@@ -204,7 +216,13 @@ class LoginSession:
         )
 
     def _deliver_code(self, client: httpx.Client, redirected_to: str) -> None:
-        response = client.get(self._callback_on_stand(redirected_to))
+        # SAFETY: the default (never-answered codes only) despite being a GET —
+        # the authorization code is single-use, so an edge error that admits the
+        # authenticator may have answered must not be repeated.
+        response = edge_retry.send(
+            lambda: client.get(self._callback_on_stand(redirected_to)),
+            lambda r: r.status_code,
+        )
         if response.status_code >= 400:
             raise LoginNotCompletedError(
                 f"the authenticator rejected the authorization code "

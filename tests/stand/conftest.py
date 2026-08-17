@@ -55,6 +55,7 @@ from insight_stand import (  # noqa: E402  (import follows the sys.path bootstra
     default_identity_url,
     default_manifest_path,
     distinct_vectors,
+    edge_retry,
     governs_vector,
     open_service_session,
     open_session,
@@ -249,6 +250,22 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     del session, exitstatus
 
     coverage.dump(artifact_dir(_REPO_ROOT / ARTIFACT_DIR) / LEDGER_NAME)
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """Say how much of this run's green needed a second attempt.
+
+    A suite that retries its way past an unstable edge and reports nothing looks
+    exactly like a suite running against a healthy one. The count is the only
+    thing that distinguishes them.
+    """
+    retried = edge_retry.retried()
+    if not retried:
+        return
+    detail = ", ".join(f"{count}x HTTP {status}" for status, count in sorted(retried.items()))
+    terminalreporter.write_sep(
+        "-", f"edge errors retried before the stand answered: {detail}", yellow=True
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
