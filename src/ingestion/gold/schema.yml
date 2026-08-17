@@ -239,6 +239,8 @@ models:
                   - assistant_messages
                   - assistant_actions
                   - chat_assistant_conversations
+                  - prs_with_assistant
+                  - prs_total
       - name: value
         description: >
           Measure value. Rows are emitted only when the source provides a
@@ -737,7 +739,7 @@ models:
   - name: identity_resolution_coverage
     description: >
       Identity-resolution match rate measured over ACTIVITY (evidence source
-      rows), one row per source (git/ai_usage/collab/task/wiki) plus
+      rows), one row per source (git/ai_usage/ai_cost/collab/task/wiki) plus
       hr_cohorts for the peer-membership relation. A TABLE materialized in
       the same gold build as the serving relations, reading the resolution
       snapshot stamped into evidence — so coverage answers for exactly what
