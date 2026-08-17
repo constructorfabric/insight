@@ -1,10 +1,21 @@
 {{- if .Values.networkPolicy.enabled }}
+{{- $configured := .Values.networkPolicy.allowedNamespaceLabels }}
 {{- $allowed := 0 }}
-{{- range $entry := .Values.networkPolicy.allowedNamespaceLabels }}
-  {{- $allowed = add $allowed (len $entry.values) }}
+{{- range $entry := $configured }}
+  {{- /* `default` so an entry written as a bare key counts zero and reaches the
+         message below, rather than dying inside `len` on a nil. */ -}}
+  {{- $allowed = add $allowed (len (default (list) $entry.values)) }}
 {{- end }}
 {{- if eq $allowed 0 }}
-  {{- fail "networkPolicy.allowedNamespaceLabels names no namespace, so the rendered policy would deny every caller and each git sync would time out against an apparently healthy pod. Set it to the namespace running Airbyte connector jobs (the Airbyte release's own namespace unless its chart pins a separate job namespace), or set networkPolicy.enabled=false on a cluster without NetworkPolicy support." }}
+  {{- if $configured }}
+    {{- fail "networkPolicy.allowedNamespaceLabels carries a label key but names no namespace, so the rendered policy would deny every caller and each git sync would time out against an apparently healthy pod. Name the namespace running Airbyte connector jobs, remove the entry to fall back to this release's namespace, or set networkPolicy.enabled=false on a cluster without NetworkPolicy support." }}
+  {{- end }}
+  {{- /* Airbyte runs in this namespace unless a deployment puts it elsewhere,
+         so an unset allow-list admits this namespace rather than nobody: the
+         chart installs and syncs without a values file. A deployment running
+         Airbyte in its own namespace MUST name it here — the policy cannot
+         discover that, and an unnamed caller is denied. */ -}}
+  {{- $configured = list (dict "key" "kubernetes.io/metadata.name" "values" (list .Release.Namespace)) }}
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -21,8 +32,8 @@ spec:
   # Every /v1 request carries a git credential, so ingress is restricted to the
   # namespaces that run Airbyte connector pods — the only consumer.
   ingress:
-    {{- range $entry := .Values.networkPolicy.allowedNamespaceLabels }}
-    {{- range $value := $entry.values }}
+    {{- range $entry := $configured }}
+    {{- range $value := default (list) $entry.values }}
     - from:
         - namespaceSelector:
             matchLabels:

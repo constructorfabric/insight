@@ -182,12 +182,29 @@ def test_token_never_reaches_the_configmap():
     )
 
 
-def test_an_allow_list_naming_no_namespace_refuses_to_render():
+def test_a_label_key_naming_no_namespace_refuses_to_render():
     """It would render a policy that denies every caller — an install that looks
     healthy and times out every sync."""
-    done = subprocess.run(helm_args(SECRET), capture_output=True, text=True, check=False)
+    overrides = {
+        **SECRET,
+        "networkPolicy__allowedNamespaceLabels[0]__key": "kubernetes.io/metadata.name",
+    }
+    done = subprocess.run(helm_args(overrides), capture_output=True, text=True, check=False)
     assert done.returncode != 0, f"render should have failed, got:\n{done.stdout}"
-    assert "allowedNamespaceLabels names no namespace" in done.stderr
+    assert "carries a label key but names no namespace" in done.stderr
+
+
+def test_an_unset_allow_list_admits_the_releases_own_namespace():
+    """Airbyte runs beside the release unless a deployment moves it, so the
+    chart installs and syncs with no values file at all — a deployment that
+    moves Airbyte names that namespace instead."""
+    args = helm_args(SECRET) + ["--namespace", "insight-app"]
+    out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
+    docs = [doc for doc in yaml.safe_load_all(out) if doc]
+    rules = one(docs, "NetworkPolicy")["spec"]["ingress"]
+    assert len(rules) == 1
+    selector = rules[0]["from"][0]["namespaceSelector"]["matchLabels"]
+    assert selector == {"kubernetes.io/metadata.name": "insight-app"}
 
 
 def test_ingress_stays_closed_to_everything_unnamed():

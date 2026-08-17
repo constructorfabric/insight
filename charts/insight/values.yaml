@@ -517,10 +517,12 @@ analytics:
 # Git CLI Proxy — clone-based commit extraction for the nocode git connectors.
 # Airbyte-only consumer: no gateway route, no platform-config entry (other
 # services must not discover it), ingress restricted by its own NetworkPolicy.
-# Deploy is OFF by default: it costs a PVC and is only useful once a git
-# connector is configured to use it.
+# Deployed by default: every git connector reads its commits, file changes and
+# commit authors from here, so an instance without it can sync no git source at
+# all. The cost is one PVC (`persistence.size`) on an instance that syncs none —
+# set deploy=false there.
 gitCliProxy:
-  deploy: false
+  deploy: true
   replicaCount: 1
   image:
     repository: ghcr.io/constructorfabric/insight-git-cli-proxy
@@ -551,11 +553,11 @@ gitCliProxy:
   networkPolicy:
     enabled: true
     # Namespaces whose pods may call the proxy: the one running Airbyte
-    # connector jobs. Required when deploy=true — the subchart refuses to
-    # render an allow-list that would deny every caller.
-    allowedNamespaceLabels:
-      - key: kubernetes.io/metadata.name
-        values: []
+    # connector jobs. Empty admits this release's namespace, which is where
+    # Airbyte runs unless `airbyte.namespace` above points elsewhere — set that
+    # namespace here when it does, because the policy cannot read that value
+    # and an unnamed caller is denied.
+    allowedNamespaceLabels: []
 identityResolution:
   deploy: true
   replicaCount: 1
