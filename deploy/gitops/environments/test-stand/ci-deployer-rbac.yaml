@@ -28,6 +28,18 @@ rules:
   - apiGroups: [""]
     resources: [configmaps, secrets, services, serviceaccounts]
     verbs: [get, list, watch, create, update, patch, delete]
+  # The git-cli-proxy's clone cache. No `delete`: the claim is annotated
+  # helm.sh/resource-policy=keep so a release never removes it, and a
+  # credential that could would discard the cache of every synced repository.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, watch, create, update, patch]
+  # Ingress restrictions the authenticator and git-cli-proxy render when a
+  # deployment enables them. Both default off, so a stand that turns one on
+  # would otherwise fail its next upgrade the way the claim above did.
+  - apiGroups: ["networking.k8s.io"]
+    resources: [networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: ["apps"]
     resources: [deployments]
     verbs: [get, list, watch, create, update, patch, delete]
