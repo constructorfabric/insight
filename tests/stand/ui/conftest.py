@@ -37,6 +37,21 @@ from playwright.sync_api import BrowserContext, expect
 # sleeping or retrying.
 expect.set_options(timeout=15_000)
 
+#: Verified on the live compose stand: with this set, the rail drops Scorecard
+#: and every pane lists only entries that render.
+SHOW_PLANNED_OFF = "window.localStorage.setItem('insight.portal.showPlanned', 'false')"
+
+LEGACY_SHELL = "window.localStorage.setItem('insight.portal', 'false')"
+
+
+def apply_portal_prefs(context: BrowserContext) -> None:
+    """What the `context` fixture pins, for a journey that builds its own context.
+
+    A module-scoped context cannot ask for the function-scoped fixture below, and
+    a second copy of the flag names is a second place to drift.
+    """
+    context.add_init_script(SHOW_PLANNED_OFF)
+
 
 @pytest.fixture
 def context(context: BrowserContext, request: pytest.FixtureRequest) -> BrowserContext:
@@ -64,6 +79,7 @@ def context(context: BrowserContext, request: pytest.FixtureRequest) -> BrowserC
     a flag is guaranteed to precede the app's first read of it.
     """
     if request.node.get_closest_marker("legacy_shell") is not None:
-        context.add_init_script("window.localStorage.setItem('insight.portal', 'false')")
-    context.add_init_script("window.localStorage.setItem('insight.portal.showPlanned', 'false')")
+        context.add_init_script(LEGACY_SHELL)
+        return context
+    apply_portal_prefs(context)
     return context

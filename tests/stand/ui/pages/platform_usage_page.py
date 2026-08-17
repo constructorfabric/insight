@@ -101,6 +101,19 @@ class PlatformUsagePage:
         """Data rows only — `data-index` is the virtualizer's, and the header has none."""
         return self.table(label).locator(f"{TABLE_ROW}[data-index]")
 
+    def row_at(self, label: str, index: int) -> Locator:
+        """One row by the virtualizer's own number rather than by position.
+
+        Position is not identity in a virtualized table: the same `nth(3)` is a
+        different row after a scroll, and the row it named may have been
+        unmounted. `data-index` survives both.
+        """
+        return self.table(label).locator(f'{TABLE_ROW}[data-index="{index}"]')
+
+    def viewport(self, label: str) -> Locator:
+        """The scrolling container a table lives in — `max-h-90 overflow-auto`."""
+        return self.table(label).locator("xpath=..")
+
     def empty_state(self) -> Locator:
         return self.page.get_by_text("No usage in this period yet")
 
@@ -110,6 +123,26 @@ class PlatformUsagePage:
     def page_cell(self, row: Locator) -> Locator:
         return row.locator('[data-slot="table-cell"]').first
 
-    def page_path_tooltip(self) -> Locator:
-        """The raw path behind a Page label, revealed by hovering that label."""
+    def page_label(self, row: Locator) -> Locator:
+        """The label that carries the path tooltip.
+
+        The trigger is the `span` `TooltipTrigger` renders INSIDE the cell, not
+        the cell — measured by hovering the cell and finding no tooltip, then
+        hovering the span and getting one.
+        """
+        return self.page_cell(row).locator('[data-slot="tooltip-trigger"]')
+
+    def tooltips(self) -> Locator:
+        """Every mounted tooltip, open or on its way out.
+
+        Deliberately unfiltered, and counted rather than picked. Measured while
+        walking the Page column: hovering row after row leaves two tooltips
+        mounted at once, and `[data-open]` matched BOTH — the outgoing one had not
+        been marked closed yet. So a caller waits for this to reach zero before it
+        hovers and one after, instead of trying to name the right one.
+        """
         return self.page.locator('[data-slot="tooltip-content"]')
+
+    def header(self, label: str) -> Locator:
+        """A column header — somewhere to park the pointer that opens no tooltip."""
+        return self.table(label).locator('[data-slot="table-head"]').first

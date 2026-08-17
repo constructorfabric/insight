@@ -55,7 +55,13 @@ RAIL = '[data-testid="lens-rail"]'
 
 MENU_BUTTON = '[data-slot="sidebar-menu-button"]'
 
-PANE_ITEM = f'[data-slot="sidebar-group"] {MENU_BUTTON}'
+PANE_GROUP = '[data-slot="sidebar-group"]'
+
+PANE_ITEM = f"{PANE_GROUP} {MENU_BUTTON}"
+
+PANE_VIEW = f"{PANE_GROUP} button{MENU_BUTTON}"
+
+PANE_PERSON = f"{PANE_GROUP} a{MENU_BUTTON}"
 
 #: The person key in a `/ic/<key>/…` path, whatever shape it arrives in — the SPA
 #: strips the segment after `/ic` by position, so matching on shape alone here
@@ -104,11 +110,28 @@ class ContextPane:
     def items(self) -> Locator:
         return self.page.locator(PANE_ITEM)
 
+    def views(self) -> Locator:
+        """The zone's own screens, without the org chart's people.
+
+        Measured in the People pane: its "Views" group renders `<button>`
+        entries ("People (roster)", "Employees") while the "WorkChart" group
+        renders `<a>` entries per person, which navigate to that person's own
+        route and so replace the pane they were clicked from. Both carry
+        `sidebar-menu-button`, and the element is what separates them.
+        """
+        return self.page.locator(PANE_VIEW)
+
+    def people(self) -> Locator:
+        return self.page.locator(PANE_PERSON)
+
     def item(self, label: str) -> Locator:
         return self.items().filter(has_text=re.compile(rf"^{re.escape(label)}$"))
 
     def item_labels(self) -> list[str]:
         return [text.strip() for text in self.items().all_inner_texts()]
+
+    def view_labels(self) -> list[str]:
+        return [text.strip() for text in self.views().all_inner_texts()]
 
     def open_item(self, label: str) -> None:
         self.item(label).click()
@@ -126,6 +149,15 @@ class PortalShell:
 
     def go(self) -> None:
         self.page.goto(self.PATH, wait_until="domcontentloaded")
+
+    def content(self) -> Locator:
+        """The screen's own content area.
+
+        Measured: the shell renders TWO `main` elements — the sidebar inset is
+        one and the zone content is nested inside it — so a bare `main` locator
+        is a strict-mode violation rather than a wait.
+        """
+        return self.page.locator("main").last
 
     def screen(self) -> str:
         return screen_of(self.page.url)
