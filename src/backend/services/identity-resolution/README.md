@@ -17,7 +17,7 @@ authenticator's login bootstrap) and `GET /internal/persons/by-email-override`
 
 ## Run locally against the dev cluster DB
 
-The service reads MariaDB (`persons`, `account_person_map` in the `identity`
+The service reads MariaDB (the `persons` journal in the `identity`
 database). For local dev, point it at the dev cluster's MariaDB via
 `kubectl port-forward` (requires cluster access / VPN).
 

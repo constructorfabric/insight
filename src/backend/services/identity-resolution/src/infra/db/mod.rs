@@ -6,7 +6,7 @@
 //! entity-builder nor run as raw SQL (it intentionally exposes no raw-SQL path —
 //! `DbConn`/`DbTx` are builder-only). Specifically:
 //!   * window functions (`ROW_NUMBER()` / `LEAD() OVER (…)`) — the resolver reads
-//!     and the SCD2 `account_person_map` / `org_chart` rebuilds;
+//!     and the SCD2 `org_chart` rebuild;
 //!   * `WITH RECURSIVE` — the org-subchart / visibility traversals;
 //!   * atomic conditional DML with a correlated subquery — the role in-use and
 //!     last-admin lockout guards.

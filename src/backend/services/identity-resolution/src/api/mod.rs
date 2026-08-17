@@ -33,7 +33,7 @@ use crate::domain::profile;
 /// Shared application state, injected into handlers via `Extension`.
 #[derive(Clone)]
 pub struct AppState {
-    /// MariaDB connection pool (SeaORM) — reads `persons` / `account_person_map`.
+    /// MariaDB connection pool (SeaORM) — reads the `persons` journal.
     pub db: DatabaseConnection,
     /// Gear config (`org_chart_source_type`, `clickhouse_*`, …).
     pub config: GearConfig,
