@@ -92,7 +92,7 @@ Phase 1.
 
 Adopt `org_chart`: a materialized SCD2 cache of direct edges,
 rebuilt from `persons` by the Python seeder
-(`seed-persons-from-identity-input.py` step 9) using the same
+(the persons-seed) using the same
 two-table-swap pattern as `account_person_map`. The rebuild sources
 edges from a UNION of two queries:
 
@@ -404,7 +404,7 @@ historical edges (deactivated and not re-activated).
   side of the resolution JOIN trims and lowercases for symmetry.
 - ADR-0007 — `value_type` routing into `value_id` /
   `value_full_text` / `value` (the rebuild's SELECT shape).
-- `seed-persons-from-identity-input.py` step 9 — the canonical
+- The persons-seed's org_chart rebuild — the canonical
   rebuild SQL.
 
 ## Traceability

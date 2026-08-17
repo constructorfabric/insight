@@ -256,9 +256,9 @@ def seed_person_names(
     """Insert display_name / first_name / last_name observations per person.
 
     The identity service routes these value_types into `value_full_text`
-    (not `value_id`); see seed-persons-from-identity-input.py's
-    VALUE_TYPES_FOR_VALUE_FULL_TEXT. Without them the persons API returns
-    empty names and the UI falls back to email.
+    (not `value_id`) — see `route_value` in the service's `domain/seed.rs`.
+    Without them the persons API returns empty names and the UI falls back
+    to email.
     """
     sql = """
         INSERT INTO persons (

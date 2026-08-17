@@ -1156,20 +1156,19 @@ Phase 1 seed and connector models derive `insight_tenant_id` (UUID) and `insight
 - `insight_source_id` is query-joinable across `persons` and `identity_inputs` — the journal inherits it from the evidence rows.
 - `insight_tenant_id` is **not** cross-store joinable: the evidence carries the producer-side hash while the journal carries the caller's tenant (see §3.2 PersonsSeed and §4.4). Tenant joins across stores become possible only once the `tenants` table replaces the hash.
 
-**Migration path**: When `tenants` / `sources` tables are created, replace all `toUUID(UUIDNumToString(sipHash128(...)))` calls with a lookup join (e.g., `JOIN tenants t ON t.external_id = cm.tenant_id`). All affected files are marked with `-- TEMPORARY: sipHash128` comments. Search: `grep -r "TEMPORARY.*sipHash128" src/ingestion/`.
+**Migration path**: When `tenants` / `sources` tables are created, replace every `toUUID(UUIDNumToString(sipHash128(...)))` call with a lookup join (e.g., `JOIN tenants t ON t.external_id = cm.tenant_id`). The authoritative search is the formula itself — `grep -rn "sipHash128" src/ingestion/` — not a marker comment: the convention of tagging call sites `-- TEMPORARY: sipHash128` was never applied consistently, so a marker search under-reports.
 
-**Affected files** (Phase 1):
-- `dbt/macros/identity_inputs_from_history.sql` — computes both for bamboohr/zoom connector models
-- `dbt/identity/seed_persons_from_cursor.sql`, `seed_persons_from_claude_admin.sql` — compute the hash
-- `dbt/identity/seed_aliases_from_cursor.sql`, `seed_aliases_from_claude_admin.sql` — use it in tenant-scoped JOINs
-- `dbt/identity/seed_identity_inputs_from_cursor.sql`, `seed_identity_inputs_from_claude_admin.sql` — compute the hash
-- `scripts/adhoc/seed_from_cursor_manual.sql`, `scripts/adhoc/seed_from_claude_admin_manual.sql` — ad-hoc Play UI testing SQL (point-in-time snapshots, not kept in sync with dbt models)
+**Where the hash is computed** (categories, since the file list moves with the connector set):
+- `dbt/macros/identity_inputs_from_history.sql` — the shared macro, and with it every connector model that goes through it
+- per-connector `*__identity_inputs.sql` models that compute it inline instead of via the macro
+- `dbt/identity/seed_identity_inputs_from_cursor.sql` — Cursor's contributor to the union
+- the gold `*_metric_evidence.sql` models, which re-derive the tenant hash on the serving side
 
 ### REC-IR-05: Explicit canonical id emission per connector (Phase 2)
 
 **Status**: deferred to follow-up PR.
 
-**Context**: the `identity_inputs_from_history` dbt macro currently emits the canonical `value_type='id'` binding observation via two implicit CTEs (`id_upserts`, `id_deletes`) in addition to the per-field `upserts`/`deletes` blocks driven by the connector's `identity_fields` list. Connectors that go through the macro (BambooHR, Zoom, future) get this row automatically; connectors that bypass the macro (`seed_identity_inputs_from_cursor`, `seed_identity_inputs_from_claude_admin`, plus the `scripts/adhoc/seed_from_*_manual.sql` companions) emit it explicitly as a UNION-ALL branch. The contract that "every connector emits a `value_type='id'` observation" is therefore convention-driven, not declarative at the call site.
+**Context**: the `identity_inputs_from_history` dbt macro currently emits the canonical `value_type='id'` binding observation via two implicit CTEs (`id_upserts`, `id_deletes`) in addition to the per-field `upserts`/`deletes` blocks driven by the connector's `identity_fields` list. Connectors that go through the macro (BambooHR, Zoom, future) get this row automatically; connectors that bypass the macro (`seed_identity_inputs_from_cursor` and any sibling written by hand) emit it explicitly as a UNION-ALL branch. The contract that "every connector emits a `value_type='id'` observation" is therefore convention-driven, not declarative at the call site.
 
 **Why follow up**: a connector author looking at `zoom__identity_inputss.sql` sees `identity_fields=[email, employee_id, display_name]` and no mention of the account identifier itself. The relationship is invisible without reading the macro. The macro also hardcodes `value_field_name = '{source_type}.entity_id'` for the implicit row instead of the canonical `bronze_<src>.<table>.id` path that explicit entries produce elsewhere.
 

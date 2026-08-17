@@ -566,7 +566,7 @@ hydrate CTE bounded by per-person observation count (typically
 
 Defined in `src/migration/sql/003_org_chart.sql`
 (see ADR-0010). The service migrates and reads the table — the
-seed pipeline (`seed-persons-from-identity-input.py` step 9)
+persons-seed
 rebuilds it as an SCD2 cache of direct parent->child edges
 derived from `persons` via two sources: `value_type='parent_person_id'`
 observations (Source 1, future reconciliation service) and
@@ -741,7 +741,7 @@ subscriber with:
 | `cpt-insightspec-fr-identity-schema-relax-uniqueness` | §1.2 Functional Drivers; ADR-0011 §Decision Outcome (new UNIQUE on `created_at`). |
 | `cpt-insightspec-fr-identity-schema-case-insensitive-value-id` | §1.2 Functional Drivers; ADR-0011 §Decision Outcome (collation switch to `utf8mb4_unicode_ci`). |
 | `cpt-insightspec-fr-identity-org-chart-table` | §1.2 Functional Drivers; §3.7 Table `org_chart`; ADR-0010. |
-| `cpt-insightspec-fr-identity-org-chart-rebuild` | §1.2 Functional Drivers; rebuild step in seeder (`seed-persons-from-identity-input.py` step 9). |
+| `cpt-insightspec-fr-identity-org-chart-rebuild` | §1.2 Functional Drivers; the org_chart rebuild in the persons-seed. |
 | `cpt-insightspec-fr-identity-org-chart-read` | §1.2 Functional Drivers; §3.7 read paths note; `persons_repo::current_parents_for_child` / `current_children_for_parent`. |
 | `cpt-insightspec-fr-identity-profile-org-tree` | §1.2 Functional Drivers; `handlers::resolve_profile` → `hydrate_person` → profile assembly. |
 | `cpt-insightspec-nfr-identity-latency` | §1.2 NFR Allocation; §3.7 covered index. |

@@ -88,7 +88,7 @@ Confirmed by integration tests that seed each canonical `value_type`
 and assert the assembled response surfaces them at the right field.
 The seed-side routing is locked behind unit tests over
 `route_value_type_to_column` in
-`seed-persons-from-identity-input.py`.
+the persons-seed.
 
 ## Pros and Cons of the Options
 

@@ -27,9 +27,9 @@ date: 2026-04-24
 The `persons` table (MariaDB, see
 `cpt-insightspec-ir-dbtable-persons-mariadb`) records identity-attribute
 history per source-account per person. It is populated initially from
-ClickHouse `identity.identity_inputs` via a one-time seed script
-(`src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py`),
-and maintained thereafter by operator flows (future PR).
+ClickHouse `identity.identity_inputs` via the persons-seed (today the
+service's `seed` subcommand; a one-time Python script when this was
+written), and maintained thereafter by operator flows.
 
 `person_id` is the join key across the whole system: everything
 downstream (`aliases.person_id`, analytics joins, the Person-domain

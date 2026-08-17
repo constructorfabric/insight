@@ -1217,7 +1217,7 @@ non-breaking.
 | Dependency | Description | Criticality |
 |------------|-------------|-------------|
 | MariaDB `identity` database | Read target + SeaORM migration target. | p1 |
-| Seed pipeline (`seed-persons-from-identity-input.py`) | Populates the rows the reader returns. | p1 |
+| Seed pipeline (the service's `seed` subcommand) | Populates the rows the reader returns. | p1 |
 | BambooHR `bamboohr__identity_inputs` dbt model | Source of identity observations for the first connector to land on the new schema. | p1 |
 | Reconciliation service (future) | Writes `parent_person_id` observations consumed by Phase 2 org-tree expansion. | p2 |
 | api-gateway | Sole external caller in Phase 1. | p1 |

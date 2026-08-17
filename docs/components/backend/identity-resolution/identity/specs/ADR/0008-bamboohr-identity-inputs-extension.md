@@ -69,7 +69,7 @@ resolves `parent_email` / `parent_id` to a stable Insight
 
 - The seed pipeline's column-routing constants must include the new
   `value_type`s (handled in
-  `seed-persons-from-identity-input.py`).
+  the persons-seed).
 - BambooHR sync time grows slightly (more rows per employee), but
   the observation log is append-only and steady-state increases are
   bounded by attribute change frequency, not by employee count.
@@ -119,7 +119,7 @@ ADR-0007 table.
 
 - `src/ingestion/connectors/hr-directory/bamboohr/dbt/bamboohr__identity_inputs.sql`
   is the canonical model.
-- `src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py`
+- The persons-seed (`src/backend/services/identity-resolution/src/domain/seed.rs`)
   carries the matching routing constants.
 
 ## Traceability
