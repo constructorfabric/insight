@@ -3,14 +3,18 @@ name: scope-feature-tests
 description: >-
   Scope testing for a feature in constructorfabric/insight. Turn a GitHub issue or described
   feature into lean, code-grounded axes, risk-ordered test groups with target suites, an in/out
-  boundary, an acceptance gate, and optionally a linked test subtask. Use when the user asks how
-  a feature will be tested, what to check, for a test plan/scope/dimensions/groups, an exploratory
-  charter, coverage of every option, download or data limits, or a QA review. Ground the scope in
-  the actual implementation, bronze→silver→gold flow, consumer contracts and existing tests;
-  review and correct acceptance criteria first, map realistic component malfunctions, and say
-  when code contradicts the issue framing. Keep the output at test-group altitude, not individual
-  cases. Use quality-vector-tests to author tracked scenarios and file-bug-insight for an observed
-  defect.
+  boundary, an acceptance gate, and optionally a linked test subtask. Use whenever the user wants
+  to plan HOW a feature will be tested — "scope the tests for #1602", "what do we need to check
+  here", "how are we going to test this once it's done", "define the test dimensions / groups /
+  axes", "make a test plan or test scope", "create a test subtask for this feature", "what
+  coverage does this screen's options and limits need" — or when reviewing a feature to decide QA
+  coverage. Ground the scope in the actual implementation, bronze→silver→gold flow, consumer
+  contracts and existing tests — this repo, or the sibling ../insight checkout when working from
+  elsewhere; review and correct the acceptance criteria first, map realistic component
+  malfunctions, and say when the code contradicts the issue framing. Keep the output at
+  test-group altitude, not individual cases. Its authoring counterpart is quality-vector-tests,
+  which lays the coverage into the feature body as tracked scenarios; file-bug-insight reports an
+  observed defect, and drive-ui explores a surface that already exists on a stand.
 ---
 
 # Scope feature tests (Insight)
@@ -141,25 +145,25 @@ work). When the set is large and will grow (100 metrics, N connectors), say so a
 adding config, not test code. That design choice belongs in the scope, because authoring N
 hand-written suites is the failure mode.
 
-**Configurator and export surfaces need a pipeline, not a click list.** Model
-them as input state → validation → request planning → result shaping → preview
-→ serialization. Inventory every closed option set (scope, period,
-granularity, format, metric family), then separate three kinds of coverage:
+**Configurator and export surfaces need a pipeline, not a click list.** Model them as input state →
+validation → request planning → result shaping → preview → serialization. Inventory every closed
+option set the surface exposes — the metric list, the granularity choices, the export formats,
+whatever the topbar contributes — then split the coverage three ways:
 
-- enumerate every member of each short axis once;
-- use pairwise combinations where axes interact, unless the code makes a
-  specific higher-order interaction risky;
-- probe every contract limit at accepted edge / first refusal, plus empty and
-  one where those have distinct behavior.
+- **Enumerate** each short, closed axis once, from the registry or the rendered controls rather
+  than a hand-written list, so a newly added option cannot go silently untested.
+- **Combine pairwise** where axes interact, unless the code makes one specific higher-order
+  interaction risky enough to name.
+- **Probe every limit** at the last accepted and first refused value, plus the empty and
+  single-item cases wherever those behave differently.
 
-Treat route entry as an axis when state lives in the URL: control navigation,
-cold deep-link, reload and Back/Forward are different paths through the SPA.
-Treat the artifact as the consumer contract: a download event or non-empty
-file is not enough; parse every supported format and compare the semantic table
-to the preview or response that produced it. Put pure batching and serializer
-boundaries in unit/component suites, request-contract edges in `stand-api`, and
-keep `stand-ui` for the browser-only join: routing, rendering, cancellation and
-real downloads.
+Treat route entry as an axis whenever state lives in the URL: control navigation, cold deep-link,
+reload and Back/Forward are four different paths through the SPA and its validators do not all
+fail the same way. Treat the artifact as the consumer contract: a download event or a non-empty
+file proves the transport, not the content, so parse every supported format and compare the
+semantic table against the preview or the response that produced it. Put batching and serializer
+boundaries in `fe-unit` / `fe-component`, request-contract edges in `stand-api`, and keep
+`stand-ui` for the browser-only join — routing, rendering, cancellation and real downloads.
 
 ### 5. Draw the in/out boundary
 Explicitly list what's **out of scope** — not built yet, owned by another layer, or deferred to
