@@ -8,3 +8,24 @@ provisioner: cinder.csi.openstack.org
 reclaimPolicy: Delete
 allowVolumeExpansion: true
 volumeBindingMode: WaitForFirstConsumer
+---
+# Same Cinder provisioner, but naming a filesystem type so the kubelet applies
+# a pod's fsGroup to the volume. The driver advertises
+# fsGroupPolicy: ReadWriteOnceWithFSType, which acts only on a ReadWriteOnce
+# volume that carries an fsType; the default class above declares no
+# parameters, so volumes from it are owned root:root and a non-root workload
+# cannot write them without a chown Job. Consumers must also request
+# ReadWriteOnce — ReadWriteOncePod does not satisfy the policy.
+# INVARIANT: StorageClass parameters are immutable. This is a second class
+# rather than an fstype added to `cinder` so that re-running bootstrap-storage
+# against the existing default class keeps working.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: cinder-ext4
+provisioner: cinder.csi.openstack.org
+parameters:
+  csi.storage.k8s.io/fstype: ext4
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer

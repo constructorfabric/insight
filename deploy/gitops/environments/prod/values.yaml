@@ -145,6 +145,7 @@ authenticator:
     sourceType: github
     externalIdClaim: idp_sub
     defaultTenantId: 3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36
+    provisionOnLogin: true
   resources:
     requests:
       cpu: 200m
@@ -152,6 +153,25 @@ authenticator:
     limits:
       cpu: 1
       memory: 512Mi
+
+# Clone-based commit extraction for the github connector, whose descriptor
+# requires git_proxy_url/git_proxy_token; reconcile injects both from the
+# chart-owned Secret. Airbyte-only consumer — no gateway route.
+gitCliProxy:
+  deploy: true
+  persistence:
+    # INVARIANT: this pair must move together. The kubelet applies the pod's
+    # fsGroup only for a ReadWriteOnce volume carrying an fsType (the driver's
+    # fsGroupPolicy is ReadWriteOnceWithFSType), and the service runs non-root
+    # on a read-only rootfs, so a volume it cannot write is a boot failure.
+    # ReadWriteOncePod would not satisfy the policy; replicaCount is pinned to
+    # 1 by the chart, which is what keeps the single-writer guarantee.
+    storageClass: cinder-ext4
+    accessMode: ReadWriteOnce
+  networkPolicy:
+    allowedNamespaceLabels:
+      - key: kubernetes.io/metadata.name
+        values: [airbyte]
 
 identityResolution:
   deploy: true
