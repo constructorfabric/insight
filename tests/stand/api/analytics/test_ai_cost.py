@@ -25,6 +25,7 @@ import pytest
 from insight_stand import ApiClient, Manifest, PersonaSession, analytics_path
 
 from ..schemas import MetricResultsResponse, PeriodView
+from . import query_window
 
 METRIC_RESULTS = analytics_path("/v1/metric-results")
 DRILLDOWN = analytics_path("/v1/metric-drilldown")
@@ -76,11 +77,6 @@ def _evidence(client: ApiClient, person: str, start: str, end: str) -> list[Mapp
     return [row["values"] for row in response.json()["rows"]]
 
 
-def _seeded_window(manifest: Manifest) -> tuple[str, str]:
-    start, _, end = manifest.data_window.partition("..")
-    return start, end
-
-
 @pytest.mark.requires_seed("support_lead")
 @pytest.mark.reliability
 def test_a_seat_with_no_ceiling_reports_money_and_withholds_utilisation(
@@ -93,7 +89,7 @@ def test_a_seat_with_no_ceiling_reports_money_and_withholds_utilisation(
     (`generators/ai.py`), which is what makes this case reachable at all.
     """
     session = session_for("support_lead")
-    start, end = _seeded_window(stand_manifest)
+    start, end = query_window(stand_manifest)
 
     values = _period_values(session.client, session.person.uuid, [MONEY, UTILISATION], start, end)
 
@@ -118,7 +114,7 @@ def test_a_window_holding_the_read_day_returns_the_whole_billing_month(
     nothing.
     """
     session = session_for("dev_lead")
-    start, end = _seeded_window(stand_manifest)
+    start, end = query_window(stand_manifest)
 
     rows = _evidence(session.client, session.person.uuid, start, end)
     assert rows, "no seat-month evidence over the seeded window"
@@ -159,7 +155,7 @@ def test_the_usage_priced_and_the_billed_key_are_served_side_by_side(
     use — the two are never added.
     """
     session = session_for("dev_lead")
-    start, end = _seeded_window(stand_manifest)
+    start, end = query_window(stand_manifest)
 
     values = _period_values(session.client, session.person.uuid, [USAGE_PRICED, MONEY], start, end)
 
@@ -175,7 +171,7 @@ def test_the_seat_tier_breakdown_adds_up_to_the_period_value(
 ) -> None:
     """A dimension whose parts do not sum to the whole is a dimension nobody can act on."""
     session = session_for("dev_lead")
-    start, end = _seeded_window(stand_manifest)
+    start, end = query_window(stand_manifest)
 
     response = session.client.post(
         METRIC_RESULTS,
@@ -217,7 +213,7 @@ def test_a_seat_month_row_names_its_billing_month_and_its_ceiling(
     the amount has nothing to be judged against.
     """
     session = session_for("dev_lead")
-    start, end = _seeded_window(stand_manifest)
+    start, end = query_window(stand_manifest)
 
     rows = _evidence(session.client, session.person.uuid, start, end)
     assert rows, "no seat-month evidence over the seeded window"
