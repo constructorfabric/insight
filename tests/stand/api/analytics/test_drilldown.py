@@ -876,11 +876,6 @@ def test_export_cells_match_the_page_and_hostile_values_stay_inert(
 
 
 @pytest.mark.requires_seed("dev_lead")
-@pytest.mark.xfail(
-    strict=False,
-    reason="constructorfabric/insight#2361 — intermittent 500 under suite load: the "
-    "identity service answers the person-visibility check with 429; passes in isolation",
-)
 @pytest.mark.reliability
 def test_git_commit_drilldown_pages_and_reconciles(
     api: ApiClient, stand_manifest: Manifest
@@ -915,11 +910,6 @@ def test_git_commit_drilldown_pages_and_reconciles(
 
 
 @pytest.mark.requires_seed("dev_lead")
-@pytest.mark.xfail(
-    strict=False,
-    reason="constructorfabric/insight#2361 — intermittent 500 under suite load: the "
-    "identity service answers the person-visibility check with 429; passes in isolation",
-)
 @pytest.mark.reliability
 def test_git_commit_drilldown_exports_all_rows(api: ApiClient, stand_manifest: Manifest) -> None:
     walk = _walk(
@@ -966,11 +956,6 @@ def test_git_commit_drilldown_refuses_a_person_out_of_scope(
 
 
 @pytest.mark.requires_seed("dev_lead")
-@pytest.mark.xfail(
-    strict=False,
-    reason="constructorfabric/insight#2361 — intermittent 500 under suite load: the "
-    "identity service answers the person-visibility check with 429; passes in isolation",
-)
 @pytest.mark.reliability
 def test_supported_metric_with_no_evidence_returns_an_empty_page(
     api: ApiClient, stand_manifest: Manifest
