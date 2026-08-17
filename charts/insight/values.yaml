@@ -550,6 +550,12 @@ gitCliProxy:
   # first install and reused on every upgrade; reconcile hands it to the
   # connectors, so an operator never needs to see or copy it. Set it only to
   # pin a specific value.
+  #
+  # Under `credentials.autoGenerate: false` — which every gitops overlay runs —
+  # the chart emits no Secret at all and this value is unused: pre-create
+  # `existingSecret` below with the key
+  # APP__gears__git_cli_proxy__config__proxy_token, the same contract as
+  # `insight-db-creds`. Never inline the token here in a committed overlay.
   proxyToken: ""
   # Composed by templates/secrets.yaml (carries the bearer token).
   existingSecret: "insight-git-cli-proxy-config"
