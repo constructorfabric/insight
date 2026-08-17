@@ -30,6 +30,34 @@ type: DeclarativeSource
 # Issues and projects are deliberately not synced.
 
 definitions:
+  # ── The backfill bound ──────────────────────────────────────────────────
+  # `bitbucket_start_date` means one thing: fetch nothing older. Declaring it
+  # as a cursor's `start_datetime` does NOT filter anything — the CDK only
+  # tracks state with it — so every stream that fetches dated records has to
+  # put it in the REQUEST (`q`, `since`) or in a stop condition. These two
+  # anchors are the request forms, defined once so a stream that omits one is
+  # visibly missing it rather than quietly unbounded.
+  #
+  # Repository listings: VERIFIED that the vendor filters server-side, so a
+  # repository nobody has touched since the bound is never returned and its
+  # clone is never walked.
+  repos_since_start: &repos_since_start
+    pagelen: "100"
+    # Ascending, so a cursor over this listing advances monotonically.
+    sort: updated_on
+    q: >-
+      updated_on >= "{{ config['bitbucket_start_date'] }}"
+
+  # Pull-request listings used as fan-out parents. These four children keep no
+  # cursor, so their cost is bounded by this window alone. It is the LATER of
+  # the backfill bound and `bitbucket_pr_detail_lookback_days` back from now:
+  # never older than the start date, and reaching the whole way back to it when
+  # an operator widens the lookback for a backfill run.
+  prs_since_start: &prs_since_start
+    pagelen: "50"
+    q: >-
+      updated_on >= "{{ [config['bitbucket_start_date'], format_datetime(now_utc() - duration('P' ~ (config.get('bitbucket_pr_detail_lookback_days', 30) | int) ~ 'D'), '%Y-%m-%d')] | max }}"
+
   proxy_error_handler: &proxy_error_handler
     type: DefaultErrorHandler
     # Generous on purpose: a cold blobless clone of a large repository runs
@@ -192,9 +220,7 @@ streams:
         path: "/repositories/{{ stream_partition.workspace }}"
         http_method: GET
         request_parameters:
-          pagelen: "100"
-          # Ascending, so the cursor advances monotonically across pages.
-          sort: updated_on
+          <<: *repos_since_start
           # Trim the payload: the full repository object is large and only
           # these fields are used (identity, cursor, clone link).
           fields: >-
@@ -428,8 +454,7 @@ streams:
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "100"
-                    sort: updated_on
+                    <<: *repos_since_start
                     fields: >-
                       next,values.uuid,values.slug,values.updated_on,values.links.clone
                 record_selector:
@@ -616,8 +641,7 @@ streams:
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "100"
-                    sort: updated_on
+                    <<: *repos_since_start
                     fields: >-
                       next,values.uuid,values.slug,values.updated_on,values.links.clone
                 record_selector:
@@ -792,7 +816,7 @@ streams:
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "100"
+                    <<: *repos_since_start
                     fields: >-
                       next,values.uuid,values.slug,values.links.clone
                 record_selector:
@@ -1028,7 +1052,7 @@ streams:
                             path: "/repositories/{{ stream_partition.workspace }}"
                             http_method: GET
                             request_parameters:
-                              pagelen: "100"
+                              <<: *repos_since_start
                               fields: >-
                                 next,values.uuid,values.full_name,values.updated_on,values.links.clone
                           record_selector:
@@ -1305,7 +1329,7 @@ streams:
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "100"
+                    <<: *repos_since_start
                     fields: next,values.uuid,values.full_name,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -1590,12 +1614,10 @@ streams:
                     # pagelen HARD CAP on /pullrequests is 50 (400 above). No
                     # sort: with the state filters it 500s deterministically on
                     # large repositories; pagination is order-independent.
-                    pagelen: "50"
                     # Stateless sliding window: the children have no cursor of their
                     # own, so parent state would never persist. RMT dedups the
                     # re-read window.
-                    q: >-
-                      updated_on >= "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                    <<: *prs_since_start
                     fields: next,values.id,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -1649,7 +1671,7 @@ streams:
                             path: "/repositories/{{ stream_partition.workspace }}"
                             http_method: GET
                             request_parameters:
-                              pagelen: "100"
+                              <<: *repos_since_start
                               fields: next,values.uuid,values.full_name,values.updated_on
                           record_selector:
                             type: RecordSelector
@@ -1881,12 +1903,10 @@ streams:
                     # pagelen HARD CAP on /pullrequests is 50 (400 above). No
                     # sort: with the state filters it 500s deterministically on
                     # large repositories; pagination is order-independent.
-                    pagelen: "50"
                     # Stateless sliding window: the children have no cursor of their
                     # own, so parent state would never persist. RMT dedups the
                     # re-read window.
-                    q: >-
-                      updated_on >= "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                    <<: *prs_since_start
                     fields: next,values.id,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -1940,7 +1960,7 @@ streams:
                             path: "/repositories/{{ stream_partition.workspace }}"
                             http_method: GET
                             request_parameters:
-                              pagelen: "100"
+                              <<: *repos_since_start
                               fields: next,values.uuid,values.full_name,values.updated_on
                           record_selector:
                             type: RecordSelector
@@ -2203,12 +2223,10 @@ streams:
                     # pagelen HARD CAP on /pullrequests is 50 (400 above). No
                     # sort: with the state filters it 500s deterministically on
                     # large repositories; pagination is order-independent.
-                    pagelen: "50"
                     # Stateless sliding window: the children have no cursor of their
                     # own, so parent state would never persist. RMT dedups the
                     # re-read window.
-                    q: >-
-                      updated_on >= "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                    <<: *prs_since_start
                     fields: next,values.id,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -2262,7 +2280,7 @@ streams:
                             path: "/repositories/{{ stream_partition.workspace }}"
                             http_method: GET
                             request_parameters:
-                              pagelen: "100"
+                              <<: *repos_since_start
                               fields: next,values.uuid,values.full_name,values.updated_on
                           record_selector:
                             type: RecordSelector
@@ -2472,12 +2490,10 @@ streams:
                     # pagelen HARD CAP on /pullrequests is 50 (400 above). No
                     # sort: with the state filters it 500s deterministically on
                     # large repositories; pagination is order-independent.
-                    pagelen: "50"
                     # Stateless sliding window: the children have no cursor of their
                     # own, so parent state would never persist. RMT dedups the
                     # re-read window.
-                    q: >-
-                      updated_on >= "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
+                    <<: *prs_since_start
                     fields: next,values.id,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -2531,7 +2547,7 @@ streams:
                             path: "/repositories/{{ stream_partition.workspace }}"
                             http_method: GET
                             request_parameters:
-                              pagelen: "100"
+                              <<: *repos_since_start
                               fields: next,values.uuid,values.full_name,values.updated_on
                           record_selector:
                             type: RecordSelector
@@ -2923,7 +2939,7 @@ streams:
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "100"
+                    <<: *repos_since_start
                     fields: next,values.uuid,values.full_name,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -3076,11 +3092,15 @@ streams:
         path: "/repositories/{{ stream_partition.repo_full_name }}/deployments/"
         http_method: GET
         request_parameters:
-          # No sort and no q: deploy-service rejects `created_on` as a sort
-          # attribute (VERIFIED live, 400), accepts only `state.started_on`,
-          # which is null until a deployment starts — so no ordering is safe
-          # to lean an incremental stop on. Full refresh per repository; the
-          # ReplacingMergeTree absorbs the re-emission.
+          # No sort and no q, and neither is an oversight. VERIFIED live:
+          # `sort=created_on` is rejected 400 ("Invalid sort attribute"), and a
+          # `q` on created_on is ACCEPTED AND SILENTLY IGNORED — a cutoff years
+          # in the future still returns every row. The start-date bound cannot
+          # be pushed to this endpoint at all, so it is applied to the records
+          # instead (incremental_sync below): the requests still walk a
+          # repository's whole deploy history, but nothing older than the bound
+          # reaches bronze. Every other stream filters server-side; this one
+          # cannot.
           pagelen: "100"
         error_handler:
           type: DefaultErrorHandler
@@ -3160,7 +3180,7 @@ streams:
                   path: "/repositories/{{ stream_partition.workspace }}"
                   http_method: GET
                   request_parameters:
-                    pagelen: "100"
+                    <<: *repos_since_start
                     fields: next,values.uuid,values.full_name,values.updated_on
                 record_selector:
                   type: RecordSelector
@@ -3179,6 +3199,22 @@ streams:
                   type: ListPartitionRouter
                   values: "{{ config['bitbucket_workspaces'] }}"
                   cursor_field: workspace
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: created_on
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      # The endpoint cannot filter or order (see the requester above), so the
+      # bound is enforced on the records after the fetch. This drops
+      # pre-start-date deployments rather than letting a repository's whole
+      # history accumulate in bronze forever.
+      is_client_side_incremental: true
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['bitbucket_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields:
@@ -3309,10 +3345,26 @@ spec:
         type: string
         description: >-
           Earliest date for incremental sync (YYYY-MM-DD). Required: it bounds
-          the first-sync cost, so choosing it is a deployment decision.
+          the first-sync cost, so choosing it is a deployment decision. Nothing
+          older than this is fetched by any stream.
         title: Start Date
         format: date
         order: 8
+      bitbucket_pr_detail_lookback_days:
+        type: integer
+        default: 30
+        minimum: 1
+        description: >-
+          How far back to re-read pull requests for their comments, commits,
+          diffstat and activity. These four streams fan out one request per
+          pull request and keep no cursor of their own, so this window is what
+          bounds their cost on every sync. The effective bound is the LATER of
+          this window and the start date, so it can never reach further back
+          than the start date. Raise it to cover the whole backfill on a
+          first run (a two-year backfill needs ~730), then lower it: a daily
+          sync only needs to revisit what has changed.
+        title: Pull-request detail lookback (days)
+        order: 9
     additionalProperties: true
 
 metadata:

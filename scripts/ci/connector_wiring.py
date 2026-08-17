@@ -28,6 +28,25 @@ Checks
   4. cast-types — contributors MUST NOT explicitly cast the same class_people
                   column to different types; `union_by_tag` UNION ALLs the
                   branches and ClickHouse raises Code 386 NO_COMMON_TYPE.
+  5. start-date — a nocode stream that pages a dated vendor collection MUST
+                  enforce the connector's start date in the REQUEST or in a
+                  stop condition. Declaring it as a cursor's `start_datetime`
+                  filters NOTHING — the CDK only tracks state with it — so a
+                  stream can look bounded and still fetch all history. The
+                  incident this catches: twelve repository listings in one
+                  connector, three of which declared the bound, none of which
+                  applied it; every sync cloned every repository in the
+                  workspace regardless of the configured window.
+
+                  A substream counts as bounded when a parent listing bounds
+                  it, because fetching all of an in-window item's
+                  sub-resources (an issue's worklogs, a pull request's
+                  comments) is the intended grain. KNOWN GAP in that rule: a
+                  child that pages a CONTAINER's whole dated collection —
+                  every deployment of a repository, say — inherits only the
+                  repository filter, not a date bound, and this check cannot
+                  tell that shape from the legitimate one. Such a stream needs
+                  its own bound and a reviewer to notice it is missing.
 
 Empty `images.<key>.image` refs are reported as warnings, never errors: a
 brand-new CDK connector legitimately ships with `image: ""` and is patched by
@@ -76,6 +95,39 @@ def _class_people_models(connector_dir: Path) -> list[Path]:
     if not dbt_dir.is_dir():
         return []
     return [p for p in sorted(dbt_dir.glob("*.sql")) if CLASS_PEOPLE_TAG in p.read_text()]
+
+
+def _resolve_ref(pointer: str, spec: dict):
+    """Follow an Airbyte `$ref` pointer (`#/definitions/...`) inside one manifest."""
+    node = spec
+    for part in pointer.lstrip("#/").split("/"):
+        if isinstance(node, dict):
+            if part not in node:
+                return None
+            node = node[part]
+        elif isinstance(node, list) and part.isdigit() and int(part) < len(node):
+            # `#/streams/13` — a pointer at a positional stream, which is how a
+            # substream names a parent that is declared at the top level.
+            node = node[int(part)]
+        else:
+            return None
+    return node
+
+
+def _requester_text(stream: dict, spec: dict) -> str:
+    """The stream's requester as text, with `$ref` pointers expanded one level.
+
+    A bound can be written as a query param, a JQL clause or a GraphQL
+    variable, so the check reads the requester whole rather than guessing which
+    field carries it.
+    """
+    requester = (stream.get("retriever") or {}).get("requester") or {}
+    chunks = [yaml.safe_dump(requester, default_flow_style=False)]
+    for ref in re.findall(r"[$]ref:\s*['\"]?(#[^'\"\s]+)", chunks[0]):
+        target = _resolve_ref(ref, spec)
+        if target is not None:
+            chunks.append(yaml.safe_dump(target, default_flow_style=False))
+    return " ".join(chunks)
 
 
 def main(argv: list[str]) -> int:
@@ -194,6 +246,85 @@ def main(argv: list[str]) -> int:
                 "these branches — ClickHouse raises Code 386 NO_COMMON_TYPE "
                 "(cpt-dataflow-constraint-staging-class-column-types-match)."
             )
+
+    # ── 5. start-date enforcement on nocode streams ──────────────────────────
+    # A retriever that pages a dated collection has to put the bound in the
+    # request (`q`, or a `start_time_option` injecting one) or stop paging on it
+    # (`is_data_feed`), or drop the old records (`is_client_side_incremental`).
+    # `incremental_sync.start_datetime` alone is state, not a filter.
+    for manifest in sorted(connectors_root.glob("*/*/connector.yaml")):
+        rel = manifest.relative_to(connectors_root)
+        spec = _load_yaml(manifest)
+        if not isinstance(spec, dict):
+            continue
+        start_keys = {
+            k for k in ((spec.get("spec") or {}).get("connection_specification") or {}).get("properties", {})
+            if k.endswith("_start_date")
+        }
+        if not start_keys:
+            continue
+
+        def _enforces(stream: dict) -> bool:
+            inc = stream.get("incremental_sync") or {}
+            request = _requester_text(stream, spec)
+            return bool(
+                any(key in request for key in start_keys)
+                or "stream_interval.start_time" in request
+                or "stream_slice.start_time" in request
+                or "start_time_option" in inc
+                or inc.get("is_data_feed")
+                or inc.get("is_client_side_incremental")
+            )
+
+        def _parents(stream: dict) -> list:
+            """Parent streams, whether declared inline or behind a `$ref`."""
+            router = (stream.get("retriever") or {}).get("partition_router") or {}
+            routers = router if isinstance(router, list) else [router]
+            out = []
+            for r in routers:
+                if not isinstance(r, dict):
+                    continue
+                for cfg in r.get("parent_stream_configs") or []:
+                    parent = (cfg or {}).get("stream")
+                    if isinstance(parent, dict) and "$ref" in parent:
+                        parent = _resolve_ref(parent["$ref"], spec)
+                    if isinstance(parent, dict):
+                        out.append(parent)
+            return out
+
+        def _bounded(stream: dict, depth: int = 0) -> bool:
+            """The stream bounds itself, or a parent listing bounds it for it.
+
+            A substream inherits its parent's window: if the parent listing is
+            filtered, the child only visits in-window items, and fetching all of
+            a fetched item's sub-resources is the intended grain.
+            """
+            if depth > 6:
+                return True
+            return _enforces(stream) or any(_bounded(p, depth + 1) for p in _parents(stream))
+
+        def _walk(node):
+            if isinstance(node, dict):
+                if node.get("type") == "DeclarativeStream":
+                    inc = node.get("incremental_sync") or {}
+                    if "start_datetime" in inc and not _bounded(node):
+                        errors.append(
+                            f"{rel}: stream {node.get('name', '?')!r} declares a "
+                            "start_datetime that nothing enforces, and no parent "
+                            "stream bounds it either — put the bound in the request "
+                            "(`q`, `jql`, a GraphQL variable, a start_time_option) "
+                            "or stop on it (is_data_feed / "
+                            "is_client_side_incremental). A declared cursor start is "
+                            "state, not a filter: as written this stream fetches all "
+                            "history."
+                        )
+                for v in node.values():
+                    _walk(v)
+            elif isinstance(node, list):
+                for v in node:
+                    _walk(v)
+
+        _walk(spec.get("streams") or [])
 
     if args.warnings_as_errors:
         errors, warnings = errors + warnings, []
