@@ -60,6 +60,12 @@ struct Cli {
     #[arg(long, default_value_t = Settings::default().listen)]
     listen: u16,
 
+    /// How long an idle client connection is held open, in seconds. Raise it
+    /// above the idle timeout of whatever terminates TLS in front of the
+    /// gateway.
+    #[arg(long, default_value_t = Settings::default().keepalive_timeout_s)]
+    keepalive_timeout_s: u32,
+
     /// Trusted ingress-hop CIDR(s) for `set_real_ip_from` (repeatable).
     #[arg(long = "set-real-ip-from")]
     set_real_ip_from: Vec<String>,
@@ -77,6 +83,7 @@ impl Cli {
             authz_connect_timeout_ms: self.authz_connect_timeout_ms,
             authz_read_timeout_ms: self.authz_read_timeout_ms,
             worker_connections: d.worker_connections,
+            keepalive_timeout_s: self.keepalive_timeout_s,
             set_real_ip_from: if self.set_real_ip_from.is_empty() {
                 d.set_real_ip_from
             } else {

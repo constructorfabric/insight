@@ -57,6 +57,10 @@ spec:
             - name: GATEWAY_JWT_CACHE_SIZE
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.gateway.keepaliveTimeoutSeconds }}
+            - name: GATEWAY_KEEPALIVE_TIMEOUT_S
+              value: {{ . | quote }}
+            {{- end }}
           volumeMounts:
             - name: routes
               mountPath: /etc/gateway

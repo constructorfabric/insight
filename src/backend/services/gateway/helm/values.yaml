@@ -66,6 +66,11 @@ gateway:
   setRealIpFrom: []
   # lua_shared_dict exchange-cache size (empty = routegen default 64m).
   jwtCacheSize: ""
+  # How long an idle client connection is held open, in seconds (empty =
+  # routegen default 75, which is nginx's own). Raise it above the idle timeout
+  # of whatever terminates TLS in front of the gateway: a proxy that reuses a
+  # connection the gateway has just closed reports the origin as having failed.
+  keepaliveTimeoutSeconds: ""
 
 resources:
   requests:

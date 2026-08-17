@@ -26,6 +26,11 @@ pub struct Settings {
     pub authz_connect_timeout_ms: u32,
     pub authz_read_timeout_ms: u32,
     pub worker_connections: u32,
+    /// How long an idle client connection is held open. Raise it above the idle
+    /// timeout of whatever terminates TLS in front of the gateway: a proxy that
+    /// reuses a connection this side has just closed reports the origin as
+    /// having failed.
+    pub keepalive_timeout_s: u32,
     pub set_real_ip_from: Vec<String>,
     pub hsts: String,
     pub error_log_level: String,
@@ -42,6 +47,9 @@ impl Default for Settings {
             authz_connect_timeout_ms: 2000,
             authz_read_timeout_ms: 2000,
             worker_connections: 4096,
+            // nginx's own default, emitted rather than implied so an operator
+            // can see what it is and raise it.
+            keepalive_timeout_s: 75,
             set_real_ip_from: Vec::new(),
             hsts: "max-age=31536000; includeSubDomains; preload".to_owned(),
             error_log_level: "info".to_owned(),
@@ -273,6 +281,11 @@ fn emit_http_runtime(c: &mut String, settings: &Settings, authz_url: &str) -> an
     }
 
     c.push_str("    proxy_http_version 1.1;\n");
+    writeln!(
+        c,
+        "    keepalive_timeout {}s;",
+        settings.keepalive_timeout_s
+    )?;
     // Writable temp paths under /tmp so the gateway runs as a non-root user with
     // a read-only root filesystem (the prefix dirs are not writable then).
     c.push_str("    # writable temp paths -> non-root + read-only rootfs\n");

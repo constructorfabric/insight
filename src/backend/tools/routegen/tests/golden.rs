@@ -93,6 +93,25 @@ fn real_ip_emitted_only_when_trusted_cidrs_configured() {
 }
 
 #[test]
+fn keepalive_timeout_is_always_stated_and_follows_the_setting() {
+    let yaml = fixture("full.routes.yaml");
+    // Stated even at the default, so an operator reading the generated config
+    // can see the value a proxy in front has to stay under.
+    let default = generate(&yaml, &Settings::default()).unwrap();
+    assert!(default.contains("keepalive_timeout 75s;"));
+
+    let raised = generate(
+        &yaml,
+        &Settings {
+            keepalive_timeout_s: 620,
+            ..Settings::default()
+        },
+    )
+    .unwrap();
+    assert!(raised.contains("keepalive_timeout 620s;"));
+}
+
+#[test]
 fn jwks_is_not_fronted_by_the_gateway() {
     // JWKS is public and served directly by the authenticator (the key issuer),
     // never proxied through the edge.
