@@ -16,9 +16,33 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.branches
     `head_committed_date` Nullable(String),
     `is_default` Nullable(Bool)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commit_authors
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `repo_full_name` Nullable(String),
+    `author_email` Nullable(String),
+    `author_account_id` Nullable(String),
+    `author_uuid` Nullable(String),
+    `author_nickname` Nullable(String),
+    `author_display_name` Nullable(String),
+    `sample_sha` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commits
@@ -48,9 +72,9 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.commits
     `is_in_default_branch` Nullable(Bool),
     `patch_id` Nullable(String)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.deployments
@@ -74,9 +98,9 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.deployments
     `created_on` Nullable(String),
     `last_update_time` Nullable(String)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.file_changes
@@ -102,9 +126,9 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.file_changes
     `patch` Nullable(String),
     `patch_truncated` Nullable(Bool)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pipelines
@@ -127,13 +151,15 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pipelines
     `target_commit_sha` Nullable(String),
     `trigger_name` Nullable(String),
     `creator_uuid` Nullable(String),
+    `creator_account_id` Nullable(String),
+    `creator_display_name` Nullable(String),
     `duration_in_seconds` Nullable(Int64),
     `created_on` Nullable(String),
     `completed_on` Nullable(String)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_activity
@@ -155,11 +181,18 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_activity
     `actor_display_name` Nullable(String),
     `update_state` Nullable(String),
     `update_source_commit` Nullable(String),
-    `comment_id` Nullable(Int64)
+    `comment_id` Nullable(Int64),
+    `actor_account_id` Nullable(String),
+    `actor_nickname` Nullable(String),
+    `changes` Nullable(String),
+    `update_title` Nullable(String),
+    `update_reason` Nullable(String),
+    `update_draft` Nullable(Bool),
+    `update_destination_commit` Nullable(String)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_comments
@@ -177,6 +210,8 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_comments
     `pr_id` Nullable(Int64),
     `repo_full_name` Nullable(String),
     `author_uuid` Nullable(String),
+    `author_account_id` Nullable(String),
+    `author_nickname` Nullable(String),
     `author_display_name` Nullable(String),
     `deleted` Nullable(Bool),
     `parent_id` Nullable(Int64),
@@ -187,9 +222,9 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_comments
     `inline_to` Nullable(Int64),
     `inline_from` Nullable(Int64)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_commits
@@ -205,11 +240,21 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_commits
     `collected_at` Nullable(String),
     `sha` Nullable(String),
     `pr_id` Nullable(Int64),
-    `repo_full_name` Nullable(String)
+    `repo_full_name` Nullable(String),
+    `author_email` Nullable(String),
+    `author_name` Nullable(String),
+    `author_account_id` Nullable(String),
+    `author_uuid` Nullable(String),
+    `author_nickname` Nullable(String),
+    `author_display_name` Nullable(String),
+    `message` Nullable(String),
+    `committed_date` Nullable(String),
+    `parent_shas` Nullable(String),
+    `is_merge` Nullable(Bool)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_diffstat
@@ -231,9 +276,9 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_diffstat
     `lines_added` Nullable(Int64),
     `lines_removed` Nullable(Int64)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_requests
@@ -265,11 +310,19 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_requests
     `task_count` Nullable(Int64),
     `description` Nullable(String),
     `destination_commit_sha` Nullable(String),
-    `participants` Nullable(String)
+    `participants` Nullable(String),
+    `author_account_id` Nullable(String),
+    `author_nickname` Nullable(String),
+    `closed_by_account_id` Nullable(String),
+    `closed_by_display_name` Nullable(String),
+    `source_repo_full_name` Nullable(String),
+    `destination_repo_full_name` Nullable(String),
+    `close_source_branch` Nullable(Bool),
+    `reason` Nullable(String)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repositories
@@ -294,11 +347,25 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repositories
     `size` Nullable(Int64),
     `created_on` Nullable(String),
     `updated_on` Nullable(String),
-    `description` Nullable(String)
+    `description` Nullable(String),
+    `default_branch` Nullable(String),
+    `is_fork` Nullable(Bool),
+    `parent_full_name` Nullable(String),
+    `project_key` Nullable(String),
+    `project_name` Nullable(String),
+    `project_uuid` Nullable(String),
+    `workspace_slug` Nullable(String),
+    `workspace_uuid` Nullable(String),
+    `owner_username` Nullable(String),
+    `owner_uuid` Nullable(String),
+    `fork_policy` Nullable(String),
+    `enforced_signed_commits` Nullable(Bool),
+    `scm` Nullable(String),
+    `website` Nullable(String)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.workspace_members
@@ -318,7 +385,8 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.workspace_members
     `user_uuid` Nullable(String),
     `workspace` Nullable(String)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
+

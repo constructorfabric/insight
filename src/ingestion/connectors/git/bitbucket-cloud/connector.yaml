@@ -157,6 +157,20 @@ streams:
           created_on: {type: [string, "null"]}
           updated_on: {type: [string, "null"]}
           description: {type: [string, "null"]}
+          default_branch: {type: [string, "null"]}
+          is_fork: {type: [boolean, "null"]}
+          parent_full_name: {type: [string, "null"]}
+          project_key: {type: [string, "null"]}
+          project_name: {type: [string, "null"]}
+          project_uuid: {type: [string, "null"]}
+          workspace_slug: {type: [string, "null"]}
+          workspace_uuid: {type: [string, "null"]}
+          owner_username: {type: [string, "null"]}
+          owner_uuid: {type: [string, "null"]}
+          fork_policy: {type: [string, "null"]}
+          enforced_signed_commits: {type: [boolean, "null"]}
+          scm: {type: [string, "null"]}
+          website: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -244,10 +258,73 @@ streams:
             path: [description]
             value: "{{ (record.get('description') or '')[:1024] }}"
             value_type: string
+          # Which branch the repository considers its trunk. The proxy reports
+          # reachability from ITS clone's HEAD; this is what the vendor says,
+          # and the two disagree for a while after a default-branch rename.
+          - type: AddedFieldDefinition
+            path: [default_branch]
+            value: "{{ (record.get('mainbranch') or {}).get('name') or '' }}"
+            value_type: string
+          # `parent` is present only on a fork and names what it was forked
+          # from. A fork's clone carries its whole upstream history, so anything
+          # counting commits has to be able to tell one apart.
+          - type: AddedFieldDefinition
+            path: [is_fork]
+            value: "{{ record.get('parent') is not none }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [parent_full_name]
+            value: "{{ (record.get('parent') or {}).get('full_name') or '' }}"
+            value_type: string
+          # Bitbucket groups repositories into projects, which no other git
+          # vendor models — the silver contract derives project_key from the
+          # path, so these are carried for reporting rather than for joins.
+          - type: AddedFieldDefinition
+            path: [project_key]
+            value: "{{ (record.get('project') or {}).get('key') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [project_name]
+            value: "{{ (record.get('project') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [project_uuid]
+            value: "{{ (record.get('project') or {}).get('uuid') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [workspace_slug]
+            value: "{{ (record.get('workspace') or {}).get('slug') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [workspace_uuid]
+            value: "{{ (record.get('workspace') or {}).get('uuid') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [owner_username]
+            value: "{{ (record.get('owner') or {}).get('username') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [owner_uuid]
+            value: "{{ (record.get('owner') or {}).get('uuid') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [website]
+            value: "{{ record.get('website') or '' }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['uuid'] | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [mainbranch]
+          - [parent]
+          - [project]
+          - [workspace]
+          - [owner]
+          - [links]
+
   # ── Commits (git-cli-proxy) ─────────────────────────────────────────────
   - type: DeclarativeStream
     name: commits
@@ -770,6 +847,309 @@ streams:
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['name'] | replace(':', '%3A') }}
 
+  # ── Commit authors (git-cli-proxy + Bitbucket API) ──────────────────────
+  # A commit names an e-mail and no account, so it reaches a person only once
+  # something claims that e-mail for one. The proxy enumerates a repository's
+  # distinct authors from the clone it already holds, and this stream asks
+  # Bitbucket who each of them is — one call per AUTHOR, not per commit.
+  #
+  # `/commit/{sha}` answers with `author.raw` (the git ident) beside
+  # `author.user` (the account), which is the pairing neither side has alone:
+  # the proxy walk knows only the e-mail, the workspace roster only the
+  # account. `user` is absent when the committer holds no Bitbucket account —
+  # a CI or service identity — and those records are dropped rather than
+  # stored as an unresolved row.
+  - type: DeclarativeStream
+    name: commit_authors
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
+          author_account_id: {type: [string, "null"]}
+          author_uuid: {type: [string, "null"]}
+          author_nickname: {type: [string, "null"]}
+          author_display_name: {type: [string, "null"]}
+          sample_sha: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+        authenticator:
+          type: ApiKeyAuthenticator
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+          api_token: >-
+            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+        path: "/repositories/{{ stream_slice.extra_fields['repo_full_name'] }}/commit/{{ stream_partition.commit_sha }}"
+        http_method: GET
+        error_handler:
+          type: DefaultErrorHandler
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [429]
+              action: RATE_LIMITED
+              error_message: Bitbucket hourly rate budget exhausted
+            - type: HttpResponseFilter
+              http_codes: [403, 404]
+              action: IGNORE
+              error_message: >-
+                Commit gone or not accessible; other authors continue.
+            - type: HttpResponseFilter
+              http_codes: [401]
+              action: FAIL
+              failure_type: config_error
+              error_message: >-
+                Bitbucket rejected the credentials. Personal API tokens need
+                bitbucket_username set (Basic auth); workspace access tokens must
+                NOT set it (Bearer). Mixing the two is the most common cause.
+            - type: HttpResponseFilter
+              http_codes: [500, 502, 503, 504]
+              action: RETRY
+              error_message: Transient Bitbucket error
+      record_selector:
+        type: RecordSelector
+        extractor:
+          # One commit object, not a page.
+          type: DpathExtractor
+          field_path: []
+        record_filter:
+          type: RecordFilter
+          # No account behind the e-mail; there is no claim to make. Compared
+          # against '' rather than tested for truth: the interpolation renders
+          # an absent value as the string "None", which is not falsy.
+          condition: "{{ (((record.get('author') or {}).get('user') or {}).get('account_id') or '') != '' }}"
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: sample_sha
+            partition_field: commit_sha
+            extra_fields:
+              - [repo_full_name]
+              - [author_email]
+            stream:
+              type: DeclarativeStream
+              name: repository_authors
+              primary_key:
+                - author_email
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    author_email: {type: [string, "null"]}
+                    author_name: {type: [string, "null"]}
+                    sample_sha: {type: [string, "null"]}
+                    last_committed_date: {type: [string, "null"]}
+                    commit_count: {type: [integer, "null"]}
+                    repo_full_name: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *proxy_requester
+                  path: /v1/authors
+                  request_parameters:
+                    repo: "{{ stream_partition.repo_clone_url }}"
+                    page_size: "500"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: [items]
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ response['next_page_token'] }}"
+                    stop_condition: "{{ not response.get('next_page_token') }}"
+                  page_token_option:
+                    type: RequestOption
+                    field_name: page_token
+                    inject_into: request_parameter
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: clone_url
+                      partition_field: repo_clone_url
+                      extra_fields:
+                        - [full_name]
+                      incremental_dependency: true
+                      stream:
+                        type: DeclarativeStream
+                        name: repositories_for_authors
+                        primary_key:
+                          - uuid
+                        schema_loader:
+                          type: InlineSchemaLoader
+                          schema:
+                            type: object
+                            $schema: http://json-schema.org/schema#
+                            properties:
+                              uuid: {type: [string, "null"]}
+                              clone_url: {type: [string, "null"]}
+                              full_name: {type: [string, "null"]}
+                              updated_on: {type: [string, "null"]}
+                            additionalProperties: true
+                        retriever:
+                          type: SimpleRetriever
+                          requester:
+                            type: HttpRequester
+                            url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+                            authenticator:
+                              type: ApiKeyAuthenticator
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: Authorization
+                              api_token: >-
+                                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+                            path: "/repositories/{{ stream_partition.workspace }}"
+                            http_method: GET
+                            request_parameters:
+                              pagelen: "100"
+                              fields: >-
+                                next,values.uuid,values.full_name,values.updated_on,values.links.clone
+                          record_selector:
+                            type: RecordSelector
+                            extractor:
+                              type: DpathExtractor
+                              field_path: [values]
+                          paginator:
+                            type: DefaultPaginator
+                            pagination_strategy:
+                              type: CursorPagination
+                              cursor_value: "{{ response.get('next', '') }}"
+                              stop_condition: "{{ not response.get('next') }}"
+                            page_token_option:
+                              type: RequestPath
+                          partition_router:
+                            # INSIDE `retriever`, as in the sibling repository
+                            # parents: at stream level the CDK ignores it.
+                            type: ListPartitionRouter
+                            values: "{{ config['bitbucket_workspaces'] }}"
+                            cursor_field: workspace
+                        transformations:
+                          - type: AddFields
+                            fields:
+                              - type: AddedFieldDefinition
+                                path: [clone_url]
+                                value: >-
+                                  {%- set href = record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first -%}
+                                  {%- set authority, path = href.split('//', 1)[1].split('/', 1) -%}
+                                  {{ 'https://' ~ authority.split('@')[-1] ~ '/' ~ path }}
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: last_committed_date
+                datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                  - "%Y-%m-%dT%H:%M:%SZ"
+                # An author already resolved keeps their claim, so a later sync
+                # only needs the ones who have committed since — which is what
+                # keeps this O(active authors) rather than O(authors).
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['bitbucket_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
+                start_time_option:
+                  type: RequestOption
+                  field_name: since
+                  inject_into: request_parameter
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [repo_full_name]
+                      value: "{{ stream_slice.extra_fields['full_name'] }}"
+                      value_type: string
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_bitbucket_cloud
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          # The e-mail the account was resolved FOR: the git ident the proxy
+          # enumerated, which is what the commit rows carry and therefore what
+          # a claim has to be keyed on.
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: "{{ stream_slice.extra_fields['author_email'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [sample_sha]
+            value: "{{ stream_partition.commit_sha }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_account_id]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('account_id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_uuid]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('uuid') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_nickname]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('nickname') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_display_name]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('display_name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:author:{{ stream_slice.extra_fields['author_email'] | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the commit payload itself belongs to the proxy streams.
+        field_pointers:
+          - [author]
+          - [committer]
+          - [parents]
+          - [participants]
+          - [summary]
+          - [rendered]
+          - [repository]
+          - [links]
+          - [hash]
+          - [type]
+          - [date]
+          - [message]
+
   # ── Pull requests (Bitbucket API) ───────────────────────────────────────
   # Default filter is OPEN-only, and repeating `state` is the documented way
   # to widen it — request_parameters is a dict, so the states live in the
@@ -809,6 +1189,14 @@ streams:
           description: {type: [string, "null"]}
           destination_commit_sha: {type: [string, "null"]}
           participants: {type: [string, "null"]}
+          author_account_id: {type: [string, "null"]}
+          author_nickname: {type: [string, "null"]}
+          closed_by_account_id: {type: [string, "null"]}
+          closed_by_display_name: {type: [string, "null"]}
+          source_repo_full_name: {type: [string, "null"]}
+          destination_repo_full_name: {type: [string, "null"]}
+          close_source_branch: {type: [boolean, "null"]}
+          reason: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -971,6 +1359,43 @@ streams:
             path: [author_uuid]
             value: "{{ (record.get('author') or {}).get('uuid') or '' }}"
             value_type: string
+          # The workspace roster keys on account_id, so a pull request that
+          # carries only a uuid cannot be joined to the member who opened it.
+          - type: AddedFieldDefinition
+            path: [author_account_id]
+            value: "{{ (record.get('author') or {}).get('account_id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_nickname]
+            value: "{{ (record.get('author') or {}).get('nickname') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [closed_by_account_id]
+            value: "{{ (record.get('closed_by') or {}).get('account_id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [closed_by_display_name]
+            value: "{{ (record.get('closed_by') or {}).get('display_name') or '' }}"
+            value_type: string
+          # A source repository other than the destination means the branch
+          # lives in a fork — the only signal here for an outside contribution.
+          - type: AddedFieldDefinition
+            path: [source_repo_full_name]
+            value: "{{ ((record.get('source') or {}).get('repository') or {}).get('full_name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [destination_repo_full_name]
+            value: "{{ ((record.get('destination') or {}).get('repository') or {}).get('full_name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [close_source_branch]
+            value: "{{ record.get('close_source_branch') or false }}"
+            value_type: boolean
+          # Set when a pull request is declined: the decliner's stated reason.
+          - type: AddedFieldDefinition
+            path: [reason]
+            value: "{{ (record.get('reason') or '')[:1024] }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [author_display_name]
             value: "{{ (record.get('author') or {}).get('display_name') or '' }}"
@@ -1047,6 +1472,8 @@ streams:
           pr_id: {type: [integer, "null"]}
           repo_full_name: {type: [string, "null"]}
           author_uuid: {type: [string, "null"]}
+          author_account_id: {type: [string, "null"]}
+          author_nickname: {type: [string, "null"]}
           author_display_name: {type: [string, "null"]}
           deleted: {type: [boolean, "null"]}
           parent_id: {type: [integer, "null"]}
@@ -1275,6 +1702,14 @@ streams:
             value: "{{ (record.get('user') or {}).get('uuid') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [author_account_id]
+            value: "{{ (record.get('user') or {}).get('account_id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_nickname]
+            value: "{{ (record.get('user') or {}).get('nickname') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
             path: [author_display_name]
             value: "{{ (record.get('user') or {}).get('display_name') or '' }}"
             value_type: string
@@ -1331,6 +1766,16 @@ streams:
           sha: {type: [string, "null"]}
           pr_id: {type: [integer, "null"]}
           repo_full_name: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
+          author_name: {type: [string, "null"]}
+          author_account_id: {type: [string, "null"]}
+          author_uuid: {type: [string, "null"]}
+          author_nickname: {type: [string, "null"]}
+          author_display_name: {type: [string, "null"]}
+          message: {type: [string, "null"]}
+          committed_date: {type: [string, "null"]}
+          parent_shas: {type: [string, "null"]}
+          is_merge: {type: [boolean, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1547,12 +1992,63 @@ streams:
             path: [sha]
             value: "{{ record.get('hash') or '' }}"
             value_type: string
+          # `author.raw` is the git ident — `Name <email>` — and `author.user`
+          # is the Bitbucket account GitHub-style matching produced. They are
+          # the only place an e-mail and an account appear together: the proxy
+          # walk knows the e-mail and no account, the workspace roster knows
+          # the account and no e-mail. `user` is absent when the committer
+          # holds no Bitbucket account.
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: >-
+              {{ ((record.get('author') or {}).get('raw') or '').split('<')[1].split('>')[0] if '<' in ((record.get('author') or {}).get('raw') or '') else '' }}
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_name]
+            value: >-
+              {{ ((record.get('author') or {}).get('raw') or '').split('<')[0] | trim }}
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_account_id]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('account_id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_uuid]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('uuid') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_nickname]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('nickname') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_display_name]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('display_name') or '' }}"
+            value_type: string
+          # A pull request's head commits are not reachable from any branch the
+          # proxy clones until the merge lands, so for those this stream is the
+          # only carrier of the commit's own metadata.
+          - type: AddedFieldDefinition
+            path: [message]
+            value: "{{ (record.get('message') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [committed_date]
+            value: "{{ record.get('date') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [parent_shas]
+            value: "{{ ((record.get('parents') or []) | map(attribute='hash') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_merge]
+            value: "{{ ((record.get('parents') or []) | length) > 1 }}"
+            value_type: boolean
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pr_id }}:{{ record['hash'] }}
       - type: RemoveFields
-        # The commit payload comes from the proxy; only the edge is stored.
+        # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
           - [hash]
           - [type]
@@ -1863,6 +2359,13 @@ streams:
           update_state: {type: [string, "null"]}
           update_source_commit: {type: [string, "null"]}
           comment_id: {type: [integer, "null"]}
+          actor_account_id: {type: [string, "null"]}
+          actor_nickname: {type: [string, "null"]}
+          changes: {type: [string, "null"]}
+          update_title: {type: [string, "null"]}
+          update_reason: {type: [string, "null"]}
+          update_draft: {type: [boolean, "null"]}
+          update_destination_commit: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -2103,6 +2606,38 @@ streams:
           - type: AddedFieldDefinition
             path: [comment_id]
             value: "{{ (record.get('comment') or {}).get('id') }}"
+          # The roster keys on account_id; a uuid alone joins to nothing.
+          - type: AddedFieldDefinition
+            path: [actor_account_id]
+            value: "{{ ((record.get('approval') or {}).get('user') or {}).get('account_id') or ((record.get('changes_requested') or {}).get('user') or {}).get('account_id') or ((record.get('update') or {}).get('author') or {}).get('account_id') or ((record.get('comment') or {}).get('user') or {}).get('account_id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [actor_nickname]
+            value: "{{ ((record.get('approval') or {}).get('user') or {}).get('nickname') or ((record.get('changes_requested') or {}).get('user') or {}).get('nickname') or ((record.get('update') or {}).get('author') or {}).get('nickname') or ((record.get('comment') or {}).get('user') or {}).get('nickname') or '' }}"
+            value_type: string
+          # An update's field-level diff, `{"status": {"old": …, "new": …}}`.
+          # This is the only place Bitbucket says what CHANGED rather than what
+          # the value became, which is what a lifecycle-event contract needs.
+          - type: AddedFieldDefinition
+            path: [changes]
+            value: "{{ ((record.get('update') or {}).get('changes') or {}) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [update_title]
+            value: "{{ ((record.get('update') or {}).get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [update_reason]
+            value: "{{ ((record.get('update') or {}).get('reason') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [update_draft]
+            value: "{{ (record.get('update') or {}).get('draft') or false }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [update_destination_commit]
+            value: "{{ (((record.get('update') or {}).get('destination') or {}).get('commit') or {}).get('hash') or '' }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -2116,8 +2651,10 @@ streams:
           - [comment]
 
   # ── Workspace members (Bitbucket API) ───────────────────────────────────
-  # Fills the identity gap the CDK connector never covered: Bitbucket exposes
-  # no email anywhere, so identity joins on account_id / nickname.
+  # The roster: who belongs to the workspace, and the account id every other
+  # stream's actor resolves to. This endpoint carries no e-mail, so it says
+  # WHO an account is; `commit_authors` says which e-mails that account has
+  # committed under, and the two together let a commit reach a person.
   - type: DeclarativeStream
     name: workspace_members
     primary_key:
@@ -2276,6 +2813,8 @@ streams:
           target_commit_sha: {type: [string, "null"]}
           trigger_name: {type: [string, "null"]}
           creator_uuid: {type: [string, "null"]}
+          creator_account_id: {type: [string, "null"]}
+          creator_display_name: {type: [string, "null"]}
           duration_in_seconds: {type: [integer, "null"]}
           created_on: {type: [string, "null"]}
           completed_on: {type: [string, "null"]}
@@ -2465,6 +3004,14 @@ streams:
           - type: AddedFieldDefinition
             path: [creator_uuid]
             value: "{{ (record.get('creator') or {}).get('uuid') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [creator_account_id]
+            value: "{{ (record.get('creator') or {}).get('account_id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [creator_display_name]
+            value: "{{ (record.get('creator') or {}).get('display_name') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]

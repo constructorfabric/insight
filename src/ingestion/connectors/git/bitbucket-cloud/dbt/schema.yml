@@ -29,9 +29,34 @@ sources:
       - name: deployments
         freshness: null
       - name: workspace_members
+      - name: commit_authors
         freshness: null
 
 models:
+  - name: bitbucket_cloud__item_events
+    description: "Bitbucket pull-request lifecycle activity -> staging, feeds class_git_item_events"
+
+  - name: bitbucket_cloud__account_emails
+    description: "Every (Bitbucket account, e-mail) pair the connector observed, one row per pair"
+    columns:
+      - name: account_id
+        description: "Bitbucket account_id the e-mail was observed under (ADR-0002 account id)"
+        data_tests:
+          - not_null
+      - name: email
+        description: "Lowercased e-mail address the account committed under"
+        data_tests:
+          - not_null
+
+  - name: bitbucket_cloud__identity_inputs
+    description: "E-mail claims and roster display names against Bitbucket accounts -> staging, feeds silver.identity_inputs"
+    columns:
+      - name: unique_key
+        description: "One claim per (tenant, source, account, value_type, operation, value)"
+        data_tests:
+          - not_null
+          - unique
+
   - name: bitbucket_cloud__bronze_promoted
     description: "Promotes every Bitbucket bronze table to ReplacingMergeTree keyed on unique_key"
 

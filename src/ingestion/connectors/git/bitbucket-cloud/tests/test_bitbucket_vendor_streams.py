@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 
 import freezegun
-from config import BB_URL, BitbucketCloudConfigBuilder
+from config import BB_URL, PROXY_URL, BitbucketCloudConfigBuilder
 
 from connector_tests import (
     ANY_QUERY_PARAMS,
@@ -398,3 +398,116 @@ def test_pipelines_empty_page(http_mocker: HttpMocker) -> None:
 
     assert not output.errors
     assert len(output.records) == 0
+
+
+def _authors_page(*rows: dict) -> HttpResponse:
+    return HttpResponse(
+        body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200
+    )
+
+
+def _author_row(email: str, sha: str) -> dict:
+    return {
+        "author_email": email,
+        "author_name": "Dev",
+        "sample_sha": sha,
+        "last_committed_date": "2026-06-15T10:00:00+00:00",
+        "commit_count": 4,
+    }
+
+
+def _repo_with_clone() -> dict:
+    return _repo() | {
+        "links": {"clone": [{"name": "https", "href": "https://bot@bitbucket.org/acme/app.git"}]}
+    }
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_commit_authors_pair_a_git_email_with_its_account(http_mocker: HttpMocker) -> None:
+    """The proxy names the distinct authors; Bitbucket names the account behind
+    each one. `author.raw` is the git ident the commit rows carry, so the claim
+    is keyed on that rather than on any profile address."""
+    config = BitbucketCloudConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(_author_row("ada@example.com", "a" * 40)),
+    )
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/commit/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "hash": "a" * 40,
+                    "date": "2026-06-15T10:00:00+00:00",
+                    "message": "feat: x",
+                    "author": {
+                        "raw": "Ada Lovelace <ada@example.com>",
+                        "user": {
+                            "account_id": "acc-42",
+                            "uuid": "{u-42}",
+                            "nickname": "ada",
+                            "display_name": "Ada Lovelace",
+                        },
+                    },
+                    "parents": [],
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert rec["author_email"] == "ada@example.com", "keyed on the git ident"
+    assert rec["author_account_id"] == "acc-42"
+    assert rec["author_uuid"] == "{u-42}"
+    assert rec["author_nickname"] == "ada"
+    assert rec["repo_full_name"] == "acme/app"
+    assert rec["sample_sha"] == "a" * 40
+    assert rec["unique_key"].endswith(":acme/app:author:ada@example.com")
+    assert "author" not in rec and "message" not in rec
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "commit_authors", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_commit_authors_drops_an_email_with_no_bitbucket_account(
+    http_mocker: HttpMocker,
+) -> None:
+    """`author.user` is absent for a committer who holds no Bitbucket account —
+    a CI or service identity. There is no account to claim the e-mail, so the
+    row is dropped rather than stored as an unresolved one."""
+    config = BitbucketCloudConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [_repo_with_clone()]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(_author_row("ci@build.local", "b" * 40)),
+    )
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/commit/{'b' * 40}", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "hash": "b" * 40,
+                    "date": "2026-06-15T10:00:00+00:00",
+                    "author": {"raw": "CI <ci@build.local>"},
+                    "parents": [],
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config)
+
+    assert not output.errors
+    assert len(output.records) == 0, "an unmatched e-mail claims no account"

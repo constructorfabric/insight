@@ -1,4 +1,5 @@
 -- depends_on: {{ ref('github__item_events') }}
+-- depends_on: {{ ref('bitbucket_cloud__item_events') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',

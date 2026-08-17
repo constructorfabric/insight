@@ -27,5 +27,6 @@
 {% do promote_bronze_to_rmt(table='bronze_bitbucket_cloud.workspace_members',      order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_bitbucket_cloud.pipelines',              order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_bitbucket_cloud.deployments',            order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_bitbucket_cloud.commit_authors',        order_by='unique_key') %}
 
 SELECT 1 AS promoted
