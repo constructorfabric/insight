@@ -2,6 +2,7 @@ import { useMemo } from "react";
 
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { PANE_ITEM_COMING_SOON } from "@/lib/portal/aicost-configs";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
 import { MembersGrid } from "@/components/widgets/dashboard/members-grid";
 import { Card, CardContent } from "@/components/ui/card";
@@ -47,21 +48,6 @@ const LINES_KEY = "ai.accepted_lines";
 const DAYS_KEY = "ai.active_days";
 /** Grid columns for the cost-leaders scan. */
 const GRID_KEYS = [COST_KEY, DAYS_KEY, LINES_KEY, "ai.dev_conversations"];
-/** Pane items with no dedicated data-backed view yet — honest ComingSoon. */
-const COMING_SOON: Record<string, string> = {
-  "per-tool":
-    "Per-tool detail — the tool split is summarised on Overview → By tool; a standalone per-tool drilldown is pending.",
-  autofix: "Autofix — no autofix signal ingested.",
-  "ai-audit": "AI Audit — pending the diagnosis circuit.",
-  "spend-by-tool":
-    "Spend by tool — see Overview → By tool; a dedicated spend breakdown is pending.",
-  "cost-by-unit":
-    "Cost by unit / user — unit rollup is under “By unit / role”, per-user is on Overview; a combined view is pending.",
-  "idle-seats":
-    "Idle seats — the seat roster lives in bronze (52 ChatGPT seats) but isn't exposed through the analytics API yet.",
-  credits: "Credits burn-down — no credit/quota feed ingested.",
-  "ai-pricing": "AI pricing config — not wired.",
-};
 
 const TOOL_LABEL: Record<string, string> = {
   claude_code: "Claude Code",
@@ -272,10 +258,10 @@ export function AiCostView({ item }: { item: string | null }) {
     ];
   }, [grid.byKey, memberIds]);
 
-  if (item && COMING_SOON[item])
+  if (item && PANE_ITEM_COMING_SOON[item])
     return (
       <div className="mx-auto w-full max-w-md p-8">
-        <ComingSoon variant="card" state="empty" label={COMING_SOON[item]} />
+        <ComingSoon variant="card" state="empty" label={PANE_ITEM_COMING_SOON[item]} />
       </div>
     );
 
@@ -287,7 +273,7 @@ export function AiCostView({ item }: { item: string | null }) {
     memberCount: members.length,
     gridPending: grid.isPending,
     gridError: grid.isError,
-    emptyLabel: "No people in the current scope — pick a different scope in the topbar.",
+    emptyLabel: "No people in the current scope. Pick a different scope at the top of the page.",
     onRetry: () => {
       orgScope.refetch();
       grid.refetch();
@@ -396,7 +382,7 @@ export function AiCostView({ item }: { item: string | null }) {
             ))}
           </div>
         ) : (
-          <ComingSoon variant="card" state="empty" label="No per-tool breakdown for this period." />
+          <ComingSoon variant="card" state="empty" label="No breakdown by tool for this period." />
         )}
         <p className="text-xs text-muted-foreground">
           Only Claude Code is usage-metered. ChatGPT (per-seat subscription) and

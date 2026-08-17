@@ -166,7 +166,7 @@ export function SingleGroupView({
           {definitions.isError
             ? "Nothing to show here for the selected period."
             : state === "no_data_reaches_us"
-              ? "No data reaches us for this section — nothing is measured here for anyone yet."
+              ? "No data source is connected for this section — nothing is measured here for anyone yet."
               : "Nothing recorded here for the selected period."}
         </p>
       </div>

@@ -895,6 +895,9 @@ verify-ci-credential: vpn-up kube-ctx
 	check yes "create Roles in $(NS_APP) (chart renders its own RBAC)"      create roles.rbac.authorization.k8s.io -n $(NS_APP); \
 	check yes "create WorkflowTemplates in $(NS_APP)"                        create workflowtemplates.argoproj.io -n $(NS_APP); \
 	check yes "update HTTPRoutes in $(NS_APP) (chart renders the edge routes)" update httproutes.gateway.networking.k8s.io -n $(NS_APP); \
+	check yes "get PVCs in $(NS_APP) (helm reads the git-cli-proxy cache claim every upgrade)" get persistentvolumeclaims -n $(NS_APP); \
+	check yes "update PVCs in $(NS_APP) (its chart/version labels change every bump)" update persistentvolumeclaims -n $(NS_APP); \
+	check no  "delete PVCs in $(NS_APP) (the clone cache outlives the release)" delete persistentvolumeclaims -n $(NS_APP); \
 	check yes "get Roles in $(AIRBYTE_NAMESPACE) (helm reads airbyte-auth-reader every upgrade)" get roles.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
 	check yes "update Roles in $(AIRBYTE_NAMESPACE) (its chart/version labels change every bump)" update roles.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
 	check yes "create Roles in $(AIRBYTE_NAMESPACE)"                         create roles.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \

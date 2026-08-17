@@ -76,3 +76,107 @@ When uncertain whether information came from a real environment, omit it and use
 - Doc comments only for genuinely public/external APIs; keep them brief.
 - Comments should normally be one or two lines. If a comment needs a paragraph, improve the code or move the rationale to documentation.
 - If deleting a comment does not materially reduce safety, correctness, or maintainability, delete it when it is within the scope of the current work.
+
+## Code style — all languages
+
+Tooling owns layout and correctness lints: rustfmt plus clippy pedantic (deny) in `src/backend`, Ruff formatting and import order in `src/ingestion`. The rules below cover what tooling cannot enforce. dbt SQL has no linter, so for it they are the floor.
+
+### Structure
+
+- One concern per file. A module growing past ~400 lines splits into a directory — never a second noun in the same file.
+- I/O shell, pure core: anything computable without a connection or filesystem is a free function over values. Tests target the core; no mocks of our own types.
+- Repetition becomes a named helper; the name is the documentation.
+- Error construction lives in one helper per failure kind: log detailed context at the failure site, return a generic wire error, and carry one typed error or exception per failure kind.
+
+### Types
+
+- Parse, don't validate: convert raw input into a typed shape at the boundary and pass the typed value through, never a raw string across layers.
+- States that cannot coexist are made unrepresentable in the type rather than checked at runtime.
+
+### Tests
+
+- Test names state the rule, not the mechanics.
+- Table-driven cases over copy-paste; the assert message carries the failing case (`"should reject: {value!r}"`).
+
+### Readability
+
+- Paragraph functions: blank line between logical steps (gather → transform → emit). A multi-line statement gets a blank line after it before unrelated code. No blank line inside one tight thought.
+- Early return over nested conditionals: two levels of indentation inside a function body is the ceiling to aim for.
+- Name intermediates instead of nesting calls three deep; no expression so dense it needs re-reading.
+
+## Rust — backend workspace
+
+### Rust structure
+
+- Handlers are orchestration skeletons (≤ ~30 lines): extract → validate → domain call → map → respond. No business logic in the API layer; no serialization formats (CSV, XLSX, ...) outside domain.
+- A split file names its noun: `dto.rs`, `validation.rs`, `compiler.rs`.
+
+### Rust types
+
+- Newtypes at boundaries: `RelationName::parse(&str) -> Option<RelationName>`.
+- Exhaustive `match` on our own enums — no `_` arm.
+- States that cannot coexist are enum variants, not bool/Option field combinations.
+- When an API has call-order rules, encode them as type state so the wrong order fails to compile (`Session<Anonymous>` has no `.send()`; `authenticate()` returns `Session<Authenticated>` which does) — instead of a runtime `is_ready` check.
+- Smallest visibility that compiles; `pub(crate)` before `pub`. No speculative API surface.
+- `#[derive(Debug)]` always; `Clone` only when a consumer clones.
+- Constants: module top, grouped, unit-suffixed (`_BYTES`, `_SECS`, `_DAYS`).
+
+### Ownership
+
+- Borrow before cloning: `&str` over `String`, `&[T]` over `Vec<T>` in parameters; take ownership only when the function stores or consumes the value.
+- A `.clone()` inside a loop or iterator chain needs a reason; restructure to borrow or hoist it out.
+- Small `Copy` types pass by value.
+
+### Errors and dispatch
+
+- `Result` for everything fallible; panics never cross a request boundary.
+- Typed errors (`thiserror`) in domain and library code; `anyhow` only in binary entry points and startup wiring.
+- Generics for internal hot paths; `dyn Trait` only for genuinely heterogeneous collections or to cut compile-time bloat at an API boundary.
+- Prefer `#[expect(clippy::...)]` over `#[allow]` — it errors when the lint stops firing.
+
+### Concurrency
+
+- Never hold a lock or semaphore permit across an `.await` unless the hold is the point (a concurrency cap); when it is, say so with an `// INVARIANT:` line.
+- CPU-heavy or blocking work (serialization of large payloads, file I/O, crypto) goes through `spawn_blocking`, never inline in an async handler.
+- Bound every unbounded thing at the edge: concurrent requests (semaphore), response sizes, queue depths. A missing bound is a bug, not a default.
+- Shared mutable state wants a redesign before it wants `Arc<Mutex<_>>`; message passing or single-owner tasks first.
+
+### Performance
+
+- Measure before optimizing; no speculative micro-optimization in review feedback or code.
+- No allocation in per-row or per-item loops when the value can be borrowed or hoisted; watch for `.collect()` used only to iterate again.
+- Streaming over buffering when payloads can be large; if buffering is required, cap it.
+
+### Rust readability
+
+- `let .. else` and `?` are the early-return forms; reach for them before nesting.
+- One `let` per binding.
+- Import order: std, external crates, workspace crates, `crate::`/`super::` — one blank line between groups (rustfmt won't fix this; keep it by hand).
+- Match arms: single-line arms stay single-line; once one arm needs a block, give every arm breathing room.
+- `///` doc comments live in shared library crates; binaries and services get none. No `missing_docs` enforcement anywhere.
+- In tests, alias `type R = Result<(), Box<dyn Error>>` to cut ceremony.
+
+## Python and dbt SQL — ingestion
+
+### Python
+
+- Type hints on every signature; no bare `Any` escapes.
+- Typed boundary shapes are `@dataclass(frozen=True)`, `NamedTuple`, or enum.
+- `pytest.mark.parametrize` over copy-pasted cases.
+- Comprehensions stay single-clause — one needing two `for` clauses or an `else` becomes a loop.
+
+### dbt model shape
+
+- The `config` block comes first. Every ClickHouse setting goes in `query_settings` — never a trailing `SETTINGS` clause in the model body (dbt appends its own; two clauses in one statement is a syntax error).
+- CTEs are the paragraphs: one named transformation each, noun names (`active_users`, `events_per_day`), blank line between CTEs. A CTE doing two jobs splits.
+- Explicit column lists across layer boundaries — no `SELECT *`.
+- One column per line, aliases aligned with the surrounding model.
+- Uppercase keywords, lowercase identifiers.
+
+### dbt layering
+
+- Gold reads only class-contract columns from silver — never vendor-specific ones. A missing fact means extending the class contract first.
+- Measures emit through the shared shape macros; a new macro appears only when a new computation kind becomes executable.
+- Reads from mutable (ReplacingMergeTree) class relations keep `FINAL` — parts are not duplicate-immune.
+- Every model documents its columns and accepted measure keys in `schema.yml`; key uniqueness gets a dbt data test.
+- `dbt parse` before committing model changes.

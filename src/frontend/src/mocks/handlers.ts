@@ -412,7 +412,23 @@ export const handlers = [
         history: [
           {
             person_id: bob?.person_id,
+            person: bob
+              ? {
+                  person_id: bob.person_id,
+                  email: bob.email,
+                  display_name: bob.name,
+                  job_title: bob.role,
+                }
+              : null,
             author_person_id: carol?.person_id,
+            author: carol
+              ? {
+                  person_id: carol.person_id,
+                  email: carol.email,
+                  display_name: carol.name,
+                  job_title: carol.role,
+                }
+              : null,
             by_operator: true,
             reason: "operator-bind",
             recorded_at: "2026-08-01T10:15:00.000000",
@@ -421,8 +437,38 @@ export const handlers = [
             person_id: carol?.person_id,
             author_person_id: "00000000-0000-0000-0000-000000000000",
             by_operator: false,
-            reason: null,
+            // The resolver's own rows carry an EMPTY reason, never null —
+            // mirroring the real column, which a nullish fallback misses.
+            reason: "",
             recorded_at: "2026-07-15T08:00:00.000000",
+          },
+          {
+            person_id: carol?.person_id,
+            author_person_id: "00000000-0000-0000-0000-000000000000",
+            by_operator: false,
+            reason: "login-bootstrap",
+            recorded_at: "2026-07-01T06:30:00.000000",
+          },
+        ],
+        // The call behind the operator's row above: who ran it, how far it
+        // reached, and the one thing no other record holds — why.
+        operations: [
+          {
+            operation_id: "01900000-0000-7000-8000-0000000000f1",
+            verb: "operator-bind",
+            author_person_id: carol?.person_id,
+            author: carol
+              ? {
+                  person_id: carol.person_id,
+                  email: carol.email,
+                  display_name: carol.name,
+                  job_title: carol.role,
+                }
+              : null,
+            comment: "Checked with HR — same person, the chat handle is theirs.",
+            accounts_touched: 3,
+            outcome: "applied",
+            recorded_at: "2026-08-01T10:15:00.000000",
           },
         ],
       });
@@ -438,9 +484,13 @@ export const handlers = [
       );
     }
     const terms = q.toLowerCase().split(/\s+/);
+    // A term that parses as an id names a person, mirroring the service: it is
+    // the only way to reach someone the journal holds no values for.
     const items = PEOPLE.filter((p) =>
       terms.every((term) =>
-        [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(term)),
+        isPersonId(term)
+          ? p.person_id.toLowerCase() === term
+          : [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(term)),
       ),
     )
       .slice(0, 20)
@@ -453,6 +503,35 @@ export const handlers = [
         status: "active",
       }));
     return HttpResponse.json({ items, truncated: false, next_cursor: null });
+  }),
+  // Account search: the same roster, matched by what an account carries.
+  http.get("/api/identity/v1/resolution/accounts", ({ request }) => {
+    const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+    if (q.length < 3) {
+      return HttpResponse.json(
+        { type: "urn:insight:error:invalid_argument" },
+        { status: 400 },
+      );
+    }
+    const needle = q.toLowerCase();
+    const items = PEOPLE.filter((p) =>
+      [p.name, p.email].some((v) => v.toLowerCase().includes(needle)),
+    ).map((p, index) => ({
+      source: index % 2 === 0 ? "github" : "gitlab",
+      source_id: "01900000-0000-7000-8000-00000000aa01",
+      account_id: `acct-${index + 1}`,
+      email: p.email,
+      username: null,
+      display_name: p.name,
+      person: {
+        person_id: p.person_id,
+        email: p.email,
+        display_name: p.name,
+        job_title: p.role,
+      },
+      bound_by_operator: index % 3 === 0,
+    }));
+    return HttpResponse.json({ items, truncated: false });
   }),
   // A merge preview's substance: two synthetic accounts for anyone.
   http.get(
@@ -523,6 +602,9 @@ export const handlers = [
           account_id: "dev-42",
           email: "dev42@example.com",
           username: "dev42",
+          // Contested means unbound: nobody holds it, which is why two people
+          // can claim it.
+          bound_to: null,
           candidates: [card(bob), card(carol)],
         },
         {
@@ -532,6 +614,7 @@ export const handlers = [
           account_id: "a.kim",
           email: alice?.email ?? "alice.kim@example.com",
           username: null,
+          bound_to: alice?.person_id,
           candidates: [card(alice)],
         },
         {
@@ -543,8 +626,38 @@ export const handlers = [
           username: "ci-bot-7",
           candidates: [],
         },
+        {
+          // Minted during a sign-in so its owner could get in: bound, and
+          // still nobody's decision. It may duplicate a person the roster
+          // already knows, which only an operator can settle.
+          kind: "provisioned_at_login",
+          source: "github",
+          source_id: "01900000-0000-7000-8000-00000000aa01",
+          account_id: "new-joiner",
+          email: null,
+          username: "new-joiner",
+          bound_to: carol?.person_id,
+          candidates: [card(carol, { provisional: true })],
+        },
+        {
+          // Neither address nor handle — nothing automation can match on. The
+          // source still describes the human, which is what the fold reads for
+          // the operator and what makes this row bindable by hand.
+          kind: "no_evidence",
+          source: "hr",
+          source_id: "01900000-0000-7000-8000-00000000aa03",
+          account_id: "921",
+          email: null,
+          username: null,
+          display_name: "Nadia Orlov",
+          job_title: "Office Manager",
+          department: "Operations",
+          status: "Inactive",
+          manager_email: "carol.chen@example.com",
+          candidates: [],
+        },
       ],
-      rates: { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 },
+      rates: { observed: 60, bound: 55, pending: 3, no_evidence: 2, excluded: 1 },
       truncated: false,
       items_truncated: false,
     });
@@ -594,4 +707,80 @@ export const handlers = [
   ),
   ...savedQueryHandlers(),
   ...customMetricHandlers(),
+  ...usageHandlers(),
 ];
+
+// ── Platform usage (`/v1/usage/*`) ─────────────────────────────
+
+function syntheticDays(count: number) {
+  const days = [];
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const day = new Date();
+    day.setUTCDate(day.getUTCDate() - i);
+    days.push({
+      day: day.toISOString().slice(0, 10),
+      visits: 2 + ((i * 7) % 9),
+      visitors: 1 + ((i * 3) % 5),
+    });
+  }
+  return days;
+}
+
+function usageHandlers() {
+  return [
+    http.get("/api/analytics/v1/usage/config", () =>
+      HttpResponse.json({ enabled: true }),
+    ),
+    http.post("/api/analytics/v1/usage/events", () =>
+      new HttpResponse(null, { status: 204 }),
+    ),
+    http.get("/api/analytics/v1/usage/summary", () => {
+      const by_day = syntheticDays(30);
+      return HttpResponse.json({
+        since: by_day[0]?.day ?? "",
+        until: by_day.at(-1)?.day ?? "",
+        totals: {
+          visits: by_day.reduce((sum, d) => sum + d.visits, 0),
+          visitors: 4,
+          page_views: 214,
+        },
+        by_day,
+        by_person: [
+          {
+            person_id: defaultPerson?.person_id ?? "",
+            display_name: defaultPerson?.name ?? "",
+            visits: 31,
+            page_views: 96,
+            last_seen: `${by_day.at(-1)?.day ?? ""} 09:12`,
+          },
+          {
+            person_id: PEOPLE[1]?.person_id ?? "",
+            display_name: PEOPLE[1]?.name ?? "",
+            visits: 18,
+            page_views: 64,
+            last_seen: `${by_day.at(-1)?.day ?? ""} 08:40`,
+          },
+          {
+            person_id: PEOPLE[2]?.person_id ?? "",
+            display_name: PEOPLE[2]?.name ?? "",
+            visits: 7,
+            page_views: 54,
+            last_seen: `${by_day.at(-2)?.day ?? ""} 17:05`,
+          },
+        ],
+        by_event: [
+          { event_name: "drill", target: "pr_cycle_time", opens: 34, people: 3 },
+          { event_name: "drill", target: "review_load", opens: 21, people: 3 },
+          { event_name: "drill", target: "ai_share", opens: 12, people: 2 },
+          { event_name: "session_start", target: "", opens: 57, people: 4 },
+        ],
+        by_page: [
+          { path: "/portal/overview", views: 88, visitors: 4 },
+          { path: "/portal/people", views: 61, visitors: 3 },
+          { path: "/portal/manage/metric-catalog", views: 42, visitors: 2 },
+          { path: "/portal/manage/platform-usage", views: 23, visitors: 1 },
+        ],
+      });
+    }),
+  ];
+}

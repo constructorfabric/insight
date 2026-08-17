@@ -183,7 +183,7 @@ describe("AiCostView", () => {
 
   it("renders an honest ComingSoon for unwired pane items", () => {
     render(<AiCostView item="autofix" />);
-    expect(screen.getByText(/no autofix signal ingested/i)).toBeInTheDocument();
+    expect(screen.getByText(/no autofix data is collected/i)).toBeInTheDocument();
     // no fabricated KPI cards behind it
     expect(screen.queryByText("AI cost")).not.toBeInTheDocument();
   });

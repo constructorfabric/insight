@@ -6,22 +6,23 @@ already reads that fixture to configure every context — so `page.goto("/")`
 lands on the stand, and a journey that needs the address asks for `base_url`
 and gets the one the browser was actually given.
 
-That URL has to be `localhost`-based, and not for convenience. `__Host-`
-prefixed cookies are only stored from a **trustworthy** origin, and over plain
-http a browser trusts exactly one host name. Point a runner at
-`gateway:8080` and the session cookie is dropped without a word: the SPA sees
-`/auth/me` 401, restarts the login, and loops until the gateway's rate limiter
-turns it into a 503 that looks like a broken backend. Chromium's
-`--unsafely-treat-insecure-origin-as-secure` does not help —
+That URL has to name a **trustworthy** origin, and not for convenience.
+`__Host-` prefixed cookies are stored from nowhere else: any `https://` stand
+qualifies, and over plain http a browser trusts exactly one host name.
+Point a runner at `gateway:8080` and the session cookie is dropped without a
+word: the SPA sees `/auth/me` 401, restarts the login, and loops until the
+gateway's rate limiter turns it into a 503 that looks like a broken backend.
+Chromium's `--unsafely-treat-insecure-origin-as-secure` does not help —
 `window.isSecureContext` was measured as `false` with the flag on Chromium 149,
 in `launch()` and `launch_persistent_context()`, with and without
 `--user-data-dir`.
 
-So a containerised runner joins the gateway's network namespace
-(`--network container:insight-gateway`) and uses `localhost:<port>`, which is
-genuinely trustworthy and needs no flags. A host-side run uses the same URL
-against the published port. Either way the stand's registered `/auth/callback`
-redirect URI matches, so one configuration serves both.
+So a plain-http compose stand is addressed as `localhost:<port>`, which is
+genuinely trustworthy and needs no flags: a containerised runner joins the
+gateway's network namespace (`--network container:insight-gateway`), a
+host-side run uses the published port. A deployed stand is reached at its own
+https origin. Every one of them matches the stand's registered
+`/auth/callback` redirect URI, so one configuration serves them all.
 """
 
 from __future__ import annotations

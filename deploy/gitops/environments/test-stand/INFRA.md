@@ -141,8 +141,8 @@ not facts about any real deployment.
 |---|---|---|
 | **Fork-downgrade wedge** | Chart version resolved from `.insight-version` in a stale checkout → a downgrade; helm rewrites live Deployments into the older shape and wedges. A post-check comparing only against the *requested* version calls it a pass. | Resolver reads the OCI registry's latest tag first; the deploy workflow + `recreate-test-stand.sh` both refuse a version older than what's deployed. |
 | **`TEST_STAND_SEED_EMAIL` drift** | Dev-lead address declared in two places (realm + seeder flag) with no agreement check; only that one login fails. | `seed-stand.sh` reads the address out of the applied realm ConfigMap (keyed on the roster UUID). The flag survives only as an explicit, warned override. |
-| **730-day seed window** | Seed window wider than the analytics API's max queryable period → every window-derived request 400s, looking like a broad data problem. | Seed window capped inside the API limit; one shared query-window helper caps both suites at the same value. |
-| **Pending-upgrade wedge** | An interrupted `helm upgrade` leaves the release `pending-upgrade`, which helm refuses to upgrade over; every later deploy fails generically. | `make deploy` checks release status first and refuses with an explicit fix; workflow step timeouts stay below helm's own `--timeout`. |
+| **730-day seed window** | Seed window wider than the analytics API's max queryable period → every window-derived request 400s, looking like a broad data problem. | Both stands seed 730 days on purpose, so the trap is live: no test may read `data_window` raw. One shared helper (`tests/stand/api/analytics/query_window`) clamps every request to the queryable tail, and a reconciliation must pass the same clamped period to both sides or it compares two different periods. |
+| **Pending-upgrade wedge** | An interrupted `helm upgrade` leaves the release `pending-upgrade`, which helm refuses to upgrade over; every later deploy fails generically. | `make deploy` checks release status first and refuses with an explicit fix; the workflow's step timeout stays ABOVE helm's own `--timeout`, so helm times out and unwinds instead of being SIGKILLed mid-upgrade. |
 | **Diagnostics-allowlist retreat** | The workflow published curated cluster diagnostics into the public log; an allowlist like that only ever grows. | A failed run prints only the dead stage + edge probe status codes. Full output is read operator-side. |
 | **`max_user_connections` crash-loop** | The shared MariaDB user defaulted to the operator's low per-user limit (§1). | `maxUserConnections: 100` on `User/insight`. |
 
@@ -213,8 +213,9 @@ authenticates and resolves to nobody, every pod Ready, release `deployed`.
   the realm and the seed follows; `--email` overrides for a stand whose realm
   came from elsewhere (and reproduces the failure above if pointed at this one).
 - **Nothing below this line checks it.** The seed preflight asserts an address
-  is *set*, not that anyone answers to it; the only downstream detector is the
-  smoke gate, which `stages` can skip. Sibling failures with the same signature:
+  is *set*, not that anyone answers to it; the downstream detectors are the
+  smoke gate and the suite behind it, both of which `stages` can skip. Sibling
+  failures with the same signature:
   §11 (wrong external-id claim) and §15 (source type disagrees).
 
 ## Between deploy and seed

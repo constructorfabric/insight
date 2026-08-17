@@ -93,7 +93,7 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 17 operations.
+#: analytics — 20 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/queries"),
     _a("POST", "/v1/queries"),
@@ -119,6 +119,12 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", f"/v1/metrics/{SOME_METRIC_KEY}"),
     _a("PUT", f"/v1/metrics/{SOME_METRIC_KEY}"),
     _a("DELETE", f"/v1/metrics/{SOME_METRIC_KEY}"),
+    # Usage monitoring. All three are `.authenticated()` at the edge; the
+    # summary's admin gate lives inside the handler, so it is invisible here and
+    # asserted in test_usage.py instead.
+    _a("POST", "/v1/usage/events"),
+    _a("GET", "/v1/usage/config"),
+    _a("GET", "/v1/usage/summary"),
 )
 
 #: identity-resolution — 26 operations. `/health` and `/healthz` are the host
@@ -132,6 +138,7 @@ IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     # the accounts read: it is a connector type, not an id, and the tests
     # address the same literal — a stand-in would fold a segment nothing varies.
     _i("GET", "/v1/resolution/attention"),
+    _i("GET", "/v1/resolution/accounts"),
     _i("GET", f"/v1/resolution/accounts/github/{SOME_ID}/{SOME_ACCOUNT_ID}"),
     _i("GET", f"/v1/resolution/persons/{SOME_ID}/accounts"),
     _i("POST", "/v1/resolution/bind"),
@@ -166,6 +173,7 @@ ALL_OPERATIONS: Final[tuple[Operation, ...]] = ANALYTICS_OPERATIONS + IDENTITY_O
 _ADMIN_GATED_SUFFIXES: Final[tuple[str, ...]] = (
     "/v1/persons",
     "/v1/resolution/attention",
+    "/v1/resolution/accounts",
     f"/v1/resolution/accounts/github/{SOME_ID}/{SOME_ACCOUNT_ID}",
     f"/v1/resolution/persons/{SOME_ID}/accounts",
     "/v1/resolution/bind",

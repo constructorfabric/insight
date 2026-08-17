@@ -161,7 +161,7 @@ export function PeriodSelectorBar({
                       render={
                         <span
                           className="rounded bg-muted px-1 py-px text-xs font-semibold tracking-wider text-muted-foreground uppercase"
-                          aria-label="Dates bucketed by UTC midnight"
+                          aria-label="Days are counted in UTC"
                           onClick={(e) => e.stopPropagation()}
                         >
                           UTC

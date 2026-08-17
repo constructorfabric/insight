@@ -11,7 +11,7 @@ on:
         type: string
       stages:
         description: >-
-          Which stages to run, as a prefix of deploy -> seed -> smoke: `all`, `deploy+seed`, or `deploy`. A partial run is never a pass — the summary and the run title both say which stages were skipped.
+          Which stages to run, as a prefix of deploy -> seed -> smoke -> suite: `all`, `deploy+seed+smoke`, `deploy+seed`, or `deploy`. A partial run is never a pass — the summary and the run title both say which stages were skipped.
         required: false
         default: all
         type: string
@@ -31,6 +31,7 @@ on:
         type: choice
         options:
           - all
+          - deploy+seed+smoke
           - deploy+seed
           - deploy
       seed_force:
@@ -50,14 +51,15 @@ permissions:
 
 jobs:
   test-stand:
-    name: deploy → seed → smoke
+    name: deploy → seed → smoke → suite
     runs-on: ubuntu-latest
     # `environment:` cannot sit on a job that `uses:` a reusable workflow, so
-    # it is declared here; its main-only branch policy still evaluates.
+    # it is declared here rather than on the caller.
     environment: insight-test-stand
     # Above the sum of the step ceilings: deploy (14) + edge (3) + seed, which
-    # now runs seed + identity projection + gold rebuild (110) + smoke (5).
-    timeout-minutes: 150
+    # runs seed + identity projection + gold rebuild (110) + smoke (5) +
+    # browser install (10) + the full suite (45).
+    timeout-minutes: 210
     env:
       ENV_NAME: test-stand
       VALUES_FILE: deploy/gitops/environments/test-stand/values.yaml
@@ -69,8 +71,10 @@ jobs:
       ROUTE_NAMES: insight-gateway insight-keycloak
       REQUESTED_CHART_VERSION: ${{ inputs.chart_version }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      # This repo is public: every cluster/seeder/pytest byte goes through
-      # $REDACT before the console; raw copies stay in $RUNNER_TEMP.
+      # This repo is public. Cluster, seeder and pytest output goes through
+      # $REDACT on its way to the console — at the pipes below, not as a blanket
+      # property of the job: a step that echoes something new has to add its
+      # own. Raw copies stay in $RUNNER_TEMP.
       REDACT: .github/workflows/scripts/redact-stand-log.py
 
     steps:
@@ -134,18 +138,14 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # A dispatch may come from another branch; the environment's
-          # deployment-branch policy is what decides whether it may.
           if [ "$REF_NAME" != "main" ]; then
             if [ "$EVENT" = "workflow_dispatch" ]; then
-              echo "::warning::dispatched from '$REF_NAME', not main. Allowed because the" \
-                   "insight-test-stand environment's deployment-branch policy already" \
-                   "decided this ref may deploy — but what lands on the stand is that" \
-                   "branch's idea of the deploy, not main's."
+              echo "::warning::dispatched from '$REF_NAME', not main — what lands on the" \
+                   "stand is that branch's idea of the deploy, not main's."
             else
               echo "::error::this workflow deploys main and only main (ref was '$REF_NAME', event '$EVENT')."
-              echo "A workflow_call arrives from build-images.yml after a publish, which only"
-              echo "happens on main, so a call from anywhere else means the caller's guard broke."
+              echo "A workflow_call arrives from deploy-test-stand-on-publish.yml, which fires"
+              echo "on a main build, so a call from anywhere else means the caller's guard broke."
               exit 1
             fi
           fi
@@ -155,8 +155,8 @@ jobs:
           fi
           echo "deploying umbrella chart $CHART_VERSION to ENV=$ENV_NAME"
 
-      # `stages` is a PREFIX of deploy -> seed -> smoke, never independent
-      # flags: each stage reads a precondition the previous one wrote.
+      # `stages` is a PREFIX of deploy -> seed -> smoke -> suite, never
+      # independent flags: each stage reads a precondition the previous one wrote.
       - name: Resolve which stages run
         id: stages
         env:
@@ -164,22 +164,27 @@ jobs:
         run: |
           set -euo pipefail
           case "${STAGES:-all}" in
-            all)          deploy=true seed=true  smoke=true  ;;
-            deploy+seed)  deploy=true seed=true  smoke=false ;;
-            deploy)       deploy=true seed=false smoke=false ;;
+            all)               deploy=true seed=true  smoke=true  suite=true  ;;
+            deploy+seed+smoke) deploy=true seed=true  smoke=true  suite=false ;;
+            deploy+seed)       deploy=true seed=true  smoke=false suite=false ;;
+            deploy)            deploy=true seed=false smoke=false suite=false ;;
             *)
-              echo "::error::stages '$STAGES' is not one of: all, deploy+seed, deploy"
+              echo "::error::stages '$STAGES' is not one of: all, deploy+seed+smoke, deploy+seed, deploy"
               exit 1 ;;
           esac
           {
             echo "run_deploy=$deploy"
             echo "run_seed=$seed"
             echo "run_smoke=$smoke"
+            echo "run_suite=$suite"
           } >> "$GITHUB_OUTPUT"
-          echo "stages: ${STAGES:-all}  (deploy=$deploy seed=$seed smoke=$smoke)"
+          echo "stages: ${STAGES:-all}  (deploy=$deploy seed=$seed smoke=$smoke suite=$suite)"
           if [ "$smoke" != "true" ]; then
             echo "::warning::partial run — stages='${STAGES:-all}'. The smoke gate did NOT run," \
                  "so this run says the chart installs, not that the stand works."
+          elif [ "$suite" != "true" ]; then
+            echo "::warning::partial run — stages='${STAGES:-all}'. The smoke gate ran but the" \
+                 "full suite did not, so no API contract and no browser journey was checked."
           fi
 
       - name: Confirm the environment is wired up
@@ -283,7 +288,7 @@ jobs:
 
       # The upgrade step's `timeout-minutes` must stay above helm's own
       # `--timeout 10m`: a step timeout SIGKILLs helm and wedges the release.
-      - name: 'Stage 1/4 — mask the OIDC client secret'
+      - name: 'Stage 1/5 — mask the OIDC client secret'
         id: deploy_secret
         run: |
           set -euo pipefail
@@ -297,7 +302,7 @@ jobs:
             [ -n "$s" ] && echo "::add-mask::$s"
           fi
 
-      - name: 'Stage 1/4 — refuse a version downgrade'
+      - name: 'Stage 1/5 — refuse a version downgrade'
         id: deploy_downgrade_guard
         run: |
           set -euo pipefail
@@ -330,7 +335,7 @@ jobs:
             exit 1
           fi
 
-      - name: 'Stage 1/4 — upgrade the release through the official gitops target'
+      - name: 'Stage 1/5 — upgrade the release through the official gitops target'
         id: deploy_upgrade
         timeout-minutes: 14
         run: |
@@ -342,7 +347,7 @@ jobs:
             TIMEOUT=10m \
             2>&1 | python3 "$REDACT"
 
-      - name: 'Stage 1/4 — confirm the edge still routes'
+      - name: 'Stage 1/5 — confirm the edge still routes'
         id: deploy_routes
         run: |
           set -euo pipefail
@@ -373,9 +378,9 @@ jobs:
             exit 1
           fi
 
-      # Before the 65-minute seed on purpose: an unreachable stand must fail
+      # Before the long seed on purpose: an unreachable stand must fail
       # fast, not surface later as a misleading smoke failure.
-      - name: 'Stage 2/4 — black-box the public edge (DNS, TLS, route, auth)'
+      - name: 'Stage 2/5 — black-box the public edge (DNS, TLS, route, auth)'
         id: edge
         timeout-minutes: 3
         run: |
@@ -412,11 +417,15 @@ jobs:
             exit 1
           fi
 
-      # seed-stand.sh now runs three Jobs in sequence — the seed itself, the
-      # identity projection (persons-seed + persons-sync), and the gold rebuild.
-      # 110 min sits above the sum of their own activeDeadlineSeconds, so each
-      # Job's deadline fires first and leaves no orphan Job.
-      - name: 'Stage 3/4 — seed the stand'
+      # seed-stand.sh runs FOUR Jobs in sequence — the seed itself, persons-seed
+      # and persons-sync for the identity projection, and the gold rebuild —
+      # each with its own hour-long activeDeadlineSeconds. This ceiling is well
+      # under that sum on purpose: four Jobs each taking their full hour is a
+      # wedged stand, not a slow one, and 110 min is already far above a healthy
+      # run. It fires first in that case, so a timed-out seed CAN leave a Job
+      # running in the cluster — the run says which one, and it is reaped by
+      # ttlSecondsAfterFinished once it ends.
+      - name: 'Stage 3/5 — seed the stand'
         id: seed
         if: steps.stages.outputs.run_seed == 'true'
         timeout-minutes: 110
@@ -440,14 +449,17 @@ jobs:
             echo "::warning::seeding with an explicit --email from secrets.TEST_STAND_SEED_EMAIL — the dev-lead address is NOT being read from the realm this deploy applied. Unset that secret unless this stand's realm is provisioned outside deploy/gitops."
           fi
 
-          # 365, not more: the API refuses any period ≥ 400 days.
+          # Two years, matching the compose stand. Wider than any one request
+          # the API will answer — it refuses a period of 400 days or more — so
+          # a suite asking about "the seeded period" clamps to the queryable
+          # tail (tests/stand/api/analytics/query_window).
           kube_context="$(yq -r '.kubeContext' "$INVENTORY_FILE")"
           seed_rc=0
           ./src/ingestion/tools/seed/seed-stand.sh \
             -n "$STAND_NAMESPACE" \
             --context "$kube_context" \
             "${email_args[@]}" \
-            --days 365 \
+            --days 730 \
             "${force_args[@]}" \
             > "$RUNNER_TEMP/seed.log" 2>&1 || seed_rc=$?
 
@@ -476,7 +488,7 @@ jobs:
           echo "lines above."
           exit 1
 
-      - name: 'Stage 4/4 — smoke the stand through its public URL'
+      - name: 'Stage 4/5 — smoke the stand through its public URL'
         id: smoke
         if: steps.stages.outputs.run_smoke == 'true'
         timeout-minutes: 5
@@ -496,12 +508,83 @@ jobs:
             pytest tests/stand -m stand_smoke --stand-manifest "$INSIGHT_STAND_MANIFEST" \
             2>&1 | python3 "$REDACT"
 
+      # Chromium and its system libraries, resolved by the locked test
+      # environment so every runner drives the same build. Its own step: a
+      # failed install is an infrastructure problem, not a red suite.
+      - name: 'Stage 5/5 — install the browser the journeys drive'
+        if: steps.stages.outputs.run_suite == 'true'
+        timeout-minutes: 10
+        run: uv run --project tests --frozen playwright install --with-deps chromium
+
+      # Every API contract and every browser journey, against the stand this run
+      # just deployed and seeded — the smoke gate above says a persona can sign
+      # in and one metric answers, and no more.
+      #
+      # In THIS job rather than a dependent one: the manifest names personas and
+      # in-cluster addresses, so it must never become an artifact on a public
+      # repo, and it lives only in this runner's temp directory. Staying here
+      # also keeps the whole run inside the `test-stand-deploy` concurrency
+      # group, which is what stops the next merge's deploy from landing on the
+      # stand mid-suite.
+      #
+      # No endpoint-coverage gate: that gate belongs to the compose lane, which
+      # reaches the internal listeners this stand keeps in-cluster.
+      - name: 'Stage 5/5 — run the full stand suite'
+        id: suite
+        if: steps.stages.outputs.run_suite == 'true'
+        timeout-minutes: 45
+        env:
+          INSIGHT_STAND_BASE_URL: ${{ vars.TEST_STAND_BASE_URL }}
+          INSIGHT_STAND_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD }}
+          INSIGHT_STAND_MANIFEST: ${{ runner.temp }}/stand-manifest.json
+        run: |
+          set -euo pipefail
+          export INSIGHT_STAND_ARTIFACT_DIR="$RUNNER_TEMP/stand-artifacts"
+          mkdir -p "$INSIGHT_STAND_ARTIFACT_DIR"
+          # retain-on-failure: a green run then carries no session credentials
+          # off the runner at all, which is a smaller problem than redacting one.
+          uv run --project tests --frozen \
+            pytest tests/stand -ra --stand-manifest "$INSIGHT_STAND_MANIFEST" \
+            --browser chromium \
+            --tracing=retain-on-failure \
+            --screenshot=only-on-failure \
+            2>&1 | python3 "$REDACT"
+
+      # BETWEEN capture and upload, and always — a failed run is exactly when a
+      # trace exists. A Playwright trace replays a real signed-in session: it
+      # carries the session cookie and every Authorization header. The script
+      # fails closed — a trace it cannot rewrite and verify is deleted. It
+      # opens `*.zip` and nothing else, which is why no video is captured
+      # above: an unopened recording of a signed-in session is the one artifact
+      # nothing here could vouch for.
+      - name: Strip credentials from traces
+        id: redact_traces
+        if: always() && (steps.suite.outcome == 'success' || steps.suite.outcome == 'failure')
+        run: python3 .github/workflows/scripts/redact-playwright-trace.py test-results
+
+      - name: Upload traces and screenshots
+        # Gated on redaction having SUCCEEDED, not merely run: a non-zero exit
+        # means at least one trace was not proven clean. Screenshots ride along
+        # unrewritten — they are page renders, carrying seeded persona data but
+        # no header and no cookie.
+        if: always() && steps.redact_traces.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stand-suite-traces
+          path: |
+            test-results/**/*.zip
+            test-results/**/*.png
+          # A green run keeps none of them, by the capture policy above.
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Summarise the run
         if: always()
         env:
           OUTCOME: ${{ job.status }}
           RUN_SEED: ${{ steps.stages.outputs.run_seed }}
           RUN_SMOKE: ${{ steps.stages.outputs.run_smoke }}
+          RUN_SUITE: ${{ steps.stages.outputs.run_suite }}
           STAGES: ${{ inputs.stages }}
           # From what the steps DID, not what was requested.
           DEPLOY_RESULT: >-
@@ -509,6 +592,7 @@ jobs:
           EDGE_RESULT: ${{ steps.edge.outcome || 'skipped' }}
           SEED_RESULT: ${{ steps.seed.outcome || 'skipped' }}
           GATE_RESULT: ${{ steps.smoke.outcome || 'skipped' }}
+          SUITE_RESULT: ${{ steps.suite.outcome || 'skipped' }}
         run: |
           set -euo pipefail
 
@@ -542,12 +626,17 @@ jobs:
             echo "| edge | $(render "$EDGE_RESULT") |"
             echo "| seed | $(render "$SEED_RESULT") |"
             echo "| smoke | $(render "$GATE_RESULT") |"
+            echo "| suite | $(render "$SUITE_RESULT") |"
             echo "| outcome | **$OUTCOME** |"
             echo ""
             if [ "$RUN_SMOKE" != "true" ]; then
               echo "> **Partial run — this is a rehearsal, not a pass.** The smoke gate did not"
               echo "> run, so nothing here claims a person can sign in or that any metric returns"
               echo "> data. It says the chart installs$([ "$RUN_SEED" = "true" ] && echo ' and the stand seeds' || echo ''), and no more."
+              echo ""
+            elif [ "$RUN_SUITE" != "true" ]; then
+              echo "> **Partial run.** The smoke gate ran, the full suite did not: no API contract"
+              echo "> and no browser journey was checked on this stand."
               echo ""
             fi
             if [ "$OUTCOME" != "success" ]; then

@@ -12,7 +12,7 @@ use utoipa::ToSchema;
 
 use crate::engine::key::CacheKey;
 use crate::engine::page::PageToken;
-use crate::engine::read::{self, Page, branches, commits, numstat, patches};
+use crate::engine::read::{self, Page, authors, branches, commits, numstat, patches};
 use crate::engine::runner::GitError;
 use crate::engine::store::{Freshness, RepoGuard, StoreError};
 
@@ -52,6 +52,14 @@ pub struct BranchesQuery {
     page_token: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AuthorsQuery {
+    repo: Option<String>,
+    since: Option<String>,
+    page_size: Option<u32>,
+    page_token: Option<String>,
+}
+
 /// Concrete page wrappers, one per endpoint: `Page<T>` cannot be a schema
 /// because the registry keys components on the type's own name, so all three
 /// instantiations would collide on one component.
@@ -76,6 +84,13 @@ pub struct BranchesPage {
 }
 impl toolkit::api::api_dto::ResponseApiDto for BranchesPage {}
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AuthorsPage {
+    pub items: Vec<authors::AuthorRow>,
+    pub next_page_token: Option<String>,
+}
+impl toolkit::api::api_dto::ResponseApiDto for AuthorsPage {}
+
 impl From<Page<commits::CommitRow>> for CommitsPage {
     fn from(page: Page<commits::CommitRow>) -> Self {
         Self {
@@ -96,6 +111,15 @@ impl From<Page<FileChangeRow>> for FileChangesPage {
 
 impl From<Page<branches::BranchRow>> for BranchesPage {
     fn from(page: Page<branches::BranchRow>) -> Self {
+        Self {
+            items: page.items,
+            next_page_token: page.next_page_token,
+        }
+    }
+}
+
+impl From<Page<authors::AuthorRow>> for AuthorsPage {
+    fn from(page: Page<authors::AuthorRow>) -> Self {
         Self {
             items: page.items,
             next_page_token: page.next_page_token,
@@ -404,6 +428,45 @@ pub async fn list_branches(
     .await?;
 
     json_page(BranchesPage::from(page)).await
+}
+
+/// `GET /v1/authors` — one row per distinct commit author.
+///
+/// # Errors
+///
+/// [`ApiError`] on malformed input or an origin failure.
+pub async fn list_authors(
+    Extension(state): Extension<Arc<AppState>>,
+    headers: HeaderMap,
+    ValidatedQuery(query): ValidatedQuery<AuthorsQuery>,
+) -> Result<Response, ApiError> {
+    let repo = required_param(query.repo.as_deref(), "repo")?;
+    let context = RequestContext::from_parts(&headers, repo, state.clone_url_policy())?;
+    let paging = Paging::parse(query.page_token.as_deref(), query.page_size)?;
+
+    let page = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+        let (state, context, paging) = (&state, &context, &paging);
+        let since = query.since.as_deref();
+        Box::pin(async move {
+            // Already sorted by e-mail, which is the ascending key the cursor
+            // pages on — an author has no date to order by, since the walk
+            // collapses every commit they wrote into one row.
+            let all =
+                authors::read(state.store.runner(), guard.git_dir(), &context.creds, since).await?;
+            let (items, cursor) =
+                read::slice_page(all, paging.token.as_ref(), paging.page_size, |row| {
+                    (row.author_email.clone(), String::new())
+                });
+
+            Ok(Page {
+                items,
+                next_page_token: encode_cursor(cursor, &context.key, &guard),
+            })
+        })
+    })
+    .await?;
+
+    json_page(AuthorsPage::from(page)).await
 }
 
 /// One page of commit keys, its cursor, and — when the index answered — the

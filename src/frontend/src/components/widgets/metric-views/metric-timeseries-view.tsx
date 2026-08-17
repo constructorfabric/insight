@@ -11,6 +11,7 @@ import { evidenceSelection } from "@/api/metric-drilldown-client";
 import type { DateRange } from "@/api/period-to-date-range";
 import {
   useMetricEvidenceOptional,
+  withOwnTarget,
   type EvidenceDialogTarget,
 } from "@/components/metric-evidence-context";
 import { Button } from "@/components/ui/button";
@@ -478,7 +479,12 @@ export function MetricTimeseriesView({
       ),
       metric.computation !== "ratio" && selectedGroupBy ? [selectedGroupBy] : []
     );
-    if (selection) evidenceContext?.openEvidence(selection, metric.label);
+    if (selection) {
+      evidenceContext?.openEvidenceTargets(
+        withOwnTarget(evidenceTargets, { selection, label: metric.label }),
+        { activeMetricKey: selection.metric_key }
+      );
+    }
   }
 
   return (
@@ -557,10 +563,11 @@ export function MetricTimeseriesView({
               aria-label="View supporting data"
               title="View supporting data"
               onClick={() =>
-                evidenceContext?.openEvidenceTargets(
-                  evidenceTargets,
-                  evidenceTargets.map((target) => target.label).join(" & ")
-                )
+                evidenceContext?.openEvidenceTargets(evidenceTargets, {
+                  title: evidenceTargets
+                    .map((target) => target.label)
+                    .join(" & "),
+                })
               }
             >
               <Database className="size-4" />
@@ -600,11 +607,7 @@ export function MetricTimeseriesView({
         className={cn(
           "relative flex min-h-0 flex-col px-0",
           // A chart has no height of its own to fall back on; a table does.
-          presentation === "chart"
-            ? "h-96"
-            : expanded
-              ? undefined
-              : "max-h-96"
+          presentation === "chart" ? "h-96" : expanded ? undefined : "max-h-96"
         )}
         aria-busy={data.isFetching}
       >

@@ -55,9 +55,36 @@ verb still accepts `--image <ref>` to run a suite baked into a container
 joined to the gateway's network namespace, but no such image is published
 anymore — the lane ran from a published `ui-tests` image once, and the mode
 remains only as a mechanism. See `dev-compose.sh`'s
-`cmd_test_stand_help` for the full verb reference, including
-`--auth`/`--base-url`/`--stand-manifest` overrides for pointing the suite at
-a stand other than the one it just brought up.
+`cmd_test_stand_help` for the full verb reference.
+
+## Running it against a deployed stand
+
+The verb is compose-only: it reads `.env.compose.test-stand` and refuses
+unless a gateway answers on `http://localhost:<GATEWAY_PORT>/`. Aiming at a
+deployed stand means calling pytest directly with the three values that
+locate one — where it is, what it was seeded with, and the credential its
+personas share:
+
+```bash
+export INSIGHT_STAND_BASE_URL=https://<stand host>
+export INSIGHT_STAND_PERSONA_PASSWORD=<the realm's persona password>
+uv run --project tests --frozen pytest tests/stand -ra \
+  --stand-manifest /path/to/stand-manifest.json
+```
+
+The manifest is the seed's own record of what it wrote, and on a cluster
+stand it exists only in the seed Job's log — recover it from there while the
+Job survives:
+
+```bash
+kubectl -n <namespace> logs job/<the seed job> \
+  | grep -m1 '^SEED_MANIFEST_JSON: ' | cut -d' ' -f2- > stand-manifest.json
+```
+
+It names personas and in-cluster addresses, so it stays on the machine that
+read it. Browser journeys need `playwright install chromium` as above; they
+work against any `https://` origin, which is trustworthy enough to store the
+session cookie.
 
 ## CI required gate
 

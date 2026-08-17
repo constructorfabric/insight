@@ -78,6 +78,18 @@ pub trait PersonResolver: Send + Sync {
     /// # Errors
     /// Fails when the Identity Service is unreachable or errors.
     async fn resolve(&self, id: &IdpIdentity) -> anyhow::Result<Option<PersonResolution>>;
+
+    /// Resolve, minting a person when the journal has no binding yet.
+    /// `Ok(None)` = still unknown, and the caller denies the login.
+    ///
+    /// # Errors
+    /// Fails when the Identity Service is unreachable or errors.
+    // INVARIANT: the default refuses, so a resolver without minting power
+    // fails closed rather than by omission.
+    async fn provision(&self, id: &IdpIdentity) -> anyhow::Result<Option<PersonResolution>> {
+        let _ = id;
+        Ok(None)
+    }
 }
 
 /// `PersonResolver` backed by the Identity Service.
@@ -109,6 +121,16 @@ pub struct IdentityPersonResolver {
 #[derive(serde::Deserialize)]
 struct ResolveProfile {
     insight_source_id: Option<Uuid>,
+}
+
+// INVARIANT: only a normal login may provision. The `__override` view-as
+// resolves by an email its operator typed, and minting there would turn a typo
+// into a person to become.
+fn provisionable_external_id(target: &ResolveTarget) -> Option<&str> {
+    match target {
+        ResolveTarget::ExternalId(external_id) => Some(external_id),
+        ResolveTarget::Email(_) => None,
+    }
 }
 
 impl IdentityPersonResolver {
@@ -206,6 +228,43 @@ impl IdentityPersonResolver {
         .await
     }
 
+    async fn provision_person_by_external_id(
+        &self,
+        external_id: &str,
+        tenant_id: &str,
+    ) -> anyhow::Result<Option<Uuid>> {
+        if self.base_url.is_empty() {
+            return Ok(None);
+        }
+        let url = format!("{}/internal/persons/provision", self.base_url);
+        let token = self.mint_service_token(tenant_id)?;
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(token)
+            .json(&serde_json::json!({
+                "source_type": self.source_type,
+                "external_id": external_id,
+                "tenant_id": tenant_id,
+            }))
+            .send()
+            .await
+            .context("Identity provision request")?;
+        // INVARIANT: only 404 means "no such principal". Folding any other
+        // status into it would dress a broken deployment up as an ordinary
+        // access denial, which is the version nobody diagnoses.
+        let status = resp.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        anyhow::ensure!(
+            status.is_success(),
+            "Identity returned {status} for /internal/persons/provision"
+        );
+        let profile: ResolveProfile = resp.json().await.context("decode ResolveProfile")?;
+        Ok(profile.insight_source_id.filter(|id| !id.is_nil()))
+    }
+
     /// Admin `__override` (view-as) lookup: resolve by email — an operator
     /// types an email, not an IdP external id. A DISTINCT route from the
     /// login-bootstrap lookup above (never dispatched from the same call).
@@ -242,5 +301,66 @@ impl PersonResolver for IdentityPersonResolver {
             person_id: person_id.to_string(),
             tenant_id: id.tenant_id.clone(),
         }))
+    }
+
+    async fn provision(&self, id: &IdpIdentity) -> anyhow::Result<Option<PersonResolution>> {
+        let Some(external_id) = provisionable_external_id(&id.resolve_by) else {
+            return Ok(None);
+        };
+        let person_id = self
+            .provision_person_by_external_id(external_id, &id.tenant_id)
+            .await?;
+        Ok(person_id.map(|person_id| PersonResolution {
+            person_id: person_id.to_string(),
+            tenant_id: id.tenant_id.clone(),
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A resolver with no minting power at all — the trait default is what a
+    /// future implementation inherits, so it must refuse rather than forget.
+    struct LookupOnly;
+
+    #[async_trait]
+    impl PersonResolver for LookupOnly {
+        async fn resolve(&self, _id: &IdpIdentity) -> anyhow::Result<Option<PersonResolution>> {
+            Ok(None)
+        }
+    }
+
+    fn identity(resolve_by: ResolveTarget) -> IdpIdentity {
+        IdpIdentity {
+            sub: "subject".to_owned(),
+            email: "someone@example.com".to_owned(),
+            tenant_id: Uuid::from_u128(7).to_string(),
+            resolve_by,
+        }
+    }
+
+    #[test]
+    fn only_a_login_is_provisionable_never_the_view_as_override() {
+        assert_eq!(
+            provisionable_external_id(&ResolveTarget::ExternalId("octocat".to_owned())),
+            Some("octocat"),
+        );
+        assert_eq!(
+            provisionable_external_id(&ResolveTarget::Email("typo@example.com".to_owned())),
+            None,
+            "an operator's typed email must never mint the person it names",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_resolver_without_minting_power_fails_closed() -> anyhow::Result<()> {
+        let provisioned = LookupOnly
+            .provision(&identity(ResolveTarget::ExternalId("octocat".to_owned())))
+            .await?;
+
+        assert!(provisioned.is_none());
+        Ok(())
     }
 }

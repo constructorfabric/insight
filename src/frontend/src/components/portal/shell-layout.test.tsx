@@ -66,7 +66,13 @@ vi.mock("@/auth", () => ({ useViewer: () => ({ email: "boss@x" }) }));
 // The settings menu pulls in viewer/theme/i18n plumbing; its presence is what
 // matters here — on a phone it is only reachable through this drawer.
 vi.mock("@/components/app-sidebar-footer", () => ({
-  AppSidebarFooter: () => <div data-testid="settings-menu" />,
+  AppSidebarFooter: ({ onNavigate }: { onNavigate?: () => void }) => (
+    <div data-testid="settings-menu">
+      <button type="button" onClick={onNavigate}>
+        Go somewhere
+      </button>
+    </div>
+  ),
 }));
 
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -204,6 +210,16 @@ describe("shell layout: phone", () => {
     expect(screen.getByTestId("settings-menu")).toBeInTheDocument();
   });
 
+  it("shuts the settings menu once it has sent the reader somewhere", async () => {
+    render(<Shell />);
+    const user = await openDrawer();
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    await user.click(screen.getByRole("button", { name: "Go somewhere" }));
+
+    expect(screen.queryByTestId("settings-menu")).not.toBeInTheDocument();
+  });
+
   it("drops the header — the zone row already names the zone", async () => {
     render(<Shell />);
     await openDrawer();
@@ -231,6 +247,15 @@ describe("shell layout: phone", () => {
 describe("shell layout: narrow (tablet)", () => {
   beforeEach(() => {
     mocks.layout = "narrow";
+  });
+
+  it("seats the pane beside the rail, not under it", () => {
+    // The drawer is positioned from the viewport edge, and at this tier the
+    // rail is what stands there.
+    const { container } = render(<Shell />);
+    expect(container.querySelector('[data-slot="sidebar-container"]')).toHaveClass(
+      "data-[side=left]:left-(--rail-width)",
+    );
   });
 
   it("collapses the pane off-canvas instead of Sheeting it", () => {

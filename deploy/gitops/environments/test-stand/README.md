@@ -1,8 +1,8 @@
 # `test-stand` — the published test stand
 
 The gitops environment for **insight-test.cfabric.org**: the cluster CI upgrades
-to the umbrella chart it just published, then seeds and smoke-tests, on every
-merge to `main`
+to the umbrella chart it just published, then seeds it, smoke-tests it and runs
+the whole deployed-stand suite against it, on every merge to `main`
 ([#2244](https://github.com/constructorfabric/insight/issues/2244)). Its whole
 job is to answer one question automatically — *does the chart we just published
 install, hold data, and let a person log in and see that data?*
@@ -159,11 +159,14 @@ coordinates, image, IdP source type **and the dev-lead address** from the
 cluster:
 
 ```bash
-./src/ingestion/tools/seed/seed-stand.sh -n insight --context insight-test-stand --days 365
+./src/ingestion/tools/seed/seed-stand.sh -n insight --context insight-test-stand --days 730
 ```
 
-`--days 365`, not more — the analytics API rejects a window ≥ 400 days
-(INFRA.md incident §3). **No `--email`, and that's the point:** the address is
+`--days 730` is what CI seeds, and matching it matters: the 400-day limit the
+analytics API enforces is a cap on a single request's period, not on the seeded
+window, and a suite asking about "the seeded range" clamps itself to the
+queryable tail. Seeding a narrower window instead disarms that clamp — see
+INFRA.md, "730-day seed window". **No `--email`, and that's the point:** the address is
 read out of the applied realm (the `insight-keycloak-config-realms` ConfigMap,
 the user whose `id` is the roster's dev-lead UUID), so the realm is the source
 of truth and the seed follows it. The script prints where it came from —
@@ -195,6 +198,20 @@ uv run --project tests --frozen pytest tests/stand -m stand_smoke -ra
 
 Nothing in the suite has a default — a missing value is reported by name before
 a single request is made.
+
+**8. The full suite** — the same three variables, every API contract and every
+browser journey. Drop the marker and add a browser:
+
+```bash
+uv run --project tests --frozen playwright install --with-deps chromium
+uv run --project tests --frozen pytest tests/stand -ra --browser chromium
+```
+
+The S2S tests skip here rather than fail: the chart gives the authenticator's
+token listener no ingress, so the seeder marks the `service_principals`
+capability absent on a cluster stand. That also means this run does not cover
+every catalogued operation — the endpoint-coverage gate stays with the compose
+lane, which can reach those listeners.
 
 ## Recovery
 
@@ -283,20 +300,31 @@ invocations to before. One deploy procedure; step 3 above is the command CI runs
 **What CI does:** the deploy is a reusable workflow called from the
 chart-publishing workflow after publish, on `main` only, with the chart version
 from the publish job's output. Credentials come from the `insight-test-stand`
-GitHub environment (main-only); the CI credential is a namespace-scoped SA, admin
-kubeconfigs stay human-only. Runs coalesce (never cancel a live upgrade); three
-named stages (deploy, seed, smoke); smoke never runs after a failed seed. On
-failure it prints only the dead stage + edge probe codes — no `describe`/env
-dumps/log artifacts (public logs). A red run belongs to the author of the merge
-that produced it: fix forward, or revert.
+GitHub environment; the CI credential is a namespace-scoped SA, admin
+kubeconfigs stay human-only. Runs coalesce (never cancel a live upgrade). The
+`stages` input is a four-name prefix chain (deploy, seed, smoke, suite), so the
+suite never runs after a failed smoke and smoke never after a failed seed; the
+workflow numbers five, because the edge probe between deploy and seed can fail
+the run on its own. On failure it prints only the dead stage + edge probe codes
+— no `describe`/env dumps/cluster log artifacts (public logs). The exceptions
+are the suite's Playwright traces, which the redaction script rewrites and
+re-verifies before upload (deleting anything it cannot prove clean), and its
+screenshots, which ride along unrewritten: that script opens `*.zip` and
+nothing else, and a screenshot is a page render carrying seeded persona data
+but no header and no cookie. No video is captured, for the same reason. A red
+run belongs to the author of the merge that produced it: fix forward, or
+revert.
 
 ## Known gaps
 
-- **The persona password is a published constant** on a seed-generated realm
-  (every user carries the seeder's `DEV_PASSWORD`). Nothing in CI is blocked by
-  it, but it's not the "no well-known passwords on a public stand" posture —
-  closing it means the realm generator taking a password instead of embedding
-  one (a seeder change).
+- **The persona password is only as strong as what the realm was generated
+  with.** The generator takes `INSIGHT_SEED_PERSONA_PASSWORD` (16 characters
+  minimum) and falls back to a constant documented for local stands when it is
+  unset, so a realm generated without it gives every seeded persona a value
+  published in this repository — not the "no well-known passwords on a public
+  stand" posture. `TEST_STAND_PERSONA_PASSWORD` cannot fix that after the fact:
+  it has to *match* what the realm carries, so the two move together (see
+  `credentials-runbook.md`).
 - **Realm ownership sits outside this repo** — the ConfigMap is written by the
   bring-up; the deploy only reads it, so a login failure can have a cause no
   file here shows. The seed now reads that same object for the dev-lead address,

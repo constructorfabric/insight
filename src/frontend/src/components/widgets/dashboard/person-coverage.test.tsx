@@ -21,7 +21,7 @@ describe("PersonCoverage", () => {
   it("blames the instrument only where the pool is empty too", () => {
     render(<PersonCoverage unmeasured={["Task delivery"]} inactive={[]} />);
     expect(
-      screen.getByText(/No data reaches us for Task delivery/)
+      screen.getByText(/No data source is connected for Task delivery/)
     ).toBeTruthy();
   });
 
@@ -42,7 +42,7 @@ describe("PersonCoverage", () => {
       <PersonCoverage unmeasured={["Task delivery"]} inactive={["Wiki"]} />
     );
     expect(
-      screen.getByText(/No data reaches us for Task delivery/)
+      screen.getByText(/No data source is connected for Task delivery/)
     ).toBeTruthy();
     expect(screen.getByText(/Nothing recorded in Wiki/)).toBeTruthy();
   });

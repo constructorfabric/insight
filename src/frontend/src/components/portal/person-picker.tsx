@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
 
 import type { PersonSummary } from "@/api/identity-client";
 import { PersonCell } from "@/components/portal/person-cell";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -73,13 +74,32 @@ export function PersonPicker({
         <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
           {results.map((person) => (
             <li key={person.person_id}>
-              <button
-                type="button"
-                onClick={() => onPick(person)}
-                className="w-full rounded-md border border-transparent p-2 text-start hover:bg-muted/60"
+              {/* Not a <button>: the card inside carries its own copy control,
+                  and a button may not nest a button — the same rule the queue
+                  rows follow. */}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={(event) => {
+                  if (
+                    event.target instanceof Element &&
+                    event.target.closest("button, a")
+                  ) {
+                    return;
+                  }
+                  onPick(person);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  if (event.target !== event.currentTarget) return;
+                  event.preventDefault();
+                  onPick(person);
+                }}
+                aria-label={personDisplayName(person)}
+                className="w-full cursor-pointer rounded-md border border-transparent p-2 text-start select-text hover:bg-muted/60"
               >
                 <PersonCell person={person} />
-              </button>
+              </div>
             </li>
           ))}
         </ul>

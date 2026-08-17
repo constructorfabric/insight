@@ -26,6 +26,20 @@ struct VisiblePersonsResponse {
     visible: Vec<Uuid>,
 }
 
+/// The seeded `admin` role id — a stable migration constant of the identity
+/// service, mirrored here so a role check needs no extra round trip.
+const ADMIN_ROLE_ID: Uuid = Uuid::from_u128(0xa4d1_1000_0000_4000_8000_0000_0000_0001);
+
+#[derive(Debug, serde::Deserialize)]
+struct MeResponse {
+    roles: Vec<MeRole>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MeRole {
+    role_id: Uuid,
+}
+
 /// Identity API client.
 #[derive(Clone)]
 pub struct IdentityClient {
@@ -56,23 +70,48 @@ impl IdentityClient {
     ) -> anyhow::Result<HashSet<Uuid>> {
         let url = format!("{}/v1/visible-persons", self.base_url);
 
-        let mut req = self
+        let req = self
             .http
             .post(&url)
             .json(&VisiblePersonsRequest { person_ids });
-        if let Some(auth) = authorization {
-            req = req.header(reqwest::header::AUTHORIZATION, auth);
-        }
-        let resp = req.send().await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            tracing::warn!(status = %status, "identity visibility check failed");
-            anyhow::bail!("identity service returned {status}");
-        }
+        let resp = Self::send(req, authorization, "visibility check").await?;
 
         let checked: VisiblePersonsResponse = resp.json().await?;
         Ok(checked.visible.into_iter().collect())
+    }
+
+    /// Whether the caller holds the active `admin` identity role.
+    ///
+    /// The role lives in the identity service's `person_roles`, not in the
+    /// gateway JWT — the `roles` claim carries realm roles, which no identity
+    /// endpoint reads.
+    pub(crate) async fn is_admin(&self, authorization: Option<&str>) -> anyhow::Result<bool> {
+        let url = format!("{}/v1/me", self.base_url);
+
+        let resp = Self::send(self.http.get(&url), authorization, "role lookup").await?;
+
+        let me: MeResponse = resp.json().await?;
+        Ok(me.roles.iter().any(|role| role.role_id == ADMIN_ROLE_ID))
+    }
+
+    /// Forward the caller's authorization, if the gateway supplied one, and
+    /// fail loudly on anything but success.
+    async fn send(
+        req: reqwest::RequestBuilder,
+        authorization: Option<&str>,
+        what: &str,
+    ) -> anyhow::Result<reqwest::Response> {
+        let req = match authorization {
+            Some(auth) => req.header(reqwest::header::AUTHORIZATION, auth),
+            None => req,
+        };
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            tracing::warn!(status = %status, what, "identity request failed");
+            anyhow::bail!("identity service returned {status}");
+        }
+        Ok(resp)
     }
 
     /// Check if the identity service is configured (URL is non-empty).

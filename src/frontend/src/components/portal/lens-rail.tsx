@@ -77,10 +77,10 @@ const OPEN_WIDTH = "12rem";
  *
  * The fade only has work to do while the pane is beside the rail. It collapses
  * off-canvas on the middle width tier, and a reader can shut it by hand on a
- * wide one — painting a fixed 19.5rem of gradient in either case laid a dimmed
+ * wide one — painting the full width of gradient in either case laid a dimmed
  * strip over the content for no reason.
  */
-const PANE_EDGE = "19.5rem";
+const PANE_EDGE = "calc(var(--rail-width) + var(--sidebar-width))";
 
 /**
  * How long a pointer has to stay before the labels appear.
@@ -105,6 +105,7 @@ export function LensRail() {
   // Suppresses the hover until the pointer leaves. Only a pointer-driven click
   // sets it — see the note where it is set.
   const [dismissed, setDismissed] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancel = () => {
@@ -178,7 +179,7 @@ export function LensRail() {
     >
       <Sidebar
         collapsible="none"
-        className="w-14! overflow-visible border-e"
+        className="w-(--rail-width)! overflow-visible border-e"
       >
         {/* A fade beside the panel, not a flat veil.
             The pane's rows do not object to being dimmed — they object to
@@ -266,7 +267,7 @@ export function LensRail() {
           </SidebarMenu>
         </SidebarContent>
         <SidebarFooter className="relative z-10 items-start gap-1 ps-2">
-          <Popover>
+          <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
             <PopoverTrigger
               render={
                 <button
@@ -279,8 +280,22 @@ export function LensRail() {
                 </button>
               }
             />
-            <PopoverContent side="right" align="end" className="w-56 gap-0 p-1">
-              <AppSidebarFooter />
+            <PopoverContent
+              side="right"
+              align="end"
+              className="w-64 gap-0 p-1"
+              // Handing focus back to the trigger reopens the rail through
+              // `onFocusCapture`, over the surface just asked for.
+              finalFocus={false}
+            >
+              <AppSidebarFooter
+                onNavigate={() => {
+                  setSettingsOpen(false);
+                  // Note 4 above, reached from the footer rather than a zone.
+                  setDismissed(true);
+                  close();
+                }}
+              />
             </PopoverContent>
           </Popover>
         </SidebarFooter>
