@@ -341,7 +341,7 @@ pub async fn get_subchart_flat(
 /// # Errors
 ///
 /// Returns an error if the query fails or a stored id is not 16 bytes.
-#[allow(clippy::too_many_lines)] // one verbatim multi-CTE SQL const dominates
+#[expect(clippy::too_many_lines)] // one verbatim multi-CTE SQL const dominates
 pub async fn get_forest_flat(
     db: &DatabaseConnection,
     tenant_id: Uuid,

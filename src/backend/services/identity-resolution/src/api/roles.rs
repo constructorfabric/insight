@@ -188,7 +188,7 @@ fn already_exists(name: &str) -> CanonicalError {
 }
 
 // Takes the error by value so it can be used directly as `.map_err(read_err)`.
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
 fn read_err(e: anyhow::Error) -> CanonicalError {
     tracing::error!(error = %e, "roles query failed");
     CanonicalError::internal("failed to read roles").create()

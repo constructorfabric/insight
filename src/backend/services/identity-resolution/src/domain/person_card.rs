@@ -137,7 +137,6 @@ mod tests {
             value_full_text: None,
             value: None,
             value_effective: Some(value.to_owned()),
-            value_hash: None,
             person_id: person.as_bytes().to_vec(),
             author_person_id: vec![0u8; 16],
             reason: None,

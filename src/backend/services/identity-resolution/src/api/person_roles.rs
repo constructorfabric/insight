@@ -66,11 +66,11 @@ impl From<PersonRole> for PersonRoleResponse {
             insight_tenant_id: p.insight_tenant_id,
             person_id: p.person_id,
             role_id: p.role_id,
-            valid_from: fmt_ts(p.valid_from),
-            valid_to: p.valid_to.map(fmt_ts),
+            valid_from: super::datetime::fmt_ts(p.valid_from),
+            valid_to: p.valid_to.map(super::datetime::fmt_ts),
             author_person_id: p.author_person_id,
             reason: p.reason,
-            created_at: fmt_ts(p.created_at),
+            created_at: super::datetime::fmt_ts(p.created_at),
         }
     }
 }
@@ -174,7 +174,7 @@ pub async fn list_person_roles(
     let tenant = ctx.subject_tenant_id();
     require_admin(&state.db, &ctx).await?;
 
-    let limit = clamp_limit(params.limit);
+    let limit = super::listing::clamp_limit(params.limit, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT);
     let rows = person_roles_repo::list(
         &state.db,
         tenant,
@@ -260,15 +260,10 @@ fn not_found(id: Uuid) -> CanonicalError {
 }
 
 // Takes the error by value so it can be used directly as `.map_err(read_err)`.
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
 fn read_err(e: anyhow::Error) -> CanonicalError {
     tracing::error!(error = %e, "person_roles query failed");
     CanonicalError::internal("failed to read assignments").create()
-}
-
-/// Format a DB `DateTime` (naive) as ISO-8601 with a `T` separator.
-fn fmt_ts(dt: DateTime) -> String {
-    dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
 /// `reason`, when present, must be at most 500 chars.
@@ -291,10 +286,6 @@ fn reason_too_long() -> CanonicalError {
     )
 }
 
-fn clamp_limit(limit: Option<i64>) -> u64 {
-    super::listing::clamp_limit(limit, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,10 +303,28 @@ mod tests {
 
     #[test]
     fn limit_clamping() {
-        assert_eq!(clamp_limit(None), LIST_DEFAULT_LIMIT);
-        assert_eq!(clamp_limit(Some(10)), 10);
-        assert_eq!(clamp_limit(Some(0)), 1, "zero → 1");
-        assert_eq!(clamp_limit(Some(-5)), 1, "negative → 1");
-        assert_eq!(clamp_limit(Some(9999)), LIST_MAX_LIMIT, "over cap → 500");
+        assert_eq!(
+            crate::api::listing::clamp_limit(None, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            LIST_DEFAULT_LIMIT
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(10), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            10
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(0), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            1,
+            "zero → 1"
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(-5), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            1,
+            "negative → 1"
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(9999), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            LIST_MAX_LIMIT,
+            "over cap → 500"
+        );
     }
 }

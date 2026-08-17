@@ -111,7 +111,7 @@ fn not_found(person_id: Uuid) -> CanonicalError {
 }
 
 // Takes the error by value so it can be used directly as `.map_err(read_err)`.
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
 fn read_err(e: anyhow::Error) -> CanonicalError {
     tracing::error!(error = %e, "subchart query failed");
     CanonicalError::internal("failed to read subchart").create()

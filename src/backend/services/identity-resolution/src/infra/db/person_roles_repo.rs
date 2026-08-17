@@ -16,7 +16,7 @@ const COLUMNS: &str = "person_role_id, insight_tenant_id, person_id, role_id, \
      valid_from, valid_to, author_person_id, reason, created_at";
 
 /// One `person_roles` row (a role assignment).
-#[allow(clippy::struct_field_names)] // columns are ids by nature (`*_id`)
+#[expect(clippy::struct_field_names)] // columns are ids by nature (`*_id`)
 #[derive(Debug, Clone)]
 pub struct PersonRole {
     pub person_role_id: Uuid,
@@ -124,7 +124,7 @@ pub async fn list(
 /// # Errors
 ///
 /// Returns an error if the insert fails.
-#[allow(clippy::too_many_arguments)] // mirrors the columns of one assignment row
+#[expect(clippy::too_many_arguments)] // mirrors the columns of one assignment row
 pub async fn insert(
     db: &DatabaseConnection,
     person_role_id: Uuid,

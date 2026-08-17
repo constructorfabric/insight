@@ -96,7 +96,7 @@ pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
 
 /// Declare each operation via the toolkit `OperationBuilder` (records the route
 /// + its OpenAPI spec + auth/error metadata).
-#[allow(clippy::too_many_lines)] // one flat block per route — readability over splitting
+#[expect(clippy::too_many_lines)] // one flat block per route — readability over splitting
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     // Internal, SERVICE-ONLY S2S resolvers — TWO SEPARATE routes so the
     // login-bootstrap (external id) and the authenticator's admin `__override`

@@ -326,7 +326,6 @@ mod tests {
             value_full_text: None,
             value: None,
             value_effective: Some(value_effective.to_owned()),
-            value_hash: None,
             person_id: vec![0u8; 16],
             author_person_id: vec![0u8; 16],
             reason: None,

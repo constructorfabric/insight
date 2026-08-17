@@ -55,7 +55,7 @@ impl OperationStatus {
 /// One row of the `operations` table.
 // Field names mirror the DB columns (`operation_id` / `operation_type`), so
 // keep the shared prefix.
-#[allow(clippy::struct_field_names)]
+#[expect(clippy::struct_field_names)]
 #[derive(Debug, Clone)]
 pub struct Operation {
     pub operation_id: Uuid,

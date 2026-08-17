@@ -5,7 +5,7 @@
 //! whole tenant tree.
 
 // `viewer_person_id` / `viewed_person_id` are the domain's own field names.
-#![allow(clippy::similar_names)]
+#![expect(clippy::similar_names)]
 
 use sea_orm::prelude::DateTime;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
@@ -15,7 +15,7 @@ const COLUMNS: &str = "visibility_id, insight_tenant_id, viewer_person_id, viewe
      valid_from, valid_to, author_person_id, reason, created_at";
 
 /// One `visibility` grant.
-#[allow(clippy::struct_field_names)] // columns are ids by nature (`*_id`)
+#[expect(clippy::struct_field_names)] // columns are ids by nature (`*_id`)
 #[derive(Debug, Clone)]
 pub struct Visibility {
     pub visibility_id: Uuid,
@@ -132,7 +132,7 @@ pub async fn list(
 /// # Errors
 ///
 /// Returns an error if the insert fails.
-#[allow(clippy::too_many_arguments)] // mirrors the columns of one grant row
+#[expect(clippy::too_many_arguments)] // mirrors the columns of one grant row
 pub async fn insert(
     db: &DatabaseConnection,
     visibility_id: Uuid,

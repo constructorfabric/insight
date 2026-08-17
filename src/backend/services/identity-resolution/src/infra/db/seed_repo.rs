@@ -215,7 +215,9 @@ pub async fn latest_email_to_person(
 ///
 /// Returns an error if any statement fails; the transaction is the caller's to
 /// roll back.
-#[allow(clippy::too_many_lines)] // dominated by the verbatim org_chart CTE
+// The length is dominated by the verbatim org_chart CTE string constant, not
+// control flow — keeping the SQL inline (co-located, greppable) over hoisting it.
+#[expect(clippy::too_many_lines)]
 async fn rebuild_org_chart(
     txn: &DatabaseTransaction,
     tenant_id: Uuid,
@@ -480,9 +482,6 @@ async fn rebuild_org_chart(
 /// # Errors
 ///
 /// Returns an error if any statement fails; the transaction is rolled back.
-// The length is dominated by the verbatim org_chart CTE string constant, not
-// control flow — keeping the SQL inline (co-located, greppable) over hoisting it.
-#[allow(clippy::too_many_lines)]
 pub async fn apply(
     db: &DatabaseConnection,
     tenant_id: Uuid,

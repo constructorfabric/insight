@@ -1,4 +1,5 @@
-//! Flexible date-time parsing for request DTOs.
+//! The date-time wire shape of this API: parsing request DTOs, formatting
+//! responses.
 //!
 //! The API accepts OpenAPI `format: date-time` (RFC-3339 with `Z` or a
 //! numeric offset). `sea_orm::prelude::DateTime` is `chrono::NaiveDateTime`,
@@ -10,6 +11,13 @@
 
 use chrono::{DateTime as ChronoDateTime, NaiveDate, NaiveDateTime, Utc};
 use serde::{Deserialize, Deserializer};
+
+/// Format a DB `DateTime` (naive) as ISO-8601 with a `T` separator
+/// (`NaiveDateTime::to_string` uses a space, which breaks ISO-8601 parsers).
+#[must_use]
+pub(crate) fn fmt_ts(dt: NaiveDateTime) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
+}
 
 /// Parse the accepted date-time forms to naive-UTC. Returns `None` if the string
 /// matches none of them.

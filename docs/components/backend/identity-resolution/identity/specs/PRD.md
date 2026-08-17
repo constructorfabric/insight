@@ -188,9 +188,7 @@ visible row is well-formed per the routing rules in ADR-0007.
 - The `PersonResponse` shape (Phase 1) with parent attributes
   (`parent_email`, `parent_id`, `parent_person_id`). The Phase-1
   `GET /v1/persons/{email}` endpoint that carried it was retired
-  (zero callers); `POST /v1/profiles` is the
-  successor and an internal-only
-  `GET /internal/persons/by-email/{email}` remains for in-cluster use.
+  (zero callers); `POST /v1/profiles` is the successor.
 - `POST /v1/profiles` (Phase 2, constructorfabric/insight#347)
   — single-profile lookup by either email (across all sources) or
   source-native id (within one source instance), returning a
@@ -763,7 +761,7 @@ this NFR forces the explicit bytes binding everywhere.
 
 **Type**: HTTP/REST endpoint.
 
-**Stability**: **retired** — the public endpoint was removed (approved, zero callers); [`POST /v1/profiles`](#post-v1profiles--profile-resolution) is the successor. The path-form lookup kept the caller's email in the URL, which leaked into observability surfaces this service does not control (api-gateway access logs, ingress logs, browser history, CDN/proxy logs). An internal-only `GET /internal/persons/by-email/{email}` remains for in-cluster use. The description below is kept for historical traceability of the response shape, which lives on in `POST /v1/profiles`.
+**Stability**: **retired** — the public endpoint was removed (approved, zero callers); [`POST /v1/profiles`](#post-v1profiles--profile-resolution) is the successor. The path-form lookup kept the caller's email in the URL, which leaked into observability surfaces this service does not control (api-gateway access logs, ingress logs, browser history, CDN/proxy logs). The description below is kept for historical traceability of the response shape, which lives on in `POST /v1/profiles`.
 
 **Stability history**: Phase 2 of #348 added `supervisor_email`,
 `supervisor_name`, and the `subordinates[]` recursion onto the existing

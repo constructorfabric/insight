@@ -165,10 +165,8 @@ pub struct InternalByExternalIdQuery {
 /// exists yet. Still fail-closed — a valid gateway JWT is required (host
 /// authn), and a non-service principal (`subject_type != "service"`, the
 /// gears mapping of the `sub_type` claim) gets 403. Registered as a raw
-/// route so it stays out of the public OpenAPI. Supersedes the removed
-/// `GET /internal/persons/by-email/{email}`
-/// as the login-bootstrap lookup — same gate, resolves by external id instead
-/// of email.
+/// route so it stays out of the public OpenAPI. This is the login-bootstrap
+/// lookup: it resolves by external id, never by email.
 pub async fn internal_person_by_external_id(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -390,10 +388,8 @@ pub struct InternalByEmailOverrideQuery {
 /// through to this one.
 ///
 /// Same bypass-tenant-gates rationale and fail-closed service-only gate as
-/// `by-external-id`. This is the URL the OLD, now-removed
-/// `GET /internal/persons/by-email/{email}` login-bootstrap lookup would map
-/// to if it still existed — but it doesn't: this route is override-only by
-/// contract, never called from the login path.
+/// `by-external-id`. INVARIANT: override-only by contract — the login path
+/// never resolves by email.
 pub async fn internal_person_by_email_override(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,

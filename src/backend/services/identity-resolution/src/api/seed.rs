@@ -61,8 +61,8 @@ impl From<Operation> for PersonsSeedOperationResponse {
             request: parse_or_null(op.request_json.as_deref()),
             summary: parse_or_null(op.summary_json.as_deref()),
             error_message: op.error_message,
-            started_at: fmt_ts(op.started_at),
-            completed_at: op.completed_at.map(fmt_ts),
+            started_at: super::datetime::fmt_ts(op.started_at),
+            completed_at: op.completed_at.map(super::datetime::fmt_ts),
         }
     }
 }
@@ -76,12 +76,6 @@ pub(crate) fn parse_or_null(json: Option<&str>) -> Option<serde_json::Value> {
         return None;
     }
     serde_json::from_str(s).ok()
-}
-
-/// Format a DB `DateTime` (naive) as ISO-8601 with a `T` separator
-/// (`NaiveDateTime::to_string` uses a space, which breaks ISO-8601 parsers).
-pub(crate) fn fmt_ts(dt: sea_orm::prelude::DateTime) -> String {
-    dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
 /// List response wrapper (typed for OpenAPI).

@@ -260,9 +260,9 @@ framework types.
 - Migrations are applied by the service's `migrate` subcommand
   (initContainer in Kubernetes) before the serving process starts.
 - Maps `POST /v1/profiles` (the successor of the retired
-  `GET /v1/persons/{email}` — removed, zero callers),
-  `GET /internal/persons/by-email/{email}`
-  (internal-only), `/health`, `/healthz`.
+  `GET /v1/persons/{email}` — removed, zero callers), the internal-only
+  `GET /internal/persons/{by-external-id,by-email-override}` and
+  `POST /internal/persons/provision`, `/health`, `/healthz`.
 - Implements the error mapping that emits RFC 7807
   bodies with sanitised `db_target` for DB errors only.
 
@@ -377,7 +377,7 @@ implementation details.
 
 | PRD Interface | Implementation | Notes |
 |---------------|----------------|-------|
-| [`cpt-insightspec-interface-identity-person-lookup`](PRD.md#get-v1personsemail--person-lookup) | **Retired** (approved removal, zero callers). `POST /v1/profiles` (`api/handlers.rs::resolve_profile`) is the successor; an internal-only `GET /internal/persons/by-email/{email}` remains for in-cluster use. Snake-case JSON. | Kept for historical traceability. |
+| [`cpt-insightspec-interface-identity-person-lookup`](PRD.md#get-v1personsemail--person-lookup) | **Retired** (approved removal, zero callers). `POST /v1/profiles` (`api/handlers.rs::resolve_profile`) is the successor. Snake-case JSON. | Kept for historical traceability. |
 | [`cpt-insightspec-interface-identity-health`](PRD.md#get-health--database-readiness) | Health handler — opens a connection, runs `SELECT 1`. | 200 / 503. |
 | [`cpt-insightspec-interface-identity-healthz`](PRD.md#get-healthz--process-liveness) | Liveness handler returning `"ok"`. | Never touches DB. |
 
