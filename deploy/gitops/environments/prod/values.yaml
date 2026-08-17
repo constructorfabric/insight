@@ -173,6 +173,10 @@ gitCliProxy:
     storageClass: cinder-ext4
     accessMode: ReadWriteOnce
   networkPolicy:
+    # Stated rather than inherited: the chart default flipped to false in
+    # 0.5.171, and the clone cache holds private source, so leaving the policy
+    # to a default would silently expose it cluster-wide on an upgrade.
+    enabled: true
     allowedNamespaceLabels:
       - key: kubernetes.io/metadata.name
         values: [airbyte]
