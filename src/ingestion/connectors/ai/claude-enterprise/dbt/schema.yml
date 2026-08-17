@@ -64,6 +64,11 @@ models:
               arguments:
                 values: ['claude_code']
       - name: session_count
+      - name: conversation_count
+        description: >
+          code_session_count again — a Claude Code session is the unit of
+          conversation and the analytics API exposes no separate counter, so
+          ai.dev_conversations reports session counts for this source.
       - name: lines_added
         description: "AI-accepted lines (code_lines_added)"
       - name: lines_removed

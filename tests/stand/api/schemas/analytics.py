@@ -557,6 +557,8 @@ class TelemetryRecord(BaseModel):
     context_session_id: str | None = None
     data: Any | None = None
     name: str | None = None
+    time_sent: int | None = Field(None, description='Epoch milliseconds on the same clock: when the batch was flushed.')
+    time_triggered: int | None = Field(None, description="Epoch milliseconds on the browser's clock: when the event happened.")
 
 
 class TimeseriesPointDto(BaseModel):

@@ -10,8 +10,11 @@ models:
       CONTRACT — activity invariant: a row exists ONLY when the person had real
       activity with the tool that day. Every staging model in the
       silver:class_ai_dev_usage tag must gate emission on a source-appropriate
-      activity signal (cursor: isActive=true; claude-team: status='active';
-      claude-enterprise/copilot/chatgpt-team: activity-counter filters).
+      activity signal (cursor: isActive=true;
+      claude-team/claude-enterprise/copilot/chatgpt-team: activity-counter
+      filters). Seat lifecycle state is NOT an activity signal: it describes
+      the seat as of the last read, so gating on it deletes the history of
+      whoever left — carry it in seat_status instead.
       Downstream consumers (insight.ai_metric_observations active_day) rely on
       row existence and must NOT re-derive activity from counters.
     columns:
@@ -62,14 +65,26 @@ models:
                 values: ['cursor', 'claude_code', 'copilot', 'windsurf', 'codex']
       - name: conversation_count
         description: >
-          Dev-tool conversations/threads on this day, populated ONLY by
-          connectors whose source actually reports them (Claude Code sessions,
-          Codex threads). Structural NULL where the source has no conversation
-          concept (Cursor, Copilot) — never a synthetic marker. Gold
-          dev_conversations sums this column with no tool filter; a connector
-          opts in by mapping the column.
+          Dev-tool conversations/threads on this day — the metric-feed column
+          Gold dev_conversations sums with no tool filter. A connector opts in
+          by mapping it; structural NULL where the source has no conversation
+          concept (Cursor) — never a synthetic marker.
+
+          For the dev-agent tools the vendors do not report conversations
+          separately: one session or thread IS the unit of conversation, so
+          claude_code and codex connectors map their session/thread counter
+          here and the value equals session_count on those rows. That is the
+          intended mapping, not a duplication to collapse — the two columns
+          hold different concepts that coincide for these sources, and they do
+          NOT coincide on class_ai_assistant_usage, where chat reports
+          conversations and the office surfaces report sessions.
       - name: session_count
-        description: "Sessions recorded on this day. For Cursor: 1 per active day (Cursor only exposes an is-active flag, not session counts)."
+        description: >
+          Sessions recorded on this day. For Cursor: 1 per active day (Cursor
+          only exposes an is-active flag, not session counts). Contract and
+          data-quality column only — it feeds the activity guard, and no Gold
+          measure or metric reads it. The conversations metric reads
+          conversation_count.
         tests:
           - not_null
       - name: lines_added
@@ -171,6 +186,15 @@ models:
         description: "When the record was collected"
         tests:
           - not_null
+      - name: seat_status
+        description: >
+          Vendor seat / licence state as reported at the LAST read, lower-cased
+          ('active', 'deactivated', …). Not a property of `day`: sources restate
+          it on every read of their rolling window, so a person whose seat is
+          deactivated today carries the new value on every historical row.
+          Populated by Claude Team only (`status`); NULL where the source has no
+          seat lifecycle concept. Reaches gold as the seat_status dimension.
+          Never use it as an emission filter — see the activity invariant above.
 
   - name: class_ai_assistant_usage
     description: >
@@ -385,7 +409,8 @@ models:
       - name: overage_metrics_json
         description: >
           Raw vendor-specific extras kept out of the positional contract.
-          Claude Team: limit_type / used_credits_basis / out_of_credits / seat_tier.
+          Claude Team: limit_type / used_credits_basis / out_of_credits /
+          seat_tier / disabled_reason / disabled_until / account_name.
       - name: source
         description: "Staging-model discriminator."
         tests:

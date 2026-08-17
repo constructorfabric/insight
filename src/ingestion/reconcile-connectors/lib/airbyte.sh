@@ -300,6 +300,14 @@ for p in json.load(sys.stdin):
 # POST /api/v1/connector_builder_projects/create with the manifest as a
 # parsed object. Prints the new builderProjectId. Manifest is loaded by
 # python/load_connector_manifest.py to convert YAML -> JSON object.
+#
+# The manifest reaches python on STDIN, never as an argument: Linux caps a
+# single argument at MAX_ARG_STRLEN (131072 bytes, kernel-fixed and not
+# raisable by ulimit), and a manifest crosses that long before it is unusual —
+# `execve` then fails with "Argument list too long", the body comes out empty,
+# and the API answers the empty POST with a 500 that names nothing. macOS has
+# no per-argument cap, so the same call succeeds locally and fails only in the
+# toolbox. A pipe has no such limit.
 # ---------------------------------------------------------------------------
 ab_builder_create_with_manifest() {
   local workspace_id="$1"
@@ -312,16 +320,16 @@ ab_builder_create_with_manifest() {
   local manifest_json
   manifest_json="$(python3 "${_AIRBYTE_PY_DIR}/load_connector_manifest.py" "${manifest_path}")" || return 1
   local body
-  body=$(python3 -c '
+  body=$(printf '%s' "${manifest_json}" | python3 -c '
 import sys, json
 print(json.dumps({
   "workspaceId": sys.argv[1],
   "builderProject": {
     "name": sys.argv[2],
-    "draftManifest": json.loads(sys.argv[3]),
+    "draftManifest": json.load(sys.stdin),
   },
 }))
-' "${workspace_id}" "${connector_name}" "${manifest_json}")
+' "${workspace_id}" "${connector_name}")
   ab__curl POST /api/v1/connector_builder_projects/create "${body}" \
     | python3 -c 'import sys,json;print(json.load(sys.stdin).get("builderProjectId",""))'
 }
@@ -350,9 +358,11 @@ ab_builder_publish() {
   # (which is {type, connection_specification}). Build the wrapper here from
   # snake_case manifest fields. Same shape used by update path below.
   local body
-  body=$(python3 -c '
+  # The manifest arrives on stdin, not as an argument — see the note on
+  # ab_builder_create_with_manifest.
+  body=$(printf '%s' "${manifest_json}" | python3 -c '
 import sys, json
-m = json.loads(sys.argv[5])
+m = json.load(sys.stdin)
 mspec = m.get("spec", {}) or {}
 spec = {
   "documentationUrl": mspec.get("documentation_url", ""),
@@ -371,7 +381,7 @@ print(json.dumps({
     "version": 1,
   },
 }))
-' "${workspace_id}" "${builder_project_id}" "${connector_name}" "${description}" "${manifest_json}")
+' "${workspace_id}" "${builder_project_id}" "${connector_name}" "${description}")
   ab__curl POST /api/v1/connector_builder_projects/publish "${body}" \
     | python3 -c 'import sys,json;print(json.load(sys.stdin).get("sourceDefinitionId",""))'
 }
@@ -416,9 +426,11 @@ else:
   local next_version=$((current_version + 1))
 
   local body
-  body=$(python3 -c '
+  # The manifest arrives on stdin, not as an argument — see the note on
+  # ab_builder_create_with_manifest.
+  body=$(printf '%s' "${manifest_json}" | python3 -c '
 import sys, json
-m = json.loads(sys.argv[4])
+m = json.load(sys.stdin)
 mspec = m.get("spec", {}) or {}
 spec = {
   "documentationUrl": mspec.get("documentation_url", ""),
@@ -434,10 +446,10 @@ print(json.dumps({
     "description": sys.argv[3],
     "manifest": m,
     "spec": spec,
-    "version": int(sys.argv[5]),
+    "version": int(sys.argv[4]),
   },
 }))
-' "${workspace_id}" "${source_definition_id}" "${description}" "${manifest_json}" "${next_version}")
+' "${workspace_id}" "${source_definition_id}" "${description}" "${next_version}")
   ab__curl POST /api/v1/declarative_source_definitions/create_manifest "${body}"
 }
 
