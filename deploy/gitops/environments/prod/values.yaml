@@ -154,9 +154,13 @@ authenticator:
       cpu: 1
       memory: 512Mi
 
-# Clone-based commit extraction for the github connector, whose descriptor
-# requires git_proxy_url/git_proxy_token; reconcile injects both from the
-# chart-owned Secret. Airbyte-only consumer — no gateway route.
+# Clone-based commit extraction for the github connector. Airbyte-only
+# consumer — no gateway route.
+# INVARIANT: the connector's own Secret must carry git_proxy_url and
+# git_proxy_token itself. Reconcile injects them only for a descriptor setting
+# platform_config.git_proxy, and no descriptor sets it, so the CronJob's
+# GIT_PROXY_URL/GIT_PROXY_TOKEN go unread. The sealed token must stay equal to
+# the one in insight-git-cli-proxy-config or every sync 401s.
 gitCliProxy:
   deploy: true
   persistence:
