@@ -13,13 +13,21 @@ import { buildIdentityTree, PEOPLE, PEOPLE_BY_EMAIL } from "./registry";
 const defaultPerson = PEOPLE[0];
 
 /**
+ * A mock page holds far fewer rows than a real one. The synthetic roster is
+ * smaller than the console's page size, so honouring `?limit=` would put every
+ * row on page one and leave "show more" unreachable in mock mode — the affordance
+ * would have no dev or Storybook path at all.
+ */
+const MOCK_PAGE_SIZE = 8;
+
+/**
  * One page of a listing, cursor and all — the mock pages the way the service
  * does so the console's "show more" is exercised in mock mode too. The cursor
  * carries the query it was issued for, and a mismatched one restarts, which is
  * the behaviour the real cursor enforces by refusing.
  */
 function pageOf<T>(items: T[], params: URLSearchParams, query: string) {
-  const limit = Number(params.get("limit") ?? 20);
+  const limit = Math.min(Number(params.get("limit") ?? 20), MOCK_PAGE_SIZE);
   const cursor = params.get("cursor");
   const decoded = cursor ? JSON.parse(atob(cursor)) : null;
   const offset = decoded?.q === query ? Number(decoded.at) : 0;
@@ -30,7 +38,6 @@ function pageOf<T>(items: T[], params: URLSearchParams, query: string) {
 
   return {
     items: slice,
-    truncated: more,
     next_cursor: more ? btoa(JSON.stringify({ q: query, at: next })) : null,
   };
 }

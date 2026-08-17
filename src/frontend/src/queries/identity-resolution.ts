@@ -130,23 +130,42 @@ const PAGE_SIZE = 50;
  * service refuses a cursor issued for a different query, since resuming one
  * mid-alphabet would skip people.
  */
+/** What a blank query means to a caller of {@link usePersonList}. */
+export type PersonListIntent = "browse" | "match";
+
+/**
+ * Whether these terms ask for anything under this intent.
+ *
+ * INVARIANT: one rule, used by both the query's fetch gate and the caller's
+ * display. A picker that renders rows the query never asked for is showing
+ * another caller's cache.
+ */
+export function listsAnyone(q: string, intent: PersonListIntent): boolean {
+  return intent === "browse" || q.trim().length > 0;
+}
+
 export function usePersonList(
   q: string,
-  /** Off where a blank query must NOT list the tenant — the assign picker
-   *  inside a dialog wants matches, not a roster. */
-  options: { enabled?: boolean } = {},
+  /** `browse` lists the tenant on a blank query; `match` answers nothing until
+   *  terms are typed — the assign picker inside a dialog wants matches, and a
+   *  roster would bury the one name the operator came to type.
+   *
+   *  INVARIANT: part of the query key, not only the fetch gate. `enabled: false`
+   *  stops a request and not a cache read, so one shared key would render the
+   *  roster that browse mode cached inside the dialog. */
+  intent: PersonListIntent = "browse",
 ): UseInfiniteQueryResult<InfiniteData<PersonSearchResponse>> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
   const trimmed = q.trim();
   return useInfiniteQuery({
-    queryKey: ["identity", "persons", "search", sessionScope, trimmed],
+    queryKey: ["identity", "persons", "search", sessionScope, intent, trimmed],
     queryFn: ({ pageParam }) =>
       searchPersons(trimmed, { cursor: pageParam, limit: PAGE_SIZE }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     staleTime: ATTENTION_STALE_TIME,
-    enabled: sessionScope != null && (options.enabled ?? true),
+    enabled: sessionScope != null && listsAnyone(trimmed, intent),
   });
 }
 

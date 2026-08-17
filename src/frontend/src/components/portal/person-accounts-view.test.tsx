@@ -36,7 +36,8 @@ const hooks = vi.hoisted(() => ({
     fetchNextPage: vi.fn(),
   },
 }));
-vi.mock("@/queries/identity-resolution", () => ({
+vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   usePersonAccounts: () => hooks.accounts,
   usePersonList: () => hooks.search,
   // The window's own behaviour belongs to account-detail.test.

@@ -509,7 +509,6 @@ class AccountSearchResponse(BaseModel):
     )
     items: list[AccountMatchResponse]
     next_cursor: str | None = Field(None, description='Pass back as `?cursor=` for the next page; absent on the last one. Only\nvalid for the query that issued it — narrowing `q` starts over.')
-    truncated: bool = Field(..., description='More accounts follow this page. Kept beside `next_cursor` for the\nclients that predate it: to them it still reads "this is a cut".')
 
 
 class AttentionResponse(BaseModel):
@@ -519,7 +518,7 @@ class AttentionResponse(BaseModel):
     items: list[QueueItemResponse]
     items_truncated: bool = Field(..., description='`limit` cut the item list — more accounts await a decision than are\nlisted here. Distinct from `truncated`: the rates stay whole-tenant,\nonly this page is short.')
     rates: ResolutionRatesResponse
-    truncated: bool = Field(..., description='The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide.')
+    truncated: bool = Field(..., description="One of the two reads behind this queue hit its safety cap — the connector\nevidence or the tenant's bindings — so the queue and the rates describe\nonly part of the tenant's accounts. Consumers must not present these\nnumbers as tenant-wide.")
 
 
 class CorrectionResponse(BaseModel):
@@ -566,7 +565,6 @@ class PersonListResponse(BaseModel):
     )
     items: list[PersonSummaryResponse]
     next_cursor: str | None = Field(None, description='Pass back as `?cursor=` for the next page; absent on the last one. Only\nvalid for the query that issued it — narrowing the terms starts over.')
-    truncated: bool = Field(..., description='More persons follow this page. Kept beside `next_cursor` for the\nclients that predate it: to them it still reads "this is a cut", which\nis true — it is just no longer the end of the road.')
 
 
 class PersonRoleListResponse(BaseModel):

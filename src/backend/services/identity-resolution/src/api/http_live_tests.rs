@@ -28,7 +28,8 @@ use toolkit_security::SecurityContext;
 
 use super::AppState;
 use crate::config::GearConfig;
-use crate::infra::db::test_fixture::{Fixture, fixture_or_skip};
+use crate::domain::resolution::EXCLUDED_PERSON;
+use crate::infra::db::test_fixture::{FIXTURE_REASON, Fixture, fixture_or_skip};
 use crate::infra::db::{person_roles_repo, roles_repo};
 
 type TestResult = anyhow::Result<()>;
@@ -691,13 +692,18 @@ async fn the_listing_is_ordered_by_the_label_each_row_shows() -> TestResult {
     let operator = admin_operator(&f).await?;
     let marker = Uuid::now_v7().simple().to_string();
 
+    // The addresses and the name are deliberately in opposite orders: `named`
+    // has the EARLIER address and the LATER name. Sorting by the address would
+    // put them first, sorting by the label they show puts them second — so the
+    // assertion can tell the two rules apart, which a same-direction pair
+    // cannot.
     let email_only = f
-        .person(&format!("aaa-order-{marker}@http-live.test"))
+        .person(&format!("mmm-order-{marker}@http-live.test"))
         .await?;
     let named = f
-        .person(&format!("zzz-order-{marker}@http-live.test"))
+        .person(&format!("aaa-order-{marker}@http-live.test"))
         .await?;
-    f.observed(named, "display_name", &format!("Orderly Named {marker}"))
+    f.observed(named, "display_name", &format!("Zzz Named {marker}"))
         .await?;
     let unlabelled = f.emailless_person().await?;
 
@@ -712,14 +718,37 @@ async fn the_listing_is_ordered_by_the_label_each_row_shows() -> TestResult {
     assert_eq!(
         listed,
         expected.to_vec(),
-        "the address sorts before the name that starts later, and the \
+        "the displayed name places the named person, not their address, and the \
          label-less person comes last"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn a_cut_page_says_so_instead_of_posing_as_the_answer() -> TestResult {
+async fn the_roster_leaves_out_the_person_that_stands_for_exclusion() -> TestResult {
+    // Excluding an account binds it to a sentinel person id. It is a marker, not
+    // somebody: listed, it would be a nameless row an operator could pick as a
+    // bind or merge target, and every excluded account would look like theirs.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let operator = admin_operator(&f).await?;
+    let account = format!("excluded-{}", Uuid::now_v7().simple());
+    f.bound_at(&account, EXCLUDED_PERSON, FIXTURE_REASON, 60)
+        .await?;
+
+    let (status, body) = get(app(&f, operator), "/v1/persons").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !found_ids(&body)?.contains(&EXCLUDED_PERSON.to_string()),
+        "the exclusion sentinel is not a person to list"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cut_page_offers_the_next_one_and_a_whole_answer_does_not() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -738,10 +767,16 @@ async fn a_cut_page_says_so_instead_of_posing_as_the_answer() -> TestResult {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(found_ids(&body)?.len(), 2, "the page honours the limit");
-    assert_eq!(body["truncated"], true, "the cut is announced");
+    assert!(
+        body["next_cursor"].is_string(),
+        "a cut page offers the way on: {body}"
+    );
 
     let (_, full) = get(app(&f, operator), &format!("/v1/persons?q=cut-{marker}")).await?;
     assert_eq!(found_ids(&full)?.len(), 3);
-    assert_eq!(full["truncated"], false);
+    assert!(
+        full["next_cursor"].is_null(),
+        "a whole answer offers no next page: {full}"
+    );
     Ok(())
 }

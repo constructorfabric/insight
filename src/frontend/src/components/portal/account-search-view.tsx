@@ -90,8 +90,10 @@ export function AccountSearchView() {
         />
       ) : null}
 
-      {/* Two different emptinesses: terms that matched nothing, and a tenant
-          whose connectors have reported nothing at all. */}
+      {/* Two different emptinesses: terms that matched nothing, and nothing to
+          list. The second one does not claim the tenant is empty — the service
+          answers an empty list for a fold it cannot read yet, and an operator
+          cannot tell that from a tenant nobody has connected. */}
       {!loading && items.length === 0 && !search.isError ? (
         <Empty className="rounded-lg border">
           <EmptyHeader>
@@ -135,7 +137,10 @@ export function AccountSearchView() {
                 variant="outline"
                 size="sm"
                 className="m-2 self-start"
-                disabled={search.isFetchingNextPage}
+                // Not `disabled`: disabling the element that has focus blurs it,
+                // and the operator's next Tab restarts from the page chrome —
+                // a whole page of rows away from the button they just pressed.
+                aria-busy={search.isFetchingNextPage}
                 onClick={() => void search.fetchNextPage()}
               >
                 {search.isFetchingNextPage
@@ -176,11 +181,14 @@ function AccountRow({
   return (
     // Fixed columns, not content-sized ones: a list is read down a column, and
     // holders whose names differ in length would otherwise step the cards and
-    // the verbs sideways on every row.
+    // the verbs sideways on every row. Only where there is room for all four —
+    // the trailing tracks are ~29rem, and taking them from a narrower window
+    // would leave the address, the one value this mode answers with, an
+    // ellipsis. Below that the row stacks instead.
     <div
       className={cn(
         "grid grid-cols-1 items-center gap-2 rounded-md border p-3",
-        "sm:grid-cols-[minmax(0,1fr)_18rem_11rem_auto]",
+        "lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)_minmax(0,11rem)_auto]",
         selected ? "border-ring bg-muted" : "border-transparent",
       )}
     >

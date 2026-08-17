@@ -30,7 +30,7 @@ const hooks = vi.hoisted(() => {
   return {
     search: {
       data: undefined as
-        | { pages: { items: AccountMatch[]; truncated: boolean }[] }
+        | { pages: { items: AccountMatch[] }[] }
         | undefined,
       isFetching: false,
       isFetchingNextPage: false,
@@ -48,7 +48,8 @@ const hooks = vi.hoisted(() => {
     verb,
   };
 });
-vi.mock("@/queries/identity-resolution", () => ({
+vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useAccountList: () => hooks.search,
   useAccountBinding: () => hooks.binding,
   useBindAccount: () => hooks.verb(),
@@ -93,7 +94,7 @@ function match(over: Partial<AccountMatch> = {}): AccountMatch {
 }
 
 function page(items: AccountMatch[]) {
-  return { pages: [{ items, truncated: false }] };
+  return { pages: [{ items }] };
 }
 
 beforeEach(() => {
@@ -119,11 +120,18 @@ describe("AccountSearchView", () => {
     expect(screen.getByText("octocat")).toBeInTheDocument();
   });
 
-  it("says so when no connector has reported an account at all", () => {
+  // An empty list is not proof of an empty tenant: the service answers one for
+  // a fold it cannot read yet, so this state says what it knows — nothing to
+  // list — and names the other explanation instead of denying it.
+  it("offers nothing to list without claiming no account exists", () => {
     hooks.search.data = page([]);
     render(<AccountSearchView />);
 
-    expect(screen.getByText(/no account has been observed yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing to list here yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/may not have run yet/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/no account has been observed/i),
+    ).not.toBeInTheDocument();
   });
 
   it("answers whose an account is", async () => {

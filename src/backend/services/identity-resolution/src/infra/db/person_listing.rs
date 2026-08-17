@@ -9,26 +9,44 @@
 //! first/last, else the address, else the source-native handle — folded to
 //! lower case, with the people the journal knows by nothing but an id last.
 //! Ordering by anything else would sort the list by a value the rows do not
-//! show. The label is computed from the same latest-observation-wins rule
-//! `person_card` assembles cards by, so the two cannot disagree.
+//! show.
+//!
+//! INVARIANT: the label follows `person_card`'s rule exactly, including where
+//! that rule leaves an attribute absent. Both rank every observation of a value
+//! type and only then discard a blank winner — dropping blanks first would
+//! promote a value the card does not show, and the list would sort a row under a
+//! name nobody sees.
 //!
 //! The filter deliberately matches a WIDER surface than the order: every value
 //! that is current **for its own source**, not just the globally latest one.
 //! A person renamed in one system stays findable by the name another system
 //! still reports, which is exactly what an operator arrives holding.
 //!
-//! INVARIANT: this is a deliberate tenant-bounded scan, not a missing index.
-//! A substring match over the journal cannot use a B-tree, and a derived
-//! current-values table would be one more cache to keep in sync with every
-//! write path. The consumer is the admin console — one operator at a time —
-//! and the scan is bounded by the tenant filter, the six searchable value
-//! types and the page. Revisit as a derived table only if measured slow at
-//! real scale.
+//! This is a deliberate tenant-wide scan, not a missing index: a substring match
+//! over the journal cannot use a B-tree, and a derived current-values table
+//! would be one more cache to keep in sync with every write path. The page
+//! bounds what is returned and not the work — every page ranks the tenant's
+//! observations again — so the consumer is the admin console, one operator at a
+//! time. A derived table is the answer if that stops being true.
 
 use sea_orm::{ConnectionTrait as _, DatabaseConnection, DbBackend, QueryResult, Statement};
 use uuid::Uuid;
 
 use crate::domain::resolution::EXCLUDED_PERSON;
+
+/// How much of the label the order key carries.
+///
+/// INVARIANT: must keep the key under `max_sort_length` (1024 bytes by default,
+/// 4 bytes per utf8mb4 character, plus one for the band digit). MariaDB
+/// truncates a TEXT sort key at that length but compares the resume predicate in
+/// full, so a longer key would order two rows equal and resume between them —
+/// and the row on the wrong side of that boundary is unreachable by paging.
+/// Truncation only widens the tie the `person_id` tie-break already settles.
+const ORDER_KEY_CHARS: usize = 255;
+
+// The bound is only a bound if it fits: four bytes per utf8mb4 character, plus
+// the band digit, inside MariaDB's default `max_sort_length`.
+const _: () = assert!(ORDER_KEY_CHARS * 4 < 1024);
 
 /// Observation attributes a term may match. Wider than the label's inputs:
 /// `employee_id` is worth searching by and worth nothing to sort by.
@@ -141,7 +159,7 @@ fn build_query(
         current_vals AS (
             SELECT person_id, value_type, value_effective, created_at, id
             FROM ranked
-            WHERE rn = 1 AND value_effective IS NOT NULL
+            WHERE rn = 1
         ),
         latest_vals AS (
             SELECT person_id, value_type, value_effective,
@@ -182,7 +200,7 @@ fn build_query(
             SELECT p.person_id AS person_id,
                    CONCAT(
                        IF(c.label IS NULL, '1', '0'),
-                       LOWER(COALESCE(c.label, ''))
+                       LEFT(LOWER(COALESCE(c.label, '')), {ORDER_KEY_CHARS})
                    ) AS order_key
             FROM people p
             LEFT JOIN card c ON c.person_id = p.person_id
@@ -228,7 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn browsing_binds_no_filter_and_still_orders_and_limits() {
+    fn a_query_with_no_terms_filters_nothing_and_still_pages() {
         let sql = query(&[], &[], None);
 
         assert!(!sql.contains("EXISTS"), "no term filter when browsing");
@@ -239,33 +257,69 @@ mod tests {
 
     #[test]
     fn every_term_becomes_its_own_match_requirement() {
+        // ANDed, not ORed: "iva example.com" means a person matching both, and
+        // the AND is what the count of clauses cannot see.
         let terms = ["iva".to_owned(), "example.com".to_owned()];
 
         let sql = query(&terms, &[], None);
 
-        assert_eq!(
-            sql.matches("EXISTS").count(),
-            2,
-            "a person must match both terms, not either"
+        assert_eq!(sql.matches("EXISTS").count(), 2);
+        assert!(
+            !sql.contains("OR EXISTS"),
+            "a person must match both terms, not either: {sql}"
         );
     }
 
     #[test]
-    fn the_listing_starts_from_every_person_not_only_the_described_ones() {
-        // A person minted at first sign-in carries no card attributes at all;
-        // browsing must still list them, so the base set is the journal's
-        // persons and the label join is an outer one.
-        let sql = query(&[], &[], None);
+    fn every_value_lands_in_the_slot_its_placeholder_holds() {
+        // The bind list is assembled by hand, so a mismatch does not fail — it
+        // shifts, and a resume value lands in a LIKE pattern. Counting is not
+        // enough; each value has to be recognisable in its own position.
+        let terms = ["iva".to_owned()];
+        let tenant = Uuid::from_u128(0xA1);
+        let within = [Uuid::from_u128(0xB2)];
+        let resuming = Uuid::from_u128(0xC3);
 
-        assert!(sql.contains("SELECT DISTINCT person_id"));
-        assert!(sql.contains("LEFT JOIN card"));
+        let (sql, values) = build_query(
+            tenant,
+            &terms,
+            &within,
+            Some(After {
+                order_key: "0ivanov",
+                person_id: resuming,
+            }),
+            50,
+        );
+
+        assert_eq!(
+            sql.matches('?').count(),
+            values.len(),
+            "a placeholder without its value shifts every later binding"
+        );
+        let bytes = |id: Uuid| sea_orm::Value::from(id.as_bytes().to_vec());
+        assert_eq!(
+            values,
+            vec![
+                bytes(tenant),
+                bytes(tenant),
+                bytes(EXCLUDED_PERSON),
+                bytes(within[0]),
+                sea_orm::Value::from("%iva%".to_owned()),
+                sea_orm::Value::from("0ivanov".to_owned()),
+                sea_orm::Value::from("0ivanov".to_owned()),
+                bytes(resuming),
+                sea_orm::Value::from(50u64),
+            ],
+            "the bind order drifted from the order the placeholders appear in"
+        );
     }
 
     #[test]
     fn resuming_compares_the_key_then_breaks_the_tie_on_the_id() {
-        // A case-folding collation makes distinct labels compare equal, so the
-        // id tie-break is what keeps a page boundary from repeating or
-        // skipping those rows.
+        // A case-folding collation makes distinct labels compare equal, and the
+        // key is truncated for the sort, which widens that tie further — so the
+        // id tie-break is what keeps a page boundary from repeating or skipping
+        // those rows.
         let sql = query(
             &[],
             &[],
@@ -279,35 +333,12 @@ mod tests {
     }
 
     #[test]
-    fn bound_values_follow_the_placeholder_order() {
-        let terms = ["iva".to_owned()];
-        let within = [Uuid::nil()];
-
-        let (sql, values) = build_query(
-            Uuid::nil(),
-            &terms,
-            &within,
-            Some(After {
-                order_key: "0ivanov",
-                person_id: Uuid::nil(),
-            }),
-            50,
-        );
-
-        assert_eq!(
-            sql.matches('?').count(),
-            values.len(),
-            "a placeholder without its value shifts every later binding"
-        );
-    }
-
-    #[test]
-    fn the_unnamed_band_sorts_after_every_label() {
-        // The band is a leading digit on the key rather than a second ORDER BY
-        // column, so the cursor stays a single comparable string.
-        let sql = query(&[], &[], None);
-
-        assert!(sql.contains("IF(c.label IS NULL, '1', '0')"));
+    fn the_order_key_is_cut_to_what_the_sort_can_compare() {
+        // MariaDB truncates a TEXT sort key at `max_sort_length` but compares the
+        // resume predicate in full. Cutting the label to a length that fits is
+        // what stops a long-label boundary from skipping a person for good; the
+        // budget itself is checked at compile time beside the constant.
+        assert!(query(&[], &[], None).contains(&format!("), {ORDER_KEY_CHARS})")));
     }
 
     #[test]

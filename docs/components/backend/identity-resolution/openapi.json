@@ -214,15 +214,10 @@
               "string",
               "null"
             ]
-          },
-          "truncated": {
-            "description": "More accounts follow this page. Kept beside `next_cursor` for the\nclients that predate it: to them it still reads \"this is a cut\".",
-            "type": "boolean"
           }
         },
         "required": [
-          "items",
-          "truncated"
+          "items"
         ],
         "type": "object"
       },
@@ -242,7 +237,7 @@
             "$ref": "#/components/schemas/ResolutionRatesResponse"
           },
           "truncated": {
-            "description": "The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide.",
+            "description": "One of the two reads behind this queue hit its safety cap — the connector\nevidence or the tenant's bindings — so the queue and the rates describe\nonly part of the tenant's accounts. Consumers must not present these\nnumbers as tenant-wide.",
             "type": "boolean"
           }
         },
@@ -613,15 +608,10 @@
               "string",
               "null"
             ]
-          },
-          "truncated": {
-            "description": "More persons follow this page. Kept beside `next_cursor` for the\nclients that predate it: to them it still reads \"this is a cut\", which\nis true — it is just no longer the end of the road.",
-            "type": "boolean"
           }
         },
         "required": [
-          "items",
-          "truncated"
+          "items"
         ],
         "type": "object"
       },

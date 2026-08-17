@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { usePersonList } from "@/queries/identity-resolution";
+import { listsAnyone, usePersonList } from "@/queries/identity-resolution";
 import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 250;
@@ -45,14 +45,20 @@ export function PersonPicker({
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const debounced = useDebouncedValue(query, DEBOUNCE_MS);
-  const asked = browseWhenEmpty || debounced.trim().length > 0;
-  const list = usePersonList(debounced, { enabled: asked });
+  const intent = browseWhenEmpty ? "browse" : "match";
+  const asked = listsAnyone(debounced, intent);
+  const list = usePersonList(debounced, intent);
 
   const excluded = new Set(excludeIds);
-  const results = (list.data?.pages ?? [])
-    .flatMap((page) => page.items)
-    .filter((p) => !excluded.has(p.person_id));
+  const results = asked
+    ? (list.data?.pages ?? [])
+        .flatMap((page) => page.items)
+        .filter((p) => !excluded.has(p.person_id))
+    : [];
   const loading = list.isFetching && !list.isFetchingNextPage;
+  // A page whose every row was excluded is not "nobody matches" while more
+  // pages are unread — the button below is the answer, not the message.
+  const exhausted = !list.hasNextPage;
 
   return (
     <div className="flex flex-col gap-2">
@@ -77,7 +83,7 @@ export function PersonPicker({
           {t("identities.picker.failed")}
         </p>
       ) : null}
-      {asked && list.data && results.length === 0 && !loading ? (
+      {asked && list.data && results.length === 0 && !loading && exhausted ? (
         <p className="text-sm text-muted-foreground">
           {t("identities.picker.no_matches")}
         </p>
@@ -85,8 +91,8 @@ export function PersonPicker({
       {results.length > 0 ? (
         <ul
           className={cn(
-            "flex flex-col gap-1 overflow-y-auto",
-            className ?? "max-h-64",
+            "flex max-h-64 flex-col gap-1 overflow-y-auto",
+            className,
           )}
         >
           {results.map((person) => (
@@ -121,13 +127,13 @@ export function PersonPicker({
           ))}
         </ul>
       ) : null}
-      {list.hasNextPage ? (
+      {asked && list.hasNextPage ? (
         <Button
           type="button"
           variant="outline"
           size="sm"
           className="self-start"
-          disabled={list.isFetchingNextPage}
+          aria-busy={list.isFetchingNextPage}
           onClick={() => void list.fetchNextPage()}
         >
           {list.isFetchingNextPage

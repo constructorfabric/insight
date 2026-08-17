@@ -153,12 +153,13 @@ function AccountRow({
   const { t } = useTranslation();
   const label = entry.email?.trim() || entry.username?.trim() || entry.account_id;
   return (
-    // Same fixed columns as the account listing: the two lists sit one tab
-    // apart and reading either one down a column should feel the same.
+    // Same fixed columns, and the same width to earn them, as the account
+    // listing: the two lists sit one tab apart and reading either one down a
+    // column should feel the same.
     <div
       className={cn(
         "grid grid-cols-1 items-center gap-2 rounded-md border p-3",
-        "sm:grid-cols-[minmax(0,1fr)_11rem_auto]",
+        "lg:grid-cols-[minmax(0,1fr)_minmax(0,11rem)_auto]",
         selected ? "border-ring bg-muted" : "border-transparent",
       )}
     >

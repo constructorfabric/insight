@@ -65,13 +65,13 @@ struct PageKey {
     person_id: Uuid,
 }
 
+impl listing::PagePosition for PageKey {
+    const KIND: &'static str = "persons";
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonListResponse {
     pub items: Vec<PersonSummaryResponse>,
-    /// More persons follow this page. Kept beside `next_cursor` for the
-    /// clients that predate it: to them it still reads "this is a cut", which
-    /// is true — it is just no longer the end of the road.
-    pub truncated: bool,
     /// Pass back as `?cursor=` for the next page; absent on the last one. Only
     /// valid for the query that issued it — narrowing the terms starts over.
     pub next_cursor: Option<String>,
@@ -92,7 +92,7 @@ pub async fn search_persons(
     let (named, values) = partition_terms(&terms);
 
     let query = terms.join(" ");
-    let resume = resume_from(params.cursor.as_deref(), &query)?;
+    let resume = resume_from(params.cursor.as_deref(), tenant, &query)?;
 
     // Terms that named nobody must answer nobody. Without this the page would
     // fall through to the unfiltered listing and hand back the whole tenant.
@@ -102,14 +102,10 @@ pub async fn search_persons(
         page_of_persons(&state, tenant, &values, &named, resume.as_ref(), limit).await?
     };
 
-    let (rows, next_cursor) = cut_to_page(rows, limit, &query)?;
+    let (rows, next_cursor) = cut_to_page(rows, limit, tenant, &query)?;
     let items = hydrate(&state, tenant, &rows).await?;
 
-    Ok(Json(PersonListResponse {
-        items,
-        truncated: next_cursor.is_some(),
-        next_cursor,
-    }))
+    Ok(Json(PersonListResponse { items, next_cursor }))
 }
 
 /// One page plus the over-fetched truncation probe.
@@ -136,6 +132,7 @@ async fn page_of_persons(
 fn cut_to_page(
     mut rows: Vec<PersonListRow>,
     limit: u64,
+    tenant: Uuid,
     query: &str,
 ) -> Result<(Vec<PersonListRow>, Option<String>), CanonicalError> {
     if rows.len() <= usize::try_from(limit).unwrap_or(usize::MAX) {
@@ -147,6 +144,7 @@ fn cut_to_page(
         .last()
         .map(|last| {
             listing::encode_cursor(
+                tenant,
                 query,
                 &PageKey {
                     order_key: last.order_key.clone(),
@@ -185,12 +183,16 @@ async fn hydrate(
     Ok(items)
 }
 
-fn resume_from(cursor: Option<&str>, query: &str) -> Result<Option<PageKey>, CanonicalError> {
+fn resume_from(
+    cursor: Option<&str>,
+    tenant: Uuid,
+    query: &str,
+) -> Result<Option<PageKey>, CanonicalError> {
     let Some(cursor) = cursor.map(str::trim).filter(|c| !c.is_empty()) else {
         return Ok(None);
     };
 
-    listing::decode_cursor::<PageKey>(cursor, query)
+    listing::decode_cursor::<PageKey>(cursor, tenant, query)
         .map(Some)
         .map_err(|rejected: CursorRejected| invalid("cursor", rejected.message()))
 }
@@ -328,6 +330,8 @@ mod tests {
         );
     }
 
+    const TENANT: Uuid = Uuid::from_u128(0x7e_11a7);
+
     #[test]
     fn browsing_is_not_a_query_that_named_nobody() {
         assert!(
@@ -339,12 +343,12 @@ mod tests {
     #[test]
     fn a_full_page_offers_the_next_one_and_a_short_page_ends_the_walk() -> R {
         let full = vec![row("0alice"), row("0bob"), row("0carol")];
-        let (served, next) = cut_to_page(full, 2, "")?;
+        let (served, next) = cut_to_page(full, 2, TENANT, "")?;
         assert_eq!(served.len(), 2, "the probe row is never served");
         assert!(next.is_some(), "a probe row means another page exists");
 
         let short = vec![row("0alice")];
-        let (served, next) = cut_to_page(short, 2, "")?;
+        let (served, next) = cut_to_page(short, 2, TENANT, "")?;
         assert_eq!(served.len(), 1);
         assert!(next.is_none(), "no probe row is the end of the list");
         Ok(())
@@ -355,9 +359,9 @@ mod tests {
         let rows = vec![row("0alice"), row("0bob"), row("0carol")];
         let second = rows[1].clone();
 
-        let (_, next) = cut_to_page(rows, 2, "")?;
+        let (_, next) = cut_to_page(rows, 2, TENANT, "")?;
         let cursor = next.ok_or("expected a next page")?;
-        let key: PageKey = listing::decode_cursor(&cursor, "")
+        let key: PageKey = listing::decode_cursor(&cursor, TENANT, "")
             .map_err(|rejected| rejected.message().to_owned())?;
 
         assert_eq!(key.order_key, second.order_key);
@@ -368,17 +372,17 @@ mod tests {
     #[test]
     fn a_cursor_is_refused_once_the_query_changes() {
         let rows = vec![row("0alice"), row("0bob")];
-        let cursor = cut_to_page(rows, 1, "iva")
+        let cursor = cut_to_page(rows, 1, TENANT, "iva")
             .ok()
             .and_then(|(_, next)| next)
             .unwrap_or_default();
 
         assert!(
-            resume_from(Some(&cursor), "ivan").is_err(),
+            resume_from(Some(&cursor), TENANT, "ivan").is_err(),
             "resuming a narrowed search mid-alphabet would skip people"
         );
         assert!(
-            resume_from(Some(&cursor), "iva").is_ok(),
+            resume_from(Some(&cursor), TENANT, "iva").is_ok(),
             "the query that issued it still walks"
         );
     }
@@ -387,7 +391,7 @@ mod tests {
     fn an_absent_or_blank_cursor_starts_at_the_first_page() -> R {
         for cursor in [None, Some(""), Some("  ")] {
             assert!(
-                resume_from(cursor, "")
+                resume_from(cursor, TENANT, "")
                     .map_err(|e| anyhow::anyhow!("{e:?}"))?
                     .is_none(),
                 "should start over: {cursor:?}"

@@ -102,6 +102,11 @@ def test_the_next_page_neither_repeats_nor_skips_a_person(
     person twice, a skip means somebody is unreachable by browsing."""
     one_at_a_time = _walk(admin_operator_session, {"limit": 1}, pages=6)
 
+    # Without this the test passes on a build that issues no cursor at all: the
+    # walk would stop after one row, and one row never repeats itself.
+    assert len(one_at_a_time) > 1, (
+        "the walk never left the first page — the listing offered no cursor"
+    )
     assert len(one_at_a_time) == len(set(one_at_a_time)), (
         f"a person appeared on two pages: {one_at_a_time}"
     )

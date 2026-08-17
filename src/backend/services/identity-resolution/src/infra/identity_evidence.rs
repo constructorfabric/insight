@@ -49,78 +49,102 @@ pub struct EvidenceSnapshot {
 /// The descriptive attributes are read for the operator, not for the matcher:
 /// an account with no address is bound by a human or by nobody, and a human
 /// needs to recognise whose it is. Same scan, same grouping.
+///
+/// INVARIANT: every aggregate breaks its tie on `(_synced_at, _version)`, not
+/// `_synced_at` alone. The relation is a `ReplacingMergeTree(_version)`, so until
+/// a merge runs one row can be present twice; `_synced_at` alone would then pick
+/// between them arbitrarily and the fold would answer differently per execution —
+/// which the listing's cursor cannot survive, since it resumes after a value this
+/// fold produced. Deciding by the replacing version picks the row `FINAL` would
+/// keep, without a merge pass over the table.
+///
+/// No ORDER BY: both readers wrap this and order it their own way, and a sort
+/// here would be thrown away by one of them.
 const FOLD_SQL: &str = r"
     SELECT
         ifNull(insight_source_type, '')                 AS source_type,
         ifNull(toString(insight_source_id), '')         AS source_id,
         ifNull(source_account_id, '')                   AS account_id,
-        argMax(ifNull(operation_type, ''), _synced_at)  AS latest_op,
+        argMax(ifNull(operation_type, ''), (_synced_at, _version)) AS latest_op,
         argMaxIf(
-            ifNull(value, ''), _synced_at,
+            ifNull(value, ''), (_synced_at, _version),
             value_type = 'email' AND operation_type = 'UPSERT' AND value != ''
         )                                               AS email,
         argMaxIf(
-            ifNull(value, ''), _synced_at,
+            ifNull(value, ''), (_synced_at, _version),
             value_type = 'username' AND operation_type = 'UPSERT' AND value != ''
         )                                               AS username,
         argMaxIf(
-            ifNull(value, ''), _synced_at,
+            ifNull(value, ''), (_synced_at, _version),
             value_type = 'display_name' AND operation_type = 'UPSERT' AND value != ''
         )                                               AS display_name,
         argMaxIf(
-            ifNull(value, ''), _synced_at,
+            ifNull(value, ''), (_synced_at, _version),
             value_type = 'first_name' AND operation_type = 'UPSERT' AND value != ''
         )                                               AS first_name,
         argMaxIf(
-            ifNull(value, ''), _synced_at,
+            ifNull(value, ''), (_synced_at, _version),
             value_type = 'last_name' AND operation_type = 'UPSERT' AND value != ''
         )                                               AS last_name,
         argMaxIf(
-            ifNull(value, ''), _synced_at,
+            ifNull(value, ''), (_synced_at, _version),
             value_type = 'job_title' AND operation_type = 'UPSERT' AND value != ''
         )                                               AS job_title,
         argMaxIf(
-            ifNull(value, ''), _synced_at,
+            ifNull(value, ''), (_synced_at, _version),
             value_type = 'department' AND operation_type = 'UPSERT' AND value != ''
         )                                               AS department,
         argMaxIf(
-            ifNull(value, ''), _synced_at,
+            ifNull(value, ''), (_synced_at, _version),
             value_type = 'status' AND operation_type = 'UPSERT' AND value != ''
         )                                               AS status,
         argMaxIf(
-            ifNull(value, ''), _synced_at,
+            ifNull(value, ''), (_synced_at, _version),
             value_type = 'parent_email' AND operation_type = 'UPSERT' AND value != ''
         )                                               AS manager_email
     FROM identity.identity_inputs
     WHERE source_account_id IS NOT NULL AND source_account_id != ''
     GROUP BY source_type, source_id, account_id
-    ORDER BY source_type, source_id, account_id
 ";
 
+/// The fold's own columns, named rather than `SELECT *`: the row struct is
+/// decoded positionally, so a reordered or added fold column would otherwise
+/// mis-decode in silence.
+const FOLD_COLUMNS: &str = "source_type, source_id, account_id, latest_op, email, username, \
+     display_name, first_name, last_name, job_title, department, status, manager_email";
+
+/// The name a source sends in parts, as [`compose_name`] assembles it. The
+/// order key needs it because a row described by parts alone still shows one.
+const COMPOSED_NAME_SQL: &str = "trimBoth(concatWithSeparator(' ', first_name, last_name))";
+
 /// The listing's order key: the label the row shows, folded to lower case.
-/// Ordering by the account key instead would sort the list by an identifier
-/// the operator does not read — and pagination needs SOME total order, since
-/// the fold has none of its own.
-const ORDER_LABEL_SQL: &str = "lower(if(email != '', email, \
-     if(username != '', username, if(display_name != '', display_name, account_id))))";
+///
+/// INVARIANT: the same precedence, including the composed fallback, that
+/// `map_row` and the console's account row apply. Sorting by anything else puts
+/// a row under a value it does not display. Unicode-aware (`lowerUTF8`, not
+/// `lower`), or a non-ASCII name sorts outside its own alphabet.
+const ORDER_LABEL_SQL: &str = "lowerUTF8(if(email != '', email, \
+     if(username != '', username, \
+     if(display_name != '', display_name, \
+     if({COMPOSED} != '', {COMPOSED}, account_id)))))";
 
 /// One page of the fold. `{FILTER}` narrows it, `{RESUME}` continues a walk;
 /// both are empty when browsing from the start.
 const LIST_SQL: &str = r"
-    SELECT source_type, source_id, account_id, latest_op, email, username,
-           display_name, first_name, last_name, job_title, department, status,
-           manager_email, {LABEL} AS order_label
+    SELECT {COLUMNS}, {LABEL} AS order_label
     FROM ({FOLD})
     WHERE latest_op != 'DELETE'{FILTER}{RESUME}
     ORDER BY order_label, source_type, source_id, account_id
     LIMIT ?
 ";
 
+/// Unicode-aware to match the order key: an operator who types `ü` must reach
+/// the row that shows `Ü`, the way the person listing's collation already does.
 const FILTER_SQL: &str = "
-      AND (positionCaseInsensitive(email, ?) > 0
-           OR positionCaseInsensitive(username, ?) > 0
-           OR positionCaseInsensitive(account_id, ?) > 0
-           OR positionCaseInsensitive(display_name, ?) > 0)";
+      AND (positionCaseInsensitiveUTF8(email, ?) > 0
+           OR positionCaseInsensitiveUTF8(username, ?) > 0
+           OR positionCaseInsensitiveUTF8(account_id, ?) > 0
+           OR positionCaseInsensitiveUTF8(display_name, ?) > 0)";
 
 /// Tuple comparison, so the tie-break on the account key is part of the same
 /// predicate: two accounts sharing a label must not both sit on the boundary.
@@ -160,6 +184,15 @@ struct FoldedRow {
 pub struct ListedAccount {
     pub evidence: AccountEvidence,
     pub order_label: String,
+}
+
+/// One page of listed accounts, and whether another follows it.
+#[derive(Debug, Default)]
+pub struct AccountPage {
+    pub accounts: Vec<ListedAccount>,
+    /// The database had more rows than the page. Not derivable from `accounts`,
+    /// which is why it travels with them.
+    pub more: bool,
 }
 
 /// Where a page of accounts resumes: the last row served.
@@ -206,8 +239,15 @@ impl ClickHouseEvidenceReader {
     pub async fn accounts(&self) -> anyhow::Result<EvidenceSnapshot> {
         // `''` for the order key: this read has no order to carry, and the
         // row shape is shared with the listing.
-        let sql =
-            format!("SELECT *, '' AS order_label FROM ({FOLD_SQL}) LIMIT {MAX_EVIDENCE_ACCOUNTS}");
+        //
+        // INVARIANT: the ORDER BY sits in the same SELECT as the ceiling. A
+        // ceiling over an unordered read takes whichever rows arrive first, so
+        // two reads could describe different subsets and the rates would move
+        // with no data behind it.
+        let sql = format!(
+            "SELECT {FOLD_COLUMNS}, '' AS order_label FROM ({FOLD_SQL}) \
+             ORDER BY source_type, source_id, account_id LIMIT {MAX_EVIDENCE_ACCOUNTS}"
+        );
         let rows: Vec<FoldedRow> = match self.client.query(&sql).fetch_all().await {
             Ok(rows) => rows,
             Err(e) if is_missing_relation(&e) => {
@@ -290,7 +330,7 @@ const OBSERVED_ACCOUNT_SQL: &str = r"
         toString(argMax(insight_source_id, _synced_at))  AS source_id,
         argMax(ifNull(operation_type, ''), _synced_at)   AS latest_op,
         argMaxIf(
-            ifNull(value, ''), _synced_at,
+            ifNull(value, ''), (_synced_at, _version),
             value_type = 'email' AND operation_type = 'UPSERT' AND value != ''
         )                                               AS email
     FROM identity.identity_inputs
@@ -343,11 +383,15 @@ fn map_row(row: FoldedRow) -> anyhow::Result<AccountEvidence> {
 /// Assemble the listing query: the fold, the optional needle, the optional
 /// resume, and the order that makes paging over it well defined.
 fn list_sql(filtered: bool, resuming: bool) -> String {
+    // {LABEL} last: it is what RESUME_SQL is written in terms of, so it has to
+    // be substituted after the resume clause is spliced in.
     LIST_SQL
+        .replace("{COLUMNS}", FOLD_COLUMNS)
         .replace("{FOLD}", FOLD_SQL)
         .replace("{FILTER}", if filtered { FILTER_SQL } else { "" })
         .replace("{RESUME}", if resuming { RESUME_SQL } else { "" })
         .replace("{LABEL}", ORDER_LABEL_SQL)
+        .replace("{COMPOSED}", COMPOSED_NAME_SQL)
 }
 
 /// A source that sends the parts but no whole name still names the person.
@@ -364,17 +408,19 @@ impl ClickHouseEvidenceReader {
     ///
     /// `needle` absent lists every open account; present, it keeps the ones
     /// carrying it. `after` resumes a previous page. Closed accounts are left
-    /// out either way — the source shut that door.
+    /// out either way — the source shut that door. `page_size` is what the
+    /// caller serves; the probe that decides whether another page follows is
+    /// fetched and dropped here, so no caller has to arrange that itself.
     ///
     /// # Errors
     ///
-    /// Returns an error if the query fails or a stored source id is not a UUID.
+    /// Returns an error if the query fails.
     pub async fn list(
         &self,
         needle: Option<&str>,
         after: Option<AfterAccount<'_>>,
-        limit: u64,
-    ) -> anyhow::Result<Vec<ListedAccount>> {
+        page_size: u64,
+    ) -> anyhow::Result<AccountPage> {
         let sql = list_sql(needle.is_some(), after.is_some());
 
         let mut query = self.client.query(&sql);
@@ -391,24 +437,32 @@ impl ClickHouseEvidenceReader {
                 .bind(after.account_id);
         }
 
-        let rows: Vec<FoldedRow> = match query.bind(limit).fetch_all().await {
+        let mut rows: Vec<FoldedRow> = match query.bind(page_size + 1).fetch_all().await {
             Ok(rows) => rows,
-            Err(e) if is_missing_relation(&e) => return Ok(Vec::new()),
+            Err(e) if is_missing_relation(&e) => return Ok(AccountPage::default()),
             Err(e) => return Err(e.into()),
         };
 
-        // A row with an unreadable source id is one unusable account, not a
-        // reason to answer nothing — the same rule the full fold applies.
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| {
-                let order_label = row.order_label.clone();
-                map_row(row).ok().map(|evidence| ListedAccount {
-                    evidence,
-                    order_label,
+        // INVARIANT: read from the row count, before mapping can shrink it. A
+        // row with an unreadable source id is one unusable account — dropping it
+        // is right, but letting it decide there is no next page would strand
+        // every account after this boundary.
+        let more = rows.len() as u64 > page_size;
+        rows.truncate(usize::try_from(page_size).unwrap_or(usize::MAX));
+
+        Ok(AccountPage {
+            accounts: rows
+                .into_iter()
+                .filter_map(|row| {
+                    let order_label = row.order_label.clone();
+                    map_row(row).ok().map(|evidence| ListedAccount {
+                        evidence,
+                        order_label,
+                    })
                 })
-            })
-            .collect())
+                .collect(),
+            more,
+        })
     }
 
     /// Whether the evidence knows this account.
@@ -631,5 +685,57 @@ mod tests {
             Some("Lee")
         );
         Ok(())
+    }
+
+    #[test]
+    fn every_placeholder_of_the_listing_has_a_value_bound_to_it() {
+        // The bind list is written by hand — four needle probes, four resume
+        // values, the page size — so a placeholder without its value shifts
+        // every later binding and the resume lands in a needle slot.
+        for (case, filtered, resuming, expected) in [
+            ("browse", false, false, 1),
+            ("search", true, false, 5),
+            ("browse, resumed", false, true, 5),
+            ("search, resumed", true, true, 9),
+        ] {
+            assert_eq!(
+                list_sql(filtered, resuming).matches('?').count(),
+                expected,
+                "placeholder count changed for: {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_listing_leaves_no_template_hole_unfilled() {
+        // The resume clause is written in terms of the label, so the label is
+        // substituted after it — one wrong ordering and a literal `{LABEL}`
+        // reaches the server.
+        let sql = list_sql(true, true);
+
+        assert!(!sql.contains('{'), "unsubstituted hole in: {sql}");
+        assert_eq!(
+            sql.matches("lowerUTF8").count(),
+            2,
+            "the order key and the resume comparison must be the same expression"
+        );
+    }
+
+    #[test]
+    fn the_order_key_falls_back_the_way_the_row_reads() {
+        // The row shows email, else username, else the whole name, else the
+        // parts composed, else the id. Sorting by anything else puts a row under
+        // a value the operator cannot see.
+        let sql = list_sql(false, false);
+
+        for value in [
+            "email",
+            "username",
+            "display_name",
+            "first_name",
+            "account_id",
+        ] {
+            assert!(sql.contains(value), "the order key ignores {value}");
+        }
     }
 }

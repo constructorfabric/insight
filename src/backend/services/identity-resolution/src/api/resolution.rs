@@ -731,9 +731,10 @@ pub struct ResolutionRatesResponse {
 pub struct AttentionResponse {
     pub items: Vec<QueueItemResponse>,
     pub rates: ResolutionRatesResponse,
-    /// The evidence read hit its safety cap: the queue and the rates describe
-    /// only the first accounts of the tenant, not all of them. Consumers must
-    /// not present these numbers as tenant-wide.
+    /// One of the two reads behind this queue hit its safety cap — the connector
+    /// evidence or the tenant's bindings — so the queue and the rates describe
+    /// only part of the tenant's accounts. Consumers must not present these
+    /// numbers as tenant-wide.
     pub truncated: bool,
     /// `limit` cut the item list — more accounts await a decision than are
     /// listed here. Distinct from `truncated`: the rates stay whole-tenant,
@@ -893,9 +894,6 @@ pub struct AccountMatchResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AccountSearchResponse {
     pub items: Vec<AccountMatchResponse>,
-    /// More accounts follow this page. Kept beside `next_cursor` for the
-    /// clients that predate it: to them it still reads "this is a cut".
-    pub truncated: bool,
     /// Pass back as `?cursor=` for the next page; absent on the last one. Only
     /// valid for the query that issued it — narrowing `q` starts over.
     pub next_cursor: Option<String>,
@@ -916,6 +914,10 @@ struct AccountPageKey {
     source: String,
     source_id: String,
     account_id: String,
+}
+
+impl super::listing::PagePosition for AccountPageKey {
+    const KIND: &'static str = "observed-accounts";
 }
 
 /// `GET /v1/resolution/accounts` — list the observed accounts and say whose
@@ -939,11 +941,10 @@ pub async fn search_accounts(
         DEFAULT_ACCOUNT_SEARCH_LIMIT,
         MAX_ACCOUNT_SEARCH_LIMIT,
     );
-    let resume = account_resume_from(params.cursor.as_deref(), &needle)?;
+    let resume = account_resume_from(params.cursor.as_deref(), tenant, &needle)?;
 
     let reader = evidence_reader(&state);
-    // Over-fetch by one: the extra row is the next-page probe, never served.
-    let mut listed = reader
+    let page = reader
         .list(
             (!needle.is_empty()).then_some(needle.as_str()),
             resume.as_ref().map(|key| AfterAccount {
@@ -952,21 +953,18 @@ pub async fn search_accounts(
                 source_id: &key.source_id,
                 account_id: &key.account_id,
             }),
-            limit + 1,
+            limit,
         )
         .await
         .map_err(|e| internal(&e, "failed to read the observed accounts"))?;
 
-    let more = listed.len() > usize::try_from(limit).unwrap_or(usize::MAX);
-    if more {
-        listed.pop();
-    }
-    let next_cursor = more
-        .then(|| next_account_cursor(listed.last(), &needle))
+    let next_cursor = page
+        .more
+        .then(|| next_account_cursor(page.accounts.last(), tenant, &needle))
         .transpose()?
         .flatten();
 
-    let found: Vec<AccountEvidence> = listed.into_iter().map(|row| row.evidence).collect();
+    let found: Vec<AccountEvidence> = page.accounts.into_iter().map(|row| row.evidence).collect();
     let keys: Vec<SourceAccountKey> = found.iter().map(|e| e.account.clone()).collect();
     let bindings = resolution_repo::current_bindings(&state.db, tenant, &keys)
         .await
@@ -1016,22 +1014,19 @@ pub async fn search_accounts(
         })
         .collect();
 
-    Ok(Json(AccountSearchResponse {
-        items,
-        truncated: next_cursor.is_some(),
-        next_cursor,
-    }))
+    Ok(Json(AccountSearchResponse { items, next_cursor }))
 }
 
 fn account_resume_from(
     cursor: Option<&str>,
+    tenant: Uuid,
     needle: &str,
 ) -> Result<Option<AccountPageKey>, CanonicalError> {
     let Some(cursor) = cursor.map(str::trim).filter(|c| !c.is_empty()) else {
         return Ok(None);
     };
 
-    super::listing::decode_cursor::<AccountPageKey>(cursor, needle)
+    super::listing::decode_cursor::<AccountPageKey>(cursor, tenant, needle)
         .map(Some)
         .map_err(|rejected| invalid("cursor", rejected.message()))
 }
@@ -1039,10 +1034,12 @@ fn account_resume_from(
 /// The cursor that resumes after the last row served.
 fn next_account_cursor(
     last: Option<&ListedAccount>,
+    tenant: Uuid,
     needle: &str,
 ) -> Result<Option<String>, CanonicalError> {
     last.map(|row| {
         super::listing::encode_cursor(
+            tenant,
             needle,
             &AccountPageKey {
                 order_label: row.order_label.clone(),
@@ -1265,14 +1262,19 @@ fn kind_label(kind: ItemKind) -> &'static str {
 /// tenant, not all of it.
 async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), CanonicalError> {
     let evidence = read_evidence(state).await?;
-    let truncated = evidence.truncated;
     // The whole tenant rather than the observed accounts by name: this asks
-    // about all of them, and naming them costs an order of magnitude more than
-    // reading the tenant. Bindings for accounts no connector reports any more
-    // come back too; the review only ever looks up the keys it was given.
-    let bindings = resolution_repo::current_bindings_in_tenant(&state.db, tenant)
-        .await
-        .map_err(|e| internal(&e, "failed to read current bindings"))?;
+    // about all of them, and a statement's cost grows faster than the number it
+    // names. Bindings for accounts no connector reports any more come back too;
+    // the review only ever looks up the keys it was given.
+    let bindings = resolution_repo::current_bindings_in_tenant(
+        &state.db,
+        tenant,
+        resolution_repo::Ceiling::Bounded(resolution_repo::MAX_TENANT_BINDINGS),
+    )
+    .await
+    .map_err(|e| internal(&e, "failed to read current bindings"))?;
+    // Either half hitting its ceiling makes the rates a prefix of the tenant.
+    let truncated = evidence.truncated || bindings.truncated;
 
     let observed = evidence
         .accounts
@@ -1286,7 +1288,10 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), 
         })
         .collect();
 
-    Ok((review_queue::build(observed, &bindings), truncated))
+    Ok((
+        review_queue::build(observed, &bindings.by_account),
+        truncated,
+    ))
 }
 
 /// One hydration read for a queue page: every distinct candidate id, fetched

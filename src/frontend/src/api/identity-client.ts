@@ -146,8 +146,8 @@ export interface ResolutionRates {
 export interface AttentionResponse {
   items: AttentionItem[];
   rates: ResolutionRates;
-  /** The server's evidence read hit its safety cap: the queue and the rates
-   *  describe only a prefix of the tenant's accounts. Optional so a client
+  /** One of the reads behind the queue hit its safety cap: the queue and the
+   *  rates describe only part of the tenant's accounts. Optional so a client
    *  deployed ahead of the backend keeps working; absent reads as complete. */
   truncated?: boolean;
   /** `limit` cut the item list — the rates are still whole-tenant, only this
@@ -198,8 +198,6 @@ export interface AccountMatch {
 
 export interface AccountSearchResponse {
   items: AccountMatch[];
-  /** More accounts follow this page. */
-  truncated: boolean;
   /** Pass back as `cursor` for the next page; absent on the last one. */
   next_cursor?: string | null;
 }
@@ -401,8 +399,6 @@ export async function excludeAccount(args: {
 
 export interface PersonSearchResponse {
   items: PersonSummary[];
-  /** More persons follow this page. */
-  truncated: boolean;
   /** Pass back as `cursor` for the next page; absent on the last one. */
   next_cursor?: string | null;
 }

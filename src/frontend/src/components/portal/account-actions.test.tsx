@@ -46,7 +46,8 @@ const hooks = vi.hoisted(() => {
     },
   };
 });
-vi.mock("@/queries/identity-resolution", () => ({
+vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useBindAccount: () => hooks.bind,
   useMergePersons: () => hooks.merge,
   useDetachAccount: () => hooks.detach,

@@ -100,6 +100,10 @@ def test_no_needle_lists_the_observed_accounts_a_page_at_a_time(
             f"q={params!r} answered {response.status_code}: {response.text[:300]}"
         )
         listing = response.parse(AccountSearchResponse)
+        # An empty list would satisfy the bound too, and the service answers one
+        # for a fold it cannot read — so a query aimed at the wrong relation, or
+        # a stand whose identity build never ran, would read as a pass here.
+        assert listing.items, f"q={params!r} listed no observed account"
         assert len(listing.items) <= 20, "the default page is the bound"
 
 
@@ -125,8 +129,21 @@ def test_the_account_listing_pages_without_repeating_an_account(
         if not cursor:
             break
 
-    assert seen, "the stand observes at least one account"
+    # A walk that stops on page one proves nothing about a boundary, and one
+    # account never repeats itself.
+    assert len(seen) > 1, "the walk never left the first page — no cursor was issued"
     assert len(seen) == len(set(seen)), f"an account appeared on two pages: {seen}"
+
+    # Uniqueness alone cannot see a skip: a cursor that jumps forward still
+    # returns distinct accounts. Retracing against one whole page can.
+    whole_page = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"limit": len(seen)})
+    listed = [
+        f"{item.source}:{item.source_id}:{item.account_id}"
+        for item in whole_page.parse(AccountSearchResponse).items
+    ]
+    assert seen == listed, (
+        "walking one row at a time must retrace the same accounts in the same order"
+    )
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead")
