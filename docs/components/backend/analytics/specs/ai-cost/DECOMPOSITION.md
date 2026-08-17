@@ -65,11 +65,18 @@ against its eight. The real gaps are elsewhere:
 3. **Two facts stall inside our own pipeline**: `last_active` never leaves bronze, and rows
    with a non-active `status` are dropped without anyone knowing what is lost.
 
-**Deferred out of this issue.** `prs_with_cc_count` and `prs_total_count` also reach silver
-unread, but they answer whether a pull request involved Claude Code — the subject of `#1660`,
-not of cost. No requirement here calls for them, and FR-9 forbids the per-PR cost figure they
-would invite. Recorded as a candidate for `#1660`; the vendor populates them only where
-Anthropic's GitHub app is connected.
+**Resolved since.** The `status` half of gap 3 is closed: the value is carried into
+class-contract `seat_status` and reaches gold as a dimension, because filtering on it was
+retroactive — the vendor restates the status for every day it re-reads, so dropping non-active
+rows deleted the whole history of whoever left. See `audit-claude-team.md` D1. `last_active`
+still stops at bronze (D4).
+
+**Deferred out of this issue, then revised.** `prs_with_cc_count` and `prs_total_count` answer
+whether a pull request involved Claude Code — the subject of `#1660`, not of cost — and FR-9
+forbids the per-PR cost figure they would invite. That still holds for anything per-PR. The two
+counts themselves no longer stop in silver: they are served as `ai.prs_with_assistant` and
+`ai.prs_total`, emitted only where the vendor supplies a value, since the alternative was data
+nobody could reach. The vendor populates them only where Anthropic's GitHub app is connected.
 
 **Decomposition strategy**:
 
@@ -381,8 +388,8 @@ branch is picked up.
     paid seat nobody used is visible as money. Room left under the extra-usage ceiling is
     **not** underuse and is never counted as such: it was never purchased.
   - The seat-state filter lives inside the overage branch rather than being inherited from
-    the activity stream. A deactivated person keeps an overage row but loses activity rows,
-    and would otherwise read as an idle seat. The gate is `credit_limit_cents IS NOT NULL`;
+    the activity stream: a seat with no usage has no activity row to inherit a state from.
+    The gate is `credit_limit_cents IS NOT NULL`;
     `is_enabled` is carried as a dimension and never filtered on (2.1).
   - e2e for both.
 
