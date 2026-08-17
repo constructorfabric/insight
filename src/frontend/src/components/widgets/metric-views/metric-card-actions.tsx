@@ -1,7 +1,11 @@
 import { Database, Ellipsis } from "lucide-react";
 
 import type { MetricEvidenceSelection } from "@/api/metric-drilldown-client";
-import { useMetricEvidenceOptional } from "@/components/metric-evidence-context";
+import {
+  useEvidenceScope,
+  useMetricEvidenceOptional,
+  withOwnTarget,
+} from "@/components/metric-evidence-context";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -18,6 +22,7 @@ export function MetricCardActions({
   label: string;
 }) {
   const evidenceContext = useMetricEvidenceOptional();
+  const scope = useEvidenceScope();
   if (!evidence || !evidenceContext) return null;
 
   return (
@@ -40,7 +45,10 @@ export function MetricCardActions({
         <DropdownMenuItem
           onClick={(event) => {
             event.stopPropagation();
-            evidenceContext.openEvidence(evidence, label);
+            evidenceContext.openEvidenceTargets(
+              withOwnTarget(scope, { selection: evidence, label }),
+              { activeMetricKey: evidence.metric_key }
+            );
           }}
         >
           <Database />

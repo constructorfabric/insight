@@ -123,6 +123,12 @@ gears:
         tenant_claim: "tenant_id"
         # Fallback tenant for a claim-less IdP (e.g. Okta); empty = fail closed.
         default_tenant_id: ""
+        # Mint a person on first login instead of refusing one the journal has
+        # no binding for yet (the nightly persons-seed links by e-mail, so a
+        # roster member without one never gets a binding). Off here: the
+        # compose stand seeds `persons` up front, so nothing needs it — turn it
+        # on to exercise the path.
+        provision_on_login: false
       # Service tokens (§10 G1 / DD-AUTH-05). The token endpoint runs on its own
       # listener (token_bind_addr) so it never shares the main port. Service
       # tokens are always tenant-scoped; the caller names the tenant.

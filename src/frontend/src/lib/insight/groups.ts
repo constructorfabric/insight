@@ -232,7 +232,8 @@ const COLLABORATION_COLLECTION: MetricCollectionConfig = {
       key: "collab.channel_posts",
       views: [{ view: "period" }, { view: "peer" }],
     },
-    { key: "collab.dm_ratio", views: [{ view: "period" }, { view: "peer" }] },
+    // DM Ratio is off until #2577 — the value it reports is wrong.
+    // { key: "collab.dm_ratio", views: [{ view: "period" }, { view: "peer" }] },
     {
       key: "collab.msgs_per_active_day",
       views: [{ view: "period" }, { view: "peer" }],

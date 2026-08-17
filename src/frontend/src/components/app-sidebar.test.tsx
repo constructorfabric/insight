@@ -29,10 +29,16 @@ vi.mock("@tanstack/react-router", () => ({
   }: {
     select: (s: { location: { pathname: string } }) => string;
   }) => select({ location: { pathname: currentPath } }),
+  useSearch: () => ({}),
 }));
 
 vi.mock("@/auth", () => ({
   useViewer: () => ({ email: viewerEmail, personId: viewerPersonId }),
+}));
+
+// This sidebar is the shell the toggle falls back to.
+vi.mock("@/lib/portal/portal-store", () => ({
+  usePortalEnabled: () => false,
 }));
 
 vi.mock("@/queries/ic-dashboard", () => ({

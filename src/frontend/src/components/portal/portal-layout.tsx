@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 
 import { MockBanner } from "@/components/mock-banner";
 import { ViewAsBanner } from "@/components/view-as-banner";
@@ -54,11 +54,17 @@ export function PortalLayout() {
   }, [isPending, isManager, adminPending, adminError, isAdmin, zone, replaceZone]);
 
   return (
-    <SidebarProvider className="h-svh overflow-hidden">
+    <SidebarProvider
+      className="h-svh overflow-hidden"
+      style={{ "--rail-width": "3.5rem" } as CSSProperties}
+    >
       <PaneStateForLayout />
       <LensRail />
       <ContextPane />
-      <SidebarInset className="min-w-0 overflow-x-clip overflow-y-auto">
+      {/* INVARIANT: `isolate` keeps the inset's own stacking — the sticky
+          topbar included — under the rail and the pane, which open across it
+          on the tier where the pane is off-canvas. */}
+      <SidebarInset className="isolate min-w-0 overflow-x-clip overflow-y-auto">
         <MockBanner />
         {/* The impersonation indicator: it names whose data is on screen and
             carries the way out. Missing it left a view-as operator with no sign

@@ -23,9 +23,10 @@ CHART = Path(__file__).resolve().parents[1]
 RELEASE = "insight"
 
 
-# The chart refuses to render an allow-list that names no namespace, so every
-# render that is not about that refusal has to name one.
+# The policy is opt-in, and enabling it without naming a namespace refuses to
+# render — so every render that is about the policy turns it on AND names one.
 ALLOWED_NAMESPACE = {
+    "networkPolicy__enabled": "true",
     "networkPolicy__allowedNamespaceLabels[0]__key": "kubernetes.io/metadata.name",
     "networkPolicy__allowedNamespaceLabels[0]__values[0]": "airbyte",
 }
@@ -182,12 +183,24 @@ def test_token_never_reaches_the_configmap():
     )
 
 
-def test_an_allow_list_naming_no_namespace_refuses_to_render():
+def test_enabling_the_policy_without_a_namespace_refuses_to_render():
     """It would render a policy that denies every caller — an install that looks
     healthy and times out every sync."""
-    done = subprocess.run(helm_args(SECRET), capture_output=True, text=True, check=False)
+    overrides = {**SECRET, "networkPolicy__enabled": "true"}
+    done = subprocess.run(helm_args(overrides), capture_output=True, text=True, check=False)
     assert done.returncode != 0, f"render should have failed, got:\n{done.stdout}"
     assert "allowedNamespaceLabels names no namespace" in done.stderr
+
+
+def test_the_policy_is_opt_in_so_a_bare_install_renders():
+    """The /v1 bearer token is what authenticates a caller; requiring every
+    deployment to declare where Airbyte runs before the chart will install is
+    friction the token already covers. Same posture as the authenticator."""
+    out = subprocess.run(helm_args(SECRET), capture_output=True, text=True, check=True).stdout
+    docs = [doc for doc in yaml.safe_load_all(out) if doc]
+    assert not [doc for doc in docs if doc.get("kind") == "NetworkPolicy"], (
+        "no policy unless a deployment asks for one"
+    )
 
 
 def test_ingress_stays_closed_to_everything_unnamed():

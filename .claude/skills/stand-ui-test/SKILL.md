@@ -156,9 +156,12 @@ criteria an expectation must meet before it is admitted are in
 What a journey *can* assert about numbers is their **honesty**:
 
 - a populated tile is `not_to_have_text("—")`
-- an unseeded domain renders its explicit empty state ("No data", "No metrics
-  with data for this period.")
 - an unrecorded cell renders as unrecorded rather than as a figure
+
+The empty-state half of that rule has no subject on either stand any more:
+every metric domain is seeded, so a journey asserting "No data" fails. The
+page objects for it (`empty_domain_card`, `unrecorded_metric_cell`) are still
+there for whenever something is legitimately empty again.
 
 That is SCENARIOS.md §5 rule 1 — *never a zero for missing data* — and it is
 the strongest metric-adjacent claim available here.

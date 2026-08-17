@@ -121,11 +121,10 @@ def seed_class_git_commits(
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
-    # Dealt to the dev lead's first commits in generation order (a merge
-    # commit is skipped — gold's evidence model filters those out, so a
-    # message on one would never reach the drilldown). Deterministic across
-    # re-seeds because the commit stream itself is.
-    hostile_messages = list(HOSTILE_COMMIT_MESSAGES)
+    # Row indices of the dev lead's non-merge commits, ascending by date. Gold's
+    # evidence model filters merge commits out, so a message on one would never
+    # reach the drilldown.
+    lead_commits: list[int] = []
     for p in _eligible(roster):
         persona = persona_multiplier(p.uuid)
         weight = TEAM_PROFILES[p.team or ""].weights["github"]
@@ -139,9 +138,8 @@ def seed_class_git_commits(
                 # LOC per commit capped at ≤200 by construction.
                 added = float(rng.randint(2, 180))
                 removed = float(rng.randint(0, 80))
-                message = ""
-                if p.uuid == DEV_LEAD_UUID and not is_merge and hostile_messages:
-                    message = hostile_messages.pop(0)
+                if p.uuid == DEV_LEAD_UUID and not is_merge:
+                    lead_commits.append(len(rows))
                 rows.append(
                     (
                         tenant_uuid,
@@ -157,10 +155,24 @@ def seed_class_git_commits(
                         added,
                         removed,
                         "insight_github",
-                        message,
+                        "",
                         version,
                     )
                 )
+
+    # The most recent of those commits, not the earliest: a suite asking about
+    # "the seeded period" asks about the tail the API will answer for, and a
+    # window wider than that cap would leave titles dealt to the oldest days
+    # unreachable.
+    message_at = cols.index("message")
+    for offset, hostile in enumerate(reversed(HOSTILE_COMMIT_MESSAGES), start=1):
+        if offset > len(lead_commits):
+            break
+        index = lead_commits[-offset]
+        row = list(rows[index])
+        row[message_at] = hostile
+        rows[index] = tuple(row)
+
     return bulk_insert(client, "silver", "class_git_commits", cols, rows)
 
 

@@ -70,9 +70,9 @@ export function gradeSectionStanding(counts: RankCounts): Status {
  */
 export function sectionStandingPhrase(counts: RankCounts): string {
   const rankable = rankableCount(counts)
-  if (rankable === 0) return "no peer data"
+  if (rankable === 0) return "no comparison"
   if (counts.bottom > 0) return `${counts.bottom} of ${rankable} behind peers`
   if (counts.top > 0) return `${counts.top} of ${rankable} ahead of peers`
-  return "on par with peers"
+  return "near the median"
 }
 

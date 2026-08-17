@@ -19,7 +19,7 @@ export function unavailableReason(
     return "This metric is not computing on this installation";
   }
   if (metric.origin !== "custom" && metric.last_observed_date == null) {
-    return "No data reaches us for this metric yet";
+    return "No data source is connected for this metric yet";
   }
   if (!needsRollup(granularity)) return null;
 

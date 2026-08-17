@@ -6,9 +6,8 @@ the proxy instead of one vendor API call per commit; everything git cannot
 carry (PRs, reviews, comments, issues, projects, CI, deployments) stays on
 api.github.com.
 
-Supersedes the retired `github-v2` CDK connector: same `data_source`
-(`insight_github`), same bronze namespace (`bronze_github`), same silver
-staging models.
+Writes `data_source` `insight_github` into the `bronze_github` namespace, and
+feeds the shared `class_git_*` silver models.
 
 ## Streams
 
@@ -31,10 +30,53 @@ staging models.
 | deployment_statuses | `/deployments/{id}/statuses` | windowed deployments parent |
 | pull_request_timeline_events | GraphQL `pullRequest.timelineItems` | windowed PR parent, per PR |
 | issue_timeline_events | GraphQL `issue.timelineItems` | updated_at issues parent, per issue |
+| commit_authors | proxy `/v1/authors` → `/repos/{r}/commits/{sha}` | last_committed_date authors parent, one lookup per author |
 
 **org_members is deliberately absent**: the deployed `git/github-directory`
 connector already syncs the org roster for identity resolution. Folding it in
 here is a separate migration.
+
+## Commit attribution
+
+A commit carries a name and an e-mail; it never carries an account, because git
+has no concept of one. Gold attributes activity to a person by e-mail, and the
+roster can only claim an e-mail for a member who publishes one — so a member who
+keeps their address private gets no commit attribution from the roster alone.
+
+Two streams close that gap. `commit_authors` asks GitHub who each distinct
+commit author is — the proxy enumerates them from the clone, one vendor lookup
+per author — and reaches authors who never open a pull request.
+`pull_request_commits` carries the same match inline on every PR commit,
+including for addresses that are not public. `github__account_emails` collects
+the pairs from both, adds the ones a noreply address names by construction, and
+`github__identity_inputs` publishes them as e-mail claims against the account.
+
+The claims feed the identity service's persons-seed, which decides what an
+account is. No roster connector is required for attribution to work: an
+account whose claimed e-mail matches a person the roster already knows — from
+`github-directory`, BambooHR, Entra, or any other source — is linked to that
+person and gets its binding minted right there, which is how a git-only
+source joins an HR-rostered organization.
+
+Three things to know before deploying:
+
+- **When `github-directory` is deployed, both connectors must share one
+  `insight_source_id`.** The seed and the resolver key an account on (source
+  type, source id, login); under different ids the roster bindings and these
+  claims describe different accounts, and a member with no published e-mail
+  can end up as two persons.
+- **An unmatched active account is minted as a new person.** An outside
+  contributor, or a member committing under an address no roster carries,
+  becomes a fresh person and shows up in the seed's `accounts_minted_new`
+  counter. Merging a minted person into the right one (or excluding it) is the
+  operator's manual-resolution workflow, and an operator-authored binding wins
+  every later seed.
+- **Only `value_type='email'` rows are emitted, never the `value_type='id'`
+  binding.** Bindings are the seed's decision to make; emitting them here
+  would assert membership this connector cannot know.
+
+Commits GitHub cannot match at all (`author` comes back null — CI and service
+identities) reach no account and stay unattributed.
 
 ## Error policy
 

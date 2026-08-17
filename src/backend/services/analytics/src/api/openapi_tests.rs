@@ -38,12 +38,15 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         "/v1/queries",
         "/v1/queries/{id}",
         "/v1/queries/{id}/run",
+        "/v1/usage/config",
+        "/v1/usage/events",
+        "/v1/usage/summary",
     ] {
         assert!(paths.contains_key(expected), "missing path {expected}");
     }
     assert_eq!(
         paths.len(),
-        11,
+        14,
         "the contract must carry exactly the surviving paths, got {:?}",
         paths.keys().collect::<Vec<_>>()
     );

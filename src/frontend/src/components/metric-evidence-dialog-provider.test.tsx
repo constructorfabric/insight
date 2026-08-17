@@ -87,7 +87,7 @@ function Controls() {
               { selection: git, label: "Duplicate" },
               { selection: wiki, label: "Wiki" },
             ],
-            "Combined"
+            { title: "Combined" }
           )
         }
       >
@@ -95,6 +95,30 @@ function Controls() {
       </button>
       <button type="button" onClick={() => evidence.openEvidenceTargets([])}>
         open empty
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          evidence.openEvidenceTargets(
+            [
+              { selection: git, label: "Commits" },
+              { selection: wiki, label: "Wiki" },
+            ],
+            { activeMetricKey: wiki.metric_key }
+          )
+        }
+      >
+        open on wiki
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          evidence.openEvidenceTargets([{ selection: git, label: "Commits" }], {
+            activeMetricKey: "not.here",
+          })
+        }
+      >
+        open on a stranger
       </button>
     </>
   );
@@ -158,5 +182,31 @@ describe("MetricEvidenceDialogProvider", () => {
     expect(mocks.removeQueries).toHaveBeenCalledWith({
       queryKey: ["metric-drilldown"],
     });
+  });
+
+  it("opens on the metric the caller asked for, not the first one", async () => {
+    const user = userEvent.setup();
+    render(
+      <MetricEvidenceDialogProvider>
+        <Controls />
+      </MetricEvidenceDialogProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "open on wiki" }));
+    expect(screen.getByText("wiki.pages")).toBeInTheDocument();
+  });
+
+  it("falls back to the first metric when the requested one is absent", async () => {
+    const user = userEvent.setup();
+    render(
+      <MetricEvidenceDialogProvider>
+        <Controls />
+      </MetricEvidenceDialogProvider>
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "open on a stranger" })
+    );
+    expect(screen.getByText("git.commits")).toBeInTheDocument();
   });
 });

@@ -33,7 +33,9 @@ demonstrable on real data.
 
 - **Phase 1 — Claude Team.** Everything this connector can yield, at least matching the
   reference implementation in `data_collector` (`apps/claude`).
-- **Phase 2 — per-token cost.** Reduced to Cursor. The Claude API branch (2.7–2.10) is
+- **Phase 2 — Codex Team.** The same two halves for the Codex workspace, subscription and
+  overusage, reusing Phase 1's gold pair and registry source rather than re-deriving them.
+- **Phase 3 — per-token cost.** Reduced to Cursor. The Claude API branch (2.7–2.10) is
   deferred: the connector it reads was removed from the repository, and so were the two silver
   relations it fed. See "Deferred with the claude-admin removal" below.
 
@@ -84,8 +86,8 @@ Anthropic's GitHub app is connected.
 **Late-phase items (future scope)**:
 
 - **Per-PR cost as `allocated` or `cohort-ratio`** — blocked on `#1674` (FR-9).
-- **Invoices for vendors other than Claude Team** (ChatGPT, Cursor) — different mechanisms;
-  Phase 1 covers Claude Team only.
+- **Cursor invoices** — a different mechanism again; Phase 1 covers Claude Team and Phase 2 the
+  Codex workspace.
 
 One defect surfaced by this work is tracked separately and is **not** in scope: the 3-day
 incremental window against roughly 30-day vendor revisions.
@@ -105,13 +107,13 @@ connector:
 | 2.8 Claude API — price card and per-person token cost | reads `claude_admin_cost_report`, which has no producer | the connector returns |
 | 2.9 Claude API — org-grain cost class | both named feeders were deleted — `claude_admin__ai_cost` was never built and `to_ai_cost.sql` went with `openai` | any vendor billing line item reaches silver |
 | 2.10 Claude API — price reconciliation | depends on 2.8 | 2.8 |
-| 2.11 Cost coverage contract | depends on a token-billed source reaching a metric | the Cursor branch below, or 2.8 |
+| 2.11 Cost coverage contract | depends on a token-billed source reaching a metric | the Phase 3 Cursor branch below, or 2.8 |
 
 [ADR-0003](../ADR/0003-price-card-per-person-token-cost.md) governs 2.8 and is deferred with
 it. It stays in the tree: the decision and its reasoning are the input to whoever revives the
 branch, and the ADR itself now records what is open in it.
 
-**What Phase 2 still holds.** Cursor is the only per-token source left in the repository, and it
+**What Phase 3 holds.** Cursor is the only per-token source left in the repository, and it
 needs no price card at all — `chargedCents WHERE isChargeable` is the billed amount, already in
 money (research notes §2). Its entry is deliberately not written here: writing scope for work
 nobody has scheduled produced 2.7–2.10, which are now shelved. It will be written when the
@@ -200,7 +202,8 @@ branch is picked up.
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-feature-claude-team-seat-metrics`
 
 - **Purpose**: Close the phase's central gap: the silver class is populated and correct, and
-  no client can read it. This also creates the `ai_cost` managed source that Phase 2 extends.
+  no client can read it. This also creates the `ai_cost` managed source that Phases 2 and 3
+  extend.
 
 - **Depends On**: `cpt-insightspec-aicost-feature-claude-team-403` — without it a
   demonstration cannot distinguish absent overage from an absent permission.
@@ -525,7 +528,7 @@ cpt-insightspec-aicost-feature-claude-team-403 (HIGH, p1)
                                             |
                 cpt-insightspec-aicost-feature-claude-team-seat-cost (MEDIUM, p2)
 
-PHASE 2 - Claude API
+PHASE 3 - per-token cost (Claude API branch, deferred)
 
 cpt-insightspec-aicost-feature-token-usage-contract (HIGH, p1)
     |
@@ -553,7 +556,7 @@ cpt-insightspec-aicost-feature-claude-team-seat-metrics (Phase 1)
   evidence relation and its registry source block are created there. The parent design binds
   one evidence relation per source, so the second consumer extends the first's relation
   rather than creating another. This is the one cross-phase dependency; Phase 1 precedes
-  Phase 2 in any case.
+  Phase 3 in any case.
 - `cost-coverage` requires at least one metric per layer before it can report on them.
 - `audit`, `403`, `token-usage-contract` and `cost-class` have no dependencies and may
   proceed in parallel.

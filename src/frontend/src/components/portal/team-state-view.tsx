@@ -197,7 +197,7 @@ export function TeamStateView() {
     memberCount: members.length,
     gridPending: grid.isPending,
     gridError: grid.isError,
-    emptyLabel: "No people in the current scope — pick a different scope in the topbar.",
+    emptyLabel: "No people in the current scope. Pick a different scope at the top of the page.",
     onRetry: () => {
       orgScope.refetch();
       grid.refetch();
@@ -237,9 +237,6 @@ export function TeamStateView() {
       <AttentionList
         flags={flags}
         summary={attentionSummary(flags, flaggedPeople, members.length)}
-        peopleLabel={
-          flags.length > 0 ? `${flaggedPeople} of ${members.length} people` : undefined
-        }
       />
 
       {/* Detailed scan */}
@@ -258,7 +255,7 @@ export function TeamStateView() {
               metricKeys={shownKeys}
               byKey={heatByKey}
               previousByKey={grid.previousByKey}
-              caption={`${teamName || "Team"} — members × metrics`}
+              caption={`${teamName || "Team"} — people × metrics`}
               cohortLabel={cohortLabel}
             />
           </CardContent>

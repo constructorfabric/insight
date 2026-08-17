@@ -114,6 +114,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         "/internal/persons/by-email-override",
         axum::routing::get(handlers::internal_person_by_email_override),
     );
+    let router = router.route(
+        "/internal/persons/provision",
+        axum::routing::post(handlers::internal_provision_person),
+    );
 
     let router = OperationBuilder::post("/v1/profiles")
         .operation_id("identity_resolution.profiles.resolve")
@@ -258,6 +262,32 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(resolution::attention)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/resolution/accounts")
+        .operation_id("identity_resolution.resolution.search_accounts")
+        .summary("Find an observed account by a value it carries, and whose it is")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed(
+            "q",
+            true,
+            "Needle matched against the account's current address, handle, id              and observed name (at least 3 characters).",
+            "string",
+        )
+        .query_param_typed(
+            "limit",
+            false,
+            "Cap on returned matches (1..=100, default 20); `truncated` says              whether it cut the list.",
+            "integer",
+        )
+        .json_response_with_schema::<resolution::AccountSearchResponse>(
+            openapi,
+            StatusCode::OK,
+            "Matching accounts with their holders",
+        )
+        .standard_errors(openapi)
+        .handler(resolution::search_accounts)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/v1/resolution/accounts/{source}/{source_id}/{account_id}")

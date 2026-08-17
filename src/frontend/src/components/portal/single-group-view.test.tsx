@@ -136,7 +136,7 @@ describe("SingleGroupView", () => {
     );
     mocks.definitions = [];
     draw();
-    expect(screen.getByText(/No data reaches us for this section/)).toBeInTheDocument();
+    expect(screen.getByText(/No data source is connected for this section/)).toBeInTheDocument();
     expect(screen.queryByText(/Nothing recorded here/)).not.toBeInTheDocument();
   });
 
@@ -150,7 +150,7 @@ describe("SingleGroupView", () => {
     mocks.definitionsError = true;
     draw();
     expect(screen.getByText(/Nothing to show here/)).toBeInTheDocument();
-    expect(screen.queryByText(/No data reaches us/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No data source is connected/)).not.toBeInTheDocument();
   });
 
   it("waits for the listing rather than showing one sentence and swapping it", () => {
@@ -160,7 +160,7 @@ describe("SingleGroupView", () => {
     mocks.definitionsPending = true;
     draw();
     expect(screen.queryByText(/Nothing recorded here/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/No data reaches us/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No data source is connected/)).not.toBeInTheDocument();
   });
 
   it("gives a detail block only to the headline metrics that read", () => {

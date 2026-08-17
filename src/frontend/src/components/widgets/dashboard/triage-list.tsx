@@ -16,16 +16,20 @@ import type { TeamMember } from "@/types/insight";
 function rollupStatus(
   belowCount: number,
   topCount: number,
+  rankable: number,
 ): PeerStatusWithNeutral {
   if (belowCount > 0) return "bottom";
   if (topCount > 0) return "top";
-  return "in_pack";
+  // Nothing rankable is not "near the median" — there is no median to be near.
+  return rankable > 0 ? "in_pack" : "neutral";
 }
 
 export interface TriageRow {
   member: TeamMember;
   belowCount: number;
   topCount: number;
+  /** How many of the person's metrics could be ranked against peers at all. */
+  rankable: number;
   worstMetricLabel: string | null;
 }
 
@@ -41,7 +45,7 @@ export function TriageList({ rows }: TriageListProps) {
     <div className="flex flex-col gap-2">
       {rows.map((r) => {
         const status = applyFocus(
-          rollupStatus(r.belowCount, r.topCount),
+          rollupStatus(r.belowCount, r.topCount, r.rankable),
           focusMode,
         );
         return (
@@ -83,7 +87,7 @@ export function TriageList({ rows }: TriageListProps) {
                       </span>
                     ) : (
                       <span className="text-xs text-muted-foreground">
-                        on par with peers
+                        {r.rankable > 0 ? "near the median" : "no comparison"}
                       </span>
                     )}
                   </div>

@@ -66,8 +66,8 @@ describe("gradeSectionStanding", () => {
 });
 
 describe("sectionStandingPhrase", () => {
-  it("says no peer data with nothing rankable", () => {
-    expect(sectionStandingPhrase(counts({ unranked: 2 }))).toBe("no peer data");
+  it("says no comparison with nothing rankable", () => {
+    expect(sectionStandingPhrase(counts({ unranked: 2 }))).toBe("no comparison");
   });
 
   it("prefers behind over ahead on mixed profiles", () => {
@@ -93,7 +93,7 @@ describe("sectionStandingPhrase", () => {
 
   it("reports on par for an all-in-pack section", () => {
     expect(sectionStandingPhrase(counts({ inPack: 4 }))).toBe(
-      "on par with peers",
+      "near the median",
     );
   });
 });

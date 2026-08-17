@@ -1,0 +1,61 @@
+name: Dependabot failure watch
+
+on:
+  schedule:
+    - cron: "40 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Collect failed Dependabot runs
+        id: collect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SINCE="$(date -u -d '25 hours ago' +%Y-%m-%d)"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs?event=dynamic&status=failure&created=%3E%3D${SINCE}&per_page=100" \
+            --jq '.workflow_runs[] | "- [\(.name)](\(.html_url)) — \(.created_at)"' \
+            | sort -u > failures.md
+          COUNT="$(wc -l < failures.md | tr -d ' ')"
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+          echo "Failed Dependabot runs since ${SINCE}: ${COUNT}"
+          cat failures.md
+
+      - name: Open or update the tracking issue
+        if: steps.collect.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COUNT: ${{ steps.collect.outputs.count }}
+        run: |
+          set -euo pipefail
+          MARKER="<!-- dependabot-failure-watch -->"
+          {
+            echo "${MARKER}"
+            echo
+            echo "Dependabot update jobs failed in the last 24 hours. Each link opens the run;"
+            echo "the \`Dependencies failed to update\` table at the end of its log names the"
+            echo "dependencies that were dropped."
+            echo
+            cat failures.md
+            echo
+            echo "A dropped update is silent otherwise: the run's actor is a bot, so nobody is notified."
+          } > body.md
+
+          EXISTING="$(gh issue list --state open --search "${MARKER} in:body" --json number --jq '.[0].number // empty')"
+          if [ -n "${EXISTING}" ]; then
+            gh issue comment "${EXISTING}" --body-file body.md
+            echo "Commented on #${EXISTING}"
+          else
+            gh issue create \
+              --title "Dependabot dropped ${COUNT} update job(s)" \
+              --body-file body.md \
+              --assignee Gregory91G
+          fi

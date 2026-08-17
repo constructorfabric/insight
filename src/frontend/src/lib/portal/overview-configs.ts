@@ -1,6 +1,6 @@
 import { headlineMetricKeys } from "@/lib/insight/groups";
 import { sectionMetricKeys, type LensConfig } from "@/lib/portal/lens-configs";
-import { ZONE_DEFAULT_ITEM } from "@/lib/portal/nav-model";
+import { defaultZoneItem } from "@/lib/portal/nav-model";
 
 /**
  * The Overview zone registry: each pane item (nav-model ZONE_SECTIONS.overview)
@@ -13,7 +13,7 @@ import { ZONE_DEFAULT_ITEM } from "@/lib/portal/nav-model";
 const ATTENTION_KEYS: readonly string[] = headlineMetricKeys();
 
 /** The item the router renders when no pane item is selected. */
-export const DEFAULT_OVERVIEW_ITEM = ZONE_DEFAULT_ITEM.overview!;
+export const DEFAULT_OVERVIEW_ITEM = defaultZoneItem("overview")!;
 
 export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
   [DEFAULT_OVERVIEW_ITEM]: {
@@ -63,8 +63,8 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     sections: [{ kind: "attention", metrics: ATTENTION_KEYS, max: 30 }],
   },
   health: {
-    title: "Overview · What we can see",
-    tagline: "how much of the work reaches us, by part and by person",
+    title: "Overview · Data coverage",
+    tagline: "which sections have data, and for how many people",
     // One model, three cuts: the verdict, the parts nothing reaches, and how
     // thinly people are seen. The radar that used to live here computed
     // coverage a second way — a different predicate (`entityObserved`, which
@@ -84,9 +84,9 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
       {
         kind: "distribution",
         metric: "git.commits",
-        title: "Commit-volume distribution",
+        title: "How many commits people made",
         caption:
-          "How many people fall in each commit-count band — a long right tail means a few people produce most of the commits.",
+          "How many people fall in each commit-count band — when the bars stretch far to the right, a few people account for most of it.",
         unitLabel: "commits per person",
       },
     ],

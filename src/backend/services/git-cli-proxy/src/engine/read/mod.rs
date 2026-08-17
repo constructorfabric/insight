@@ -1,3 +1,4 @@
+pub mod authors;
 pub mod blobs;
 pub mod branches;
 pub mod commits;
@@ -135,7 +136,7 @@ mod live_tests {
     use crate::engine::store::Freshness;
     use crate::engine::store::tests::{always_fetch, creds, fixture, key, open_until_ready, sh};
 
-    use super::{blobs, branches, commits, numstat, patches, slice_page};
+    use super::{authors, blobs, branches, commits, numstat, patches, slice_page};
     use crate::engine::page::PageToken;
     use crate::engine::read::commits::CommitKey;
 
@@ -256,6 +257,82 @@ mod live_tests {
         assert!(
             rows.iter().all(|r| !r.head_sha.is_empty()),
             "every branch reports a tip"
+        );
+    }
+
+    /// The author walk against a real clone: one row per e-mail whatever the
+    /// spelling of the name, counted across every branch, and `since` bounded
+    /// by the same instant comparison the commit walk uses.
+    #[tokio::test]
+    async fn authors_fold_the_walk_to_one_row_per_email() {
+        let f = fixture("authors");
+        sh(
+            &f.root.join("origin"),
+            "echo two >> a.txt && git add . && \
+             GIT_AUTHOR_NAME='Ada' GIT_AUTHOR_EMAIL='ada@example.com' \
+             GIT_AUTHOR_DATE='2026-08-02T11:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-02T11:00:00+0000' git commit -qm second && \
+             echo three >> a.txt && git add . && \
+             GIT_AUTHOR_NAME='Ada Lovelace' GIT_AUTHOR_EMAIL='ada@example.com' \
+             GIT_AUTHOR_DATE='2026-08-04T11:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-04T11:00:00+0000' git commit -qm third && \
+             git checkout -q -b feature && echo four > c.txt && git add c.txt && \
+             GIT_AUTHOR_NAME='Bo' GIT_AUTHOR_EMAIL='bo@example.com' \
+             GIT_AUTHOR_DATE='2026-08-05T12:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-05T12:00:00+0000' git commit -qm fourth && \
+             git checkout -q main",
+        );
+
+        let k = key(&f);
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        let runner = f.store.runner();
+        let git_dir = guard.git_dir();
+
+        let rows = match authors::read(runner, git_dir, &creds(), None).await {
+            Ok(r) => r,
+            Err(e) => panic!("authors::read: {e}"),
+        };
+
+        // The fixture's own root commit is authored by test@example.com.
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.author_email.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ada@example.com", "bo@example.com", "test@example.com"],
+            "distinct authors, ascending by e-mail: {rows:?}"
+        );
+
+        let ada = &rows[0];
+        assert_eq!(ada.commit_count, 2, "both spellings are one author");
+        assert_eq!(
+            ada.author_name, "Ada Lovelace",
+            "the newest commit names them"
+        );
+        assert!(
+            !ada.sample_sha.is_empty(),
+            "an author carries a commit to look up"
+        );
+        assert!(
+            rows.iter().any(|r| r.author_email == "bo@example.com"),
+            "a feature-branch author is walked too"
+        );
+
+        let recent =
+            match authors::read(runner, git_dir, &creds(), Some("2026-08-03T00:00:00Z")).await {
+                Ok(r) => r,
+                Err(e) => panic!("authors::read(since): {e}"),
+            };
+        assert_eq!(
+            recent
+                .iter()
+                .map(|r| r.author_email.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ada@example.com", "bo@example.com"],
+            "an author whose commits all predate `since` drops out: {recent:?}"
+        );
+        assert_eq!(
+            recent[0].commit_count, 1,
+            "only the commits inside the window count"
         );
     }
 

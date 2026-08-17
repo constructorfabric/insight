@@ -298,6 +298,52 @@ describe("MetricEvidenceDialog", () => {
     });
   });
 
+  describe("what the dialog is named", () => {
+    const twoTargets = [
+      { selection, label: "Commits" },
+      {
+        selection: { ...selection, metric_key: "wiki.pages" },
+        label: "Wiki pages",
+      },
+    ] as const;
+
+    it("takes the caller's name for the whole set when it gives one", () => {
+      render(
+        <MetricEvidenceDialog
+          state={{
+            targets: [...twoTargets] as EvidenceDialogState["targets"],
+            activeMetricKey: "git.commits",
+            title: "Commits & Wiki pages",
+          }}
+          onMetricChange={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+      expect(
+        screen.getByRole("heading", { name: "Commits & Wiki pages" })
+      ).toBeInTheDocument();
+    });
+
+    it("otherwise names the metric on screen, never a placeholder", () => {
+      render(
+        <MetricEvidenceDialog
+          state={{
+            targets: [...twoTargets] as EvidenceDialogState["targets"],
+            activeMetricKey: "wiki.pages",
+          }}
+          onMetricChange={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+      expect(
+        screen.getByRole("heading", { name: "Wiki pages" })
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", { name: "Metric evidence" })
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("switches targets and reports export failures", async () => {
     const user = userEvent.setup();
     const onMetricChange = vi.fn();

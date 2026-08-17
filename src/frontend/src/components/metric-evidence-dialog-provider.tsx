@@ -12,9 +12,11 @@ import { sessionAuthorizationScope } from "@/auth/session-scope";
 import { useAuth } from "@/auth/use-auth";
 import {
   EvidenceDialogContext,
+  type EvidenceDialogOptions,
   type EvidenceDialogState,
 } from "@/components/metric-evidence-context";
 import { MetricEvidenceDialog } from "@/components/metric-evidence-dialog";
+import { recordUsageEvent } from "@/telemetry";
 
 type ScopedEvidenceDialogState = EvidenceDialogState & {
   sessionScope: string | null;
@@ -41,7 +43,7 @@ export function MetricEvidenceDialogProvider({
   const openEvidenceTargets = useCallback(
     (
       targets: readonly EvidenceDialogState["targets"][number][],
-      title?: EvidenceDialogState["title"]
+      options?: EvidenceDialogOptions
     ) => {
       const uniqueTargets = [
         ...new Map(
@@ -50,10 +52,17 @@ export function MetricEvidenceDialogProvider({
       ];
       const first = uniqueTargets[0];
       if (!first) return;
+      const requested = options?.activeMetricKey;
+      const active = uniqueTargets.some(
+        (target) => target.selection.metric_key === requested
+      )
+        ? requested!
+        : first.selection.metric_key;
+      recordUsageEvent("drill", active);
       setState({
         targets: [first, ...uniqueTargets.slice(1)],
-        activeMetricKey: first.selection.metric_key,
-        title,
+        activeMetricKey: active,
+        title: options?.title,
         sessionScope,
       });
     },

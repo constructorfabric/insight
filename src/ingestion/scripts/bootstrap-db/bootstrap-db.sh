@@ -52,6 +52,7 @@ CREATE DATABASE IF NOT EXISTS staging;
 CREATE DATABASE IF NOT EXISTS silver;
 CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DATABASE};
 CREATE DATABASE IF NOT EXISTS presentation;
+CREATE DATABASE IF NOT EXISTS product_usage;
 SQL
 # person.persons + identity.aliases must exist before the identity dbt models
 # (LEFT ANTI JOIN person.persons). init-identity is the first, idempotent

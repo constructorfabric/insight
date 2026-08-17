@@ -29,8 +29,7 @@ export function useZoneNav(): {
   const navigate = useNavigate();
   const { activeZone, activePerson } = useActiveZone();
   const { isManager, isPending: mgrPending } = useViewerIsManager();
-  // Zones we have not built are hidden unless the viewer opted into seeing
-  // planned work — a rail of scaffolds makes the built zones look unreliable.
+  // A rail of scaffolds makes the built zones look unreliable.
   const showPlanned = usePortalShowPlanned();
   // An IC (no reports) has no subtree to roll up, so org zones are hidden — the
   // shell collapses to Person. While the viewer's identity is still resolving,
@@ -44,7 +43,7 @@ export function useZoneNav(): {
   const zones = ZONES.filter(
     (z) =>
       (orgZonesVisible || IC_ZONES.has(z.id) || (z.id === "manage" && isAdmin)) &&
-      (z.readiness !== "unbuilt" || showPlanned),
+      (z.readiness == null || showPlanned),
   );
 
   function selectZone(zone: Zone) {

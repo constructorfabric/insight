@@ -1609,6 +1609,36 @@
         ],
         "type": "string"
       },
+      "TelemetryRecord": {
+        "properties": {
+          "context_app_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "context_app_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "context_session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "data": {},
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "TimeseriesDto": {
         "properties": {
           "dimensions": {
@@ -1702,6 +1732,210 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "UsageConfigResponse": {
+        "properties": {
+          "enabled": {
+            "description": "Whether this instance records usage at all.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "UsageDay": {
+        "properties": {
+          "day": {
+            "type": "string"
+          },
+          "visitors": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "visits": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "visits",
+          "visitors"
+        ],
+        "type": "object"
+      },
+      "UsageEvent": {
+        "properties": {
+          "event_name": {
+            "type": "string"
+          },
+          "opens": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "people": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_name",
+          "target",
+          "opens",
+          "people"
+        ],
+        "type": "object"
+      },
+      "UsageIngestRequest": {
+        "description": "SDK v2 body. Fields shared by every record are hoisted out of them into\n`meta`, so a record carries only what differs.",
+        "properties": {
+          "meta": {
+            "$ref": "#/components/schemas/TelemetryRecord"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/TelemetryRecord"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "UsagePage": {
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "views": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "visitors": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "views",
+          "visitors"
+        ],
+        "type": "object"
+      },
+      "UsagePerson": {
+        "properties": {
+          "display_name": {
+            "description": "Empty when the visitor has not been mirrored into the identity rows yet.",
+            "type": "string"
+          },
+          "last_seen": {
+            "type": "string"
+          },
+          "page_views": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "person_id": {
+            "type": "string"
+          },
+          "visits": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "person_id",
+          "display_name",
+          "visits",
+          "page_views",
+          "last_seen"
+        ],
+        "type": "object"
+      },
+      "UsageSummaryResponse": {
+        "properties": {
+          "by_day": {
+            "items": {
+              "$ref": "#/components/schemas/UsageDay"
+            },
+            "type": "array"
+          },
+          "by_event": {
+            "items": {
+              "$ref": "#/components/schemas/UsageEvent"
+            },
+            "type": "array"
+          },
+          "by_page": {
+            "items": {
+              "$ref": "#/components/schemas/UsagePage"
+            },
+            "type": "array"
+          },
+          "by_person": {
+            "items": {
+              "$ref": "#/components/schemas/UsagePerson"
+            },
+            "type": "array"
+          },
+          "since": {
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/UsageTotals"
+          },
+          "until": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "since",
+          "until",
+          "totals",
+          "by_day",
+          "by_person",
+          "by_page",
+          "by_event"
+        ],
+        "type": "object"
+      },
+      "UsageTotals": {
+        "properties": {
+          "page_views": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "visitors": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "visits": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "visits",
+          "visitors",
+          "page_views"
+        ],
         "type": "object"
       },
       "ValueTransform": {
@@ -3355,6 +3589,259 @@
           }
         ],
         "summary": "Run a saved query"
+      }
+    },
+    "/v1/usage/config": {
+      "get": {
+        "operationId": "analytics_api.usage.config",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageConfigResponse"
+                }
+              }
+            },
+            "description": "Usage collection state"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Whether this instance records usage"
+      }
+    },
+    "/v1/usage/events": {
+      "post": {
+        "operationId": "analytics_api.usage.ingest",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UsageIngestRequest"
+              }
+            }
+          },
+          "description": "Telemetry SDK records",
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Accepted"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Record usage events"
+      }
+    },
+    "/v1/usage/summary": {
+      "get": {
+        "operationId": "analytics_api.usage.summary",
+        "parameters": [
+          {
+            "description": "Inclusive first day, YYYY-MM-DD",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive last day, YYYY-MM-DD",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageSummaryResponse"
+                }
+              }
+            },
+            "description": "Usage summary"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Usage summary for a date range"
       }
     }
   }

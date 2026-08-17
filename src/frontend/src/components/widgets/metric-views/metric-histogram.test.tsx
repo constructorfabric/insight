@@ -105,20 +105,22 @@ describe("MetricHistogram", () => {
     }
 
     function renderWithEvidence(metric: NormalizedMetricResult) {
-      const openEvidence = vi.fn();
+      const openEvidenceTargets = vi.fn();
       render(
         <EvidenceDialogContext.Provider
-          value={{ openEvidence, openEvidenceTargets: vi.fn() }}
+          value={{ openEvidence: vi.fn(), openEvidenceTargets }}
         >
           <MetricHistogram metric={metric} entityId="me@x.com" />
         </EvidenceDialogContext.Provider>
       );
-      return openEvidence;
+      return openEvidenceTargets;
     }
 
     it("opens the records behind the distribution", async () => {
       const user = userEvent.setup();
-      const openEvidence = renderWithEvidence(drillable(medianMetric(BINS)));
+      const openEvidenceTargets = renderWithEvidence(
+        drillable(medianMetric(BINS))
+      );
 
       await user.click(
         screen.getByRole("button", { name: "More actions for PR cycle time" })
@@ -126,9 +128,16 @@ describe("MetricHistogram", () => {
       await user.click(
         await screen.findByRole("menuitem", { name: "View supporting data" })
       );
-      expect(openEvidence).toHaveBeenCalledWith(
-        expect.objectContaining({ metric_key: "git.pr_cycle_time_h" }),
-        "PR cycle time"
+      expect(openEvidenceTargets).toHaveBeenCalledWith(
+        [
+          {
+            selection: expect.objectContaining({
+              metric_key: "git.pr_cycle_time_h",
+            }),
+            label: "PR cycle time",
+          },
+        ],
+        { activeMetricKey: "git.pr_cycle_time_h" }
       );
     });
 

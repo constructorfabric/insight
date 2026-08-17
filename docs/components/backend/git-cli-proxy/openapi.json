@@ -1,6 +1,57 @@
 {
   "components": {
     "schemas": {
+      "AuthorRow": {
+        "description": "One distinct commit author, with a commit of theirs to look them up by.\n\nGit records an author as a name and an e-mail and knows nothing of vendor\naccounts, so a consumer that needs the account resolves it against the\nvendor — one lookup per author rather than one per commit, which is the\nwhole reason this endpoint exists.",
+        "properties": {
+          "author_email": {
+            "type": "string"
+          },
+          "author_name": {
+            "type": "string"
+          },
+          "commit_count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "last_committed_date": {
+            "type": "string"
+          },
+          "sample_sha": {
+            "description": "A commit this author wrote, for the account lookup. The author's most\nrecent one: a vendor matches an e-mail against the accounts that carry\nit today, so the freshest commit is the likeliest to resolve.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "author_email",
+          "author_name",
+          "sample_sha",
+          "last_committed_date",
+          "commit_count"
+        ],
+        "type": "object"
+      },
+      "AuthorsPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorRow"
+            },
+            "type": "array"
+          },
+          "next_page_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "BranchRow": {
         "properties": {
           "head_committed_date": {
@@ -282,6 +333,137 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/authors": {
+      "get": {
+        "operationId": "git_cli_proxy.authors.list",
+        "parameters": [
+          {
+            "description": "Clone URL of the repository (http/https)",
+            "in": "query",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Lower bound on committed_date; an author whose commits all predate it is omitted",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "1..=1000, default 1000; larger values are clamped",
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Cursor from a previous page; pins the snapshot and never fetches",
+            "in": "query",
+            "name": "page_token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorsPage"
+                }
+              }
+            },
+            "description": "One page of authors"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Repository exceeds the configured per-repository size cap"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Distinct commit authors, ascending by e-mail"
+      }
+    },
     "/v1/branches": {
       "get": {
         "operationId": "git_cli_proxy.branches.list",

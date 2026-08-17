@@ -27,6 +27,7 @@ sources:
       - name: deployment_statuses
       - name: pull_request_timeline_events
       - name: issue_timeline_events
+      - name: commit_authors
 
 models:
   - name: github__bronze_promoted
@@ -58,3 +59,32 @@ models:
 
   - name: github__pull_requests_commits
     description: "GitHub PR commits -> staging, feeds class_git_pull_requests_commits"
+
+  - name: github__account_emails
+    description: "Every (GitHub account, e-mail) pair the connector observed, one row per pair"
+    columns:
+      - name: login
+        description: "Lowercased GitHub login the e-mail was observed under (ADR-0002 account id)"
+        data_tests:
+          - not_null
+      - name: email
+        description: "Lowercased e-mail address the account committed under or published"
+        data_tests:
+          - not_null
+      - name: observed_in
+        description: "Bronze field that first named this pair, carried onto the claim as provenance"
+      - name: observed_at
+        description: "Earliest time the pair was observed"
+
+  - name: github__identity_inputs
+    description: "E-mail claims against GitHub accounts -> staging, feeds silver.identity_inputs"
+    columns:
+      - name: unique_key
+        description: "One claim per (tenant, account, value_type, operation, e-mail)"
+        data_tests:
+          - not_null
+          - unique
+      - name: source_account_id
+        description: "Lowercased GitHub login the claim is made against"
+      - name: value
+        description: "The claimed e-mail address"

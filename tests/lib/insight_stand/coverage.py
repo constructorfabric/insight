@@ -140,6 +140,13 @@ BLOCKED: dict[str, frozenset[int]] = {
     "GET /v1/metrics/{metric_key}": _NO_AUTHZ_OR_CONFLICT,
     "PUT /v1/metrics/{metric_key}": _NO_AUTHZ_OR_CONFLICT,
     "DELETE /v1/metrics/{metric_key}": _NO_AUTHZ_OR_CONFLICT,
+    # Usage monitoring. Neither read model addresses a row, so neither has a
+    # not-found or a conflict path. `/config` subtracts two more: it takes no
+    # input and holds no gate, so 400 and 403 are unreachable there. The summary
+    # reaches both — it is the one analytics operation with an admin gate — and
+    # `test_usage.py` covers them rather than blocking them.
+    "GET /v1/usage/config": frozenset({400, 403, 404, 409}),
+    "GET /v1/usage/summary": frozenset({404, 409}),
 }
 
 

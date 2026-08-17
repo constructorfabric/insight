@@ -243,6 +243,46 @@ pub async fn list(
     rows.iter().map(row_to_operation).collect()
 }
 
+/// Every correction call that named this account, newest first.
+///
+/// The binding journal records WHAT each decision did; the operation records
+/// who ran it, why they said they ran it, and how many accounts went with it.
+/// Matching is by containment in the request payload rather than by time, so
+/// nothing is attributed to a call that did not name the account.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub async fn corrections_for_account(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    operation_type: &str,
+    source_type: &str,
+    source_id: Uuid,
+    account_id: &str,
+    limit: u64,
+) -> anyhow::Result<Vec<Operation>> {
+    let sql = format!(
+        "SELECT {COLUMNS} FROM operations          WHERE insight_tenant_id = ?            AND operation_type = ?            AND JSON_CONTAINS(                 request_json,                  JSON_OBJECT('source', ?, 'source_id', ?, 'account_id', ?),                  '$.accounts')          ORDER BY started_at DESC, operation_id DESC LIMIT ?"
+    );
+
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            &sql,
+            [
+                tenant_id.as_bytes().to_vec().into(),
+                operation_type.into(),
+                source_type.into(),
+                source_id.to_string().into(),
+                account_id.into(),
+                limit.into(),
+            ],
+        ))
+        .await?;
+    rows.iter().map(row_to_operation).collect()
+}
+
 /// Fail every `queued`/`running` operation whose `started_at` is older than
 /// `older_than`. Run once at worker startup so a pod restart cannot leave a row
 /// stuck in `running` forever (its in-memory job is gone). Intentionally NOT

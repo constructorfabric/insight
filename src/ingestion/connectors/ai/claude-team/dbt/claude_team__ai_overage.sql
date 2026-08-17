@@ -40,9 +40,10 @@
 ) }}
 
 WITH latest_per_seat_month AS (
-    -- Bronze is full-refresh+append: every sync re-emits all seats with the
-    -- same unique_key (no date). Collapse to the latest snapshot per seat per
-    -- calendar month so each (seat, month) keeps its freshest spend reading.
+    -- Bronze is full-refresh+append and its unique_key carries the extraction
+    -- month, so it keeps each seat's closing state per month. Collapsing here
+    -- is still required: repeated syncs within a month re-emit the seat, and
+    -- rows written before the key carried a month have no month in theirs.
     SELECT *
     FROM {{ source('bronze_claude_team', 'claude_team_overage_spend') }}
     WHERE account_uuid IS NOT NULL
@@ -60,9 +61,11 @@ WITH latest_per_seat_month AS (
 SELECT
     tenant_id                                           AS insight_tenant_id,
     source_id,
-    -- Silver dedup key: tenant-source-seat-month. The month component (absent
-    -- from the Bronze unique_key) preserves monthly history and gives intra-
-    -- month idempotency (latest snapshot wins via _version, same key).
+    -- Silver dedup key: tenant-source-seat-month, the same grain Bronze now
+    -- keys on. Derived here from the extraction timestamp rather than copied,
+    -- so rows written under the older key still land in the right month. The
+    -- month preserves history and gives intra-month idempotency (latest
+    -- snapshot wins via _version, same key).
     CAST(concat(
         coalesce(tenant_id, ''), '-',
         coalesce(source_id, ''), '-',

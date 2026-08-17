@@ -8,10 +8,12 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import {
-  usePortalNavActions,
-} from "@/lib/portal/portal-nav";
+import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { personIdFromPath } from "@/lib/metrics/entity";
+import {
+  filterOrgTree,
+  type OrgTreeFilter,
+} from "@/lib/portal/org-tree-filter";
 import { useIcPerson } from "@/queries/ic-dashboard";
 import type { IdentityPerson } from "@/types/insight";
 
@@ -31,14 +33,17 @@ function PersonNode({
   depth,
   activePersonId,
   leadsToTeam,
+  filter,
 }: {
   node: IdentityPerson;
   depth: number;
   activePersonId: string | null;
   /** Lead (has reports) links to their team roster instead of their own page. */
   leadsToTeam: boolean;
+  filter: OrgTreeFilter | null;
 }) {
   const { setScope } = usePortalNavActions();
+  if (filter && !filter.visible.has(node.person_id)) return null;
   const hasReports = node.subordinates.length > 0;
   const isActive = activePersonId
     ? personIdEq(activePersonId, node.person_id)
@@ -47,7 +52,9 @@ function PersonNode({
     hasReports && activePersonId
       ? node.subordinates.some((s) => containsPerson(s, activePersonId))
       : false;
-  const open = depth === 0 || isActive || hasActiveDescendant;
+  // While filtering, the chain to a match is what the reader asked to see, so
+  // it opens regardless of where they happen to be standing.
+  const open = filter ? true : depth === 0 || isActive || hasActiveDescendant;
   // A lead's name lands on their team; an IC's on their own page. (The two
   // literal `to`s keep the typed router happy vs. a computed path.) Drilling
   // into a lead also *sets the org scope* (design §6) so the topbar badge and
@@ -91,6 +98,7 @@ function PersonNode({
               depth={depth + 1}
               activePersonId={activePersonId}
               leadsToTeam={leadsToTeam}
+              filter={filter}
             />
           ))
         : null}
@@ -103,7 +111,10 @@ function PersonNode({
  * AppSidebar so the portal shell's context pane can reuse the same tree
  * without duplicating the traversal / active-node logic.
  */
-export function OrgTree({ leadsToTeam = false }: { leadsToTeam?: boolean } = {}) {
+export function OrgTree({
+  leadsToTeam = false,
+  query = "",
+}: { leadsToTeam?: boolean; query?: string } = {}) {
   const { personId: viewerPersonId } = useViewer();
   const viewerQ = useIcPerson(viewerPersonId ?? "");
   const viewer = viewerQ.data ?? null;
@@ -114,8 +125,16 @@ export function OrgTree({ leadsToTeam = false }: { leadsToTeam?: boolean } = {})
     if (pathname === "/" && viewerPersonId) return viewerPersonId;
     return null;
   }, [pathname, viewerPersonId]);
+  const filter = useMemo(() => filterOrgTree(viewer, query), [viewer, query]);
 
   if (!viewer) return null;
+  if (filter && filter.visible.size === 0) {
+    return (
+      <p className="px-4 py-2 text-sm text-muted-foreground">
+        No one here matches “{query.trim()}”
+      </p>
+    );
+  }
 
   return (
     <SidebarMenu>
@@ -124,6 +143,7 @@ export function OrgTree({ leadsToTeam = false }: { leadsToTeam?: boolean } = {})
         depth={0}
         activePersonId={activePersonId}
         leadsToTeam={leadsToTeam}
+        filter={filter}
       />
     </SidebarMenu>
   );

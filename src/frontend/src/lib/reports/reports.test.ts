@@ -359,7 +359,7 @@ describe("unavailableReason", () => {
   it("names a metric nothing has ever reached", () => {
     expect(
       unavailableReason({ ...enabled, last_observed_date: null }, "month", sums),
-    ).toMatch(/No data reaches us/);
+    ).toMatch(/No data source is connected/);
   });
 
   it("takes a custom metric at its word about freshness", () => {
