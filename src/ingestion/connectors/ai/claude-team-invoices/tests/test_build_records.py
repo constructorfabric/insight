@@ -130,6 +130,34 @@ def test_a_failed_chain_does_not_stop_the_run(caplog: pytest.LogCaptureFixture) 
     assert "stripe chain failed" in caplog.text
 
 
+def test_a_seat_price_of_an_unexpected_type_degrades_the_invoice_visibly(caplog: pytest.LogCaptureFixture) -> None:
+    """Returning absence instead would put every seat price at NULL while the
+    chain still read as complete — indistinguishable from a vendor pricing no seats."""
+
+    def lines_with_a_string_price(acct, token):
+        return "in_1ABC", [dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount="1000")]
+
+    with caplog.at_level(logging.WARNING):
+        records = list(build_records([invoice()], lines_with_a_string_price))
+
+    assert [r["chain_status"] for r in records] == [CHAIN_FAILED]
+    assert records[0]["invoice_total_excluding_tax"] == 3000, "the ledger survives"
+    # The type it arrived as, by name — a `failed` row alone would send the
+    # operator to the egress and Stripe-Version checks the remediation names.
+    assert "hosted_invoice_unit_amount arrived as str" in caplog.text
+
+
+def test_a_seat_line_the_vendor_left_unpriced_does_not_degrade_the_invoice() -> None:
+    """Absence is a state this connector reports; only a changed type is a fault."""
+
+    def lines_unpriced(acct, token):
+        return "in_1ABC", [dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount=None)]
+
+    records = list(build_records([invoice()], lines_unpriced))
+    assert [r["chain_status"] for r in records] == [CHAIN_OK, CHAIN_OK]
+    assert [r["seat_unit_amount"] for r in records] == [None, None]
+
+
 def test_a_run_of_unparsable_urls_fails_instead_of_writing_priceless_rows() -> None:
     invoices = [invoice(url="https://elsewhere.example/x") for _ in range(3)] + [invoice()]
     with pytest.raises(UrlFormatDrift) as raised:

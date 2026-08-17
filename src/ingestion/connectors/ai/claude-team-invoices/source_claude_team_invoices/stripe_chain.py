@@ -83,6 +83,11 @@ def is_proration(line: Mapping[str, Any]) -> bool:
     return bool(details.get("proration"))
 
 
+def prices_a_seat(line: Mapping[str, Any]) -> bool:
+    """Whether this line is the kind that states a per-seat price at all."""
+    return classify_line(line) == CATEGORY_SUBSCRIPTIONS and not is_proration(line)
+
+
 def seat_unit_amount(line: Mapping[str, Any]) -> int | None:
     """The per-seat price on a line, in minor units, or None when it has none.
 
@@ -90,13 +95,33 @@ def seat_unit_amount(line: Mapping[str, Any]) -> int | None:
     extra usage, prorations, a subscription line the vendor left unpriced —
     yields None, which downstream renders as absence rather than as zero.
     """
-    if classify_line(line) != CATEGORY_SUBSCRIPTIONS or is_proration(line):
+    if not prices_a_seat(line):
         return None
     amount = line.get("hosted_invoice_unit_amount")
     # `bool` is an `int` in Python, and a boolean here would price a seat at 1.
     if isinstance(amount, bool) or not isinstance(amount, int):
         return None
     return int(amount)
+
+
+def unreadable_seat_prices(lines: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Type names found where a seat-pricing line should state an integer amount.
+
+    `None` is not one of them: a subscription line the vendor left unpriced is a
+    state this connector reports rather than a shape it failed to read. Anything
+    else — a float, a digit string — is the vendor having changed the field's type,
+    and returning absence for it would put every seat price at NULL while the
+    chain still read as complete.
+    """
+    offenders = []
+    for line in lines:
+        if not prices_a_seat(line):
+            continue
+        amount = line.get("hosted_invoice_unit_amount")
+        if amount is None or (isinstance(amount, int) and not isinstance(amount, bool)):
+            continue
+        offenders.append(type(amount).__name__)
+    return sorted(set(offenders))
 
 
 def shape_line(line: Mapping[str, Any], invoice_key: str) -> dict[str, Any]:
@@ -291,14 +316,20 @@ def build_records(
             continue
         try:
             invoice_id, lines = fetch_lines(ref.acct, ref.token)
+            unreadable = unreadable_seat_prices(lines)
+            if unreadable:
+                raise StripeChainError(f"hosted_invoice_unit_amount arrived as {', '.join(unreadable)}, not an integer")
         except Exception as error:  # noqa: BLE001 - one invoice must not end the run
             # A gap in pricing, not a reason to lose the invoice or fail the sync.
-            # The type and status only: a request error stringifies its URL, and
-            # the hosted-invoice hop carries the token in that URL.
+            # Only a StripeChainError carries its message: those are authored here
+            # and name what the response got wrong, which is the whole diagnostic
+            # for a shape change. Anything else contributes its type and status
+            # alone — a request error stringifies its URL, and the hosted-invoice
+            # hop carries the token in that URL.
             logger.warning(
                 "stripe chain failed for the invoice created at %s: %s (HTTP %s)",
                 invoice.get("created_ts"),
-                type(error).__name__,
+                str(error) if isinstance(error, StripeChainError) else type(error).__name__,
                 getattr(getattr(error, "response", None), "status_code", "n/a"),
             )
             yield invoice_row(invoice, CHAIN_FAILED, None)
