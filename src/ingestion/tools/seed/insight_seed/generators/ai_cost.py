@@ -162,9 +162,17 @@ def seed_claude_team_invoices_bronze(
 
     An invoice is an organisation-level fact, not a per-person one: one per
     billing month, priced per tier, plus the extra usage the same month billed.
-    Its lines are what a seat price is recoverable from, so the grain is the
-    line and aggregation stays gold's job.
+    Its lines are what a seat price is recoverable from, so each invoice emits its
+    own row carrying its money and one row per line, and aggregation stays gold's job.
+
+    The layers above are cleared too: this is the only generator that seeds bronze
+    and lets dbt build staging and silver, and both are incremental behind a strict
+    `_airbyte_extracted_at >` watermark. A re-seed writes the same deterministic
+    timestamps, so without this a shorter window would leave the months that dropped
+    out of it standing in staging and silver.
     """
+    truncate(client, "silver", "class_ai_invoice")
+    truncate(client, "staging", "claude_team__ai_invoice")
     truncate(client, "bronze_claude_team_invoices", "claude_team_invoice_lines")
     cols = [
         "_airbyte_raw_id",
@@ -200,6 +208,11 @@ def seed_claude_team_invoices_bronze(
         "period_start_ts",
         "period_end_ts",
     ]
+
+    def bronze_row(**fields: object) -> tuple[object, ...]:
+        """Position `fields` against `cols`; anything unset is NULL, as the connector leaves it."""
+        return tuple(fields.get(col) for col in cols)
+
     source_id = deterministic_uuid("ai.invoice.src", tenant_uuid)
     tiered_seats = sum(
         1
@@ -212,20 +225,50 @@ def seed_claude_team_invoices_bronze(
     for period_month, read_day in _seat_month_reads(days):
         seats_total = tiered_seats * _SEAT_PRICE_CENTS
         extra = int(seats_total * 0.1)
+        total = seats_total + extra
         invoice_id = f"in_{period_month:%Y%m}"
-        raised_at = _dt.datetime.combine(period_month, _dt.time(), tzinfo=_dt.UTC)
+        payment_intent = f"pi_{period_month:%Y%m}"
+        raised_ts = int(_dt.datetime.combine(period_month, _dt.time(), tzinfo=_dt.UTC).timestamp())
         read_at = _dt.datetime.combine(read_day, _dt.time(), tzinfo=_dt.UTC)
-        period_end = _dt.datetime.combine(
-            (period_month + _dt.timedelta(days=32)).replace(day=1), _dt.time(), tzinfo=_dt.UTC
+        period_end_ts = int(
+            _dt.datetime.combine(
+                (period_month + _dt.timedelta(days=32)).replace(day=1), _dt.time(), tzinfo=_dt.UTC
+            ).timestamp()
         )
-        invoice = {
+
+        envelope = {
+            "_airbyte_extracted_at": read_at,
+            "_airbyte_meta": "{}",
+            "_airbyte_generation_id": 0,
+            "tenant_id": tenant_uuid,
+            "source_id": source_id,
+            "collected_at": read_at.isoformat(),
+            "data_source": "insight_claude_team",
+            "chain_status": "ok",
             "invoice_id": invoice_id,
-            "invoice_created_ts": int(raised_at.timestamp()),
-            "invoice_total": seats_total + extra,
-            "invoice_total_excluding_tax": seats_total + extra,
-            "invoice_num_seats": tiered_seats,
-            "invoice_payment_intent": f"pi_{period_month:%Y%m}",
+            "invoice_status": "paid",
+            "invoice_created_ts": raised_ts,
+            "invoice_currency": "usd",
         }
+
+        rows.append(
+            bronze_row(
+                **envelope,
+                _airbyte_raw_id=deterministic_uuid("ai.invoice.raw", invoice_id, "invoice"),
+                # The connector's wrapper key, whose last part is a due date the
+                # vendor does not report and which it stringifies as absent.
+                unique_key=f"{tenant_uuid}-{source_id}-invoice-{raised_ts}-{payment_intent}-{total}-None",
+                invoice_total=total,
+                invoice_total_excluding_tax=total,
+                invoice_num_seats=tiered_seats,
+                invoice_payment_intent=payment_intent,
+                # The span its lines charge for, as the connector reports it: the
+                # invoice is raised at the boundary of the month it bills.
+                period_start_ts=raised_ts,
+                period_end_ts=period_end_ts,
+            )
+        )
+
         lines = [
             (
                 "subscriptions",
@@ -248,39 +291,23 @@ def seed_claude_team_invoices_bronze(
         ]
         for category, line_id, description, amount, quantity, unit, seat_unit in lines:
             rows.append(
-                (
-                    deterministic_uuid("ai.invoice.raw", invoice_id, line_id),
-                    read_at,
-                    "{}",
-                    0,
-                    tenant_uuid,
-                    source_id,
-                    f"{tenant_uuid}-{source_id}-{invoice_id}-{line_id}",
-                    read_at.isoformat(),
-                    "insight_claude_team",
-                    "ok",
-                    invoice_id,
-                    "paid",
-                    invoice["invoice_created_ts"],
-                    None,
-                    "usd",
-                    invoice["invoice_total"],
-                    invoice["invoice_total_excluding_tax"],
-                    invoice["invoice_num_seats"],
-                    invoice["invoice_payment_intent"],
-                    line_id,
-                    description,
-                    "Example plan - Standard",
-                    "Standard" if category == "subscriptions" else None,
-                    category,
-                    False,
-                    amount,
-                    "usd",
-                    quantity,
-                    unit,
-                    seat_unit,
-                    int(raised_at.timestamp()),
-                    int(period_end.timestamp()),
+                bronze_row(
+                    **envelope,
+                    _airbyte_raw_id=deterministic_uuid("ai.invoice.raw", invoice_id, line_id),
+                    unique_key=f"{tenant_uuid}-{source_id}-{invoice_id}-{line_id}",
+                    line_id=line_id,
+                    description=description,
+                    product_name="Example plan - Standard",
+                    tier_label="Standard" if category == "subscriptions" else None,
+                    category=category,
+                    is_proration=False,
+                    amount=amount,
+                    currency="usd",
+                    quantity=quantity,
+                    unit_amount=unit,
+                    seat_unit_amount=seat_unit,
+                    period_start_ts=raised_ts,
+                    period_end_ts=period_end_ts,
                 )
             )
     return bulk_insert(
