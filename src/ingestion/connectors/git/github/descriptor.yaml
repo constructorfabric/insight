@@ -8,15 +8,21 @@ workflow: sync
 # the dbt tags, and the pipeline's silver step hardcodes `tag:<slug>+`.
 dbt_select: "tag:github+"
 
+# The proxy's address and bearer token belong to the platform, not to the
+# operator: the chart owns both and publishes them into the reconcile CronJob,
+# which injects them into this connector's source config. A Secret carrying them
+# would be a second copy of a port and a token that the chart can change.
+platform_config:
+  git_proxy: true
+
 secret:
   # The pre-flight Secret validator reads this list and nothing else, so it
-  # carries every field the spec requires, not only the ones beyond it.
+  # carries every field the operator must supply — the proxy address and token
+  # are not among them, because platform_config.git_proxy injects those.
   required_fields:
     - github_token
     - github_organizations
     - github_start_date
-    - git_proxy_url
-    - git_proxy_token
 
 connection:
   namespace: bronze_github
