@@ -9,12 +9,13 @@
     tags=['silver']
 ) }}
 
--- Unified vendor invoice lines across AI vendors — the invoiced layer, as
--- opposed to consumption priced at vendor rates (class_ai_dev_usage) or spend
--- against a seat's ceiling (class_ai_overage). Grain: one row per (tenant,
--- source, invoice, line). Monetary contract in minor units + ISO currency.
--- seat_unit_cents is the per-seat price the vendor stated on that line, NULL
--- wherever the line prices no seat.
+-- Unified vendor invoices across AI vendors — the invoiced layer, as opposed to
+-- consumption priced at vendor rates (class_ai_dev_usage) or spend against a
+-- seat's ceiling (class_ai_overage). Grain: one row per (tenant, source, invoice)
+-- carrying that invoice's own money, plus one row per (tenant, source, invoice,
+-- line). Monetary contract in minor units + ISO currency. invoice_net_cents is
+-- set on the invoice's row alone; seat_unit_cents is the per-seat price the
+-- vendor stated on a line, NULL wherever the line prices no seat.
 --
 -- depends_on: {{ ref('claude_team__ai_invoice') }}
 

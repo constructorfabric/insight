@@ -23,12 +23,13 @@ models:
 
   - name: claude_team__ai_invoice
     description: >
-      Bronze → Silver: Claude Team vendor invoice lines → class_ai_invoice.
+      Bronze → Silver: Claude Team vendor invoices → class_ai_invoice.
       Sourced from claude_team_invoice_lines (the claude.ai invoice wrapper plus
       the Stripe hosted chain behind each hosted_invoice_url). One row per
+      (tenant, source, invoice) carrying that invoice's money, plus one row per
       (tenant, source, invoice, line); an invoice whose chain failed contributes
-      one row carrying the invoice with no line. First contributor to
-      class_ai_invoice — DEFINES its positional contract.
+      its own row and no line. First contributor to class_ai_invoice — DEFINES
+      its positional contract.
       UNITS: Stripe amounts are already cents; mapped through with NO ×100.
     columns:
       - name: insight_tenant_id
@@ -38,14 +39,18 @@ models:
         tests:
           - not_null
       - name: unique_key
-        description: "Dedup key: tenant-source-invoice-line, or tenant-source-status-created-payment_intent for a row with no line"
+        description: >
+          Dedup key: tenant-source-invoice-line for a line, and
+          tenant-source-invoice-created-payment_intent-total-due for an invoice's
+          own row. The invoice key carries no chain outcome, so the row an
+          unenriched run wrote is the row an enriched run replaces.
         tests:
           - not_null
           - unique
       - name: invoice_id
-        description: "Stripe invoice id (in_…). NULL when the chain did not complete — the wrapper carries no id."
+        description: "Stripe invoice id (in_…). NULL until the chain completes — the wrapper carries no id."
       - name: line_id
-        description: "Stripe invoice line id (il_…). NULL when the chain did not complete."
+        description: "Stripe invoice line id (il_…). NULL on an invoice's own row."
       - name: tool
         description: "Always 'claude'"
         tests:
@@ -58,14 +63,16 @@ models:
       - name: chain_status
         description: >
           How far the Stripe chain got for this invoice: 'ok' (lines retrieved),
-          'failed' (a hop raised), 'unparsable_url' (no chain could start). Rows
-          other than 'ok' carry the invoice's money and no line, so an
+          'failed' (a hop raised), 'unparsable_url' (the vendor offered a hosted
+          URL that no longer matches the expected form), 'no_hosted_url' (the
+          vendor offered none, which a draft invoice legitimately does). Rows
+          other than 'ok' are the invoice's own row with no line, so an
           unenriched invoice is visible rather than silently absent.
         tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ['ok', 'failed', 'unparsable_url']
+                values: ['ok', 'failed', 'unparsable_url', 'no_hosted_url']
       - name: category
         description: >
           From the structural Stripe parent, never the description: a
@@ -100,9 +107,12 @@ models:
       - name: seat_quantity
         description: "Seats the line covers. Not the wrapper's num_seats, which names one line's quantity across a multi-tier invoice."
       - name: invoice_net_cents
-        description: "Invoice total excluding tax, denormalised onto every line of that invoice"
+        description: >
+          Invoice total excluding tax, carried by the invoice's own row alone —
+          NULL on every line row. Summing it over a tenant-month is therefore the
+          invoice-level spend with no dedup needed.
       - name: invoice_metrics_json
-        description: "Raw vendor extras: product_name, description, num_seats, invoice_total, period_end_ts"
+        description: "Raw vendor extras: product_name, description, num_seats, invoice_total, period_end_ts. The invoice-level ones are empty on a line row."
       - name: source
         description: "Always 'claude_team'"
         tests:

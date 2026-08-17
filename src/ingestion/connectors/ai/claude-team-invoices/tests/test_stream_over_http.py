@@ -91,22 +91,25 @@ def register_chain(
     http.get(LINES_URL, [{"json": page} for page in lines_pages])
 
 
-def test_the_chain_yields_one_enriched_record_per_line(stream: InvoiceLines, http: rm_module.Mocker) -> None:
+def test_the_chain_yields_the_invoice_row_and_one_record_per_line(stream: InvoiceLines, http: rm_module.Mocker) -> None:
     register_chain(http, [{"data": [subscription_line()], "has_more": False}])
 
     records = list(stream.read_records(sync_mode="full_refresh"))
 
-    assert len(records) == 1
-    record = records[0]
-    assert record["chain_status"] == "ok"
-    assert record["invoice_id"] == INVOICE_ID
-    assert record["seat_unit_amount"] == 1000
-    assert record["invoice_total_excluding_tax"] == 3000
+    assert len(records) == 2
+    own, line = records
+    assert [r["chain_status"] for r in records] == ["ok", "ok"]
+    assert [r["invoice_id"] for r in records] == [INVOICE_ID, INVOICE_ID]
+    assert (own["line_id"], own["invoice_total_excluding_tax"]) == (None, 3000)
+    assert (line["line_id"], line["seat_unit_amount"]) == ("il_standard", 1000)
+    assert line["invoice_total_excluding_tax"] is None, "the invoice's money is on its own row"
     # The framework fields every bronze row carries (ADR-0004).
-    assert record["tenant_id"] == CONFIG["insight_tenant_id"]
-    assert record["source_id"] == CONFIG["insight_source_id"]
-    assert record["data_source"] == "insight_claude_team"
-    assert record["unique_key"].startswith(f"{CONFIG['insight_tenant_id']}-{CONFIG['insight_source_id']}-")
+    for record in records:
+        assert record["tenant_id"] == CONFIG["insight_tenant_id"]
+        assert record["source_id"] == CONFIG["insight_source_id"]
+        assert record["data_source"] == "insight_claude_team"
+        assert record["unique_key"].startswith(f"{CONFIG['insight_tenant_id']}-{CONFIG['insight_source_id']}-")
+    assert own["unique_key"] != line["unique_key"]
 
 
 def test_each_hop_carries_the_credential_that_authorises_it(stream: InvoiceLines, http: rm_module.Mocker) -> None:
@@ -138,7 +141,7 @@ def test_line_pages_are_walked_until_the_endpoint_stops_offering_more(
 
     records = list(stream.read_records(sync_mode="full_refresh"))
 
-    assert [r["line_id"] for r in records] == ["il_first", "il_second"]
+    assert [r["line_id"] for r in records] == [None, "il_first", "il_second"], "the invoice's own row leads"
     line_requests = [r for r in http.request_history if "api.stripe.com" in r.url]
     assert len(line_requests) == 2
     assert "starting_after=il_first" in line_requests[1].url, "the second page resumes after the first page's last id"

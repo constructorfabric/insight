@@ -44,13 +44,13 @@ prepaid extra usage.
 A seat price is `hosted_invoice_unit_amount` on a non-proration subscription
 line. It is not `amount / quantity`: a mid-period seat change emits proration
 lines whose amounts cover part of a period, and dividing those yields a number
-that is not a price. It is also not the wrapper's `num_seats`, which is absent
-on most invoices and, where present, reports one line's quantity while the
-invoice covers several tiers.
+that is not a price. It is also not the wrapper's `num_seats`, which may be
+absent and, where present, reports one line's quantity while an invoice can
+price several tiers.
 
-One tenant runs several tiers at once — a single invoice prices each of them on
-its own line — so a seat price binds to a tier and reaches a person through
-`class_ai_overage.seat_tier`, never by dividing an invoice total.
+An invoice may price several tiers at once, each on its own line — so a seat
+price binds to a tier and reaches a person through `class_ai_overage.seat_tier`,
+never by dividing an invoice total.
 
 `period` dates a line to the window it charges for, which is not always the
 window the invoice was raised in. A line is filed by its period, never by the
@@ -62,8 +62,15 @@ the extra usage a seat later consumes, and they price no seat.
 
 ## Degradation
 
-A chain failure on one invoice emits that invoice with `chain_status = 'failed'`
-and no line, so the money stays on the ledger without a fabricated price. If
-more than half the hosted URLs fail to parse the run fails instead: that is a
-format change, and a run of unpriced rows would read as the vendor having
-stopped charging for seats.
+Every invoice emits its own row carrying its money and how far its chain got;
+lines are added beside it only when the chain completed. So a chain failure keeps
+the money on the ledger without a fabricated price, and the invoice keeps one row
+across attempts — a later run that enriches it replaces that row instead of
+adding its money a second time.
+
+`chain_status` distinguishes four outcomes: `ok`, `failed` (a hop answered
+badly), `unparsable_url` (a hosted URL was offered but no longer matches), and
+`no_hosted_url` (none was offered, as on a draft invoice). Only URLs that were
+offered count towards drift: if more than half of them fail to parse the run
+fails instead, because that is a format change, and a run of unpriced rows would
+read as the vendor having stopped charging for seats.

@@ -2,16 +2,19 @@
 -- Bronze → Silver: Claude Team vendor invoices → class_ai_invoice
 --
 -- Source: bronze_claude_team_invoices.claude_team_invoice_lines — one row per
--- invoice line, produced by the CDK connector that walks the claude.ai invoice
--- wrapper and follows the Stripe hosted chain for the line items behind it.
+-- invoice plus one per invoice line, produced by the CDK connector that walks the
+-- claude.ai invoice wrapper and follows the Stripe hosted chain behind it.
 --
 -- This is the FIRST contributor to class_ai_invoice and therefore DEFINES its
 -- positional contract (consumed by union_by_tag('silver:class_ai_invoice')).
 -- Vendor-specific extras go into invoice_metrics_json, never new columns.
 --
--- GRAIN: one row per (tenant, source, invoice, line). Aggregating to invoice or
--- to category is gold's job — a class that pre-aggregated would make the
--- per-tier seat price unrecoverable.
+-- GRAIN: one row per (tenant, source, invoice) carrying that invoice's own
+-- money, plus one row per (tenant, source, invoice, line). Invoice money is on
+-- the invoice's row alone, so summing it needs no dedup and an invoice whose
+-- chain later completes replaces its own row instead of adding a second one.
+-- Aggregating to category is gold's job — a class that pre-aggregated would make
+-- the per-tier seat price unrecoverable.
 --
 -- UNITS: Stripe amounts are ALREADY minor units (cents), so they map straight
 -- through with NO ×100 — same as claude_team__ai_overage, unlike
@@ -21,9 +24,13 @@
 -- was issued — a monthly invoice is raised at the period boundary and would
 -- otherwise land in the neighbouring month. Rows carrying no line fall back to
 -- the invoice date.
+-- STRATEGY: delete+insert, not append. An invoice's row is rewritten whenever its
+-- chain gets further, so the same unique_key arrives twice; appending would leave
+-- both versions standing until a background merge collapsed them, and the
+-- `unique` test reads without FINAL.
 {{ config(
     materialized='incremental',
-    incremental_strategy='append',
+    incremental_strategy='delete+insert',
     unique_key='unique_key',
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
@@ -33,51 +40,17 @@
     tags=['claude-team-invoices', 'silver:class_ai_invoice']
 ) }}
 
-WITH latest_per_line AS (
+WITH latest_per_key AS (
 
-    -- Bronze is full-refresh+append: every sync re-emits every invoice under
-    -- the same unique_key. Collapse to the freshest read per line.
+    -- Bronze is full-refresh+append: every sync re-emits every invoice and line
+    -- under the same unique_key, and an invoice's row changes when its chain
+    -- finally completes. Collapse to the freshest read per key.
     SELECT *
     FROM {{ source('bronze_claude_team_invoices', 'claude_team_invoice_lines') }}
     WHERE unique_key IS NOT NULL
       AND unique_key != ''
     ORDER BY _airbyte_extracted_at DESC
     LIMIT 1 BY unique_key
-
-),
-
-enriched_wrappers AS (
-
-    -- How far the wrapper can identify an invoice: what it reported before the
-    -- chain ran. The payment intent is what separates two invoices raised in the
-    -- same second; the amount stands in where the vendor reported no intent.
-    SELECT DISTINCT
-        tenant_id,
-        source_id,
-        invoice_created_ts,
-        ifNull(invoice_payment_intent, '') AS wrapper_intent,
-        invoice_total
-    FROM latest_per_line
-    WHERE chain_status = 'ok'
-
-),
-
-superseded AS (
-
-    -- A failed row keys on the wrapper, a successful one on Stripe's ids, so a
-    -- recovered invoice adds its lines instead of replacing the gap it left.
-    -- Drop that gap once the same invoice has lines: keeping it would double the
-    -- invoice-level money and hold the coverage check red after a recovery.
-    SELECT lines.*
-    FROM latest_per_line AS lines
-    LEFT JOIN enriched_wrappers AS enriched
-           ON enriched.tenant_id = lines.tenant_id
-          AND enriched.source_id = lines.source_id
-          AND enriched.invoice_created_ts = lines.invoice_created_ts
-          AND enriched.wrapper_intent = ifNull(lines.invoice_payment_intent, '')
-          AND enriched.invoice_total = lines.invoice_total
-    WHERE lines.chain_status = 'ok'
-       OR enriched.invoice_created_ts IS NULL
 
 )
 
@@ -115,12 +88,12 @@ SELECT
     data_source,
     CAST(_airbyte_extracted_at AS Nullable(DateTime64(3))) AS collected_at,
     toUnixTimestamp64Milli(_airbyte_extracted_at)          AS _version
-FROM superseded
+FROM latest_per_key
 {% if is_incremental() %}
-  -- A finalised invoice's lines are immutable, so only rows read since the last
-  -- build can carry anything new. The empty-table guard mirrors the sibling
-  -- models: over an empty `this` the max is the epoch and every row would be
-  -- filtered out.
+  -- A row only ever changes because a newer read produced it, so rows read since
+  -- the last build are the only ones that can carry anything new. The empty-table
+  -- guard mirrors the sibling models: over an empty `this` the max is the epoch
+  -- and every row would be filtered out.
   WHERE (
     (SELECT count() FROM {{ this }}) = 0
     OR _airbyte_extracted_at > (

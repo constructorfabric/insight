@@ -1,9 +1,10 @@
 """The invoice stream: claude.ai wrapper, then the Stripe hosted chain per invoice.
 
-One stream, one bronze table, one record per invoice line. Invoice-level fields
-are denormalised onto every line so an invoice's ledger survives even when its
-chain fails — that case emits a single row carrying the invoice with
-`chain_status = 'failed'` and no line, rather than dropping the money.
+One stream, one bronze table, two kinds of record: every invoice emits its own
+row carrying its money and how far its chain got, and a chain that completed adds
+one row per line beside it. An invoice's ledger therefore survives a broken chain
+without a fabricated price, and it sits on exactly one row — so a later run that
+enriches the invoice replaces that row rather than adding its money a second time.
 
 The chain is four hops per invoice:
 
