@@ -524,6 +524,12 @@ analytics:
 # changes and commit authors through this service, so an instance without it can
 # sync no git source at all. The cost is one PVC (`persistence.size`) on an
 # instance that syncs none — set deploy=false there.
+# Two prerequisites an environment must meet before this renders for it:
+#   * under `credentials.deploymentMode: gitops`, set `proxyToken` (or
+#     pre-create insight-git-cli-proxy-config) — a template-time token would
+#     differ on every sync, so secrets.yaml refuses to generate one;
+#   * the deploy credential must hold a persistentvolumeclaims rule for the
+#     cache claim (test-stand: ci-deployer-rbac.yaml).
 gitCliProxy:
   deploy: true
   replicaCount: 1
