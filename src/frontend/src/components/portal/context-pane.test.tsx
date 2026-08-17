@@ -83,7 +83,7 @@ describe("ContextPane", () => {
     expect(screen.getByText("Overview")).toBeInTheDocument();
     expect(screen.getByText("Cross-functional org rollup")).toBeInTheDocument();
     const item = renderHook(() => usePortalItem());
-    await userEvent.click(screen.getByText("What we can see"));
+    await userEvent.click(screen.getByText("Data coverage"));
     expect(item.result.current).toBe("health");
   });
 
@@ -113,7 +113,7 @@ describe("ContextPane", () => {
   it("renders the People zone with the org tree and roster items", () => {
     mocks.zone = { activeZone: "people", activePerson: "boss@x" };
     pane();
-    expect(screen.getByText("Roster & org structure")).toBeInTheDocument();
+    expect(screen.getByText("People & org structure")).toBeInTheDocument();
     expect(screen.getByTestId("org-tree")).toBeInTheDocument();
   });
 
@@ -128,6 +128,8 @@ describe("ContextPane", () => {
     ["overview", "At a glance"],
     ["aicost", "Overview"],
     ["people", "People (roster)"],
+    ["reports", "Report builder"],
+    ["manage", "Metric catalog"],
   ])("highlights the default item of %s when the URL names none", (zone, label) => {
     mocks.zone = { activeZone: zone, activePerson: "boss@x" };
     pane();
@@ -148,10 +150,10 @@ describe("ContextPane", () => {
     expect(buttonFor("People (roster)")).toHaveAttribute("data-active");
   });
 
-  it("highlights nothing in Manage, whose no-item view is no menu entry", () => {
-    mocks.zone = { activeZone: "manage", activePerson: "boss@x" };
+  it("highlights nothing in a zone with nothing built to open on", () => {
+    mocks.zone = { activeZone: "scorecard", activePerson: "boss@x" };
     pane();
-    expect(buttonFor("Metric catalog")).not.toHaveAttribute("data-active");
+    expect(document.querySelectorAll("[data-active]")).toHaveLength(0);
   });
 
   it("renders the person's sections nav in the Person zone", () => {
@@ -188,7 +190,7 @@ describe("ContextPane", () => {
         id: "git_output",
         title: "Git output",
         status: "neutral",
-        phrase: "no peer data",
+        phrase: "no comparison",
         hasData: false,
         peersHaveData: true,
         isPending: false,
@@ -209,14 +211,14 @@ describe("ContextPane", () => {
         id: "git_output",
         title: "Git output",
         status: "neutral",
-        phrase: "no peer data",
+        phrase: "no comparison",
         hasData: false,
         peersHaveData: false,
         isPending: false,
       },
     ];
     pane();
-    const button = screen.getByTitle("No data reaches us for this section");
+    const button = screen.getByTitle("No data source is connected for this section");
     const mark = button.querySelector("span[aria-hidden]")!;
     expect(mark.className).not.toContain("bg-muted-foreground");
     expect(mark.className).toContain("border");

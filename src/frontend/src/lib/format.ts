@@ -1,4 +1,4 @@
-import { format, parseISO } from "date-fns";
+import { format, formatDistance, parseISO } from "date-fns";
 import { enUS } from "date-fns/locale";
 
 import type { MetricFormat } from "@/api/metric-results-client";
@@ -109,8 +109,27 @@ export function formatDate(iso: string, pattern = "d MMM"): string {
  * passed through untouched, so the helper is safe for either shape.
  */
 export function formatUtcInstant(iso: string, pattern = "d MMM"): string {
-  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso);
-  return formatDate(hasZone ? iso : `${iso}Z`, pattern);
+  return formatDate(withZone(iso), pattern);
+}
+
+/**
+ * The same instant as an age ("3 days ago").
+ *
+ * How long a binding has stood is the question an audit trail is read for —
+ * "still the automatic one from months back" versus "someone decided this
+ * yesterday" — and a date makes the reader do that subtraction. The exact
+ * instant stays beside it; this replaces nothing.
+ */
+export function formatUtcAge(iso: string, now = new Date()): string {
+  return formatDistance(parseISO(withZone(iso)), now, {
+    addSuffix: true,
+    locale: enUS,
+  });
+}
+
+/** The identity journal serializes UTC without a designator (.NET parity). */
+function withZone(iso: string): string {
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`;
 }
 
 /** "1.0k" reads worse than "1k" on an axis. */

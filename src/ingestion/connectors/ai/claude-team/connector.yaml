@@ -255,9 +255,18 @@ streams:
           - type: AddedFieldDefinition
             path: [source_id]
             value: "{{ config['insight_source_id'] }}"
+          # The month belongs in the key. This endpoint reports the billing
+          # month in progress and carries no history, so a month exists only in
+          # the rows read during it. Keyed on the seat alone, Bronze kept one
+          # row per seat — its latest state — and every closed month became
+          # unreproducible: a `dbt --full-refresh` (dispatched by a MAJOR
+          # descriptor bump) rebuilt Silver from that residue and silently
+          # dropped the history. Keyed on seat-and-month, Bronze retains the
+          # closing state of each month, which is the grain Silver already
+          # keeps, and a rebuild reproduces it.
           - type: AddedFieldDefinition
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['account_uuid'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['account_uuid'] }}-{{ now_utc().strftime('%Y-%m') }}"
           - type: AddedFieldDefinition
             path: [collected_at]
             value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"

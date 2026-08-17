@@ -320,6 +320,11 @@ services:
       APP__gears__identity_resolution__config__clickhouse_database: "${CLICKHOUSE_DATABASE:-insight}"
       APP__gears__identity_resolution__config__clickhouse_user: "${CLICKHOUSE_USER:-insight}"
       APP__gears__identity_resolution__config__clickhouse_password: "${CLICKHOUSE_PASSWORD:-insight-local}"
+      # The tenant this journal is keyed by. The seed already passes it per
+      # invocation; the SERVICE needs it too, because a write that has no
+      # caller context to infer a tenant from (the login bootstrap) checks the
+      # asserted one against this rather than trusting it.
+      APP__gears__identity_resolution__config__tenant_default_id: "${TENANT_DEFAULT_ID:-00000000-df51-5b42-9538-d2b56b7ee953}"
     volumes:
       - type: bind
         source: ./deploy/compose/build/identity-resolution/identity-resolution

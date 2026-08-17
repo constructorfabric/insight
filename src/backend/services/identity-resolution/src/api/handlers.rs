@@ -20,11 +20,12 @@ use super::AppState;
 use super::canonical_json::CanonicalJson;
 use super::error::ProfileError;
 use super::gate::{require_caller, require_service};
+use crate::domain::login_bootstrap;
 use crate::domain::profile::{
     ParentProjection, PersonResponse, ResolveProfileRequest, assemble_person, assemble_profile,
     latest_values,
 };
-use crate::infra::db::{persons_repo, subchart_repo};
+use crate::infra::db::{persons_repo, resolution_repo, subchart_repo};
 
 /// `POST /v1/profiles` — resolve one identity (email or source-native id) to a
 /// person, then assemble the profile.
@@ -190,27 +191,190 @@ pub async fn internal_person_by_external_id(
             .create());
     }
 
-    let person_id =
-        persons_repo::resolve_person_id_by_source_any_tenant(&state.db, source_type, external_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "internal by-external-id lookup failed");
-                CanonicalError::internal("lookup failed").create()
-            })?
-            .ok_or_else(|| {
-                ProfileError::not_found(format!(
-                    "person with source_type '{source_type}' external_id '{external_id}' not found"
-                ))
-                .with_resource(external_id.to_owned())
-                .create()
-            })?;
+    let person_id = lookup_by_external_id(&state, source_type, external_id)
+        .await?
+        .ok_or_else(|| {
+            ProfileError::not_found(format!(
+                "person with source_type '{source_type}' external_id '{external_id}' not found"
+            ))
+            .with_resource(external_id.to_owned())
+            .create()
+        })?;
 
-    Ok(Json(InternalPersonResponse {
+    Ok(Json(person_response(external_id, person_id)))
+}
+
+/// Body for `POST /internal/persons/provision`.
+#[derive(Debug, serde::Deserialize)]
+pub struct InternalProvisionRequest {
+    source_type: String,
+    external_id: String,
+    /// The tenant the `id_token` asserted. A read can stay tenant-agnostic; a
+    /// write cannot, and at login there is no caller context to infer it from.
+    tenant_id: Uuid,
+}
+
+/// `POST /internal/persons/provision` — SERVICE-ONLY login bootstrap that
+/// MINTS a person when the journal has no binding for this IdP principal yet.
+/// Same contract and gate as [`internal_person_by_external_id`], and the same
+/// response shape, so the caller can treat the two identically.
+///
+/// Why this exists: the login-bootstrap row is otherwise written only by the
+/// nightly persons-seed, which links a person by e-mail and skips an account
+/// that carries none. A member of the IdP's roster with no published address
+/// is therefore refused at login until an operator binds them by hand.
+///
+/// It mints only for an account a connector has ALREADY OBSERVED, and reuses
+/// that observation's `insight_source_id`. Both halves matter:
+///
+/// - the roster stays the authority on who exists, so this is "the IdP
+///   authenticated someone the org already lists", never "anyone who reaches
+///   the IdP becomes a person";
+/// - the persons-seed recognises an account by the whole triple, so a binding
+///   written under any other instance id would be invisible to it and the
+///   account would stay unbound forever. Matching the observed id is what
+///   makes the next batch run ADOPT this person rather than mint a second.
+pub async fn internal_provision_person(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    CanonicalJson(req): CanonicalJson<InternalProvisionRequest>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    require_service(&ctx)?;
+
+    let principal =
+        login_bootstrap::parse_principal(&req.source_type, &req.external_id, req.tenant_id)
+            .map_err(|refusal| refused(refusal, &req))?;
+    let (source_type, external_id) = (principal.source_type, principal.external_id);
+    // Validated before the lookup, not just before the write: a route that
+    // answered an existing person for any asserted tenant and refused only a
+    // new one would fail intermittently under a misconfigured tenant claim,
+    // which is the shape nobody diagnoses.
+    let tenant = login_bootstrap::provisioning_tenant(
+        &state.config.tenant_default_id,
+        principal.asserted_tenant,
+    )
+    .map_err(|refusal| refused(login_bootstrap::Refusal::Tenant(refusal), &req))?;
+
+    if let Some(person_id) = lookup_by_external_id(&state, source_type, external_id).await? {
+        return Ok(Json(person_response(external_id, person_id)));
+    }
+
+    let observed = super::resolution::evidence_reader(&state)
+        .observed_account(source_type, external_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "login bootstrap: connector evidence lookup failed");
+            CanonicalError::internal("lookup failed").create()
+        })?
+        .ok_or_else(|| {
+            ProfileError::not_found(format!(
+                "no connector has observed source_type '{source_type}' external_id '{external_id}'"
+            ))
+            .with_resource(external_id.to_owned())
+            .create()
+        })?;
+
+    let row = login_bootstrap::decide(principal, &observed, tenant, chrono::Utc::now().naive_utc())
+        .map_err(|refusal| refused(refusal, &req))?;
+
+    let minted = resolution_repo::append_binding_if_unbound(&state.db, tenant, &row)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "login bootstrap: binding write failed");
+            CanonicalError::internal("provisioning failed").create()
+        })?;
+
+    // Read what is in force, never what was intended. Two interleavings end up
+    // here: a racing login wrote first, or an operator decided first —
+    // including an exclusion, which the lookup hides and which must read as
+    // "no person to enter as" rather than as a fresh mint.
+    let person_id = lookup_by_external_id(&state, source_type, external_id)
+        .await?
+        .ok_or_else(|| {
+            tracing::warn!(
+                target: "audit",
+                event = "login_bootstrap_refused_decided_account",
+                source_type,
+                external_id,
+                "the account is already decided as not-a-person; no login identity for it"
+            );
+            ProfileError::not_found(format!(
+                "source_type '{source_type}' external_id '{external_id}' resolves to no person"
+            ))
+            .with_resource(external_id.to_owned())
+            .create()
+        })?;
+
+    if minted {
+        tracing::info!(
+            target: "audit",
+            event = "login_bootstrap_person_provisioned",
+            source_type,
+            external_id,
+            person_id = %person_id,
+            "minted a person for an authenticated principal the roster already lists"
+        );
+    }
+
+    Ok(Json(person_response(external_id, person_id)))
+}
+
+/// Map a domain refusal onto the wire. Each is an answer about the principal,
+/// so none of them is a 500.
+fn refused(refusal: login_bootstrap::Refusal, req: &InternalProvisionRequest) -> CanonicalError {
+    use login_bootstrap::{Refusal, TenantRefusal};
+
+    let resource = req.external_id.trim().to_owned();
+    match refusal {
+        Refusal::Invalid { field, message } => ProfileError::invalid_argument()
+            .with_field_violation(field, message, "INVALID")
+            .create(),
+        Refusal::Tenant(TenantRefusal::Unconfigured) => ProfileError::failed_precondition()
+            .with_precondition_violation(
+                "tenant",
+                "provisioning needs the service's default tenant to be configured",
+                "tenant_unconfigured",
+            )
+            .create(),
+        Refusal::Tenant(TenantRefusal::Mismatch) => ProfileError::invalid_argument()
+            .with_field_violation(
+                "tenant_id",
+                "tenant_id is not the tenant this journal is keyed by",
+                "TENANT_MISMATCH",
+            )
+            .create(),
+        Refusal::Closed => ProfileError::not_found(format!("'{resource}' is closed at its source"))
+            .with_resource(resource)
+            .create(),
+        Refusal::Addressed => ProfileError::not_found(format!(
+            "'{resource}' carries an address; identity resolution links it, \
+             so there is nothing to bootstrap"
+        ))
+        .with_resource(resource)
+        .create(),
+    }
+}
+
+async fn lookup_by_external_id(
+    state: &AppState,
+    source_type: &str,
+    external_id: &str,
+) -> Result<Option<Uuid>, CanonicalError> {
+    persons_repo::resolve_person_id_by_source_any_tenant(&state.db, source_type, external_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "internal by-external-id lookup failed");
+            CanonicalError::internal("lookup failed").create()
+        })
+}
+
+fn person_response(external_id: &str, person_id: Uuid) -> InternalPersonResponse {
+    InternalPersonResponse {
         value_type: "id".to_owned(),
         value: external_id.to_owned(),
         insight_source_type: "person",
         insight_source_id: person_id,
-    }))
+    }
 }
 
 /// Query params for `GET /internal/persons/by-email-override`.

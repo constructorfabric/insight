@@ -5,6 +5,7 @@ import {
   formatMetricNumber,
   formatMetricValue,
   formatPp,
+  formatUtcAge,
   formatUtcInstant,
   metricDisplayUnit,
 } from "@/lib/format";
@@ -63,6 +64,15 @@ describe("small formatters", () => {
     expect(
       formatUtcInstant("2026-08-01T10:15:00+02:00", "HH:mm"),
     ).toBe(formatUtcInstant("2026-08-01T08:15:00Z", "HH:mm"));
+  });
+
+  // Same trap as the instant: read as local time, a zone-less journal entry
+  // would age by the viewer's offset — hours out on a fresh decision.
+  it("formatUtcAge reads a zone-less timestamp as UTC too", () => {
+    const now = new Date("2026-08-08T10:15:00Z");
+
+    expect(formatUtcAge("2026-08-01T10:15:00.000000", now)).toBe("7 days ago");
+    expect(formatUtcAge("2026-08-01T10:15:00Z", now)).toBe("7 days ago");
   });
 });
 

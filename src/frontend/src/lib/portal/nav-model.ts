@@ -50,15 +50,15 @@ export type ZoneKind = "person" | "directions" | "theme" | "manage" | "people";
  *   data. If it still renders empty, that is a per-tenant data gap and the
  *   view says which source is missing. Always visible: the gap IS the signal.
  * - **`planned`** — the product does not model this yet (a metric family is
- *   not in the semantic layer). Identical for every tenant. Kept visible but
- *   demoted, because it tells a reader the domain exists in our model.
+ *   not in the semantic layer). Identical for every tenant.
  * - **`unbuilt`** — WE have not built the screen yet, though the data path
- *   exists. This is our backlog, not roadmap communication: hidden unless the
- *   viewer opts into seeing planned work.
+ *   exists. This is our backlog, not roadmap communication.
  *
  * Rendering a tenant data gap and our own unfinished UI the same way is what
  * makes both meaningless, which is why the distinction is in the model rather
- * than in prose.
+ * than in prose. It shapes how an entry reads, not whether the reader's
+ * "show planned sections" choice reaches it: either marker hides when that is
+ * off, because neither renders a view.
  */
 export type Readiness = "planned" | "unbuilt";
 
@@ -174,10 +174,10 @@ export interface PaneGroup {
 export const PLANNED_GROUP_LABEL = "Planned";
 
 /**
- * Split entries into what a reader should always see and what belongs under
- * the demoted "Planned" group. `unbuilt` entries drop out entirely unless the
- * viewer opted in — showing our own unfinished screens next to honest tenant
- * data gaps teaches people that empty means nothing in particular.
+ * Split entries into the views a reader can open and the marked ones that
+ * belong under the demoted "Planned" group. Nothing marked survives
+ * `showPlanned: false` — a reader who turned planned sections off is asking
+ * for navigation that only lists what renders.
  */
 export function partitionByReadiness<T extends { readiness?: Readiness }>(
   entries: readonly T[],
@@ -187,9 +187,7 @@ export function partitionByReadiness<T extends { readiness?: Readiness }>(
   const planned: T[] = [];
   for (const e of entries) {
     if (e.readiness == null) live.push(e);
-    // `planned` is roadmap the reader benefits from seeing; `unbuilt` is ours
-    // and only appears when the viewer asked for planned work.
-    else if (e.readiness === "planned" || showPlanned) planned.push(e);
+    else if (showPlanned) planned.push(e);
   }
   return { live, planned };
 }
@@ -203,18 +201,11 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
         { id: "by-direction", label: "By direction", icon: Layers },
         { id: "trend", label: "Trend", icon: TrendingUp },
         { id: "attention", label: "Attention needed", icon: AlertTriangle },
-        { id: "health", label: "What we can see", icon: ScanEye },
+        { id: "health", label: "Data coverage", icon: ScanEye },
         { id: "contribution", label: "Contribution breakdown", icon: Users },
       ],
     },
   ],
-  // Lean, data-honest menu: Overview is the live dashboard (adoption + by-tool
-  // + cost-by-person in one scroll); the second group is capabilities that need
-  // data we don't ingest yet (kept visible as honest ComingSoon, not padded out
-  // into a dozen dead tabs).
-  // Full intended IA. Overview / Adoption funnel / By unit are backed by real
-  // data; the rest render an honest ComingSoon (see AiCostView.COMING_SOON) —
-  // the menu shows the roadmap, but nothing fabricates data it doesn't have.
   aicost: [
     {
       items: [{ id: "overview", label: "Overview", icon: LayoutGrid }],
@@ -226,7 +217,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
         { id: "by-unit-role", label: "By unit / role", icon: Layers },
         { id: "per-tool", label: "Per-tool", icon: Sparkles, readiness: "unbuilt" },
         { id: "autofix", label: "Autofix", icon: Activity, readiness: "planned" },
-        { id: "ai-audit", label: "AI Audit", icon: Radar, readiness: "planned" },
+        { id: "ai-audit", label: "AI Audit", icon: Radar, readiness: "unbuilt" },
       ],
     },
     {
@@ -234,14 +225,14 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
       items: [
         { id: "spend-by-tool", label: "Spend by tool", icon: DollarSign, readiness: "unbuilt" },
         { id: "cost-by-unit", label: "Cost by unit / user", icon: Users, readiness: "unbuilt" },
-        { id: "idle-seats", label: "Idle seats", icon: Clock, readiness: "planned" },
+        { id: "idle-seats", label: "Idle seats", icon: Clock, readiness: "unbuilt" },
         { id: "credits", label: "Credits burn-down", icon: TrendingUp, readiness: "planned" },
         {
           id: "ai-pricing",
           label: "AI pricing",
           icon: DollarSign,
           badge: { text: "ai.cost", tone: "error" },
-          readiness: "planned",
+          readiness: "unbuilt",
         },
       ],
     },
@@ -250,17 +241,17 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
     {
       items: [
         { id: "fixed", label: "Fixed scorecard", icon: LayoutGrid, readiness: "unbuilt" },
-        { id: "detailed", label: "Detailed (drill)", icon: Layers, readiness: "unbuilt" },
-        { id: "quarterly", label: "Quarterly QoQ", icon: TrendingUp, readiness: "unbuilt" },
+        { id: "detailed", label: "Detailed breakdown", icon: Layers, readiness: "unbuilt" },
+        { id: "quarterly", label: "Quarter over quarter", icon: TrendingUp, readiness: "unbuilt" },
       ],
     },
   ],
   reports: [
     {
-      label: "Generated (diagnosis)",
+      label: "Generated reports",
       items: [
-        { id: "delivery-trend", label: "Delivery trend v3", icon: FileText, readiness: "unbuilt" },
-        { id: "ttm", label: "TTM report", icon: FileText, readiness: "unbuilt" },
+        { id: "delivery-trend", label: "Delivery trend", icon: FileText, readiness: "unbuilt" },
+        { id: "ttm", label: "Trailing twelve months", icon: FileText, readiness: "unbuilt" },
       ],
     },
     {
@@ -280,7 +271,7 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
 // zone (reached by drilling into any name); listing it again would duplicate it.
 export const PEOPLE_ITEMS: readonly PaneItem[] = [
   { id: "roster", label: "People (roster)", icon: Users },
-  { id: "median-by-role", label: "Median by Role", icon: BarChart3, readiness: "planned" },
+  { id: "median-by-role", label: "Median by Role", icon: BarChart3, readiness: "unbuilt" },
   { id: "employees", label: "Employees", icon: Fingerprint },
 ];
 
@@ -303,27 +294,26 @@ export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "platform-usage", label: "Platform usage", icon: Activity, readiness: "unbuilt" },
   { id: "mcp", label: "MCP servers", icon: Server, readiness: "unbuilt" },
   { id: "config", label: "Config & setup", icon: Settings2, readiness: "unbuilt" },
-  { id: "whats-new", label: "What's new", icon: Megaphone, readiness: "unbuilt" },
+  { id: "whats-new", label: "What's new", icon: Megaphone },
 ];
 
 /* ── Zone item resolution ────────────────────────────────────────────── */
-
-/**
- * The item a zone falls back to when the URL names none. Absent = the zone's
- * no-item view is no menu row (Manage), or its default has no id at all
- * (Person — see ContextPane.PersonSectionsNav).
- */
-export const ZONE_DEFAULT_ITEM: Record<string, string> = {
-  overview: "at-a-glance",
-  aicost: "overview",
-  people: "roster",
-};
 
 /** Every pane item a zone lists, in display order, planned ones included. */
 export function zoneItems(zoneId: string): readonly PaneItem[] {
   if (zoneId === "people") return PEOPLE_ITEMS;
   if (zoneId === "manage") return MANAGE_ITEMS;
   return (ZONE_SECTIONS[zoneId] ?? []).flatMap((g) => g.items);
+}
+
+/**
+ * The item a zone falls back to when the URL names none: its first BUILT entry.
+ * Planned and unbuilt ones are skipped because the pane filters them out (see
+ * {@link partitionByReadiness}), and a default it filters out marks a row that
+ * is not on screen.
+ */
+export function defaultZoneItem(zoneId: string): string | null {
+  return zoneItems(zoneId).find((i) => i.readiness == null)?.id ?? null;
 }
 
 /**
@@ -335,5 +325,5 @@ export function zoneItems(zoneId: string): readonly PaneItem[] {
  */
 export function resolveZoneItem(zoneId: string, item: string | null): string | null {
   if (item && zoneItems(zoneId).some((i) => i.id === item)) return item;
-  return ZONE_DEFAULT_ITEM[zoneId] ?? null;
+  return defaultZoneItem(zoneId);
 }

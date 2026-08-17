@@ -13,12 +13,45 @@ export interface EvidenceDialogState {
   title?: string;
 }
 
+export interface EvidenceDialogOptions {
+  title?: string;
+  activeMetricKey?: string;
+}
+
 export interface EvidenceDialogContextValue {
   openEvidence: (selection: MetricEvidenceSelection, label: string) => void;
   openEvidenceTargets: (
     targets: readonly EvidenceDialogTarget[],
-    title?: string
+    options?: EvidenceDialogOptions
   ) => void;
+}
+
+/**
+ * The metrics a surface can offer alongside the one being opened, so every
+ * entry lands in the same dialog with the same picker.
+ */
+export const EvidenceScopeContext = createContext<
+  readonly EvidenceDialogTarget[]
+>([]);
+
+export function useEvidenceScope(): readonly EvidenceDialogTarget[] {
+  return useContext(EvidenceScopeContext);
+}
+
+/**
+ * The scope with `own` in place of its own metric, so the selection the caller
+ * built — its filters and display dimensions — is the one that opens.
+ */
+export function withOwnTarget(
+  scope: readonly EvidenceDialogTarget[],
+  own: EvidenceDialogTarget
+): EvidenceDialogTarget[] {
+  const key = own.selection.metric_key;
+  return scope.some((target) => target.selection.metric_key === key)
+    ? scope.map((target) =>
+        target.selection.metric_key === key ? own : target
+      )
+    : [own, ...scope];
 }
 
 export const EvidenceDialogContext = createContext<

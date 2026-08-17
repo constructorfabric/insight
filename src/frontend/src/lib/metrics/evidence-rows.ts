@@ -24,6 +24,26 @@ export function cellText(
   return String(value);
 }
 
+export function summaryLine(text: string): string {
+  return text.split("\n").find((line) => line.trim() !== "") ?? text;
+}
+
+// INVARIANT: `ref` is a PR or issue number, unique only within a repository —
+// keying on it alone would join two rows' expansion.
+export function evidenceRowKeys(rows: readonly MetricEvidenceRow[]): string[] {
+  const seen = new Map<string, number>();
+  return rows.map((row) => {
+    const signature = JSON.stringify(
+      Object.keys(row.values)
+        .sort()
+        .map((key) => [key, row.values[key]])
+    );
+    const occurrence = seen.get(signature) ?? 0;
+    seen.set(signature, occurrence + 1);
+    return occurrence === 0 ? signature : `${signature}#${occurrence}`;
+  });
+}
+
 function matchesSearch(
   row: MetricEvidenceRow,
   columns: readonly MetricEvidenceColumn[],
@@ -45,13 +65,6 @@ function compare(left: unknown, right: unknown): number {
   });
 }
 
-/**
- * Filter and sort loaded evidence rows.
- *
- * Rows with no value for the sorted column sort last in both directions —
- * a missing field is not a small one, and floating them to the top of an
- * ascending sort would bury the smallest real values.
- */
 export function visibleEvidenceRows({
   rows,
   columns,

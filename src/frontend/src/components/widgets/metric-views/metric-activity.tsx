@@ -1,7 +1,11 @@
 import { useMemo, useState } from "react";
 
 import { evidenceSelection } from "@/api/metric-drilldown-client";
-import { useMetricEvidenceOptional } from "@/components/metric-evidence-context";
+import {
+  useEvidenceScope,
+  useMetricEvidenceOptional,
+  withOwnTarget,
+} from "@/components/metric-evidence-context";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
@@ -164,6 +168,7 @@ function EventList({
   rows: NonNullable<ReturnType<typeof useMetricDetail>["data"]>["rows"];
 }) {
   const evidence = useMetricEvidenceOptional();
+  const scope = useEvidenceScope();
   const selection = evidenceSelection(metric.selection, entityId);
   const events = useMemo(() => activityEvents(rows), [rows]);
   const shown = events.slice(0, EVENTS_SHOWN);
@@ -196,7 +201,12 @@ function EventList({
           type="button"
           variant="link"
           className="h-auto justify-start p-0 text-xs"
-          onClick={() => evidence.openEvidence(selection, metric.label)}
+          onClick={() =>
+            evidence.openEvidenceTargets(
+              withOwnTarget(scope, { selection, label: metric.label }),
+              { activeMetricKey: selection.metric_key }
+            )
+          }
         >
           {rest} more
         </Button>

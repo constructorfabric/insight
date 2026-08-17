@@ -107,7 +107,7 @@ describe("ReportBuilderView", () => {
     expect(isDisabled("Issues closed")).toBe(true);
     expect(screen.getByText("Issues closed").closest("label")).toHaveAttribute(
       "title",
-      expect.stringMatching(/No data reaches us/),
+      expect.stringMatching(/No data source is connected/),
     );
   });
 

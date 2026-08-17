@@ -136,6 +136,18 @@ describe("Manage · Metric catalog", () => {
   });
 });
 
+describe("Manage · What's new", () => {
+  it("renders the release notes without the legacy screen's own header", () => {
+    render(<ManageView item="whats-new" />);
+
+    expect(screen.getByText("Insight · What's new")).toBeInTheDocument();
+    expect(
+      screen.getByText("We've moved to the new interface for good"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+  });
+});
+
 describe("Manage · Data health", () => {
   it("counts schema statuses and, separately, definitions with no data", () => {
     render(<ManageView item="data-health" />);
@@ -153,7 +165,7 @@ describe("Manage · Data health", () => {
 describe("Manage · unwired items", () => {
   it("renders an honest placeholder instead of a fake admin screen", () => {
     render(<ManageView item="taxonomy" />);
-    expect(screen.getByText(/not wired yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/not built yet/i)).toBeInTheDocument();
   });
 });
 

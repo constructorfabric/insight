@@ -191,6 +191,7 @@ pub async fn known_account_bindings(
             KnownBinding {
                 person_id: Uuid::from_slice(&person_id)?,
                 author_person_id: Uuid::from_slice(&author_person_id)?,
+                provisioned_at_login: false,
             },
         );
     }

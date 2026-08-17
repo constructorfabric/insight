@@ -66,6 +66,8 @@ vi.mock("@/components/portal/slice-select", () => ({
   ),
 }));
 
+import { portalRouter } from "@/test/portal-router";
+
 import { PortalTopBar } from "./portal-topbar";
 
 function bar() {
@@ -93,6 +95,7 @@ beforeEach(() => {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
   mocks.definitions = { metrics: [] };
+  portalRouter.reset();
 });
 
 describe("PortalTopBar", () => {
@@ -125,5 +128,25 @@ describe("PortalTopBar", () => {
     await waitFor(() =>
       expect(screen.getByTestId("dims")).toHaveTextContent("division"),
     );
+  });
+});
+
+const filters = () => screen.queryByRole("group", { name: "View filters" });
+
+describe("PortalTopBar · zones that filter nothing", () => {
+  it("drops the whole filter group on Manage", async () => {
+    portalRouter.set({ zone: "manage" });
+    bar();
+
+    // Awaited: the catalog resolves after the first paint.
+    await waitFor(() => expect(screen.queryByTestId("dims")).toBeNull());
+    expect(filters()).toBeNull();
+  });
+
+  it("keeps it on a zone whose numbers the filters move", async () => {
+    portalRouter.set({ zone: "overview" });
+    bar();
+
+    await waitFor(() => expect(filters()).toBeInTheDocument());
   });
 });

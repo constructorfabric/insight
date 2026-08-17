@@ -19,6 +19,7 @@ import type {
 import { IdentitiesView } from "@/components/portal/identities-view";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
+import { WhatsNewBody } from "@/screens/whats-new";
 import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -29,9 +30,10 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
 };
 
 /**
- * Manage-zone surfaces backed by live data (Metric catalog, Data health).
+ * Manage-zone surfaces (Metric catalog, Data health, Identities, What's new).
  *
- * Both read the **unified** registry (`GET /v1/metric-definitions`) — the set
+ * The two catalog surfaces read the **unified** registry
+ * (`GET /v1/metric-definitions`) — the set
  * of metrics `/v1/metric-results` actually serves. The legacy
  * `/catalog/get_metrics` surface describes a disjoint, pre-catalog key
  * namespace (`*_bullet_rows.*`), so listing it here showed an admin a catalog
@@ -41,13 +43,10 @@ export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
   if (item === "data-health") return <DataHealth />;
   if (item === "identities") return <IdentitiesGate />;
+  if (item === "whats-new") return <WhatsNewBody />;
   return (
     <div className="mx-auto w-full max-w-md p-8">
-      <ComingSoon
-        variant="card"
-        state="empty"
-        label="Admin surface — not wired yet"
-      />
+      <ComingSoon variant="card" state="empty" label="Not built yet" />
     </div>
   );
 }
@@ -101,9 +100,14 @@ function useFlatDefinitions() {
       (q.data ?? [])
         .flatMap((g) => g.metrics)
         .sort((a, b) => a.metric_key.localeCompare(b.metric_key)),
-    [q.data],
+    [q.data]
   );
-  return { metrics, isLoading: q.isLoading, isError: q.isError, refetch: q.refetch };
+  return {
+    metrics,
+    isLoading: q.isLoading,
+    isError: q.isError,
+    refetch: q.refetch,
+  };
 }
 
 const DIRECTION_LABEL: Record<MetricDefinition["direction"], string> = {
@@ -147,7 +151,9 @@ function MetricCatalogTable() {
           <TableBody>
             {metrics.map((m) => (
               <TableRow key={m.metric_key}>
-                <TableCell className="font-mono text-xs">{m.metric_key}</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {m.metric_key}
+                </TableCell>
                 <TableCell>{m.short_label ?? m.label}</TableCell>
                 <TableCell className="text-muted-foreground">
                   {m.unit || "—"}
@@ -216,7 +222,7 @@ function DataHealth() {
             <div
               className={cn(
                 "mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                STATUS_STYLE[s],
+                STATUS_STYLE[s]
               )}
             >
               {s}

@@ -158,7 +158,7 @@ function DrilldownPanel({
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center p-10">
-            <ComingSoon state="error" label="Missing drilldown data" />
+            <ComingSoon state="error" label="No supporting data" />
           </div>
         )}
       </div>

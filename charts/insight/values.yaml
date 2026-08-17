@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.13.13.18-487013f" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.16.14.12-9511b24" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.13.13.18-487013f" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.16.14.12-9511b24" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -384,6 +384,19 @@ authenticator:
     # id_token claim carrying the IdP's stable external user id for
     # sourceType (e.g. Entra's "oid"). Defaults to "sub".
     externalIdClaim: "sub"
+    # Provision a person on first successful login instead of refusing one the
+    # journal has no binding for yet.
+    #
+    # The login-bootstrap row is otherwise written only by the nightly
+    # persons-seed, which links a person by e-mail — so a roster member whose
+    # directory publishes no address (a GitHub member with a hidden e-mail, for
+    # one) cannot enter until an operator binds them by hand.
+    #
+    # Off by default because it widens who may ENTER. It does not widen who
+    # EXISTS: identity mints only for an account a connector has already
+    # observed, refuses one the source has closed, refuses one an operator
+    # excluded, and writes only under the tenant its own journal is keyed by.
+    provisionOnLogin: false
   # Honor `/auth/login?__override=<email>` (view-as, #1941): the session is
   # minted for that person instead of the authenticated one. Dev/demo
   # environments ONLY — MUST stay false anywhere real users log in.
@@ -543,7 +556,6 @@ gitCliProxy:
     allowedNamespaceLabels:
       - key: kubernetes.io/metadata.name
         values: []
-
 identityResolution:
   deploy: true
   replicaCount: 1

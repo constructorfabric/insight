@@ -304,9 +304,17 @@ pub async fn callback(
         tracing::info!(session_id = %old_sid, "session-fixation guard: revoked presented session");
     }
 
-    // Resolve the internal person. Unknown -> 403 (first-admin bootstrap / RBAC
-    // are out of step-04 scope; local dev seeds the persons table).
-    let resolution = match state.resolver.resolve(&idp.identity).await {
+    // Identity requires a connector to have observed the principal before it
+    // mints, so this decides who waits for the batch, not who exists.
+    let resolved = match state.resolver.resolve(&idp.identity).await {
+        Ok(Some(p)) => Ok(Some(p)),
+        Ok(None) if state.cfg.idp.provision_on_login => {
+            state.resolver.provision(&idp.identity).await
+        }
+        other => other,
+    };
+
+    let resolution = match resolved {
         Ok(Some(p)) => p,
         Ok(None) => {
             tracing::warn!(

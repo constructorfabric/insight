@@ -11,7 +11,7 @@ import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { worstEntry, type PeerStoryEntry } from "@/lib/metrics/peer-story";
 import type { PeerCohortLabel } from "@/lib/peers";
-import { rankCounts, type RankCounts } from "@/lib/scoring";
+import { rankableCount, rankCounts, type RankCounts } from "@/lib/scoring";
 import type { TeamMember } from "@/types/insight";
 
 export interface MembersOverviewProps {
@@ -87,6 +87,11 @@ export function MembersOverview({
           member,
           belowCount: metricBelowByMember.get(entityId) ?? 0,
           topCount: entries.filter((entry) => entry.status === "top").length,
+          rankable: rankableCount(
+            rankCounts(
+              entries.map((entry) => ({ row: entry, rank: entry.status })),
+            ),
+          ),
           worstMetricLabel: worstEntry(entries)?.label ?? null,
         };
       }),
@@ -96,9 +101,9 @@ export function MembersOverview({
   return (
     <Card>
       <CardHeader className="gap-1">
-        <CardTitle>Members × metrics</CardTitle>
+        <CardTitle>People × metrics</CardTitle>
         <p className="text-xs text-muted-foreground">
-          {members.length} members · cell colour = position vs {cohortLabel}{" "}
+          {members.length} people · cell colour = position vs {cohortLabel}{" "}
           peers
         </p>
       </CardHeader>
@@ -114,7 +119,7 @@ export function MembersOverview({
             previousByKey={previousHeatmapByKey}
             countsByMember={countsByMember}
             worstByMember={worstByMember}
-            caption={`Team members compared to their own ${cohortLabel} peers across cross-family metrics`}
+            caption={`People compared to their own ${cohortLabel} peers across cross-family metrics`}
             cohortLabel={cohortLabel}
           />
         </div>

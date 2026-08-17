@@ -167,7 +167,7 @@ jobs:
           # rustfmt + clippy for the lint steps; llvm-tools-preview for cargo-llvm-cov.
           components: rustfmt, clippy, llvm-tools-preview
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
         with:
           # Both possible workspaces declared; only the relevant one is used per
           # crate. Per-component cache key so jobs don't thrash a shared target.
@@ -193,7 +193,7 @@ jobs:
           if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
           cargo clippy -p ${{ matrix.entry.package }} --all-targets $feats
 
-      - uses: taiki-e/install-action@cb33e69fad06166ca28a42b2575e4dadabf62ee8 # v2
+      - uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2
         if: ${{ matrix.entry.cover }}
         with:
           tool: cargo-llvm-cov

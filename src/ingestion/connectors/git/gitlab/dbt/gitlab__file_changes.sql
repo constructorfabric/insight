@@ -28,11 +28,7 @@ SELECT
     COALESCE(p.repo_slug, '') AS repo_slug,
     COALESCE(fc.commit_sha, '') AS commit_hash,
     COALESCE(fc.new_path, fc.old_path, '') AS file_path,
-    if(
-        length(splitByChar('.', COALESCE(fc.new_path, fc.old_path, ''))) > 1,
-        arrayElement(splitByChar('.', COALESCE(fc.new_path, fc.old_path, '')), -1),
-        ''
-    ) AS file_extension,
+    {{ git_file_extension("COALESCE(fc.new_path, fc.old_path, '')") }} AS file_extension,
     multiIf(
         fc.new_file = true, 'added',
         fc.deleted_file = true, 'deleted',

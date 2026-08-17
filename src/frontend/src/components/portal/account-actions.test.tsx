@@ -125,6 +125,34 @@ describe("AccountActions", () => {
     );
   });
 
+  // A confirmation an operator can consent to has to say what changes.
+  // Re-asserting the binding in force changes no binding at all — the
+  // description that suits a bind ("the account moves to X") states the
+  // opposite of what happens here.
+  it("tells a confirm apart from a bind in what it promises", async () => {
+    render(
+      <AccountActions accountRef={REF} binding={binding()} candidates={[BOB, CAROL]} />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(
+      within(screen.getByRole("dialog")).getByText(/binding does not change/i),
+    ).toBeInTheDocument();
+  });
+
+  it("names who a detach takes the account away from", async () => {
+    render(
+      <AccountActions accountRef={REF} binding={binding()} candidates={[BOB]} />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /detach into a new person/i }),
+    );
+    expect(
+      within(screen.getByRole("dialog")).getByText(/stops counting towards Bob Park/i),
+    ).toBeInTheDocument();
+  });
+
   it("the merge dialog previews what moves before anything happens", async () => {
     hooks.personAccounts.data = {
       person_id: BOB.person_id,

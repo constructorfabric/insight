@@ -98,10 +98,10 @@ export function IcNeedsAttention({
                           half a row away it was read as a fifth number. */}
                       <span className={cn("shrink-0 justify-self-start rounded border px-1.5 whitespace-nowrap", TEXT_LABEL)}>
                         {item.kind === "fell"
-                          ? "fell this period"
+                          ? "dropped this period"
                           : item.noPrevious
-                            ? "no earlier period"
-                            : "ongoing"}
+                            ? "no earlier period to compare"
+                            : "not new this period"}
                       </span>
                     </span>
                     <span className="flex items-baseline gap-2 sm:contents">

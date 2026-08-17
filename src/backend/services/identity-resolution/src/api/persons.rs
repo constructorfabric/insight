@@ -8,6 +8,10 @@
 //! both — the operator is the disambiguator, and hiding one of them by
 //! recency would decide a contested case silently.
 //!
+//! A term that parses as a UUID names a person id instead: it is the one
+//! identifier an operator can copy off a card, and the only way to reach a
+//! person the journal holds no values for.
+//!
 //! Admin-gated and deliberately NOT visibility-filtered: this is the operator
 //! surface, and the seeded operator sits outside the org chart on purpose.
 
@@ -20,12 +24,14 @@ use serde::{Deserialize, Serialize};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 use super::AppState;
 use super::error::PersonSearchError;
 use super::gate::require_admin;
 use super::resolution::PersonSummaryResponse;
 use crate::domain::person_card;
+use crate::domain::resolution::EXCLUDED_PERSON;
 use crate::infra::db::persons_repo;
 
 const DEFAULT_LIMIT: u64 = 20;
@@ -68,11 +74,16 @@ pub async fn search_persons(
     let terms = search_terms(params.q.as_deref())?;
     let limit = super::listing::clamp_limit(params.limit, DEFAULT_LIMIT, MAX_LIMIT);
 
+    let (named, values) = partition_terms(&terms);
+
     // Over-fetch by one: the extra row is the truncation probe, never served.
-    let mut ids =
-        persons_repo::search_persons_by_current_values(&state.db, tenant, &terms, limit + 1)
+    let mut ids = if named.is_empty() {
+        persons_repo::search_persons_by_current_values(&state.db, tenant, &values, &[], limit + 1)
             .await
-            .map_err(|e| read_err(&e))?;
+            .map_err(|e| read_err(&e))?
+    } else {
+        persons_named_by_id(&state, tenant, &named, &values, limit + 1).await?
+    };
     let truncated = ids.len() > usize::try_from(limit).unwrap_or(usize::MAX);
     if truncated {
         ids.pop();
@@ -86,12 +97,64 @@ pub async fn search_persons(
         .map(PersonSummaryResponse::from)
         .collect();
     sort_for_display(&mut items);
+    // A picker is where the wrong person gets chosen, so a person who exists
+    // only because somebody signed in must say so here of all places.
+    super::resolution::mark_provisional(&state, tenant, &mut items).await?;
 
     Ok(Json(PersonListResponse {
         items,
         truncated,
         next_cursor: None,
     }))
+}
+
+/// A term that parses as a UUID names a person id; everything else is matched
+/// against observed values.
+///
+/// Without this the one identifier an operator can copy off a card finds
+/// nothing, and a person the journal holds no attributes for — minted at first
+/// sign-in, before the resolver attaches the roster's name — cannot be found at
+/// all, since a value search has no value to match.
+fn partition_terms(terms: &[String]) -> (Vec<Uuid>, Vec<String>) {
+    let mut named = Vec::new();
+    let mut values = Vec::new();
+    for term in terms {
+        match Uuid::parse_str(term) {
+            // The excluded-person sentinel is not a person; naming it finds
+            // nobody rather than serving the row every exclusion appends to.
+            Ok(id) if id != EXCLUDED_PERSON => named.push(id),
+            Ok(_) => {}
+            Err(_) => values.push(term.clone()),
+        }
+    }
+    (named, values)
+}
+
+/// Persons named by id, narrowed by any value terms alongside them.
+///
+/// The value filter runs WITHIN the named ids — intersecting with a tenant-wide
+/// value search would test membership in an independently truncated prefix and
+/// silently drop a genuine match. Sorted and capped so the caller's truncation
+/// probe drops a deterministic id, never whichever the database returned last.
+async fn persons_named_by_id(
+    state: &AppState,
+    tenant: Uuid,
+    named: &[Uuid],
+    values: &[String],
+    limit: u64,
+) -> Result<Vec<Uuid>, CanonicalError> {
+    let mut known = persons_repo::persons_in_tenant(&state.db, tenant, named)
+        .await
+        .map_err(|e| read_err(&e))?;
+    known.sort_unstable();
+    known.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    if values.is_empty() || known.is_empty() {
+        return Ok(known);
+    }
+
+    persons_repo::search_persons_by_current_values(&state.db, tenant, values, &known, limit)
+        .await
+        .map_err(|e| read_err(&e))
 }
 
 /// Split `q` into terms: non-empty, whitespace-separated, capped in count and
@@ -168,5 +231,30 @@ mod tests {
             "over the length cap refused"
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_uuid_term_names_a_person_while_the_rest_match_values() {
+        let terms = vec![
+            "019e27bc-dec6-7773-b1e7-820ea2624b1b".to_owned(),
+            "ann".to_owned(),
+        ];
+
+        let (named, values) = partition_terms(&terms);
+
+        assert_eq!(named.len(), 1, "the id is a name, not a value to match");
+        assert_eq!(values, vec!["ann".to_owned()]);
+    }
+
+    #[test]
+    fn the_excluded_sentinel_names_nobody() {
+        // It accumulates a journal row per exclusion, so it exists in the
+        // table — and it is still not a person the picker may offer.
+        let terms = vec![EXCLUDED_PERSON.to_string()];
+
+        let (named, values) = partition_terms(&terms);
+
+        assert!(named.is_empty());
+        assert!(values.is_empty(), "not matched as a value either");
     }
 }

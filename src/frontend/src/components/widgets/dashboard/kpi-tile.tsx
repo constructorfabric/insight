@@ -151,7 +151,7 @@ export function KpiTile({
           <span>
             {tile.medianLabel
               ? `Team ${tile.medianLabel}${tile.gapText ? ` · ${tile.gapText}` : ""}`
-              : "No peer data"}
+              : "No comparison"}
           </span>
         </CardFooter>
       </Card>

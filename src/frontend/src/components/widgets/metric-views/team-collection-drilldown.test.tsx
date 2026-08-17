@@ -98,8 +98,8 @@ describe("TeamCollectionDrilldown", () => {
     expect(screen.getByText("Unable to load metrics")).toBeInTheDocument();
   });
 
-  it("shows the no-members message when the roster is empty", () => {
+  it("shows the empty-roster message when nobody is in the team", () => {
     renderDrilldown(gridData(), []);
-    expect(screen.getByText(/No team members/i)).toBeInTheDocument();
+    expect(screen.getByText(/Nobody in this team yet/i)).toBeInTheDocument();
   });
 });

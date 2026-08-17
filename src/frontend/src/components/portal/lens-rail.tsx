@@ -105,6 +105,7 @@ export function LensRail() {
   // Suppresses the hover until the pointer leaves. Only a pointer-driven click
   // sets it — see the note where it is set.
   const [dismissed, setDismissed] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancel = () => {
@@ -266,7 +267,7 @@ export function LensRail() {
           </SidebarMenu>
         </SidebarContent>
         <SidebarFooter className="relative z-10 items-start gap-1 ps-2">
-          <Popover>
+          <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
             <PopoverTrigger
               render={
                 <button
@@ -279,8 +280,22 @@ export function LensRail() {
                 </button>
               }
             />
-            <PopoverContent side="right" align="end" className="w-56 gap-0 p-1">
-              <AppSidebarFooter />
+            <PopoverContent
+              side="right"
+              align="end"
+              className="w-56 gap-0 p-1"
+              // Handing focus back to the trigger reopens the rail through
+              // `onFocusCapture`, over the surface just asked for.
+              finalFocus={false}
+            >
+              <AppSidebarFooter
+                onNavigate={() => {
+                  setSettingsOpen(false);
+                  // Note 4 above, reached from the footer rather than a zone.
+                  setDismissed(true);
+                  close();
+                }}
+              />
             </PopoverContent>
           </Popover>
         </SidebarFooter>

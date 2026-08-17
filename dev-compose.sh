@@ -1431,17 +1431,20 @@ for dbt-built gold data rather than for containers to report healthy.
 
           The four backend services (analytics, authenticator,
           identity-resolution, gateway) and the frontend are PULLED, each
-          pinned to its own chart's appVersion — never :latest, and never
-          compiled here. Building them took ~26 minutes for code the stand
-          does not change.
+          pinned to its own chart's appVersion — never :latest.
 
-          --build  Build the whole product from this working tree instead:
-                   the backend compiled from source and the frontend built
-                   with pnpm (served by the front-built nginx). Needed to
-                   test a local change: `up` otherwise refuses when the tree
-                   differs from origin/main under src/backend/ or
-                   src/frontend/, since the pinned images would not be what
-                   ran.
+          An appVersion names what main released, so pass the flag for whatever
+          tree this checkout changes, or the stand will not run it:
+
+          --build-backend    Compile the Rust services from this tree. Adds
+                             ~28 min (measured across CI's build-path runs).
+          --build-frontend   Build the SPA from this tree with pnpm, served by
+                             the front-built nginx. Backend stays pinned.
+          --build            Both.
+
+          `up` refuses to pin a tree that differs from origin/main and names
+          the flag to pass — but only when origin/main is in the checkout. A
+          shallow clone says so on stderr and defers to its caller.
   seed    Re-seed the running stand (default target: all).
   test    Run the stand suite against an already-up stand. Passes extra
           arguments through to pytest — no `--` separator.
@@ -1524,7 +1527,11 @@ test_stand_tree_matches_charts() {
   local subtree="$1" flag="$2"
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
   git remote get-url origin >/dev/null 2>&1 || return 0
-  git rev-parse --verify --quiet origin/main >/dev/null || return 0
+  # Inert on a depth-1 checkout (every CI runner). Say so, so a log reader does
+  # not read the silence as a passed check.
+  git rev-parse --verify --quiet origin/main >/dev/null || {
+    echo "NOTE: no origin/main here — ${subtree}/ unchecked, ${flag} is the caller's call." >&2
+    return 0; }
 
   local changed
   changed="$(git diff --name-only origin/main -- "$subtree" 2>/dev/null | head -5)"
@@ -1539,11 +1546,11 @@ test_stand_tree_matches_charts() {
 }
 
 test_stand_backend_matches_charts() {
-  test_stand_tree_matches_charts src/backend --build
+  test_stand_tree_matches_charts src/backend --build-backend
 }
 
 test_stand_frontend_matches_chart() {
-  test_stand_tree_matches_charts src/frontend --build
+  test_stand_tree_matches_charts src/frontend --build-frontend
 }
 
 # Derive the test env file from the committed example, overriding only the
@@ -1801,31 +1808,36 @@ cmd_test_stand() {
 
   case "$verb" in
     up)
-      local image build=false
+      # Each tree is pinned to its chart's appVersion or built from this one,
+      # asked separately: --build is the both-axes alias.
+      local image build_backend=false build_frontend=false
       while [[ $# -gt 0 ]]; do
         case "$1" in
-          --build) build=true; shift ;;
+          --build)          build_backend=true; build_frontend=true; shift ;;
+          --build-backend)  build_backend=true; shift ;;
+          --build-frontend) build_frontend=true; shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
         esac
       done
 
-      if [[ "$build" == true ]]; then
+      if [[ "$build_frontend" == true ]]; then
         test_stand_write_env built || return 1
+        echo "=== the frontend is built from this tree (pnpm), not pulled ==="
       else
         test_stand_frontend_matches_chart || return 1
         image="$(test_stand_frontend_image)" || return 1
         test_stand_write_env ghcr "$image" || return 1
       fi
 
-      # Pinning writes the four *_IMAGE vars into the env file, which is what
-      # makes cmd_up put those services in its ghcr list — so this has to happen
-      # before cmd_up reads it.
-      if [[ "$build" != true ]]; then
+      # INVARIANT: pinning writes the *_IMAGE vars, and that is the only thing
+      # keeping cmd_up off the compiler — so it has to run before cmd_up reads
+      # the env file.
+      if [[ "$build_backend" == true ]]; then
+        echo "=== the backend is compiled from this tree, not pulled ==="
+      else
         test_stand_backend_matches_charts || return 1
         test_stand_pull_backends || return 1
-      else
-        echo "=== --build: compiling the backend and building the frontend from this tree ==="
       fi
 
       local up_args=(--env-file "$TEST_STAND_ENV_FILE"

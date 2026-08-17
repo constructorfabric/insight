@@ -23,12 +23,12 @@ describe("consumeOverrideParam", () => {
 
   it("bounces into /auth/login with the target and a cleaned return_to", () => {
     stubLocation(
-      "https://insight.test/team/board?__override=ao%40constructor.tech&tab=stats"
+      "https://insight.test/team/board?__override=viewer%40example.com&tab=stats"
     );
 
     expect(consumeOverrideParam()).toBe(true);
     expect(assign).toHaveBeenCalledWith(
-      `/auth/login?__override=${encodeURIComponent("ao@constructor.tech")}&return_to=${encodeURIComponent("/team/board?tab=stats")}`
+      `/auth/login?__override=${encodeURIComponent("viewer@example.com")}&return_to=${encodeURIComponent("/team/board?tab=stats")}`
     );
   });
 

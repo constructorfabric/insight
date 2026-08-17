@@ -132,6 +132,7 @@ IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     # the accounts read: it is a connector type, not an id, and the tests
     # address the same literal — a stand-in would fold a segment nothing varies.
     _i("GET", "/v1/resolution/attention"),
+    _i("GET", "/v1/resolution/accounts"),
     _i("GET", f"/v1/resolution/accounts/github/{SOME_ID}/{SOME_ACCOUNT_ID}"),
     _i("GET", f"/v1/resolution/persons/{SOME_ID}/accounts"),
     _i("POST", "/v1/resolution/bind"),
@@ -166,6 +167,7 @@ ALL_OPERATIONS: Final[tuple[Operation, ...]] = ANALYTICS_OPERATIONS + IDENTITY_O
 _ADMIN_GATED_SUFFIXES: Final[tuple[str, ...]] = (
     "/v1/persons",
     "/v1/resolution/attention",
+    "/v1/resolution/accounts",
     f"/v1/resolution/accounts/github/{SOME_ID}/{SOME_ACCOUNT_ID}",
     f"/v1/resolution/persons/{SOME_ID}/accounts",
     "/v1/resolution/bind",
