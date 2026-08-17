@@ -249,6 +249,15 @@ describe("shell layout: narrow (tablet)", () => {
     mocks.layout = "narrow";
   });
 
+  it("seats the pane beside the rail, not under it", () => {
+    // The drawer is positioned from the viewport edge, and at this tier the
+    // rail is what stands there.
+    const { container } = render(<Shell />);
+    expect(container.querySelector('[data-slot="sidebar-container"]')).toHaveClass(
+      "data-[side=left]:left-(--rail-width)",
+    );
+  });
+
   it("collapses the pane off-canvas instead of Sheeting it", () => {
     // The rail is still there, so the pane must NOT take over the rail's duties
     // — no zone list, no settings row, and the header stays.

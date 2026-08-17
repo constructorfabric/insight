@@ -77,10 +77,10 @@ const OPEN_WIDTH = "12rem";
  *
  * The fade only has work to do while the pane is beside the rail. It collapses
  * off-canvas on the middle width tier, and a reader can shut it by hand on a
- * wide one — painting a fixed 19.5rem of gradient in either case laid a dimmed
+ * wide one — painting the full width of gradient in either case laid a dimmed
  * strip over the content for no reason.
  */
-const PANE_EDGE = "19.5rem";
+const PANE_EDGE = "calc(var(--rail-width) + var(--sidebar-width))";
 
 /**
  * How long a pointer has to stay before the labels appear.
@@ -179,7 +179,7 @@ export function LensRail() {
     >
       <Sidebar
         collapsible="none"
-        className="w-14! overflow-visible border-e"
+        className="w-(--rail-width)! overflow-visible border-e"
       >
         {/* A fade beside the panel, not a flat veil.
             The pane's rows do not object to being dimmed — they object to

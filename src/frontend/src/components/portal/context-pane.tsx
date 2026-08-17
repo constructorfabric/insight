@@ -104,7 +104,13 @@ export function ContextPane() {
   const dismissDrawer = useDismissDrawer();
 
   return (
-    <Sidebar collapsible={drawer ? "offcanvas" : "none"} className="border-e">
+    <Sidebar
+      collapsible={drawer ? "offcanvas" : "none"}
+      className={cn(
+        "border-e",
+        layout === "narrow" && "data-[side=left]:left-(--rail-width)"
+      )}
+    >
       {/* The drawer's zone row already names the zone, so repeating it in a
           header would cost two of the ~14 rows a phone has. */}
       {isPhone ? null : (
