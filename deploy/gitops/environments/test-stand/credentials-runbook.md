@@ -149,6 +149,8 @@ make -C deploy/gitops verify-ci-credential ENV=test-stand
 | `create roles.rbac.authorization.k8s.io -n insight` | the chart renders its own reconcile RBAC |
 | `create workflowtemplates.argoproj.io -n insight` | the chart renders WorkflowTemplates and CronWorkflows |
 | `update httproutes.gateway.networking.k8s.io -n insight` | the umbrella renders both edge routes from `gateway.route` / `keycloak.route`, so `helm upgrade` writes them on every run |
+| `get persistentvolumeclaims -n insight` | the git-cli-proxy renders a claim for its clone cache, and `helm upgrade` reads it before patching |
+| `update persistentvolumeclaims -n insight` | its chart and version labels change on every bump |
 | `create roles.rbac.authorization.k8s.io -n airbyte` | the chart renders `insight-airbyte-auth-reader` into the Airbyte namespace, not the release one |
 | `create rolebindings.rbac.authorization.k8s.io -n airbyte` | same object, the binding half |
 
@@ -164,6 +166,7 @@ make -C deploy/gitops verify-ci-credential ENV=test-stand
 | `list nodes --all-namespaces` | no cluster-scoped reads |
 | `create clusterrolebindings… --all-namespaces` | cannot widen its own grant |
 | `get pods -n kube-system` | no unrelated namespace, control plane included |
+| `delete persistentvolumeclaims -n insight` | the clone cache is annotated `helm.sh/resource-policy: keep` and outlives the release; a credential that could delete it could discard every synced repository |
 
 ### 3.2 One RBAC subtlety worth knowing
 

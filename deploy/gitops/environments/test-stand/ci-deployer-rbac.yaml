@@ -28,6 +28,12 @@ rules:
   - apiGroups: [""]
     resources: [configmaps, secrets, services, serviceaccounts]
     verbs: [get, list, watch, create, update, patch, delete]
+  # The git-cli-proxy's clone cache. No `delete`: the claim is annotated
+  # helm.sh/resource-policy=keep so a release never removes it, and a
+  # credential that could would discard the cache of every synced repository.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, watch, create, update, patch]
   - apiGroups: ["apps"]
     resources: [deployments]
     verbs: [get, list, watch, create, update, patch, delete]
