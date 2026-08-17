@@ -34,7 +34,7 @@ The `persons` schema splits the value across three columns by
   case-insensitive search, room for FULLTEXT.
 - `value TEXT` — catch-all, indexed only via `value_hash`.
 
-The C# service must agree with the seed pipeline on which `value_type`
+The serving path must agree with the seed pipeline on which `value_type`
 lands in which column, otherwise lookups will miss rows the seed
 wrote.
 

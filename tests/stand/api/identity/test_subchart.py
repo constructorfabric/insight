@@ -1,9 +1,7 @@
 """The identity-resolution service, through the gateway.
 
 Per `deploy/compose/gateway/routes.yaml`, `/api/identity` reaches
-`identity-resolution:8082` — the Rust service. The .NET `insight-identity` that
-used to answer here was removed upstream in favour of it (epic #1602) and the
-gateway was repointed.
+`identity-resolution:8082`.
 
 Organised by SERVICE, not by auth state, against one path constant per route.
 The 401 half is not here: `test_gateway.py` sweeps it over every operation in

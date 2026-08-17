@@ -60,7 +60,7 @@ ADMIN_OPERATOR_UUID = "cccccccc-0000-0000-0000-000000000001"
 # created by the identity-resolution migrations, not by this seed.
 ADMIN_ROLE_NAME = "admin"
 
-# Author for every dev-seed observation (Guid.Empty == "system").
+# Author for every dev-seed observation (the nil UUID == "system").
 AUTHOR_PERSON_UUID = "00000000-0000-0000-0000-000000000000"
 
 # Fixed insight_source_id used by every dev-seed observation and org-chart

@@ -96,8 +96,7 @@ partition `(tenant, person, source_type, source_id, value_type)`
 - `422 Unprocessable Entity` +
   `urn:insight:error:ambiguous_profile` (with echoed lookup and
   matched `person_ids` list) on multiple matches,
-- `400 Bad Request` + `urn:insight:error:*` for malformed bodies via
-  FluentValidation.
+- `400 Bad Request` + `urn:insight:error:*` for malformed bodies.
 
 ### Consequences
 
@@ -108,8 +107,8 @@ partition `(tenant, person, source_type, source_id, value_type)`
   see real signal when the seed pipeline produces ambiguous rows.
 - Phase 3 can extend the body with `start_date` / `end_date` /
   additional `value_type`s without a new endpoint URL.
-- The new partition key in `SqlProfiles.cs` differs from the Phase-1
-  `Sql.cs ResolvePersonIdByEmail` query: the Phase-2 partition
+- The new partition key differs from the Phase-1 resolve-by-email
+  query: the Phase-2 partition
   includes `person_id` and excludes `value_id`, so a rebound email
   correctly fails to resolve to its prior person. The Phase-1 query
   is kept as-is for backwards compatibility.
@@ -120,7 +119,7 @@ partition `(tenant, person, source_type, source_id, value_type)`
 ### Confirmation
 
 Confirmed by eleven integration tests in
-`Insight.Identity.Tests.Integration/ProfilesEndpointTests.cs`:
+the profiles-endpoint integration tests:
 two happy-path lookups (email + id) plus an email-lowercase test,
 three not-found paths (unknown email, unknown id within source,
 rebound email old value), one ambiguity test (two persons sharing
@@ -133,7 +132,7 @@ fields, missing tenant).
 ### POST /v1/profiles with structured body + single-result invariant (chosen)
 
 - Good, because cross-field validation (value_type+source-fields) is
-  ergonomic in a body — both with FluentValidation and OpenAPI doc.
+  ergonomic in a body — both to implement and to document in OpenAPI.
 - Good, because data-invariant violations surface as 422 rather than
   being hidden by silent picking.
 - Good, because Phase 3 date-range and multi-id-type extensions can
@@ -190,4 +189,4 @@ fields, missing tenant).
 - [`cpt-insightspec-fr-identity-profile-resolve`](../PRD.md#resolve-profile-by-email-or-source-native-id)
 - [`cpt-insightspec-fr-identity-profile-ambiguous-422`](../PRD.md#surface-single-result-invariant-via-422)
 - [`cpt-insightspec-fr-identity-profile-ids-list`](../PRD.md#project-full-alias-list-on-response)
-- [`cpt-insightspec-fr-identity-profile-validation`](../PRD.md#validate-request-body-via-fluentvalidation)
+- [`cpt-insightspec-fr-identity-profile-validation`](../PRD.md#validate-the-request-body)

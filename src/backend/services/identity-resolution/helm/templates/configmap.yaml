@@ -36,7 +36,7 @@ data:
           openapi:
             title: "Insight Identity Resolution API"
             version: "0.1.0"
-            description: "Identity Resolution service (Rust port of .NET identity)"
+            description: "Identity Resolution service"
 
       gear-orchestrator:
         config: {}

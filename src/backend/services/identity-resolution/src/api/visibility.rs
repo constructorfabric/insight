@@ -1,6 +1,6 @@
 //! Visibility grants HTTP surface — create / list / revoke.
 //!
-//! Admin-gated; ported 1:1 from the .NET `VisibilityEndpoints` (ADR-0012).
+//! Admin-gated (ADR-0012).
 //! `viewed_person_id` null = viewer sees the whole tenant tree. Revoke is a
 //! plain soft-delete (no lockout guard).
 
@@ -79,9 +79,8 @@ impl From<Visibility> for VisibilityResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct VisibilityListResponse {
     pub items: Vec<VisibilityResponse>,
-    /// Wire parity with the .NET `ListResponse`: the cursor is declared
-    /// but pagination is not implemented — always `null` (both
-    /// implementations return every row; consumers already tolerate it).
+    /// The cursor is declared but pagination is not implemented — always
+    /// `null`; the route returns every row.
     pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for VisibilityListResponse {}
@@ -99,8 +98,8 @@ pub struct ListParams {
     pub viewer: Option<Uuid>,
     pub viewed: Option<Uuid>,
     pub active: Option<bool>,
-    // Signed so a negative `?limit=` clamps to 1 (parity with the .NET `int?`
-    // clamp) rather than failing query deserialization.
+    // Signed so a negative `?limit=` clamps to 1 rather than failing query
+    // deserialization.
     pub limit: Option<i64>,
 }
 
@@ -211,7 +210,7 @@ pub async fn delete_visibility(
     }
 
     // 404 only if the grant never existed; otherwise soft-delete + 204 (a
-    // second revoke of an already-revoked grant is a no-op 204). Parity w/ .NET.
+    // second revoke of an already-revoked grant is a no-op 204).
     if visibility_repo::get_by_id(&state.db, tenant, id)
         .await
         .map_err(read_err)?
@@ -239,8 +238,7 @@ fn read_err(e: anyhow::Error) -> CanonicalError {
     CanonicalError::internal("failed to read grants").create()
 }
 
-/// `reason`, when present, must be at most 500 chars — mirrors the .NET
-/// `MaximumLength(500)` on the create + `RevokeReasonValidator`.
+/// `reason`, when present, must be at most 500 chars.
 fn reason_valid(reason: Option<&str>) -> bool {
     reason.is_none_or(|r| r.chars().count() <= MAX_REASON_LEN)
 }
@@ -255,8 +253,7 @@ fn reason_too_long() -> CanonicalError {
         .create()
 }
 
-/// Clamp `?limit=` to `[1, 500]`; negatives → 1, absent → 50 (parity with the
-/// .NET `int?` clamp).
+/// Clamp `?limit=` to `[1, 500]`; negatives → 1, absent → 50.
 fn clamp_limit(limit: Option<i64>) -> u64 {
     limit.map_or(LIST_DEFAULT_LIMIT, |l| {
         u64::try_from(l).unwrap_or(1).clamp(1, LIST_MAX_LIMIT)

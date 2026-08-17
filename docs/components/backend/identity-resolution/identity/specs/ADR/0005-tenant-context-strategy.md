@@ -61,7 +61,7 @@ declaration order:
 2. `JwtTenantContext` — reads the `insight_tenant_id` claim. Stub for
    Phase 1.5; relies on api-gateway forwarding the principal.
 3. `ConfigTenantContext` — returns
-   `IDENTITY__identity__tenant_default_id` when set.
+   `APP__gears__identity-resolution__config__tenant_default_id` when set.
 
 If all return `null`, the endpoint returns 400 with an RFC 7807 body.
 
@@ -113,7 +113,7 @@ all-null path.
 
 ## More Information
 
-- Anton's review comment on PR #398 (HeaderTenantContext.cs:6)
+- Review comment on PR #398 (the header-based tenant context)
   flagging that JWT verification must follow in Phase 2.
 
 ## Traceability

@@ -6,11 +6,9 @@ Regenerate with:
 
 Source: `docs/components/backend/identity-resolution/openapi.json`, generated
 offline by `cargo run -p identity-resolution -- openapi` and drift-gated in CI
-beside the analytics and authenticator documents. Until that subcommand existed
-this module was hand-written from the Rust DTOs, because the committed contract
-was still the retired .NET one; these models now describe the structs that
-serialize the wire, so a validation failure is a contract disagreement rather
-than a stale transcription.
+beside the analytics and authenticator documents. These models describe the
+structs that serialize the wire, so a validation failure is a contract
+disagreement rather than a stale transcription.
 
 The names are the contract's, not the suite's: `SubchartResponse` where the
 hand-written module said `Subchart`. `stand/api/schemas/__init__.py` re-exports
@@ -162,8 +160,8 @@ class PersonAccountsResponse(BaseModel):
 
 class PersonResponse(BaseModel):
     """
-    A person node in the org tree (subordinate of a profile), matching the .NET
-    `PersonResponse`. Unlike `ProfileResponse`, the attribute fields are plain
+    A person node in the org tree (subordinate of a profile). Unlike
+    `ProfileResponse`, the attribute fields are plain
     strings (empty when absent, not omitted) and the `supervisor_*`/`parent_*`
     fields serialize as `null` rather than being dropped.
     """
@@ -225,11 +223,9 @@ class PersonSummaryResponse(BaseModel):
 
 class PersonsSeedOperationResponse(BaseModel):
     """
-    One operation's status. Wire shape mirrors the .NET
-    `PersonsSeedOperationResponse`: `request` and `summary` are surfaced as
-    parsed JSON (not double-encoded strings), the tenant/author ids are
-    included, timestamps are ISO-8601, and null fields are emitted (the .NET
-    serializer does not drop nulls).
+    One operation's status. `request` and `summary` are surfaced as parsed
+    JSON (not double-encoded strings), the tenant/author ids are included,
+    timestamps are ISO-8601, and null fields are emitted rather than dropped.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -286,8 +282,7 @@ class Problem(BaseModel):
 class ProfileIdEntry(BaseModel):
     """
     One source-native account id bound to the person — the latest
-    `value_type='id'` observation per source instance. Ported from the .NET
-    `ProfileIdEntry`.
+    `value_type='id'` observation per source instance.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -303,7 +298,7 @@ class ProfileResponse(BaseModel):
     current attributes, the org tree (`supervisor_*` / `parent_*` /
     `subordinates[]`), and every current source-native id (`ids[]`). Null
     attribute fields are omitted from JSON; `subordinates`/`ids` are always
-    present (empty when none), matching the .NET contract.
+    present (empty when none).
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -314,7 +309,7 @@ class ProfileResponse(BaseModel):
     email: str | None = None
     employee_id: str | None = None
     first_name: str | None = None
-    ids: list[ProfileIdEntry] = Field(..., description='Every current source-native id for the person (one per source instance).\nAlways serialized — an empty array when the person has no ids — matching\nthe .NET contract (unlike the attributes above, which are omitted).')
+    ids: list[ProfileIdEntry] = Field(..., description='Every current source-native id for the person (one per source instance).\nAlways serialized — an empty array when the person has no ids, unlike\nthe attributes above, which are omitted.')
     insight_tenant_id: UUID
     job_title: str | None = None
     last_name: str | None = None
@@ -575,7 +570,7 @@ class PersonRoleListResponse(BaseModel):
         extra='forbid',
     )
     items: list[PersonRoleResponse]
-    next_cursor: str | None = Field(None, description='Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).')
+    next_cursor: str | None = Field(None, description='The cursor is declared but pagination is not implemented — always\n`null`; the route returns every row.')
 
 
 class PersonsSeedListResponse(BaseModel):
@@ -586,7 +581,7 @@ class PersonsSeedListResponse(BaseModel):
         extra='forbid',
     )
     items: list[PersonsSeedOperationResponse]
-    next_cursor: str | None = Field(None, description='Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).')
+    next_cursor: str | None = Field(None, description='The cursor is declared but pagination is not implemented — always\n`null`; the route returns every row.')
 
 
 class PersonsSyncListResponse(BaseModel):
@@ -609,7 +604,7 @@ class RoleListResponse(BaseModel):
         extra='forbid',
     )
     items: list[RoleResponse]
-    next_cursor: str | None = Field(None, description='Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).')
+    next_cursor: str | None = Field(None, description='The cursor is declared but pagination is not implemented — always\n`null`; the route returns every row.')
 
 
 class SubchartForestResponse(BaseModel):
@@ -631,7 +626,7 @@ class VisibilityListResponse(BaseModel):
         extra='forbid',
     )
     items: list[VisibilityResponse]
-    next_cursor: str | None = Field(None, description='Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).')
+    next_cursor: str | None = Field(None, description='The cursor is declared but pagination is not implemented — always\n`null`; the route returns every row.')
 
 
 class AccountBindingResponse(BaseModel):

@@ -27,8 +27,8 @@
 
 `bamboohr__identity_inputs.sql` initially emits three fields:
 `workEmail` (email), `employeeNumber` (employee_id), and
-`displayName` (display_name). The C# service projects every BambooHR
-person attribute onto the `Person` response (first/last name,
+`displayName` (display_name). The service projects every BambooHR
+person attribute onto the profile response (first/last name,
 department, division, job title, status, parent email, parent id),
 so the dbt model must emit them too — otherwise the response shape
 stays empty for everything beyond email + display_name.
@@ -109,7 +109,7 @@ ADR-0007 table.
 ### Post-seed enrichment step
 
 - Good, because dbt stays minimal and the enrichment lives where
-  the C# code already does.
+  the service code already does.
 - Bad, because adding a second writer to `persons` complicates the
   ownership story (see ADR-0006 service-owned migrations).
 - Bad, because enrichment failures become a separate operational

@@ -39,7 +39,7 @@ use crate::infra::identity_inputs::ClickHouseIdentityInputsReader;
 /// check (`api::gate`) inspects the JWT subject, not data rows.
 pub const SYSTEM_AUTHOR: Uuid = Uuid::nil();
 
-/// The only seed mode the pipeline implements (parity with the .NET service).
+/// The only seed mode the pipeline implements.
 pub const LINK_BY_EMAIL_MODE: &str = "link-by-email";
 
 /// Upper bound on the read + pipeline — same ceiling the removed queue

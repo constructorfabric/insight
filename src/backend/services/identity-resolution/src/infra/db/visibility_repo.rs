@@ -1,7 +1,6 @@
 //! `visibility` grants store (create / list / revoke).
 //!
-//! Ported from the .NET `VisibilityRepository` / `Sql.Visibility.cs` (ADR-0012).
-//! Tenant-scoped; a grant is active while `valid_to IS NULL`; revoke =
+//! ADR-0012. Tenant-scoped; a grant is active while `valid_to IS NULL`; revoke =
 //! soft-delete (set `valid_to`). `viewed_person_id IS NULL` = viewer sees the
 //! whole tenant tree.
 
@@ -57,7 +56,7 @@ fn row_to_visibility(r: &sea_orm::QueryResult) -> anyhow::Result<Visibility> {
     })
 }
 
-/// Fetch one grant by id (tenant-scoped). Ported from `SqlVisibility.GetById`.
+/// Fetch one grant by id (tenant-scoped).
 ///
 /// # Errors
 ///
@@ -128,8 +127,7 @@ pub async fn list(
 }
 
 /// Insert a grant (`valid_to = NULL`). `valid_from` defaults to now when `None`;
-/// `viewed_person_id = None` grants whole-tree visibility. Ported verbatim from
-/// `SqlVisibility.Insert`.
+/// `viewed_person_id = None` grants whole-tree visibility.
 ///
 /// # Errors
 ///
@@ -170,7 +168,7 @@ pub async fn insert(
 }
 
 /// Revoke (soft-delete) an active grant. Returns rows affected (0 if already
-/// revoked). Ported verbatim from `SqlVisibility.SoftDelete`.
+/// revoked).
 ///
 /// # Errors
 ///

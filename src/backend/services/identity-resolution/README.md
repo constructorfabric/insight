@@ -1,6 +1,6 @@
 # identity-resolution
 
-The Insight identity service (Rust; epic #1602 — port of the retired .NET `identity` service).
+The Insight identity service (Rust; epic #1602).
 Built on the gears-rust framework — same host pattern as `services/analytics`
 (the `api-gateway` system gear is the REST host; auth ENABLED — the
 `oidc-authn-plugin` verifies the gateway JWT and maps its claims into the
@@ -55,8 +55,7 @@ open http://localhost:8082/docs   # OpenAPI docs page
 ```
 
 ## Notes
-- HTTP port **8082** (owned by the `api-gateway` host gear) — same port as the
-  retired .NET identity service it replaced, so the cutover flipped only the hostname.
+- HTTP port **8082** (owned by the `api-gateway` host gear).
 - `database_url` is left **empty** in `config/insight.yaml` — no credentials are
   committed. It is injected via the env override above (or, in a real deploy,
   from the umbrella Secret).

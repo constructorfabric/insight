@@ -1,14 +1,13 @@
 //! Persons-seed write store (MariaDB).
 //!
-//! Two halves, ported from the .NET `IPersonsSeedStore` / `SqlPersonsSeed`:
+//! Two halves:
 //!   * resolver-feeding reads — current `account → person` bindings and the
 //!     latest `email → person` map (fed to [`crate::domain::seed`]);
 //!   * the transactional `apply` — `INSERT IGNORE` the resolved observations
 //!     into `persons`, then rebuild the tenant's `org_chart` (SCD2).
 //!
-//! All SQL is verbatim from the .NET service for parity. These queries use `LEAD()`/`ROW_NUMBER()`
-//! window functions (SCD2 `valid_from`/`valid_to`) and `INSERT … SELECT` cache
-//! rebuilds — constructs `toolkit-db` cannot express, hence the raw-SQL /
+//! These queries use `LEAD()`/`ROW_NUMBER()` window functions (SCD2
+//! `valid_from`/`valid_to`) and `INSERT … SELECT` cache rebuilds — constructs `toolkit-db` cannot express, hence the raw-SQL /
 //! self-managed pool (see `infra::db` module docs + constructorfabric/gears-rust#4239).
 
 use std::collections::HashMap;
@@ -162,8 +161,8 @@ pub async fn known_account_bindings(
 
 /// Current `email → person_id` map for the tenant — the latest
 /// `value_type='email'` observation per email. Keys are normalized via
-/// [`normalize_email`] (lowercase only, no trim — ADR-0011, .NET parity) so the
-/// resolver's lookups match. Ported from `SqlPersonsSeed.LatestEmailToPerson`.
+/// [`normalize_email`] (lowercase only, no trim — ADR-0011) so the resolver's
+/// lookups match.
 ///
 /// # Errors
 ///
@@ -223,8 +222,7 @@ async fn rebuild_org_chart(
     author_person_id: Uuid,
 ) -> anyhow::Result<u64> {
     const DELETE_ORG_CHART: &str = "DELETE FROM org_chart WHERE insight_tenant_id = ?";
-    // Ported verbatim from Sql.PersonsSeed.cs::InsertOrgChartForTenant. The `?`
-    // markers bind, in order: `insight_tenant_id` SIX times (state_log,
+    // The `?` markers bind, in order: `insight_tenant_id` SIX times (state_log,
     // default_active, pe_periods, email_to_person, existing_edges,
     // source_member_latest_active), then `author_person_id` once (the Path-B
     // no-parent rows). Keep this order in lock-step with the params vec below.

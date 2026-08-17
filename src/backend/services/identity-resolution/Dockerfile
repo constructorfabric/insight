@@ -1,5 +1,4 @@
-# Multi-stage build for Insight Identity Resolution (Rust port of the .NET
-# identity service, epic #1602).
+# Multi-stage build for Insight Identity Resolution (epic #1602).
 #
 # Build context: src/backend/
 # Usage: cd src/backend && docker build -f services/identity-resolution/Dockerfile -t insight-identity-resolution:dev .

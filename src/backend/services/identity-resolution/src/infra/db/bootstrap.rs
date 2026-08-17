@@ -1,11 +1,10 @@
-//! First-admin bootstrap — port of the .NET `BootstrapAdminRunner`.
+//! First-admin bootstrap.
 //!
 //! Breaks the chicken-and-egg between the admin-gated CRUD endpoints and an
 //! empty `person_roles` table: when `bootstrap_admin_person_id` is configured,
 //! the person gets an active `admin` assignment in `tenant_default_id`.
 //! Idempotent (`INSERT … WHERE NOT EXISTS` on the active-assignment triple);
-//! runs at the end of the `migrate` subcommand — the .NET service ran it at
-//! startup after `DbUp`, same effective point in the lifecycle.
+//! runs at the end of the `migrate` subcommand.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
@@ -13,7 +12,6 @@ use uuid::Uuid;
 use super::roles_repo::ADMIN_ROLE_ID;
 use crate::config::GearConfig;
 
-/// SQL is verbatim from `BootstrapAdminRunner.cs` (named params → `?`).
 const SQL: &str = "
     INSERT INTO person_roles
         (person_role_id, insight_tenant_id, person_id, role_id,
@@ -30,8 +28,8 @@ const SQL: &str = "
     )
 ";
 
-/// Seed the first admin according to the gear config. Mirrors the .NET
-/// skip semantics: no bootstrap person configured → silent no-op; person
+/// Seed the first admin according to the gear config. Skip semantics: no
+/// bootstrap person configured → silent no-op; person
 /// configured but no tenant → warn and skip.
 ///
 /// # Errors

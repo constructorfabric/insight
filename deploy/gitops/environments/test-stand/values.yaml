@@ -658,9 +658,8 @@ authenticator:
 #  Identity Resolution — the only identity service, plus its two CronJobs
 # ═══════════════════════════════════════════════════════════════════════════
 #
-# There is no `identity:` block anywhere in this file. The .NET identity
-# service was removed from the umbrella; `identity.*` keys are no longer read
-# by anything, so one written here would be silently ignored rather than
+# There is no `identity:` block anywhere in this file: `identity.*` keys are
+# read by nothing, so one written here would be silently ignored rather than
 # rejected.
 identityResolution:
   deploy: true

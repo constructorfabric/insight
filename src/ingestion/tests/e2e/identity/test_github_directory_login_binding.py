@@ -131,9 +131,6 @@ def test_github_login_resolves_a_person_through_the_real_connector_pipeline(
     """A seeded org member is resolvable by the id binding the authenticator
     queries — the whole reason this connector exists.
     """
-    if not identity_svc.supports_seed_cli:
-        pytest.skip("the seed CLI exists only on the Rust implementation (#1690)")
-
     run_tag = uuid.uuid4().hex[:10]
     login = f"pipeline-dev-{run_tag}"
 
@@ -186,9 +183,6 @@ def test_login_binding_is_lowercased_so_a_brokered_username_matches(
     The connector therefore binds on the lowercased login, and this pins it:
     the lowercased form resolves, the mixed-case one does not.
     """
-    if not identity_svc.supports_seed_cli:
-        pytest.skip("the seed CLI exists only on the Rust implementation (#1690)")
-
     run_tag = uuid.uuid4().hex[:10]
     mixed_case_login = f"Pipeline-Dev-{run_tag}"
 

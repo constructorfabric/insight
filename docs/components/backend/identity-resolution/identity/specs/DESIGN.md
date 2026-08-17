@@ -43,7 +43,7 @@ picking the latest value per `value_type` across sources. The service
 is stateless beyond its connection pool, owns its database (SeaORM
 migrations applied via the service's `migrate` subcommand), and follows
 the layered `api` → `domain` → `infra` module split of the gears-rust
-host (ported from the retired .NET service, epic #1602).
+host (epic #1602).
 
 The vision is **operational simplicity**: zero in-memory cache, every
 read hits MariaDB on a covered index; first-install behaviour is
@@ -91,9 +91,9 @@ Architecture-shaping decisions are captured as ADRs in
 | [`cpt-insightspec-fr-identity-profile-ambiguous-422`](PRD.md#surface-single-result-invariant-via-422) | The resolve step distinguishes found / not-found / ambiguous. When the reader returns `>1` distinct `person_id`, the handler emits an RFC 7807 extension body carrying the lookup body + the matched `person_ids` list with status 422. |
 | [`cpt-insightspec-fr-identity-profile-ids-list`](PRD.md#project-full-alias-list-on-response) | `persons_repo::current_source_ids_for_person` returns the latest `value_type='id'` per source instance; the profile assembler ships the list unchanged into the `ProfileResponse` wire shape (`domain/profile.rs::ProfileIdEntry`). |
 | [`cpt-insightspec-fr-identity-profile-org-tree`](PRD.md#project-the-same-org-tree-shape-as-v1persons) | The profile handler hydrates the same `Person` tree (`hydrate_person`) that the retired GET endpoint returned, copying `supervisor_email` / `supervisor_name` / `parent_email` / `parent_id` / `parent_person_id` / `subordinates` straight off the projection. Identical `Person` shape across callers — guaranteed by reusing the recursion. |
-| [`cpt-insightspec-fr-identity-profile-validation`](PRD.md#validate-request-body-via-fluentvalidation) | Request-body validation in the handler expresses the cross-field rules (`value_type=='id'` requires source coordinates; `value_type=='email'` forbids them) before resolving the tenant; first-error wins on `urn:insight:error:*` URN. (Ported from the retired .NET FluentValidation validator.) |
+| [`cpt-insightspec-fr-identity-profile-validation`](PRD.md#validate-the-request-body) | Request-body validation in the handler expresses the cross-field rules (`value_type=='id'` requires source coordinates; `value_type=='email'` forbids them) before resolving the tenant; first-error wins. |
 | [`cpt-insightspec-fr-identity-org-chart-table`](PRD.md#materialised-parentchild-edge-cache) | Migration `003_org_chart.sql` adds the SCD2 edge table with PK `(tenant, source_type, source_id, child, valid_from)`, CHECK `no_self_loop`, and indexes on current-parent / current-children / cross-source views; ADR-0010 records the design decision. |
-| [`cpt-insightspec-fr-identity-org-chart-rebuild`](PRD.md#rebuild-edges-from-persons-deterministically) | `seed-persons-from-identity-input.py` step 9 builds `org_chart_next` from a UNION of `value_type='parent_person_id'` (Source 1, future reconciliation) and `value_type='parent_email'` JOINed to the latest `value_type='email'` observation per `(tenant, value_id)` partition (Source 2, current pipeline); Source 1 wins via NOT EXISTS guard. Step 5 sorts accounts BambooHR-first so the canonical `supervisorEmail` source establishes `person_id`s before downstream connectors. Source 2 intersects each `parent_email` period with the child's **active intervals** derived from `value_type='status'` observations (Active/Inactive/Terminated, with LAG to collapse duplicates and LEAD to compute interval ends); children without any status observation get a synthetic [-inf,+inf) interval. Re-activation (Inactive -> Active) produces a fresh row rather than reopening the closed one — SCD2 history is preserved. Two-table swap via `RENAME` mirrors step 8. Parent_emails with no email-bearer in `persons` are skipped and counted in the seeder log (no stubs created — see ADR-0010). Post-swap two-hop cycle detection self-joins CURRENT edges and emits a WARN line if `(A->B)` and `(B->A)` co-exist; deeper cycles are bounded structurally by the Phase-3 subchart endpoint's depth parameter. |
+| [`cpt-insightspec-fr-identity-org-chart-rebuild`](PRD.md#rebuild-edges-from-persons-deterministically) | The persons-seed rebuilds `org_chart` from a UNION of `value_type='parent_person_id'` (Source 1, future reconciliation) and `value_type='parent_email'` JOINed to the latest `value_type='email'` observation per `(tenant, value_id)` partition (Source 2, current pipeline); Source 1 wins via NOT EXISTS guard. Step 5 sorts accounts BambooHR-first so the canonical `supervisorEmail` source establishes `person_id`s before downstream connectors. Source 2 intersects each `parent_email` period with the child's **active intervals** derived from `value_type='status'` observations (Active/Inactive/Terminated, with LAG to collapse duplicates and LEAD to compute interval ends); children without any status observation get a synthetic [-inf,+inf) interval. Re-activation (Inactive -> Active) produces a fresh row rather than reopening the closed one — SCD2 history is preserved. Two-table swap via `RENAME` mirrors step 8. Parent_emails with no email-bearer in `persons` are skipped and counted in the seeder log (no stubs created — see ADR-0010). Post-swap two-hop cycle detection self-joins CURRENT edges and emits a WARN line if `(A->B)` and `(B->A)` co-exist; deeper cycles are bounded structurally by the Phase-3 subchart endpoint's depth parameter. |
 | [`cpt-insightspec-fr-identity-org-chart-read`](PRD.md#read-current-parent-and-children-edges) | `persons_repo::current_parents_for_child` / `current_children_for_parent` issue `SELECT ... WHERE child_person_id=? AND valid_to IS NULL` (respectively `parent_person_id=?`); the query strings live with the repository, materialised as `OrgChartEdge` rows. |
 
 #### NFR Allocation
@@ -151,9 +151,8 @@ The tenant is the `tenant_id` claim of the gateway JWT verified by the
 oidc-authn-plugin (mapped to `subject_tenant_id` in the
 SecurityContext). The config `tenant_default_id` is an opt-in default
 for single-tenant clusters (and the bootstrap-admin seed).
-Multi-tenant production overlays leave the default empty. (The .NET
-service's header-first composite resolver is retired — a tenant from
-the outside world never passes.)
+Multi-tenant production overlays leave the default empty: a tenant from
+the outside world never passes.
 
 #### Fail fast at startup, not at first request
 
@@ -178,16 +177,15 @@ framework — no `println!`, no raw email interpolation.
 
 #### gears-rust host / workspace Rust toolchain
 
-- [ ] `p1` - **ID**: `cpt-insightspec-constraint-identity-dotnet-9`
+- [ ] `p1` - **ID**: `cpt-insightspec-constraint-identity-rust-toolchain`
 
 The service is a gear on the gears-rust host and builds with the
-workspace-pinned Rust toolchain (ported from the retired .NET 9
-implementation, epic #1602). It ships in the shared backend workspace
+workspace-pinned Rust toolchain (epic #1602). It ships in the shared backend workspace
 at `src/backend/services/identity-resolution/`.
 
 #### SeaORM MySQL backend for MariaDB
 
-- [ ] `p1` - **ID**: `cpt-insightspec-constraint-identity-mysqlconnector`
+- [ ] `p1` - **ID**: `cpt-insightspec-constraint-identity-mysql-backend`
 
 The MariaDB-flavoured wire protocol is served by SeaORM's MySQL
 (SQLx) backend. The dependency is pinned in the service's
@@ -196,10 +194,9 @@ path in domain or api touches the driver.
 
 #### SeaORM migrator for migrations
 
-- [ ] `p1` - **ID**: `cpt-insightspec-constraint-identity-dbup-version`
+- [ ] `p1` - **ID**: `cpt-insightspec-constraint-identity-migrator`
 
-The SeaORM migrator is the migration mechanism (see ADR-0006; it
-replaced the retired .NET service's DbUp). Migration steps live in
+The SeaORM migrator is the migration mechanism (see ADR-0006). Migration steps live in
 `src/migration/` (one Rust file per step) and embed their SQL from
 `src/migration/sql/`. They are applied via the service's `migrate`
 subcommand, which also runs the migrate-time first-admin bootstrap.
@@ -263,8 +260,8 @@ framework types.
 - Migrations are applied by the service's `migrate` subcommand
   (initContainer in Kubernetes) before the serving process starts.
 - Maps `POST /v1/profiles` (the successor of the retired
-  `GET /v1/persons/{email}` — dropped together with the .NET service,
-  zero callers), `GET /internal/persons/by-email/{email}`
+  `GET /v1/persons/{email}` — removed, zero callers),
+  `GET /internal/persons/by-email/{email}`
   (internal-only), `/health`, `/healthz`.
 - Implements the error mapping that emits RFC 7807
   bodies with sanitised `db_target` for DB errors only.
@@ -325,8 +322,7 @@ SQL strings.
 
 - `cpt-insightspec-component-identity-api` — consumes the lookup
   service.
-- `cpt-insightspec-component-identity-infra` — implements
-  `IPersonsReader`.
+- `cpt-insightspec-component-identity-infra` — the read store.
 
 #### infra module (`src/infra/`)
 
@@ -381,7 +377,7 @@ implementation details.
 
 | PRD Interface | Implementation | Notes |
 |---------------|----------------|-------|
-| [`cpt-insightspec-interface-identity-person-lookup`](PRD.md#get-v1personsemail--person-lookup) | **Retired** together with the .NET service (approved removal, zero callers). `POST /v1/profiles` (`api/handlers.rs::resolve_profile`) is the successor; an internal-only `GET /internal/persons/by-email/{email}` remains for in-cluster use. Snake-case JSON. | Kept for historical traceability. |
+| [`cpt-insightspec-interface-identity-person-lookup`](PRD.md#get-v1personsemail--person-lookup) | **Retired** (approved removal, zero callers). `POST /v1/profiles` (`api/handlers.rs::resolve_profile`) is the successor; an internal-only `GET /internal/persons/by-email/{email}` remains for in-cluster use. Snake-case JSON. | Kept for historical traceability. |
 | [`cpt-insightspec-interface-identity-health`](PRD.md#get-health--database-readiness) | Health handler — opens a connection, runs `SELECT 1`. | 200 / 503. |
 | [`cpt-insightspec-interface-identity-healthz`](PRD.md#get-healthz--process-liveness) | Liveness handler returning `"ok"`. | Never touches DB. |
 
@@ -510,8 +506,7 @@ across pod restarts; idempotency is at the script level (every DDL
 uses `CREATE TABLE IF NOT EXISTS`). When `bootstrap_admin_person_id`
 is configured, the `migrate` subcommand also seeds the first active
 `admin` assignment in `tenant_default_id` unless one already exists
-(the migrate-time first-admin bootstrap, ported from the .NET
-`BootstrapAdminRunner`).
+(the migrate-time first-admin bootstrap).
 
 ### 3.7 Database schemas & tables
 
@@ -598,7 +593,7 @@ Phase 2 callers project these onto the `/v1/persons` and
 `/v1/profiles` response shapes (designated-source supervisor +
 per-source detail). Phase 3 (`/v1/subchart/{person_id}?depth=N`,
 issue #348) walks the table via a depth-bounded recursive CTE in a
-single round-trip — `SqlSubchart.GetSubchart` joins a recursive
+single round-trip — the subchart query joins a recursive
 `subtree` CTE rooted at `@root_person_id` (depth-bounded by the
 optional `@max_depth` parameter; null = unbounded, capped by
 MariaDB's `cte_max_recursion_depth = 1000`) against a derived
@@ -616,8 +611,7 @@ visible set.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-identity-schema-versions`
 
-SeaORM's migration tracker table (it replaced the retired .NET
-service's DbUp `SchemaVersions`). Created automatically on the first
+SeaORM's migration tracker table. Created automatically on the first
 `migrate` run if absent; the service does not interact with it
 directly. Provides idempotency for pod restarts.
 
@@ -705,8 +699,7 @@ Configuration is the gears-rust host config: YAML section
 `gears.identity-resolution.config` in `config/insight.yaml`, with
 `APP__gears__identity-resolution__config__<field>` env overrides
 (bound to `GearConfig`). The listener address lives in the host's
-`api-gateway` gear config (`bind_addr: 0.0.0.0:8082` — the same port
-the retired .NET service used, so consumers only flipped hostname).
+`api-gateway` gear config (`bind_addr: 0.0.0.0:8082`).
 
 | Config field (env override `APP__gears__identity-resolution__config__<field>`) | Default | Notes |
 |---------|---------|-------|

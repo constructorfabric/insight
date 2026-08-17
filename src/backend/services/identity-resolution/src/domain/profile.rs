@@ -31,13 +31,13 @@ pub struct ResolveProfileRequest {
 /// current attributes, the org tree (`supervisor_*` / `parent_*` /
 /// `subordinates[]`), and every current source-native id (`ids[]`). Null
 /// attribute fields are omitted from JSON; `subordinates`/`ids` are always
-/// present (empty when none), matching the .NET contract.
+/// present (empty when none).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileResponse {
     pub person_id: Uuid,
     pub insight_tenant_id: Uuid,
-    // `email` and `display_name` are always present in JSON (null when absent),
-    // matching the .NET contract (no `[JsonIgnore]` on these two).
+    // `email` and `display_name` are always present in JSON (null when
+    // absent), unlike the attributes below.
     pub email: Option<String>,
     pub display_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -57,7 +57,7 @@ pub struct ProfileResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub employee_id: Option<String>,
     // Org tree. `supervisor_*` and the legacy `parent_*` triple are both filled
-    // from the single `org_chart` parent edge (matching the .NET assembler).
+    // from the single `org_chart` parent edge.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supervisor_email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,13 +72,13 @@ pub struct ProfileResponse {
     /// configured `org_chart` source. Always serialized (empty when none).
     pub subordinates: Vec<PersonResponse>,
     /// Every current source-native id for the person (one per source instance).
-    /// Always serialized — an empty array when the person has no ids — matching
-    /// the .NET contract (unlike the attributes above, which are omitted).
+    /// Always serialized — an empty array when the person has no ids, unlike
+    /// the attributes above, which are omitted.
     pub ids: Vec<ProfileIdEntry>,
 }
 
-/// A person node in the org tree (subordinate of a profile), matching the .NET
-/// `PersonResponse`. Unlike `ProfileResponse`, the attribute fields are plain
+/// A person node in the org tree (subordinate of a profile). Unlike
+/// `ProfileResponse`, the attribute fields are plain
 /// strings (empty when absent, not omitted) and the `supervisor_*`/`parent_*`
 /// fields serialize as `null` rather than being dropped.
 #[derive(Debug, Serialize, ToSchema)]
@@ -106,8 +106,7 @@ pub struct PersonResponse {
 }
 
 /// One source-native account id bound to the person — the latest
-/// `value_type='id'` observation per source instance. Ported from the .NET
-/// `ProfileIdEntry`.
+/// `value_type='id'` observation per source instance.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProfileIdEntry {
     pub insight_source_type: String,
@@ -117,7 +116,7 @@ pub struct ProfileIdEntry {
 
 /// The parent (a.k.a. supervisor) edge resolved into the fields written onto
 /// the response. Both the `supervisor_*` and legacy `parent_*` fields come from
-/// this single projection (matching the .NET `PersonAssembler`). `None` leaves
+/// this single projection. `None` leaves
 /// every parent field null.
 pub struct ParentProjection {
     pub person_id: Uuid,
@@ -133,7 +132,7 @@ impl toolkit::api::api_dto::ResponseApiDto for ProfileResponse {}
 impl toolkit::api::api_dto::ResponseApiDto for PersonResponse {}
 
 /// Collapse a person's observations to the current value per attribute — the
-/// latest by `created_at` (per the .NET `ProfileAssembler`, ADR-0003) — and map
+/// latest by `created_at` (ADR-0003) — and map
 /// to the response DTO. `value_effective` is the DB's coalesced display value.
 #[must_use]
 pub fn assemble_profile(
@@ -148,7 +147,7 @@ pub fn assemble_profile(
     let get = |value_type: &str| latest.get(value_type).cloned();
 
     // Display-name fallback: derive first/last from display_name only when
-    // neither is observed (matches the .NET `DisplayNameSplitter` path).
+    // neither is observed.
     let display_name = get("display_name");
     let mut first_name = get("first_name");
     let mut last_name = get("last_name");
@@ -208,8 +207,8 @@ pub fn assemble_profile(
 }
 
 /// Assemble a subordinate `PersonResponse` from its observations, parent edge,
-/// and already-hydrated child subtree. Mirrors the .NET `PersonAssembler`:
-/// attribute fields default to the empty string (not omitted), and the
+/// and already-hydrated child subtree. Attribute fields default to the empty
+/// string (not omitted), and the
 /// display-name split fallback applies here too.
 #[must_use]
 pub fn assemble_person(
@@ -267,7 +266,7 @@ pub fn latest_values(observations: Vec<persons::Model>) -> HashMap<String, Strin
     let mut latest: HashMap<String, persons::Model> = HashMap::new();
     for obs in observations {
         match latest.get(&obs.value_type) {
-            // Tie-break on `id` (matches the .NET `created_at DESC, id DESC`), so
+            // Tie-break on `id` (`created_at DESC, id DESC`), so
             // the result is deterministic even when `created_at` values are equal
             // (common under batch backfill) and independent of DB row order.
             Some(prev) if (prev.created_at, prev.id) >= (obs.created_at, obs.id) => {}
@@ -279,9 +278,8 @@ pub fn latest_values(observations: Vec<persons::Model>) -> HashMap<String, Strin
     latest
         .into_iter()
         .filter_map(|(k, m)| {
-            // Keep the raw value; trim is only the emptiness test. .NET does not
-            // trim (NullIfBlank / GetValueOrDefault return the value verbatim),
-            // so leading/trailing whitespace in source data must survive.
+            // Keep the raw value; trim is only the emptiness test, so
+            // leading/trailing whitespace in source data survives.
             let value = m.value_effective?;
             (!value.trim().is_empty()).then_some((k, value))
         })
@@ -289,7 +287,7 @@ pub fn latest_values(observations: Vec<persons::Model>) -> HashMap<String, Strin
 }
 
 /// Best-effort split of a display name into `(first, last)` when dedicated
-/// observations are missing. Ported from the .NET `DisplayNameSplitter`:
+/// observations are missing.
 /// `"Last, First"` (comma) → `(after, before)`; `"First Rest"` (space) →
 /// `(before, rest)`; single token → `(token, "")`; blank → `("", "")`.
 fn split_display_name(display_name: &str) -> (String, String) {
@@ -594,7 +592,7 @@ mod tests {
             None,
             Vec::new(),
         );
-        // Absent attributes are empty strings (not omitted), per .NET PersonResponse.
+        // Absent attributes are empty strings, not omitted.
         assert_eq!(leaf.email, "leaf@example.com");
         assert_eq!(leaf.department, "");
         assert_eq!(leaf.first_name, "");
@@ -650,7 +648,7 @@ mod tests {
             None,
             Vec::new(),
         );
-        // .NET returns the value verbatim (no TRIM); only blank collapses to None.
+        // The value is returned verbatim (no TRIM); only blank collapses to None.
         assert_eq!(profile.department.as_deref(), Some(" Engineering "));
         assert_eq!(profile.division, None);
         Ok(())

@@ -62,9 +62,9 @@ class ProblemDocument(BaseModel):
 class ListResponse[T](BaseModel):
     """`{"items": [...], "next_cursor": null}` — every listing in both services.
 
-    Generic because it is genuinely one shape: identity says so in its own source
-    ("wire parity with the .NET ListResponse: the cursor is declared but
-    pagination is not implemented — always null"), and analytics matches.
+    Generic because it is genuinely one shape: identity says so in its own
+    source ("the cursor is declared but pagination is not implemented —
+    always null"), and analytics matches.
     """
 
     items: list[T]

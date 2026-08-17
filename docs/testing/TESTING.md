@@ -82,9 +82,8 @@ cargo fmt --check && cargo clippy --all-targets              # lint
 Components against a real store, and the API contract:
 
 - **Testcontainers** — identity-resolution (Rust) against a real MariaDB.
-- **Identity contract suite** — the e2e identity contract tests run against the Rust identity-resolution service
-  (`E2E_IDENTITY_IMPLEMENTATION=rust` is the default and only value; the CI dotnet lane and the .NET openapi-drift job
-  were removed with the retired .NET identity service).
+- **Identity contract suite** — the e2e identity contract tests run against the identity-resolution service,
+  which the harness boots itself.
 - **dbt data tests** — bronze → silver → gold model assertions.
 - **Contract** — OpenAPI-drift + metric-coverage gates (every served `metric_key` is value-asserted or skip-listed).
 - **API & metric tests** — the `bronze-to-api` rig: seed bronze → dbt → CH gold-view → analytics-api HTTP == expected value.

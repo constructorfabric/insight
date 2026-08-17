@@ -1,6 +1,5 @@
 //! `person_roles` assignment store (grant / list / revoke).
 //!
-//! Ported from the .NET `RolesRepository` person-role methods / `Sql.Roles.cs`.
 //! Tenant-scoped SCD2-ish junction: an assignment is active while
 //! `valid_to IS NULL`; revoke = soft-delete (set `valid_to`). Revoke of an
 //! `admin` assignment is protected against removing the tenant's LAST active
@@ -50,7 +49,7 @@ fn row_to_person_role(r: &sea_orm::QueryResult) -> anyhow::Result<PersonRole> {
     })
 }
 
-/// Fetch one assignment by id (tenant-scoped). Ported from `SqlRoles.PersonRoleById`.
+/// Fetch one assignment by id (tenant-scoped).
 ///
 /// # Errors
 ///
@@ -80,8 +79,7 @@ pub async fn get_by_id(
 }
 
 /// List assignments for the tenant, optionally filtered by person / role /
-/// active-only, newest first, capped at `limit`. Ported from
-/// `RolesRepository.ListAsync` (`SqlRoles.PersonRoleListBase` + dynamic filters).
+/// active-only, newest first, capped at `limit`.
 ///
 /// # Errors
 ///
@@ -121,8 +119,7 @@ pub async fn list(
 }
 
 /// Grant a role: insert an active assignment (`valid_to = NULL`). `valid_from`
-/// defaults to now when `None` (`IFNULL(?, UTC_TIMESTAMP(6))`). Ported verbatim
-/// from `SqlRoles.InsertPersonRole`.
+/// defaults to now when `None` (`IFNULL(?, UTC_TIMESTAMP(6))`).
 ///
 /// # Errors
 ///
@@ -203,8 +200,7 @@ pub async fn soft_delete(
 /// active `admin` assignment (lockout guard). Returns rows affected: 1 =
 /// revoked, 0 = already revoked / vanished / would-be-last-admin.
 ///
-/// Ported verbatim from `RolesRepository.TrySoftDeletePersonRoleProtectingLastAdminAsync`:
-/// a `RepeatableRead` **transaction** that first takes row-level write locks on
+/// A `RepeatableRead` **transaction** that first takes row-level write locks on
 /// every active admin in the target's tenant (`SELECT … FOR UPDATE`), then runs
 /// the guarded UPDATE. The correlated `COUNT` inside the single UPDATE is a
 /// snapshot read on MariaDB, so the lock is what actually closes the TOCTOU race

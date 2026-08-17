@@ -46,8 +46,7 @@
 ### 1.1 Purpose
 
 `insight-identity-resolution` is a Rust service on the gears-rust host
-(ported from the retired .NET service, epic #1602) that
-serves person lookups over the multi-source observation log stored in
+(epic #1602) that serves person lookups over the multi-source observation log stored in
 the MariaDB `persons` table. It owns its database (per ADR-0006),
 applies its own SeaORM migrations via its `migrate` subcommand, and
 exposes a small read-only HTTP surface to api-gateway and internal
@@ -94,9 +93,9 @@ established for the other Rust services in the platform.
 | `value_id` / `value_full_text` / `value` | Routing columns selected per `value_type` per ADR-0007. `id`/`email`/`username` → `value_id` (utf8mb4_unicode_ci — case-insensitive per ADR-0011); `display_name` → `value_full_text` (utf8mb4_unicode_ci); everything else → `value`. |
 | `insight_tenant_id` | `BINARY(16)` tenant UUID; part of every query and every index. |
 | Latest-per-source | The projection `ROW_NUMBER() OVER (PARTITION BY source_type, source_id, value_type ORDER BY created_at DESC)` — picks the most recent observation per attribute per source. |
-| Assembler | `PersonAssembler` — collapses latest-per-source rows into a single `PersonResponse` by picking the latest value across sources per `value_type`. |
-| SeaORM migrator | The service's migration mechanism (run via the `migrate` subcommand); tracks applied steps in a `seaql_migrations` table inside the service's own database. (Replaced the retired .NET service's DbUp.) |
-| Seed | The one-shot Bash + Python pipeline at `src/backend/services/identity-resolution/seed/` that materialises `persons` rows from ClickHouse `identity.identity_inputs`. Not a schema migration. |
+| Assembler | Collapses latest-per-source rows into a single profile response by picking the latest value across sources per `value_type`. |
+| SeaORM migrator | The service's migration mechanism (run via the `migrate` subcommand); tracks applied steps in a `seaql_migrations` table inside the service's own database. |
+| Seed | The `seed` subcommand that materialises `persons` rows from ClickHouse `identity.identity_inputs`. Not a schema migration. |
 
 ## 2. Actors
 
@@ -188,8 +187,8 @@ visible row is well-formed per the routing rules in ADR-0007.
 
 - The `PersonResponse` shape (Phase 1) with parent attributes
   (`parent_email`, `parent_id`, `parent_person_id`). The Phase-1
-  `GET /v1/persons/{email}` endpoint that carried it was retired with
-  the .NET service (zero callers); `POST /v1/profiles` is the
+  `GET /v1/persons/{email}` endpoint that carried it was retired
+  (zero callers); `POST /v1/profiles` is the
   successor and an internal-only
   `GET /internal/persons/by-email/{email}` remains for in-cluster use.
 - `POST /v1/profiles` (Phase 2, constructorfabric/insight#347)
@@ -444,7 +443,7 @@ keeping the recursion in one place.
 
 **Actors**: `cpt-insightspec-actor-api-gateway`
 
-#### Validate request body via FluentValidation
+#### Validate the request body
 
 - [x] `p1` - **ID**: `cpt-insightspec-fr-identity-profile-validation`
 
@@ -456,15 +455,9 @@ layer. The error type **MUST** be one of:
 `urn:insight:error:missing_source_for_id`,
 `urn:insight:error:source_not_allowed_for_email`.
 
-Cross-field rules are expressed via FluentValidation's `When(...)`
-predicates; the validator is registered in DI via
-`AddValidatorsFromAssemblyContaining<…>`.
-
-**Rationale**: Cross-field validation (`value_type='id'` requires
-both source fields; `value_type='email'` forbids them) is not
-ergonomically expressible with Data Annotations; FluentValidation
-keeps the rules in one class that is unit-testable independently of
-the endpoint.
+**Rationale**: the cross-field rules (`value_type='id'` requires both
+source fields; `value_type='email'` forbids them) live in one place,
+unit-testable independently of the endpoint.
 
 **Actors**: `cpt-insightspec-actor-api-gateway`,
 `cpt-insightspec-actor-platform-sre`
@@ -664,9 +657,8 @@ ADR-0002.
 
 - [x] `p1` - **ID**: `cpt-insightspec-fr-identity-org-chart-read`
 
-The service **MUST** expose `IPersonsReader.GetCurrentParentsAsync`
-and `GetCurrentChildrenAsync` returning `OrgChartEdge` records
-scoped to a single tenant. Both **MUST** read CURRENT edges only
+The service **MUST** expose current-parents and current-children
+reads returning org-chart edges scoped to a single tenant. Both **MUST** read CURRENT edges only
 (`valid_to IS NULL`) and **MUST** preserve per-source-instance edge
 granularity in the result. Temporal "as-of T" queries are Phase 3+
 and add a new method on the same interface; the table's
@@ -674,9 +666,8 @@ and add a new method on the same interface; the table's
 
 **Rationale**: Phase-2 endpoint enrichment (parent/subordinates
 fields on `/v1/persons` and `/v1/profiles`) and Phase-3 subchart
-recursion both call the same two reads — keeping them on
-`IPersonsReader` keeps the abstraction stable across the three
-phases.
+recursion both call the same two reads — one abstraction stable
+across the three phases.
 
 **Actors**: `cpt-insightspec-actor-api-gateway`,
 `cpt-insightspec-actor-mariadb`
@@ -772,7 +763,7 @@ this NFR forces the explicit bytes binding everywhere.
 
 **Type**: HTTP/REST endpoint.
 
-**Stability**: **retired** — the public endpoint was removed together with the retired .NET service (approved removal, zero callers); [`POST /v1/profiles`](#post-v1profiles--profile-resolution) is the successor. The path-form lookup kept the caller's email in the URL, which leaked into observability surfaces this service does not control (api-gateway access logs, ingress logs, browser history, CDN/proxy logs). An internal-only `GET /internal/persons/by-email/{email}` remains for in-cluster use. The description below is kept for historical traceability of the response shape, which lives on in `POST /v1/profiles`.
+**Stability**: **retired** — the public endpoint was removed (approved, zero callers); [`POST /v1/profiles`](#post-v1profiles--profile-resolution) is the successor. The path-form lookup kept the caller's email in the URL, which leaked into observability surfaces this service does not control (api-gateway access logs, ingress logs, browser history, CDN/proxy logs). An internal-only `GET /internal/persons/by-email/{email}` remains for in-cluster use. The description below is kept for historical traceability of the response shape, which lives on in `POST /v1/profiles`.
 
 **Stability history**: Phase 2 of #348 added `supervisor_email`,
 `supervisor_name`, and the `subordinates[]` recursion onto the existing
@@ -953,7 +944,7 @@ urn:insight:error:person_not_found`.
 `urn:insight:error:tenant_unresolved`,
 `urn:insight:error:invalid_value_type`,
 `urn:insight:error:missing_source_type`, etc. (one URN per call —
-first FluentValidation failure wins).
+the first validation failure wins).
 
 **Response 422 Unprocessable Entity** —
 `urn:insight:error:ambiguous_profile`. Body extends the standard
@@ -1101,8 +1092,8 @@ endpoints.
 
 - [x] `p1` - **ID**: `cpt-insightspec-contract-identity-env-config`
 
-(The `IDENTITY__*` prefix of the retired .NET service is gone; the
-contract is now the gears-rust host config.)
+(The contract is the gears-rust host config; the older `IDENTITY__*`
+env prefix is gone.)
 
 **Direction**: required from operator (Helm umbrella or BYO Secret).
 

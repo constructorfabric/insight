@@ -102,8 +102,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     // login-bootstrap (external id) and the authenticator's admin `__override`
     // view-as feature (email) can never be confused for one another via a
     // shared dispatch parameter. Registered as raw routes so they stay out of
-    // the generated OpenAPI (matching the .NET `.ExcludeFromDescription()`);
-    // auth is still enforced by the host gateway and `SecurityContext` is
+    // the generated OpenAPI; auth is still enforced by the host gateway and `SecurityContext` is
     // injected by the host authn pipeline, same as every other route. Each
     // handler itself gates on `subject_type == "service"`.
     let router = router.route(

@@ -1,27 +1,14 @@
 //! Database migrations for the identity-resolution service.
 //!
-//! Ownership transfer (epic #1602 cutover): the `identity` MariaDB schema was
-//! owned by the .NET identity service, which applied `sql/*.sql` via `DbUp` at
-//! startup. That service is decommissioned; schema changes are authored HERE,
-//! as new `mNNN_*` modules.
+//! Each `mNNN_*` module applies one `sql/NNN_*.sql` script through
+//! [`apply_sql`]. Every script is idempotent (`CREATE … IF NOT EXISTS`,
+//! `MODIFY COLUMN` to the same type is a no-op, index/constraint drops
+//! recreate under the same name), so a `migrate` run against a schema that is
+//! already current passes through as a no-op sweep that only populates the
+//! `seaql_migrations` ledger.
 //!
-//! `sql/001…013` are byte-for-byte copies of the `DbUp` scripts
-//! (`services/identity/src/Insight.Identity.Infrastructure/Migrations/`) —
-//! review parity with `diff -r` — with ONE deliberate edit: `012`'s
-//! constraint DROP/ADD are `IF EXISTS`/`IF NOT EXISTS` guarded (crash- and
-//! concurrency-recovery; documented in the file). `014` is the first
-//! Rust-authored migration (deliberately NOT added to the frozen .NET set —
-//! one applier, no concurrent-ALTER window). Every script is idempotent
-//! (`CREATE … IF NOT
-//! EXISTS`, `MODIFY COLUMN` to the same type is a no-op, index/constraint
-//! drops recreate under the same name), so the first Rust `migrate` run on an
-//! environment whose schema `DbUp` already applied passes through as a no-op
-//! sweep that only populates the `seaql_migrations` ledger. `DbUp`'s own
-//! `SchemaVersions` ledger is left in place, orphaned.
-//!
-//! The additive-only rule that held while rolling traffic back to the .NET
-//! service was still an escape hatch is retired with that service; `015` is
-//! the first migration to drop a relation.
+//! `012`'s constraint DROP/ADD are `IF EXISTS`/`IF NOT EXISTS` guarded for
+//! crash- and concurrency-recovery; the file documents why.
 //!
 //! Timezone note: sqlx pins every pooled `MySQL` connection to
 //! `time_zone='+00:00'`, so `SET time_zone` statements inside the scripts are
@@ -42,6 +29,7 @@ mod m20260724_000012_org_chart_nullable_parent;
 mod m20260724_000013_persons_email_any_tenant_idx;
 mod m20260724_000014_account_person_map_datetime;
 mod m20260817_000015_drop_account_person_map;
+mod m20260817_000016_drop_dbup_ledger;
 
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::sea_orm::ConnectionTrait;
@@ -67,12 +55,13 @@ impl MigratorTrait for Migrator {
             Box::new(m20260724_000013_persons_email_any_tenant_idx::Migration),
             Box::new(m20260724_000014_account_person_map_datetime::Migration),
             Box::new(m20260817_000015_drop_account_person_map::Migration),
+            Box::new(m20260817_000016_drop_dbup_ledger::Migration),
         ]
     }
 }
 
-/// Execute every statement of a `DbUp`-style SQL script on the migration
-/// connection, in order.
+/// Execute every statement of a SQL script on the migration connection, in
+/// order.
 ///
 /// The `MySQL` wire protocol takes one statement per call, so the script is
 /// split on `;` after stripping `--` line comments. That is safe for these
@@ -114,9 +103,9 @@ pub(crate) fn irreversible() -> DbErr {
 mod tests {
     use super::split_statements;
 
-    /// Statement counts per script. A count change means either an upstream
-    /// .NET script edit leaked in (they are frozen) or the splitter broke —
-    /// both must be looked at, not auto-accepted.
+    /// Statement counts per script. A count change means either an edit to an
+    /// applied script leaked in or the splitter broke — both must be looked
+    /// at, not auto-accepted.
     #[test]
     fn splits_every_script_into_the_expected_statement_count() {
         let cases: &[(&str, usize)] = &[
@@ -141,6 +130,7 @@ mod tests {
             (include_str!("sql/013_persons_email_any_tenant_idx.sql"), 1),
             (include_str!("sql/014_account_person_map_datetime.sql"), 2),
             (include_str!("sql/015_drop_account_person_map.sql"), 1),
+            (include_str!("sql/016_drop_dbup_ledger.sql"), 1),
         ];
         for (i, (script, expected)) in cases.iter().enumerate() {
             let stmts = split_statements(script);

@@ -1,10 +1,9 @@
 //! Person-roles junction HTTP surface — grant / list / revoke role assignments.
 //!
-//! Admin-gated; ported 1:1 from the .NET `PersonRolesEndpoints` (ADR-0014).
-//! Revoke refuses to remove the tenant's LAST active `admin` assignment
-//! (lockout protection). As in the roles domain, the .NET last-admin 422 has
-//! no gears canonical equivalent → surfaced as `aborted` (409), the same
-//! mapping as every .NET-422 guard (contract-suite pinned).
+//! Admin-gated (ADR-0014). Revoke refuses to remove the tenant's LAST active
+//! `admin` assignment (lockout protection). As in the roles domain, the
+//! refusal is surfaced as `aborted` (409) — the same mapping the other
+//! data-invariant guards use (contract-suite pinned).
 
 use std::sync::Arc;
 
@@ -80,9 +79,8 @@ impl From<PersonRole> for PersonRoleResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonRoleListResponse {
     pub items: Vec<PersonRoleResponse>,
-    /// Wire parity with the .NET `ListResponse`: the cursor is declared
-    /// but pagination is not implemented — always `null` (both
-    /// implementations return every row; consumers already tolerate it).
+    /// The cursor is declared but pagination is not implemented — always
+    /// `null`; the route returns every row.
     pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonRoleListResponse {}
@@ -100,8 +98,8 @@ pub struct ListParams {
     pub person: Option<Uuid>,
     pub role: Option<Uuid>,
     pub active: Option<bool>,
-    // Signed so a negative `?limit=` clamps to 1 (parity with the .NET `int?`
-    // clamp) rather than failing query deserialization.
+    // Signed so a negative `?limit=` clamps to 1 rather than failing query
+    // deserialization.
     pub limit: Option<i64>,
 }
 
@@ -114,8 +112,8 @@ pub async fn create_person_role(
     let tenant = ctx.subject_tenant_id();
     let author = require_admin(&state.db, &ctx).await?;
 
-    // Per-field validation, mirroring the .NET `CreatePersonRoleCommandValidator`
-    // (`invalid_person_id` / `invalid_role_id` / `invalid_reason`).
+    // Per-field validation: `invalid_person_id` / `invalid_role_id` /
+    // `invalid_reason`.
     if req.person_id.is_nil() {
         return Err(invalid_field(
             "person_id",
@@ -268,15 +266,12 @@ fn read_err(e: anyhow::Error) -> CanonicalError {
     CanonicalError::internal("failed to read assignments").create()
 }
 
-/// Format a DB `DateTime` (naive) as ISO-8601 with a `T` separator, matching the
-/// .NET `System.Text.Json` `DateTime` output.
+/// Format a DB `DateTime` (naive) as ISO-8601 with a `T` separator.
 fn fmt_ts(dt: DateTime) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
-/// `reason`, when present, must be at most 500 chars — mirrors the .NET
-/// `MaximumLength(500)` on `CreatePersonRoleCommandValidator` /
-/// `RevokeReasonValidator`.
+/// `reason`, when present, must be at most 500 chars.
 fn reason_valid(reason: Option<&str>) -> bool {
     reason.is_none_or(|r| r.chars().count() <= MAX_REASON_LEN)
 }

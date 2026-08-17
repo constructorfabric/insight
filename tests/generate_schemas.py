@@ -140,11 +140,9 @@ Regenerate with:
 
 Source: `docs/components/backend/identity-resolution/openapi.json`, generated
 offline by `cargo run -p identity-resolution -- openapi` and drift-gated in CI
-beside the analytics and authenticator documents. Until that subcommand existed
-this module was hand-written from the Rust DTOs, because the committed contract
-was still the retired .NET one; these models now describe the structs that
-serialize the wire, so a validation failure is a contract disagreement rather
-than a stale transcription.
+beside the analytics and authenticator documents. These models describe the
+structs that serialize the wire, so a validation failure is a contract
+disagreement rather than a stale transcription.
 
 The names are the contract's, not the suite's: `SubchartResponse` where the
 hand-written module said `Subchart`. `stand/api/schemas/__init__.py` re-exports
@@ -206,8 +204,8 @@ class Untrusted:
 def declares_only_200(spec_path: Path) -> str | None:
     """None while every operation in the document declares nothing but `200`.
 
-    The retired .NET contract's signature, and a property no Rust service in this
-    repository can have: they register through `OperationBuilder`, whose
+    A property no service in this repository can have: they register through
+    `OperationBuilder`, whose
     `.standard_errors(openapi)` stamps 400/401/403/404/409/429/500 onto every
     route (that over-stamping is its own problem, #1669 — but it means a single
     declared error code proves the document was emitted by the Rust service).
@@ -271,8 +269,7 @@ def modellable_bodies(spec_path: Path) -> list[str]:
 
     SUCCESS responses only, and reached through the responses rather than by
     listing `components.schemas`: a document may declare component schemas for
-    its REQUEST bodies (the .NET identity contract declares five) while
-    describing no response at all, and request models are not what this module
+    its REQUEST bodies while describing no response at all, and request models are not what this module
     generates. Error responses are excluded because every service declares the
     same `Problem`, hand-written once as `common.ProblemDocument`.
     """

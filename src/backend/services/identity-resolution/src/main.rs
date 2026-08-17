@@ -1,5 +1,4 @@
-//! Insight Identity Resolution service (Rust port of the .NET `identity` service,
-//! epic #1602).
+//! Insight Identity Resolution service (epic #1602).
 //!
 //! Boots as a gears-rust host on [`toolkit::bootstrap::run_server`] — same host
 //! pattern as `services/analytics`. Auth is ENABLED (`NGINX_BFF` R1): the
@@ -42,7 +41,7 @@ use toolkit::bootstrap::{AppConfig, run_server};
 /// Identity Resolution service.
 #[derive(Parser)]
 #[command(name = "identity-resolution")]
-#[command(about = "Insight Identity Resolution service (Rust port of .NET identity)")]
+#[command(about = "Insight Identity Resolution service")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     /// Path to YAML configuration file.

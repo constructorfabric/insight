@@ -2,8 +2,7 @@
 MariaDB identity seed: persons, org_chart, person_roles.
 
 All UUIDs are stored as BINARY(16) in RFC 4122 big-endian — the
-convention the identity-resolution service's schema uses (inherited
-from the retired .NET service's `Guid.ToByteArray(bigEndian: true)`).
+convention the identity-resolution service's schema uses.
 """
 
 from __future__ import annotations

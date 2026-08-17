@@ -81,9 +81,9 @@ spec:
         {{- end }}
         # Schema owner (epic #1602 ownership transfer): applies pending
         # migrations + the first-admin bootstrap before the server starts —
-        # same pattern as the analytics chart. Idempotent on a database the
-        # .NET DbUp already migrated (no-op sweep), and serialized against
-        # concurrent migrators via a GET_LOCK advisory lock.
+        # same pattern as the analytics chart. Idempotent on an already-current
+        # database (no-op sweep), and serialized against concurrent migrators
+        # via a GET_LOCK advisory lock.
         - name: migrate
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
