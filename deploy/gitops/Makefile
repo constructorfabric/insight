@@ -167,6 +167,13 @@ ENVOY_GATEWAY_VERSION    ?= 1.8.3
 CERT_MANAGER_NAMESPACE   ?= $(shell yq -r '.namespaces.certManager   // "cert-manager"' $(INVENTORY) 2>/dev/null)
 CERT_MANAGER_RELEASE     ?= cert-manager
 CERT_MANAGER_VERSION     ?= 1.20.2
+# The gateway-shim needs the Gateway API CRDs already present to start, so an
+# env whose cluster has none must switch it off or the controller never comes
+# up. Defaults on — an env that terminates TLS at a Gateway wants the shim.
+# Which component ships those CRDs, and in what order: test-stand/INFRA.md.
+# Defaulted in make rather than yq's `//`, which falls through on an explicit
+# `false` as readily as on a missing key and would swallow every override.
+CERT_MANAGER_GATEWAY_SHIM ?= $(if $(filter false,$(shell yq -r '.bootstrap.certManagerGatewayShim' $(INVENTORY) 2>/dev/null)),false,true)
 
 SEALED_SECRETS_NAMESPACE ?= $(shell yq -r '.namespaces.sealedSecrets // "kube-system"' $(INVENTORY) 2>/dev/null)
 SEALED_SECRETS_RELEASE   ?= sealed-secrets-controller
@@ -1121,14 +1128,22 @@ bootstrap-cert-manager: vpn-up kube-ctx
 		--namespace $(CERT_MANAGER_NAMESPACE) --create-namespace \
 		--version $(CERT_MANAGER_VERSION) $(HELM_EXTRA_FLAGS) \
 		--set crds.enabled=true \
-		--set config.enableGatewayAPI=true \
+		--set config.enableGatewayAPI=$(CERT_MANAGER_GATEWAY_SHIM) \
 		$$VALUES_ARGS \
 		--wait --timeout 5m
 	@kubectl --context $(KUBE_CTX) -n $(CERT_MANAGER_NAMESPACE) \
 		rollout status deploy/$(CERT_MANAGER_RELEASE)-webhook --timeout=60s
+	@# INVARIANT: bootstrap returns only once every issuer this file defines is
+	@# Ready — a CA issuer is not usable until its root Certificate is minted,
+	@# and a release whose leaf references one too early stalls on a missing
+	@# Secret until helm's atomic timeout instead of failing here by name.
 	@if [ -f $(BOOTSTRAP_DIR)/selfsigned-issuer.yaml ]; then \
 		echo "applying $(BOOTSTRAP_DIR)/selfsigned-issuer.yaml"; \
 		kubectl --context $(KUBE_CTX) apply -f $(BOOTSTRAP_DIR)/selfsigned-issuer.yaml; \
+		for issuer in $$(yq -N -r 'select(.kind == "ClusterIssuer") | .metadata.name' $(BOOTSTRAP_DIR)/selfsigned-issuer.yaml); do \
+			kubectl --context $(KUBE_CTX) wait clusterissuer/$$issuer \
+				--for=condition=Ready --timeout=120s; \
+		done; \
 	fi
 
 .PHONY: bootstrap-sealed-secrets
