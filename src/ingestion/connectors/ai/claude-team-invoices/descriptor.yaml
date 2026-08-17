@@ -19,3 +19,11 @@ connection:
   # bronze_claude_team would put this connector's table under the declarative
   # connector's ownership.
   namespace: "bronze_claude_team_invoices"
+
+# Same three keys as the claude-team connector — one proxy, one session key on it.
+# The claude.ai sessionKey is never here: it lives on the customer's proxy only.
+secret:
+  required_fields:
+    - claude_org_id
+    - proxy_url
+    - proxy_auth_token
