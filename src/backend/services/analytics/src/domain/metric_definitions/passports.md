@@ -90,7 +90,7 @@ this file and the registry disagree.
 - Reads: dev_conversations
 - Formula: sum(dev_conversations)
 - Shape: integer, higher_is_better, unit conversations
-- Notes: Person-attributed coding conversations from dev tools that report them.
+- Notes: Person-attributed conversations with coding AI tools, counted as the vendor counts them. For the agent tools this is the session or thread count — a session is the unit of conversation there, and no vendor publishes a separate conversation counter — so the number reads as "times the person started working with the assistant", not as messages exchanged. Tools that report no such unit, inline-completion tools among them, return no value rather than a zero.
 
 ## ai.chat_assistant_conversations — AI chat conversations
 
@@ -99,6 +99,22 @@ this file and the registry disagree.
 - Formula: sum(chat_assistant_conversations)
 - Shape: integer, higher_is_better, unit conversations
 - Notes: Person-attributed chat assistant conversations from supported AI chat tools.
+
+## ai.prs_with_assistant — PRs with AI assistance
+
+- Source: ai_usage (ai_metric_observations)
+- Reads: prs_with_assistant
+- Formula: sum(prs_with_assistant)
+- Shape: integer, higher_is_better, unit PRs
+- Notes: Pull requests where the coding assistant was active at least once, as the vendor attributes them. Reported only by sources that connect to the code host themselves, so a person working without that connection returns no value rather than a zero. Counts pull requests, not commits or lines, and says nothing about how much of the change the assistant wrote.
+
+## ai.prs_total — PRs seen by the AI vendor
+
+- Source: ai_usage (ai_metric_observations)
+- Reads: prs_total
+- Formula: sum(prs_total)
+- Shape: integer, neutral, unit PRs
+- Notes: Pull requests the AI vendor observed for the person, served as the context for PRs with AI assistance rather than as a goal of its own. It is the vendor's count over the vendor's own window, which need not be the day it is reported against and need not agree with the git sources — read it next to that measure, not next to git pull-request metrics.
 
 ## git.commits — Commits
 

@@ -9,7 +9,8 @@ Those behaviors exist only after the component renders and handles user input.
 Metric values are not asserted against anything this suite invented, because the
 stand manifest declares no golden metrics. What is asserted is a reconciliation:
 the numbers in both downloaded files are the numbers the deployed table renders,
-which holds whatever the seed contains.
+which holds whatever the seed contains — including the footer split the formats
+keep deliberately, totals in the workbook and none in the CSV.
 """
 
 from __future__ import annotations
@@ -33,9 +34,36 @@ pytestmark = pytest.mark.reliability
 #: leads with the bucket it covers.
 BUCKET = re.compile(r"\d{4}-\d{2}-\d{2}")
 
+#: The two footer rows the table renders under the series.
+FOOTERS = ("Total", "Grand total")
+
 
 def timeseries_rows(exported: Table) -> Table:
     return [row for row in exported if row and BUCKET.fullmatch(row[0])]
+
+
+def labelled_row(table: Table, label: str) -> list[str]:
+    matches = [row for row in table if row and row[0] == label]
+    assert len(matches) == 1, f"expected one {label!r} row, found {len(matches)}"
+
+    return matches[0]
+
+
+def numbers(text: str) -> list[str]:
+    """Every number in a rendered cell, digit-grouping and signs removed."""
+    return [match.replace(",", "") for match in re.findall(r"[\d,]+", text)]
+
+
+def assert_same_counts(shown: list[str], written: list[str]) -> None:
+    """One rendered row against its exported one.
+
+    The table renders lines added and removed in one signed cell where the
+    export gives them a column each, so the numbers are compared rather than
+    the strings.
+    """
+    label, commits, merged, lines = shown
+    assert [commits, merged] == written[1:3], f"{label}: counts on screen and exported differ"
+    assert numbers(lines) == written[3:5], f"{label}: rendered lines cell and export columns differ"
 
 
 @pytest.mark.requires_seed("dev_lead")
@@ -92,13 +120,19 @@ def test_git_output_repository_timeseries_switches_views_and_downloads(
     rendered_series = [row for row in on_screen if row and BUCKET.fullmatch(row[0])]
     assert rendered_series, "no bucket rows on screen to reconcile the export against"
     for shown, written in zip(rendered_series, timeseries_rows(exported[".csv"]), strict=True):
-        bucket, commits, merged, lines = shown
-        assert [commits, merged] == written[1:3], (
-            f"{bucket}: counts on screen and in the export differ"
-        )
-        assert [n.replace(",", "") for n in re.findall(r"[\d,]+", lines)] == written[3:5], (
-            f"{bucket}: the rendered lines cell and the exported columns differ"
-        )
+        assert_same_counts(shown, written)
+
+    # The two formats carry the footers differently on purpose: the CSV is the
+    # machine-readable copy and stops at the last bucket, while the workbook
+    # reproduces what the table shows. Asserting the split keeps a regression in
+    # either direction visible instead of silently accepted.
+    assert not [row for row in exported[".csv"] if row and row[0] in FOOTERS], (
+        f"csv gained a footer row, which its consumers parse as data: {exported['.csv']}"
+    )
+    assert_same_counts(labelled_row(on_screen, "Total"), labelled_row(exported[".xlsx"], "Total"))
+    assert numbers(labelled_row(on_screen, "Grand total")[1]) == numbers(
+        labelled_row(exported[".xlsx"], "Grand total")[1]
+    ), "the workbook's grand totals are not the ones the table renders"
 
     git_output.chart_view().click()
     expect(git_output.metric_selector()).to_be_visible()

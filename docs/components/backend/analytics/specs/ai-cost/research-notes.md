@@ -348,16 +348,19 @@ by `cost_type`, not by which connector produced it.** A `billing_model` column o
 | Stream (`connector.yaml`) | `claude_team_overage_spend` (line 168) | `claude_team_code_metrics` (line 288) |
 | Bronze table | `bronze_claude_team.claude_team_overage_spend` | `bronze_claude_team.claude_team_code_metrics` |
 | Grain | one row per seat, monthly snapshot | one row per (`metric_date`, `email`) |
-| Used in | `claude_team__ai_overage.sql` → column `is_enabled` | `claude_team__ai_dev_usage.sql:93` → `WHERE status = 'active'` |
+| Used in | `claude_team__ai_overage.sql` → column `is_enabled` | `claude_team__ai_dev_usage.sql` → class-contract column `seat_status` (was a `WHERE status = 'active'` filter; audit D1) |
 | Meaning | undocumented | undocumented beyond `'active'` |
 
 Consequence for seat-utilisation metrics: the denominator comes from `class_ai_overage`
-while activity comes from `class_ai_dev_usage` filtered to `status='active'`. A deactivated
-person keeps their overage row but loses their activity rows, and would register as an
-under-utilised seat. The state filter has to live inside the overage branch. `is_enabled`
-looked like the candidate when this section was written; §16 and audit decision D2 settle it
-the other way — the gate is `credit_limit_cents IS NOT NULL` alone, and `is_enabled` is
-carried as a dimension. This paragraph is kept for the reasoning, not for its conclusion.
+while activity comes from `class_ai_dev_usage`, which at the time was filtered to
+`status='active'`. A deactivated person kept their overage row but lost their activity rows,
+and would register as an under-utilised seat. That half no longer applies — audit D1 removed
+the filter, so the activity rows stay. The conclusion is unchanged for the other reason: a
+person with no usage at all has no activity row to inherit a state from, so the state filter
+still has to live inside the overage branch. `is_enabled` looked like the candidate when this
+section was written; §16 and audit decision D2 settle it the other way — the gate is
+`credit_limit_cents IS NOT NULL` alone, and `is_enabled` is carried as a dimension. This
+paragraph is kept for the reasoning, not for its conclusion.
 
 ### Other `overage_spend_limits` fields
 
@@ -415,10 +418,13 @@ gap independent of #1607 and should be tracked separately.
 5. **`dbt source freshness` is scheduled nowhere** — see §15. Every connector declares
    thresholds; no workflow runs the command. Platform-wide, not AI-specific; should become
    its own issue linked to `#1607`.
-6. **Vendor pull-request attribution deferred** — `prs_with_cc_count` and `prs_total_count`
-   reach silver unread. Removed from this decomposition as `#1660` territory; no requirement
-   here needs them, and the vendor populates them only where Anthropic's GitHub app is
-   connected — everywhere else both counters read zero without meaning it.
+6. **Vendor pull-request attribution deferred, then served** — `prs_with_cc_count` and
+   `prs_total_count` reached silver unread. Removed from this decomposition as `#1660`
+   territory; no requirement here needed them, and the vendor populates them only where
+   Anthropic's GitHub app is connected — everywhere else both counters read zero without
+   meaning it. Reversed on the counters alone: they are served as `ai.prs_with_assistant` and
+   `ai.prs_total`, emitted only where the vendor supplies a value so that the zeros never
+   become assertions. Anything per-PR remains `#1660`'s and FR-9's.
 7. **#1986 "Verified state" corrections** — the Cursor hard-NULL claim is stale, and
    `ai_cost_person_period` is described as the grain the catalog could read, though the
    unified registry reads `ai_metric_observations`.

@@ -21,6 +21,7 @@ from .base import (
     anchor_datetime,
     bulk_insert,
     days_window,
+    deterministic_int,
     deterministic_uuid,
     persona_multiplier,
     poisson,
@@ -89,6 +90,7 @@ def seed_ai_dev_usage(
         "prs_total_count",
         "conversation_count",
         "_version",
+        "seat_status",
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
@@ -97,6 +99,12 @@ def seed_ai_dev_usage(
             continue
         profile = TEAM_PROFILES[p.team]
         persona = persona_multiplier(p.uuid)
+        # Seat state is per person, not per day: sources restate it for every
+        # day they re-read. A minority of leavers keeps the gold seat_status
+        # dimension exercised with more than one value.
+        seat_status = (
+            "deactivated" if deterministic_int(p.uuid, "ai.seat_status") % 10 == 0 else "active"
+        )
         for tool, src_key in _DEV_TOOLS:
             weight = profile.weights.get(src_key, 0)
             if weight <= 0:
@@ -138,6 +146,7 @@ def seed_ai_dev_usage(
                         float(rng.randint(0, 4)),
                         float(sessions),
                         version,
+                        seat_status,
                     )
                 )
     return bulk_insert(client, "silver", "class_ai_dev_usage", cols, rows)

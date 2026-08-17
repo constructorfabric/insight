@@ -27,6 +27,14 @@
 -- As months roll over this accrues a monthly history; within the current
 -- month it always reflects the freshest snapshot. unique_key carries the
 -- month so a new month never overwrites a prior month's closing value.
+-- INVARIANT: full_refresh=false is a data-safety guard. This model is the only
+-- place a past month's closing spend exists — the endpoint keeps no history and
+-- Bronze rows keyed on the seat alone collapse to its latest state — so a
+-- rebuild from Bronze deletes those months rather than reproducing them, and
+-- reconcile-connectors dispatches `dbt --full-refresh` automatically on a MAJOR
+-- descriptor bump. Silver still rebuilds freely: it reads this model, not
+-- Bronze. To rebuild deliberately, drop the table — the empty-table guard below
+-- then reloads the whole Bronze window.
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
@@ -35,6 +43,7 @@
     order_by=['unique_key'],
     on_schema_change='append_new_columns',
     settings={'allow_nullable_key': 1},
+    full_refresh=false,
     schema='staging',
     tags=['claude-team', 'silver:class_ai_overage']
 ) }}
@@ -110,7 +119,12 @@ SELECT
         'limit_type',         ifNull(toString(limit_type), ''),
         'used_credits_basis', ifNull(toString(used_credits_basis), ''),
         'out_of_credits',     ifNull(toString(out_of_credits), ''),
-        'seat_tier',          ifNull(toString(seat_tier), '')
+        'seat_tier',          ifNull(toString(seat_tier), ''),
+        -- Why extra usage is off for a seat, and until when: without these a
+        -- zero spend cannot be told apart from a seat the vendor blocked.
+        'disabled_reason',    ifNull(toString(disabled_reason), ''),
+        'disabled_until',     ifNull(toString(disabled_until), ''),
+        'account_name',       ifNull(toString(account_name), '')
     ))                                                  AS overage_metrics_json,
     'claude_team'                                       AS source,
     data_source,

@@ -1635,6 +1635,22 @@
               "string",
               "null"
             ]
+          },
+          "time_sent": {
+            "description": "Epoch milliseconds on the same clock: when the batch was flushed.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "time_triggered": {
+            "description": "Epoch milliseconds on the browser's clock: when the event happened.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "type": "object"

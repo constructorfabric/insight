@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage
     `source` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
-    `_version` Int64
+    `_version` Int64,
+    `seat_status` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY unique_key
