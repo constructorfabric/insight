@@ -66,10 +66,12 @@ pub struct TelemetryRecord {
     pub context_app_name: Option<String>,
     #[serde(default)]
     pub context_app_version: Option<String>,
-    /// Epoch milliseconds, stamped by the SDK when the event happened. Without
-    /// it every record of a batch lands on its flush time.
+    /// Epoch milliseconds on the browser's clock: when the event happened.
     #[serde(default)]
     pub time_triggered: Option<i64>,
+    /// Epoch milliseconds on the same clock: when the batch was flushed.
+    #[serde(default)]
+    pub time_sent: Option<i64>,
     #[serde(default)]
     pub data: Option<serde_json::Value>,
 }
@@ -85,12 +87,13 @@ pub async fn ingest_usage_events(
 
     let tenant_id = ctx.subject_tenant_id();
     let person_id = ctx.subject_id();
+    let arrival = Utc::now();
 
     let rows: Vec<UsageEventRow> = req
         .records
         .iter()
         .take(MAX_RECORDS)
-        .map(|record| to_row(record, &req.meta, tenant_id, person_id))
+        .map(|record| to_row(record, &req.meta, tenant_id, person_id, arrival))
         .filter(is_recordable)
         .collect();
 
@@ -121,10 +124,25 @@ struct UsageEventRow {
     app_version: String,
 }
 
-fn event_time(time_triggered: Option<i64>) -> DateTime<Utc> {
-    time_triggered
-        .and_then(DateTime::from_timestamp_millis)
-        .unwrap_or_else(Utc::now)
+/// How long a record may plausibly have waited in the browser's buffer. Past
+/// this the correction cannot place it in the right day, which is the only
+/// thing it exists to protect.
+const MAX_BUFFERED_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// Both stamps come off the browser's clock, so their difference — how long the
+/// record waited to be flushed — survives a clock that is hours out. Anchoring
+/// that to the arrival instant keeps the timestamp ours while still separating
+/// records the SDK sent in one beacon.
+fn event_time(record: &TelemetryRecord, arrival: DateTime<Utc>) -> DateTime<Utc> {
+    let (Some(triggered), Some(sent)) = (record.time_triggered, record.time_sent) else {
+        return arrival;
+    };
+    match sent.checked_sub(triggered) {
+        Some(buffered) if (0..=MAX_BUFFERED_MS).contains(&buffered) => {
+            arrival - Duration::milliseconds(buffered)
+        }
+        _ => arrival,
+    }
 }
 
 /// A field the SDK hoists into `meta` is cloned into every record of the batch,
@@ -138,10 +156,11 @@ fn to_row(
     meta: &TelemetryRecord,
     tenant_id: Uuid,
     person_id: Uuid,
+    arrival: DateTime<Utc>,
 ) -> UsageEventRow {
     let data = record.data.as_ref().or(meta.data.as_ref());
     UsageEventRow {
-        ts: event_time(record.time_triggered),
+        ts: event_time(record, arrival),
         tenant_id,
         person_id,
         session_id: shared(
