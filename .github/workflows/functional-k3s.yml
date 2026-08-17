@@ -174,10 +174,20 @@ jobs:
             --from-literal=redis-password="${REDIS_PASSWORD}" \
             --dry-run=client -o yaml > "${secret_dir}/insight-db-creds.yaml"
 
+          # The chart never generates the gateway signing key — it is BYO on
+          # every environment (authenticator ADR 0002). This cluster lives for
+          # one job, so mint a throwaway ES256 key and seal it like the rest.
+          openssl ecparam -name prime256v1 -genkey -noout \
+            | openssl pkcs8 -topk8 -nocrypt -out "${secret_dir}/current.pem"
+          kubectl -n "${INSIGHT_NAMESPACE}" create secret generic insight-authenticator-signing-keys \
+            --from-file=current.pem="${secret_dir}/current.pem" \
+            --dry-run=client -o yaml > "${secret_dir}/insight-authenticator-signing-keys.yaml"
+
           make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INFRA_NAMESPACE}" NAME=clickhouse-creds VALUE_FILE="${secret_dir}/clickhouse-creds.yaml"
           make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INFRA_NAMESPACE}" NAME=mariadb-creds VALUE_FILE="${secret_dir}/mariadb-creds.yaml"
           make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INFRA_NAMESPACE}" NAME=redis-creds VALUE_FILE="${secret_dir}/redis-creds.yaml"
           make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INSIGHT_NAMESPACE}" NAME=insight-db-creds VALUE_FILE="${secret_dir}/insight-db-creds.yaml"
+          make -C deploy/gitops seal-from-file ENV="${GITOPS_ENV}" NAMESPACE="${INSIGHT_NAMESPACE}" NAME=insight-authenticator-signing-keys VALUE_FILE="${secret_dir}/insight-authenticator-signing-keys.yaml"
 
           rm -rf "${secret_dir}"
 

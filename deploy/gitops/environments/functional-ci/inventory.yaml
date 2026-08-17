@@ -45,4 +45,7 @@ secrets:
     - {name: redis-creds, enabled: true}
   services:
     - {name: insight-db-creds, enabled: true}
+    # Minted per job by the workflow's sealing step — the chart supplies no
+    # signing key and the authenticator will not start without one.
+    - {name: insight-authenticator-signing-keys, enabled: true}
     - {name: insight-oidc, enabled: false}
