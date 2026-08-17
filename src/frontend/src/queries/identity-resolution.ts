@@ -21,14 +21,17 @@ import {
   getAttention,
   getPersonAccounts,
   mergePersons,
+  searchAccounts,
   searchPersons,
   type AccountBinding,
+  type AccountSearchResponse,
   type AttentionResponse,
   type CorrectionResponse,
   type PersonAccountEntry,
   type PersonSearchResponse,
 } from "@/api/identity-client";
 import type { AccountRef } from "@/lib/identities/account-key";
+import { dropDecided } from "@/lib/identities/cases";
 import { useAuth } from "@/auth/use-auth";
 import { sessionAuthorizationScope } from "@/auth/session-scope";
 
@@ -87,10 +90,20 @@ function useCorrection<TArgs>(
   const client = useQueryClient();
   return useMutation({
     mutationFn: run,
-    // Invalidate-only, the house style: the journal is the truth and a verb
-    // may land as `already_decided`/`refused`, so guessing the new state
-    // client-side would lie exactly when it matters.
-    onSuccess: () => {
+    // The journal stays the truth, and the refetch below is what reconciles
+    // to it — but the attention read folds every observed account, so its
+    // latency grows with the dataset, and until it lands the operator is
+    // still looking at the row they just decided. Dropping the accounts the
+    // SERVER reported as decided is not a guess about the new state; a
+    // `refused` account keeps its row, and the rest follows from the refetch.
+    onSuccess: (result) => {
+      client.setQueriesData<AttentionResponse>(
+        { queryKey: [...RESOLUTION_KEY, "attention"] },
+        (previous) =>
+          previous
+            ? { ...previous, items: dropDecided(previous.items, result.items) }
+            : previous,
+      );
       void client.invalidateQueries({ queryKey: RESOLUTION_KEY });
       void client.invalidateQueries({ queryKey: PERSON_SEARCH_KEY });
     },
@@ -112,6 +125,19 @@ export function usePersonSearch(q: string): UseQueryResult<PersonSearchResponse>
     queryFn: () => searchPersons(trimmed),
     staleTime: ATTENTION_STALE_TIME,
     enabled: sessionScope != null && trimmed.length >= 2,
+  });
+}
+
+/** Live account search for the account mode; the component debounces. */
+export function useAccountSearch(q: string): UseQueryResult<AccountSearchResponse> {
+  const { session } = useAuth();
+  const sessionScope = sessionAuthorizationScope(session);
+  const trimmed = q.trim();
+  return useQuery({
+    queryKey: [...RESOLUTION_KEY, "account-search", sessionScope, trimmed],
+    queryFn: () => searchAccounts(trimmed),
+    staleTime: ATTENTION_STALE_TIME,
+    enabled: sessionScope != null && trimmed.length >= 3,
   });
 }
 

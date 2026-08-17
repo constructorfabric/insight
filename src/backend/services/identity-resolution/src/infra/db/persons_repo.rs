@@ -12,7 +12,7 @@
 //! so an excluded account resolves as no person rather than as the shared
 //! sentinel, and an older binding is never resurrected past an exclusion.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
@@ -21,6 +21,7 @@ use sea_orm::{
 use uuid::Uuid;
 
 use super::entities::persons;
+use crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON;
 use crate::domain::person_card::{self, CARD_VALUE_TYPES, PersonCard};
 use crate::domain::resolution::EXCLUDED_PERSON;
 
@@ -346,6 +347,10 @@ pub async fn search_persons_by_current_values(
     db: &DatabaseConnection,
     tenant_id: Uuid,
     terms: &[String],
+    // Restrict matching to these persons; empty = the whole tenant. The id+value
+    // search needs the value filter applied WITHIN the named ids — intersecting
+    // with an independently truncated tenant-wide result drops genuine matches.
+    within: &[Uuid],
     limit: u64,
 ) -> anyhow::Result<Vec<Uuid>> {
     if terms.is_empty() {
@@ -380,6 +385,12 @@ pub async fn search_persons_by_current_values(
         WHERE cv.person_id != ?
     ",
     );
+    if !within.is_empty() {
+        let placeholders = vec!["?"; within.len()].join(", ");
+        sql.push_str(" AND cv.person_id IN (");
+        sql.push_str(&placeholders);
+        sql.push(')');
+    }
     for _ in terms {
         sql.push_str(
             " AND EXISTS (SELECT 1 FROM current_vals t \
@@ -392,6 +403,7 @@ pub async fn search_persons_by_current_values(
         tenant_id.as_bytes().to_vec().into(),
         EXCLUDED_PERSON.as_bytes().to_vec().into(),
     ];
+    values.extend(within.iter().map(|id| id.as_bytes().to_vec().into()));
     values.extend(terms.iter().map(|t| like_pattern(t).into()));
     values.push(limit.into());
 
@@ -423,6 +435,53 @@ fn like_pattern(term: &str) -> String {
 /// # Errors
 ///
 /// Returns an error if the query fails.
+/// Of the given persons, those the journal holds nothing but login-mints for.
+///
+/// Such a person exists so somebody could sign in, and nothing else about them
+/// has been observed or decided yet — so they may well duplicate a person the
+/// roster already knows. Naming one as a merge target is the wrong direction:
+/// the history is on the other side.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn provisional_persons(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_ids: &[Uuid],
+) -> anyhow::Result<HashSet<Uuid>> {
+    if person_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let placeholders = vec!["?"; person_ids.len()].join(", ");
+    let sql = format!(
+        "SELECT person_id          FROM persons          WHERE insight_tenant_id = ? AND person_id IN ({placeholders})          GROUP BY person_id          HAVING SUM(CASE WHEN reason <=> ? THEN 0 ELSE 1 END) = 0"
+    );
+
+    let mut params: Vec<sea_orm::Value> = Vec::with_capacity(person_ids.len() + 2);
+    params.push(tenant_id.as_bytes().to_vec().into());
+    for id in person_ids {
+        params.push(id.as_bytes().to_vec().into());
+    }
+    params.push(LOGIN_BOOTSTRAP_REASON.into());
+
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            &sql,
+            params,
+        ))
+        .await?;
+
+    let mut provisional = HashSet::with_capacity(rows.len());
+    for row in rows {
+        let person_id: Vec<u8> = row.try_get("", "person_id")?;
+        provisional.insert(Uuid::from_slice(&person_id)?);
+    }
+    Ok(provisional)
+}
+
 pub async fn person_cards(
     db: &DatabaseConnection,
     tenant_id: Uuid,

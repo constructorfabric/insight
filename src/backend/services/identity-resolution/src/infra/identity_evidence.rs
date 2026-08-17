@@ -13,6 +13,7 @@ use insight_clickhouse::{Client, Config};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::domain::review_queue::AccountDescription;
 use crate::domain::seed::SourceAccountKey;
 
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
@@ -23,6 +24,8 @@ pub struct AccountEvidence {
     pub account: SourceAccountKey,
     pub email: Option<String>,
     pub username: Option<String>,
+    /// How the source describes the account — for a reader, not the matcher.
+    pub description: AccountDescription,
     /// The account's latest event is a closure signal — it is deactivated at
     /// the source and must not be surfaced for review.
     pub is_closed: bool,
@@ -42,6 +45,10 @@ pub struct EvidenceSnapshot {
 /// DELETE rows carry an empty value by contract, so the value aggregates filter
 /// on UPSERT — while the operation aggregate keeps every event, which is what
 /// makes closure detectable.
+///
+/// The descriptive attributes are read for the operator, not for the matcher:
+/// an account with no address is bound by a human or by nobody, and a human
+/// needs to recognise whose it is. Same scan, same grouping.
 const FOLD_SQL: &str = r"
     SELECT
         ifNull(insight_source_type, '')                 AS source_type,
@@ -55,11 +62,55 @@ const FOLD_SQL: &str = r"
         argMaxIf(
             ifNull(value, ''), _synced_at,
             value_type = 'username' AND operation_type = 'UPSERT' AND value != ''
-        )                                               AS username
+        )                                               AS username,
+        argMaxIf(
+            ifNull(value, ''), _synced_at,
+            value_type = 'display_name' AND operation_type = 'UPSERT' AND value != ''
+        )                                               AS display_name,
+        argMaxIf(
+            ifNull(value, ''), _synced_at,
+            value_type = 'first_name' AND operation_type = 'UPSERT' AND value != ''
+        )                                               AS first_name,
+        argMaxIf(
+            ifNull(value, ''), _synced_at,
+            value_type = 'last_name' AND operation_type = 'UPSERT' AND value != ''
+        )                                               AS last_name,
+        argMaxIf(
+            ifNull(value, ''), _synced_at,
+            value_type = 'job_title' AND operation_type = 'UPSERT' AND value != ''
+        )                                               AS job_title,
+        argMaxIf(
+            ifNull(value, ''), _synced_at,
+            value_type = 'department' AND operation_type = 'UPSERT' AND value != ''
+        )                                               AS department,
+        argMaxIf(
+            ifNull(value, ''), _synced_at,
+            value_type = 'status' AND operation_type = 'UPSERT' AND value != ''
+        )                                               AS status,
+        argMaxIf(
+            ifNull(value, ''), _synced_at,
+            value_type = 'parent_email' AND operation_type = 'UPSERT' AND value != ''
+        )                                               AS manager_email
     FROM identity.identity_inputs
     WHERE source_account_id IS NOT NULL AND source_account_id != ''
     GROUP BY source_type, source_id, account_id
     ORDER BY source_type, source_id, account_id
+";
+
+/// Accounts whose current values contain the needle, for the operator who has
+/// an account in hand and no idea whose it is. The fold is the same one the
+/// queue reads; only the filter and the ceiling differ.
+const SEARCH_SQL: &str = r"
+    SELECT source_type, source_id, account_id, latest_op, email, username,
+           display_name, first_name, last_name, job_title, department, status,
+           manager_email
+    FROM ({FOLD})
+    WHERE latest_op != 'DELETE'
+      AND (positionCaseInsensitive(email, ?) > 0
+           OR positionCaseInsensitive(username, ?) > 0
+           OR positionCaseInsensitive(account_id, ?) > 0
+           OR positionCaseInsensitive(display_name, ?) > 0)
+    LIMIT ?
 ";
 
 /// Ceiling on the fold, which is read whole into memory. The queue's rates are
@@ -77,6 +128,13 @@ struct FoldedRow {
     latest_op: String,
     email: String,
     username: String,
+    display_name: String,
+    first_name: String,
+    last_name: String,
+    job_title: String,
+    department: String,
+    status: String,
+    manager_email: String,
 }
 
 /// Reads folded evidence for the review surface.
@@ -223,6 +281,15 @@ pub struct ObservedAccount {
 }
 
 fn map_row(row: FoldedRow) -> anyhow::Result<AccountEvidence> {
+    let description = AccountDescription {
+        display_name: non_empty(row.display_name)
+            .or_else(|| compose_name(non_empty(row.first_name), non_empty(row.last_name))),
+        job_title: non_empty(row.job_title),
+        department: non_empty(row.department),
+        status: non_empty(row.status),
+        manager_email: non_empty(row.manager_email),
+    };
+
     Ok(AccountEvidence {
         account: SourceAccountKey {
             source_type: row.source_type,
@@ -231,11 +298,52 @@ fn map_row(row: FoldedRow) -> anyhow::Result<AccountEvidence> {
         },
         email: non_empty(row.email),
         username: non_empty(row.username),
+        description,
         is_closed: row.latest_op == "DELETE",
     })
 }
 
+/// A source that sends the parts but no whole name still names the person.
+fn compose_name(first: Option<String>, last: Option<String>) -> Option<String> {
+    match (first, last) {
+        (Some(first), Some(last)) => Some(format!("{first} {last}")),
+        (Some(one), None) | (None, Some(one)) => Some(one),
+        (None, None) => None,
+    }
+}
+
 impl ClickHouseEvidenceReader {
+    /// Accounts whose current values contain `needle`, newest-agnostic.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails or a stored source id is not a UUID.
+    pub async fn search(&self, needle: &str, limit: u64) -> anyhow::Result<Vec<AccountEvidence>> {
+        let sql = SEARCH_SQL.replace("{FOLD}", FOLD_SQL);
+        let rows: Vec<FoldedRow> = match self
+            .client
+            .query(&sql)
+            .bind(needle)
+            .bind(needle)
+            .bind(needle)
+            .bind(needle)
+            .bind(limit)
+            .fetch_all()
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) if is_missing_relation(&e) => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+
+        // A row with an unreadable source id is one unusable account, not a
+        // reason to answer nothing — the same rule the full fold applies.
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| map_row(row).ok())
+            .collect())
+    }
+
     /// Whether the evidence knows this account.
     ///
     /// # Errors
@@ -342,6 +450,13 @@ mod tests {
             latest_op: latest_op.to_owned(),
             email: email.to_owned(),
             username: username.to_owned(),
+            display_name: String::new(),
+            first_name: String::new(),
+            last_name: String::new(),
+            job_title: String::new(),
+            department: String::new(),
+            status: String::new(),
+            manager_email: String::new(),
         }
     }
 
@@ -392,6 +507,61 @@ mod tests {
         let evidence = map_row(folded("UPSERT", "", "octocat"))?;
         assert_eq!(evidence.username.as_deref(), Some("octocat"));
         assert_eq!(evidence.email, None);
+        Ok(())
+    }
+
+    #[test]
+    fn an_account_with_no_matchable_value_still_arrives_described() -> anyhow::Result<()> {
+        let mut row = folded("UPSERT", "", "");
+        row.display_name = "Ann Lee".to_owned();
+        row.job_title = "Engineer".to_owned();
+        row.department = "Platform".to_owned();
+        row.status = "Active".to_owned();
+        row.manager_email = "lead@example.com".to_owned();
+
+        let evidence = map_row(row)?;
+
+        assert_eq!(evidence.email, None, "nothing to match on");
+        assert_eq!(
+            evidence.description.display_name.as_deref(),
+            Some("Ann Lee")
+        );
+        assert_eq!(evidence.description.job_title.as_deref(), Some("Engineer"));
+        assert_eq!(evidence.description.department.as_deref(), Some("Platform"));
+        assert_eq!(evidence.description.status.as_deref(), Some("Active"));
+        assert_eq!(
+            evidence.description.manager_email.as_deref(),
+            Some("lead@example.com")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_name_sent_in_parts_is_composed() -> anyhow::Result<()> {
+        let mut parts = folded("UPSERT", "", "");
+        parts.first_name = "Ann".to_owned();
+        parts.last_name = "Lee".to_owned();
+        assert_eq!(
+            map_row(parts)?.description.display_name.as_deref(),
+            Some("Ann Lee")
+        );
+
+        let mut both = folded("UPSERT", "", "");
+        both.display_name = "A. Lee".to_owned();
+        both.first_name = "Ann".to_owned();
+        both.last_name = "Lee".to_owned();
+        assert_eq!(
+            map_row(both)?.description.display_name.as_deref(),
+            Some("A. Lee"),
+            "an observed whole name wins over one assembled from parts"
+        );
+
+        let mut half = folded("UPSERT", "", "");
+        half.last_name = "Lee".to_owned();
+        assert_eq!(
+            map_row(half)?.description.display_name.as_deref(),
+            Some("Lee")
+        );
         Ok(())
     }
 }

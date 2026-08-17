@@ -61,7 +61,7 @@ impl CommitHeader {
 /// an author named `A<0x1f>B` used to push `B` into the email field and every
 /// later field one place along, forging a row whose author, email and
 /// committer are attacker-chosen.
-const FIELD: char = '\n';
+pub(super) const FIELD: char = '\n';
 
 /// Records are NUL-separated (`git log -z`), and that choice is load-bearing.
 /// A commit message is attacker-controlled — anyone who can push to a synced
@@ -69,7 +69,7 @@ const FIELD: char = '\n';
 /// close its own record and open a forged one, with an attacker-chosen sha,
 /// author and email. git truncates a commit message at the first NUL, so NUL
 /// is the one byte a message provably cannot contain.
-const RECORD: char = '\0';
+pub(super) const RECORD: char = '\0';
 
 /// One commit's position in the walk, and just enough to filter on.
 ///
@@ -361,7 +361,7 @@ const PATCH_ID_BATCH: usize = 128;
 /// A full object id: 40 hex characters under SHA-1, 64 under SHA-256. Pinning
 /// only the SHA-1 length silently discards every commit in a SHA-256
 /// repository, because each parsed record fails this check and is dropped.
-fn is_object_id(value: &str) -> bool {
+pub(super) fn is_object_id(value: &str) -> bool {
     matches!(value.len(), 40 | 64) && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
@@ -378,7 +378,7 @@ fn parse_headers(text: &str) -> Vec<CommitHeader> {
 /// fields of that record. The record still parses and its sha is still its
 /// own, so the blast radius is the attacker's own row — but the value that
 /// reaches bronze should not carry control bytes either way.
-fn scrub(value: &str) -> String {
+pub(super) fn scrub(value: &str) -> String {
     value.chars().filter(|c| !c.is_control()).collect()
 }
 

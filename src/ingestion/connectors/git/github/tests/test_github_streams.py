@@ -91,6 +91,26 @@ def test_repositories_full_refresh_and_stamping(http_mocker: HttpMocker) -> None
 
 
 @freezegun.freeze_time(_FROZEN)
+def test_repository_roster_admits_neither_forks_nor_archived(http_mocker: HttpMocker) -> None:
+    """A fork's clone carries its whole upstream history, so admitting one
+    credits every upstream commit to this organization; an archived repository
+    is not active work. Both stay out of the roster every other stream
+    partitions over."""
+    config = GithubConfigBuilder().build()
+    fork = _repo() | {"id": 43, "full_name": "acme/forked", "name": "forked", "fork": True}
+    archived = _repo() | {"id": 44, "full_name": "acme/old", "name": "old", "archived": True}
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([_repo(), fork, archived]), status_code=200),
+    )
+
+    output = read_stream(_CONNECTOR, "repositories", config)
+
+    assert not output.errors
+    assert [r.record.data["full_name"] for r in output.records] == ["acme/app"]
+
+
+@freezegun.freeze_time(_FROZEN)
 def test_secondary_rate_limit_403_retries_then_succeeds(http_mocker: HttpMocker) -> None:
     """GitHub reports secondary limits as 403; the predicate must classify it
     as a throttle (retry) rather than a denial (skip)."""
@@ -173,10 +193,22 @@ def test_pull_requests_trim_body_and_hoist_author(http_mocker: HttpMocker) -> No
                         "draft": False,
                         "title": "t" * 3000,
                         "body": "b" * 3000,
-                        "user": {"login": "alice"},
-                        "head": {"ref": "feat", "sha": "e" * 40},
-                        "base": {"ref": "main"},
-                        "author_association": "MEMBER",
+                        "user": {"login": "alice", "id": 4242, "type": "User"},
+                        "head": {
+                            "ref": "feat",
+                            "sha": "e" * 40,
+                            "label": "contributor:feat",
+                            "repo": {"full_name": "contributor/app"},
+                        },
+                        "base": {"ref": "main", "sha": "f" * 40},
+                        "author_association": "CONTRIBUTOR",
+                        "labels": [{"name": "bug"}, {"name": "urgent"}],
+                        "assignees": [{"login": "bob"}],
+                        "requested_reviewers": [{"login": "carol"}],
+                        "requested_teams": [{"slug": "platform"}],
+                        "milestone": {"title": "v2", "number": 9},
+                        "auto_merge": None,
+                        "locked": False,
                         "created_at": "2026-06-10T00:00:00Z",
                         "updated_at": "2026-06-20T00:00:00Z",
                     }
@@ -193,6 +225,17 @@ def test_pull_requests_trim_body_and_hoist_author(http_mocker: HttpMocker) -> No
     assert len(rec["body"]) == 2048
     assert len(rec["title"]) == 1024
     assert rec["author_login"] == "alice"
+    assert (rec["author_id"], rec["author_type"]) == (4242, "User")
+    # A head branch in another repository is the only fork signal here.
+    assert rec["head_repo_full_name"] == "contributor/app"
+    assert rec["head_label"] == "contributor:feat"
+    assert rec["base_sha"] == "f" * 40
+    assert json.loads(rec["label_names"]) == ["bug", "urgent"]
+    assert json.loads(rec["assignee_logins"]) == ["bob"]
+    assert json.loads(rec["requested_reviewer_logins"]) == ["carol"]
+    assert json.loads(rec["requested_team_slugs"]) == ["platform"]
+    assert (rec["milestone_title"], rec["milestone_number"]) == ("v2", 9)
+    assert rec["auto_merge_enabled"] is False
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "pull_requests", strict=True)
 
@@ -234,9 +277,12 @@ def test_data_feed_stops_at_start_date_but_boundary_page_tail_emits(http_mocker:
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_pull_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> None:
-    """PR<->commit membership is vendor-only; the commit payload belongs to
-    the proxy streams, so bronze keeps the sha and the PR identity alone."""
+def test_pull_request_commits_carry_the_commit_email_and_its_account(
+    http_mocker: HttpMocker,
+) -> None:
+    """A commit's e-mail and the GitHub account it belongs to appear together
+    nowhere else, so both survive alongside the membership edge and the commit's
+    own metadata — the proxy cannot see a fork's head commits at all."""
     config = GithubConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.get(
@@ -271,13 +317,26 @@ def test_pull_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> No
                     {
                         "sha": "a" * 40,
                         "node_id": "C_1",
-                        "commit": {"message": "feat: x", "author": {"name": "Alice"}},
+                        "commit": {
+                            "message": "feat: x",
+                            "author": {
+                                "name": "Alice",
+                                "email": "alice@example.com",
+                                "date": "2026-06-11T09:00:00Z",
+                            },
+                            "committer": {
+                                "name": "Alice",
+                                "email": "1234+alice@users.noreply.github.com",
+                                "date": "2026-06-11T09:05:00Z",
+                            },
+                            "verification": {"verified": True, "reason": "valid"},
+                        },
                         "url": "https://api.github.com/repos/acme/app/commits/" + "a" * 40,
                         "html_url": "https://github.com/acme/app/commit/" + "a" * 40,
                         "comments_url": "https://api.github.com/repos/acme/app/commits/x/comments",
-                        "author": {"login": "alice"},
-                        "committer": {"login": "alice"},
-                        "parents": [{"sha": "b" * 40}],
+                        "author": {"login": "alice", "id": 4242, "type": "User"},
+                        "committer": {"login": "alice", "id": 4242, "type": "User"},
+                        "parents": [{"sha": "b" * 40}, {"sha": "c" * 40}],
                     }
                 ]
             ),
@@ -293,6 +352,20 @@ def test_pull_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> No
     assert rec["pull_number"] == 31
     assert rec["repo_full_name"] == "acme/app"
     assert rec["unique_key"].endswith(f":acme/app:31:{'a' * 40}")
+    assert rec["author_login"] == "alice"
+    assert rec["author_id"] == 4242
+    assert rec["author_type"] == "User"
+    assert rec["author_email"] == "alice@example.com"
+    assert rec["author_name"] == "Alice"
+    assert rec["authored_date"] == "2026-06-11T09:00:00Z"
+    assert rec["committer_login"] == "alice"
+    assert rec["committer_email"] == "1234+alice@users.noreply.github.com"
+    assert rec["committed_date"] == "2026-06-11T09:05:00Z"
+    assert rec["message"] == "feat: x"
+    assert rec["is_verified"] is True
+    assert rec["verification_reason"] == "valid"
+    assert json.loads(rec["parent_shas"]) == ["b" * 40, "c" * 40]
+    assert rec["is_merge"] is True
     assert "commit" not in rec and "parents" not in rec
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "pull_request_commits", strict=True)
@@ -324,7 +397,15 @@ def test_pull_request_diff_stats_come_from_the_list_node(http_mocker: HttpMocker
                                         "additions": 120,
                                         "deletions": 7,
                                         "changedFiles": 3,
-                                        "author": {"email": "alice@example.com"},
+                                        "author": {
+                                            "login": "alice",
+                                            "databaseId": 4242,
+                                            "email": "alice@example.com",
+                                        },
+                                        "mergedBy": {"login": "bob", "databaseId": 77},
+                                        "reviewDecision": "APPROVED",
+                                        "totalCommentsCount": 5,
+                                        "isCrossRepository": False,
                                     }
                                 ],
                             }
@@ -343,6 +424,12 @@ def test_pull_request_diff_stats_come_from_the_list_node(http_mocker: HttpMocker
     assert (rec["additions"], rec["deletions"], rec["changed_files"]) == (120, 7, 3)
     assert rec["pull_number"] == 31
     assert rec["repo_full_name"] == "acme/app"
+    # REST reports merged_at but never who merged it.
+    assert (rec["merged_by_login"], rec["merged_by_id"]) == ("bob", 77)
+    assert (rec["author_login"], rec["author_id"]) == ("alice", 4242)
+    assert rec["review_decision"] == "APPROVED"
+    assert rec["total_comments_count"] == 5
+    assert rec["is_cross_repository"] is False
     assert rec["unique_key"].endswith(":acme/app:31")
     assert rec["author_email"] == "alice@example.com"
     assert "changedFiles" not in rec and "updatedAt" not in rec
@@ -727,3 +814,96 @@ def test_projects_v2_graphql_pagination_cursor_in_body(http_mocker: HttpMocker) 
     assert rec["title"] == "Roadmap"
     assert rec["short_description"] == ""
     _no_literal_none(output.records)
+
+
+def _authors_page(*rows: dict) -> HttpResponse:
+    return HttpResponse(
+        body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200
+    )
+
+
+def _author(email: str, sha: str, name: str = "Dev") -> dict:
+    return {
+        "author_email": email,
+        "author_name": name,
+        "sample_sha": sha,
+        "last_committed_date": "2026-06-15T10:00:00+00:00",
+        "commit_count": 3,
+    }
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_commit_authors_resolve_a_proxy_author_to_an_account(http_mocker: HttpMocker) -> None:
+    """The proxy names the distinct authors; GitHub names the account behind
+    each one. One vendor call per author, keyed on the git e-mail so the claim
+    matches what the commit rows carry."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(_author("ada@example.com", "a" * 40)),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'a' * 40}", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "sha": "a" * 40,
+                    "node_id": "C_1",
+                    "commit": {"author": {"name": "Ada", "email": "ada@example.com"}},
+                    "author": {"login": "ada", "id": 4242, "type": "User"},
+                    "committer": {"login": "ada", "id": 4242, "type": "User"},
+                    "parents": [],
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert rec["author_email"] == "ada@example.com", "keyed on the git ident, not the profile"
+    assert (rec["author_login"], rec["author_id"], rec["author_type"]) == ("ada", 4242, "User")
+    assert rec["repo_full_name"] == "acme/app"
+    assert rec["sample_sha"] == "a" * 40
+    assert rec["unique_key"].endswith(":acme/app:author:ada@example.com")
+    assert "commit" not in rec and "author" not in rec
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "commit_authors", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_commit_authors_drops_an_email_github_matches_to_nobody(
+    http_mocker: HttpMocker,
+) -> None:
+    """GitHub answers `author: null` for an e-mail verified on no account — a
+    CI or service identity. There is no account to claim the e-mail, so the
+    row is dropped rather than stored as an unresolved one."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/authors", query_params=ANY_QUERY_PARAMS),
+        _authors_page(_author("ci@build.local", "b" * 40, name="CI")),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/commits/{'b' * 40}", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "sha": "b" * 40,
+                    "commit": {"author": {"name": "CI", "email": "ci@build.local"}},
+                    "author": None,
+                    "committer": None,
+                    "parents": [],
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "commit_authors", config)
+
+    assert not output.errors
+    assert len(output.records) == 0, "an unmatched e-mail claims no account"

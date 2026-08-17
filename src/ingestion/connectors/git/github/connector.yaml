@@ -278,7 +278,9 @@ definitions:
           field_path: []
         record_filter:
           type: RecordFilter
-          condition: "{{ not record.get('archived', false) }}"
+          # A fork's clone carries its whole upstream history, so admitting one
+          # attributes every upstream commit to this organization.
+          condition: "{{ not record.get('archived', false) and not record.get('fork', false) }}"
       paginator:
         type: DefaultPaginator
         pagination_strategy:
@@ -334,7 +336,9 @@ definitions:
           field_path: []
         record_filter:
           type: RecordFilter
-          condition: "{{ not record.get('archived', false) }}"
+          # A fork's clone carries its whole upstream history, so admitting one
+          # attributes every upstream commit to this organization.
+          condition: "{{ not record.get('archived', false) and not record.get('fork', false) }}"
       paginator:
         type: DefaultPaginator
         pagination_strategy:
@@ -388,6 +392,20 @@ streams:
           private: {type: [boolean, "null"]}
           has_issues: {type: [boolean, "null"]}
           has_wiki: {type: [boolean, "null"]}
+          has_projects: {type: [boolean, "null"]}
+          has_discussions: {type: [boolean, "null"]}
+          has_pages: {type: [boolean, "null"]}
+          is_template: {type: [boolean, "null"]}
+          disabled: {type: [boolean, "null"]}
+          web_commit_signoff_required: {type: [boolean, "null"]}
+          visibility: {type: [string, "null"]}
+          license_spdx_id: {type: [string, "null"]}
+          topics: {type: [string, "null"]}
+          homepage: {type: [string, "null"]}
+          stargazers_count: {type: [integer, "null"]}
+          forks_count: {type: [integer, "null"]}
+          watchers_count: {type: [integer, "null"]}
+          open_issues_count: {type: [integer, "null"]}
           language: {type: [string, "null"]}
           size: {type: [integer, "null"]}
           clone_url: {type: [string, "null"]}
@@ -414,7 +432,9 @@ streams:
           field_path: []
         record_filter:
           type: RecordFilter
-          condition: "{{ not record.get('archived', false) }}"
+          # A fork's clone carries its whole upstream history, so admitting one
+          # attributes every upstream commit to this organization.
+          condition: "{{ not record.get('archived', false) and not record.get('fork', false) }}"
       paginator:
         type: DefaultPaginator
         pagination_strategy:
@@ -440,10 +460,31 @@ streams:
             path: [description]
             value: "{{ (record.get('description') or '')[:1024] }}"
             value_type: string
+          # `private` is a boolean, so an organization's internal repositories
+          # are indistinguishable from private ones without this.
+          - type: AddedFieldDefinition
+            path: [visibility]
+            value: "{{ record.get('visibility') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [license_spdx_id]
+            value: "{{ (record.get('license') or {}).get('spdx_id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [topics]
+            value: "{{ (record.get('topics') or []) | tojson }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record['id'] }}
+      - type: RemoveFields
+        # Hoisted above; the nested originals stay out of bronze.
+        field_pointers:
+          - [license]
+          - [owner]
+          - [permissions]
+          - [custom_properties]
 
   # ── commits (git-cli-proxy) ────────────────────────────────────────
   - type: DeclarativeStream
@@ -729,6 +770,195 @@ streams:
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['name'] | replace(':', '%3A') }}
 
+  # ── Commit authors (git-cli-proxy + GitHub API) ─────────────────────────
+  # A commit names an e-mail and no account, so a commit reaches a person only
+  # once something claims that e-mail for one. The proxy enumerates the
+  # distinct authors of a repository from the clone it already holds, and this
+  # stream asks GitHub who each of them is — one call per AUTHOR, not per
+  # commit, which is the whole reason the proxy answers first.
+  #
+  # `/repos/{repo}/commits/{sha}` reports the account GitHub matched the
+  # commit's e-mail to, including addresses kept off the public profile. It
+  # reports `author: null` where it can match none — a CI or service identity —
+  # and those records are dropped rather than stored as an unresolved row.
+  - type: DeclarativeStream
+    name: commit_authors
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
+          author_login: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
+          author_type: {type: [string, "null"]}
+          sample_sha: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        error_handler: *rest_error_handler_repo_scoped
+        path: "/repos/{{ stream_slice.extra_fields['repo_full_name'] }}/commits/{{ stream_partition.commit_sha }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          # The response is one commit object, not a list.
+          type: DpathExtractor
+          field_path: []
+        record_filter:
+          type: RecordFilter
+          # No account matched the e-mail; there is no claim to make. Compared
+          # against '' rather than tested for truth: the interpolation renders a
+          # missing login as the STRING "None", which is not falsy.
+          condition: "{{ ((record.get('author') or {}).get('login') or '') != '' }}"
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: sample_sha
+            partition_field: commit_sha
+            extra_fields:
+              - [repo_full_name]
+              - [author_email]
+            stream:
+              type: DeclarativeStream
+              name: repository_authors
+              primary_key:
+                - author_email
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    author_email: {type: [string, "null"]}
+                    author_name: {type: [string, "null"]}
+                    sample_sha: {type: [string, "null"]}
+                    last_committed_date: {type: [string, "null"]}
+                    commit_count: {type: [integer, "null"]}
+                    repo_full_name: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *proxy_requester
+                  path: /v1/authors
+                  request_parameters:
+                    repo: "{{ stream_partition.repo_clone_url }}"
+                    page_size: "500"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: [items]
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ response['next_page_token'] }}"
+                    stop_condition: "{{ not response.get('next_page_token') }}"
+                  page_token_option:
+                    type: RequestOption
+                    field_name: page_token
+                    inject_into: request_parameter
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: clone_url
+                      partition_field: repo_clone_url
+                      extra_fields:
+                        - [full_name]
+                      incremental_dependency: true
+                      stream: *repositories_pushed_parent
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: last_committed_date
+                datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                  - "%Y-%m-%dT%H:%M:%SZ"
+                # An author already resolved keeps their claim, so a later sync
+                # only needs the ones who have committed since — which is what
+                # keeps this O(active authors) rather than O(authors).
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['github_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
+                start_time_option:
+                  type: RequestOption
+                  field_name: since
+                  inject_into: request_parameter
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [repo_full_name]
+                      value: "{{ stream_slice.extra_fields['full_name'] }}"
+                      value_type: string
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          # The e-mail the account was resolved FOR: the git ident the proxy
+          # enumerated, which is what the commit rows carry and therefore what
+          # a claim has to be keyed on.
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: "{{ stream_slice.extra_fields['author_email'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [sample_sha]
+            value: "{{ stream_partition.commit_sha }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_login]
+            value: "{{ (record.get('author') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('author') or {}).get('id') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [author_type]
+            value: "{{ (record.get('author') or {}).get('type') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:author:{{ stream_slice.extra_fields['author_email'] | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the commit payload itself belongs to the proxy streams.
+        field_pointers:
+          - [commit]
+          - [author]
+          - [committer]
+          - [parents]
+          - [files]
+          - [stats]
+          - [node_id]
+          - [sha]
+          - [url]
+          - [html_url]
+          - [comments_url]
+
   # ── Pull requests (GitHub API) ──────────────────────────────────────────
   # LIST endpoint only: /pulls has no `since`, so newest-first plus the
   # data-feed stop halts pagination at the stored per-repo state, and the
@@ -757,16 +987,30 @@ streams:
           draft: {type: [boolean, "null"]}
           title: {type: [string, "null"]}
           author_login: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
+          author_type: {type: [string, "null"]}
           author_association: {type: [string, "null"]}
           head_sha: {type: [string, "null"]}
           head_ref: {type: [string, "null"]}
+          head_label: {type: [string, "null"]}
+          head_repo_full_name: {type: [string, "null"]}
           base_ref: {type: [string, "null"]}
+          base_sha: {type: [string, "null"]}
           merge_commit_sha: {type: [string, "null"]}
           created_at: {type: [string, "null"]}
           updated_at: {type: [string, "null"]}
           closed_at: {type: [string, "null"]}
           merged_at: {type: [string, "null"]}
           body: {type: [string, "null"]}
+          locked: {type: [boolean, "null"]}
+          active_lock_reason: {type: [string, "null"]}
+          auto_merge_enabled: {type: [boolean, "null"]}
+          label_names: {type: [string, "null"]}
+          assignee_logins: {type: [string, "null"]}
+          requested_reviewer_logins: {type: [string, "null"]}
+          requested_team_slugs: {type: [string, "null"]}
+          milestone_title: {type: [string, "null"]}
+          milestone_number: {type: [integer, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -833,6 +1077,14 @@ streams:
             value: "{{ (record.get('user') or {}).get('login') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('user') or {}).get('id') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [author_type]
+            value: "{{ (record.get('user') or {}).get('type') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
             path: [head_sha]
             value: "{{ (record.get('head') or {}).get('sha') or '' }}"
             value_type: string
@@ -841,8 +1093,23 @@ streams:
             value: "{{ (record.get('head') or {}).get('ref') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [head_label]
+            value: "{{ (record.get('head') or {}).get('label') or '' }}"
+            value_type: string
+          # Differs from repo_full_name exactly when the branch lives in a fork,
+          # which is the only signal in this payload for an external
+          # contribution. Empty where the fork has since been deleted.
+          - type: AddedFieldDefinition
+            path: [head_repo_full_name]
+            value: "{{ ((record.get('head') or {}).get('repo') or {}).get('full_name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
             path: [base_ref]
             value: "{{ (record.get('base') or {}).get('ref') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [base_sha]
+            value: "{{ (record.get('base') or {}).get('sha') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [title]
@@ -852,6 +1119,38 @@ streams:
             path: [body]
             value: "{{ (record.get('body') or '')[:2048] }}"
             value_type: string
+          # `auto_merge` is an object describing who armed it, or null; only
+          # whether it was armed survives here.
+          - type: AddedFieldDefinition
+            path: [auto_merge_enabled]
+            value: "{{ record.get('auto_merge') is not none }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [label_names]
+            value: "{{ ((record.get('labels') or []) | map(attribute='name') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [assignee_logins]
+            value: "{{ ((record.get('assignees') or []) | map(attribute='login') | list) | tojson }}"
+            value_type: string
+          # Reviewers still owing a review: the request events say a review was
+          # asked for, this says the ask is still outstanding.
+          - type: AddedFieldDefinition
+            path: [requested_reviewer_logins]
+            value: "{{ ((record.get('requested_reviewers') or []) | map(attribute='login') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [requested_team_slugs]
+            value: "{{ ((record.get('requested_teams') or []) | map(attribute='slug') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [milestone_title]
+            value: "{{ ((record.get('milestone') or {}).get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [milestone_number]
+            value: "{{ (record.get('milestone') or {}).get('number') or 0 }}"
+            value_type: integer
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -862,6 +1161,13 @@ streams:
           - [user]
           - [head]
           - [base]
+          - [labels]
+          - [assignees]
+          - [requested_reviewers]
+          - [requested_teams]
+          - [milestone]
+          - [auto_merge]
+          - [_links]
 
   # ── Pull request reviews (GitHub API) ───────────────────────────────────
   # No repo-level reviews endpoint exists in REST, so this is one call per PR
@@ -890,6 +1196,8 @@ streams:
           commit_id: {type: [string, "null"]}
           submitted_at: {type: [string, "null"]}
           author_id: {type: [integer, "null"]}
+          author_type: {type: [string, "null"]}
+          body: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1015,6 +1323,16 @@ streams:
             path: [author_id]
             value: "{{ (record.get('user') or {}).get('id') }}"
           - type: AddedFieldDefinition
+            path: [author_type]
+            value: "{{ (record.get('user') or {}).get('type') or '' }}"
+            value_type: string
+          # The reviewer's verdict text. Review COMMENTS are a separate stream;
+          # this is the summary that accompanies the approval or rejection.
+          - type: AddedFieldDefinition
+            path: [body]
+            value: "{{ (record.get('body') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pull_number }}:{{ record['id'] }}
@@ -1022,13 +1340,15 @@ streams:
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
           - [user]
+          - [_links]
 
   # ── Pull request commits (GitHub API) ───────────────────────────────────
   # PR<->commit membership is vendor metadata: it does not exist in git, and a
   # squash- or rebase-merged PR leaves its original commits unreachable from
-  # every ref the proxy clones. One light call per PR in the window — the
-  # commit payloads themselves stay on the proxy path, so this stream stores
-  # only the edge.
+  # every ref the proxy clones. One light call per PR in the window.
+  # A PR's head commits live under refs/pull/*, which a clone does not fetch,
+  # so fork and force-pushed commits reach no other stream: this one carries
+  # their commit metadata as well as the membership edge.
   # VERIFIED CAVEAT: this endpoint returns at most 250 commits per PR.
   - type: DeclarativeStream
     name: pull_request_commits
@@ -1048,6 +1368,22 @@ streams:
           sha: {type: [string, "null"]}
           pull_number: {type: [integer, "null"]}
           repo_full_name: {type: [string, "null"]}
+          author_login: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
+          author_type: {type: [string, "null"]}
+          author_name: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
+          authored_date: {type: [string, "null"]}
+          committer_login: {type: [string, "null"]}
+          committer_id: {type: [integer, "null"]}
+          committer_name: {type: [string, "null"]}
+          committer_email: {type: [string, "null"]}
+          committed_date: {type: [string, "null"]}
+          message: {type: [string, "null"]}
+          parent_shas: {type: [string, "null"]}
+          is_merge: {type: [boolean, "null"]}
+          is_verified: {type: [boolean, "null"]}
+          verification_reason: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1093,12 +1429,85 @@ streams:
             path: [repo_full_name]
             value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
             value_type: string
+          # The GitHub account behind a commit. Git carries only a name and an
+          # e-mail, so this response is the one place a commit's e-mail and its
+          # GitHub login appear together — the edge identity resolution needs.
+          # `author` is null wherever GitHub cannot match the e-mail to an
+          # account, which is how CI and service identities present.
+          - type: AddedFieldDefinition
+            path: [author_login]
+            value: "{{ (record.get('author') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('author') or {}).get('id') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [author_type]
+            value: "{{ (record.get('author') or {}).get('type') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [committer_login]
+            value: "{{ (record.get('committer') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [committer_id]
+            value: "{{ (record.get('committer') or {}).get('id') or 0 }}"
+            value_type: integer
+          # A PR's head commits live under refs/pull/*, which a clone does not
+          # fetch, so the proxy commit walk cannot see fork or force-pushed
+          # commits at all. For those this stream is the only carrier of the
+          # commit's own metadata, not a duplicate of it.
+          - type: AddedFieldDefinition
+            path: [author_name]
+            value: "{{ ((record.get('commit') or {}).get('author') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: "{{ ((record.get('commit') or {}).get('author') or {}).get('email') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [authored_date]
+            value: "{{ ((record.get('commit') or {}).get('author') or {}).get('date') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [committer_name]
+            value: "{{ ((record.get('commit') or {}).get('committer') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [committer_email]
+            value: "{{ ((record.get('commit') or {}).get('committer') or {}).get('email') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [committed_date]
+            value: "{{ ((record.get('commit') or {}).get('committer') or {}).get('date') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [message]
+            value: "{{ ((record.get('commit') or {}).get('message') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [parent_shas]
+            value: "{{ ((record.get('parents') or []) | map(attribute='sha') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_merge]
+            value: "{{ ((record.get('parents') or []) | length) > 1 }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [is_verified]
+            value: "{{ ((record.get('commit') or {}).get('verification') or {}).get('verified') or false }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [verification_reason]
+            value: "{{ ((record.get('commit') or {}).get('verification') or {}).get('reason') or '' }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.pull_number }}:{{ record['sha'] }}
       - type: RemoveFields
-        # The commit payload comes from the proxy; only the edge is stored.
+        # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
           - [commit]
           - [author]
@@ -1139,6 +1548,13 @@ streams:
           changed_files: {type: [integer, "null"]}
           updated_at: {type: [string, "null"]}
           author_email: {type: [string, "null"]}
+          author_login: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
+          merged_by_login: {type: [string, "null"]}
+          merged_by_id: {type: [integer, "null"]}
+          review_decision: {type: [string, "null"]}
+          total_comments_count: {type: [integer, "null"]}
+          is_cross_repository: {type: [boolean, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1155,7 +1571,7 @@ streams:
               repository(owner: $owner, name: $name) {
                 pullRequests(first: 100, after: $cursor, states: [OPEN, CLOSED, MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
                   pageInfo { hasNextPage endCursor }
-                  nodes { number updatedAt additions deletions changedFiles author { ... on User { email } } }
+                  nodes { number updatedAt additions deletions changedFiles reviewDecision totalCommentsCount isCrossRepository author { login ... on User { databaseId email } } mergedBy { login ... on User { databaseId } } }
                 }
               }
             }
@@ -1227,6 +1643,39 @@ streams:
             path: [author_email]
             value: "{{ (record.get('author') or {}).get('email') or '' }}"
             value_type: string
+          # The account the e-mail above belongs to, so a published profile
+          # e-mail is a claim against a known account rather than a loose value.
+          - type: AddedFieldDefinition
+            path: [author_login]
+            value: "{{ (record.get('author') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('author') or {}).get('databaseId') or 0 }}"
+            value_type: integer
+          # Who merged it — REST reports merged_at but never the merger, and a
+          # MergedEvent is only collected for pull requests inside the timeline
+          # window.
+          - type: AddedFieldDefinition
+            path: [merged_by_login]
+            value: "{{ (record.get('mergedBy') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [merged_by_id]
+            value: "{{ (record.get('mergedBy') or {}).get('databaseId') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [review_decision]
+            value: "{{ record.get('reviewDecision') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [total_comments_count]
+            value: "{{ record.get('totalCommentsCount') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [is_cross_repository]
+            value: "{{ record.get('isCrossRepository') or false }}"
+            value_type: boolean
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -1238,6 +1687,10 @@ streams:
           - [changedFiles]
           - [updatedAt]
           - [author]
+          - [mergedBy]
+          - [reviewDecision]
+          - [totalCommentsCount]
+          - [isCrossRepository]
 
   # ── Issue & PR conversation comments (GitHub API) ───────────────────────
   # ONE repo-level endpoint covers both: PR conversation comments are issue
@@ -1267,6 +1720,9 @@ streams:
           updated_at: {type: [string, "null"]}
           body: {type: [string, "null"]}
           author_id: {type: [integer, "null"]}
+          author_type: {type: [string, "null"]}
+          is_via_github_app: {type: [boolean, "null"]}
+          reactions_total: {type: [integer, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1339,6 +1795,22 @@ streams:
           - type: AddedFieldDefinition
             path: [author_id]
             value: "{{ (record.get('user') or {}).get('id') }}"
+          # `Bot` marks an automated commenter; login naming conventions are the
+          # only other signal and they are not reliable.
+          - type: AddedFieldDefinition
+            path: [author_type]
+            value: "{{ (record.get('user') or {}).get('type') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_via_github_app]
+            value: "{{ record.get('performed_via_github_app') is not none }}"
+            value_type: boolean
+          # Engagement on the comment. The per-emoji breakdown is dropped; only
+          # the total carries a signal worth serving.
+          - type: AddedFieldDefinition
+            path: [reactions_total]
+            value: "{{ (record.get('reactions') or {}).get('total_count') or 0 }}"
+            value_type: integer
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -1348,6 +1820,8 @@ streams:
         field_pointers:
           - [user]
           - [issue_url]
+          - [reactions]
+          - [performed_via_github_app]
 
   # ── Inline code-review comments (GitHub API) ────────────────────────────
   # Repo-level, so one partition per repo rather than one call per PR. These
@@ -1377,8 +1851,19 @@ streams:
           updated_at: {type: [string, "null"]}
           body: {type: [string, "null"]}
           author_id: {type: [integer, "null"]}
+          author_type: {type: [string, "null"]}
           path: {type: [string, "null"]}
           line: {type: [integer, "null"]}
+          start_line: {type: [integer, "null"]}
+          side: {type: [string, "null"]}
+          subject_type: {type: [string, "null"]}
+          commit_id: {type: [string, "null"]}
+          original_commit_id: {type: [string, "null"]}
+          review_id: {type: [integer, "null"]}
+          in_reply_to_id: {type: [integer, "null"]}
+          diff_hunk: {type: [string, "null"]}
+          is_via_github_app: {type: [boolean, "null"]}
+          reactions_total: {type: [integer, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1451,11 +1936,44 @@ streams:
           - type: AddedFieldDefinition
             path: [author_id]
             value: "{{ (record.get('user') or {}).get('id') }}"
+          - type: AddedFieldDefinition
+            path: [author_type]
+            value: "{{ (record.get('user') or {}).get('type') or '' }}"
+            value_type: string
           # An outdated comment loses `line`; `original_line` keeps the
           # position it was written against.
           - type: AddedFieldDefinition
             path: [line]
             value: "{{ record.get('line') or record.get('original_line') }}"
+          - type: AddedFieldDefinition
+            path: [start_line]
+            value: "{{ record.get('start_line') or record.get('original_start_line') or 0 }}"
+            value_type: integer
+          # Which review this comment was submitted under, and which comment it
+          # answers: without them every inline comment reads as a standalone
+          # remark and a review thread cannot be reconstructed.
+          - type: AddedFieldDefinition
+            path: [review_id]
+            value: "{{ record.get('pull_request_review_id') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [in_reply_to_id]
+            value: "{{ record.get('in_reply_to_id') or 0 }}"
+            value_type: integer
+          # The code the remark was made about, so a comment can be read without
+          # refetching the diff.
+          - type: AddedFieldDefinition
+            path: [diff_hunk]
+            value: "{{ (record.get('diff_hunk') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_via_github_app]
+            value: "{{ record.get('performed_via_github_app') is not none }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [reactions_total]
+            value: "{{ (record.get('reactions') or {}).get('total_count') or 0 }}"
+            value_type: integer
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -1466,6 +1984,11 @@ streams:
           - [user]
           - [pull_request_url]
           - [original_line]
+          - [original_start_line]
+          - [pull_request_review_id]
+          - [reactions]
+          - [performed_via_github_app]
+          - [_links]
 
   # ── Issues (GitHub API) ─────────────────────────────────────────────────
   # The endpoint returns PRs too; the record filter drops them (a PR carries
@@ -1491,9 +2014,21 @@ streams:
           state: {type: [string, "null"]}
           state_reason: {type: [string, "null"]}
           title: {type: [string, "null"]}
+          body: {type: [string, "null"]}
           author_login: {type: [string, "null"]}
+          author_id: {type: [integer, "null"]}
+          author_type: {type: [string, "null"]}
+          author_association: {type: [string, "null"]}
           assignee_logins: {type: [string, "null"]}
+          assignee_ids: {type: [string, "null"]}
           label_names: {type: [string, "null"]}
+          issue_type: {type: [string, "null"]}
+          milestone_title: {type: [string, "null"]}
+          milestone_number: {type: [integer, "null"]}
+          closed_by_login: {type: [string, "null"]}
+          closed_by_id: {type: [integer, "null"]}
+          locked: {type: [boolean, "null"]}
+          reactions_total: {type: [integer, "null"]}
           comments: {type: [integer, "null"]}
           created_at: {type: [string, "null"]}
           updated_at: {type: [string, "null"]}
@@ -1564,16 +2099,59 @@ streams:
             value: "{{ (record.get('user') or {}).get('login') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [author_id]
+            value: "{{ (record.get('user') or {}).get('id') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [author_type]
+            value: "{{ (record.get('user') or {}).get('type') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
             path: [assignee_logins]
             value: "{{ ((record.get('assignees') or []) | map(attribute='login') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [assignee_ids]
+            value: "{{ ((record.get('assignees') or []) | map(attribute='id') | list) | tojson }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [label_names]
             value: "{{ ((record.get('labels') or []) | map(attribute='name') | list) | tojson }}"
             value_type: string
+          # GitHub's native issue type (Bug, Task, Feature), distinct from a
+          # label. Null on repositories where the org has not enabled types.
+          - type: AddedFieldDefinition
+            path: [issue_type]
+            value: "{{ (record.get('type') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [milestone_title]
+            value: "{{ ((record.get('milestone') or {}).get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [milestone_number]
+            value: "{{ (record.get('milestone') or {}).get('number') or 0 }}"
+            value_type: integer
+          # Who closed it, which the state and state_reason do not say.
+          - type: AddedFieldDefinition
+            path: [closed_by_login]
+            value: "{{ (record.get('closed_by') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [closed_by_id]
+            value: "{{ (record.get('closed_by') or {}).get('id') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [reactions_total]
+            value: "{{ (record.get('reactions') or {}).get('total_count') or 0 }}"
+            value_type: integer
           - type: AddedFieldDefinition
             path: [title]
             value: "{{ (record.get('title') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [body]
+            value: "{{ (record.get('body') or '')[:2048] }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
@@ -1585,6 +2163,13 @@ streams:
           - [user]
           - [assignees]
           - [labels]
+          - [type]
+          - [milestone]
+          - [closed_by]
+          - [reactions]
+          - [performed_via_github_app]
+          - [sub_issues_summary]
+          - [issue_field_values]
 
   # ── Projects V2 (GitHub GraphQL) ────────────────────────────────────────
   # Projects V2 has no REST API. Cursor rides in the request body — the
@@ -1730,6 +2315,18 @@ streams:
           head_branch: {type: [string, "null"]}
           head_sha: {type: [string, "null"]}
           actor_login: {type: [string, "null"]}
+          actor_id: {type: [integer, "null"]}
+          triggering_actor_login: {type: [string, "null"]}
+          triggering_actor_id: {type: [integer, "null"]}
+          run_number: {type: [integer, "null"]}
+          workflow_path: {type: [string, "null"]}
+          display_title: {type: [string, "null"]}
+          check_suite_id: {type: [integer, "null"]}
+          pull_request_numbers: {type: [string, "null"]}
+          head_commit_message: {type: [string, "null"]}
+          head_commit_timestamp: {type: [string, "null"]}
+          head_commit_author_name: {type: [string, "null"]}
+          head_commit_author_email: {type: [string, "null"]}
           run_started_at: {type: [string, "null"]}
           created_at: {type: [string, "null"]}
           updated_at: {type: [string, "null"]}
@@ -1797,6 +2394,52 @@ streams:
             value: "{{ (record.get('actor') or {}).get('login') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [actor_id]
+            value: "{{ (record.get('actor') or {}).get('id') or 0 }}"
+            value_type: integer
+          # Diverges from `actor` on a re-run: the actor stays whoever caused
+          # the original run, so without this a re-run is credited to them.
+          - type: AddedFieldDefinition
+            path: [triggering_actor_login]
+            value: "{{ (record.get('triggering_actor') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [triggering_actor_id]
+            value: "{{ (record.get('triggering_actor') or {}).get('id') or 0 }}"
+            value_type: integer
+          # `name` is the workflow's display name, which is not unique and can be
+          # edited; the path identifies the workflow file itself.
+          - type: AddedFieldDefinition
+            path: [workflow_path]
+            value: "{{ record.get('path') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [display_title]
+            value: "{{ (record.get('display_title') or '')[:1024] }}"
+            value_type: string
+          # The pull requests this run was for, so CI outcome joins to review
+          # without matching on head_sha.
+          - type: AddedFieldDefinition
+            path: [pull_request_numbers]
+            value: "{{ ((record.get('pull_requests') or []) | map(attribute='number') | list) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [head_commit_message]
+            value: "{{ ((record.get('head_commit') or {}).get('message') or '')[:2048] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [head_commit_timestamp]
+            value: "{{ (record.get('head_commit') or {}).get('timestamp') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [head_commit_author_name]
+            value: "{{ ((record.get('head_commit') or {}).get('author') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [head_commit_author_email]
+            value: "{{ ((record.get('head_commit') or {}).get('author') or {}).get('email') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:run:{{ record['id'] }}:{{ record.get('run_attempt', 1) }}
@@ -1804,6 +2447,12 @@ streams:
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
           - [actor]
+          - [triggering_actor]
+          - [head_commit]
+          - [pull_requests]
+          - [repository]
+          - [head_repository]
+          - [referenced_workflows]
 
   # ── Deployments (GitHub API) ────────────────────────────────────────────
   # No date filter and no outcome on this endpoint: newest-first + data-feed
@@ -1829,8 +2478,12 @@ streams:
           ref: {type: [string, "null"]}
           task: {type: [string, "null"]}
           environment: {type: [string, "null"]}
+          original_environment: {type: [string, "null"]}
+          is_transient_environment: {type: [boolean, "null"]}
+          is_production_environment: {type: [boolean, "null"]}
           description: {type: [string, "null"]}
           creator_login: {type: [string, "null"]}
+          creator_id: {type: [integer, "null"]}
           created_at: {type: [string, "null"]}
           updated_at: {type: [string, "null"]}
         required:
@@ -1897,18 +2550,41 @@ streams:
             value: "{{ (record.get('creator') or {}).get('login') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [creator_id]
+            value: "{{ (record.get('creator') or {}).get('id') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
             path: [description]
             value: "{{ (record.get('description') or '')[:1024] }}"
             value_type: string
+          # `environment` is the current name; a promotion rewrites it, and
+          # `original_environment` is where the deploy actually started. The two
+          # flags say what KIND of environment it is — the name alone cannot,
+          # since naming is per-repository convention.
+          - type: AddedFieldDefinition
+            path: [original_environment]
+            value: "{{ record.get('original_environment') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_transient_environment]
+            value: "{{ record.get('transient_environment') or false }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [is_production_environment]
+            value: "{{ record.get('production_environment') or false }}"
+            value_type: boolean
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_full_name | replace(':', '%3A') }}:deploy:{{ record['id'] }}
       - type: RemoveFields
-        # Hoisted above; the nested originals stay out of bronze.
+        # Hoisted above; the nested and renamed originals stay out of bronze.
         field_pointers:
           - [creator]
           - [payload]
+          - [transient_environment]
+          - [production_environment]
+          - [performed_via_github_app]
 
   # ── Deployment statuses (GitHub API) ────────────────────────────────────
   # A deployment record has no outcome; this child fetches success/failure
@@ -1934,8 +2610,14 @@ streams:
           repo_full_name: {type: [string, "null"]}
           state: {type: [string, "null"]}
           environment: {type: [string, "null"]}
+          description: {type: [string, "null"]}
           creator_login: {type: [string, "null"]}
+          creator_id: {type: [integer, "null"]}
+          target_url: {type: [string, "null"]}
+          log_url: {type: [string, "null"]}
+          environment_url: {type: [string, "null"]}
           created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -2054,6 +2736,28 @@ streams:
             value: "{{ (record.get('creator') or {}).get('login') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
+            path: [creator_id]
+            value: "{{ (record.get('creator') or {}).get('id') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:1024] }}"
+            value_type: string
+          # Where the run and the deployed environment can be reached, which is
+          # the evidence a failed status points at.
+          - type: AddedFieldDefinition
+            path: [target_url]
+            value: "{{ record.get('target_url') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [log_url]
+            value: "{{ record.get('log_url') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [environment_url]
+            value: "{{ record.get('environment_url') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:{{ stream_partition.deployment_id }}:status:{{ record['id'] }}
@@ -2061,6 +2765,7 @@ streams:
         # Hoisted above; the nested originals stay out of bronze.
         field_pointers:
           - [creator]
+          - [performed_via_github_app]
 
   # ── Pull request timeline events (GitHub GraphQL) ───────────────────────
   # One call per pull request in the sliding window rather than one per page:
@@ -2088,9 +2793,12 @@ streams:
           item_number: {type: [integer, "null"]}
           repo_full_name: {type: [string, "null"]}
           actor_login: {type: [string, "null"]}
+          actor_id: {type: [integer, "null"]}
           target_login: {type: [string, "null"]}
+          target_id: {type: [integer, "null"]}
           label_name: {type: [string, "null"]}
           state_reason: {type: [string, "null"]}
+          merge_commit_sha: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -2110,17 +2818,17 @@ streams:
                     pageInfo { hasNextPage endCursor }
                     nodes {
                       __typename
-                      ... on ReadyForReviewEvent { id createdAt actor { login } }
-                      ... on ConvertToDraftEvent { id createdAt actor { login } }
-                      ... on ReviewRequestedEvent { id createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } }
-                      ... on ReviewRequestRemovedEvent { id createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } }
-                      ... on AssignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
-                      ... on UnassignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
-                      ... on LabeledEvent { id createdAt actor { login } label { name } }
-                      ... on UnlabeledEvent { id createdAt actor { login } label { name } }
-                      ... on ClosedEvent { id createdAt actor { login } stateReason }
-                      ... on ReopenedEvent { id createdAt actor { login } }
-                      ... on MergedEvent { id createdAt actor { login } }
+                      ... on ReadyForReviewEvent { id createdAt actor { login ... on User { databaseId } } }
+                      ... on ConvertToDraftEvent { id createdAt actor { login ... on User { databaseId } } }
+                      ... on ReviewRequestedEvent { id createdAt actor { login ... on User { databaseId } } requestedReviewer { ... on User { login databaseId } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } }
+                      ... on ReviewRequestRemovedEvent { id createdAt actor { login ... on User { databaseId } } requestedReviewer { ... on User { login databaseId } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } }
+                      ... on AssignedEvent { id createdAt actor { login ... on User { databaseId } } assignee { ... on User { login databaseId } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
+                      ... on UnassignedEvent { id createdAt actor { login ... on User { databaseId } } assignee { ... on User { login databaseId } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
+                      ... on LabeledEvent { id createdAt actor { login ... on User { databaseId } } label { name } }
+                      ... on UnlabeledEvent { id createdAt actor { login ... on User { databaseId } } label { name } }
+                      ... on ClosedEvent { id createdAt actor { login ... on User { databaseId } } stateReason }
+                      ... on ReopenedEvent { id createdAt actor { login ... on User { databaseId } } }
+                      ... on MergedEvent { id createdAt actor { login ... on User { databaseId } } commit { oid } }
                     }
                   }
                 }
@@ -2182,6 +2890,12 @@ streams:
             path: [actor_login]
             value: "{{ (record.get('actor') or {}).get('login') or '' }}"
             value_type: string
+          # Teams, bots and mannequins have a login but no databaseId, so this
+          # is 0 for them while actor_login still names them.
+          - type: AddedFieldDefinition
+            path: [actor_id]
+            value: "{{ (record.get('actor') or {}).get('databaseId') or 0 }}"
+            value_type: integer
           # Assignment and review-request events name a second person; the
           # field differs by event type and only one is ever present.
           - type: AddedFieldDefinition
@@ -2190,12 +2904,23 @@ streams:
               {{ (record.get('assignee') or {}).get('login') or (record.get('requestedReviewer') or {}).get('login') or (record.get('requestedReviewer') or {}).get('slug') or '' }}
             value_type: string
           - type: AddedFieldDefinition
+            path: [target_id]
+            value: >-
+              {{ (record.get('assignee') or {}).get('databaseId') or (record.get('requestedReviewer') or {}).get('databaseId') or 0 }}
+            value_type: integer
+          - type: AddedFieldDefinition
             path: [label_name]
             value: "{{ (record.get('label') or {}).get('name') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [state_reason]
             value: "{{ record.get('stateReason') or '' }}"
+            value_type: string
+          # Present on MergedEvent alone: the commit the merge produced, which
+          # ties the lifecycle event to the resulting history.
+          - type: AddedFieldDefinition
+            path: [merge_commit_sha]
+            value: "{{ (record.get('commit') or {}).get('oid') or '' }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
@@ -2212,6 +2937,7 @@ streams:
           - [requestedReviewer]
           - [label]
           - [stateReason]
+          - [commit]
 
   # ── Issue timeline events (GitHub GraphQL) ──────────────────────────────
   # Same per-item shape as the pull-request stream, but a different item-type
@@ -2239,7 +2965,9 @@ streams:
           item_number: {type: [integer, "null"]}
           repo_full_name: {type: [string, "null"]}
           actor_login: {type: [string, "null"]}
+          actor_id: {type: [integer, "null"]}
           target_login: {type: [string, "null"]}
+          target_id: {type: [integer, "null"]}
           label_name: {type: [string, "null"]}
           state_reason: {type: [string, "null"]}
           field_name: {type: [string, "null"]}
@@ -2264,15 +2992,15 @@ streams:
                     pageInfo { hasNextPage endCursor }
                     nodes {
                       __typename
-                      ... on AssignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
-                      ... on UnassignedEvent { id createdAt actor { login } assignee { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
-                      ... on LabeledEvent { id createdAt actor { login } label { name } }
-                      ... on UnlabeledEvent { id createdAt actor { login } label { name } }
-                      ... on ClosedEvent { id createdAt actor { login } stateReason }
-                      ... on ReopenedEvent { id createdAt actor { login } }
-                      ... on IssueTypeChangedEvent { id createdAt actor { login } issueType { name } prevIssueType { name } }
+                      ... on AssignedEvent { id createdAt actor { login ... on User { databaseId } } assignee { ... on User { login databaseId } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
+                      ... on UnassignedEvent { id createdAt actor { login ... on User { databaseId } } assignee { ... on User { login databaseId } ... on Bot { login } ... on Mannequin { login } ... on Organization { login } } }
+                      ... on LabeledEvent { id createdAt actor { login ... on User { databaseId } } label { name } }
+                      ... on UnlabeledEvent { id createdAt actor { login ... on User { databaseId } } label { name } }
+                      ... on ClosedEvent { id createdAt actor { login ... on User { databaseId } } stateReason }
+                      ... on ReopenedEvent { id createdAt actor { login ... on User { databaseId } } }
+                      ... on IssueTypeChangedEvent { id createdAt actor { login ... on User { databaseId } } issueType { name } prevIssueType { name } }
                       ... on IssueFieldChangedEvent {
-                        id createdAt actor { login } previousValue newValue
+                        id createdAt actor { login ... on User { databaseId } } previousValue newValue
                         issueField {
                           ... on IssueFieldSingleSelect { name }
                           ... on IssueFieldMultiSelect { name }
@@ -2281,7 +3009,7 @@ streams:
                           ... on IssueFieldText { name }
                         }
                       }
-                      ... on ProjectV2ItemStatusChangedEvent { id createdAt actor { login } previousStatus status }
+                      ... on ProjectV2ItemStatusChangedEvent { id createdAt actor { login ... on User { databaseId } } previousStatus status }
                     }
                   }
                 }
@@ -2418,10 +3146,20 @@ streams:
             path: [actor_login]
             value: "{{ (record.get('actor') or {}).get('login') or '' }}"
             value_type: string
+          # Teams, bots and mannequins have a login but no databaseId, so this
+          # is 0 for them while actor_login still names them.
+          - type: AddedFieldDefinition
+            path: [actor_id]
+            value: "{{ (record.get('actor') or {}).get('databaseId') or 0 }}"
+            value_type: integer
           - type: AddedFieldDefinition
             path: [target_login]
             value: "{{ (record.get('assignee') or {}).get('login') or '' }}"
             value_type: string
+          - type: AddedFieldDefinition
+            path: [target_id]
+            value: "{{ (record.get('assignee') or {}).get('databaseId') or 0 }}"
+            value_type: integer
           - type: AddedFieldDefinition
             path: [label_name]
             value: "{{ (record.get('label') or {}).get('name') or '' }}"

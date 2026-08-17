@@ -1,20 +1,18 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowDown,
   ArrowUp,
-  Check,
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
-  Copy,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import type {
   MetricEvidenceColumn,
   MetricEvidenceRow,
 } from "@/api/metric-drilldown-client";
+import { CopyValueButton } from "@/components/copy-value-button";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -44,47 +42,6 @@ function columnLayout(column: MetricEvidenceColumn) {
 }
 
 const EXPANDER_REM = 2.25;
-
-function CopyValueButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  const resetTimer = useRef<number | null>(null);
-
-  useEffect(
-    () => () => {
-      if (resetTimer.current != null) window.clearTimeout(resetTimer.current);
-    },
-    []
-  );
-
-  async function copyValue(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      if (resetTimer.current != null) window.clearTimeout(resetTimer.current);
-      resetTimer.current = window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
-      toast.error("Unable to copy ref");
-    }
-  }
-
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-xs"
-      className="shrink-0 text-muted-foreground hover:text-foreground"
-      aria-label={copied ? "Copied" : `Copy ${value}`}
-      title={copied ? "Copied" : "Copy ref"}
-      onClick={(event) => {
-        event.stopPropagation();
-        void copyValue();
-      }}
-    >
-      {copied ? <Check /> : <Copy />}
-    </Button>
-  );
-}
 
 function SortIcon({ state }: { state: "asc" | "desc" | null }) {
   if (state === "asc") return <ArrowUp className="size-3.5 shrink-0" />;
@@ -303,7 +260,11 @@ export function MetricEvidenceTable({
                       {column.key === "ref" && value != null ? (
                         <div className="flex min-w-0 items-center gap-1">
                           <span className="min-w-0 truncate">{line}</span>
-                          <CopyValueButton value={String(value)} />
+                          <CopyValueButton
+                            value={String(value)}
+                            title="Copy ref"
+                            errorMessage="Unable to copy ref"
+                          />
                         </div>
                       ) : (
                         line
