@@ -161,11 +161,6 @@ boundaries in unit/component suites, request-contract edges in `stand-api`, and
 keep `stand-ui` for the browser-only join: routing, rendering, cancellation and
 real downloads.
 
-For an executed Report builder exploration, hand this scope to `drive-ui` and
-its [`report-builder-exploration.md`](../drive-ui/references/report-builder-exploration.md)
-charter; this skill decides the coverage shape, while `drive-ui` gathers the
-observations and evidence.
-
 ### 5. Draw the in/out boundary
 Explicitly list what's **out of scope** — not built yet, owned by another layer, or deferred to
 later work — so nobody scores the feature against unbuilt surface. For a **port** — and usually a

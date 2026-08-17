@@ -1,6 +1,6 @@
 ---
 name: drive-ui
-description: "Drive the Insight web UI in a real browser to see, verify, explore, or capture evidence from any stand — a local compose or kind install, or a shared remote one. Use this whenever the task means LOOKING at the dashboard rather than reading its code: 'check the IC page', 'is that chart still broken', 'screenshot the metrics drilldown', 'reproduce it in the UI', 'grab evidence for a bug', 'open the stand and look at X', 'try every Report builder option', 'find the download limit', or any UI defect you are about to file. Read it BEFORE launching a browser at any remote stand, because the Entra-plus-passkey ones cannot be logged into from a browser you launched, and the wrong acquisition move costs the user a login they cannot complete. Also read it before reporting a wrong number as a UI defect — the data that decides it is captured here, and this skill collects observations rather than drawing conclusions from them. The `playwright-cli` skill owns the commands; this skill owns getting an authenticated browser and capturing evidence someone can act on, and hands the issue itself to `file-bug-insight`."
+description: "Drive the Insight web UI in a real browser to see, verify, explore, or capture evidence from any stand — a local compose or kind install, or a shared remote one. Use this whenever the task means LOOKING at the dashboard rather than reading its code: 'check the IC page', 'is that chart still broken', 'screenshot the metrics drilldown', 'reproduce it in the UI', 'grab evidence for a bug', 'open the stand and look at X', 'exercise every option in this screen', 'find the download limit', or any UI defect you are about to file. Read it BEFORE launching a browser at any remote stand, because the Entra-plus-passkey ones cannot be logged into from a browser you launched, and the wrong acquisition move costs the user a login they cannot complete. Also read it before reporting a wrong number as a UI defect — the data that decides it is captured here, and this skill collects observations rather than drawing conclusions from them. The `playwright-cli` skill owns the commands; this skill owns getting an authenticated browser and capturing evidence someone can act on, and hands the issue itself to `file-bug-insight`."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill
@@ -133,11 +133,6 @@ than treating a download event as success. Parse every supported format and
 compare headers, row count, missing-versus-zero cells and a representative
 value against the preview or API response. Keep console and request evidence
 beside the file.
-
-For Report builder work, read
-[`references/report-builder-exploration.md`](./references/report-builder-exploration.md)
-before driving the browser. It maps the current controls, limits, failure
-states and download oracles to the cheapest test layer.
 
 ## Capture evidence someone can act on
 

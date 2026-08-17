@@ -1,6 +1,6 @@
 ---
 name: stand-ui-test
-description: "Write, fix, or review the browser journeys in tests/stand/ui/ — Playwright (Python, sync API) against a deployed Insight stand with a real Keycloak sign-in. Covers the governing UI-vs-API rule and how to justify a browser test in writing, accessibility-first locators, the page-object/flows split, manifest-derived expectations, URL/deep-link validation, and real browser downloads. Use for any request to write, add, fix or review a committed browser test in this repository — 'add a Playwright test for X', 'the UI test is failing', 'turn this scenario into a browser journey', 'add a Report builder regression' — and for anything under tests/stand/ui/. For HTTP contract tests use stand-api-test; playwright-cli is for driving a browser interactively at a prompt and for Playwright's own CLI — reach for it only when nothing will be committed under tests/stand/ui/; drive-ui is for looking at a stand by hand."
+description: "Write, fix, or review the browser journeys in tests/stand/ui/ — Playwright (Python, sync API) against a deployed Insight stand with a real Keycloak sign-in. Covers the governing UI-vs-API rule and how to justify a browser test in writing, accessibility-first locators, the page-object/flows split, manifest-derived expectations, URL/deep-link validation, and real browser downloads. Use for any request to write, add, fix or review a committed browser test in this repository — 'add a Playwright test for X', 'the UI test is failing', 'turn this scenario into a browser journey', 'add a deep-link or download regression' — and for anything under tests/stand/ui/. For HTTP contract tests use stand-api-test; playwright-cli is for driving a browser interactively at a prompt and for Playwright's own CLI — reach for it only when nothing will be committed under tests/stand/ui/; drive-ui is for looking at a stand by hand."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill, Task
@@ -73,9 +73,6 @@ all option permutations belong in frontend tests; period and request caps
 belong in `stand-api`. The stand journey proves only what those suites cannot:
 the deployed router does not crash, controls reach the real backend, the
 preview renders, and the browser receives semantically correct files.
-
-For the Report builder's current axes and boundary map, read
-[`../drive-ui/references/report-builder-exploration.md`](../drive-ui/references/report-builder-exploration.md).
 
 ## Signing in
 
