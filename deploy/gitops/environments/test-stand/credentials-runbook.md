@@ -149,6 +149,8 @@ make -C deploy/gitops verify-ci-credential ENV=test-stand
 | `create roles.rbac.authorization.k8s.io -n insight` | the chart renders its own reconcile RBAC |
 | `create workflowtemplates.argoproj.io -n insight` | the chart renders WorkflowTemplates and CronWorkflows |
 | `update httproutes.gateway.networking.k8s.io -n insight` | the umbrella renders both edge routes from `gateway.route` / `keycloak.route`, so `helm upgrade` writes them on every run |
+| `get persistentvolumeclaims -n insight` | the git-cli-proxy renders a claim for its clone cache, and `helm upgrade` reads it before patching |
+| `update persistentvolumeclaims -n insight` | its chart and version labels change on every bump |
 | `create roles.rbac.authorization.k8s.io -n airbyte` | the chart renders `insight-airbyte-auth-reader` into the Airbyte namespace, not the release one |
 | `create rolebindings.rbac.authorization.k8s.io -n airbyte` | same object, the binding half |
 
@@ -164,6 +166,7 @@ make -C deploy/gitops verify-ci-credential ENV=test-stand
 | `list nodes --all-namespaces` | no cluster-scoped reads |
 | `create clusterrolebindings… --all-namespaces` | cannot widen its own grant |
 | `get pods -n kube-system` | no unrelated namespace, control plane included |
+| `delete persistentvolumeclaims -n insight` | the clone cache is annotated `helm.sh/resource-policy: keep` and outlives the release; a credential that could delete it could discard every synced repository |
 
 ### 3.2 One RBAC subtlety worth knowing
 
@@ -536,6 +539,15 @@ it does not itself hold, and `admin` does not carry `escalate`. The chart render
 its own reconcile Role with `argoproj.io` and `onepassword.com` rules. Someone
 trimmed the supplemental `Role` in `ci-deployer-rbac.yaml` — diff it against
 git history and re-run `make provision-ci ENV=test-stand` to repair drift.
+
+**`could not get information about the resource <kind> … is forbidden`**
+The chart grew a kind the Role does not enumerate — the guard working, not a
+broken credential. Helm reads *every* rendered object before it plans the
+patch, so one unreadable kind fails the whole upgrade. Either add the kind to
+`ci-deployer-rbac.yaml` and re-apply (`make -C deploy/gitops provision-ci
+ENV=test-stand`, which does not rotate the token), or turn the subchart off in
+this environment's `values.yaml` when the stand does not need it —
+`gitCliProxy.deploy: false` is there for that reason.
 
 **`namespaces is forbidden` on a first install**
 `helm upgrade --install --create-namespace` POSTs a Namespace at cluster scope,

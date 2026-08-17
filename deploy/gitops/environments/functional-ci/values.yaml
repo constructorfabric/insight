@@ -2,6 +2,13 @@ credentials:
   deploymentMode: gitops
   autoGenerate: false
 
+# No git connector runs here, and gitops mode cannot self-generate the proxy's
+# bearer token (secrets.yaml refuses: a template-time token would differ on
+# every sync). Enabling git syncing on this environment means setting
+# gitCliProxy.proxyToken as well.
+gitCliProxy:
+  deploy: false
+
 global:
   storageClass: local-path
   tenantDefaultId: "00000000-df51-5b42-9538-d2b56b7ee953"

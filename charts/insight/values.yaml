@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.17.06.39-879d306" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.17.07.44-b53dc49" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.17.06.39-879d306" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.17.07.44-b53dc49" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -524,6 +524,12 @@ analytics:
 # changes and commit authors through this service, so an instance without it can
 # sync no git source at all. The cost is one PVC (`persistence.size`) on an
 # instance that syncs none — set deploy=false there.
+# Two prerequisites an environment must meet before this renders for it:
+#   * under `credentials.deploymentMode: gitops`, set `proxyToken` (or
+#     pre-create insight-git-cli-proxy-config) — a template-time token would
+#     differ on every sync, so secrets.yaml refuses to generate one;
+#   * the deploy credential must hold a persistentvolumeclaims rule for the
+#     cache claim (test-stand: ci-deployer-rbac.yaml).
 gitCliProxy:
   deploy: true
   replicaCount: 1
@@ -550,6 +556,12 @@ gitCliProxy:
   # first install and reused on every upgrade; reconcile hands it to the
   # connectors, so an operator never needs to see or copy it. Set it only to
   # pin a specific value.
+  #
+  # Under `credentials.autoGenerate: false` — which every gitops overlay runs —
+  # the chart emits no Secret at all and this value is unused: pre-create
+  # `existingSecret` below with the key
+  # APP__gears__git_cli_proxy__config__proxy_token, the same contract as
+  # `insight-db-creds`. Never inline the token here in a committed overlay.
   proxyToken: ""
   # Composed by templates/secrets.yaml (carries the bearer token).
   existingSecret: "insight-git-cli-proxy-config"

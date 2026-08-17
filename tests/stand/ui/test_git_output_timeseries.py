@@ -6,9 +6,10 @@ SPA opens the Git output dialog, defaults its first generic timeseries block to
 the table presentation, switches presentations, or produces browser downloads.
 Those behaviors exist only after the component renders and handles user input.
 
-Metric values are not asserted because the stand manifest declares no golden
-metrics. The journey instead verifies the stable structure built from seeded Git
-activity and that both export paths produce non-empty browser downloads.
+Metric values are not asserted against anything this suite invented, because the
+stand manifest declares no golden metrics. What is asserted is a reconciliation:
+the numbers in both downloaded files are the numbers the deployed table renders,
+which holds whatever the seed contains.
 """
 
 from __future__ import annotations
@@ -21,11 +22,20 @@ import pytest
 from insight_stand import PersonaSession
 from playwright.sync_api import Page, expect
 
+from .downloads import Table, download_export, rendered_rows
 from .flows import sign_in
 from .pages.person_view import PersonView
 
 # Quality vector of this module's tests.
 pytestmark = pytest.mark.reliability
+
+#: A row of the timeseries proper, as opposed to a header or a totals row: it
+#: leads with the bucket it covers.
+BUCKET = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def timeseries_rows(exported: Table) -> Table:
+    return [row for row in exported if row and BUCKET.fullmatch(row[0])]
 
 
 @pytest.mark.requires_seed("dev_lead")
@@ -55,16 +65,40 @@ def test_git_output_repository_timeseries_switches_views_and_downloads(
     expect(table.get_by_role("cell", name="Total", exact=True)).to_be_visible()
     expect(table.get_by_role("cell", name="Grand total", exact=True)).to_be_visible()
 
+    exported: dict[str, Table] = {}
     for menu_item, suffix in (("CSV (.csv)", ".csv"), ("Excel (.xlsx)", ".xlsx")):
         git_output.export().click()
-        with page.expect_download() as download_info:
-            page.get_by_role("menuitem", name=menu_item).click()
-        download = download_info.value
-        assert download.suggested_filename.startswith("output-by-repository_")
-        assert download.suggested_filename.endswith(suffix)
-        destination = tmp_path / download.suggested_filename
-        download.save_as(destination)
-        assert destination.stat().st_size > 0
+        filename, table_out = download_export(page, menu_item, into=tmp_path, exact=False)
+        assert filename.startswith("output-by-repository_"), filename
+        assert filename.endswith(suffix), filename
+        exported[suffix] = table_out
+
+    assert timeseries_rows(exported[".csv"]) == timeseries_rows(exported[".xlsx"]), (
+        "the two formats are written by different code and must still carry the same series"
+    )
+
+    on_screen = rendered_rows(table)
+    repository = on_screen[0][1]
+    assert exported[".csv"][0][0] == on_screen[0][0], (
+        "exported bucket header differs from the table's"
+    )
+    assert all(column.startswith(f"{repository} —") for column in exported[".csv"][0][1:]), (
+        f"csv columns are not the rendered repository's: {exported['.csv'][0]}"
+    )
+    assert repository in exported[".xlsx"][0], (
+        f"xlsx columns lost the repository: {exported['.xlsx'][0]}"
+    )
+
+    rendered_series = [row for row in on_screen if row and BUCKET.fullmatch(row[0])]
+    assert rendered_series, "no bucket rows on screen to reconcile the export against"
+    for shown, written in zip(rendered_series, timeseries_rows(exported[".csv"]), strict=True):
+        bucket, commits, merged, lines = shown
+        assert [commits, merged] == written[1:3], (
+            f"{bucket}: counts on screen and in the export differ"
+        )
+        assert [n.replace(",", "") for n in re.findall(r"[\d,]+", lines)] == written[3:5], (
+            f"{bucket}: the rendered lines cell and the exported columns differ"
+        )
 
     git_output.chart_view().click()
     expect(git_output.metric_selector()).to_be_visible()
