@@ -879,309 +879,6 @@ streams:
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.repo_clone_url | replace(':', '%3A') }}:{{ record['name'] | replace(':', '%3A') }}
 
-  # ── Commit authors (git-cli-proxy + Bitbucket API) ──────────────────────
-  # A commit names an e-mail and no account, so it reaches a person only once
-  # something claims that e-mail for one. The proxy enumerates a repository's
-  # distinct authors from the clone it already holds, and this stream asks
-  # Bitbucket who each of them is — one call per AUTHOR, not per commit.
-  #
-  # `/commit/{sha}` answers with `author.raw` (the git ident) beside
-  # `author.user` (the account), which is the pairing neither side has alone:
-  # the proxy walk knows only the e-mail, the workspace roster only the
-  # account. `user` is absent when the committer holds no Bitbucket account —
-  # a CI or service identity — and those records are dropped rather than
-  # stored as an unresolved row.
-  - type: DeclarativeStream
-    name: commit_authors
-    primary_key:
-      - unique_key
-    schema_loader:
-      type: InlineSchemaLoader
-      schema:
-        type: object
-        $schema: http://json-schema.org/schema#
-        properties:
-          unique_key: {type: string}
-          tenant_id: {type: [string, "null"]}
-          source_id: {type: [string, "null"]}
-          data_source: {type: [string, "null"]}
-          collected_at: {type: [string, "null"]}
-          repo_full_name: {type: [string, "null"]}
-          author_email: {type: [string, "null"]}
-          author_account_id: {type: [string, "null"]}
-          author_uuid: {type: [string, "null"]}
-          author_nickname: {type: [string, "null"]}
-          author_display_name: {type: [string, "null"]}
-          sample_sha: {type: [string, "null"]}
-        required:
-          - unique_key
-        additionalProperties: true
-    retriever:
-      type: SimpleRetriever
-      requester:
-        type: HttpRequester
-        url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-        authenticator:
-          type: ApiKeyAuthenticator
-          inject_into:
-            type: RequestOption
-            inject_into: header
-            field_name: Authorization
-          api_token: >-
-            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-        path: "/repositories/{{ stream_slice.extra_fields['repo_full_name'] }}/commit/{{ stream_partition.commit_sha }}"
-        http_method: GET
-        error_handler:
-          type: DefaultErrorHandler
-          max_retries: 5
-          backoff_strategies: *vendor_backoff
-          response_filters:
-            - type: HttpResponseFilter
-              http_codes: [429]
-              action: RATE_LIMITED
-              error_message: Bitbucket hourly rate budget exhausted
-            - type: HttpResponseFilter
-              http_codes: [403, 404]
-              action: IGNORE
-              error_message: >-
-                Commit gone or not accessible; other authors continue.
-            - type: HttpResponseFilter
-              http_codes: [401]
-              action: FAIL
-              failure_type: config_error
-              error_message: >-
-                Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace access tokens must
-                NOT set it (Bearer). Mixing the two is the most common cause.
-            - type: HttpResponseFilter
-              http_codes: [500, 502, 503, 504]
-              action: RETRY
-              error_message: Transient Bitbucket error
-      record_selector:
-        type: RecordSelector
-        extractor:
-          # One commit object, not a page.
-          type: DpathExtractor
-          field_path: []
-        record_filter:
-          type: RecordFilter
-          # No account behind the e-mail; there is no claim to make. Compared
-          # against '' rather than tested for truth: the interpolation renders
-          # an absent value as the string "None", which is not falsy.
-          condition: "{{ (((record.get('author') or {}).get('user') or {}).get('account_id') or '') != '' }}"
-      partition_router:
-        type: SubstreamPartitionRouter
-        parent_stream_configs:
-          - type: ParentStreamConfig
-            parent_key: sample_sha
-            partition_field: commit_sha
-            extra_fields:
-              - [repo_full_name]
-              - [author_email]
-            stream:
-              type: DeclarativeStream
-              name: repository_authors
-              primary_key:
-                - author_email
-              schema_loader:
-                type: InlineSchemaLoader
-                schema:
-                  type: object
-                  $schema: http://json-schema.org/schema#
-                  properties:
-                    author_email: {type: [string, "null"]}
-                    author_name: {type: [string, "null"]}
-                    sample_sha: {type: [string, "null"]}
-                    last_committed_date: {type: [string, "null"]}
-                    commit_count: {type: [integer, "null"]}
-                    repo_full_name: {type: [string, "null"]}
-                  additionalProperties: true
-              retriever:
-                type: SimpleRetriever
-                requester:
-                  <<: *proxy_requester
-                  path: /v1/authors
-                  request_parameters:
-                    repo: "{{ stream_partition.repo_clone_url }}"
-                    page_size: "500"
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: [items]
-                paginator:
-                  type: DefaultPaginator
-                  pagination_strategy:
-                    type: CursorPagination
-                    cursor_value: "{{ response['next_page_token'] }}"
-                    stop_condition: "{{ not response.get('next_page_token') }}"
-                  page_token_option:
-                    type: RequestOption
-                    field_name: page_token
-                    inject_into: request_parameter
-                partition_router:
-                  type: SubstreamPartitionRouter
-                  parent_stream_configs:
-                    - type: ParentStreamConfig
-                      parent_key: clone_url
-                      partition_field: repo_clone_url
-                      extra_fields:
-                        - [full_name]
-                      incremental_dependency: true
-                      stream:
-                        type: DeclarativeStream
-                        name: repositories_for_authors
-                        primary_key:
-                          - uuid
-                        schema_loader:
-                          type: InlineSchemaLoader
-                          schema:
-                            type: object
-                            $schema: http://json-schema.org/schema#
-                            properties:
-                              uuid: {type: [string, "null"]}
-                              clone_url: {type: [string, "null"]}
-                              full_name: {type: [string, "null"]}
-                              updated_on: {type: [string, "null"]}
-                            additionalProperties: true
-                        retriever:
-                          type: SimpleRetriever
-                          requester:
-                            type: HttpRequester
-                            url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
-                            authenticator:
-                              type: ApiKeyAuthenticator
-                              inject_into:
-                                type: RequestOption
-                                inject_into: header
-                                field_name: Authorization
-                              api_token: >-
-                                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
-                            path: "/repositories/{{ stream_partition.workspace }}"
-                            http_method: GET
-                            request_parameters:
-                              <<: *repos_since_start
-                              fields: >-
-                                next,values.uuid,values.full_name,values.updated_on,values.links.clone
-                          record_selector:
-                            type: RecordSelector
-                            extractor:
-                              type: DpathExtractor
-                              field_path: [values]
-                          paginator:
-                            type: DefaultPaginator
-                            pagination_strategy:
-                              type: CursorPagination
-                              cursor_value: "{{ response.get('next', '') }}"
-                              stop_condition: "{{ not response.get('next') }}"
-                            page_token_option:
-                              type: RequestPath
-                          partition_router:
-                            # INSIDE `retriever`, as in the sibling repository
-                            # parents: at stream level the CDK ignores it.
-                            type: ListPartitionRouter
-                            values: "{{ config['bitbucket_workspaces'] }}"
-                            cursor_field: workspace
-                        transformations:
-                          - type: AddFields
-                            fields:
-                              - type: AddedFieldDefinition
-                                path: [clone_url]
-                                value: >-
-                                  {%- set href = record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first -%}
-                                  {%- set authority, path = href.split('//', 1)[1].split('/', 1) -%}
-                                  {{ 'https://' ~ authority.split('@')[-1] ~ '/' ~ path }}
-              incremental_sync:
-                type: DatetimeBasedCursor
-                cursor_field: last_committed_date
-                datetime_format: "%Y-%m-%dT%H:%M:%S%z"
-                cursor_datetime_formats:
-                  - "%Y-%m-%dT%H:%M:%S%z"
-                  - "%Y-%m-%dT%H:%M:%SZ"
-                # An author already resolved keeps their claim, so a later sync
-                # only needs the ones who have committed since — which is what
-                # keeps this O(active authors) rather than O(authors).
-                start_datetime:
-                  type: MinMaxDatetime
-                  datetime: "{{ config['bitbucket_start_date'] }}"
-                  datetime_format: "%Y-%m-%d"
-                start_time_option:
-                  type: RequestOption
-                  field_name: since
-                  inject_into: request_parameter
-              transformations:
-                - type: AddFields
-                  fields:
-                    - type: AddedFieldDefinition
-                      path: [repo_full_name]
-                      value: "{{ stream_slice.extra_fields['full_name'] }}"
-                      value_type: string
-    transformations:
-      - type: AddFields
-        fields:
-          - type: AddedFieldDefinition
-            path: [tenant_id]
-            value: "{{ config['insight_tenant_id'] }}"
-          - type: AddedFieldDefinition
-            path: [source_id]
-            value: "{{ config['insight_source_id'] }}"
-          - type: AddedFieldDefinition
-            path: [data_source]
-            value: insight_bitbucket_cloud
-          - type: AddedFieldDefinition
-            path: [collected_at]
-            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
-          - type: AddedFieldDefinition
-            path: [repo_full_name]
-            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
-            value_type: string
-          # The e-mail the account was resolved FOR: the git ident the proxy
-          # enumerated, which is what the commit rows carry and therefore what
-          # a claim has to be keyed on.
-          - type: AddedFieldDefinition
-            path: [author_email]
-            value: "{{ stream_slice.extra_fields['author_email'] }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [sample_sha]
-            value: "{{ stream_partition.commit_sha }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [author_account_id]
-            value: "{{ ((record.get('author') or {}).get('user') or {}).get('account_id') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [author_uuid]
-            value: "{{ ((record.get('author') or {}).get('user') or {}).get('uuid') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [author_nickname]
-            value: "{{ ((record.get('author') or {}).get('user') or {}).get('nickname') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [author_display_name]
-            value: "{{ ((record.get('author') or {}).get('user') or {}).get('display_name') or '' }}"
-            value_type: string
-          - type: AddedFieldDefinition
-            path: [unique_key]
-            value: >-
-              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:author:{{ stream_slice.extra_fields['author_email'] | replace(':', '%3A') }}
-      - type: RemoveFields
-        # Hoisted above; the commit payload itself belongs to the proxy streams.
-        field_pointers:
-          - [author]
-          - [committer]
-          - [parents]
-          - [participants]
-          - [summary]
-          - [rendered]
-          - [repository]
-          - [links]
-          - [hash]
-          - [type]
-          - [date]
-          - [message]
-
   # ── Pull requests (Bitbucket API) ───────────────────────────────────────
   # Default filter is OPEN-only, and repeating `state` is the documented way
   # to widen it — request_parameters is a dict, so the states live in the
@@ -3434,6 +3131,309 @@ streams:
           - [state]
           - [environment]
           - [deployable]
+  # ── Commit authors (git-cli-proxy + Bitbucket API) ──────────────────────
+  # A commit names an e-mail and no account, so it reaches a person only once
+  # something claims that e-mail for one. The proxy enumerates a repository's
+  # distinct authors from the clone it already holds, and this stream asks
+  # Bitbucket who each of them is — one call per AUTHOR, not per commit.
+  #
+  # `/commit/{sha}` answers with `author.raw` (the git ident) beside
+  # `author.user` (the account), which is the pairing neither side has alone:
+  # the proxy walk knows only the e-mail, the workspace roster only the
+  # account. `user` is absent when the committer holds no Bitbucket account —
+  # a CI or service identity — and those records are dropped rather than
+  # stored as an unresolved row.
+  - type: DeclarativeStream
+    name: commit_authors
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          repo_full_name: {type: [string, "null"]}
+          author_email: {type: [string, "null"]}
+          author_account_id: {type: [string, "null"]}
+          author_uuid: {type: [string, "null"]}
+          author_nickname: {type: [string, "null"]}
+          author_display_name: {type: [string, "null"]}
+          sample_sha: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+        authenticator:
+          type: ApiKeyAuthenticator
+          inject_into:
+            type: RequestOption
+            inject_into: header
+            field_name: Authorization
+          api_token: >-
+            {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+        path: "/repositories/{{ stream_slice.extra_fields['repo_full_name'] }}/commit/{{ stream_partition.commit_sha }}"
+        http_method: GET
+        error_handler:
+          type: DefaultErrorHandler
+          max_retries: 5
+          backoff_strategies: *vendor_backoff
+          response_filters:
+            - type: HttpResponseFilter
+              http_codes: [429]
+              action: RATE_LIMITED
+              error_message: Bitbucket hourly rate budget exhausted
+            - type: HttpResponseFilter
+              http_codes: [403, 404]
+              action: IGNORE
+              error_message: >-
+                Commit gone or not accessible; other authors continue.
+            - type: HttpResponseFilter
+              http_codes: [401]
+              action: FAIL
+              failure_type: config_error
+              error_message: >-
+                Bitbucket rejected the credentials. Personal API tokens need
+                bitbucket_username set (Basic auth); workspace access tokens must
+                NOT set it (Bearer). Mixing the two is the most common cause.
+            - type: HttpResponseFilter
+              http_codes: [500, 502, 503, 504]
+              action: RETRY
+              error_message: Transient Bitbucket error
+      record_selector:
+        type: RecordSelector
+        extractor:
+          # One commit object, not a page.
+          type: DpathExtractor
+          field_path: []
+        record_filter:
+          type: RecordFilter
+          # No account behind the e-mail; there is no claim to make. Compared
+          # against '' rather than tested for truth: the interpolation renders
+          # an absent value as the string "None", which is not falsy.
+          condition: "{{ (((record.get('author') or {}).get('user') or {}).get('account_id') or '') != '' }}"
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: sample_sha
+            partition_field: commit_sha
+            extra_fields:
+              - [repo_full_name]
+              - [author_email]
+            stream:
+              type: DeclarativeStream
+              name: repository_authors
+              primary_key:
+                - author_email
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  type: object
+                  $schema: http://json-schema.org/schema#
+                  properties:
+                    author_email: {type: [string, "null"]}
+                    author_name: {type: [string, "null"]}
+                    sample_sha: {type: [string, "null"]}
+                    last_committed_date: {type: [string, "null"]}
+                    commit_count: {type: [integer, "null"]}
+                    repo_full_name: {type: [string, "null"]}
+                  additionalProperties: true
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *proxy_requester
+                  path: /v1/authors
+                  request_parameters:
+                    repo: "{{ stream_partition.repo_clone_url }}"
+                    page_size: "500"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: [items]
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ response['next_page_token'] }}"
+                    stop_condition: "{{ not response.get('next_page_token') }}"
+                  page_token_option:
+                    type: RequestOption
+                    field_name: page_token
+                    inject_into: request_parameter
+                partition_router:
+                  type: SubstreamPartitionRouter
+                  parent_stream_configs:
+                    - type: ParentStreamConfig
+                      parent_key: clone_url
+                      partition_field: repo_clone_url
+                      extra_fields:
+                        - [full_name]
+                      incremental_dependency: true
+                      stream:
+                        type: DeclarativeStream
+                        name: repositories_for_authors
+                        primary_key:
+                          - uuid
+                        schema_loader:
+                          type: InlineSchemaLoader
+                          schema:
+                            type: object
+                            $schema: http://json-schema.org/schema#
+                            properties:
+                              uuid: {type: [string, "null"]}
+                              clone_url: {type: [string, "null"]}
+                              full_name: {type: [string, "null"]}
+                              updated_on: {type: [string, "null"]}
+                            additionalProperties: true
+                        retriever:
+                          type: SimpleRetriever
+                          requester:
+                            type: HttpRequester
+                            url_base: "{{ config.get('bitbucket_api_base_url', 'https://api.bitbucket.org/2.0') }}"
+                            authenticator:
+                              type: ApiKeyAuthenticator
+                              inject_into:
+                                type: RequestOption
+                                inject_into: header
+                                field_name: Authorization
+                              api_token: >-
+                                {{ ('Basic ' ~ ((config['bitbucket_username'] ~ ':' ~ config['bitbucket_token']) | base64encode)) if config.get('bitbucket_username') else ('Bearer ' ~ config['bitbucket_token']) }}
+                            path: "/repositories/{{ stream_partition.workspace }}"
+                            http_method: GET
+                            request_parameters:
+                              <<: *repos_since_start
+                              fields: >-
+                                next,values.uuid,values.full_name,values.updated_on,values.links.clone
+                          record_selector:
+                            type: RecordSelector
+                            extractor:
+                              type: DpathExtractor
+                              field_path: [values]
+                          paginator:
+                            type: DefaultPaginator
+                            pagination_strategy:
+                              type: CursorPagination
+                              cursor_value: "{{ response.get('next', '') }}"
+                              stop_condition: "{{ not response.get('next') }}"
+                            page_token_option:
+                              type: RequestPath
+                          partition_router:
+                            # INSIDE `retriever`, as in the sibling repository
+                            # parents: at stream level the CDK ignores it.
+                            type: ListPartitionRouter
+                            values: "{{ config['bitbucket_workspaces'] }}"
+                            cursor_field: workspace
+                        transformations:
+                          - type: AddFields
+                            fields:
+                              - type: AddedFieldDefinition
+                                path: [clone_url]
+                                value: >-
+                                  {%- set href = record['links']['clone'] | selectattr('name', 'equalto', 'https') | map(attribute='href') | list | first -%}
+                                  {%- set authority, path = href.split('//', 1)[1].split('/', 1) -%}
+                                  {{ 'https://' ~ authority.split('@')[-1] ~ '/' ~ path }}
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: last_committed_date
+                datetime_format: "%Y-%m-%dT%H:%M:%S%z"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                  - "%Y-%m-%dT%H:%M:%SZ"
+                # An author already resolved keeps their claim, so a later sync
+                # only needs the ones who have committed since — which is what
+                # keeps this O(active authors) rather than O(authors).
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['bitbucket_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
+                start_time_option:
+                  type: RequestOption
+                  field_name: since
+                  inject_into: request_parameter
+              transformations:
+                - type: AddFields
+                  fields:
+                    - type: AddedFieldDefinition
+                      path: [repo_full_name]
+                      value: "{{ stream_slice.extra_fields['full_name'] }}"
+                      value_type: string
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_bitbucket_cloud
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [repo_full_name]
+            value: "{{ stream_slice.extra_fields['repo_full_name'] }}"
+            value_type: string
+          # The e-mail the account was resolved FOR: the git ident the proxy
+          # enumerated, which is what the commit rows carry and therefore what
+          # a claim has to be keyed on.
+          - type: AddedFieldDefinition
+            path: [author_email]
+            value: "{{ stream_slice.extra_fields['author_email'] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [sample_sha]
+            value: "{{ stream_partition.commit_sha }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_account_id]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('account_id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_uuid]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('uuid') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_nickname]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('nickname') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [author_display_name]
+            value: "{{ ((record.get('author') or {}).get('user') or {}).get('display_name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_slice.extra_fields['repo_full_name'] | replace(':', '%3A') }}:author:{{ stream_slice.extra_fields['author_email'] | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the commit payload itself belongs to the proxy streams.
+        field_pointers:
+          - [author]
+          - [committer]
+          - [parents]
+          - [participants]
+          - [summary]
+          - [rendered]
+          - [repository]
+          - [links]
+          - [hash]
+          - [type]
+          - [date]
+          - [message]
+
 concurrency_level:
   type: ConcurrencyLevel
   # Never 1: the concurrent CDK self-deadlocks at a single worker once a sync
