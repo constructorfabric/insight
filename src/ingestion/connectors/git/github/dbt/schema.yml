@@ -76,15 +76,33 @@ models:
       - name: observed_at
         description: "Earliest time the pair was observed"
 
+  - name: github__unowned_commit_emails
+    description: "Commit author e-mails no GitHub account claims, with the name their commits carry"
+    columns:
+      - name: email
+        description: "Lowercased commit author e-mail, and the account id it is published under"
+        data_tests:
+          - not_null
+          - unique
+      - name: author_name
+        description: "Name from the author's most recent commit, so an operator can recognise them"
+      - name: last_committed_at
+        description: "Most recent commit authored under this address"
+
   - name: github__identity_inputs
     description: "E-mail claims against GitHub accounts -> staging, feeds silver.identity_inputs"
     columns:
       - name: unique_key
-        description: "One claim per (tenant, account, value_type, operation, e-mail)"
+        description: "One claim per (tenant, source, account, value_type, operation, value)"
         data_tests:
           - not_null
           - unique
+      - name: insight_source_type
+        description: "`github` for a login-keyed account, `github-commit-email` for an unowned e-mail"
+        data_tests:
+          - accepted_values:
+              values: ["github", "github-commit-email"]
       - name: source_account_id
-        description: "Lowercased GitHub login the claim is made against"
+        description: "The lowercased GitHub login, or the e-mail itself when no account claims it"
       - name: value
-        description: "The claimed e-mail address"
+        description: "The claimed e-mail address, or the git author name for a display_name row"
