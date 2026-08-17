@@ -129,6 +129,15 @@ update_env_var() {
 # wolf is one nobody reads.
 FRONTEND_BUILD_STAMP="src/frontend/dist/.source-fingerprint"
 BACKEND_BUILD_STAMP="deploy/compose/build/.source-fingerprint"
+#: Which realm the running keycloak imported. Beside the build artefacts
+#: because that path is already ignored.
+KEYCLOAK_REALM_STAMP="deploy/compose/build/.keycloak-realm"
+
+stamp_write() {
+  local stamp="$1" value="$2"
+  mkdir -p "$(dirname "$stamp")" 2>/dev/null || return 0
+  printf '%s' "$value" > "$stamp" 2>/dev/null || true
+}
 
 source_fingerprint() {
   local subtree="$1"
@@ -141,8 +150,7 @@ source_fingerprint() {
 
 stamp_build() {
   local stamp="$1" subtree="$2"
-  mkdir -p "$(dirname "$stamp")" 2>/dev/null || return 0
-  source_fingerprint "$subtree" > "$stamp" 2>/dev/null || true
+  stamp_write "$stamp" "$(source_fingerprint "$subtree")"
 }
 
 # 0 when the artefact does not match the tree — including when it carries no
@@ -672,6 +680,9 @@ YML
     --dev-email "$dev_lead_email" \
     $redirect_args \
     --out "$ROOT_DIR/deploy/compose/keycloak/realm-insight.generated.json"
+  local realm_fingerprint
+  realm_fingerprint="$(shasum -a 256 "$ROOT_DIR/deploy/compose/keycloak/realm-insight.generated.json" | cut -c1-16)"
+
 
   # NGINX_BFF: the AUTHENTICATOR (not the frontend) logs in against Keycloak,
   # server-side, as the pre-seeded `insight-authenticator` confidential client.
@@ -810,6 +821,21 @@ YML
       docker rm -f "$front_ctr" >/dev/null 2>&1 || true
     fi
   fi
+
+  # Keycloak imports the realm when its CONTAINER is created and never again:
+  # `start-dev` keeps the imported copy inside the container, and the realm
+  # arrives as a bind-mounted file, which compose cannot see change. So an `up`
+  # that regenerates the realm — a new redirect URI, a different issuer —
+  # against a keycloak an earlier attempt left running keeps authenticating
+  # against the OLD realm, and every login fails on a 400 from `authorize`.
+  local realm_was=""
+  [[ -f "$KEYCLOAK_REALM_STAMP" ]] && realm_was="$(cat "$KEYCLOAK_REALM_STAMP" 2>/dev/null)"
+  if [[ -n "${realm_fingerprint:-}" && "$realm_fingerprint" != "$realm_was" ]] &&
+     docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${COMPOSE_PROJECT_NAME}-keycloak"; then
+    echo "=== realm changed since keycloak started — recreating it so the import re-runs ==="
+    "${compose_cmd[@]}" --profile auth-keycloak up -d --force-recreate --no-deps keycloak || return 1
+  fi
+  [[ -n "${realm_fingerprint:-}" ]] && stamp_write "$KEYCLOAK_REALM_STAMP" "$realm_fingerprint"
 
   echo "=== docker compose up ==="
   if ! "${compose_cmd[@]}" ${profiles[@]+"${profiles[@]}"} up -d --remove-orphans; then
@@ -1482,6 +1508,10 @@ for dbt-built gold data rather than for containers to report healthy.
           --build-frontend   Build the SPA from this tree with pnpm, served by
                              the front-built nginx. Backend stays pinned.
           --build            Both.
+          --gateway-port N   Publish the gateway on N instead of the example's
+                             default. The realm callback and the suite's base
+                             URL follow it; use when something else holds the
+                             port.
           --skip-seed        Keep the data a previous seed left instead of
                              seeding again. Saves minutes when only the SPA
                              changed; the readiness gate is then replaced by a
@@ -1805,9 +1835,12 @@ test_stand_status() {
 # `mode` is ghcr (image required) or built (image empty — the front-built
 # profile serves the pnpm build from src/frontend/dist).
 test_stand_write_env() {
-  local mode="$1" image="${2:-}"
+  local mode="$1" image="${2:-}" port="${3:-}"
   [[ -f .env.compose.example ]] || { echo "ERROR: .env.compose.example not found." >&2; return 1; }
   cp .env.compose.example "$TEST_STAND_ENV_FILE"
+  # Before anything derives the origin from it — the realm's callback and the
+  # suite's base URL both come from this port.
+  [[ -n "$port" ]] && update_env_var "$TEST_STAND_ENV_FILE" GATEWAY_PORT "$port"
   update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_MODE   "$mode"
   update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_IMAGE  "$image"
   update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_MARIA ""
@@ -2058,24 +2091,32 @@ cmd_test_stand() {
       # Each tree is pinned to its chart's appVersion or built from this one,
       # asked separately: --build is the both-axes alias.
       local image build_backend=false build_frontend=false skip_seed=false
+      local gateway_port=""
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --build)          build_backend=true; build_frontend=true; shift ;;
           --build-backend)  build_backend=true; shift ;;
           --build-frontend) build_frontend=true; shift ;;
           --skip-seed)      skip_seed=true; shift ;;
+          --gateway-port=*) gateway_port="${1#*=}"; shift ;;
+          --gateway-port)
+            [[ $# -ge 2 ]] || { echo "ERROR: --gateway-port requires a value." >&2; return 2; }
+            gateway_port="$2"; shift 2 ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
         esac
       done
 
+      [[ -z "$gateway_port" || "$gateway_port" =~ ^[0-9]+$ ]] || {
+        echo "ERROR: --gateway-port takes a port number, got '$gateway_port'." >&2; return 2; }
+
       if [[ "$build_frontend" == true ]]; then
-        test_stand_write_env built || return 1
+        test_stand_write_env built "" "$gateway_port" || return 1
         echo "=== the frontend is built from this tree (pnpm), not pulled ==="
       else
         test_stand_frontend_matches_chart || return 1
         image="$(test_stand_frontend_image)" || return 1
-        test_stand_write_env ghcr "$image" || return 1
+        test_stand_write_env ghcr "$image" "$gateway_port" || return 1
       fi
 
       # INVARIANT: pinning writes the *_IMAGE vars, and that is the only thing
