@@ -1266,12 +1266,11 @@ fn kind_label(kind: ItemKind) -> &'static str {
 async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), CanonicalError> {
     let evidence = read_evidence(state).await?;
     let truncated = evidence.truncated;
-    let accounts: Vec<SourceAccountKey> = evidence
-        .accounts
-        .iter()
-        .map(|e| e.account.clone())
-        .collect();
-    let bindings = resolution_repo::current_bindings(&state.db, tenant, &accounts)
+    // The whole tenant rather than the observed accounts by name: this asks
+    // about all of them, and naming them costs an order of magnitude more than
+    // reading the tenant. Bindings for accounts no connector reports any more
+    // come back too; the review only ever looks up the keys it was given.
+    let bindings = resolution_repo::current_bindings_in_tenant(&state.db, tenant)
         .await
         .map_err(|e| internal(&e, "failed to read current bindings"))?;
 

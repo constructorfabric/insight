@@ -552,15 +552,24 @@ async fn persons_search_requires_the_admin_row() -> TestResult {
 }
 
 #[tokio::test]
-async fn persons_search_without_terms_is_a_client_error() -> TestResult {
+async fn a_request_without_terms_lists_the_roster() -> TestResult {
+    // No terms is not a malformed search, it is the console's person mode:
+    // an operator reviewing identities needs to see who exists rather than
+    // guess a name to type.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
     let operator = admin_operator(&f).await?;
+    let listed = f.person("rostered@http-live.test").await?;
 
     for uri in ["/v1/persons", "/v1/persons?q=%20%20"] {
-        let (status, _) = get(app(&f, operator), uri).await?;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "should reject: {uri}");
+        let (status, body) = get(app(&f, operator), uri).await?;
+
+        assert_eq!(status, StatusCode::OK, "should list: {uri}");
+        assert!(
+            found_ids(&body)?.contains(&listed.to_string()),
+            "the roster is missing a person of the tenant: {uri}"
+        );
     }
     Ok(())
 }
@@ -671,10 +680,11 @@ async fn every_term_must_match_though_not_the_same_value() -> TestResult {
 }
 
 #[tokio::test]
-async fn named_persons_sort_before_email_only_ones() -> TestResult {
-    // The named-first display contract: a person with a display_name lists
-    // before one the journal only knows by email, whatever their ids or
-    // email spellings say.
+async fn the_listing_is_ordered_by_the_label_each_row_shows() -> TestResult {
+    // Alphabetical by the label the row displays — display name, else the
+    // address — so the order can be followed down the column. A person the
+    // journal knows by nothing but a binding has no label to place, and sits
+    // after everyone who has one rather than under an id nobody reads.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -689,14 +699,21 @@ async fn named_persons_sort_before_email_only_ones() -> TestResult {
         .await?;
     f.observed(named, "display_name", &format!("Orderly Named {marker}"))
         .await?;
+    let unlabelled = f.emailless_person().await?;
 
-    let (status, body) = get(app(&f, operator), &format!("/v1/persons?q=order-{marker}")).await?;
+    let (status, body) = get(app(&f, operator), "/v1/persons").await?;
 
     assert_eq!(status, StatusCode::OK);
+    let expected = [email_only, named, unlabelled].map(|id| id.to_string());
+    let listed: Vec<String> = found_ids(&body)?
+        .into_iter()
+        .filter(|id| expected.contains(id))
+        .collect();
     assert_eq!(
-        found_ids(&body)?,
-        vec![named.to_string(), email_only.to_string()],
-        "named first, even though the email-only person's email sorts earlier"
+        listed,
+        expected.to_vec(),
+        "the address sorts before the name that starts later, and the \
+         label-less person comes last"
     );
     Ok(())
 }

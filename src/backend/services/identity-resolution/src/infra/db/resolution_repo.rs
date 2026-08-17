@@ -19,19 +19,14 @@ use crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON;
 use crate::domain::resolution::{BINDING_VALUE_TYPE, BindingRow};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
 
-/// Current binding of each requested account — the latest `value_type='id'`
-/// observation, with its author so the caller can tell an operator decision
-/// from an automatic one. Accounts never observed are simply absent.
+/// The latest `value_type='id'` observation per account, with its author so the
+/// caller can tell an operator decision from an automatic one.
 ///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id column is not 16 bytes.
-pub async fn current_bindings(
-    db: &DatabaseConnection,
-    tenant_id: Uuid,
-    accounts: &[SourceAccountKey],
-) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
-    const SQL_PREFIX: &str = r"
+/// `accounts` is the only difference between the two readers below: a tuple list
+/// naming them, or nothing at all.
+fn current_bindings_sql(accounts: &str) -> String {
+    format!(
+        r"
         WITH ranked AS (
             SELECT
                 insight_source_type,
@@ -47,25 +42,43 @@ pub async fn current_bindings(
             FROM persons
             WHERE value_type = 'id'
               AND value_id IS NOT NULL
-              AND insight_tenant_id = ?
-              AND (insight_source_type, insight_source_id, value_id) IN (";
-    const SQL_SUFFIX: &str = r")
+              AND insight_tenant_id = ?{accounts}
         )
         SELECT insight_source_type, insight_source_id, source_account_id, person_id,
                author_person_id, reason
         FROM ranked
         WHERE rn = 1
-    ";
+    "
+    )
+}
 
-    // The review surface asks about every observed account, so the list is as
-    // long as the tenant is wide: chunk it rather than build one statement
-    // whose placeholder count grows without bound.
-    const LOOKUP_CHUNK: usize = 500;
+/// Current binding of each requested account. Accounts never observed are simply
+/// absent.
+///
+/// For a handful of accounts — a verb's targets, a page of the listing. The cost
+/// of naming accounts grows faster than their count, so a caller after most of
+/// the tenant reads it whole instead ([`current_bindings_in_tenant`]): past a
+/// few hundred, a list is slower than no list.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored id column is not 16 bytes.
+pub async fn current_bindings(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    accounts: &[SourceAccountKey],
+) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
+    // Smaller is cheaper, not slower: the per-statement cost grows faster than
+    // the tuple count, so fewer names per statement does less total work than
+    // fewer statements. Raising this to save round trips loses.
+    const LOOKUP_CHUNK: usize = 100;
 
     let mut map = HashMap::with_capacity(accounts.len());
     for chunk in accounts.chunks(LOOKUP_CHUNK) {
         let tuples = vec!["(?, ?, ?)"; chunk.len()].join(", ");
-        let sql = format!("{SQL_PREFIX}{tuples}{SQL_SUFFIX}");
+        let sql = current_bindings_sql(&format!(
+            "\n              AND (insight_source_type, insight_source_id, value_id) IN ({tuples})"
+        ));
 
         let mut params: Vec<Value> = Vec::with_capacity(chunk.len() * 3 + 1);
         params.push(tenant_id.as_bytes().to_vec().into());
@@ -85,6 +98,35 @@ pub async fn current_bindings(
 
         collect_bindings(rows, &mut map)?;
     }
+    Ok(map)
+}
+
+/// Current binding of every account in the tenant — the review surface's read,
+/// which asks about all of them.
+///
+/// INVARIANT: this answers exactly what naming every account would, plus
+/// accounts nobody asked about. The filter it drops sits on the ranking's own
+/// partition key, so removing it cannot change which observation wins for an
+/// account — only which accounts appear. A caller that must not see beyond its
+/// own keys looks them up rather than iterating the map.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored id column is not 16 bytes.
+pub async fn current_bindings_in_tenant(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            current_bindings_sql(""),
+            [tenant_id.as_bytes().to_vec().into()],
+        ))
+        .await?;
+
+    let mut map = HashMap::with_capacity(rows.len());
+    collect_bindings(rows, &mut map)?;
     Ok(map)
 }
 
