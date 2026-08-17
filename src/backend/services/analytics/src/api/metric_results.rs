@@ -13,12 +13,14 @@ use super::AppState;
 use super::error::MetricError;
 use crate::domain::metric_drilldown::load_capabilities;
 use crate::domain::metric_results::{
-    BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultViewDto,
-    MetricResultsRequest, MetricResultsResponse, PeerWideRow, PeriodWideRow, PlannedQuery,
-    RankingQueryRow, TimeseriesQueryRow, UnbatchedView, ValidatedMetricResultsRequest,
-    build_breakdown_view, build_histogram_view, build_metric_result, build_peer_view,
-    build_period_view, build_ranked_groups, build_timeseries_view, demux_peer_rows,
-    demux_period_rows, enforce_view_row_limit, plan_queries, plan_rankings, validate_request,
+    BatchItem, BreakdownQueryRow, CacheOutcome, CachePlan, CompiledQuery, HistogramQueryRow,
+    MetricResultViewDto, MetricResultsRequest, MetricResultsResponse, PeerWideRow, PeriodWideRow,
+    PlannedQuery, RankedGroup, RankingPolicyKey, RankingQueryRow, TimeseriesQueryRow,
+    UnbatchedView, ValidatedMetricResultsRequest, ViewOutcome, build_breakdown_view,
+    build_histogram_view, build_metric_result, build_ranked_groups, build_timeseries_view,
+    demux_peer_rows, demux_period_rows, derive_view_keys, enforce_view_row_limit, flat_keys,
+    plan_queries, plan_rankings, relation_epochs, required_relations, uncacheable_keys,
+    validate_request,
 };
 use crate::domain::person_visibility::authorize_entity_ids;
 use toolkit_security::SecurityContext;
@@ -58,46 +60,13 @@ pub async fn query_metric_results(
         .map(|metric| metric.def.key().to_owned())
         .collect::<Vec<_>>();
     let capabilities = load_capabilities(&state.db, tenant_id, &metric_keys);
-    let rankings = async {
-        let mut ranking_results = BTreeMap::new();
-        let mut rankings = stream::iter(plan_rankings(&req))
-            .map(|ranking| {
-                let state = Arc::clone(&state);
-                async move {
-                    let comment = format!("metric-results:ranking:{}", ranking.key.rank_metric_key);
-                    let rows =
-                        fetch_rows::<RankingQueryRow>(&state, ranking.query, &comment).await?;
-                    let groups = build_ranked_groups(&ranking.dimensions, rows)?;
-                    Ok::<_, CanonicalError>((ranking.key, groups))
-                }
-            })
-            .buffer_unordered(QUERY_CONCURRENCY);
-        while let Some(result) = rankings.next().await {
-            let (key, groups) = result?;
-            ranking_results.insert(key, groups);
-        }
-        Ok::<_, CanonicalError>(ranking_results)
-    };
-    let (ranking_results, capabilities) = tokio::join!(rankings, capabilities);
-    let ranking_results = ranking_results?;
-    let planned = plan_queries(&req, &ranking_results)?;
+    let (plan, capabilities, rankings) = tokio::join!(
+        probe_cache(&state, &req),
+        capabilities,
+        fetch_rankings(&state, &req)
+    );
 
-    let mut views_by_metric: Vec<Vec<Option<MetricResultViewDto>>> = req
-        .metrics
-        .iter()
-        .map(|metric| (0..metric.views.len()).map(|_| None).collect())
-        .collect();
-
-    // Consuming results as they complete bails on the first error; dropping
-    // the stream cancels the in-flight and queued queries.
-    let mut results = stream::iter(planned)
-        .map(|query| execute_planned(&state, &req, query))
-        .buffer_unordered(QUERY_CONCURRENCY);
-    while let Some(result) = results.next().await {
-        for view in result? {
-            views_by_metric[view.metric_index][view.view_index] = Some(view.view);
-        }
-    }
+    let mut views_by_metric = resolve_views(&state, &req, plan, rankings?).await?;
 
     let capabilities = match capabilities {
         Ok(capabilities) => capabilities,
@@ -109,11 +78,10 @@ pub async fn query_metric_results(
     let mut metrics = Vec::with_capacity(req.metrics.len());
     for (idx, metric) in req.metrics.iter().enumerate() {
         let mut views = Vec::with_capacity(metric.views.len());
-        for (view_index, view) in views_by_metric[idx].drain(..).enumerate() {
+        for view in views_by_metric[idx].drain(..) {
             let Some(view) = view else {
                 return Err(CanonicalError::internal("missing metric view result").create());
             };
-            enforce_view_row_limit(&view, format!("metrics[{idx}].views[{view_index}]"))?;
             views.push(view);
         }
         let selection = crate::domain::metric_results::MetricResultSelectionDto {
@@ -147,10 +115,112 @@ pub async fn query_metric_results(
     Ok(Json(response))
 }
 
+/// Reads the cache for every requested view and reports what is left to run.
+/// Anything that goes wrong here — no Redis, no epoch, a slow read — resolves to
+/// "nothing was cached".
+async fn probe_cache(state: &Arc<AppState>, req: &ValidatedMetricResultsRequest) -> CachePlan {
+    if !state.view_cache.enabled() {
+        return CachePlan::build(req, uncacheable_keys(req), &[]);
+    }
+
+    let relations = required_relations(&req.metrics);
+    let Some(epochs) = relation_epochs(&state.ch, &relations).await else {
+        return CachePlan::build(req, uncacheable_keys(req), &[]);
+    };
+
+    let keys = derive_view_keys(req, &epochs);
+    let cached = state.view_cache.get_many(&flat_keys(&keys)).await;
+
+    CachePlan::build(req, keys, &cached)
+}
+
+async fn resolve_views(
+    state: &Arc<AppState>,
+    req: &ValidatedMetricResultsRequest,
+    mut plan: CachePlan,
+    rankings: BTreeMap<RankingPolicyKey, Vec<RankedGroup>>,
+) -> Result<Vec<Vec<Option<MetricResultViewDto>>>, CanonicalError> {
+    let cache_stats = plan.stats();
+    tracing::debug!(
+        hits = cache_stats.hits,
+        misses = cache_stats.misses,
+        uncacheable = cache_stats.uncacheable,
+        "metric-results view cache"
+    );
+
+    // Each narrowed request carries its own entity set, so its queries must be
+    // built AND rendered against that request, never the caller's.
+    let mut jobs = Vec::new();
+    for (origin, narrowed) in plan.narrowed() {
+        let scope = Arc::new(narrowed.req.clone());
+        for query in plan_queries(&narrowed.req, &rankings)? {
+            jobs.push((origin, Arc::clone(&scope), query));
+        }
+    }
+
+    // Consuming results as they complete bails on the first error; dropping
+    // the stream cancels the in-flight and queued queries.
+    let mut results = stream::iter(jobs)
+        .map(|(origin, scope, query)| async move {
+            let produced = execute_planned(state, &scope, query).await?;
+            Ok::<_, CanonicalError>((origin, produced))
+        })
+        .buffer_unordered(QUERY_CONCURRENCY);
+    while let Some(result) = results.next().await {
+        let (origin, produced) = result?;
+        for item in produced {
+            plan.record(origin, item.metric_index, item.view_index, item.outcome)?;
+        }
+    }
+
+    let CacheOutcome { views, writes } = plan.finish(req)?;
+
+    // The response gate runs before anything is stored, so a view the caller is
+    // about to be refused never reaches Redis.
+    for (metric_index, metric_views) in views.iter().enumerate() {
+        for (view_index, view) in metric_views.iter().enumerate() {
+            let Some(view) = view else { continue };
+            enforce_view_row_limit(view, format!("metrics[{metric_index}].views[{view_index}]"))?;
+        }
+    }
+
+    if !writes.is_empty() {
+        let cache = Arc::clone(&state.view_cache);
+        tokio::spawn(async move { cache.set_many(writes).await });
+    }
+
+    Ok(views)
+}
+
+async fn fetch_rankings(
+    state: &Arc<AppState>,
+    req: &ValidatedMetricResultsRequest,
+) -> Result<BTreeMap<RankingPolicyKey, Vec<RankedGroup>>, CanonicalError> {
+    let mut ranking_results = BTreeMap::new();
+    let mut rankings = stream::iter(plan_rankings(req))
+        .map(|ranking| {
+            let state = Arc::clone(state);
+            async move {
+                let comment = format!("metric-results:ranking:{}", ranking.key.rank_metric_key);
+                let rows = fetch_rows::<RankingQueryRow>(&state, ranking.query, &comment).await?;
+                let groups = build_ranked_groups(&ranking.dimensions, rows)?;
+                Ok::<_, CanonicalError>((ranking.key, groups))
+            }
+        })
+        .buffer_unordered(QUERY_CONCURRENCY);
+
+    while let Some(result) = rankings.next().await {
+        let (key, groups) = result?;
+        ranking_results.insert(key, groups);
+    }
+
+    Ok(ranking_results)
+}
+
 struct MetricViewResult {
     metric_index: usize,
     view_index: usize,
-    view: MetricResultViewDto,
+    outcome: ViewOutcome,
 }
 
 async fn execute_planned(
@@ -166,7 +236,7 @@ async fn execute_planned(
             Ok(items
                 .iter()
                 .zip(rows_by_item)
-                .map(|(item, rows)| view_result(item, build_period_view(&item.def, req, rows)))
+                .map(|(item, rows)| view_result(item, ViewOutcome::PeriodRows(rows)))
                 .collect())
         }
         PlannedQuery::PeerBatch { items, query } => {
@@ -176,7 +246,7 @@ async fn execute_planned(
             Ok(items
                 .iter()
                 .zip(rows_by_item)
-                .map(|(item, rows)| view_result(item, build_peer_view(rows)))
+                .map(|(item, rows)| view_result(item, ViewOutcome::PeerRows(rows)))
                 .collect())
         }
         PlannedQuery::Single {
@@ -208,7 +278,7 @@ async fn execute_planned(
             Ok(vec![MetricViewResult {
                 metric_index,
                 view_index,
-                view,
+                outcome: ViewOutcome::View(view),
             }])
         }
     }
@@ -225,11 +295,11 @@ fn batch_log_comment(kind: &str, items: &[BatchItem]) -> String {
     format!("metric-results:{kind}-batch:{keys}")
 }
 
-fn view_result(item: &BatchItem, view: MetricResultViewDto) -> MetricViewResult {
+fn view_result(item: &BatchItem, outcome: ViewOutcome) -> MetricViewResult {
     MetricViewResult {
         metric_index: item.metric_index,
         view_index: item.view_index,
-        view,
+        outcome,
     }
 }
 

@@ -71,7 +71,7 @@ impl ValidatedEntitySelection {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ValidatedMetricResultsRequest {
     pub tenant_id: Uuid,
     pub entity: ValidatedEntitySelection,
@@ -84,7 +84,7 @@ pub struct ValidatedMetricResultsRequest {
     pub enforce_tenant_scope: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ValidatedMetricRequest {
     pub def: MetricDefinition,
     pub filters: Vec<ValidatedDimensionFilter>,

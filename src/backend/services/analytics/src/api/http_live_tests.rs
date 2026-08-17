@@ -76,6 +76,7 @@ fn build_state(db: DatabaseConnection, identity: IdentityClient) -> AppState {
         ch: dead_ch(),
         identity,
         config: GearConfig::default(),
+        view_cache: crate::infra::cache::MetricViewCache::disabled(),
     }
 }
 

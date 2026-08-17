@@ -31,6 +31,7 @@ use crate::config::GearConfig;
 use crate::domain::metric_crud;
 use crate::domain::metric_definitions::listing as metric_definitions_listing;
 use crate::domain::saved_query;
+use crate::infra::cache::MetricViewCache;
 use crate::infra::identity::IdentityClient;
 
 /// Shared application state.
@@ -39,8 +40,8 @@ pub struct AppState {
     pub db: DatabaseConnection,
     pub ch: insight_clickhouse::Client,
     pub identity: IdentityClient,
-    #[allow(dead_code)] // will be used for runtime config access (rate limits, feature flags)
     pub config: GearConfig,
+    pub view_cache: Arc<MetricViewCache>,
 }
 
 pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {

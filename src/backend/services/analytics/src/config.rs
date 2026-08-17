@@ -9,6 +9,8 @@
 
 use serde::Deserialize;
 
+const DEFAULT_CACHE_TTL_SECS: u64 = 3600;
+
 /// Configuration consumed by the analytics gear. Deserialized from
 /// `gears.analytics.config`.
 #[derive(Debug, Clone, Deserialize)]
@@ -43,10 +45,19 @@ pub struct GearConfig {
     /// Redis URL (e.g., `redis://localhost:6379`). Empty disables every
     /// Redis-backed path; multi-replica deploys configure it so a cache added
     /// here is coordinated across replicas rather than per-process.
+    ///
+    /// This backs the metric-result view cache, whose key count grows with the
+    /// variety of requests served and shrinks only as entries expire. Point it
+    /// at an instance with an eviction policy, or at one dedicated to this
+    /// service — an instance shared with session state and left on `noeviction`
+    /// will start refusing writes once the cache fills it.
     pub redis_url: String,
 
     /// Metric read configuration.
     pub metric_catalog: MetricCatalogConfig,
+
+    /// Metric-result view cache configuration.
+    pub metric_results_cache: MetricResultsCacheConfig,
 }
 
 impl Default for GearConfig {
@@ -61,6 +72,27 @@ impl Default for GearConfig {
             identity_url: String::new(),
             redis_url: String::new(),
             metric_catalog: MetricCatalogConfig::default(),
+            metric_results_cache: MetricResultsCacheConfig::default(),
+        }
+    }
+}
+
+/// Per-environment knobs for the metric-result view cache. The cache is keyed
+/// by the warehouse relation UUID, so a rebuild invalidates exactly; the TTL
+/// only bounds how long superseded keys occupy Redis.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MetricResultsCacheConfig {
+    /// Lifetime of a cached view fragment.
+    ///
+    /// Env: `APP__gears__analytics__config__metric_results_cache__ttl_secs`.
+    pub ttl_secs: u64,
+}
+
+impl Default for MetricResultsCacheConfig {
+    fn default() -> Self {
+        Self {
+            ttl_secs: DEFAULT_CACHE_TTL_SECS,
         }
     }
 }

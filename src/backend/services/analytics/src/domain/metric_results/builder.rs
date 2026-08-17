@@ -45,7 +45,6 @@ impl SeriesData {
 }
 
 pub fn build_period_view(
-    _def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
     rows: Vec<PeriodQueryRow>,
 ) -> MetricResultViewDto {
@@ -161,12 +160,26 @@ pub fn build_ranked_groups(
         .collect()
 }
 
-pub fn build_peer_view(rows: Vec<PeerQueryRow>) -> MetricResultViewDto {
-    MetricResultViewDto::Peer {
-        values: rows
-            .into_iter()
-            .map(|row| PeerValueDto {
-                entity_id: row.entity_id,
+/// Peer values stay sparse — an entity outside the cohort relation has no
+/// pool to compare against and is omitted rather than zero-filled. Ordering
+/// follows the requested ids so the same pool always renders the same bytes.
+pub fn build_peer_view(
+    req: &ValidatedMetricResultsRequest,
+    rows: Vec<PeerQueryRow>,
+) -> MetricResultViewDto {
+    let mut rows_by_entity: HashMap<String, PeerQueryRow> = rows
+        .into_iter()
+        .map(|row| (row.entity_id.clone(), row))
+        .collect();
+
+    let values = req
+        .entity
+        .entity_ids()
+        .into_iter()
+        .filter_map(|entity_id| {
+            let row = rows_by_entity.remove(&entity_id)?;
+            Some(PeerValueDto {
+                entity_id,
                 target_value: row.target_value,
                 p25: row.p25,
                 median: row.median,
@@ -175,8 +188,10 @@ pub fn build_peer_view(rows: Vec<PeerQueryRow>) -> MetricResultViewDto {
                 max: row.max,
                 n: row.n.unwrap_or(0),
             })
-            .collect(),
-    }
+        })
+        .collect();
+
+    MetricResultViewDto::Peer { values }
 }
 
 pub fn build_breakdown_view(
@@ -358,7 +373,6 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::domain::metric_definitions::definition::ValueTransform;
     use chrono::NaiveDate;
     use serde_json::json;
 
@@ -493,8 +507,7 @@ mod tests {
             entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             value: Some(5.0),
         }];
-        let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
-        else {
+        let MetricResultViewDto::Period { values } = build_period_view(&req, rows) else {
             panic!("expected period view");
         };
         assert_eq!(values[0].entity_id, "00000000-0000-0000-0000-00000000000b");
@@ -510,9 +523,7 @@ mod tests {
             "2026-01-01",
             "2026-01-31",
         );
-        let MetricResultViewDto::Period { values } =
-            build_period_view(&ratio_metric(), &req, Vec::new())
-        else {
+        let MetricResultViewDto::Period { values } = build_period_view(&req, Vec::new()) else {
             panic!("expected period view");
         };
         assert_eq!(values[0].value, None);
@@ -526,9 +537,7 @@ mod tests {
             "2026-01-01",
             "2026-01-31",
         );
-        let MetricResultViewDto::Period { values } =
-            build_period_view(&median_metric(), &req, Vec::new())
-        else {
+        let MetricResultViewDto::Period { values } = build_period_view(&req, Vec::new()) else {
             panic!("expected period view");
         };
         assert_eq!(values[0].value, None);
@@ -541,9 +550,7 @@ mod tests {
             "2026-01-01",
             "2026-01-31",
         );
-        let MetricResultViewDto::Period { values } =
-            build_period_view(&distinct_count_metric(), &req, Vec::new())
-        else {
+        let MetricResultViewDto::Period { values } = build_period_view(&req, Vec::new()) else {
             panic!("expected period view");
         };
         assert_eq!(values[0].value, None);
@@ -973,22 +980,38 @@ mod tests {
     }
 
     #[test]
-    fn missing_value_ignores_the_transform() {
-        let mut def = sum_metric();
-        def.transform = Some(ValueTransform {
-            multiplier: Some(-1.0),
-            offset: Some(100.0),
-            clamp_min: Some(0.0),
-            clamp_max: Some(100.0),
-        });
+    fn peer_view_omits_entities_without_a_pool_and_follows_requested_order() {
         let req = request(
-            vec!["00000000-0000-0000-0000-00000000000c"],
+            vec![
+                "00000000-0000-0000-0000-00000000000b",
+                "00000000-0000-0000-0000-00000000000c",
+                "00000000-0000-0000-0000-00000000000a",
+            ],
             "2026-01-01",
             "2026-01-31",
         );
-        let MetricResultViewDto::Period { values } = build_period_view(&def, &req, vec![]) else {
-            panic!("expected period view");
+        let row = |entity_id: &str, target: f64| PeerQueryRow {
+            entity_id: entity_id.to_owned(),
+            target_value: Some(target),
+            p25: None,
+            median: None,
+            p75: None,
+            min: None,
+            max: None,
+            n: Some(5),
         };
-        assert_eq!(values[0].value, None);
+        // Row order out of the pool query is unspecified; person C has no cohort row.
+        let rows = vec![
+            row("00000000-0000-0000-0000-00000000000a", 1.0),
+            row("00000000-0000-0000-0000-00000000000b", 2.0),
+        ];
+
+        let MetricResultViewDto::Peer { values } = build_peer_view(&req, rows) else {
+            panic!("expected peer view");
+        };
+
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0].entity_id, "00000000-0000-0000-0000-00000000000b");
+        assert_eq!(values[1].entity_id, "00000000-0000-0000-0000-00000000000a");
     }
 }

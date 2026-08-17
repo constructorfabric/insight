@@ -140,7 +140,7 @@ pub enum ComputationDto {
     DistinctCount,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "view", rename_all = "snake_case")]
 pub enum MetricResultViewDto {
     Period {
@@ -162,7 +162,7 @@ pub enum MetricResultViewDto {
     },
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct HistogramValueDto {
     pub entity_id: String,
     /// Empty when the entity has no events in the period — the entity is
@@ -170,49 +170,49 @@ pub struct HistogramValueDto {
     pub bins: Vec<HistogramBinDto>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct HistogramBinDto {
     pub lo: f64,
     pub hi: f64,
     pub count: u64,
 }
 
-#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MetricDimensionDto {
     pub key: String,
     pub value: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PeriodValueDto {
     pub entity_id: String,
     pub value: Option<f64>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct TimeseriesDto {
     pub entity_id: String,
     pub dimensions: Vec<MetricDimensionDto>,
     #[schema(required)]
     pub total: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rank: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remainder: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub points: Vec<TimeseriesPointDto>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct TimeseriesPointDto {
     pub bucket_start: String,
     pub value: Option<f64>,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PeerValueDto {
     pub entity_id: String,
     pub target_value: Option<f64>,
@@ -224,7 +224,7 @@ pub struct PeerValueDto {
     pub n: u64,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BreakdownValueDto {
     pub entity_id: String,
     pub dimensions: Vec<MetricDimensionDto>,
@@ -233,3 +233,106 @@ pub struct BreakdownValueDto {
 
 impl toolkit::api::api_dto::RequestApiDto for MetricResultsRequest {}
 impl toolkit::api::api_dto::ResponseApiDto for MetricResultsResponse {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cached views are stored as their own wire shape, so anything the wire
+    /// omits has to come back as the same absence rather than a decode failure.
+    #[test]
+    fn every_view_survives_a_round_trip_through_its_wire_shape() {
+        let dimension = || MetricDimensionDto {
+            key: "tool".to_owned(),
+            value: "example".to_owned(),
+            label: None,
+        };
+        let views = vec![
+            MetricResultViewDto::Period {
+                values: vec![
+                    PeriodValueDto {
+                        entity_id: "a".to_owned(),
+                        value: Some(1.5),
+                    },
+                    PeriodValueDto {
+                        entity_id: "b".to_owned(),
+                        value: None,
+                    },
+                ],
+            },
+            MetricResultViewDto::Timeseries {
+                bucket: Bucket::Week,
+                series: vec![
+                    TimeseriesDto {
+                        entity_id: "a".to_owned(),
+                        dimensions: vec![dimension()],
+                        total: None,
+                        rank: None,
+                        remainder: None,
+                        label: None,
+                        points: vec![TimeseriesPointDto {
+                            bucket_start: "2026-01-01".to_owned(),
+                            value: None,
+                        }],
+                    },
+                    TimeseriesDto {
+                        entity_id: "b".to_owned(),
+                        dimensions: Vec::new(),
+                        total: Some(3.0),
+                        rank: Some(2),
+                        remainder: Some(true),
+                        label: Some("Other".to_owned()),
+                        points: Vec::new(),
+                    },
+                ],
+            },
+            MetricResultViewDto::Peer {
+                values: vec![PeerValueDto {
+                    entity_id: "a".to_owned(),
+                    target_value: Some(1.0),
+                    p25: None,
+                    median: None,
+                    p75: None,
+                    min: None,
+                    max: None,
+                    n: 7,
+                }],
+            },
+            MetricResultViewDto::Breakdown {
+                dimensions: vec!["tool".to_owned()],
+                values: vec![BreakdownValueDto {
+                    entity_id: "a".to_owned(),
+                    dimensions: vec![dimension()],
+                    value: None,
+                }],
+            },
+            MetricResultViewDto::Histogram {
+                values: vec![HistogramValueDto {
+                    entity_id: "a".to_owned(),
+                    bins: vec![HistogramBinDto {
+                        lo: 0.0,
+                        hi: 1.0,
+                        count: 4,
+                    }],
+                }],
+            },
+        ];
+
+        for view in views {
+            let encoded = match serde_json::to_value(&view) {
+                Ok(encoded) => encoded,
+                Err(error) => panic!("should serialize {view:?}: {error}"),
+            };
+            let decoded: MetricResultViewDto = match serde_json::from_value(encoded.clone()) {
+                Ok(decoded) => decoded,
+                Err(error) => panic!("should decode {encoded}: {error}"),
+            };
+            let reencoded = match serde_json::to_value(&decoded) {
+                Ok(reencoded) => reencoded,
+                Err(error) => panic!("should re-serialize {decoded:?}: {error}"),
+            };
+
+            assert_eq!(encoded, reencoded, "should round trip: {encoded}");
+        }
+    }
+}
