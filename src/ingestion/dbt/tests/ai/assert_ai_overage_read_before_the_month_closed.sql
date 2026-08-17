@@ -20,10 +20,13 @@
 WITH toStartOfMonth(today()) AS current_month,
      current_month - INTERVAL 1 MONTH AS closed_month
 
-{#- `closed_month` is NOT aliased to `period_month` below: a SELECT alias
-    shadows the column of the same name, the WHERE would compare the alias
-    with itself, and every month would collapse into one group whose latest
-    read is the open month's — silently inverting the check. -#}
+{# `closed_month` is NOT aliased to `period_month` below: a SELECT alias
+   shadows the column of the same name, the WHERE would compare the alias
+   with itself, and every month would collapse into one group whose latest
+   read is the open month's — silently inverting the check.
+
+   Untrimmed delimiters on purpose: this comment stands between two SQL
+   tokens, and a trimming one would glue `closed_month` to `SELECT`. #}
 SELECT
     insight_tenant_id,
     source_id,
