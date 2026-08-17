@@ -57,7 +57,7 @@ pub struct GearConfig {
     pub metric_catalog: MetricCatalogConfig,
 
     /// Metric-result view cache configuration.
-    pub metric_results_cache: MetricResultsCacheConfig,
+    pub(crate) metric_results_cache: MetricResultsCacheConfig,
 }
 
 impl Default for GearConfig {
@@ -82,11 +82,11 @@ impl Default for GearConfig {
 /// only bounds how long superseded keys occupy Redis.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
-pub struct MetricResultsCacheConfig {
+pub(crate) struct MetricResultsCacheConfig {
     /// Lifetime of a cached view fragment.
     ///
     /// Env: `APP__gears__analytics__config__metric_results_cache__ttl_secs`.
-    pub ttl_secs: u64,
+    pub(crate) ttl_secs: u64,
 }
 
 impl Default for MetricResultsCacheConfig {

@@ -1,6 +1,6 @@
 mod batch;
 mod builder;
-pub(crate) mod cache;
+mod cache;
 pub(crate) mod compiler;
 mod dto;
 mod validation;

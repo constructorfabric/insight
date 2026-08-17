@@ -41,7 +41,7 @@ pub struct AppState {
     pub ch: insight_clickhouse::Client,
     pub identity: IdentityClient,
     pub config: GearConfig,
-    pub view_cache: Arc<MetricViewCache>,
+    pub(crate) view_cache: Arc<MetricViewCache>,
 }
 
 pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {

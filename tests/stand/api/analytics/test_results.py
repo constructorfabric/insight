@@ -20,7 +20,7 @@ The 401 half is in `test_gateway.py`, swept over every operation at once.
 from __future__ import annotations
 
 import pytest
-from insight_stand import ApiClient, ApiResponse, Manifest, analytics_path
+from insight_stand import ApiClient, ApiResponse, Manifest, analytics_path, wait_until
 from insight_stand.api import JsonValue
 
 from ..schemas import (
@@ -314,23 +314,28 @@ def test_asking_the_same_question_twice_gives_the_same_answer(
 ) -> None:
     """A repeated request answers identically, however it was served.
 
-    The deployed service answers metric reads through a result cache, so the
-    second identical request is served from stored fragments rather than
-    recomputed from ClickHouse. That is invisible to the caller only if the two
-    responses agree exactly — this asserts the whole document, so a value, an
-    ordering or an omitted entity that survives one path but not the other
-    fails here rather than in a dashboard.
+    The deployed service answers metric reads through a result cache, so a
+    repeat may be assembled from stored fragments rather than recomputed. That
+    is invisible to the caller only if the documents agree exactly, which is
+    what this asserts — a value, an ordering or an omitted entity that survives
+    one path but not the other fails here rather than in a dashboard.
 
-    Nothing in the request says "cache": the point is that the caller cannot
-    tell, and neither can this test.
+    Whether any given response was a hit is deliberately NOT asserted: the API
+    exposes no such signal, and inventing one would test the test. The write
+    behind a first request is dispatched without blocking it, so the repeat is
+    polled rather than issued once — that both lets the store settle and makes a
+    disagreement loud instead of racy.
     """
     person = stand_manifest.fixture("dev_lead")
     metric_key = _a_metric_key(api)
 
-    cold = _ok(_ask_many(api, stand_manifest, [person.uuid], metric_key))
-    warm = _ok(_ask_many(api, stand_manifest, [person.uuid], metric_key))
+    first = _ok(_ask_many(api, stand_manifest, [person.uuid], metric_key))
 
-    assert cold == warm, "the same request answered differently the second time"
+    wait_until(
+        lambda: _ok(_ask_many(api, stand_manifest, [person.uuid], metric_key)) == first,
+        timeout_s=15,
+        description="a repeated metric-results request to answer identically",
+    )
 
 
 @pytest.mark.requires_seed("dev_lead", "development_ic")

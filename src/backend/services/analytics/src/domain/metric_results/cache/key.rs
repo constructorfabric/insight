@@ -170,8 +170,6 @@ fn view_key_plan(
             per_entity_keys(req, PerEntityKind::Peer, &probe, &epochs)
         }
 
-        // The compiled SQL embeds the resolved top-N groups, which are only
-        // known after the ranking query has run over the whole entity set.
         ValidatedMetricView::Timeseries {
             group_limit: Some(_),
             ..

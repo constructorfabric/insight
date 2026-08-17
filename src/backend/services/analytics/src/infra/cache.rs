@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Values above this are served but not stored, so one pathological view
 /// cannot dominate a Redis shared with session state.
@@ -13,6 +13,9 @@ const MAX_ENTRY_BYTES: usize = 256 * 1024;
 /// few thousand fragments; sending them as one command would occupy the shared
 /// server for the whole reply, delaying session traffic behind it.
 const MAX_KEYS_PER_COMMAND: usize = 256;
+/// Bytes per command, alongside the key count: 256 maximum-sized entries would
+/// otherwise put ~64 MiB on the wire in one round trip.
+const MAX_COMMAND_BYTES: usize = 1024 * 1024;
 /// Budget for one Redis command. Applied per chunk so a large read degrades
 /// chunk by chunk instead of discarding everything it already fetched.
 const COMMAND_TIMEOUT: Duration = Duration::from_millis(150);
@@ -29,16 +32,16 @@ const MAX_CONCURRENT_WRITERS: usize = 8;
 /// carries authenticator sessions and a metric read must never be the reason a
 /// login fails.
 #[derive(Debug)]
-pub struct MetricViewCache {
+pub(crate) struct MetricViewCache {
     conn: OnceLock<ConnectionManager>,
     ttl: Duration,
-    writers: Semaphore,
+    writers: Arc<Semaphore>,
     connect_reported: AtomicBool,
     op_reported: AtomicBool,
 }
 
 impl MetricViewCache {
-    pub fn disabled() -> Arc<Self> {
+    pub(crate) fn disabled() -> Arc<Self> {
         Arc::new(Self::new(Duration::ZERO))
     }
 
@@ -46,7 +49,7 @@ impl MetricViewCache {
         Self {
             conn: OnceLock::new(),
             ttl,
-            writers: Semaphore::new(MAX_CONCURRENT_WRITERS),
+            writers: Arc::new(Semaphore::new(MAX_CONCURRENT_WRITERS)),
             connect_reported: AtomicBool::new(false),
             op_reported: AtomicBool::new(false),
         }
@@ -55,7 +58,7 @@ impl MetricViewCache {
     /// Never fails: an empty URL disables the cache, and an unreachable Redis
     /// leaves it disabled while a background task keeps trying, so a cold Redis
     /// cannot hold up boot.
-    pub fn connect(redis_url: &str, ttl: Duration) -> Arc<Self> {
+    pub(crate) fn connect(redis_url: &str, ttl: Duration) -> Arc<Self> {
         if redis_url.trim().is_empty() || ttl.is_zero() {
             return Self::disabled();
         }
@@ -74,13 +77,23 @@ impl MetricViewCache {
         cache
     }
 
-    pub fn enabled(&self) -> bool {
+    pub(crate) fn enabled(&self) -> bool {
         self.conn.get().is_some()
+    }
+
+    /// A write is admitted before its task is spawned, so a slow Redis cannot
+    /// accumulate queued writers each retaining an encoded batch.
+    pub(crate) fn try_admit_write(&self) -> Option<OwnedSemaphorePermit> {
+        let Ok(permit) = Arc::clone(&self.writers).try_acquire_owned() else {
+            tracing::debug!("metric-results cache write skipped; writer limit reached");
+            return None;
+        };
+        Some(permit)
     }
 
     /// A chunk that fails or times out yields misses for its own keys only;
     /// everything already fetched is still served.
-    pub async fn get_many(&self, keys: &[String]) -> Vec<Option<Vec<u8>>> {
+    pub(crate) async fn get_many(&self, keys: &[String]) -> Vec<Option<Vec<u8>>> {
         let mut found = Vec::with_capacity(keys.len());
         if keys.is_empty() {
             return found;
@@ -90,7 +103,7 @@ impl MetricViewCache {
         };
 
         let mut conn = conn.clone();
-        for chunk in keys.chunks(MAX_KEYS_PER_COMMAND) {
+        for chunk in budgeted(keys, String::len) {
             let read = conn.mget::<_, Vec<Option<Vec<u8>>>>(chunk);
             let batch = match tokio::time::timeout(COMMAND_TIMEOUT, read).await {
                 Ok(Ok(batch)) if batch.len() == chunk.len() => batch,
@@ -113,14 +126,14 @@ impl MetricViewCache {
         found
     }
 
-    pub async fn set_many(&self, entries: Vec<(String, Vec<u8>)>) {
+    // INVARIANT: the permit is held for the whole call — that hold is the
+    // concurrency cap, so it is taken by the caller and dropped only on return.
+    pub(crate) async fn set_many(
+        &self,
+        _permit: OwnedSemaphorePermit,
+        entries: Vec<(String, Vec<u8>)>,
+    ) {
         let Some(conn) = self.conn.get() else {
-            return;
-        };
-        // INVARIANT: the permit is held across the writes it bounds — that hold
-        // is the concurrency cap, not incidental.
-        let Ok(_permit) = self.writers.try_acquire() else {
-            tracing::debug!("metric-results cache write skipped; writer limit reached");
             return;
         };
 
@@ -134,7 +147,7 @@ impl MetricViewCache {
 
         let ttl_secs = self.ttl.as_secs();
         let mut conn = conn.clone();
-        for chunk in storable.chunks(MAX_KEYS_PER_COMMAND) {
+        for chunk in budgeted(&storable, |(key, value)| key.len() + value.len()) {
             let mut pipe = redis::pipe();
             for (key, value) in chunk {
                 pipe.set_ex::<_, _>(key, value, ttl_secs).ignore();
@@ -175,6 +188,28 @@ impl MetricViewCache {
     }
 }
 
+/// Splits into commands bounded by BOTH key count and serialized bytes, so one
+/// command's size cannot scale with the caller's payload.
+fn budgeted<T>(items: &[T], size_of: impl Fn(&T) -> usize) -> Vec<&[T]> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < items.len() {
+        let mut bytes = 0;
+        let mut end = start;
+        while end < items.len() && end - start < MAX_KEYS_PER_COMMAND {
+            let next = bytes + size_of(&items[end]);
+            if end > start && next > MAX_COMMAND_BYTES {
+                break;
+            }
+            bytes = next;
+            end += 1;
+        }
+        chunks.push(&items[start..end]);
+        start = end;
+    }
+    chunks
+}
+
 async fn connect_until_ready(cache: Arc<MetricViewCache>, client: redis::Client) {
     loop {
         match client.get_connection_manager().await {
@@ -210,14 +245,26 @@ mod tests {
             cache.get_many(&["a".to_owned(), "b".to_owned()]).await,
             vec![None, None]
         );
-        cache.set_many(vec![("a".to_owned(), vec![1, 2, 3])]).await;
+        assert!(
+            cache.try_admit_write().is_some(),
+            "a disabled cache still admits, and then stores nothing"
+        );
     }
 
     #[tokio::test]
-    async fn empty_url_and_zero_ttl_disable_the_cache() {
-        assert!(!MetricViewCache::connect("", Duration::from_mins(1)).enabled());
-        assert!(!MetricViewCache::connect("   ", Duration::from_mins(1)).enabled());
-        assert!(!MetricViewCache::connect("redis://127.0.0.1:6379", Duration::ZERO).enabled());
+    async fn an_absent_url_or_a_zero_ttl_disables_the_cache() {
+        let cases = [
+            ("", Duration::from_mins(1)),
+            ("   ", Duration::from_mins(1)),
+            ("redis://127.0.0.1:6379", Duration::ZERO),
+        ];
+
+        for (url, ttl) in cases {
+            assert!(
+                !MetricViewCache::connect(url, ttl).enabled(),
+                "should stay disabled: url={url:?} ttl={ttl:?}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -227,7 +274,37 @@ mod tests {
 
         assert!(!cache.enabled());
         assert_eq!(cache.get_many(&["k".to_owned()]).await, vec![None]);
-        cache.set_many(vec![("k".to_owned(), vec![0])]).await;
+    }
+
+    #[test]
+    fn a_command_is_bounded_by_key_count_and_by_bytes() {
+        let small: Vec<usize> = (0..=(MAX_KEYS_PER_COMMAND * 2)).collect();
+        let by_count = budgeted(&small, |_| 1);
+
+        assert!(
+            by_count
+                .iter()
+                .all(|chunk| chunk.len() <= MAX_KEYS_PER_COMMAND),
+            "a chunk exceeded the key cap"
+        );
+        assert_eq!(
+            by_count.iter().map(|chunk| chunk.len()).sum::<usize>(),
+            small.len(),
+            "chunking dropped or duplicated items"
+        );
+
+        let heavy = vec![MAX_COMMAND_BYTES / 2; 8];
+        let by_bytes = budgeted(&heavy, |size| *size);
+
+        assert!(
+            by_bytes.iter().all(|chunk| chunk.len() <= 2),
+            "byte budget did not bound a chunk well under the key cap"
+        );
+
+        // An item larger than the whole budget still ships, alone.
+        let oversized = vec![MAX_COMMAND_BYTES * 4];
+        assert_eq!(budgeted(&oversized, |size| *size).len(), 1);
+        assert!(budgeted::<usize>(&[], |_| 1).is_empty());
     }
 
     #[tokio::test]

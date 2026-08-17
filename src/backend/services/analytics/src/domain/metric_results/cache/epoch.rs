@@ -10,6 +10,9 @@ use super::super::validation::{ValidatedMetricRequest, ValidatedMetricView};
 /// The cache may never be the reason a request stalls, so a slow epoch lookup
 /// degrades to "nothing was cached" like every other failure here.
 const EPOCH_TIMEOUT: Duration = Duration::from_millis(500);
+/// A database whose engine is not Atomic reports this for every table, so it
+/// would never change and could never invalidate a fragment.
+const UNSET_UUID: &str = "00000000-0000-0000-0000-000000000000";
 
 /// A warehouse relation a cached fragment was computed from.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -114,6 +117,13 @@ pub async fn relation_epochs(
     let by_relation = rows
         .into_iter()
         .filter_map(|row| {
+            if row.uuid == UNSET_UUID {
+                tracing::debug!(
+                    table = %row.name,
+                    "metric-results cache: relation reports no table UUID"
+                );
+                return None;
+            }
             let relation = relations
                 .iter()
                 .find(|r| r.database == row.database && r.table == row.name)?;

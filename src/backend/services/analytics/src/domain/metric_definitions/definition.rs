@@ -282,8 +282,6 @@ impl MetricDefinition {
         }
     }
 
-    /// Every input the compiler reads, not just the one that names the batch
-    /// group — a ratio's denominator can carry its own observation source.
     pub fn inputs(&self) -> Vec<&MetricInput> {
         match &self.spec {
             ComputationSpec::Sum { value }

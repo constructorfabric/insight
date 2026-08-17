@@ -184,9 +184,12 @@ async fn resolve_views(
         }
     }
 
-    if !writes.is_empty() {
+    if let Some(permit) = (!writes.is_empty())
+        .then(|| state.view_cache.try_admit_write())
+        .flatten()
+    {
         let cache = Arc::clone(&state.view_cache);
-        tokio::spawn(async move { cache.set_many(writes).await });
+        tokio::spawn(async move { cache.set_many(permit, writes).await });
     }
 
     Ok(views)
