@@ -115,6 +115,12 @@ spec:
             # tenant-mismatch guard.
             - name: SEED_CROSS_TENANT_FIXTURE
               value: "${SEED_CROSS_TENANT}"
+            # The chart gives the authenticator's token listener no ingress, so
+            # no runner outside the cluster can exchange an assertion for a
+            # service principal; the S2S tests skip on the capability rather
+            # than fail against an address that answers nothing.
+            - name: SEED_SERVICE_PRINCIPALS
+              value: "false"
             - name: SEED_FORCE
               value: "${SEED_FORCE}"
             # Empty means "whatever the seeder documents", which is a window

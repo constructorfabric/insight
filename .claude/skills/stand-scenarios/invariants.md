@@ -28,14 +28,17 @@ Enforced at: the API returns `null` rather than `0` for an unmeasured value
 renders `—` / "not recorded" / an explicit empty card.
 
 Partially covered: `test_the_personal_dashboard_renders_every_metric_domain`
-asserts the unseeded Wiki domain shows "No data" and
-"No metrics with data for this period.", and that populated KPI tiles are
-`not_to_have_text("—")`. `test_the_team_view_lists_every_report_the_roster_declares`
-asserts an unrecorded cell renders as unrecorded rather than as a number.
+asserts that populated KPI tiles are `not_to_have_text("—")`, and
+`test_the_team_view_lists_every_report_the_roster_declares` asserts that every
+member's cell renders for every column — recorded or an honest "not recorded" —
+without demanding a value.
 
-Gap worth a claim: the **API** half — that an unmeasured metric answers `null`
-and never `0`. The UI cannot prove it; a backend that returned `0` and a
-frontend that rendered `—` for falsy would look identical on screen.
+Gaps worth a claim: every metric domain is seeded now, so no view on this stand
+asserts the empty state itself — that a domain with no data renders its explicit
+empty card, and that an unmeasured cell reads "not recorded" rather than `0`.
+And the **API** half: that an unmeasured metric answers `null` and never `0`.
+The UI cannot prove that one at all; a backend that returned `0` and a frontend
+that rendered `—` for falsy would look identical on screen.
 
 ## R2 · Confidence and limitations travel with every conclusion
 

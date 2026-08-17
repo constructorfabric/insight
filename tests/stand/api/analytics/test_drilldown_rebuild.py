@@ -48,6 +48,7 @@ from insight_stand.stand import CANDIDATE_ENV_FILES, ENV_FILE_ENV
 
 from ..schemas import MetricResultsResponse, PeriodView, ProblemDocument
 from ..schemas.analytics import MetricDrilldownResponse
+from . import query_window
 
 pytestmark = pytest.mark.reliability
 
@@ -195,7 +196,7 @@ def _remove_seed_containers(project: str) -> None:
 def _request(
     manifest: Manifest, *, limit: int | None = None, cursor: str | None = None
 ) -> dict[str, JsonValue]:
-    start, _, end = manifest.data_window.partition("..")
+    start, end = query_window(manifest)
     request: dict[str, JsonValue] = {
         "metric_key": GIT_COMMITS,
         "entity": {"type": "person", "id": manifest.fixture("dev_lead").uuid},
@@ -229,7 +230,7 @@ def _walk(api: ApiClient, manifest: Manifest) -> list[Mapping[str, Any]]:
 
 def _period_value(api: ApiClient, manifest: Manifest) -> float | None:
     """The scalar the dashboard shows for the same selection — the walk's oracle."""
-    start, _, end = manifest.data_window.partition("..")
+    start, end = query_window(manifest)
     person_id = manifest.fixture("dev_lead").uuid
     response = api.post(
         METRIC_RESULTS,
