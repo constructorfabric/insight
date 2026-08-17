@@ -10,7 +10,7 @@
 # Proxy source code + Dockerfile + deployment docs:
 #   https://gitlab.constr.dev/insight/secure-enclave → proxies/claude_team/
 #
-# Four streams (this commit completes the Phase 5 MVP set):
+# Streams:
 #   1. claude_team_members     — full snapshot, no pagination
 #   2. claude_team_invites     — full snapshot, no pagination
 #   3. claude_team_overage_spend — page-paginated; gracefully tolerates
@@ -18,6 +18,9 @@
 #   4. claude_team_code_metrics — per-day, offset-paginated; uses a
 #                                  DatetimeBasedCursor to walk a
 #                                  configurable backfill window
+#   5. claude_team_code_metrics_org — the org-level half of the same
+#                                  response (PR attribution, top-user
+#                                  rankings); per-day, no pagination
 
 version: "7.0.4"
 type: DeclarativeSource
@@ -293,11 +296,10 @@ streams:
   # response signals more pages but OffsetIncrement also stops when
   # a response returns < page_size rows.
   #
-  # Extras dropped: the response also carries `pr_attribution`,
-  # `top_users_by_prs`, `top_users_by_lines_of_code` — empty in the
-  # test org and not per-user. If they become populated later they
-  # warrant a separate stream rather than denormalisation into every
-  # user row.
+  # The response also carries org-level `pr_attribution`,
+  # `top_users_by_prs` and `top_users_by_lines_of_code`. They are not
+  # per-user, so denormalising them into every user row would be wrong;
+  # claude_team_code_metrics_org below reads them as their own stream.
   - type: DeclarativeStream
     name: claude_team_code_metrics
     primary_key:
@@ -413,6 +415,120 @@ streams:
       # row. The API does not include the date in per-user objects;
       # without this, all rows from different days would collide on the
       # primary key.
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [metric_date]
+            value: "{{ stream_interval.start_time }}"
+
+  # ── Stream 5: claude_team_code_metrics_org ──────────────────────────
+  # The org-level half of the same /claude_code/metrics_aggs/users
+  # response: pull-request attribution and the vendor's own top-user
+  # rankings. One record per day — field_path [] selects the envelope
+  # itself rather than the `users` array, and the org-level keys do not
+  # paginate, so this stream deliberately declares no paginator and
+  # costs one request per day on top of the per-user stream's pages.
+  #
+  # Kept out of claude_team_code_metrics because these values describe
+  # the organisation, not a person: copying them onto every user row
+  # would multiply one fact by the roster and make any sum wrong.
+  #
+  # No Silver target. The class contracts are per-person, and there is
+  # no org-grain AI class to receive an org fact — Bronze retention is
+  # the point: the vendor keeps no history, so a value not captured on
+  # the day it was published is gone.
+  - type: DeclarativeStream
+    name: claude_team_code_metrics_org
+    primary_key:
+      - metric_date
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          metric_date: { type: string }
+          # Vendor-defined shapes, kept whole rather than modelled: they
+          # are undocumented and empty on organisations without the
+          # Anthropic GitHub app, so pinning a shape now would be a guess.
+          pr_attribution: { type: [object, "null"] }
+          top_users_by_prs: { type: [array, "null"] }
+          top_users_by_lines_of_code: { type: [array, "null"] }
+    retriever:
+      type: SimpleRetriever
+      requester:
+        type: HttpRequester
+        url_base: "{{ config['proxy_url'] }}"
+        path: "/api/claude_code/metrics_aggs/users"
+        http_method: GET
+        request_headers:
+          Authorization: "Bearer {{ config['proxy_auth_token'] }}"
+        request_parameters:
+          organization_uuid: "{{ config['claude_org_id'] }}"
+          customer_type: "claude_ai"
+          subscription_type: "team"
+          limit: "1"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: metric_date
+      cursor_datetime_formats:
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%d"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config.get('start_date') or day_delta(-7, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+        min_datetime: "2025-11-24"
+      end_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ day_delta(-1, format='%Y-%m-%d') }}"
+        datetime_format: "%Y-%m-%d"
+      step: P1D
+      cursor_granularity: P1D
+      start_time_option:
+        type: RequestOption
+        field_name: start_date
+        inject_into: request_parameter
+      end_time_option:
+        type: RequestOption
+        field_name: end_date
+        inject_into: request_parameter
+    transformations:
+      # The envelope also holds the per-user array and its paging flag.
+      # Keeping them here would store the roster twice — once per user row
+      # in claude_team_code_metrics and once more inside every org row.
+      - type: RemoveFields
+        field_pointers:
+          - [users]
+          - [has_next]
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [tenant_id]
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path: [source_id]
+            value: "{{ config['insight_source_id'] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_interval.start_time }}"
+          - type: AddedFieldDefinition
+            path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+          - type: AddedFieldDefinition
+            path: [data_source]
+            value: insight_claude_team
       - type: AddFields
         fields:
           - type: AddedFieldDefinition
