@@ -424,6 +424,20 @@ analytics:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
 
+gitCliProxy:
+  # Off, against the chart default. The proxy exists to clone repositories for
+  # the nocode git connectors, and this stand runs none — every row it serves
+  # comes from the seeder, which writes bronze directly. What the chart's
+  # default buys here is a 50Gi volume nothing reads.
+  #
+  # Cost of the switch: reconcile logs a WARN and skips any connector whose
+  # descriptor sets `platform_config.git_proxy`, because GIT_PROXY_URL and
+  # GIT_PROXY_TOKEN reach that CronJob only when this is true. A stand that
+  # grows a real git source has to turn this back on — and grant the CI
+  # credential `persistentvolumeclaims`, which it does not hold, because
+  # ci-deployer-rbac.yaml enumerates the kinds the chart may render.
+  deploy: false
+
 frontend: # the web UI (dashboard)
   replicaCount: 1
   route:

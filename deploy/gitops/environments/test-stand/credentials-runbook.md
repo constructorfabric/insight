@@ -537,6 +537,25 @@ its own reconcile Role with `argoproj.io` and `onepassword.com` rules. Someone
 trimmed the supplemental `Role` in `ci-deployer-rbac.yaml` — diff it against
 git history and re-run `make provision-ci ENV=test-stand` to repair drift.
 
+**`could not get information about the resource <kind> … is forbidden`**
+The chart grew a kind the Role does not enumerate. This is the designed
+failure, not a broken credential: the grant is a list of kinds rather than a
+bind to `admin`, so a new one stops the deploy instead of installing under a
+grant nobody reviewed. Helm reads *every* rendered object before it plans the
+patch, so one unreadable kind fails the whole upgrade rather than one object —
+`get` is enough to trigger it.
+
+Two ways out, and which one is right depends on whether this stand needs the
+thing at all:
+
+- The stand needs it → add the kind to `ci-deployer-rbac.yaml` with the full
+  verb set and re-apply with `make -C deploy/gitops provision-ci ENV=test-stand`.
+  That does not rotate the token, so the GitHub environment secret stays valid.
+  Grant the kind the chart renders; a wildcard here would retire the guard.
+- The stand does not → turn the subchart off in this environment's
+  `values.yaml`. Nothing renders, nothing is claimed, and the credential stays
+  as narrow as it was. `gitCliProxy.deploy: false` is there for that reason.
+
 **`namespaces is forbidden` on a first install**
 `helm upgrade --install --create-namespace` POSTs a Namespace at cluster scope,
 but only when the release does not yet exist. This credential cannot create
