@@ -41,14 +41,10 @@ stringData:
   git_proxy_url: "http://insight-git-cli-proxy:8085"
   git_proxy_token: "CHANGE_ME"
   bitbucket_start_date: "2026-01-01"
-  bitbucket_pr_detail_lookback_days: "30"
 ```
 
 `bitbucket_start_date` is the one bound: no stream fetches anything older, and a
-repository nobody has touched since it is never listed, so never cloned. The
-lookback is the exception that needs a second value — the four per-pull-request
-streams keep no cursor, so their cost is set by how far back they re-read.
-Widen it for a backfill run, then put it back.
+repository nobody has touched since it is never listed, so never cloned.
 
 ### Fields
 
@@ -61,7 +57,6 @@ Widen it for a backfill run, then put it back.
 | `git_proxy_token` | Yes | Bearer token the proxy requires on every `/v1` request |
 | `bitbucket_api_base_url` | No | API base URL (default `https://api.bitbucket.org/2.0`) |
 | `bitbucket_start_date` | Yes | Earliest date fetched, by every stream (YYYY-MM-DD); bounds the first-sync cost |
-| `bitbucket_pr_detail_lookback_days` | No (30) | How far back the four per-PR streams re-read; raise for a backfill, then lower |
 
 ### Automatically injected
 
@@ -146,7 +141,7 @@ forms so an omission is visible:
 | anchor | applies to | form |
 |---|---|---|
 | `repos_since_start` | every repository listing (12 of them) | `q=updated_on >= start_date`, server-side |
-| `prs_since_start` | the four per-PR fan-out parents | `q=updated_on >= max(start_date, now - lookback)` |
+| `prs_since_start` | the four per-PR fan-out parents | `q=updated_on >= max(start_date, now - 30d)` |
 
 Filtering repositories server-side is what bounds the clone cost: an untouched
 repository is never returned, so the proxy never walks it. VERIFIED against the

@@ -48,15 +48,23 @@ definitions:
     q: >-
       updated_on >= "{{ config['bitbucket_start_date'] }}"
 
-  # Pull-request listings used as fan-out parents. These four children keep no
-  # cursor, so their cost is bounded by this window alone. It is the LATER of
-  # the backfill bound and `bitbucket_pr_detail_lookback_days` back from now:
-  # never older than the start date, and reaching the whole way back to it when
-  # an operator widens the lookback for a backfill run.
+  # Pull-request listings used as fan-out parents. The start date is a FLOOR,
+  # not a window: everything from it to now, nothing older. A rolling window
+  # would stop short of it and silently drop pull requests inside the range the
+  # operator asked for.
+  #
+  # `stream_interval.start_time` is the floor on the first run and stored state
+  # afterwards, which is what makes the floor affordable: the window is walked
+  # in full once, then only what changed. Both halves are required — the parent
+  # carries a cursor so there IS state, and each child carries one plus
+  # `incremental_dependency: true` so the state is persisted. VERIFIED in
+  # SubstreamPartitionRouter.set_initial_state: parent state is seeded from the
+  # CHILD's, and it is keyed on the parent's own `cursor_field`, so a
+  # full-refresh parent raises `unhashable type: 'list'` on the second sync.
   prs_since_start: &prs_since_start
     pagelen: "50"
     q: >-
-      updated_on >= "{{ [config['bitbucket_start_date'], format_datetime(now_utc() - duration('P' ~ (config.get('bitbucket_pr_detail_lookback_days', 30) | int) ~ 'D'), '%Y-%m-%d')] | max }}"
+      updated_on >= "{{ stream_interval.start_time }}"
 
   proxy_error_handler: &proxy_error_handler
     type: DefaultErrorHandler
@@ -1576,8 +1584,15 @@ streams:
           - type: ParentStreamConfig
             parent_key: id
             partition_field: pr_id
+            # Parent state persists only because this child is itself
+            # incremental (VERIFIED in SubstreamPartitionRouter.set_initial_state:
+            # parent state is seeded from the CHILD's). Without it the parent
+            # restarts at the start-date floor every sync and re-walks the whole
+            # window forever.
+            incremental_dependency: true
             extra_fields:
               - [repo_full_name]
+              - [updated_on]
             stream:
               type: DeclarativeStream
               name: pull_requests_for_comments
@@ -1690,6 +1705,18 @@ streams:
                             type: ListPartitionRouter
                             values: "{{ config['bitbucket_workspaces'] }}"
                             cursor_field: workspace
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: updated_on
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S.%f%z"
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                lookback_window: P1D
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['bitbucket_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
               transformations:
                 - type: AddFields
                   fields:
@@ -1697,6 +1724,22 @@ streams:
                       path: [repo_full_name]
                       value: "{{ stream_partition.repo_full_name }}"
                       value_type: string
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_on
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      # A cursor of its own is what makes the parent's state persist, and the
+      # CDK keeps it PER PULL REQUEST (PerPartitionWithGlobalCursor, since no
+      # global_substream_cursor is set) — so one pull request's progress can
+      # never filter away an older record belonging to another.
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['bitbucket_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields:
@@ -1798,6 +1841,7 @@ streams:
           committed_date: {type: [string, "null"]}
           parent_shas: {type: [string, "null"]}
           is_merge: {type: [boolean, "null"]}
+          pr_updated_on: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1865,8 +1909,15 @@ streams:
           - type: ParentStreamConfig
             parent_key: id
             partition_field: pr_id
+            # Parent state persists only because this child is itself
+            # incremental (VERIFIED in SubstreamPartitionRouter.set_initial_state:
+            # parent state is seeded from the CHILD's). Without it the parent
+            # restarts at the start-date floor every sync and re-walks the whole
+            # window forever.
+            incremental_dependency: true
             extra_fields:
               - [repo_full_name]
+              - [updated_on]
             stream:
               type: DeclarativeStream
               name: pull_requests_for_commits
@@ -1979,6 +2030,18 @@ streams:
                             type: ListPartitionRouter
                             values: "{{ config['bitbucket_workspaces'] }}"
                             cursor_field: workspace
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: updated_on
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S.%f%z"
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                lookback_window: P1D
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['bitbucket_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
               transformations:
                 - type: AddFields
                   fields:
@@ -1986,6 +2049,22 @@ streams:
                       path: [repo_full_name]
                       value: "{{ stream_partition.repo_full_name }}"
                       value_type: string
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: pr_updated_on
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      # A cursor of its own is what makes the parent's state persist, and the
+      # CDK keeps it PER PULL REQUEST (PerPartitionWithGlobalCursor, since no
+      # global_substream_cursor is set) — so one pull request's progress can
+      # never filter away an older record belonging to another.
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['bitbucket_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields:
@@ -2063,6 +2142,14 @@ streams:
             path: [is_merge]
             value: "{{ ((record.get('parents') or []) | length) > 1 }}"
             value_type: boolean
+          # No date of its own, so it carries the parent pull request's — which
+          # is monotonic because the parent's own cursor is, and which the
+          # cursor can observe because RecordSelector transforms BEFORE
+          # cursor.observe (VERIFIED in record_selector.filter_and_transform).
+          - type: AddedFieldDefinition
+            path: [pr_updated_on]
+            value: "{{ stream_slice.extra_fields['updated_on'] }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -2109,6 +2196,7 @@ streams:
           status: {type: [string, "null"]}
           lines_added: {type: [integer, "null"]}
           lines_removed: {type: [integer, "null"]}
+          pr_updated_on: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -2185,8 +2273,15 @@ streams:
           - type: ParentStreamConfig
             parent_key: id
             partition_field: pr_id
+            # Parent state persists only because this child is itself
+            # incremental (VERIFIED in SubstreamPartitionRouter.set_initial_state:
+            # parent state is seeded from the CHILD's). Without it the parent
+            # restarts at the start-date floor every sync and re-walks the whole
+            # window forever.
+            incremental_dependency: true
             extra_fields:
               - [repo_full_name]
+              - [updated_on]
             stream:
               type: DeclarativeStream
               name: pull_requests_for_diffstat
@@ -2299,6 +2394,18 @@ streams:
                             type: ListPartitionRouter
                             values: "{{ config['bitbucket_workspaces'] }}"
                             cursor_field: workspace
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: updated_on
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S.%f%z"
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                lookback_window: P1D
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['bitbucket_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
               transformations:
                 - type: AddFields
                   fields:
@@ -2306,6 +2413,22 @@ streams:
                       path: [repo_full_name]
                       value: "{{ stream_partition.repo_full_name }}"
                       value_type: string
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: pr_updated_on
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      # A cursor of its own is what makes the parent's state persist, and the
+      # CDK keeps it PER PULL REQUEST (PerPartitionWithGlobalCursor, since no
+      # global_substream_cursor is set) — so one pull request's progress can
+      # never filter away an older record belonging to another.
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['bitbucket_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields:
@@ -2336,6 +2459,14 @@ streams:
           - type: AddedFieldDefinition
             path: [old_path]
             value: "{{ (record.get('old') or {}).get('path') or '' }}"
+            value_type: string
+          # No date of its own, so it carries the parent pull request's — which
+          # is monotonic because the parent's own cursor is, and which the
+          # cursor can observe because RecordSelector transforms BEFORE
+          # cursor.observe (VERIFIED in record_selector.filter_and_transform).
+          - type: AddedFieldDefinition
+            path: [pr_updated_on]
+            value: "{{ stream_slice.extra_fields['updated_on'] }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
@@ -2452,8 +2583,15 @@ streams:
           - type: ParentStreamConfig
             parent_key: id
             partition_field: pr_id
+            # Parent state persists only because this child is itself
+            # incremental (VERIFIED in SubstreamPartitionRouter.set_initial_state:
+            # parent state is seeded from the CHILD's). Without it the parent
+            # restarts at the start-date floor every sync and re-walks the whole
+            # window forever.
+            incremental_dependency: true
             extra_fields:
               - [repo_full_name]
+              - [updated_on]
             stream:
               type: DeclarativeStream
               name: pull_requests_for_activity
@@ -2566,6 +2704,18 @@ streams:
                             type: ListPartitionRouter
                             values: "{{ config['bitbucket_workspaces'] }}"
                             cursor_field: workspace
+              incremental_sync:
+                type: DatetimeBasedCursor
+                cursor_field: updated_on
+                datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                cursor_datetime_formats:
+                  - "%Y-%m-%dT%H:%M:%S.%f%z"
+                  - "%Y-%m-%dT%H:%M:%S%z"
+                lookback_window: P1D
+                start_datetime:
+                  type: MinMaxDatetime
+                  datetime: "{{ config['bitbucket_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
               transformations:
                 - type: AddFields
                   fields:
@@ -2573,6 +2723,22 @@ streams:
                       path: [repo_full_name]
                       value: "{{ stream_partition.repo_full_name }}"
                       value_type: string
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: event_date
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%f%z"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      lookback_window: P1D
+      # A cursor of its own is what makes the parent's state persist, and the
+      # CDK keeps it PER PULL REQUEST (PerPartitionWithGlobalCursor, since no
+      # global_substream_cursor is set) — so one pull request's progress can
+      # never filter away an older record belonging to another.
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['bitbucket_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields:
@@ -3350,21 +3516,6 @@ spec:
         title: Start Date
         format: date
         order: 8
-      bitbucket_pr_detail_lookback_days:
-        type: integer
-        default: 30
-        minimum: 1
-        description: >-
-          How far back to re-read pull requests for their comments, commits,
-          diffstat and activity. These four streams fan out one request per
-          pull request and keep no cursor of their own, so this window is what
-          bounds their cost on every sync. The effective bound is the LATER of
-          this window and the start date, so it can never reach further back
-          than the start date. Raise it to cover the whole backfill on a
-          first run (a two-year backfill needs ~730), then lower it: a daily
-          sync only needs to revisit what has changed.
-        title: Pull-request detail lookback (days)
-        order: 9
     additionalProperties: true
 
 metadata:

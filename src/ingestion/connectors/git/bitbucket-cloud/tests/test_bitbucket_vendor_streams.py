@@ -14,6 +14,7 @@ error_ignore (403), error_retry (429), transformations (None-guard).
 from __future__ import annotations
 
 import json
+from urllib.parse import unquote_plus
 
 import freezegun
 from config import BB_URL, PROXY_URL, BitbucketCloudConfigBuilder
@@ -511,3 +512,148 @@ def test_commit_authors_drops_an_email_with_no_bitbucket_account(
 
     assert not output.errors
     assert len(output.records) == 0, "an unmatched e-mail claims no account"
+
+
+def _pr_listing(pr_id: int, updated_on: str) -> HttpResponse:
+    return HttpResponse(
+        body=json.dumps(
+            {"values": [{"id": pr_id, "updated_on": updated_on, "repo_full_name": "acme/app"}]}
+        ),
+        status_code=200,
+    )
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_pr_detail_reaches_back_to_the_start_date_not_a_rolling_month(
+    http_mocker: HttpMocker,
+) -> None:
+    """The start date is a floor, not a window. A pull request last touched five
+    months ago is inside a start date of 2026-06-01 and its comments must be
+    collected — a rolling 30-day window would have skipped it silently."""
+    config = BitbucketCloudConfigBuilder().build()  # start date 2026-06-01
+    stale = "2026-06-05T10:00:00.000000+00:00"  # ~4 weeks before _FROZEN
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+        _pr_listing(31, stale),
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{BB_URL}/repositories/acme/app/pullrequests/31/comments",
+            query_params=ANY_QUERY_PARAMS,
+        ),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "values": [
+                        {
+                            "id": 900,
+                            "created_on": stale,
+                            "updated_on": stale,
+                            "content": {"raw": "old but in range"},
+                            "user": {"uuid": "{u-1}", "account_id": "acc-1"},
+                        }
+                    ]
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_comments", config)
+
+    assert not output.errors
+    assert len(output.records) == 1, "a pull request older than 30 days is still in range"
+    assert output.records[0].record.data["id"] == 900
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_pr_detail_state_advances_so_a_later_sync_resumes(http_mocker: HttpMocker) -> None:
+    """The child carries a cursor so the parent's state persists. Without it the
+    parent restarts at the start-date floor on every sync and re-walks the whole
+    window; with it, the run emits state the next run resumes from."""
+    config = BitbucketCloudConfigBuilder().build()
+    updated = "2026-06-20T10:00:00.000000+00:00"
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+        _pr_listing(31, updated),
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{BB_URL}/repositories/acme/app/pullrequests/31/diffstat",
+            query_params=ANY_QUERY_PARAMS,
+        ),
+        HttpResponse(
+            body=json.dumps(
+                {"values": [{"status": "modified", "new": {"path": "a.txt"}, "lines_added": 3}]}
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_diffstat", config)
+
+    assert not output.errors
+    assert len(output.records) == 1
+    # The record has no date of its own; it carries the parent pull request's,
+    # which is what the cursor observes.
+    assert output.records[0].record.data["pr_updated_on"] == updated
+    assert output.state_messages, "an incremental child must emit state"
+    state = output.state_messages[-1].state.stream.stream_state.__dict__
+    stored = state["states"][0]["cursor"]["pr_updated_on"]
+    assert stored.startswith("2026-06-20T10:00:00"), (
+        f"the stamped parent date is what the cursor stores: {state}"
+    )
+    # The parent's own state is what a later sync resumes from.
+    assert state["parent_state"]["pull_requests_for_diffstat"]["state"]["updated_on"] == updated
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_resumed_sync_asks_for_less_than_the_first(http_mocker: HttpMocker) -> None:
+    """The start date is a floor paid once. The first run asks for the whole
+    window; a run carrying state asks only for what changed since — which is
+    what makes a floor of one or two years affordable on a daily schedule.
+
+    Both halves are needed for this: the fan-out parent holds a cursor so there
+    IS state, and the child holds one plus `incremental_dependency` so the state
+    is persisted. Drop either and the parent restarts at the floor every sync.
+    """
+    config = BitbucketCloudConfigBuilder().build()  # start date 2026-06-01
+    updated = "2026-06-20T10:00:00.000000+00:00"
+
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+        _pr_listing(31, updated),
+    )
+    http_mocker.get(
+        HttpRequest(
+            f"{BB_URL}/repositories/acme/app/pullrequests/31/diffstat",
+            query_params=ANY_QUERY_PARAMS,
+        ),
+        HttpResponse(
+            body=json.dumps(
+                {"values": [{"status": "modified", "new": {"path": "a.txt"}, "lines_added": 1}]}
+            ),
+            status_code=200,
+        ),
+    )
+
+    def _sync(state):
+        return read_stream(_CONNECTOR, "pull_request_diffstat", config, state=state)
+
+    first = _sync(None)
+    assert not first.errors
+    resumed = _sync([m.state for m in first.state_messages][-1:])
+    assert not resumed.errors, f"a resumed sync must not fail: {resumed.errors}"
+
+    asked = [
+        unquote_plus(str(r.url))
+        for r in http_mocker._mocker.request_history
+        if "/pullrequests?" in str(r.url)
+    ]
+    assert 'updated_on >= "2026-06-01' in asked[0], f"first run starts at the floor: {asked[0]}"
+    assert 'updated_on >= "2026-06-19' in asked[-1], (
+        f"a resumed run starts at stored state, not the floor: {asked[-1]}"
+    )
