@@ -208,3 +208,54 @@ fn a_malformed_day_is_refused_rather_than_queried() {
         Some("2026-01-31".to_owned())
     );
 }
+
+#[test]
+fn the_event_time_is_the_browsers_not_the_inserts() {
+    let mut event = record("page_view", serde_json::json!({ "path": "/portal" }));
+    event.time_triggered = Some(1_755_400_000_123);
+
+    let row = to_row(
+        &event,
+        &TelemetryRecord::default(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+    );
+
+    assert_eq!(row.ts.timestamp_millis(), 1_755_400_000_123);
+}
+
+#[test]
+fn two_events_flushed_together_keep_their_own_times() {
+    let meta = TelemetryRecord::default();
+    let tenant = Uuid::now_v7();
+    let person = Uuid::now_v7();
+
+    let mut first = record("page_view", serde_json::json!({ "path": "/a" }));
+    first.time_triggered = Some(1_755_400_000_000);
+    let mut second = record("page_view", serde_json::json!({ "path": "/b" }));
+    second.time_triggered = Some(1_755_400_060_000);
+
+    let rows = [
+        to_row(&first, &meta, tenant, person),
+        to_row(&second, &meta, tenant, person),
+    ];
+
+    assert_ne!(
+        rows[0].ts, rows[1].ts,
+        "one beacon carried both, but they happened a minute apart"
+    );
+}
+
+#[test]
+fn a_record_with_no_browser_time_falls_back_to_arrival() {
+    let before = chrono::Utc::now().timestamp_millis();
+
+    let row = to_row(
+        &record("page_view", serde_json::json!({ "path": "/portal" })),
+        &TelemetryRecord::default(),
+        Uuid::now_v7(),
+        Uuid::now_v7(),
+    );
+
+    assert!(row.ts.timestamp_millis() >= before);
+}

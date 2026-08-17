@@ -1635,6 +1635,14 @@
               "string",
               "null"
             ]
+          },
+          "time_triggered": {
+            "description": "Epoch milliseconds, stamped by the SDK when the event happened. Without\nit every record of a batch lands on its flush time.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "type": "object"

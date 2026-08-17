@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::{Extension, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
@@ -66,6 +66,10 @@ pub struct TelemetryRecord {
     pub context_app_name: Option<String>,
     #[serde(default)]
     pub context_app_version: Option<String>,
+    /// Epoch milliseconds, stamped by the SDK when the event happened. Without
+    /// it every record of a batch lands on its flush time.
+    #[serde(default)]
+    pub time_triggered: Option<i64>,
     #[serde(default)]
     pub data: Option<serde_json::Value>,
 }
@@ -100,9 +104,11 @@ pub async fn ingest_usage_events(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// INVARIANT: `event_id` and `ts` are omitted so the table's DEFAULTs apply.
+/// INVARIANT: `event_id` is omitted so the table's DEFAULT applies.
 #[derive(Debug, Serialize, clickhouse::Row)]
 struct UsageEventRow {
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
+    ts: DateTime<Utc>,
     #[serde(with = "clickhouse::serde::uuid")]
     tenant_id: Uuid,
     #[serde(with = "clickhouse::serde::uuid")]
@@ -113,6 +119,12 @@ struct UsageEventRow {
     target: String,
     app_name: String,
     app_version: String,
+}
+
+fn event_time(time_triggered: Option<i64>) -> DateTime<Utc> {
+    time_triggered
+        .and_then(DateTime::from_timestamp_millis)
+        .unwrap_or_else(Utc::now)
 }
 
 /// A field the SDK hoists into `meta` is cloned into every record of the batch,
@@ -129,6 +141,7 @@ fn to_row(
 ) -> UsageEventRow {
     let data = record.data.as_ref().or(meta.data.as_ref());
     UsageEventRow {
+        ts: event_time(record.time_triggered),
         tenant_id,
         person_id,
         session_id: shared(
