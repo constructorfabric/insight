@@ -42,7 +42,7 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
 /// one is guaranteed to exist.
 async fn a_product_metric_key(db: &DatabaseConnection) -> Result<String, sea_orm::DbErr> {
     let row = db
-        .query_one(Statement::from_string(
+        .query_one_raw(Statement::from_string(
             db.get_database_backend(),
             "SELECT metric_key FROM metric_definitions WHERE tenant_id IS NULL LIMIT 1",
         ))
@@ -60,14 +60,14 @@ async fn insert_definition(
     label: &str,
 ) -> Result<Uuid, sea_orm::DbErr> {
     let id = Uuid::now_v7();
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "INSERT INTO metric_definitions \
             (id, tenant_id, metric_key, label, format, direction, entity_type, computation_type, origin) \
          VALUES (?, ?, ?, ?, 'integer', 'higher_is_better', 'person', 'sum', 'custom')",
         [
-            Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))),
-            Value::Bytes(Some(Box::new(tenant.as_bytes().to_vec()))),
+            Value::Bytes(Some(id.as_bytes().to_vec())),
+            Value::Bytes(Some(tenant.as_bytes().to_vec())),
             Value::from(metric_key),
             Value::from(label),
         ],
@@ -81,10 +81,10 @@ async fn stored_last_observed(
     id: Uuid,
 ) -> Result<Option<chrono::NaiveDate>, sea_orm::DbErr> {
     let row = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "SELECT last_observed_date FROM metric_definitions WHERE id = ?",
-            [Value::Bytes(Some(Box::new(id.as_bytes().to_vec())))],
+            [Value::Bytes(Some(id.as_bytes().to_vec()))],
         ))
         .await?
         .ok_or_else(|| sea_orm::DbErr::Custom("definition disappeared".to_owned()))?;
@@ -284,12 +284,12 @@ async fn invalid_evidence_reference_is_an_error_not_unchecked() -> anyhow::Resul
     };
     let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
     let result = async {
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "UPDATE metric_sources SET evidence_ref = ? WHERE id = ?",
             [
                 Value::from("Not A Relation"),
-                Value::Bytes(Some(Box::new(fixture.source_id.as_bytes().to_vec()))),
+                Value::Bytes(Some(fixture.source_id.as_bytes().to_vec())),
             ],
         ))
         .await?;
