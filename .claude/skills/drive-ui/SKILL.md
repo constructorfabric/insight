@@ -1,6 +1,6 @@
 ---
 name: drive-ui
-description: "Drive the Insight web UI in a real browser to see, verify, or capture evidence from any stand — a local compose or kind install, or a shared remote one. Use this whenever the task means LOOKING at the dashboard rather than reading its code: 'check the IC page', 'is that chart still broken', 'screenshot the metrics drilldown', 'reproduce it in the UI', 'grab evidence for a bug', 'open the stand and look at X', or any UI defect you are about to file. Read it BEFORE launching a browser at any remote stand, because the Entra-plus-passkey ones cannot be logged into from a browser you launched, and the wrong acquisition move costs the user a login they cannot complete. Also read it before reporting a wrong number as a UI defect — the data that decides it is captured here, and this skill collects observations rather than drawing conclusions from them. The `playwright-cli` skill owns the commands; this skill owns getting an authenticated browser and capturing evidence someone can act on, and hands the issue itself to `file-bug-insight`."
+description: "Drive the Insight web UI in a real browser to see, verify, explore, or capture evidence from any stand — a local compose or kind install, or a shared remote one. Use this whenever the task means LOOKING at the dashboard rather than reading its code: 'check the IC page', 'is that chart still broken', 'screenshot the metrics drilldown', 'reproduce it in the UI', 'grab evidence for a bug', 'open the stand and look at X', 'try every Report builder option', 'find the download limit', or any UI defect you are about to file. Read it BEFORE launching a browser at any remote stand, because the Entra-plus-passkey ones cannot be logged into from a browser you launched, and the wrong acquisition move costs the user a login they cannot complete. Also read it before reporting a wrong number as a UI defect — the data that decides it is captured here, and this skill collects observations rather than drawing conclusions from them. The `playwright-cli` skill owns the commands; this skill owns getting an authenticated browser and capturing evidence someone can act on, and hands the issue itself to `file-bug-insight`."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill
@@ -19,6 +19,7 @@ The right acquisition move depends entirely on the identity provider, so start t
 | Stand | Auth | Move |
 |---|---|---|
 | local compose (`http://localhost:3000`) | Keycloak, username + password | `playwright-cli open` |
+| seeded compose test stand (gateway port from `.env.compose.test-stand`) | Keycloak, username + password | open the **gateway origin**, never the raw frontend port |
 | local k8s / kind (`http://localhost:8080` after a port-forward) | Keycloak, username + password | `playwright-cli open --persistent` |
 | a shared remote stand behind Keycloak | username + password | `playwright-cli open --persistent` |
 | a remote stand behind Microsoft Entra | **passkey** | Attach to the user's own Chrome — never launch |
@@ -36,6 +37,15 @@ What actually blocks you is identity, not auth. The login email has to resolve t
 Read that symptom as "the stand isn't ready", not "the product is broken" — filing it would be a `layer: stand` finding, which `file-bug-insight` will bounce.
 
 The Keycloak login is a real username-and-password form, so `--persistent` is worth it — the session survives between runs.
+
+The seeded test stand is different from ordinary development compose. Drive it
+through the origin returned by `test_stand_origin` in `dev-compose.sh`: read
+`GATEWAY_PORT` from the `.env.compose.test-stand` belonging to the worktree that
+launched the stack, then open `http://localhost:<port>`. Do not open the
+published `insight-front` port. Its nginx serves the SPA and `/api`, but not the
+OIDC `/auth/*` chain; a browser there can loop on redirects or load `/auth`
+assets as HTML and create a false frontend failure. The gateway is the one
+origin that fronts SPA, auth and API together.
 
 ### Behind a passkey: attach, never launch
 
@@ -99,6 +109,35 @@ playwright-cli requests     # then `request <n>` for the failing call's status a
 ```
 
 Attach both to the report: the value on screen, and the value the API actually returned, pasted rather than characterised. Those two facts side by side are what a reader needs — leave what they imply to whoever picks the issue up. `metric-parity` collects the same question further down the medallion when you can reach it.
+
+## Explore a configurable surface
+
+Inventory the options before clicking. Read the rendered controls and the code
+that supplies them, then name the axes that can change the result. Exercise
+every member of a short, closed axis; use pairwise combinations across axes
+rather than an unbounded Cartesian product.
+
+For every numeric, date, row, request or file limit, test the exact edge as a
+pair: the largest accepted value and the smallest refused value. Add the empty
+and one-item cases where they represent different states. A distant invalid
+value proves rejection, but it does not detect an off-by-one mismatch between
+the UI and API.
+
+Test both ways into URL-backed state: navigate with controls, then load the
+equivalent URL cold and reload it. Also exercise Back/Forward when the feature
+claims its state is shareable. A validator function passing in isolation does
+not prove the router runs it before a strict hook renders.
+
+When the surface builds a downloadable artifact, inspect the artifact rather
+than treating a download event as success. Parse every supported format and
+compare headers, row count, missing-versus-zero cells and a representative
+value against the preview or API response. Keep console and request evidence
+beside the file.
+
+For Report builder work, read
+[`references/report-builder-exploration.md`](./references/report-builder-exploration.md)
+before driving the browser. It maps the current controls, limits, failure
+states and download oracles to the cheapest test layer.
 
 ## Capture evidence someone can act on
 

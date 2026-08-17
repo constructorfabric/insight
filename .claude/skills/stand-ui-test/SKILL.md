@@ -1,6 +1,6 @@
 ---
 name: stand-ui-test
-description: "Write, fix, or review the browser journeys in tests/stand/ui/ — Playwright (Python, sync API) against a deployed Insight stand with a real Keycloak sign-in. Covers the governing UI-vs-API rule and how to justify a browser test in writing, accessibility-first locators, the page-object/flows split, manifest-derived expectations, and the assertions a journey may and may not make. Use for any request to write, add, fix or review a committed browser test in this repository — 'add a Playwright test for X', 'the UI test is failing', 'turn this scenario into a browser journey' — and for anything under tests/stand/ui/. For HTTP contract tests use stand-api-test; playwright-cli is for driving a browser interactively at a prompt and for Playwright's own CLI — reach for it only when nothing will be committed under tests/stand/ui/; drive-ui is for looking at a stand by hand."
+description: "Write, fix, or review the browser journeys in tests/stand/ui/ — Playwright (Python, sync API) against a deployed Insight stand with a real Keycloak sign-in. Covers the governing UI-vs-API rule and how to justify a browser test in writing, accessibility-first locators, the page-object/flows split, manifest-derived expectations, URL/deep-link validation, and real browser downloads. Use for any request to write, add, fix or review a committed browser test in this repository — 'add a Playwright test for X', 'the UI test is failing', 'turn this scenario into a browser journey', 'add a Report builder regression' — and for anything under tests/stand/ui/. For HTTP contract tests use stand-api-test; playwright-cli is for driving a browser interactively at a prompt and for Playwright's own CLI — reach for it only when nothing will be committed under tests/stand/ui/; drive-ui is for looking at a stand by hand."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill, Task
@@ -49,6 +49,33 @@ transition, and counting locator matches per name — `drive-ui` or
 `playwright-cli` for in-browser probes, plain `curl` for what an HTTP client
 sees. Quote the number you got. A plausible paragraph with nothing behind it is
 exactly the failure this rule exists to prevent.
+
+## URL state and download journeys
+
+A crafted deep-link earns a browser journey when the claim is that the SPA
+validates URL state before a strict hook renders. The API cannot observe a
+global error boundary, and a unit test of the validator cannot prove the router
+actually invokes it. Test the exact accepted/refused boundary at the cheaper
+unit and API layers, then keep one stand journey that loads the refused URL
+from a cold page and asserts the application shell remains usable with an
+explicit fallback or validation message. Also assert that no request carrying
+the refused value was sent.
+
+For a browser-generated report or export, `expect_download()` is only the
+transport assertion. Save the file, parse CSV and XLSX, and compare the same
+semantic table in both formats: headers, all rows, missing-versus-zero cells
+and representative values derived from the preview or API response. Assert the
+filename separately. A suffix and non-zero byte count do not prove the report
+contains the requested scope, period, granularity or metrics.
+
+Keep the permanent browser path small. Batching caps, serializer escaping and
+all option permutations belong in frontend tests; period and request caps
+belong in `stand-api`. The stand journey proves only what those suites cannot:
+the deployed router does not crash, controls reach the real backend, the
+preview renders, and the browser receives semantically correct files.
+
+For the Report builder's current axes and boundary map, read
+[`../drive-ui/references/report-builder-exploration.md`](../drive-ui/references/report-builder-exploration.md).
 
 ## Signing in
 
@@ -223,19 +250,21 @@ coverage.
 2. Write the justification paragraph, backed by a measurement.
 3. Find the real locators against a running stand — `drive-ui` or
    `playwright-cli`. A ticket describes intended, not current, behaviour.
-4. Add or extend a page object; keep it assertion-free.
-5. Declare `@pytest.mark.requires_seed(...)` for every person named.
-6. Derive expectations from the manifest; guard against an empty derivation.
-7. Write the `expect` tree in the test. Give the journey its quality-vector
+4. For URL-backed or downloadable surfaces, map exact contract edges to unit,
+   API and browser checks before adding the journey.
+5. Add or extend a page object; keep it assertion-free.
+6. Declare `@pytest.mark.requires_seed(...)` for every person named.
+7. Derive expectations from the manifest; guard against an empty derivation.
+8. Write the `expect` tree in the test. Give the journey its quality-vector
    marker — module `pytestmark` when the whole module shares a vector,
    per-test markers throughout a mixed module, never both; the why lives
    with the marker declarations in `tests/pyproject.toml`. Journeys proving
    rendering and data are `reliability`, refused-access journeys `security`,
    breadth-across-domains journeys `versatility`. Collection aborts on any
    other vector count.
-8. Audit fidelity, then run headed once to confirm it fails for the right
+9. Audit fidelity, then run headed once to confirm it fails for the right
    reason when you break the expectation deliberately.
-9. When the journey implements a scenario tracked in a feature issue's Testing
+10. When the journey implements a scenario tracked in a feature issue's Testing
    section, cite it in the test docstring (`#2163 scenario 3`) and keep the
    marker equal to the scenario's vector tag; the full traceability contract
    (id-not-prose, box-checking after merge) is the `quality-vector-tests`

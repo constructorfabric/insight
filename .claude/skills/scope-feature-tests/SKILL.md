@@ -1,23 +1,16 @@
 ---
 name: scope-feature-tests
 description: >-
-  Scope the testing for a feature in constructorfabric/insight — turn a GitHub issue (or a
-  described feature) into a lean, code-grounded test scope: the axes/dimensions of checking,
-  grouped test areas with a target suite each, an in/out-of-scope boundary, and an acceptance
-  gate, then optionally file it as a linked test subtask. Use this whenever the user wants to plan HOW a feature will be
-  tested — "scope the tests for #1602", "what do we need to check here", "how are we going to
-  test this once it's done", "define the test dimensions / groups / axes", "make a test plan or
-  test scope", "create a test subtask for this feature", or when reviewing a feature to decide
-  QA coverage. The heart of the skill is grounding every check in the ACTUAL implementation and
-  bronze→silver→gold data flow in the insight repo — this repo, or the sibling
-  ../insight checkout when working from elsewhere — (not generic checklists) and
-  correcting the feature's stated framing against what the code really does — including reviewing
-  the issue's acceptance criteria first and proposing a corrected set when they are arbitrary,
-  and mapping the touched components' malfunctions as a test axis. Its authoring counterpart is
-  quality-vector-tests, which lays the resulting coverage into the feature body as tracked
-  scenarios. This is the QA-scoping counterpart to file-bug-insight (which reports an observed defect): prefer this when
-  the task is planning coverage for work being or about to be built, and keep the altitude at
-  dimensions/groups, not individual test cases.
+  Scope testing for a feature in constructorfabric/insight. Turn a GitHub issue or described
+  feature into lean, code-grounded axes, risk-ordered test groups with target suites, an in/out
+  boundary, an acceptance gate, and optionally a linked test subtask. Use when the user asks how
+  a feature will be tested, what to check, for a test plan/scope/dimensions/groups, an exploratory
+  charter, coverage of every option, download or data limits, or a QA review. Ground the scope in
+  the actual implementation, bronze→silver→gold flow, consumer contracts and existing tests;
+  review and correct acceptance criteria first, map realistic component malfunctions, and say
+  when code contradicts the issue framing. Keep the output at test-group altitude, not individual
+  cases. Use quality-vector-tests to author tracked scenarios and file-bug-insight for an observed
+  defect.
 ---
 
 # Scope feature tests (Insight)
@@ -148,6 +141,31 @@ work). When the set is large and will grow (100 metrics, N connectors), say so a
 adding config, not test code. That design choice belongs in the scope, because authoring N
 hand-written suites is the failure mode.
 
+**Configurator and export surfaces need a pipeline, not a click list.** Model
+them as input state → validation → request planning → result shaping → preview
+→ serialization. Inventory every closed option set (scope, period,
+granularity, format, metric family), then separate three kinds of coverage:
+
+- enumerate every member of each short axis once;
+- use pairwise combinations where axes interact, unless the code makes a
+  specific higher-order interaction risky;
+- probe every contract limit at accepted edge / first refusal, plus empty and
+  one where those have distinct behavior.
+
+Treat route entry as an axis when state lives in the URL: control navigation,
+cold deep-link, reload and Back/Forward are different paths through the SPA.
+Treat the artifact as the consumer contract: a download event or non-empty
+file is not enough; parse every supported format and compare the semantic table
+to the preview or response that produced it. Put pure batching and serializer
+boundaries in unit/component suites, request-contract edges in `stand-api`, and
+keep `stand-ui` for the browser-only join: routing, rendering, cancellation and
+real downloads.
+
+For an executed Report builder exploration, hand this scope to `drive-ui` and
+its [`report-builder-exploration.md`](../drive-ui/references/report-builder-exploration.md)
+charter; this skill decides the coverage shape, while `drive-ui` gathers the
+observations and evidence.
+
 ### 5. Draw the in/out boundary
 Explicitly list what's **out of scope** — not built yet, owned by another layer, or deferred to
 later work — so nobody scores the feature against unbuilt surface. For a **port** — and usually a
@@ -251,6 +269,17 @@ Use these to interrogate the feature — keep the ones the code makes real, drop
 - **Tenant isolation** — no cross-tenant leakage; same key across tenants stays separate.
 - **Contract & consumer compatibility** — API/response shapes, status/error codes, downstream
   consumers and existing e2e stay green.
+- **Exact limits** — for every documented or code-enforced cap, prove the last accepted value and
+  first refused value at the enforcing layer; add a UI check only when client-side routing or
+  rendering can fail before the request is sent.
+- **Option inventory** — enumerate each short, closed option set once; use pairwise combinations
+  across interacting axes and derive the inventory from the registry or rendered controls so a
+  newly added option cannot go silently untested.
+- **Artifact parity** — parse every download format and compare headers, row count, ordering,
+  missing-versus-zero semantics and representative cells with the preview or API response; a
+  filename suffix and non-zero byte count are smoke, not correctness.
+- **URL-state lifecycle** — control navigation, cold deep-link, reload and Back/Forward preserve or
+  safely reject the same state without replacing the application shell with a global error.
 - **Migration & cutover** (esp. ports) — new impl boots on the old schema/data, no re-migration
   or loss; drop-in swap is invisible to consumers.
 - **The differential gate** (ports, consolidations, migrations) — same seeded dataset → new output
