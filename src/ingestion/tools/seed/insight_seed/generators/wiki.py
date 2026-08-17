@@ -38,7 +38,6 @@ PAGES_CAP = 3
 EDITS_CAP = 12
 COMMENTS_CAP = 6
 
-# How long after a page is published it still attracts comments.
 COMMENT_WINDOW_DAYS = 8
 
 _PAGE_KINDS = ("runbook", "design note", "retro", "onboarding guide", "spec")
