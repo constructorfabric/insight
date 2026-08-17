@@ -26,8 +26,9 @@ from .downloads import Table, download_export, rendered_rows
 from .flows import sign_in
 from .pages.person_view import PersonView
 
-# Quality vector of this module's tests.
-pytestmark = pytest.mark.reliability
+# Quality vector of this module's tests, plus the porting debt: the journey
+# still asserts the retired dashboard shell (tests/stand/ui/conftest.py).
+pytestmark = [pytest.mark.reliability, pytest.mark.legacy_shell]
 
 #: A row of the timeseries proper, as opposed to a header or a totals row: it
 #: leads with the bucket it covers.

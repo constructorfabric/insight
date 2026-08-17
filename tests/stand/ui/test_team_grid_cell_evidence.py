@@ -28,8 +28,9 @@ from .pages.group_dialog import MetricEvidenceDialog
 from .pages.person_view import PersonView
 from .pages.team_view import TeamView
 
-# Quality vector of this module's tests.
-pytestmark = pytest.mark.reliability
+# Quality vector of this module's tests, plus the porting debt: the journey
+# still asserts the retired dashboard shell (tests/stand/ui/conftest.py).
+pytestmark = [pytest.mark.reliability, pytest.mark.legacy_shell]
 
 
 @pytest.mark.requires_seed("dev_lead")

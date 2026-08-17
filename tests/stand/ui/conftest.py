@@ -39,15 +39,31 @@ expect.set_options(timeout=15_000)
 
 
 @pytest.fixture
-def context(context: BrowserContext) -> BrowserContext:
-    """Every journey drives the legacy dashboard shell, stated explicitly.
+def context(context: BrowserContext, request: pytest.FixtureRequest) -> BrowserContext:
+    """A journey drives the shell a customer gets, which is the portal.
 
-    The portal became opt-out (an ABSENT `insight.portal` key renders it), so
-    a fresh browser context stopped meaning "the shell these journeys were
-    written against" and every selector started timing out inside the portal.
-    The suite's tested surface stays the legacy shell until portal journeys
-    exist; the init script runs before any app code on every page, which is
-    the one moment the flag is guaranteed to precede the first read.
+    The portal is opt-out — an ABSENT `insight.portal` key renders it — so the
+    suite pinning it to `'false'` left every journey asserting a surface no
+    install shows by default. Nothing pins it here any more: a fresh context
+    boots the shell the product ships, and `/` redirects to `/portal`.
+
+    `insight.portal.showPlanned` IS pinned, to `'false'`. It defaults to on
+    (`readBoolPref` returns true for anything that is not literally `"false"`),
+    which lists not-yet-built zones and pane entries beside the real ones —
+    measured on a mock-mode build, the rail offers Scorecard, whose zone carries
+    `readiness: "unbuilt"`, and hiding planned entries drops it. With them
+    hidden, what the rail and pane render IS the built set, so a journey can
+    enumerate navigation by walking it instead of hard-coding a list that rots.
+
+    `legacy_shell` pins the old flag back for journeys still written against the
+    retired dashboard. Those modules are the porting backlog, and the marker is
+    how a reader tells "not ported yet" from "deliberately about the legacy
+    shell"; it is not a configuration to write a new journey against.
+
+    Both scripts run before any app code on every page, which is the one moment
+    a flag is guaranteed to precede the app's first read of it.
     """
-    context.add_init_script("window.localStorage.setItem('insight.portal', 'false')")
+    if request.node.get_closest_marker("legacy_shell") is not None:
+        context.add_init_script("window.localStorage.setItem('insight.portal', 'false')")
+    context.add_init_script("window.localStorage.setItem('insight.portal.showPlanned', 'false')")
     return context

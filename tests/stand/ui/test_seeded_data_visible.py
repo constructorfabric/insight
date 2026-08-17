@@ -32,6 +32,10 @@ from .pages.landing_page import LandingPage
 from .pages.person_view import PersonView
 from .pages.team_view import TeamView
 
+# The porting debt: the journey still asserts the retired dashboard shell
+# (tests/stand/ui/conftest.py). Its quality vectors are per-test, below.
+pytestmark = pytest.mark.legacy_shell
+
 
 @pytest.mark.requires_seed("dev_lead", "development_ic")
 @pytest.mark.reliability
