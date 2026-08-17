@@ -65,9 +65,10 @@ models:
           How far the Stripe chain got for this invoice: 'ok' (lines retrieved),
           'failed' (a hop raised), 'unparsable_url' (the vendor offered a hosted
           URL that no longer matches the expected form), 'no_hosted_url' (the
-          vendor offered none, which a draft invoice legitimately does). Rows
-          other than 'ok' are the invoice's own row with no line, so an
-          unenriched invoice is visible rather than silently absent.
+          vendor offered none for an invoice it has finalised). Rows other than
+          'ok' are the invoice's own row with no line, so an unenriched invoice is
+          visible rather than silently absent. Drafts never reach this class: they
+          are not invoiced yet, so the connector does not emit them.
         tests:
           - not_null
           - accepted_values:

@@ -55,6 +55,21 @@ def parse_hosted_invoice_url(url: str | None) -> HostedRef | None:
     return HostedRef(match.group(1), match.group(2)) if match else None
 
 
+INVOICE_STATUS_DRAFT = "draft"
+
+
+def is_draft(invoice: Mapping[str, Any]) -> bool:
+    """Whether the vendor has yet to finalise this invoice.
+
+    A draft is not invoiced: it carries no payment intent and a total that can
+    still change, and those are two of the five fields an invoice's row is keyed
+    on. Emitting one would put provisional money on a row whose key changes the
+    moment the invoice is finalised, leaving the draft's copy standing beside the
+    real one and counting that invoice's money twice.
+    """
+    return str(invoice.get("status") or "").lower() == INVOICE_STATUS_DRAFT
+
+
 def classify_line(line: Mapping[str, Any]) -> str:
     """Categorise one invoice line by its Stripe parent, never by its text.
 
@@ -291,6 +306,8 @@ def build_records(
     money sits on exactly one row whatever happens, and a run that enriches an
     invoice replaces the row an earlier unenriched run wrote for it.
 
+    A draft is not one of them: it is not invoiced yet, and it is skipped entirely.
+
     Four outcomes per invoice, and one for the run:
       * the wrapper offered no URL -> `no_hosted_url`
       * the URL did not parse      -> `unparsable_url`
@@ -299,7 +316,14 @@ def build_records(
     and if more than `drift_ratio` of the URLs the vendor did offer failed to
     parse, the run raises rather than writing rows that carry money but no prices.
     """
-    parsed = [(inv, parse_hosted_invoice_url(inv.get("hosted_invoice_url"))) for inv in invoices]
+    invoiced = [inv for inv in invoices if not is_draft(inv)]
+    skipped = len(invoices) - len(invoiced)
+    if skipped:
+        # Said out loud: an operator comparing the vendor's list against ours
+        # should not have to guess why a count differs.
+        logger.info("skipped %s draft invoice(s): not invoiced yet, so not on the ledger", skipped)
+
+    parsed = [(inv, parse_hosted_invoice_url(inv.get("hosted_invoice_url"))) for inv in invoiced]
 
     offered = [inv for inv, _ in parsed if inv.get("hosted_invoice_url")]
     malformed = sum(1 for inv, ref in parsed if ref is None and inv.get("hosted_invoice_url"))

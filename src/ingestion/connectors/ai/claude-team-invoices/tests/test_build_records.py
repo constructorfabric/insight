@@ -158,6 +158,37 @@ def test_a_seat_line_the_vendor_left_unpriced_does_not_degrade_the_invoice() -> 
     assert [r["seat_unit_amount"] for r in records] == [None, None]
 
 
+def test_a_draft_is_not_emitted_at_all(caplog: pytest.LogCaptureFixture) -> None:
+    """Its total can still change and it has no payment intent — two of the fields
+    an invoice's row is keyed on — so it would duplicate on finalisation."""
+    with caplog.at_level(logging.INFO):
+        records = list(build_records([invoice(status="draft", payment_intent=None, url=None)], lines_ok))
+
+    assert records == []
+    assert "skipped 1 draft invoice(s)" in caplog.text
+
+
+def test_a_draft_does_not_hide_the_invoices_beside_it() -> None:
+    drafts = [invoice(status="draft", payment_intent=None, url=None) for _ in range(2)]
+    records = list(build_records([*drafts, invoice()], lines_ok))
+    assert [r["chain_status"] for r in records] == [CHAIN_OK, CHAIN_OK, CHAIN_OK]
+    assert [r["line_id"] for r in records] == [None, "il_standard", "il_prepaid"]
+
+
+def test_a_draft_stays_out_of_the_drift_ratio() -> None:
+    """Counted in, two drafts beside one bad URL would tip a healthy run into drift."""
+    drafts = [invoice(status="draft", url=None) for _ in range(2)]
+    records = list(build_records([*drafts, invoice(url="bad"), invoice()], lines_ok))
+    assert sum(1 for r in records if r["chain_status"] == CHAIN_UNPARSABLE) == 1
+    assert sum(1 for r in records if r["chain_status"] == CHAIN_OK) == 3
+
+
+def test_a_finalised_invoice_without_a_url_is_still_reported() -> None:
+    """The status exists for this case now that drafts never reach it."""
+    records = list(build_records([invoice(url=None)], lines_ok))
+    assert [r["chain_status"] for r in records] == [CHAIN_NO_URL]
+
+
 def test_a_run_of_unparsable_urls_fails_instead_of_writing_priceless_rows() -> None:
     invoices = [invoice(url="https://elsewhere.example/x") for _ in range(3)] + [invoice()]
     with pytest.raises(UrlFormatDrift) as raised:

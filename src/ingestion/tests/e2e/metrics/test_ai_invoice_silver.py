@@ -197,8 +197,9 @@ BRONZE_ROWS = [
     # An invoice whose chain never completed: the ledger survives, the price does
     # not, and with no line there is only the raise date to file it by.
     _invoice_row("pi_broken", 999, 999, chain_status="failed", invoice_currency=None),
-    # A draft the vendor offered no hosted URL for — absence, not a format change.
-    _invoice_row("pi_draft", 750, 750, chain_status="no_hosted_url", invoice_status="draft"),
+    # A finalised invoice the vendor offered no hosted URL for. Not a draft: the
+    # connector skips those, so one could never reach bronze in the first place.
+    _invoice_row("pi_no_url", 750, 750, chain_status="no_hosted_url", invoice_status="open"),
 ]
 
 COLUMNS = [
@@ -300,7 +301,7 @@ def test_a_failed_chain_keeps_the_invoice_and_no_line(invoice_silver):
 
 
 def test_an_invoice_with_no_hosted_url_reaches_the_class_as_its_own_state(invoice_silver):
-    """A draft carries no URL; reading that as a format change would fail the sync."""
+    """Reading a missing URL as a format change would fail the whole sync instead."""
     row = _by_status(invoice_silver, "no_hosted_url")
     assert row["invoice_net_cents"] == 750
     assert row["line_id"] is None and row["invoice_id"] is None
