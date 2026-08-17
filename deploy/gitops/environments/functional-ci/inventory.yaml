@@ -14,6 +14,13 @@ namespaces:
 
 release: insight
 
+deploy:
+  # NO `--atomic`. The cluster is created and destroyed by the same job, so
+  # there is no previous revision worth rolling back to — the rollback only
+  # uninstalls the release, taking the pods and hook Jobs that hold the reason
+  # it failed with it, minutes before the diagnostics step runs.
+  atomic: false
+
 bootstrap:
   namespaces: true
   envoyGateway: false
