@@ -237,7 +237,7 @@
             "$ref": "#/components/schemas/ResolutionRatesResponse"
           },
           "truncated": {
-            "description": "One of the two reads behind this queue hit its safety cap — the connector\nevidence or the tenant's bindings — so the queue and the rates describe\nonly part of the tenant's accounts. Consumers must not present these\nnumbers as tenant-wide.",
+            "description": "The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide. (The binding read cannot be a\nprefix — a partial one would misclassify, so it fails the request.)",
             "type": "boolean"
           }
         },

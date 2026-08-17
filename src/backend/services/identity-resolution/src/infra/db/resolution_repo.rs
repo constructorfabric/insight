@@ -180,16 +180,22 @@ pub async fn current_bindings_in_tenant(
     tenant_id: Uuid,
     ceiling: Ceiling,
 ) -> anyhow::Result<BindingSnapshot> {
-    let rows = db
+    // Ask for one row past the ceiling: its presence is what says another row
+    // exists. Counting the rows against the ceiling instead calls a read that
+    // ended exactly on it truncated, and a caller that refuses to answer on
+    // truncation would then refuse a complete answer.
+    let probe = ceiling.rows().saturating_add(1);
+    let mut rows = db
         .query_all(Statement::from_sql_and_values(
             DbBackend::MySql,
             current_bindings_sql(Scope::WholeTenant),
-            [tenant_id.as_bytes().to_vec().into(), ceiling.rows().into()],
+            [tenant_id.as_bytes().to_vec().into(), probe.into()],
         ))
         .await?;
 
-    let truncated = rows.len() as u64 == ceiling.rows();
+    let truncated = rows.len() as u64 >= probe;
     if truncated {
+        rows.truncate(usize::try_from(ceiling.rows()).unwrap_or(usize::MAX));
         tracing::warn!(
             cap = ceiling.rows(),
             "tenant bindings: read cap reached; anything derived from these \

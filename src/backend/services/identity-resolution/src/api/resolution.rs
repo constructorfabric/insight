@@ -625,6 +625,20 @@ fn internal(error: &anyhow::Error, message: &str) -> CanonicalError {
     CanonicalError::internal(message).create()
 }
 
+/// The queue cannot be derived: the binding read stopped at its ceiling, so
+/// whether a given account is bound is unknown rather than false. Refusing is
+/// the safe answer — the alternative is a queue of accounts that look unbound
+/// and are not.
+fn bindings_beyond_ceiling() -> CanonicalError {
+    tracing::error!(
+        cap = resolution_repo::MAX_TENANT_BINDINGS,
+        "review queue: the tenant holds more bindings than this surface reads; \
+         refusing to classify accounts whose binding may sit past the ceiling"
+    );
+    CanonicalError::internal("the tenant holds more identity bindings than the review queue reads")
+        .create()
+}
+
 /// Query knobs for the review queue.
 #[derive(Debug, Deserialize)]
 pub struct AttentionParams {
@@ -731,10 +745,10 @@ pub struct ResolutionRatesResponse {
 pub struct AttentionResponse {
     pub items: Vec<QueueItemResponse>,
     pub rates: ResolutionRatesResponse,
-    /// One of the two reads behind this queue hit its safety cap — the connector
-    /// evidence or the tenant's bindings — so the queue and the rates describe
-    /// only part of the tenant's accounts. Consumers must not present these
-    /// numbers as tenant-wide.
+    /// The evidence read hit its safety cap: the queue and the rates describe
+    /// only the first accounts of the tenant, not all of them. Consumers must
+    /// not present these numbers as tenant-wide. (The binding read cannot be a
+    /// prefix — a partial one would misclassify, so it fails the request.)
     pub truncated: bool,
     /// `limit` cut the item list — more accounts await a decision than are
     /// listed here. Distinct from `truncated`: the rates stay whole-tenant,
@@ -1273,8 +1287,15 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), 
     )
     .await
     .map_err(|e| internal(&e, "failed to read current bindings"))?;
-    // Either half hitting its ceiling makes the rates a prefix of the tenant.
-    let truncated = evidence.truncated || bindings.truncated;
+    // A prefix of the bindings is not a partial answer, it is a wrong one: an
+    // account whose binding sits past the ceiling reads as unbound, and the queue
+    // would offer an operator a correction that overwrites a binding nobody saw.
+    // The evidence half can be a prefix honestly — it decides which accounts are
+    // examined, not what is true of them.
+    if bindings.truncated {
+        return Err(bindings_beyond_ceiling());
+    }
+    let truncated = evidence.truncated;
 
     let observed = evidence
         .accounts

@@ -518,7 +518,7 @@ class AttentionResponse(BaseModel):
     items: list[QueueItemResponse]
     items_truncated: bool = Field(..., description='`limit` cut the item list — more accounts await a decision than are\nlisted here. Distinct from `truncated`: the rates stay whole-tenant,\nonly this page is short.')
     rates: ResolutionRatesResponse
-    truncated: bool = Field(..., description="One of the two reads behind this queue hit its safety cap — the connector\nevidence or the tenant's bindings — so the queue and the rates describe\nonly part of the tenant's accounts. Consumers must not present these\nnumbers as tenant-wide.")
+    truncated: bool = Field(..., description='The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide. (The binding read cannot be a\nprefix — a partial one would misclassify, so it fails the request.)')
 
 
 class CorrectionResponse(BaseModel):

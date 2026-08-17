@@ -99,6 +99,37 @@ async fn asking_about_more_accounts_than_one_statement_carries_answers_for_all_o
 }
 
 #[tokio::test]
+async fn a_read_that_ends_exactly_on_the_ceiling_is_not_truncated() -> TestResult {
+    // The ceiling is detected by a row PAST it, not by counting up to it. A
+    // tenant holding exactly as many bindings as the ceiling has a complete
+    // answer, and the caller refuses to serve a truncated one — so calling this
+    // truncated would refuse a whole answer.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let holder = f.person("holder@binding-reads.test").await?;
+    for i in 0..3u32 {
+        f.bound_at(&format!("acct-ceil-{i}"), holder, FIXTURE_REASON, i + 1)
+            .await?;
+    }
+
+    for (ceiling, expected) in [(2, true), (3, false), (4, false)] {
+        let read = current_bindings_in_tenant(&f.db, f.tenant, Ceiling::Bounded(ceiling)).await?;
+
+        assert_eq!(
+            read.truncated, expected,
+            "three bindings read under a ceiling of {ceiling}"
+        );
+        assert_eq!(
+            read.by_account.len(),
+            usize::try_from(ceiling.min(3)).unwrap_or(3),
+            "a ceiling of {ceiling} served the wrong number of rows"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn the_tenant_read_carries_what_the_review_surface_reads() -> TestResult {
     // person, author and reason are what the queue classifies on: lose any of
     // them and a settled account reappears as undecided, or the other way round.

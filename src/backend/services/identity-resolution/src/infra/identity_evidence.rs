@@ -138,13 +138,19 @@ const LIST_SQL: &str = r"
     LIMIT ?
 ";
 
+/// INVARIANT: probes every value a row can DISPLAY, the composed name included.
+/// A row shown as a name assembled from parts must be findable by that name —
+/// searching only the whole-name column leaves those rows visible and
+/// unreachable, and they are exactly the ones an operator has to bind by hand.
+///
 /// Unicode-aware to match the order key: an operator who types `ü` must reach
 /// the row that shows `Ü`, the way the person listing's collation already does.
 const FILTER_SQL: &str = "
       AND (positionCaseInsensitiveUTF8(email, ?) > 0
            OR positionCaseInsensitiveUTF8(username, ?) > 0
            OR positionCaseInsensitiveUTF8(account_id, ?) > 0
-           OR positionCaseInsensitiveUTF8(display_name, ?) > 0)";
+           OR positionCaseInsensitiveUTF8(display_name, ?) > 0
+           OR positionCaseInsensitiveUTF8({COMPOSED}, ?) > 0)";
 
 /// Tuple comparison, so the tie-break on the account key is part of the same
 /// predicate: two accounts sharing a label must not both sit on the boundary.
@@ -394,6 +400,13 @@ fn list_sql(filtered: bool, resuming: bool) -> String {
         .replace("{COMPOSED}", COMPOSED_NAME_SQL)
 }
 
+/// How many times the needle is bound — one per value [`FILTER_SQL`] probes.
+/// Counted from the template so adding a probe cannot leave a placeholder
+/// unbound, which would slide the resume values into the needle's slots.
+fn needle_probes() -> usize {
+    FILTER_SQL.matches('?').count()
+}
+
 /// A source that sends the parts but no whole name still names the person.
 fn compose_name(first: Option<String>, last: Option<String>) -> Option<String> {
     match (first, last) {
@@ -424,10 +437,12 @@ impl ClickHouseEvidenceReader {
         let sql = list_sql(needle.is_some(), after.is_some());
 
         let mut query = self.client.query(&sql);
-        // Bound in the order the placeholders appear: the four needle probes,
-        // then the resume tuple, then the page size.
+        // Bound in the order the placeholders appear: one probe per displayable
+        // value, then the resume tuple, then the page size.
         if let Some(needle) = needle {
-            query = query.bind(needle).bind(needle).bind(needle).bind(needle);
+            for _ in 0..needle_probes() {
+                query = query.bind(needle);
+            }
         }
         if let Some(after) = after {
             query = query
@@ -694,9 +709,9 @@ mod tests {
         // every later binding and the resume lands in a needle slot.
         for (case, filtered, resuming, expected) in [
             ("browse", false, false, 1),
-            ("search", true, false, 5),
+            ("search", true, false, 1 + needle_probes()),
             ("browse, resumed", false, true, 5),
-            ("search, resumed", true, true, 9),
+            ("search, resumed", true, true, 5 + needle_probes()),
         ] {
             assert_eq!(
                 list_sql(filtered, resuming).matches('?').count(),
@@ -704,6 +719,31 @@ mod tests {
                 "placeholder count changed for: {case}"
             );
         }
+    }
+
+    #[test]
+    fn a_needle_is_probed_against_every_value_a_row_can_show() {
+        // The composed name is the one an operator reads off a row described by
+        // parts alone. Probing only the whole-name column leaves those rows
+        // findable by nothing but their account id.
+        let sql = list_sql(true, false);
+
+        assert_eq!(
+            needle_probes(),
+            5,
+            "one probe per displayable value: address, handle, id, name, composed name"
+        );
+        assert_eq!(
+            sql.matches("positionCaseInsensitiveUTF8").count(),
+            needle_probes(),
+            "a probe without its placeholder, or the other way round"
+        );
+        assert!(
+            sql.contains(&format!(
+                "positionCaseInsensitiveUTF8({COMPOSED_NAME_SQL}, ?)"
+            )),
+            "the composed name is not searched: {sql}"
+        );
     }
 
     #[test]
