@@ -5,7 +5,7 @@
 //! use" refusal is surfaced as `aborted` (409) — gears canonical errors have
 //! no 422, the same mapping the other data-invariant guards use
 //! (`ambiguous_profile`, `last_admin_protected`), pinned by the identity
-//! contract suite's `UNPROCESSABLE_OR_CONFLICT` = {422, 409}.
+//! contract suite.
 
 use std::sync::Arc;
 

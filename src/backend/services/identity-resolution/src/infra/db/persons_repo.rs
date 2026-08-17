@@ -399,7 +399,7 @@ pub async fn person_cards(
         r"
         SELECT id, value_type, insight_source_type, insight_source_id,
                insight_tenant_id, value_id, value_full_text, value,
-               value_effective, value_hash, person_id, author_person_id,
+               value_effective, person_id, author_person_id,
                reason, created_at
         FROM (
             SELECT p.*,

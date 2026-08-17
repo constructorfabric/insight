@@ -98,7 +98,7 @@ cd src/ingestion/tests/e2e
 ```
 
 **CI:** `e2e-bronze-to-api.yml` — blocking metric-coverage + openapi-drift gates. Its `api` and
-`identity-rust` HTTP contract lanes retired once those contracts moved to the compose stand
+`identity` HTTP contract lanes retired once those contracts moved to the compose stand
 (`e2e-stand.yml`); the endpoint gate moved with them.
 
 ---
