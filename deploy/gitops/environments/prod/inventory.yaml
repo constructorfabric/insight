@@ -95,8 +95,11 @@ secrets:
     - {name: github-oauth, enabled: true} # customer-managed OAuth App credential
     - {name: insight-authenticator-signing-keys, enabled: true} # ES256; NEVER regenerate
     - {name: insight-github-directory-main, enabled: true} # connector credential
-    - {name: insight-github-v2-main, enabled: false,} # connector credential — not on the
-    # cluster right now (staging blocked on #2381); flip + `make seal` once created
+    - {name: insight-github-main, enabled: false} # connector credential — not on the
+    # cluster yet. Seal it by hand with kubeseal (this env has no `seal` target)
+    # and flip to true. Its source-id annotation must stay github-directory-main:
+    # the seed keys an account on (source type, source id, login), so a second id
+    # mints one human twice.
   # Datastore-namespace credentials the CRs/charts reference. Same seal
   # contract; each entry names its own namespace (one namespace per service).
   datastores:
