@@ -508,7 +508,8 @@ class AccountSearchResponse(BaseModel):
         extra='forbid',
     )
     items: list[AccountMatchResponse]
-    truncated: bool = Field(..., description='More accounts matched than `limit` allowed — narrow the terms.')
+    next_cursor: str | None = Field(None, description='Pass back as `?cursor=` for the next page; absent on the last one. Only\nvalid for the query that issued it — narrowing `q` starts over.')
+    truncated: bool = Field(..., description='More accounts follow this page. Kept beside `next_cursor` for the\nclients that predate it: to them it still reads "this is a cut".')
 
 
 class AttentionResponse(BaseModel):
@@ -564,8 +565,8 @@ class PersonListResponse(BaseModel):
         extra='forbid',
     )
     items: list[PersonSummaryResponse]
-    next_cursor: str | None = Field(None, description='Wire parity with the other listings: declared, always `null`.')
-    truncated: bool = Field(..., description='More persons matched than `limit` allowed — the page is a cut, not the\nanswer, and the UI should ask for narrower terms. Without this flag a\ntruncated page reads as "the person does not exist".')
+    next_cursor: str | None = Field(None, description='Pass back as `?cursor=` for the next page; absent on the last one. Only\nvalid for the query that issued it — narrowing the terms starts over.')
+    truncated: bool = Field(..., description='More persons follow this page. Kept beside `next_cursor` for the\nclients that predate it: to them it still reads "this is a cut", which\nis true — it is just no longer the end of the road.')
 
 
 class PersonRoleListResponse(BaseModel):

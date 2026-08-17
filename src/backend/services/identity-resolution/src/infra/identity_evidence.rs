@@ -97,21 +97,35 @@ const FOLD_SQL: &str = r"
     ORDER BY source_type, source_id, account_id
 ";
 
-/// Accounts whose current values contain the needle, for the operator who has
-/// an account in hand and no idea whose it is. The fold is the same one the
-/// queue reads; only the filter and the ceiling differ.
-const SEARCH_SQL: &str = r"
+/// The listing's order key: the label the row shows, folded to lower case.
+/// Ordering by the account key instead would sort the list by an identifier
+/// the operator does not read — and pagination needs SOME total order, since
+/// the fold has none of its own.
+const ORDER_LABEL_SQL: &str = "lower(if(email != '', email, \
+     if(username != '', username, if(display_name != '', display_name, account_id))))";
+
+/// One page of the fold. `{FILTER}` narrows it, `{RESUME}` continues a walk;
+/// both are empty when browsing from the start.
+const LIST_SQL: &str = r"
     SELECT source_type, source_id, account_id, latest_op, email, username,
            display_name, first_name, last_name, job_title, department, status,
-           manager_email
+           manager_email, {LABEL} AS order_label
     FROM ({FOLD})
-    WHERE latest_op != 'DELETE'
+    WHERE latest_op != 'DELETE'{FILTER}{RESUME}
+    ORDER BY order_label, source_type, source_id, account_id
+    LIMIT ?
+";
+
+const FILTER_SQL: &str = "
       AND (positionCaseInsensitive(email, ?) > 0
            OR positionCaseInsensitive(username, ?) > 0
            OR positionCaseInsensitive(account_id, ?) > 0
-           OR positionCaseInsensitive(display_name, ?) > 0)
-    LIMIT ?
-";
+           OR positionCaseInsensitive(display_name, ?) > 0)";
+
+/// Tuple comparison, so the tie-break on the account key is part of the same
+/// predicate: two accounts sharing a label must not both sit on the boundary.
+const RESUME_SQL: &str = "
+      AND ({LABEL}, source_type, source_id, account_id) > (?, ?, ?, ?)";
 
 /// Ceiling on the fold, which is read whole into memory. The queue's rates are
 /// meant to cover every observed account, so this is a safety valve against an
@@ -135,6 +149,26 @@ struct FoldedRow {
     department: String,
     status: String,
     manager_email: String,
+    /// The listing's order key, computed by the query so no second definition
+    /// of it can drift from the one that sorted the rows. Empty on reads that
+    /// do not order (the whole-tenant fold).
+    order_label: String,
+}
+
+/// One listed account and the position that ordered it.
+#[derive(Debug)]
+pub struct ListedAccount {
+    pub evidence: AccountEvidence,
+    pub order_label: String,
+}
+
+/// Where a page of accounts resumes: the last row served.
+#[derive(Debug, Clone, Copy)]
+pub struct AfterAccount<'a> {
+    pub order_label: &'a str,
+    pub source_type: &'a str,
+    pub source_id: &'a str,
+    pub account_id: &'a str,
 }
 
 /// Reads folded evidence for the review surface.
@@ -170,7 +204,10 @@ impl ClickHouseEvidenceReader {
     ///
     /// Returns an error if the query fails or a stored source id is not a UUID.
     pub async fn accounts(&self) -> anyhow::Result<EvidenceSnapshot> {
-        let sql = format!("{FOLD_SQL} LIMIT {MAX_EVIDENCE_ACCOUNTS}");
+        // `''` for the order key: this read has no order to carry, and the
+        // row shape is shared with the listing.
+        let sql =
+            format!("SELECT *, '' AS order_label FROM ({FOLD_SQL}) LIMIT {MAX_EVIDENCE_ACCOUNTS}");
         let rows: Vec<FoldedRow> = match self.client.query(&sql).fetch_all().await {
             Ok(rows) => rows,
             Err(e) if is_missing_relation(&e) => {
@@ -303,6 +340,16 @@ fn map_row(row: FoldedRow) -> anyhow::Result<AccountEvidence> {
     })
 }
 
+/// Assemble the listing query: the fold, the optional needle, the optional
+/// resume, and the order that makes paging over it well defined.
+fn list_sql(filtered: bool, resuming: bool) -> String {
+    LIST_SQL
+        .replace("{FOLD}", FOLD_SQL)
+        .replace("{FILTER}", if filtered { FILTER_SQL } else { "" })
+        .replace("{RESUME}", if resuming { RESUME_SQL } else { "" })
+        .replace("{LABEL}", ORDER_LABEL_SQL)
+}
+
 /// A source that sends the parts but no whole name still names the person.
 fn compose_name(first: Option<String>, last: Option<String>) -> Option<String> {
     match (first, last) {
@@ -313,24 +360,38 @@ fn compose_name(first: Option<String>, last: Option<String>) -> Option<String> {
 }
 
 impl ClickHouseEvidenceReader {
-    /// Accounts whose current values contain `needle`, newest-agnostic.
+    /// One page of the observed accounts, ordered by the label each row shows.
+    ///
+    /// `needle` absent lists every open account; present, it keeps the ones
+    /// carrying it. `after` resumes a previous page. Closed accounts are left
+    /// out either way — the source shut that door.
     ///
     /// # Errors
     ///
     /// Returns an error if the query fails or a stored source id is not a UUID.
-    pub async fn search(&self, needle: &str, limit: u64) -> anyhow::Result<Vec<AccountEvidence>> {
-        let sql = SEARCH_SQL.replace("{FOLD}", FOLD_SQL);
-        let rows: Vec<FoldedRow> = match self
-            .client
-            .query(&sql)
-            .bind(needle)
-            .bind(needle)
-            .bind(needle)
-            .bind(needle)
-            .bind(limit)
-            .fetch_all()
-            .await
-        {
+    pub async fn list(
+        &self,
+        needle: Option<&str>,
+        after: Option<AfterAccount<'_>>,
+        limit: u64,
+    ) -> anyhow::Result<Vec<ListedAccount>> {
+        let sql = list_sql(needle.is_some(), after.is_some());
+
+        let mut query = self.client.query(&sql);
+        // Bound in the order the placeholders appear: the four needle probes,
+        // then the resume tuple, then the page size.
+        if let Some(needle) = needle {
+            query = query.bind(needle).bind(needle).bind(needle).bind(needle);
+        }
+        if let Some(after) = after {
+            query = query
+                .bind(after.order_label)
+                .bind(after.source_type)
+                .bind(after.source_id)
+                .bind(after.account_id);
+        }
+
+        let rows: Vec<FoldedRow> = match query.bind(limit).fetch_all().await {
             Ok(rows) => rows,
             Err(e) if is_missing_relation(&e) => return Ok(Vec::new()),
             Err(e) => return Err(e.into()),
@@ -340,7 +401,13 @@ impl ClickHouseEvidenceReader {
         // reason to answer nothing — the same rule the full fold applies.
         Ok(rows
             .into_iter()
-            .filter_map(|row| map_row(row).ok())
+            .filter_map(|row| {
+                let order_label = row.order_label.clone();
+                map_row(row).ok().map(|evidence| ListedAccount {
+                    evidence,
+                    order_label,
+                })
+            })
             .collect())
     }
 
@@ -457,6 +524,7 @@ mod tests {
             department: String::new(),
             status: String::new(),
             manager_email: String::new(),
+            order_label: String::new(),
         }
     }
 

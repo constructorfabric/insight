@@ -4,9 +4,14 @@
  *
  * A finding tool, not a deciding one (#2424): it never fires a verb itself.
  * Composed from the house search idiom (Search icon inside an Input) over a
- * debounced live query; a truncated answer says "narrow the terms" instead of
- * posing as complete, and terminated people stay visible but marked — finding
- * a leaver is often the point.
+ * debounced live query, paged with the cursor the service returns, so a common
+ * term reaches every match instead of stopping at the first page. Terminated
+ * people stay visible but marked — finding a leaver is often the point.
+ *
+ * `browseWhenEmpty` decides what an empty field means. The console's person
+ * mode wants the roster there; the assign picker inside an account dialog
+ * wants matches, and listing the tenant into a dropdown would bury the one
+ * name the operator came to type.
  */
 import { Search } from "lucide-react";
 import { useState } from "react";
@@ -15,32 +20,39 @@ import { useTranslation } from "react-i18next";
 import type { PersonSummary } from "@/api/identity-client";
 import { PersonCell } from "@/components/portal/person-cell";
 import { personDisplayName } from "@/lib/identities/person-display";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { usePersonSearch } from "@/queries/identity-resolution";
+import { usePersonList } from "@/queries/identity-resolution";
+import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 250;
-const MIN_QUERY_CHARS = 2;
 
 export function PersonPicker({
   onPick,
   /** Persons already shown elsewhere in the panel — filtered out, not repeated. */
   excludeIds = [],
+  browseWhenEmpty = false,
+  /** Taller where the picker IS the view rather than a field inside a dialog. */
+  className,
 }: {
   onPick: (person: PersonSummary) => void;
   excludeIds?: string[];
+  browseWhenEmpty?: boolean;
+  className?: string;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const debounced = useDebouncedValue(query, DEBOUNCE_MS);
-  const search = usePersonSearch(debounced);
+  const asked = browseWhenEmpty || debounced.trim().length > 0;
+  const list = usePersonList(debounced, { enabled: asked });
 
   const excluded = new Set(excludeIds);
-  const results = (search.data?.items ?? []).filter(
-    (p) => !excluded.has(p.person_id),
-  );
-  const active = debounced.trim().length >= MIN_QUERY_CHARS;
+  const results = (list.data?.pages ?? [])
+    .flatMap((page) => page.items)
+    .filter((p) => !excluded.has(p.person_id));
+  const loading = list.isFetching && !list.isFetchingNextPage;
 
   return (
     <div className="flex flex-col gap-2">
@@ -55,23 +67,28 @@ export function PersonPicker({
           onChange={(e) => setQuery(e.target.value)}
         />
       </div>
-      {search.isFetching ? (
+      {loading ? (
         <div className="flex justify-center py-2">
           <Spinner className="size-4" />
         </div>
       ) : null}
-      {active && search.isError ? (
+      {asked && list.isError ? (
         <p className="text-sm text-destructive">
           {t("identities.picker.failed")}
         </p>
       ) : null}
-      {active && search.data && results.length === 0 && !search.isFetching ? (
+      {asked && list.data && results.length === 0 && !loading ? (
         <p className="text-sm text-muted-foreground">
           {t("identities.picker.no_matches")}
         </p>
       ) : null}
       {results.length > 0 ? (
-        <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+        <ul
+          className={cn(
+            "flex flex-col gap-1 overflow-y-auto",
+            className ?? "max-h-64",
+          )}
+        >
           {results.map((person) => (
             <li key={person.person_id}>
               {/* Not a <button>: the card inside carries its own copy control,
@@ -104,10 +121,19 @@ export function PersonPicker({
           ))}
         </ul>
       ) : null}
-      {search.data?.truncated ? (
-        <p className="text-xs text-muted-foreground">
-          {t("identities.picker.truncated")}
-        </p>
+      {list.hasNextPage ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="self-start"
+          disabled={list.isFetchingNextPage}
+          onClick={() => void list.fetchNextPage()}
+        >
+          {list.isFetchingNextPage
+            ? t("identities.picker.loading_more")
+            : t("identities.picker.load_more")}
+        </Button>
       ) : null}
     </div>
   );

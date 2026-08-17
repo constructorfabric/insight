@@ -26,12 +26,9 @@ use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
 use crate::infra::db::{ops_repo, persons_repo, resolution_repo};
 use crate::infra::identity_evidence::{
-    AccountEvidence, ClickHouseEvidenceReader, EvidenceSnapshot,
+    AccountEvidence, AfterAccount, ClickHouseEvidenceReader, EvidenceSnapshot, ListedAccount,
 };
 
-/// A handle or an address, not a prefix of one: a one-character needle scans
-/// the whole fold to answer with everything.
-const MIN_ACCOUNT_SEARCH_CHARS: usize = 3;
 const DEFAULT_ACCOUNT_SEARCH_LIMIT: u64 = 20;
 const MAX_ACCOUNT_SEARCH_LIMIT: u64 = 100;
 
@@ -896,8 +893,12 @@ pub struct AccountMatchResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AccountSearchResponse {
     pub items: Vec<AccountMatchResponse>,
-    /// More accounts matched than `limit` allowed — narrow the terms.
+    /// More accounts follow this page. Kept beside `next_cursor` for the
+    /// clients that predate it: to them it still reads "this is a cut".
     pub truncated: bool,
+    /// Pass back as `?cursor=` for the next page; absent on the last one. Only
+    /// valid for the query that issued it — narrowing `q` starts over.
+    pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for AccountSearchResponse {}
 
@@ -905,14 +906,25 @@ impl toolkit::api::api_dto::ResponseApiDto for AccountSearchResponse {}
 pub struct AccountSearchParams {
     pub q: Option<String>,
     pub limit: Option<i64>,
+    pub cursor: Option<String>,
 }
 
-/// `GET /v1/resolution/accounts?q=` — find an account by a value it carries,
-/// and say whose it is.
+/// Where the next page of accounts resumes. Opaque on the wire.
+#[derive(Debug, Serialize, Deserialize)]
+struct AccountPageKey {
+    order_label: String,
+    source: String,
+    source_id: String,
+    account_id: String,
+}
+
+/// `GET /v1/resolution/accounts` — list the observed accounts and say whose
+/// each one is; `?q=` narrows the same list.
 ///
-/// The person search answers "which person is this"; this answers the question
+/// The person listing answers "which person is this"; this answers the question
 /// an operator arrives with when they hold an account instead: a git handle
-/// from a review, an address from a ticket.
+/// from a review, an address from a ticket. Browsing it is bounded by the page,
+/// so an operator can also just look at what the connectors reported.
 pub async fn search_accounts(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -922,29 +934,39 @@ pub async fn search_accounts(
     let tenant = ctx.subject_tenant_id();
 
     let needle = params.q.unwrap_or_default().trim().to_owned();
-    if needle.chars().count() < MIN_ACCOUNT_SEARCH_CHARS {
-        return Err(invalid(
-            "q",
-            &format!("at least {MIN_ACCOUNT_SEARCH_CHARS} characters are required"),
-        ));
-    }
     let limit = super::listing::clamp_limit(
         params.limit,
         DEFAULT_ACCOUNT_SEARCH_LIMIT,
         MAX_ACCOUNT_SEARCH_LIMIT,
     );
+    let resume = account_resume_from(params.cursor.as_deref(), &needle)?;
 
     let reader = evidence_reader(&state);
-    // Over-fetch by one: the extra row is the truncation probe, never served.
-    let mut found = reader
-        .search(&needle, limit + 1)
+    // Over-fetch by one: the extra row is the next-page probe, never served.
+    let mut listed = reader
+        .list(
+            (!needle.is_empty()).then_some(needle.as_str()),
+            resume.as_ref().map(|key| AfterAccount {
+                order_label: &key.order_label,
+                source_type: &key.source,
+                source_id: &key.source_id,
+                account_id: &key.account_id,
+            }),
+            limit + 1,
+        )
         .await
-        .map_err(|e| internal(&e, "failed to search the observed accounts"))?;
-    let truncated = found.len() > usize::try_from(limit).unwrap_or(usize::MAX);
-    if truncated {
-        found.pop();
-    }
+        .map_err(|e| internal(&e, "failed to read the observed accounts"))?;
 
+    let more = listed.len() > usize::try_from(limit).unwrap_or(usize::MAX);
+    if more {
+        listed.pop();
+    }
+    let next_cursor = more
+        .then(|| next_account_cursor(listed.last(), &needle))
+        .transpose()?
+        .flatten();
+
+    let found: Vec<AccountEvidence> = listed.into_iter().map(|row| row.evidence).collect();
     let keys: Vec<SourceAccountKey> = found.iter().map(|e| e.account.clone()).collect();
     let bindings = resolution_repo::current_bindings(&state.db, tenant, &keys)
         .await
@@ -994,7 +1016,47 @@ pub async fn search_accounts(
         })
         .collect();
 
-    Ok(Json(AccountSearchResponse { items, truncated }))
+    Ok(Json(AccountSearchResponse {
+        items,
+        truncated: next_cursor.is_some(),
+        next_cursor,
+    }))
+}
+
+fn account_resume_from(
+    cursor: Option<&str>,
+    needle: &str,
+) -> Result<Option<AccountPageKey>, CanonicalError> {
+    let Some(cursor) = cursor.map(str::trim).filter(|c| !c.is_empty()) else {
+        return Ok(None);
+    };
+
+    super::listing::decode_cursor::<AccountPageKey>(cursor, needle)
+        .map(Some)
+        .map_err(|rejected| invalid("cursor", rejected.message()))
+}
+
+/// The cursor that resumes after the last row served.
+fn next_account_cursor(
+    last: Option<&ListedAccount>,
+    needle: &str,
+) -> Result<Option<String>, CanonicalError> {
+    last.map(|row| {
+        super::listing::encode_cursor(
+            needle,
+            &AccountPageKey {
+                order_label: row.order_label.clone(),
+                source: row.evidence.account.source_type.clone(),
+                source_id: row.evidence.account.source_id.to_string(),
+                account_id: row.evidence.account.account_id.clone(),
+            },
+        )
+    })
+    .transpose()
+    .map_err(|e| {
+        tracing::error!(error = %e, "failed to issue an account page cursor");
+        CanonicalError::internal("failed to list the observed accounts").create()
+    })
 }
 
 /// `GET /v1/resolution/accounts/{source}/{source_id}/{account_id}` — why this
