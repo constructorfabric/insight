@@ -565,18 +565,6 @@ index satisfies the resolve query without a heap read, and the
 hydrate CTE bounded by per-person observation count (typically
 < 100 rows).
 
-#### Table: `account_person_map` (MariaDB)
-
-- [ ] `p1` - **ID**: `cpt-insightspec-dbtable-identity-account-person-map`
-
-Defined in `src/migration/sql/002_account_person_map.sql`.
-The service migrates the table but does **not** read it in
-Phase 1 — the seed pipeline rebuilds it as an SCD2 cache from
-`persons` (see
-[domain DESIGN §"Table: account_person_map"](../../../../../domain/identity-resolution/specs/DESIGN.md#table-account_person_map-mariadb)).
-Future Phase 2 lookups will use it for "as-of" account → person
-binding queries.
-
 #### Table: `org_chart` (MariaDB)
 
 - [ ] `p1` - **ID**: `cpt-insightspec-dbtable-identity-org-chart`

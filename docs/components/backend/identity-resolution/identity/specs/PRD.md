@@ -89,7 +89,6 @@ established for the other Rust services in the platform.
 | Term | Definition |
 |------|------------|
 | `persons` | The MariaDB append-only observation log; one row per (tenant, person_id, source_type, source_id, value_type, created_at) per ADR-0011. The earlier UNIQUE on `value_hash` wrongly collapsed state transitions and was dropped. Defined in `identity` DB. |
-| `account_person_map` | SCD2 cache derived from `persons` rows where `value_type='id'`; maps source-account → `person_id` over time. |
 | Observation | One row in `persons` — a single (`value_type`, `value`) datapoint emitted by one source for one person at one instant. Never updated; superseded by a newer observation with the same partition key. |
 | `value_type` | Free-form `VARCHAR(50)` attribute name. Canonical set: `id`, `email`, `username`, `display_name`, `first_name`, `last_name`, `department`, `division`, `job_title`, `status`, `employee_id`, `parent_email`, `parent_id`, `parent_person_id`. |
 | `value_id` / `value_full_text` / `value` | Routing columns selected per `value_type` per ADR-0007. `id`/`email`/`username` → `value_id` (utf8mb4_unicode_ci — case-insensitive per ADR-0011); `display_name` → `value_full_text` (utf8mb4_unicode_ci); everything else → `value`. |
@@ -150,7 +149,7 @@ the tenant context via the same header.
 
 **ID**: `cpt-insightspec-actor-mariadb`
 
-**Role**: Stores the `persons` and `account_person_map` tables that
+**Role**: Stores the `persons` journal and the `org_chart` edges that
 the service reads and that the SeaORM migrator migrates. Connection
 target named by the gear config's `database_url`
 (`APP__gears__identity-resolution__config__database_url`).
@@ -208,7 +207,7 @@ visible row is well-formed per the routing rules in ADR-0007.
 - Display-name split fallback when explicit `first_name` /
   `last_name` observations are absent.
 - SeaORM-migrator-applied schema (`001_persons.sql`,
-  `002_account_person_map.sql`, ...) per ADR-0006.
+  `003_org_chart.sql`, ...) per ADR-0006.
 
 ### 4.2 Out of Scope
 
@@ -596,11 +595,9 @@ index walk rather than a partition-arithmetic-inside-recursion query.
 
 - [x] `p1` - **ID**: `cpt-insightspec-fr-identity-org-chart-rebuild`
 
-The seeder (`seed-persons-from-identity-input.py` step 9) **MUST**
-rebuild `org_chart` from `persons` using the same two-table-
-swap pattern as `account_person_map`: build into
-`org_chart_next`, atomically `RENAME TABLE` into place, drop
-the old artefact. The rebuild **MUST** UNION two sources of edges:
+The seeder **MUST** rebuild `org_chart` from `persons`: a
+tenant-scoped `DELETE` followed by `INSERT ... SELECT`, inside the
+same transaction as the observation writes. The rebuild **MUST** UNION two sources of edges:
 
 1. `value_type='parent_person_id'` observations (resolved Insight
    UUIDs that a future reconciliation service will write; currently
@@ -654,8 +651,7 @@ Deeper cycles (A->B->C->A) are not detected in Phase 1; the Phase-3
 by `depth` to make those harmless to consumers.
 
 **Rationale**: Append-only `persons` with latest-per-partition makes
-the rebuild deterministic; symmetry with `account_person_map` lets
-operators reason about both caches the same way. The two-source
+the rebuild deterministic. The two-source
 union keeps the cache useful today (Source 2) while making the
 future reconciliation path activate transparently (Source 1). No
 stubs avoids inheriting the deferred operator-resolution work from
@@ -1221,9 +1217,8 @@ non-breaking.
 - [ ] Helm template renders `Service`, `Deployment`, `Secret`, and
       `_helpers.tpl` host references with the canonical
       `insight-identity-resolution` name.
-- [ ] The `migrate` subcommand creates `persons` and
-      `account_person_map` against an empty `identity` MariaDB on
-      first pod start; re-running the pod is a no-op against
+- [ ] The `migrate` subcommand creates `persons` and `org_chart`
+      against an empty `identity` MariaDB on first pod start; re-running the pod is a no-op against
       `seaql_migrations`.
 - [ ] `cfs validate --skip-code --artifact docs/components/backend/identity-resolution/identity`
       reports zero errors.
