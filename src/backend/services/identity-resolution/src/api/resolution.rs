@@ -23,11 +23,21 @@ use super::gate::require_admin;
 use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
-use crate::domain::seed::SourceAccountKey;
+use crate::domain::seed::{KnownBinding, SourceAccountKey};
 use crate::infra::db::{ops_repo, persons_repo, resolution_repo};
 use crate::infra::identity_evidence::{
     AccountEvidence, ClickHouseEvidenceReader, EvidenceSnapshot,
 };
+
+/// A handle or an address, not a prefix of one: a one-character needle scans
+/// the whole fold to answer with everything.
+const MIN_ACCOUNT_SEARCH_CHARS: usize = 3;
+const DEFAULT_ACCOUNT_SEARCH_LIMIT: u64 = 20;
+const MAX_ACCOUNT_SEARCH_LIMIT: u64 = 100;
+
+/// A trail is read, not paged: enough calls to cover any account's history
+/// without letting one response grow without bound.
+const MAX_ACCOUNT_OPERATIONS: u64 = 50;
 
 /// How many accounts one bulk call may carry — a prepared matching table is
 /// pasted by a human, not streamed.
@@ -627,13 +637,25 @@ pub struct AttentionParams {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct QueueItemResponse {
-    /// `contested` | `binding_conflict` | `no_evidence`.
+    /// `contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.
     pub kind: String,
     pub source: String,
     pub source_id: Uuid,
     pub account_id: String,
     pub email: Option<String>,
     pub username: Option<String>,
+    /// How the source describes the account. Nothing here is matchable — it is
+    /// what lets an operator recognise whose account this is when automation
+    /// cannot, which is exactly the case for the ones only they can bind.
+    pub display_name: Option<String>,
+    pub job_title: Option<String>,
+    pub department: Option<String>,
+    pub status: Option<String>,
+    pub manager_email: Option<String>,
+    /// Who holds the account right now. Absent = nobody, which is what an
+    /// unbound account on the queue means; present, it names which of the
+    /// candidates below is the one being disagreed with.
+    pub bound_to: Option<Uuid>,
     /// Persons this account could belong to, if any are known — hydrated into
     /// cards so the operator UI never has to resolve bare ids itself.
     pub candidates: Vec<PersonSummaryResponse>,
@@ -645,6 +667,11 @@ pub struct QueueItemResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonSummaryResponse {
     pub person_id: Uuid,
+    /// The journal holds nothing but a login-mint for this person: they exist
+    /// so somebody could sign in, and may duplicate one the roster knows. Not
+    /// a merge target — the history is on the other side.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub provisional: bool,
     pub email: Option<String>,
     /// Source-native handle (e.g. a git login) — often the only recognisable
     /// field of an identity no HR system has observed yet.
@@ -658,6 +685,7 @@ impl From<PersonCard> for PersonSummaryResponse {
     fn from(card: PersonCard) -> Self {
         Self {
             person_id: card.person_id,
+            provisional: false,
             email: card.email,
             username: card.username,
             display_name: card.display_name,
@@ -665,6 +693,30 @@ impl From<PersonCard> for PersonSummaryResponse {
             status: card.status,
         }
     }
+}
+
+/// Mark the cards the journal holds nothing but a login-mint for.
+///
+/// A separate read rather than a card attribute: the mark is a fact about the
+/// person's bindings, and the card is assembled from observed values.
+///
+/// # Errors
+///
+/// Returns an error if the read fails.
+pub async fn mark_provisional(
+    state: &AppState,
+    tenant: Uuid,
+    people: &mut [PersonSummaryResponse],
+) -> Result<(), CanonicalError> {
+    let ids: Vec<Uuid> = people.iter().map(|p| p.person_id).collect();
+    let provisional = persons_repo::provisional_persons(&state.db, tenant, &ids)
+        .await
+        .map_err(|e| internal(&e, "failed to read which persons are provisional"))?;
+
+    for person in people {
+        person.provisional = provisional.contains(&person.person_id);
+    }
+    Ok(())
 }
 
 /// Share of observed accounts per resolution state — the operator-visible match
@@ -712,6 +764,20 @@ pub async fn attention(
     let page: Vec<_> = review.items.into_iter().take(limit).collect();
 
     let cards = candidate_cards(state.as_ref(), tenant, &page).await?;
+    // Over the candidate ids, NOT the hydrated cards' keys: a login-minted
+    // person has no card attributes at all (their journal holds only the
+    // binding row), so the card set misses exactly the persons this flag
+    // exists to mark.
+    let candidate_ids: Vec<Uuid> = page
+        .iter()
+        .flat_map(|i| i.candidates.iter().copied())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let provisional = persons_repo::provisional_persons(&state.db, tenant, &candidate_ids)
+        .await
+        .map_err(|e| internal(&e, "failed to read which persons are provisional"))?;
+
     let items = page
         .into_iter()
         .map(|i| QueueItemResponse {
@@ -721,9 +787,21 @@ pub async fn attention(
             account_id: i.account.account_id,
             email: i.email,
             username: i.username,
+            display_name: i.description.display_name,
+            job_title: i.description.job_title,
+            department: i.description.department,
+            status: i.description.status,
+            manager_email: i.description.manager_email,
+            bound_to: i.bound_to,
             candidates: person_card::in_requested_order(&i.candidates, &cards)
                 .into_iter()
-                .map(PersonSummaryResponse::from)
+                .map(|card| {
+                    let is_provisional = provisional.contains(&card.person_id);
+                    PersonSummaryResponse {
+                        provisional: is_provisional,
+                        ..PersonSummaryResponse::from(card)
+                    }
+                })
                 .collect(),
         })
         .collect();
@@ -746,10 +824,37 @@ pub async fn attention(
 #[derive(Debug, Serialize, ToSchema)]
 pub struct HistoryEntry {
     pub person_id: Uuid,
+    /// The person this decision pointed at, as a card when one is known.
+    pub person: Option<PersonSummaryResponse>,
     pub author_person_id: Uuid,
+    /// The operator who decided it; absent for automation, which has no card.
+    pub author: Option<PersonSummaryResponse>,
     /// `true` when a person made this decision, `false` for automation.
     pub by_operator: bool,
     pub reason: Option<String>,
+    pub recorded_at: String,
+}
+
+/// One operator call that named this account.
+///
+/// The binding journal says what a decision did; this says who ran it, the
+/// reason they gave, and how far it reached — a merge lands one row here and
+/// one in every other account it moved.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AccountOperationResponse {
+    pub operation_id: Uuid,
+    /// `operator-bind` | `operator-merge` | `operator-detach` | `operator-exclude`.
+    pub verb: String,
+    pub author_person_id: Uuid,
+    /// The author as a card, when the journal knows them by more than an id.
+    pub author: Option<PersonSummaryResponse>,
+    /// What the operator typed, when they typed anything.
+    pub comment: Option<String>,
+    /// Accounts the call named, this one included.
+    pub accounts_touched: usize,
+    /// What the call did to THIS account: `applied` | `already_decided` |
+    /// `refused`. A refusal changed nothing and still belongs in the trail.
+    pub outcome: Option<String>,
     pub recorded_at: String,
 }
 
@@ -761,8 +866,136 @@ pub struct AccountBindingResponse {
     /// The binding in force now, if the account has one.
     pub person_id: Option<Uuid>,
     pub history: Vec<HistoryEntry>,
+    /// Operator calls that named this account, newest first. Absent from the
+    /// binding journal by design: one call can move many accounts, and only
+    /// the call knows why it was made.
+    pub operations: Vec<AccountOperationResponse>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for AccountBindingResponse {}
+
+/// One account as a search answers for it: what it is, and whose it is.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AccountMatchResponse {
+    pub source: String,
+    pub source_id: Uuid,
+    pub account_id: String,
+    pub email: Option<String>,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    /// The person holding it, hydrated. Absent means nobody holds it yet —
+    /// except when `excluded` is set, which is a different fact entirely.
+    pub person: Option<PersonSummaryResponse>,
+    /// The account is deliberately excluded from person metrics (a bot, CI, a
+    /// service account). Without this an exclusion — an operator's recorded
+    /// decision — would read as "bound to nobody" and invite undoing it.
+    pub excluded: bool,
+    /// `true` when a person decided this binding rather than automation.
+    pub bound_by_operator: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AccountSearchResponse {
+    pub items: Vec<AccountMatchResponse>,
+    /// More accounts matched than `limit` allowed — narrow the terms.
+    pub truncated: bool,
+}
+impl toolkit::api::api_dto::ResponseApiDto for AccountSearchResponse {}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountSearchParams {
+    pub q: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// `GET /v1/resolution/accounts?q=` — find an account by a value it carries,
+/// and say whose it is.
+///
+/// The person search answers "which person is this"; this answers the question
+/// an operator arrives with when they hold an account instead: a git handle
+/// from a review, an address from a ticket.
+pub async fn search_accounts(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    axum::extract::Query(params): axum::extract::Query<AccountSearchParams>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    require_admin(&state.db, &ctx).await?;
+    let tenant = ctx.subject_tenant_id();
+
+    let needle = params.q.unwrap_or_default().trim().to_owned();
+    if needle.chars().count() < MIN_ACCOUNT_SEARCH_CHARS {
+        return Err(invalid(
+            "q",
+            &format!("at least {MIN_ACCOUNT_SEARCH_CHARS} characters are required"),
+        ));
+    }
+    let limit = super::listing::clamp_limit(
+        params.limit,
+        DEFAULT_ACCOUNT_SEARCH_LIMIT,
+        MAX_ACCOUNT_SEARCH_LIMIT,
+    );
+
+    let reader = evidence_reader(&state);
+    // Over-fetch by one: the extra row is the truncation probe, never served.
+    let mut found = reader
+        .search(&needle, limit + 1)
+        .await
+        .map_err(|e| internal(&e, "failed to search the observed accounts"))?;
+    let truncated = found.len() > usize::try_from(limit).unwrap_or(usize::MAX);
+    if truncated {
+        found.pop();
+    }
+
+    let keys: Vec<SourceAccountKey> = found.iter().map(|e| e.account.clone()).collect();
+    let bindings = resolution_repo::current_bindings(&state.db, tenant, &keys)
+        .await
+        .map_err(|e| internal(&e, "failed to read current bindings"))?;
+
+    let person_ids: Vec<Uuid> = bindings
+        .values()
+        .map(|b| b.person_id)
+        .filter(|id| *id != EXCLUDED_PERSON)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let cards = persons_repo::person_cards(&state.db, tenant, &person_ids)
+        .await
+        .map_err(|e| internal(&e, "failed to hydrate the holders"))?;
+    let provisional = persons_repo::provisional_persons(&state.db, tenant, &person_ids)
+        .await
+        .map_err(|e| internal(&e, "failed to read which persons are provisional"))?;
+
+    let items = found
+        .into_iter()
+        .map(|account| {
+            let binding = bindings.get(&account.account);
+            AccountMatchResponse {
+                source: account.account.source_type,
+                source_id: account.account.source_id,
+                account_id: account.account.account_id,
+                email: account.email,
+                username: account.username,
+                display_name: account.description.display_name,
+                // A holder with no card attributes (a login-minted stub) is
+                // still a holder: back-fill an id-only card rather than
+                // presenting a bound account as unbound.
+                person: binding.filter(|b| b.person_id != EXCLUDED_PERSON).map(|b| {
+                    let card = cards
+                        .get(&b.person_id)
+                        .cloned()
+                        .unwrap_or_else(|| PersonCard::empty(b.person_id));
+                    PersonSummaryResponse {
+                        provisional: provisional.contains(&b.person_id),
+                        ..PersonSummaryResponse::from(card)
+                    }
+                }),
+                excluded: binding.is_some_and(|b| b.person_id == EXCLUDED_PERSON),
+                bound_by_operator: binding.is_some_and(KnownBinding::is_operator_authored),
+            }
+        })
+        .collect();
+
+    Ok(Json(AccountSearchResponse { items, truncated }))
+}
 
 /// `GET /v1/resolution/accounts/{source}/{source_id}/{account_id}` — why this
 /// account belongs to this person: the binding in force and every decision
@@ -788,15 +1021,49 @@ pub async fn account_binding(
         .await
         .map_err(|e| internal(&e, "failed to read the binding history"))?;
 
+    let operations = ops_repo::corrections_for_account(
+        &state.db,
+        tenant,
+        RESOLUTION_OP,
+        &source,
+        source_id,
+        &account_id,
+        MAX_ACCOUNT_OPERATIONS,
+    )
+    .await
+    .map_err(|e| internal(&e, "failed to read the account's operations"))?;
+
+    // One hydration for every person the trail names — the people it points at
+    // and the operators who decided — so no consumer is left resolving ids.
+    let named: Vec<Uuid> = history
+        .iter()
+        .flat_map(|h| [h.person_id, h.author_person_id])
+        .chain(operations.iter().map(|o| o.author_person_id))
+        .filter(|id| !id.is_nil())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let cards = persons_repo::person_cards(&state.db, tenant, &named)
+        .await
+        .map_err(|e| internal(&e, "failed to read the persons named in the trail"))?;
+    let card_of = |id: Uuid| cards.get(&id).cloned().map(PersonSummaryResponse::from);
+
     let entries: Vec<HistoryEntry> = history
         .iter()
         .map(|h| HistoryEntry {
             person_id: h.person_id,
+            person: card_of(h.person_id),
             author_person_id: h.author_person_id,
+            author: card_of(h.author_person_id),
             by_operator: !h.author_person_id.is_nil(),
             reason: h.reason.clone(),
             recorded_at: super::seed::fmt_ts(h.created_at),
         })
+        .collect();
+
+    let calls = operations
+        .iter()
+        .map(|op| account_operation(op, &account, card_of(op.author_person_id)))
         .collect();
 
     Ok(Json(AccountBindingResponse {
@@ -805,7 +1072,57 @@ pub async fn account_binding(
         account_id,
         person_id: history.first().map(|h| h.person_id),
         history: entries,
+        operations: calls,
     }))
+}
+
+/// Read one correction call as the trail shows it, from the payload it stored.
+fn account_operation(
+    op: &ops_repo::Operation,
+    account: &SourceAccountKey,
+    author: Option<PersonSummaryResponse>,
+) -> AccountOperationResponse {
+    let request: serde_json::Value = op
+        .request_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let accounts = request
+        .get("accounts")
+        .and_then(serde_json::Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+
+    AccountOperationResponse {
+        operation_id: op.operation_id,
+        verb: request
+            .get("verb")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        author_person_id: op.author_person_id,
+        author,
+        comment: request
+            .get("comment")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .map(str::to_owned),
+        accounts_touched: accounts.len(),
+        outcome: accounts
+            .iter()
+            .find(|entry| names_account(entry, account))
+            .and_then(|entry| entry.get("outcome"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        recorded_at: super::seed::fmt_ts(op.started_at),
+    }
+}
+
+fn names_account(entry: &serde_json::Value, account: &SourceAccountKey) -> bool {
+    entry.get("source").and_then(serde_json::Value::as_str) == Some(&account.source_type)
+        && entry.get("account_id").and_then(serde_json::Value::as_str) == Some(&account.account_id)
+        && entry.get("source_id").and_then(serde_json::Value::as_str)
+            == Some(&account.source_id.to_string())
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -876,6 +1193,7 @@ fn kind_label(kind: ItemKind) -> &'static str {
     match kind {
         ItemKind::Contested => "contested",
         ItemKind::BindingConflict => "binding_conflict",
+        ItemKind::ProvisionedAtLogin => "provisioned_at_login",
         ItemKind::NoEvidence => "no_evidence",
     }
 }
@@ -902,6 +1220,7 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), 
             account: e.account,
             email: e.email,
             username: e.username,
+            description: e.description,
             is_closed: e.is_closed,
         })
         .collect();

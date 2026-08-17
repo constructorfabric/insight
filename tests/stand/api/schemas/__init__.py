@@ -67,6 +67,7 @@ from .common import (
 )
 from .identity import (
     AccountBindingResponse,
+    AccountSearchResponse,
     AttentionResponse,
     CorrectionResponse,
     MeResponse,
@@ -119,6 +120,7 @@ __all__: Sequence[str] = (
     "EXTRACTOR_REJECTION_CONTENT_TYPE",
     "PROBLEM_CONTENT_TYPE",
     "AccountBindingResponse",
+    "AccountSearchResponse",
     "AttentionResponse",
     "CorrectionResponse",
     "CustomMetric",

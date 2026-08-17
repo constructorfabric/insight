@@ -107,20 +107,6 @@ class CreateVisibilityRequest(BaseModel):
     viewer_person_id: UUID
 
 
-class HistoryEntry(BaseModel):
-    """
-    One decision in an account's history.
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    author_person_id: UUID
-    by_operator: bool = Field(..., description='`true` when a person made this decision, `false` for automation.')
-    person_id: UUID
-    reason: str | None = None
-    recorded_at: str
-
-
 class ItemResult(BaseModel):
     """
     What happened to one requested account.
@@ -232,6 +218,7 @@ class PersonSummaryResponse(BaseModel):
     email: str | None = None
     job_title: str | None = None
     person_id: UUID
+    provisional: bool | None = Field(None, description='The journal holds nothing but a login-mint for this person: they exist\nso somebody could sign in, and may duplicate one the roster knows. Not\na merge target — the history is on the other side.')
     status: str | None = None
     username: str | None = Field(None, description='Source-native handle (e.g. a git login) — often the only recognisable\nfield of an identity no HR system has observed yet.')
 
@@ -347,11 +334,17 @@ class QueueItemResponse(BaseModel):
         extra='forbid',
     )
     account_id: str
+    bound_to: UUID | None = Field(None, description='Who holds the account right now. Absent = nobody, which is what an\nunbound account on the queue means; present, it names which of the\ncandidates below is the one being disagreed with.')
     candidates: list[PersonSummaryResponse] = Field(..., description='Persons this account could belong to, if any are known — hydrated into\ncards so the operator UI never has to resolve bare ids itself.')
+    department: str | None = None
+    display_name: str | None = Field(None, description='How the source describes the account. Nothing here is matchable — it is\nwhat lets an operator recognise whose account this is when automation\ncannot, which is exactly the case for the ones only they can bind.')
     email: str | None = None
-    kind: str = Field(..., description='`contested` | `binding_conflict` | `no_evidence`.')
+    job_title: str | None = None
+    kind: str = Field(..., description='`contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.')
+    manager_email: str | None = None
     source: str
     source_id: UUID
+    status: str | None = None
     username: str | None = None
 
 
@@ -471,15 +464,51 @@ class VisiblePersonsResponse(BaseModel):
     visible: list[UUID]
 
 
-class AccountBindingResponse(BaseModel):
+class AccountMatchResponse(BaseModel):
+    """
+    One account as a search answers for it: what it is, and whose it is.
+    """
     model_config = ConfigDict(
         extra='forbid',
     )
     account_id: str
-    history: list[HistoryEntry]
-    person_id: UUID | None = Field(None, description='The binding in force now, if the account has one.')
+    bound_by_operator: bool = Field(..., description='`true` when a person decided this binding rather than automation.')
+    display_name: str | None = None
+    email: str | None = None
+    excluded: bool = Field(..., description='The account is deliberately excluded from person metrics (a bot, CI, a\nservice account). Without this an exclusion — an operator\'s recorded\ndecision — would read as "bound to nobody" and invite undoing it.')
+    person: PersonSummaryResponse | None = None
     source: str
     source_id: UUID
+    username: str | None = None
+
+
+class AccountOperationResponse(BaseModel):
+    """
+    One operator call that named this account.
+
+    The binding journal says what a decision did; this says who ran it, the
+    reason they gave, and how far it reached — a merge lands one row here and
+    one in every other account it moved.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    accounts_touched: int = Field(..., description='Accounts the call named, this one included.', ge=0)
+    author: PersonSummaryResponse | None = None
+    author_person_id: UUID
+    comment: str | None = Field(None, description='What the operator typed, when they typed anything.')
+    operation_id: UUID
+    outcome: str | None = Field(None, description='What the call did to THIS account: `applied` | `already_decided` |\n`refused`. A refusal changed nothing and still belongs in the trail.')
+    recorded_at: str
+    verb: str = Field(..., description='`operator-bind` | `operator-merge` | `operator-detach` | `operator-exclude`.')
+
+
+class AccountSearchResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[AccountMatchResponse]
+    truncated: bool = Field(..., description='More accounts matched than `limit` allowed — narrow the terms.')
 
 
 class AttentionResponse(BaseModel):
@@ -500,6 +529,22 @@ class CorrectionResponse(BaseModel):
     applied: int = Field(..., ge=0)
     items: list[ItemResult]
     new_person_id: UUID | None = Field(None, description='Set by `detach` when the account reached the new person; absent when\nthe write was refused, since no binding points at that id.')
+
+
+class HistoryEntry(BaseModel):
+    """
+    One decision in an account's history.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    author: PersonSummaryResponse | None = None
+    author_person_id: UUID
+    by_operator: bool = Field(..., description='`true` when a person made this decision, `false` for automation.')
+    person: PersonSummaryResponse | None = None
+    person_id: UUID
+    reason: str | None = None
+    recorded_at: str
 
 
 class MeResponse(BaseModel):
@@ -588,6 +633,18 @@ class VisibilityListResponse(BaseModel):
     )
     items: list[VisibilityResponse]
     next_cursor: str | None = Field(None, description='Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).')
+
+
+class AccountBindingResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    account_id: str
+    history: list[HistoryEntry]
+    operations: list[AccountOperationResponse] = Field(..., description='Operator calls that named this account, newest first. Absent from the\nbinding journal by design: one call can move many accounts, and only\nthe call knows why it was made.')
+    person_id: UUID | None = Field(None, description='The binding in force now, if the account has one.')
+    source: str
+    source_id: UUID
 
 
 PersonResponse.model_rebuild()

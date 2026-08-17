@@ -28,6 +28,11 @@ export default defineConfig({
     },
   },
   test: {
+    // A timezone with no UTC-coinciding offset, ever. CI runners live in UTC,
+    // where "parse a zone-less timestamp as UTC" and "parse it as local" are
+    // the same function — every zone-handling test passes vacuously. Pinning
+    // a non-UTC zone makes those tests able to fail.
+    env: { TZ: "Pacific/Kiritimati" },
     // Coverage is a GLOBAL option in Vitest — with `projects` it must live at
     // the root `test` level; a `coverage` block nested inside a project is
     // ignored (which silently dropped our `cobertura` reporter and left CI's

@@ -100,6 +100,10 @@ function isMeRole(role: unknown): role is MeRole {
 /** A person as operator surfaces display them — the wire `PersonSummaryResponse`. */
 export interface PersonSummary {
   person_id: string;
+  /** The journal holds nothing but a login-mint for them: they exist so
+   *  somebody could sign in, and may duplicate a person the roster knows.
+   *  Never a merge target — the history is on the other side. */
+  provisional?: boolean;
   email?: string | null;
   username?: string | null;
   display_name?: string | null;
@@ -116,6 +120,16 @@ export interface AttentionItem {
   account_id: string;
   email?: string | null;
   username?: string | null;
+  /** How the source describes the account. None of it is matchable — it is
+   *  what lets an operator recognise an account automation cannot place. */
+  display_name?: string | null;
+  job_title?: string | null;
+  department?: string | null;
+  status?: string | null;
+  manager_email?: string | null;
+  /** Who holds the account right now; absent = nobody. Names which of the
+   *  candidates is the one being disagreed with. */
+  bound_to?: string | null;
   /** Hydrated person cards, not bare ids. */
   candidates: PersonSummary[];
 }
@@ -164,14 +178,80 @@ export async function getAttention(limit = 200): Promise<AttentionResponse> {
   return attention;
 }
 
+/** One account a search matched, with whose it is. */
+export interface AccountMatch {
+  source: string;
+  source_id: string;
+  account_id: string;
+  email?: string | null;
+  username?: string | null;
+  display_name?: string | null;
+  /** The person holding it; absent = nobody holds it yet — unless
+   *  `excluded` is set, which is a different fact entirely. */
+  person?: PersonSummary | null;
+  /** Deliberately excluded from person metrics (bot / CI). An operator's
+   *  recorded decision — not "bound to nobody", and not an invitation to
+   *  bind. Optional so an older backend reads as never-excluded. */
+  excluded?: boolean;
+  bound_by_operator: boolean;
+}
+
+export interface AccountSearchResponse {
+  items: AccountMatch[];
+  /** More matched than the limit allowed — narrow the terms. */
+  truncated: boolean;
+}
+
+/**
+ * Find an observed account by a value it carries (`GET /resolution/accounts`).
+ * The person search answers "which person is this"; this answers the question
+ * an operator arrives with when they hold an account instead.
+ */
+export async function searchAccounts(
+  q: string,
+  limit = 20,
+): Promise<AccountSearchResponse> {
+  const res = await fetchWithAuth(
+    `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}&limit=${limit}`,
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  return (await res.json()) as AccountSearchResponse;
+}
+
 /** One decision recorded for an account, newest first on the wire. */
 export interface BindingHistoryEntry {
   person_id: string;
+  /** The person it pointed at, as a card when the journal knows one. */
+  person?: PersonSummary | null;
   author_person_id: string;
+  /** The operator who decided it; absent for automation. */
+  author?: PersonSummary | null;
   /** True when a human recorded it; false = automation (seed/resolver). */
   by_operator: boolean;
   /** Verb code (`operator-bind`, …) or an automation reason. Open vocabulary. */
   reason?: string | null;
+  recorded_at: string;
+}
+
+/**
+ * One operator call that named this account. Separate from the binding journal
+ * by design: a call can move many accounts, and only the call knows why it was
+ * made.
+ */
+export interface AccountOperation {
+  operation_id: string;
+  verb: string;
+  author_person_id: string;
+  author?: PersonSummary | null;
+  /** What the operator typed, when they typed anything. */
+  comment?: string | null;
+  /** Accounts the call named, this one included. */
+  accounts_touched: number;
+  /** What it did to THIS account: `applied` | `already_decided` | `refused`. */
+  outcome?: string | null;
   recorded_at: string;
 }
 
@@ -182,6 +262,9 @@ export interface AccountBinding {
   /** Absent = the account is currently bound to nobody. */
   person_id?: string | null;
   history: BindingHistoryEntry[];
+  /** Operator calls naming this account, newest first. Optional so a client
+   *  deployed ahead of the backend keeps working. */
+  operations?: AccountOperation[];
 }
 
 /**

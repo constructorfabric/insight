@@ -15,6 +15,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
+use crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON;
 use crate::domain::resolution::{BINDING_VALUE_TYPE, BindingRow};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
 
@@ -38,6 +39,7 @@ pub async fn current_bindings(
                 value_id AS source_account_id,
                 person_id,
                 author_person_id,
+                reason,
                 ROW_NUMBER() OVER (
                     PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, value_id
                     ORDER BY created_at DESC, id DESC
@@ -49,7 +51,8 @@ pub async fn current_bindings(
               AND (insight_source_type, insight_source_id, value_id) IN (";
     const SQL_SUFFIX: &str = r")
         )
-        SELECT insight_source_type, insight_source_id, source_account_id, person_id, author_person_id
+        SELECT insight_source_type, insight_source_id, source_account_id, person_id,
+               author_person_id, reason
         FROM ranked
         WHERE rn = 1
     ";
@@ -95,6 +98,7 @@ fn collect_bindings(
         let account_id: String = row.try_get("", "source_account_id")?;
         let person_id: Vec<u8> = row.try_get("", "person_id")?;
         let author_person_id: Vec<u8> = row.try_get("", "author_person_id")?;
+        let reason: Option<String> = row.try_get("", "reason")?;
         map.insert(
             SourceAccountKey {
                 source_type,
@@ -104,6 +108,7 @@ fn collect_bindings(
             KnownBinding {
                 person_id: Uuid::from_slice(&person_id)?,
                 author_person_id: Uuid::from_slice(&author_person_id)?,
+                provisioned_at_login: reason.as_deref() == Some(LOGIN_BOOTSTRAP_REASON),
             },
         );
     }
