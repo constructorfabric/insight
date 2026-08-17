@@ -5,7 +5,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 
 import { SidebarSettings } from "./sidebar-settings";
 
-// INVARIANT: `w-56 p-1` mirrors the rail's settings popover (lens-rail.tsx),
+// INVARIANT: `w-64 p-1` mirrors the rail's settings popover (lens-rail.tsx),
 // the narrowest surface these controls render in.
 const meta: Meta<typeof SidebarSettings> = {
   title: "Components/SidebarSettings",
@@ -13,7 +13,7 @@ const meta: Meta<typeof SidebarSettings> = {
   decorators: [
     (Story) => (
       <SidebarProvider>
-        <div className="w-56 p-1">
+        <div className="w-64 p-1">
           <Story />
         </div>
       </SidebarProvider>

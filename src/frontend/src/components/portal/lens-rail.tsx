@@ -283,7 +283,7 @@ export function LensRail() {
             <PopoverContent
               side="right"
               align="end"
-              className="w-56 gap-0 p-1"
+              className="w-64 gap-0 p-1"
               // Handing focus back to the trigger reopens the rail through
               // `onFocusCapture`, over the surface just asked for.
               finalFocus={false}

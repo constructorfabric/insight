@@ -62,7 +62,7 @@ export function SidebarSettings() {
           >
             <span className="flex items-center gap-2">
               <Wrench className="size-4" />
-              <span>Planned sections</span>
+              <span>Show planned sections</span>
             </span>
             <Switch
               checked={showPlanned}
