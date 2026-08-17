@@ -540,6 +540,15 @@ its own reconcile Role with `argoproj.io` and `onepassword.com` rules. Someone
 trimmed the supplemental `Role` in `ci-deployer-rbac.yaml` — diff it against
 git history and re-run `make provision-ci ENV=test-stand` to repair drift.
 
+**`could not get information about the resource <kind> … is forbidden`**
+The chart grew a kind the Role does not enumerate — the guard working, not a
+broken credential. Helm reads *every* rendered object before it plans the
+patch, so one unreadable kind fails the whole upgrade. Either add the kind to
+`ci-deployer-rbac.yaml` and re-apply (`make -C deploy/gitops provision-ci
+ENV=test-stand`, which does not rotate the token), or turn the subchart off in
+this environment's `values.yaml` when the stand does not need it —
+`gitCliProxy.deploy: false` is there for that reason.
+
 **`namespaces is forbidden` on a first install**
 `helm upgrade --install --create-namespace` POSTs a Namespace at cluster scope,
 but only when the release does not yet exist. This credential cannot create

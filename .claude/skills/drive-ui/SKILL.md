@@ -1,6 +1,6 @@
 ---
 name: drive-ui
-description: "Drive the Insight web UI in a real browser to see, verify, or capture evidence from any stand — a local compose or kind install, or a shared remote one. Use this whenever the task means LOOKING at the dashboard rather than reading its code: 'check the IC page', 'is that chart still broken', 'screenshot the metrics drilldown', 'reproduce it in the UI', 'grab evidence for a bug', 'open the stand and look at X', or any UI defect you are about to file. Read it BEFORE launching a browser at any remote stand, because the Entra-plus-passkey ones cannot be logged into from a browser you launched, and the wrong acquisition move costs the user a login they cannot complete. Also read it before reporting a wrong number as a UI defect — the data that decides it is captured here, and this skill collects observations rather than drawing conclusions from them. The `playwright-cli` skill owns the commands; this skill owns getting an authenticated browser and capturing evidence someone can act on, and hands the issue itself to `file-bug-insight`."
+description: "Drive the Insight web UI in a real browser to see, verify, explore, or capture evidence from any stand — a local compose or kind install, or a shared remote one. Use this whenever the task means LOOKING at the dashboard rather than reading its code: 'check the IC page', 'is that chart still broken', 'screenshot the metrics drilldown', 'reproduce it in the UI', 'grab evidence for a bug', 'open the stand and look at X', 'exercise every option in this screen', 'find the download limit', or any UI defect you are about to file. Read it BEFORE launching a browser at any remote stand, because the Entra-plus-passkey ones cannot be logged into from a browser you launched, and the wrong acquisition move costs the user a login they cannot complete. Also read it before reporting a wrong number as a UI defect: the data that decides it is captured here. The `playwright-cli` skill owns the commands and this skill owns getting an authenticated browser, exploring what is on screen, and capturing evidence someone can act on — it hands the issue itself to `file-bug-insight`, and `scope-feature-tests` plans coverage on paper where this drives the stand in front of you."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill
@@ -8,7 +8,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill
 
 # Driving the Insight UI
 
-Two things about the Insight UI go wrong expensively, and neither is about clicking: **getting a browser that is already authenticated**, and **capturing evidence a reader can act on**. This skill covers both, for local and remote stands alike. The `playwright-cli` skill owns the command surface — snapshots, refs, clicks, screenshots, tracing — so read it for *how* to drive.
+Three things about the Insight UI go wrong expensively: **getting a browser that is already authenticated**, **covering a screen full of options without either missing a case or clicking forever**, and **capturing evidence a reader can act on**. This skill covers all three, for local and remote stands alike. The `playwright-cli` skill owns the command surface — snapshots, refs, clicks, screenshots, tracing — so read it for *how* to drive.
 
 The SPA lives in this repo at `src/frontend/` — source, Dockerfile and Helm chart together. So when you need to read the UI's code rather than run it, look there.
 
@@ -18,7 +18,8 @@ The right acquisition move depends entirely on the identity provider, so start t
 
 | Stand | Auth | Move |
 |---|---|---|
-| local compose (`http://localhost:3000`) | Keycloak, username + password | `playwright-cli open` |
+| local compose, vite frontend (`http://localhost:3000`) | Keycloak, username + password | `playwright-cli open` |
+| seeded compose test stand | Keycloak, username + password | `playwright-cli open --persistent` on the **gateway** origin, never the published frontend port |
 | local k8s / kind (`http://localhost:8080` after a port-forward) | Keycloak, username + password | `playwright-cli open --persistent` |
 | a shared remote stand behind Keycloak | username + password | `playwright-cli open --persistent` |
 | a remote stand behind Microsoft Entra | **passkey** | Attach to the user's own Chrome — never launch |
@@ -36,6 +37,8 @@ What actually blocks you is identity, not auth. The login email has to resolve t
 Read that symptom as "the stand isn't ready", not "the product is broken" — filing it would be a `layer: stand` finding, which `file-bug-insight` will bounce.
 
 The Keycloak login is a real username-and-password form, so `--persistent` is worth it — the session survives between runs.
+
+The seeded test stand is different from ordinary development compose. Drive it through the origin `test_stand_origin` in `dev-compose.sh` computes: read `GATEWAY_PORT` from the `.env.compose.test-stand` belonging to the worktree that launched the stack, then open `http://localhost:<port>`. Do not open the published `insight-front` port. That nginx serves the SPA and nothing else — `src/frontend/nginx/default.conf.template` has no `/api` or `/auth` location, so both fall through `try_files $uri $uri/ /index.html` and answer HTML. A browser there parses the login chain as a page and loops, which reads as a broken frontend and is not one. The gateway is the single origin that fronts SPA, auth and API together.
 
 ### Behind a passkey: attach, never launch
 
@@ -99,6 +102,18 @@ playwright-cli requests     # then `request <n>` for the failing call's status a
 ```
 
 Attach both to the report: the value on screen, and the value the API actually returned, pasted rather than characterised. Those two facts side by side are what a reader needs — leave what they imply to whoever picks the issue up. `metric-parity` collects the same question further down the medallion when you can reach it.
+
+## Explore a configurable surface
+
+A screen with option controls — a report builder, an export menu, a filtered drilldown — has more combinations than anyone can click, so decide what to click before opening it. `playwright-cli snapshot` gives you the rendered control set; the code behind it in `src/frontend/` gives you the closed sets and the limits the request is checked against. Those are the axes. `scope-feature-tests` owns deciding which of them are worth writing tests for; this is what to do with a browser once one is in front of you.
+
+Exercise every member of a short, closed axis, and combine axes pairwise rather than building an unbounded Cartesian product — a full cross of five controls is a day of clicking and nobody reads the result.
+
+For every numeric, date, row, request or file limit, drive the pair: the largest value it accepts and the smallest it refuses. Add empty and single-item cases where those are genuinely different states. A distant invalid value proves only that rejection exists — it hides an off-by-one between what the UI allows and what the API accepts, which is where these mismatches actually live.
+
+Enter URL-backed state both ways: navigate with the controls, then load the equivalent URL cold and reload it, and walk Back/Forward when the feature claims its state is shareable. A validator passing in isolation does not prove the router runs it before the page renders, and this SPA has two paths — `validatePortalSearch` (`src/frontend/src/lib/portal/portal-search.ts`) silently drops what it cannot parse, while `assertDateRange` (`src/frontend/src/api/period-to-date-range.ts`) throws into `AppErrorBoundary` and replaces the whole shell. The same bad link can degrade quietly or blank the app depending on which one it reaches, so try it rather than reasoning about it.
+
+When the surface builds a downloadable artifact, open the artifact. Parse every format it offers and compare headers, row count, missing-versus-zero cells and a representative value against the preview or the API response — `playwright-cli requests` gives you that response to compare against. A download event and a non-zero byte count tell you the transport worked, which was never the part in doubt.
 
 ## Capture evidence someone can act on
 
