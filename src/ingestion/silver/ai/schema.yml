@@ -50,8 +50,8 @@ models:
           Anthropic API key identifier. Populated when a source authenticated
           via an API key rather than a user session (common for Claude Code
           CLI: organisations provision named per-developer keys). Resolved
-          to person_id in Silver Step 2 via identity.aliases. NULL for
-          Cursor and for Claude Code rows with actor_type='user'.
+          to person_id by the resolve_person_id macro. NULL for Cursor and
+          for Claude Code rows with actor_type='user'.
       - name: day
         description: "Calendar date of usage (UTC)"
         tests:

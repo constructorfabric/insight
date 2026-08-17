@@ -210,7 +210,7 @@ Deterministic matching first (exact email, exact HR ID). Fuzzy matching is opt-i
 
 - [ ] `p2` - **ID**: `cpt-insightspec-ir-constraint-storage-split-v2`
 
-ClickHouse holds the evidence and read-side tables: `identity_inputs` (connector observations) and `identity.identity_persons` (the persons-sync mirror of the journal consumed by dbt). The legacy `identity.aliases` table also physically exists in ClickHouse but is not part of the resolution path (see §3.7).
+ClickHouse holds the evidence and read-side tables: `identity_inputs` (connector observations) and `identity.identity_persons` (the persons-sync mirror of the journal consumed by dbt).
 
 The journal tables — `persons` (append-only observation log), `account_person_map` (derived SCD2 cache), `operations` (admin-operation journal) — are stored in MariaDB (see §3.7): a transactional store is the right fit for binding decisions, row-level operator corrections, and audit history. Schema is owned and applied by the `identity-resolution` Rust service itself via its embedded SeaORM `Migrator` (see ADR-0006).
 
@@ -520,7 +520,7 @@ All write verbs append to the `persons` journal (never update/delete), record th
 
 | Aspect | Value |
 |---|---|
-| Tables | `identity_inputs` (MergeTree, connector-written), `identity.identity_persons` (mirror, swapped atomically), legacy `identity.aliases` |
+| Tables | `identity_inputs` (MergeTree, connector-written), `identity.identity_persons` (mirror, swapped atomically) |
 | Version | 24.x+ (for `generateUUIDv7()` support) |
 | Access | Read by persons-seed; written by dbt (inputs) and persons-sync (mirror) |
 | Connection | HTTP interface / native protocol |
@@ -632,7 +632,7 @@ sequenceDiagram
 
 - [ ] `p3` - **ID**: `cpt-insightspec-ir-db-schemas`
 
-Implemented tables: `identity_inputs` (ClickHouse, evidence), `identity.identity_persons` (ClickHouse, persons-sync mirror of the journal), `persons` / `account_person_map` / `operations` (MariaDB, owned by the Rust `identity-resolution` service — see ADR-0002, ADR-0003, ADR-0006). The ClickHouse `aliases` table exists but is legacy (below). The remaining v2.0 tables (`match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) were never built — see "Future tables" at the end of this section. Naming follows PR #55 conventions. For ClickHouse tables: no Nullable unless semantically required; use empty string (`''`) or zero sentinel (`'1970-01-01'`) instead.
+Implemented tables: `identity_inputs` (ClickHouse, evidence), `identity.identity_persons` (ClickHouse, persons-sync mirror of the journal), `persons` / `account_person_map` / `operations` (MariaDB, owned by the Rust `identity-resolution` service — see ADR-0002, ADR-0003, ADR-0006). The remaining v2.0 tables (`match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) were never built — see "Future tables" at the end of this section. Naming follows PR #55 conventions. For ClickHouse tables: no Nullable unless semantically required; use empty string (`''`) or zero sentinel (`'1970-01-01'`) instead.
 
 #### Table: `identity_inputs`
 
@@ -684,55 +684,6 @@ The models are incremental (`append` strategy): each run processes only `fields_
 | `t-001` | `src-bamboo` | `bamboohr` | `E123` | `employee_id` | `E123` | `bronze_bamboohr.employees.id` | `UPSERT` |
 | `t-001` | `src-gitlab` | `gitlab` | `42` | `email` | `anna.ivanova@acme.com` | `bronze_gitlab.users.email` | `UPSERT` |
 | `t-001` | `src-gitlab` | `gitlab` | `42` | `username` | `aivanova` | `bronze_gitlab.users.username` | `UPSERT` |
-
----
-
-#### Table: `aliases` (LEGACY)
-
-**ID**: `cpt-insightspec-ir-dbtable-aliases`
-
-> **Status: legacy.** The table physically exists in ClickHouse and is populated by dbt seed models only (always with `confidence = 1.0`), but it is **not consumed by the resolution path** — analytics resolves through the `identity.identity_persons` mirror and the `resolve_person_id` macro, and the service resolves through `persons`. Retirement candidate; retained here for reference until the future MatchingEngine decides whether to reuse or replace it.
-
-Resolved alias-to-person mapping. Each row links one `(value_type, value)` from one source to one person.
-
-| Column | Type | Description |
-|---|---|---|
-| `id` | `UUID DEFAULT generateUUIDv7()` | PK |
-| `insight_tenant_id` | `UUID` | Tenant isolation |
-| `person_id` | `UUID` | Logical FK → `persons.person_id` |
-| `value_type` | `LowCardinality(String)` | `id`, `email`, `username`, `employee_id`, `display_name`, `platform_id` |
-| `value` | `String` | Normalized alias value |
-| `value_field_name` | `String` | Fully-qualified source field path (from identity_inputs) |
-| `insight_source_id` | `UUID` | Source system that provided this alias |
-| `insight_source_type` | `LowCardinality(String)` | Source type |
-| `source_account_id` | `String` | Raw account ID in the source system |
-| `confidence` | `Float32` | Match confidence (1.0 = exact) |
-| `is_active` | `UInt8` | 1 = active, 0 = deactivated |
-| `effective_from` | `DateTime64(3, 'UTC')` | When this alias mapping became effective |
-| `effective_to` | `DateTime64(3, 'UTC')` | When this alias mapping ceased (`'1970-01-01'` = current) |
-| `first_observed_at` | `DateTime64(3, 'UTC')` | First time this alias was seen from this source |
-| `last_observed_at` | `DateTime64(3, 'UTC')` | Last time this alias was confirmed from this source |
-| `created_at` | `DateTime64(3, 'UTC')` | Row creation time |
-| `updated_at` | `DateTime64(3, 'UTC')` | Last modification time |
-| `is_deleted` | `UInt8` | Soft-delete flag (0 = active, 1 = deleted) |
-
-**PK**: `id`
-
-**ORDER BY**: `(insight_tenant_id, value_type, value, insight_source_id, id)`
-
-**Engine**: `ReplacingMergeTree(updated_at)`
-
-**Constraints**:
-- Logical uniqueness: one active alias per `(insight_tenant_id, value_type, value, insight_source_id)` at any time — enforced at application level since ClickHouse lacks unique constraints
-- `is_deleted = 1` rows are excluded from resolution lookups
-
-**Example**:
-
-| insight_tenant_id | person_id | value_type | value | insight_source_type | confidence | is_active |
-|---|---|---|---|---|---|---|
-| `t-001` | `p-1001` | `email` | `anna.ivanova@acme.com` | `bamboohr` | 1.0 | 1 |
-| `t-001` | `p-1001` | `employee_id` | `E123` | `bamboohr` | 1.0 | 1 |
-| `t-001` | `p-1001` | `username` | `aivanova` | `gitlab` | 0.95 | 1 |
 
 ---
 
