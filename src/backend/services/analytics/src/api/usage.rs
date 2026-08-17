@@ -41,6 +41,10 @@ const MAX_WINDOW_DAYS: i64 = 400;
 const WINDOW: &str =
     "tenant_id = toUUID(?) AND toDate(ts) >= toDate(?) AND toDate(ts) <= toDate(?)";
 
+/// A record carrying no session id stores `''`, and every such row across every
+/// person and day is that same value — one phantom visit if counted naively.
+const VISITS: &str = "uniqExactIf(session_id, session_id != '')";
+
 /// SDK v2 body. Fields shared by every record are hoisted out of them into
 /// `meta`, so a record carries only what differs.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -178,7 +182,7 @@ fn data_field(data: Option<&serde_json::Value>, key: &str) -> String {
 
 fn totals_sql(visitors: &str) -> String {
     format!(
-        "SELECT uniqExact(session_id) AS visits, {visitors} AS visitors, \
+        "SELECT {VISITS} AS visits, {visitors} AS visitors, \
          countIf(event_name = '{PAGE_VIEW}') AS page_views \
          FROM {TABLE} WHERE {WINDOW}"
     )
@@ -186,7 +190,7 @@ fn totals_sql(visitors: &str) -> String {
 
 fn by_day_sql(visitors: &str) -> String {
     format!(
-        "SELECT toString(toDate(ts)) AS day, uniqExact(session_id) AS visits, \
+        "SELECT toString(toDate(ts)) AS day, {VISITS} AS visits, \
          {visitors} AS visitors \
          FROM {TABLE} WHERE {WINDOW} GROUP BY day ORDER BY day"
     )
@@ -224,16 +228,25 @@ fn people_sql() -> String {
          coalesce(p.display_name, '') AS display_name, \
          u.visits AS visits, u.page_views AS page_views, u.last_seen AS last_seen \
          FROM (\
-           SELECT person_id AS person, uniqExact(session_id) AS visits, \
+           SELECT person_id AS person, {VISITS} AS visits, \
            countIf(event_name = '{PAGE_VIEW}') AS page_views, \
            toString(max(ts)) AS last_seen \
            FROM {TABLE} WHERE {WINDOW} AND person_id != toUUID('{NIL_UUID}') \
            GROUP BY person ORDER BY visits DESC, page_views DESC \
            LIMIT {BREAKDOWN_LIMIT}) AS u \
          LEFT JOIN (\
-           SELECT person_id, argMax(value_effective, (created_at, id)) AS display_name \
+           SELECT person_id, \
+           coalesce(\
+             nullIf(argMaxIf(value_effective, (created_at, id), value_type = 'display_name'), ''), \
+             nullIf(trimBoth(concat(\
+               coalesce(argMaxIf(value_effective, (created_at, id), value_type = 'first_name'), ''), \
+               ' ', \
+               coalesce(argMaxIf(value_effective, (created_at, id), value_type = 'last_name'), '') \
+             )), '') \
+           ) AS display_name \
            FROM identity.identity_persons \
-           WHERE value_type = 'display_name' AND insight_tenant_id = toUUID(?) \
+           WHERE value_type IN ('display_name', 'first_name', 'last_name') \
+           AND insight_tenant_id = toUUID(?) \
            GROUP BY person_id) AS p ON p.person_id = u.person \
          ORDER BY u.visits DESC, u.page_views DESC"
     )

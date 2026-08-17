@@ -13,10 +13,13 @@ routes, and the refusal is only observable with a session.
 
 Ingest is the one place this suite writes rows it cannot remove. Usage events are
 append-only and no operation deletes them, so `scratch.py`'s create-then-delete
-policy does not reach them. Two things keep that safe: `/v1/usage/summary` is the
-table's only reader, so nothing else in the suite can see what accumulates; and
-the assertions below look for one run-tagged path rather than for a total, so a
-stand that already holds events from earlier runs changes no outcome.
+policy does not reach them. `/v1/usage/summary` is the table's only reader, so
+nothing else in the suite sees what accumulates — but this module has to defend
+itself: the breakdowns are ranked top-N lists, so every read here asks for THIS
+RUN's day only. Left on the default window, a stand with more than
+`BREAKDOWN_LIMIT` single-view paths from earlier runs would tie-break the fresh
+one out of `by_page`, and the wait below would fail for a reason that has nothing
+to do with the code under test.
 
 The 401 half is in `test_gateway.py`, swept over every operation at once.
 """
@@ -24,6 +27,7 @@ The 401 half is in `test_gateway.py`, swept over every operation at once.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 from insight_stand import ApiClient, PersonaSession, analytics_path, wait_until
@@ -76,8 +80,15 @@ def _config(client: ApiClient) -> UsageConfigResponse:
     return response.parse(UsageConfigResponse)
 
 
-def _summary(client: ApiClient) -> UsageSummaryResponse:
-    response = client.get(SUMMARY)
+def _today() -> str:
+    """The server buckets by UTC day, so the run's own window is the UTC date."""
+    return datetime.now(UTC).date().isoformat()
+
+
+def _summary(client: ApiClient, since: str) -> UsageSummaryResponse:
+    # `since` is captured before the write and `until` read now, so a run that
+    # straddles UTC midnight still spans the day its own beacon landed on.
+    response = client.get(SUMMARY, params={"since": since, "until": _today()})
     assert response.status_code == 200, f"summary: {response.status_code} {response.text[:300]}"
     return response.parse(UsageSummaryResponse)
 
@@ -99,6 +110,7 @@ def summary_after_a_beacon(
     if not _config(lead_session.client).enabled:
         pytest.skip("this instance does not record usage, so no beacon can reach the summary")
 
+    day = _today()
     accepted = lead_session.client.post(
         EVENTS,
         content=json.dumps(_beacon(BEACON_PATH)),
@@ -110,11 +122,11 @@ def summary_after_a_beacon(
 
     admin = admin_operator_session.client
     wait_until(
-        lambda: BEACON_PATH in {page.path for page in _summary(admin).by_page},
+        lambda: BEACON_PATH in {page.path for page in _summary(admin, day).by_page},
         timeout_s=20,
         description=f"the page view at {BEACON_PATH} to reach the usage summary",
     )
-    return _summary(admin)
+    return _summary(admin, day)
 
 
 @pytest.mark.reliability
@@ -146,6 +158,47 @@ def test_a_beacon_is_recorded_and_reaches_the_summary(
     )
     assert pages[BEACON_PATH].views >= 1
     assert summary_after_a_beacon.totals.page_views >= 1
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_a_beacon_carrying_no_session_is_not_a_visit(
+    lead_session: PersonaSession, admin_operator_session: PersonaSession
+) -> None:
+    """A visit is a session; a record without one cannot be counted as either.
+
+    Ingest stores a missing `context_session_id` as `''`, and every such row —
+    across every person and every day — is the same value. Counted naively they
+    fold into exactly one phantom visit that never grows and never leaves.
+    """
+    if not _config(lead_session.client).enabled:
+        pytest.skip("this instance does not record usage")
+
+    admin = admin_operator_session.client
+    day = _today()
+    before = _summary(admin, day).totals.visits
+
+    path = f"/portal/{scratch.SCRATCH_PREFIX}-{scratch.RUN_TAG}-sessionless"
+    sessionless: JsonValue = {
+        "meta": {},
+        "records": [{"name": "page_view", "data": {"path": path}}],
+    }
+    accepted = lead_session.client.post(
+        EVENTS,
+        content=json.dumps(sessionless),
+        headers={"Content-Type": SDK_CONTENT_TYPE},
+    )
+    assert accepted.status_code == 204, accepted.text[:300]
+
+    wait_until(
+        lambda: path in {page.path for page in _summary(admin, day).by_page},
+        timeout_s=20,
+        description="the sessionless page view to reach the summary",
+    )
+
+    assert _summary(admin, day).totals.visits == before, (
+        "a row with no session id registered a visit"
+    )
 
 
 @pytest.mark.security
