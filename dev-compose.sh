@@ -1593,9 +1593,10 @@ test_stand_pull_backends() {
 # main's tip reported that as a difference. Falls back to origin/main when the
 # commit is not in this checkout.
 #
-# helm/ is excluded. The chart is deploy metadata, never baked into the image,
-# and its appVersion necessarily names an EARLIER commit than the one it sits
-# in — so a chart file always "differs" from the build it names.
+# What no image layer contains is excluded, or the guard demands a rebuild for
+# changes a rebuild cannot carry: helm charts (deploy metadata, and a chart's
+# own appVersion necessarily names an earlier commit than the one it sits in,
+# so it always "differs" from the build it names) and markdown.
 test_stand_tree_diff() {
   local subtree="$1" version="$2" base
   git rev-parse --git-dir >/dev/null 2>&1 || return 1
@@ -1609,9 +1610,10 @@ test_stand_tree_diff() {
   fi
 
   # `*` spans slashes here: pathspec magic without `glob` is fnmatch without
-  # FNM_PATHNAME, so this one pattern covers src/frontend/helm/ and
+  # FNM_PATHNAME, so one pattern covers src/frontend/helm/ and
   # src/backend/services/*/helm/ alike. The `**` form does NOT match.
-  git diff --name-only "$base" -- "$subtree" ":(exclude)${subtree}/*helm/*" 2>/dev/null | head -5
+  git diff --name-only "$base" -- "$subtree" \
+    ":(exclude)${subtree}/*helm/*" ":(exclude)${subtree}/*.md" 2>/dev/null | head -5
 }
 
 # Refuse to pin a tree the pinned image would not carry.
@@ -1667,6 +1669,17 @@ test_stand_env_value() {
   grep -E "^[[:space:]]*$1=" "$TEST_STAND_ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-
 }
 
+# The version a RUNNING stand pins, read off its own image ref. Drift is a
+# question about the stack in front of you, so it cannot be asked of the chart:
+# the chart says what the next `up` would pin, which moves with every release
+# and would report a two-day-old stand as current.
+test_stand_running_version() {
+  local ref
+  ref="$(test_stand_env_value "$1")"
+  [[ -n "$ref" ]] || return 1
+  printf '%s' "${ref##*:}"
+}
+
 # What the running stack was built from, against what this tree holds now.
 #
 # Never fatal, and never a gate: pointing the stack at an older build is a
@@ -1685,7 +1698,7 @@ test_stand_drift() {
     fi
   else
     diff="$(test_stand_tree_diff src/frontend \
-      "$(test_stand_chart_app_version src/frontend/helm/Chart.yaml 2>/dev/null)" 2>/dev/null || true)"
+      "$(test_stand_running_version FRONTEND_IMAGE)" 2>/dev/null || true)"
     changed="$(printf '%s\n' "$diff" | tail -n +2)"
     if [[ -n "$changed" ]]; then
       echo "WARN: this stack runs the pinned frontend image, which does not carry:"
@@ -1703,7 +1716,7 @@ test_stand_drift() {
     fi
   else
     diff="$(test_stand_tree_diff src/backend \
-      "$(test_stand_backend_app_version 2>/dev/null)" 2>/dev/null || true)"
+      "$(test_stand_running_version ANALYTICS_IMAGE)" 2>/dev/null || true)"
     changed="$(printf '%s\n' "$diff" | tail -n +2)"
     if [[ -n "$changed" ]]; then
       echo "WARN: this stack runs the pinned backend images, which do not carry:"
