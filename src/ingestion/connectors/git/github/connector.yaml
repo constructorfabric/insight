@@ -300,9 +300,16 @@ definitions:
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
       is_client_side_incremental: true
+      # A repository whose last push predates the start date has no commit,
+      # file change or author inside the window, so it is never worth the
+      # clone the proxy streams would spend on it. `pushed_at` is never older
+      # than the newest commit's push, so nothing in the window is lost by
+      # dropping it here. The endpoint offers no date filter, hence the
+      # client-side drop — and the CDK refuses to pair that with a data-feed
+      # stop, so the listing itself is still walked whole.
       start_datetime:
         type: MinMaxDatetime
-        datetime: "1970-01-01"
+        datetime: "{{ config['github_start_date'] }}"
         datetime_format: "%Y-%m-%d"
 
   # Full roster (no pushed_at gate): reviews/comments/issues/CI advance
@@ -1230,6 +1237,10 @@ streams:
             partition_field: pull_number
             extra_fields:
               - [repo_full_name]
+            # Without this the parent cursor never persists, and every
+            # pull request since the start date is re-walked — one call each —
+            # on every sync.
+            incremental_dependency: true
             stream: &pull_requests_window
               type: DeclarativeStream
               name: pull_requests_window
@@ -1282,9 +1293,12 @@ streams:
                 datetime_format: "%Y-%m-%dT%H:%M:%SZ"
                 cursor_datetime_formats:
                   - "%Y-%m-%dT%H:%M:%S%z"
-                # Stateless sliding window: the child has no cursor of its
-                # own, so parent state would never persist. The data-feed
-                # stop is what bounds pagination at the window edge.
+                # The start date, so a pull request's reviews, commits and
+                # lifecycle events cover the same period the pull request
+                # itself does. Every child of this window carries a cursor and
+                # sets `incremental_dependency`, which is what makes the bound
+                # affordable: this walk is paid once, and later syncs resume
+                # from the stored state rather than re-reading the window.
                 # VERIFIED against the CDK: the data-feed stop halts pagination at the
                 # first record older than the slice start, but the boundary PAGE's tail
                 # still emits — up to one page of pre-start_date rows per partition
@@ -1294,8 +1308,8 @@ streams:
                 is_data_feed: true
                 start_datetime:
                   type: MinMaxDatetime
-                  datetime: "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
-                  datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                  datetime: "{{ config['github_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
               transformations:
                 - type: AddFields
                   fields:
@@ -1303,6 +1317,20 @@ streams:
                       path: [repo_full_name]
                       value: "{{ stream_partition.repo_full_name }}"
                       value_type: string
+    incremental_sync:
+      # A cursor of its own is what lets the parent's state persist
+      # (`incremental_dependency` above): the review's own timestamp, so a later sync
+      # resumes instead of re-reading everything since the start date.
+      type: DatetimeBasedCursor
+      cursor_field: submitted_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -1416,7 +1444,25 @@ streams:
             partition_field: pull_number
             extra_fields:
               - [repo_full_name]
+            # Without this the parent cursor never persists, and every
+            # pull request since the start date is re-walked — one call each —
+            # on every sync.
+            incremental_dependency: true
             stream: *pull_requests_window
+    incremental_sync:
+      # A cursor of its own is what lets the parent's state persist
+      # (`incremental_dependency` above): the commit's own timestamp, so a later sync
+      # resumes instead of re-reading everything since the start date.
+      type: DatetimeBasedCursor
+      cursor_field: committed_date
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -2650,6 +2696,10 @@ streams:
             partition_field: deployment_id
             extra_fields:
               - [repo_full_name]
+            # Without this the parent cursor never persists, and every
+            # deployment since the start date is re-walked — one call each —
+            # on every sync.
+            incremental_dependency: true
             stream:
               type: DeclarativeStream
               name: deployments_window
@@ -2699,8 +2749,10 @@ streams:
                 datetime_format: "%Y-%m-%dT%H:%M:%SZ"
                 cursor_datetime_formats:
                   - "%Y-%m-%dT%H:%M:%S%z"
-                # Stateless sliding window; data-feed stop bounds the
-                # newest-first pagination at the window edge.
+                # The start date, so a deployment's outcome covers the same
+                # period the deployment does. The child carries a cursor and
+                # sets `incremental_dependency`, so this walk is paid once and
+                # later syncs resume from the stored state.
                 # VERIFIED against the CDK: the data-feed stop halts pagination at the
                 # first record older than the slice start, but the boundary PAGE's tail
                 # still emits — up to one page of pre-start_date rows per partition
@@ -2710,8 +2762,8 @@ streams:
                 is_data_feed: true
                 start_datetime:
                   type: MinMaxDatetime
-                  datetime: "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
-                  datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                  datetime: "{{ config['github_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
               transformations:
                 - type: AddFields
                   fields:
@@ -2719,6 +2771,20 @@ streams:
                       path: [repo_full_name]
                       value: "{{ stream_partition.repo_full_name }}"
                       value_type: string
+    incremental_sync:
+      # A cursor of its own is what lets the parent's state persist
+      # (`incremental_dependency` above): the status's own timestamp, so a later sync
+      # resumes instead of re-reading everything since the start date.
+      type: DatetimeBasedCursor
+      cursor_field: created_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -2861,7 +2927,25 @@ streams:
             partition_field: pull_number
             extra_fields:
               - [repo_full_name]
+            # Without this the parent cursor never persists, and every
+            # pull request since the start date is re-walked — one call each —
+            # on every sync.
+            incremental_dependency: true
             stream: *pull_requests_window
+    incremental_sync:
+      # A cursor of its own is what lets the parent's state persist
+      # (`incremental_dependency` above): the event's own timestamp, so a later sync
+      # resumes instead of re-reading everything since the start date.
+      type: DatetimeBasedCursor
+      cursor_field: event_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields: *standard_fields

@@ -30,6 +30,27 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_claude_team.claude_team_code_metrics_org
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `collected_at` Nullable(String),
+    `data_source` Nullable(String),
+    `metric_date` Nullable(String),
+    `pr_attribution` Nullable(String),
+    `top_users_by_prs` Nullable(String),
+    `top_users_by_lines_of_code` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_claude_team.claude_team_invites
 (
     `_airbyte_raw_id` String,

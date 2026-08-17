@@ -9,7 +9,7 @@ const BASE =
 const APP_NAME = "insight-frontend";
 
 const APP_VERSION =
-  (import.meta.env.VITE_APP_VERSION as string | undefined) ?? "0.0.0";
+  (import.meta.env.VITE_APP_RELEASE as string | undefined) || "0.0.0";
 
 let service: TelemetryService | null = null;
 

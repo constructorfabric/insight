@@ -42,7 +42,10 @@ models:
       Bronze → Silver: ChatGPT Team per-user per-day Codex usage →
       class_ai_dev_usage (tool='codex', source='chatgpt_team'). Sourced from
       chatgpt_team_codex_user_daily. session_count ← n_threads;
-      lines_added ← lines_added; cost_cents NULL (credits ≠ currency).
+      conversation_count ← n_threads (a thread is the unit of conversation and
+      no separate counter exists upstream, so ai.dev_conversations reports
+      thread counts here); lines_added ← lines_added;
+      cost_cents NULL (credits ≠ currency).
       Codex-only counters (credits/n_turns/text_tokens/current_streak) kept in
       tool_action_breakdown_json. Column contract matches claude_team__ai_dev_usage.
     columns:

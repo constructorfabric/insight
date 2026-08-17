@@ -45,15 +45,22 @@ ai_dev_usage_source AS (
         lower(email) AS entity_id,
         day AS metric_date,
         CAST(
-            [tuple('tool', tool, {{ ai_tool_label('tool') }})]
-            AS Array(Tuple(key String, value String, label Nullable(String)))
+            [
+                tuple('tool', tool, {{ ai_tool_label('tool') }}),
+                -- Seat state as of the last read, not as of metric_date: the
+                -- sources restate it for every day they re-read. 'unknown'
+                -- where the source has no seat lifecycle concept.
+                tuple('seat_status', coalesce(seat_status, 'unknown'), CAST(NULL AS Nullable(String)))
+            ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS tool_dimensions,
         conversation_count,
         lines_added,
         lines_removed,
         tool_use_offered,
         tool_use_accepted,
-        cost_cents
+        cost_cents,
+        prs_with_cc_count,
+        prs_total_count
     FROM {{ ref('class_ai_dev_usage') }}
     WHERE email IS NOT NULL
       AND email != ''
@@ -112,6 +119,14 @@ measure_observations AS (
     UNION ALL
 
     {{ sum_measure('dev_conversations', 'ai_dev_usage_source', 'conversation_count', 'tool_dimensions') }}
+
+    UNION ALL
+
+    {{ sum_measure('prs_with_assistant', 'ai_dev_usage_source', 'prs_with_cc_count', 'tool_dimensions') }}
+
+    UNION ALL
+
+    {{ sum_measure('prs_total', 'ai_dev_usage_source', 'prs_total_count', 'tool_dimensions') }}
 
     UNION ALL
 

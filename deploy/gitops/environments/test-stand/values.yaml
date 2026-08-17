@@ -424,6 +424,12 @@ analytics:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
 
+gitCliProxy:
+  # Off, against the chart default: the proxy clones repositories for the
+  # nocode git connectors and this stand runs none. While it is off reconcile
+  # skips any connector whose descriptor sets `platform_config.git_proxy`.
+  deploy: false
+
 frontend: # the web UI (dashboard)
   replicaCount: 1
   route:

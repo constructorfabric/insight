@@ -25,9 +25,14 @@ sources:
         evidence_granularity: source_summary
       - key: chat_assistant_conversations
         evidence_granularity: source_summary
+      - key: prs_with_assistant
+        evidence_granularity: source_summary
+      - key: prs_total
+        evidence_granularity: source_summary
     dimensions:
       - tool
       - surface
+      - seat_status
   - source:
       key: git
       kind: managed_observation
@@ -382,7 +387,7 @@ metrics:
     label: AI dev conversations
     short_label: AI dev chats
     description: Coding tool conversations where the source reports them
-    explanation: Person-attributed coding conversations from dev tools that report them.
+    explanation: Person-attributed conversations with coding AI tools, counted as the vendor counts them. For the agent tools this is the session or thread count — a session is the unit of conversation there, and no vendor publishes a separate conversation counter — so the number reads as "times the person started working with the assistant", not as messages exchanged. Tools that report no such unit, inline-completion tools among them, return no value rather than a zero.
     unit: conversations
     format: integer
     direction: higher_is_better
@@ -413,6 +418,44 @@ metrics:
     dimensions:
       - tool
       - surface
+  - metric_key: ai.prs_with_assistant
+    source_key: ai_usage
+    subject: pull_requests
+    label: PRs with AI assistance
+    short_label: PRs with AI
+    description: Pull requests the coding assistant touched
+    explanation: Pull requests where the coding assistant was active at least once, as the vendor attributes them. Reported only by sources that connect to the code host themselves, so a person working without that connection returns no value rather than a zero. Counts pull requests, not commits or lines, and says nothing about how much of the change the assistant wrote.
+    unit: PRs
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: prs_with_assistant
+    dimensions:
+      - tool
+      - seat_status
+  - metric_key: ai.prs_total
+    source_key: ai_usage
+    subject: pull_requests
+    label: PRs seen by the AI vendor
+    short_label: PRs seen
+    description: Pull requests the AI vendor counted in the same window
+    explanation: Pull requests the AI vendor observed for the person, served as the context for PRs with AI assistance rather than as a goal of its own. It is the vendor's count over the vendor's own window, which need not be the day it is reported against and need not agree with the git sources — read it next to that measure, not next to git pull-request metrics.
+    unit: PRs
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: prs_total
+    dimensions:
+      - tool
+      - seat_status
   - metric_key: git.commits
     source_key: git
     subject: commits

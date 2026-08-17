@@ -22,7 +22,15 @@ name: claude-team
 #   dispatches a one-shot `dbt --full-refresh` (reconcile-connectors), which
 #   rebuilds Silver from Bronze — the very operation this change exists to make
 #   safe, and the one that cost the June history.
-version: "2.1.0"
+# 2.2.0: adds the claude_team_code_metrics_org Bronze stream, and dbt staging
+#   stops filtering on the vendor seat status — it carries it in the
+#   class-contract column seat_status instead. MINOR per ADR-0015, not MAJOR:
+#   a major bump dispatches a one-shot `dbt --full-refresh`, and the guard that
+#   makes that safe (full_refresh=false on claude_team__ai_overage) arrives in
+#   this same change — it has to be on main before any major bump reads it.
+#   Rows written before this version keep an empty seat_status and reach gold as
+#   'unknown', which is what they honestly are.
+version: "2.2.0"
 # Daily at 04:00 UTC — off-peak vs other connectors. The customer's
 # proxy runs a single browser instance, so we avoid scheduling
 # claude-team next to anything else that may also hit it.

@@ -12,6 +12,9 @@
 -- Mapping notes:
 --   tool='codex'                  — dev-tool discriminator (cf. 'claude_code', 'cursor').
 --   session_count ← n_threads     — a Codex thread is the closest analogue to a coding session.
+--   conversation_count ← n_threads — the same thread count: a thread IS the
+--                                   unit of conversation, and no separate
+--                                   conversation counter exists upstream.
 --   lines_added ← lines_added     — AI-accepted lines (from code_attribution.lines_of_code.added).
 --   cost_cents ← NULL             — `credits` are Codex usage credits, not a currency amount.
 --   Codex-only counters (credits, n_turns, text_tokens, current_streak) are
@@ -71,7 +74,9 @@ SELECT
     'chatgpt_team'                                      AS source,
     data_source,
     CAST(_airbyte_extracted_at AS Nullable(DateTime64(3))) AS collected_at,
-    toUnixTimestamp64Milli(_airbyte_extracted_at)          AS _version
+    toUnixTimestamp64Milli(_airbyte_extracted_at)          AS _version,
+    -- The usage endpoint carries no seat lifecycle state.
+    CAST(NULL AS Nullable(String))                      AS seat_status
 FROM (
     -- Bronze dedup: keep the latest extract per (email, date). Defensive depth —
     -- becomes a no-op once promote_bronze_to_rmt merges (ADR-0002), but guards
