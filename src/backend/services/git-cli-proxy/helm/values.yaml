@@ -79,13 +79,16 @@ caCertSecret: ""
 existingSecret: ""
 
 networkPolicy:
-  # Ingress is restricted to the namespaces that run Airbyte connector pods.
-  # Disabling this exposes git credentials-bearing endpoints to the whole
-  # cluster — only do it on a cluster without NetworkPolicy support.
-  enabled: true
-  # Namespaces allowed to reach the service, matched by label. Naming none
-  # refuses to render: a policy with no rule denies every caller, which looks
-  # like a healthy install and fails every sync.
+  # Off by default, as on the authenticator: the bearer token authenticates
+  # every /v1 request, so the policy is defence-in-depth rather than the
+  # control, and a chart that cannot install without knowing where its caller
+  # runs is friction on every deployment. Enable it per deployment and name the
+  # namespace running Airbyte connector jobs — that hides the clone cache, which
+  # serves private source, from everything else in the cluster.
+  enabled: false
+  # Namespaces allowed to reach the service, matched by label. Naming none while
+  # enabled refuses to render: a policy with no rule denies every caller, which
+  # looks like a healthy install and fails every sync.
   allowedNamespaceLabels:
     - key: kubernetes.io/metadata.name
       values: []

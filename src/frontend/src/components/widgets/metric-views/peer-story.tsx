@@ -80,7 +80,7 @@ function HeroCard({
               PEER_TEXT[color]
             )}
           >
-            {isBad ? "Top issue" : "Top win"}
+            {isBad ? "Furthest behind" : "Furthest ahead"}
           </span>
         </div>
         <div>
@@ -415,16 +415,16 @@ function SupportingFold({
   const trueOnParCount = entries.length - neutralCount;
   const summaryLabel =
     neutralCount === 0
-      ? `${entries.length} on-par metric${entries.length === 1 ? "" : "s"}`
+      ? `${entries.length} metric${entries.length === 1 ? "" : "s"} near the median`
       : trueOnParCount === 0
         ? `${entries.length} supporting metric${entries.length === 1 ? "" : "s"}`
-        : `${entries.length} supporting and on-par metric${
+        : `${entries.length} other metric${
             entries.length === 1 ? "" : "s"
           }`;
   const summaryDescription =
     neutralCount === 0
-      ? `Metrics within the ${cohortLabel}'s normal range - no peer outlier`
-      : "Additional metrics without a visible peer outlier";
+      ? `Metrics in the normal range for this ${cohortLabel}`
+      : "Other metrics, with nothing standing out or nothing to compare";
   return (
     <div className="rounded-md border">
       <button
@@ -487,7 +487,7 @@ function SupportingRow({
       </div>
       <div className="text-muted-foreground">
         {!entry.stats ? (
-          <span>no peer data</span>
+          <span>no comparison</span>
         ) : !entry.observed ? (
           <span>
             no recorded activity · {cohortLabel} median:{" "}
@@ -495,7 +495,7 @@ function SupportingRow({
           </span>
         ) : entry.status === "in_pack" ? (
           <span>
-            on par · {cohortLabel} median:{" "}
+            near the {cohortLabel} median:{" "}
             {formatMetricValue(entry.stats.p50, entry.format, entry.unit)}
           </span>
         ) : (
@@ -548,9 +548,9 @@ export function PeerStory({
           <SideCards entries={sideCards} cohortLabel={cohortLabel} />
         </div>
       ) : focusMode === "critical" ? (
-        <EmptyState label="No critical issues this period" />
+        <EmptyState label="Nothing stands out as behind this period" />
       ) : focusMode === "rewards" ? (
-        <EmptyState label="No standout wins this period" />
+        <EmptyState label="Nothing stands out as ahead this period" />
       ) : null}
       <OutlierChips entries={chips} cohortLabel={cohortLabel} />
       <SupportingFold entries={folded} cohortLabel={cohortLabel} />

@@ -86,9 +86,9 @@ describe("PeerStory", () => {
         ])}
       />
     );
-    expect(screen.getByText("Top issue")).toBeInTheDocument();
+    expect(screen.getByText("Furthest behind")).toBeInTheDocument();
     // The in-pack metric lands in the supporting fold toggle.
-    expect(screen.getByText(/on-par metric/i)).toBeInTheDocument();
+    expect(screen.getByText(/near the median/i)).toBeInTheDocument();
   });
 
   it("critical focus shows only the issue hero", () => {
@@ -101,8 +101,8 @@ describe("PeerStory", () => {
         ])}
       />
     );
-    expect(screen.getByText("Top issue")).toBeInTheDocument();
-    expect(screen.queryByText("Top win")).not.toBeInTheDocument();
+    expect(screen.getByText("Furthest behind")).toBeInTheDocument();
+    expect(screen.queryByText("Furthest ahead")).not.toBeInTheDocument();
   });
 
   it("rewards focus shows the win hero", () => {
@@ -115,8 +115,8 @@ describe("PeerStory", () => {
         ])}
       />
     );
-    expect(screen.getByText("Top win")).toBeInTheDocument();
-    expect(screen.queryByText("Top issue")).not.toBeInTheDocument();
+    expect(screen.getByText("Furthest ahead")).toBeInTheDocument();
+    expect(screen.queryByText("Furthest behind")).not.toBeInTheDocument();
   });
 
   it("neutral focus renders flat-grid supporting-data actions", async () => {
@@ -135,8 +135,8 @@ describe("PeerStory", () => {
         />
       </EvidenceDialogContext.Provider>
     );
-    expect(screen.queryByText("Top issue")).not.toBeInTheDocument();
-    expect(screen.queryByText("Top win")).not.toBeInTheDocument();
+    expect(screen.queryByText("Furthest behind")).not.toBeInTheDocument();
+    expect(screen.queryByText("Furthest ahead")).not.toBeInTheDocument();
     expect(screen.getByText("issue")).toBeInTheDocument();
     expect(screen.getByText("win")).toBeInTheDocument();
     await user.click(

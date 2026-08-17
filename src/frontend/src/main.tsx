@@ -6,6 +6,7 @@ import { I18nextProvider } from "react-i18next";
 
 import "./index.css";
 import {
+  authStore,
   clearAuthErrorAttempts,
   consumeAuthErrorParam,
   consumeOverrideParam,
@@ -17,8 +18,10 @@ import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { LoginError } from "@/components/login-error";
 import { ThemeProvider } from "@/components/theme-provider";
 import i18n from "@/i18n";
+import { validatePortalSearch } from "@/lib/portal/portal-search";
 import { queryClient } from "@/query-client";
 import { initSentry } from "@/sentry";
+import { recordPageView, startUsageTelemetry } from "@/telemetry";
 import { router } from "./router";
 
 async function enableMocking(): Promise<void> {
@@ -50,6 +53,7 @@ function bootstrap(): void {
         // The session is non-sliding — without the refresh driver it dies
         // session_ttl (~10 min) after login regardless of activity (#1854).
         startSessionRefresh();
+        startUsageCollection();
         renderApp();
         return;
       }
@@ -69,6 +73,33 @@ function bootstrap(): void {
       // into the login flow.
       renderApp();
     });
+}
+
+function startUsageCollection(): void {
+  const { session } = authStore.getSnapshot();
+  if (!session) return;
+  // INVARIANT: portal screens differ only by the zone/item search params, so
+  // only a history subscription sees them change.
+  let recorded: string | null = null;
+  const recordScreen = () => {
+    const screen = currentScreen();
+    if (screen === recorded) return;
+    recorded = screen;
+    recordPageView(screen);
+  };
+  router.history.subscribe(recordScreen);
+  recordScreen();
+  void startUsageTelemetry(session);
+}
+
+function currentScreen(): string {
+  const { zone, item } = validatePortalSearch(
+    Object.fromEntries(new URLSearchParams(window.location.search)),
+  );
+  const parts = [zone, item].filter((value): value is string => Boolean(value));
+  return parts.length
+    ? `${window.location.pathname}/${parts.join("/")}`
+    : window.location.pathname;
 }
 
 function renderApp(): void {

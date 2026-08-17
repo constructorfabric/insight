@@ -78,6 +78,9 @@ pub struct ProfileGroup {
 pub struct KnownBinding {
     pub person_id: Uuid,
     pub author_person_id: Uuid,
+    /// Written during a sign-in rather than by the batch: the person exists so
+    /// somebody could get in, and nobody has confirmed it is their own.
+    pub provisioned_at_login: bool,
 }
 
 impl KnownBinding {
@@ -499,6 +502,7 @@ mod tests {
         KnownBinding {
             person_id: Uuid::from_u128(person),
             author_person_id: Uuid::nil(),
+            provisioned_at_login: false,
         }
     }
 
@@ -506,6 +510,7 @@ mod tests {
         KnownBinding {
             person_id: Uuid::from_u128(person),
             author_person_id: Uuid::from_u128(0xAD_1119),
+            provisioned_at_login: false,
         }
     }
 
@@ -716,6 +721,7 @@ mod tests {
         KnownBinding {
             person_id: EXCLUDED_PERSON,
             author_person_id: Uuid::from_u128(0xAD_1119),
+            provisioned_at_login: false,
         }
     }
 

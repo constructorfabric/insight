@@ -6,12 +6,13 @@ name: E2E — Compose stand
 # exercises the in-process ingestion rig and now carries one blocking gate
 # (metric coverage) — that workflow is untouched by this one.
 #
-# By default nothing here compiles the backend. `test-stand up` pulls
-# analytics, authenticator, identity-resolution and gateway at their charts'
-# appVersions; building them cost ~26 min per job. `up` refuses a tree that
-# changes src/backend/ rather than silently testing it against main's images,
-# so when the diff touches the backend the `changes` job flags it and the
-# lanes pass --build (and take the longer timeout) instead.
+# Nothing here builds by default: `test-stand up` pulls the frontend and the
+# four backend services at their charts' appVersions, which name main's build.
+# A ref that changes one of those trees has to build it or the lane reports on
+# code it never ran. `up` guards that, but the guard needs origin/main and these
+# lanes clone at depth 1 — so `changes` decides instead, per tree, and the lanes
+# pass --build-backend (~28 min, hence the wider timeout) and --build-frontend
+# (a pnpm build) independently.
 #
 # Two independently-reporting checks, split by what they need rather than by
 # what they cover:
@@ -89,10 +90,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
-      # Whether the diff touches src/backend/ — the lanes turn this into
-      # `up --build`, because `up` refuses a backend-changing tree
-      # rather than silently testing it against main's pulled images.
+      # One per buildable tree; the lanes turn each into its own --build-* flag.
       backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,45 +104,47 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          # No base to diff against (merge_group without one, or a manual
-          # run): assume relevant rather than skipping a gate on a guess, and
-          # take the backend answer from the same comparison `up` itself
-          # makes, so the flag and the refusal cannot disagree.
-          if [ -z "${BASE:-}" ]; then
-            BASE="$(git rev-parse --verify --quiet origin/main || true)"
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "no base sha — running"
-            if [ -n "$BASE" ] && [ -n "$(git diff --name-only "$BASE" "$HEAD" -- src/backend | head -1)" ]; then
-              echo "backend=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "backend=false" >> "$GITHUB_OUTPUT"
-            fi
-            exit 0
-          fi
+          emit() { # emit <relevant> <backend> <frontend>
+            printf 'relevant=%s\nbackend=%s\nfrontend=%s\n' "$1" "$2" "$3" >> "$GITHUB_OUTPUT"
+            echo "relevant=$1 backend=$2 frontend=$3"
+          }
           # Match pull_request path-filter semantics: compare the branch from
           # its merge base, not from the current base-branch tip. A two-dot diff
           # would attribute unrelated commits that landed on main after this
           # branch forked to the pull request and run the stand unnecessarily.
-          base_point="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || true)"
+          #
+          # No base means a schedule or a dispatch: nothing to filter, so it
+          # runs either way and the comparison only decides what to build.
+          forced=false
+          if [ -n "${BASE:-}" ]; then
+            base_point="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || true)"
+          else
+            forced=true
+            base_point="$(git rev-parse --verify --quiet origin/main || true)"
+            echo "no base sha — running, and comparing against origin/main to decide what to build"
+          fi
+          # No comparison point: build both rather than pin on a comparison that
+          # was never made.
           if [ -z "$base_point" ]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "backend=true" >> "$GITHUB_OUTPUT"
-            echo "no merge base between $BASE and $HEAD — running and building"
+            echo "no comparison point — running the stand and building the product"
+            emit true true true
             exit 0
           fi
           changed="$(git diff --name-only "$base_point" "$HEAD")"
           printf '  %s\n' "${changed//$'\n'/$'\n  '}"
+          relevant="$forced"
+          backend=false
+          frontend=false
           if echo "$changed" | grep -qE '^(tests/|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/|docs/components/backend/.*/openapi\.json|\.github/workflows/e2e-stand\.yml|\.github/workflows/scripts/redact-playwright-trace\.py)'; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            relevant=true
+          elif [ "$forced" = true ]; then
+            echo "nothing the stand covers changed — running anyway, this event has no pull request to filter"
           else
-            echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "nothing the stand covers changed"
           fi
-          if echo "$changed" | grep -q '^src/backend/'; then
-            echo "backend=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "backend=false" >> "$GITHUB_OUTPUT"
-          fi
+          if echo "$changed" | grep -q '^src/backend/'; then backend=true; fi
+          if echo "$changed" | grep -q '^src/frontend/'; then frontend=true; fi
+          emit "$relevant" "$backend" "$frontend"
 
   resolve-target:
     name: resolve-target
@@ -180,10 +182,9 @@ jobs:
     needs: [changes, resolve-target]
     if: needs.resolve-target.outputs.target == 'compose'
     runs-on: ubuntu-latest
-    # Pull mode measured near 8m, so 45 leaves ~5x headroom for a cold runner
-    # and a slow registry while not letting a hung stand burn an hour and a
-    # half. A backend-building run was measured at 28m (26m of it the build),
-    # hence the wider ceiling on that path.
+    # Measured over 60 runs: pull-path jobs 3-6m, build-path jobs 25-34m. 45
+    # absorbs a cold runner and a slow registry; 75 keeps ~2x over the worst
+    # build, without letting a hung stand burn an hour and a half.
     timeout-minutes: ${{ needs.changes.outputs.backend == 'true' && 75 || 45 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -213,10 +214,14 @@ jobs:
       - name: Bring the stand up
         env:
           BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
+          BUILD_FRONTEND: ${{ needs.changes.outputs.frontend }}
         run: |
           set -euo pipefail
+          # `if` blocks, not `[ … ] && flags+=(…)`: under set -e a false test as
+          # the last command of an && list ends the step.
           flags=()
-          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build); fi
+          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
+          if [ "$BUILD_FRONTEND" = "true" ]; then flags+=(--build-frontend); fi
           ./dev-compose.sh test-stand up "${flags[@]}"
 
       - name: Run the API suite
@@ -354,10 +359,14 @@ jobs:
       - name: Bring the stand up
         env:
           BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
+          BUILD_FRONTEND: ${{ needs.changes.outputs.frontend }}
         run: |
           set -euo pipefail
+          # `if` blocks, not `[ … ] && flags+=(…)`: under set -e a false test as
+          # the last command of an && list ends the step.
           flags=()
-          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build); fi
+          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
+          if [ "$BUILD_FRONTEND" = "true" ]; then flags+=(--build-frontend); fi
           ./dev-compose.sh test-stand up "${flags[@]}"
 
       # The suite's own Chromium, resolved by the locked test environment so

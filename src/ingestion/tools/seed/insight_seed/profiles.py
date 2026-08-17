@@ -200,6 +200,7 @@ TEAM_PROFILES: dict[str, TeamProfile] = {
             "zoom": 0.6,
             "gmail": 0.4,
             "bamboohr": 0.6,
+            "outline": 1.2,
             "cursor": 1.2,
             "claude_team": 1.0,
             "chatgpt": 0.6,
@@ -214,6 +215,7 @@ TEAM_PROFILES: dict[str, TeamProfile] = {
             "zoom": 1.2,
             "gmail": 1.2,
             "bamboohr": 0.4,
+            "outline": 0.6,
             "chatgpt": 0.6,
             "jira": 0.3,
         },
@@ -226,6 +228,7 @@ TEAM_PROFILES: dict[str, TeamProfile] = {
             "zoom": 0.6,
             "gmail": 0.8,
             "bamboohr": 1.5,
+            "outline": 1.0,
             "jira": 0.5,
             "chatgpt": 0.4,
         },
@@ -238,6 +241,7 @@ TEAM_PROFILES: dict[str, TeamProfile] = {
             "zoom": 0.5,
             "gmail": 0.8,
             "bamboohr": 0.4,
+            "outline": 0.8,
             "jira": 1.3,
             # No Zendesk connector in the repo — support rows use this
             # placeholder data_source so the per-team distinction is visible.

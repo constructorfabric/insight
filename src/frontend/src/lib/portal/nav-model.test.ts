@@ -1,28 +1,49 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  defaultZoneItem,
   MANAGE_ITEMS,
   manageItemsFor,
   partitionByReadiness,
   resolveZoneItem,
-  ZONE_DEFAULT_ITEM,
-  zoneById,
+  ZONES,
   zoneItems,
 } from "./nav-model";
 
-const defaults = Object.entries(ZONE_DEFAULT_ITEM);
+const defaults = ZONES.map((z) => [z.id, defaultZoneItem(z.id)] as const);
 
 describe("zone item defaults", () => {
-  it("name a zone the rail has", () => {
-    for (const [zone] of defaults) expect(zoneById(zone), zone).toBeDefined();
+  it("open each zone on its first built entry", () => {
+    expect(Object.fromEntries(defaults)).toEqual({
+      overview: "at-a-glance",
+      directions: null,
+      person: null,
+      people: "roster",
+      aicost: "overview",
+      scorecard: null,
+      reports: "report-builder",
+      manage: "metric-catalog",
+    });
   });
 
   it("name an item the pane always renders", () => {
-    // A default the pane can filter out (planned / unbuilt) would highlight a
-    // row that isn't there.
     for (const [zone, id] of defaults) {
+      if (id == null) continue;
       const { live } = partitionByReadiness(zoneItems(zone), false);
       expect(live.map((i) => i.id), zone).toContain(id);
+    }
+  });
+
+  it("are null only where the zone lists nothing built", () => {
+    for (const [zone, id] of defaults) {
+      const { live } = partitionByReadiness(zoneItems(zone), false);
+      expect(id === null, zone).toBe(live.length === 0);
+    }
+  });
+
+  it("name an item every viewer can see, not an admin-only one", () => {
+    for (const [zone, id] of defaults) {
+      expect(zoneItems(zone).find((i) => i.id === id)?.adminOnly, zone).toBeFalsy();
     }
   });
 });
@@ -40,10 +61,14 @@ describe("resolveZoneItem", () => {
     expect(resolveZoneItem("aicost", null)).toBe("overview");
   });
 
-  it("stays null for a zone whose no-item view is no menu row", () => {
-    expect(resolveZoneItem("manage", null)).toBeNull();
-    expect(resolveZoneItem("manage", "trend")).toBeNull();
+  it("keeps a Manage item the URL names, and falls back for one it does not", () => {
     expect(resolveZoneItem("manage", "data-health")).toBe("data-health");
+    expect(resolveZoneItem("manage", "trend")).toBe("metric-catalog");
+  });
+
+  it("stays null for a zone with nothing built to open on", () => {
+    expect(resolveZoneItem("scorecard", null)).toBeNull();
+    expect(resolveZoneItem("person", null)).toBeNull();
   });
 });
 

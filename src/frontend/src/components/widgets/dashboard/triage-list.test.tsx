@@ -34,7 +34,7 @@ function member(person_id: string, name: string): TeamMember {
 }
 
 describe("TriageList", () => {
-  it("labels each member behind / ahead / on par and links to their IC view", () => {
+  it("labels each person behind / ahead / near the median and links to their IC view", () => {
     render(
       <TriageList
         rows={[
@@ -42,18 +42,21 @@ describe("TriageList", () => {
             member: member("a@x.com", "Ann"),
             belowCount: 2,
             topCount: 0,
+            rankable: 4,
             worstMetricLabel: "Resolution",
           },
           {
             member: member("b@x.com", "Bo"),
             belowCount: 0,
             topCount: 3,
+            rankable: 4,
             worstMetricLabel: null,
           },
           {
             member: member("c@x.com", "Cy"),
             belowCount: 0,
             topCount: 0,
+            rankable: 4,
             worstMetricLabel: null,
           },
         ]}
@@ -70,8 +73,28 @@ describe("TriageList", () => {
     ).toBeInTheDocument();
     expect(
       within(screen.getByText("Cy").closest("a")!).getByText(
-        "on par with peers",
+        "near the median",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("says no comparison when nothing about the person is rankable", () => {
+    render(
+      <TriageList
+        rows={[
+          {
+            member: member("d@x.com", "Di"),
+            belowCount: 0,
+            topCount: 0,
+            rankable: 0,
+            worstMetricLabel: null,
+          },
+        ]}
+      />,
+    );
+
+    const di = screen.getByText("Di").closest("a")!;
+    expect(within(di).getByText("no comparison")).toBeInTheDocument();
+    expect(within(di).queryByText("near the median")).not.toBeInTheDocument();
   });
 });

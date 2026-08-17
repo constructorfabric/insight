@@ -40,7 +40,7 @@ export function PeopleView({
 
   if (item === "median-by-role") {
     return (
-      <Pending label="Cohort role medians — pending the two-axis cohort pipeline" />
+      <Pending label="Medians by role — not built yet" />
     );
   }
   if (item === "employees") {

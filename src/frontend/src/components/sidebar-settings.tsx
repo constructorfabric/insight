@@ -89,7 +89,11 @@ export function SidebarSettings() {
           className="w-full"
         >
           {FOCUS_MODES.map((mode) => (
-            <ToggleGroupItem key={mode} value={mode} className="flex-1 text-xs">
+            <ToggleGroupItem
+              key={mode}
+              value={mode}
+              className="flex-auto text-xs"
+            >
               {t(`settings.focus_mode.${mode}`)}
             </ToggleGroupItem>
           ))}

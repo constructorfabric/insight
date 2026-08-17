@@ -8,6 +8,7 @@
 -- depends_on: {{ ref('zulip_proxy__identity_inputs') }}
 -- depends_on: {{ ref('zoom__identity_inputs') }}
 -- depends_on: {{ ref('github_directory__identity_inputs') }}
+-- depends_on: {{ ref('github__identity_inputs') }}
 -- @cpt-principle:cpt-dataflow-principle-rmt-with-version:p1
 {{ config(
     materialized='incremental',

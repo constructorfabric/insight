@@ -18,6 +18,10 @@ pub struct MetricError;
 #[resource_error("gts.cf.insight.analytics_api.saved_query.v1~")]
 pub struct SavedQueryError;
 
+/// Resource namespace for `/v1/usage*` (adoption events + the admin read model).
+#[resource_error("gts.cf.insight.analytics_api.usage.v1~")]
+pub struct UsageError;
+
 /// Resource namespace for `/v1/metrics*` (custom-metric CRUD + export/import).
 #[resource_error("gts.cf.insight.analytics_api.custom_metric.v1~")]
 pub struct CustomMetricError;

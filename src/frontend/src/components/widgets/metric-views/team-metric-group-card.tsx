@@ -90,7 +90,7 @@ export function TeamMetricGroupCard({
   const badgeText = sectionStandingPhrase(counts);
 
   // Preview rows keep their slot even with nobody scorable — a silently
-  // shrinking card reads as broken; the row states "no peer data" instead.
+  // shrinking card reads as broken; the row states "no comparison" instead.
   const preview: TeamMetricStanding[] = def.card.preview
     .map((key) => standings.find((s) => s.metric.metric_key === key))
     .filter((s): s is TeamMetricStanding => s != null);
@@ -154,7 +154,7 @@ export function TeamMetricGroupCard({
 
 /**
  * The row's verdict in the shared chip vocabulary — behind wins over ahead,
- * on par only when nothing sticks out, "no peer data" when nobody on the
+ * near the median only when nothing sticks out, "no comparison" when nobody on the
  * roster is rankable. Counts only; the drilldown names who.
  */
 function RowStanding({
@@ -168,7 +168,7 @@ function RowStanding({
   if (scored === 0) {
     return (
       <span className="shrink-0 text-xs text-muted-foreground">
-        no peer data
+        no comparison
       </span>
     );
   }
@@ -196,5 +196,9 @@ function RowStanding({
       </span>
     );
   }
-  return <span className="shrink-0 text-xs text-muted-foreground">on par</span>;
+  return (
+    <span className="shrink-0 text-xs text-muted-foreground">
+      near the median
+    </span>
+  );
 }
