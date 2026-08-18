@@ -75,7 +75,7 @@ describe("useBindAccount cache behavior", () => {
     const { queryClient, wrapper } = harness();
     queryClient.setQueryData(ATTENTION_KEY, {
       items: [item("a1"), item("a2")],
-      rates: { observed: 2, bound: 0, pending: 2, no_evidence: 0, excluded: 0 },
+      rates: { persons: 2, observed: 2, bound: 0, pending: 2, no_evidence: 0, excluded: 0 },
     });
     bindAccount.mockResolvedValueOnce(outcome("applied"));
 
@@ -99,7 +99,7 @@ describe("useBindAccount cache behavior", () => {
     const { queryClient, wrapper } = harness();
     queryClient.setQueryData(ATTENTION_KEY, {
       items: [item("a1")],
-      rates: { observed: 1, bound: 0, pending: 1, no_evidence: 0, excluded: 0 },
+      rates: { persons: 1, observed: 1, bound: 0, pending: 1, no_evidence: 0, excluded: 0 },
     });
     bindAccount.mockResolvedValueOnce(outcome("refused"));
 

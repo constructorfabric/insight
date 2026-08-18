@@ -230,7 +230,7 @@ describe("getAttention", () => {
             candidates: [],
           },
         ],
-        rates: { observed: 1, bound: 0, pending: 1, no_evidence: 0, excluded: 0 },
+        rates: { persons: 1, observed: 1, bound: 0, pending: 1, no_evidence: 0, excluded: 0 },
       }),
     );
 

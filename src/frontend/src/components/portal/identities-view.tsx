@@ -4,9 +4,9 @@
  *
  * A triage surface, not a roster: the operator lands in what NEEDS a
  * decision, grouped by why it does, and works the backlog to zero — the
- * empty queue is the goal state and renders as one. The rates strip on top
- * counts binding states across the tenant; only its first figure, the queue's
- * own size, is work the operator can do.
+ * empty queue is the goal state and renders as one. The strip on top sizes the
+ * tenant — its people, its accounts, and how many of those accounts are the
+ * operator's own backlog.
  *
  * The queue picks a case; the window decides it. Selection lives in `?acct=`
  * so an operator can hand a colleague a link to the exact account under
@@ -40,12 +40,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
@@ -64,13 +58,7 @@ import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import {
-  ChevronDown,
-  Info,
-  PartyPopper,
-  Search,
-  TriangleAlert,
-} from "lucide-react";
+import { ChevronDown, PartyPopper, Search, TriangleAlert } from "lucide-react";
 
 /** Queue groups in working order: conflicts first, then the unknowns. */
 const KIND_ORDER = [
@@ -80,18 +68,6 @@ const KIND_ORDER = [
   "minted_from_roster",
   "no_evidence",
 ] as const;
-
-// Binding states, not workloads: every one of these counts accounts the
-// resolver has already placed or will place by itself. The only number an
-// operator can act on is the queue's own size, which is why it leads the strip
-// and is the only one carrying a status colour.
-const RATE_TILES: ReadonlyArray<{ key: keyof ResolutionRates; status: Status }> = [
-  { key: "observed", status: "neutral" },
-  { key: "bound", status: "good" },
-  { key: "pending", status: "neutral" },
-  { key: "no_evidence", status: "neutral" },
-  { key: "excluded", status: "neutral" },
-];
 
 /** A click selects the case — unless it pressed a control or ended a selection. */
 function opensTheCase(event: React.MouseEvent<HTMLElement>): boolean {
@@ -223,63 +199,53 @@ function RatesStrip({
 }) {
   const { t } = useTranslation();
   return (
-    <TooltipProvider>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
-        <Tile
-          figure={decisionsCapped ? `${decisions}+` : String(decisions)}
-          label={t("identities.rates.decisions")}
-          hint={t("identities.rates.decisions_hint")}
-          status="warn"
-        />
-        {RATE_TILES.map(({ key, status }) => (
-          <Tile
-            key={key}
-            figure={String(rates[key])}
-            label={t(`identities.rates.${key}`)}
-            hint={t(`identities.rates.${key}_hint`)}
-            status={status}
-          />
-        ))}
-      </div>
-    </TooltipProvider>
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
+      <Tile
+        figure={String(rates.persons)}
+        label={t("identities.rates.persons")}
+        status="neutral"
+      />
+      <Tile
+        figure={String(rates.observed)}
+        label={t("identities.rates.observed")}
+        status="neutral"
+      />
+      {/* The one figure here that is the operator's own work, and the only one
+          carrying a status colour. */}
+      <Tile
+        figure={decisionsCapped ? `${decisions}+` : String(decisions)}
+        label={t("identities.rates.decisions")}
+        status="warn"
+      />
+      <Tile
+        figure={String(rates.excluded)}
+        label={t("identities.rates.excluded")}
+        status="neutral"
+      />
+    </div>
   );
 }
 
 function Tile({
   figure,
   label,
-  hint,
   status,
 }: {
   figure: string;
   label: string;
-  hint: string;
   status: Status;
 }) {
   return (
     <div className="rounded-lg border bg-card p-4">
       <div className={TEXT_FIGURE}>{figure}</div>
-      <span className="mt-1 inline-flex items-center gap-1">
-        <span
-          className={cn(
-            TEXT_LABEL,
-            "inline-block rounded px-1.5 py-0.5",
-            STATUS_SURFACE_CLASS[status],
-          )}
-        >
-          {label}
-        </span>
-        <Tooltip>
-          {/* Focusable, or the hint — which carries the tile's actual
-              meaning — exists for mouse users only. */}
-          <TooltipTrigger
-            render={<span className="inline-flex text-muted-foreground" tabIndex={0} />}
-            aria-label={hint}
-          >
-            <Info className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent className="max-w-xs">{hint}</TooltipContent>
-        </Tooltip>
+      <span
+        className={cn(
+          TEXT_LABEL,
+          "mt-1 inline-block rounded px-1.5 py-0.5",
+          STATUS_SURFACE_CLASS[status],
+        )}
+      >
+        {label}
       </span>
     </div>
   );

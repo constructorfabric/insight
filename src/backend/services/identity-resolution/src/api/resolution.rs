@@ -24,7 +24,7 @@ use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
-use crate::infra::db::{ops_repo, persons_repo, resolution_repo};
+use crate::infra::db::{ops_repo, person_listing, persons_repo, resolution_repo};
 use crate::infra::identity_evidence::{
     AccountEvidence, AfterAccount, ClickHouseEvidenceReader, EvidenceSnapshot, ListedAccount,
 };
@@ -732,10 +732,13 @@ pub async fn mark_provisional(
     Ok(())
 }
 
-/// Share of observed accounts per resolution state — the operator-visible match
-/// rate.
+/// The tenant's identity picture: how many persons it knows, and how its
+/// observed accounts are split across the resolution states.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ResolutionRatesResponse {
+    /// Persons in the tenant, counted from the person journal rather than the
+    /// evidence fold — `truncated` never applies to this figure.
+    pub persons: usize,
     pub observed: usize,
     pub bound: usize,
     pub pending: usize,
@@ -770,6 +773,9 @@ pub async fn attention(
     let tenant = ctx.subject_tenant_id();
 
     let (review, truncated) = build_review(&state, tenant).await?;
+    let persons = person_listing::count_persons(&state.db, tenant)
+        .await
+        .map_err(|e| internal(&e, "failed to count the tenant's persons"))?;
 
     let limit = params.limit.map_or(DEFAULT_QUEUE_LIMIT, |l| {
         usize::try_from(l).unwrap_or(1).clamp(1, MAX_QUEUE_LIMIT)
@@ -823,6 +829,7 @@ pub async fn attention(
     Ok(Json(AttentionResponse {
         items,
         rates: ResolutionRatesResponse {
+            persons,
             observed: review.rates.observed,
             bound: review.rates.bound,
             pending: review.rates.pending,

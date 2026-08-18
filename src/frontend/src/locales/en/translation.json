@@ -405,18 +405,10 @@
     "title": "Identities",
     "subtitle": "Who each account belongs to — review what the resolver could not decide, and correct what it did.",
     "rates": {
-      "decisions": "Needs a decision",
-      "decisions_hint": "Accounts waiting for you. This is the queue below — the only number here you can act on.",
-      "observed": "Observed",
-      "observed_hint": "Every account a connector currently reports, closed ones excluded.",
-      "bound": "Bound to a person",
-      "bound_hint": "The account belongs to a person. Its activity counts towards them.",
-      "pending": "Unbound · has an address",
-      "pending_hint": "Waiting for the resolver, not for you: an address is present, so the next run binds it. Only the contested ones reach the queue.",
-      "no_evidence": "Unbound · nothing to match on",
-      "no_evidence_hint": "No address, so automation has no key to match on. Only an operator can bind these — they are in the queue.",
-      "excluded": "Excluded",
-      "excluded_hint": "Declared not a person — a bot, CI or service account. Dropped from every person metric."
+      "persons": "Persons",
+      "observed": "Accounts",
+      "decisions": "Needs attention",
+      "excluded": "Excluded"
     },
     "kind": {
       "contested": "Contested — more than one person claims the account",

@@ -68,7 +68,7 @@ import { portalRouter } from "@/test/portal-router";
 
 import { IdentitiesView } from "./identities-view";
 
-const RATES = { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 };
+const RATES = { persons: 41, observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 };
 
 function item(over: Partial<AttentionItem>): AttentionItem {
   return {
@@ -83,6 +83,12 @@ function item(over: Partial<AttentionItem>): AttentionItem {
   };
 }
 
+/** The strip's tiles in DOM order, each as its figure followed by its label. */
+function strip(): string[] {
+  const grid = screen.getByText("Persons").closest("div.grid");
+  return [...(grid?.children ?? [])].map((tile) => tile.textContent ?? "");
+}
+
 beforeEach(() => {
   attention.q.data = undefined;
   attention.q.isLoading = false;
@@ -93,6 +99,32 @@ beforeEach(() => {
 });
 
 describe("IdentitiesView", () => {
+  it("sizes the tenant in one strip: persons, every account, the backlog, the excluded", () => {
+    attention.q.data = { items: [item({}), item({ account_id: "a2" })], rates: RATES };
+    render(<IdentitiesView />);
+
+    expect(strip()).toEqual(["41Persons", "60Accounts", "2Needs attention", "1Excluded"]);
+  });
+
+  // The resolver's own intermediate states are its business, not the
+  // operator's: they were tiles once, and putting them back buries the one
+  // figure that is work.
+  it("keeps the resolver's internal states out of the strip", () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    render(<IdentitiesView />);
+
+    expect(screen.queryByText(/bound to a person/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unbound/i)).not.toBeInTheDocument();
+    expect(strip()).toHaveLength(4);
+  });
+
+  it("shows the backlog as a floor when the server cut the list", () => {
+    attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
+    render(<IdentitiesView />);
+
+    expect(strip()[2]).toBe("1+Needs attention");
+  });
+
   it("celebrates the empty queue instead of rendering a blank table", () => {
     attention.q.data = { items: [], rates: RATES };
     render(<IdentitiesView />);
@@ -359,29 +391,6 @@ describe("IdentitiesView", () => {
 
     await userEvent.click(row);
     expect(portalRouter.search.acct).toBeUndefined();
-  });
-
-  // The tiles count binding states; only the queue is work. A tile promising
-  // "review" for accounts the resolver binds by itself sent an operator
-  // looking for something they cannot do.
-  it("leads with the number the operator can act on — the queue's own size", () => {
-    attention.q.data = { items: [item({}), item({ account_id: "a2" })], rates: RATES };
-    render(<IdentitiesView />);
-
-    const tile = screen
-      .getByText(/needs a decision/i)
-      .closest("div")?.parentElement;
-    expect(within(tile as HTMLElement).getByText("2")).toBeInTheDocument();
-    // The state tiles say what they count, never "review".
-    expect(screen.getByText(/unbound · has an address/i)).toBeInTheDocument();
-    expect(screen.queryByText(/pending review/i)).not.toBeInTheDocument();
-  });
-
-  it("marks the decision count as a floor when the server cut the list", () => {
-    attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
-    render(<IdentitiesView />);
-
-    expect(screen.getByText("1+")).toBeInTheDocument();
   });
 
   // The row carries the values an operator copies out, so it cannot be a

@@ -138,6 +138,8 @@ export interface AttentionItem {
 
 /** Counts over EVERY observed account, regardless of the item cap. */
 export interface ResolutionRates {
+  /** Persons in the tenant — from the person journal, not the evidence fold. */
+  persons: number;
   observed: number;
   bound: number;
   pending: number;
