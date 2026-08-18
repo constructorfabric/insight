@@ -451,6 +451,17 @@ class VisibilityResponse(BaseModel):
     visibility_id: UUID
 
 
+class VisiblePersonsPageResponse(BaseModel):
+    """
+    One page of the persons the caller may see.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[PersonSummaryResponse]
+    next_cursor: str | None = Field(None, description='Pass back as `?cursor=` for the next page; absent on the last one.')
+
+
 class VisiblePersonsRequest(BaseModel):
     """
     Canonical person UUIDs to check (the metric runtime's key since the

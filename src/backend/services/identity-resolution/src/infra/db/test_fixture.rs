@@ -183,6 +183,27 @@ impl Fixture {
         Ok(person_id)
     }
 
+    /// A person the log holds nothing but a sign-in binding for.
+    pub(crate) async fn login_minted_person(&self, login: &str) -> anyhow::Result<Uuid> {
+        let person_id = Uuid::now_v7();
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason)
+             VALUES ('id', ?, ?, ?, ?, ?, ?, ?)",
+            [
+                SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                login.into(),
+                bytes(person_id),
+                bytes(Uuid::nil()),
+                crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON.into(),
+            ],
+        )
+        .await?;
+        Ok(person_id)
+    }
+
     pub(crate) async fn reports_to(&self, child: Uuid, parent: Uuid) -> anyhow::Result<()> {
         self.exec(
             "INSERT INTO org_chart (insight_tenant_id, insight_source_type, insight_source_id,

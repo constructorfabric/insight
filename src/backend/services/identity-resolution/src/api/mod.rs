@@ -613,6 +613,27 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(subchart::get_subchart)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/v1/visible-persons")
+        .operation_id("identity_resolution.visible_persons.list")
+        .summary("List the persons the caller may see")
+        .authenticated()
+        .query_param(
+            "q",
+            false,
+            "Whitespace-separated terms; absent browses the roster",
+        )
+        .query_param_typed("limit", false, "Page size (1..=500, default 50)", "integer")
+        .query_param("cursor", false, "Resume token from a previous page")
+        .no_license_required()
+        .json_response_with_schema::<visible_persons::VisiblePersonsPageResponse>(
+            openapi,
+            StatusCode::OK,
+            "One page of visible persons",
+        )
+        .standard_errors(openapi)
+        .handler(visible_persons::list_visible_persons)
+        .register(router, openapi);
+
     OperationBuilder::post("/v1/visible-persons")
         .operation_id("identity_resolution.visible_persons.create")
         .summary("Filter person ids to the ones the caller may see")
