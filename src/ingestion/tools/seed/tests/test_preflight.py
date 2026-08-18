@@ -374,6 +374,24 @@ class SeedReasonNamespaceTests(unittest.TestCase):
         self.assertEqual(params[0], uuid_mod.UUID(_TENANT).bytes)
         self.assertEqual(params[1], f"{config.SEED_REASON_PREFIX}%")
 
+    def test_an_operator_decision_is_not_counted_as_identity_data_from_elsewhere(self) -> None:
+        cursor = _CapturingCursor(result=(0,))
+        preflight._count_foreign_persons(cursor, _TENANT)  # type: ignore[arg-type]
+
+        _, params = cursor.executed[-1]
+        self.assertIn(f"{config.OPERATOR_REASON_PREFIX}%", params)
+
+    def test_the_operator_prefix_covers_every_verb_the_resolution_api_records(self) -> None:
+        for verb in ("bind", "merge", "detach", "exclude"):
+            with self.subTest(verb=verb):
+                self.assertTrue(f"operator-{verb}".startswith(config.OPERATOR_REASON_PREFIX))
+
+    def test_a_refusal_names_both_namespaces_it_forgave(self) -> None:
+        message = preflight.foreign_rows_problem(2, _TENANT, "identity")
+        self.assertIn(config.SEED_REASON_PREFIX, message)
+        self.assertIn(config.OPERATOR_REASON_PREFIX, message)
+        self.assertIn(config.PERSONS_SEED_LINK_REASON, message)
+
     def test_a_tenant_with_no_foreign_rows_reads_as_zero(self) -> None:
         self.assertEqual(
             preflight._count_foreign_persons(_CapturingCursor(result=None), _TENANT),  # type: ignore[arg-type]

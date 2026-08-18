@@ -443,6 +443,10 @@ mod tests {
                 "operator-exclude"
             ]
         );
+        // INVARIANT: the seeder's preflight tells its own rows from a foreign
+        // directory's by this prefix (config.OPERATOR_REASON_PREFIX). A verb
+        // spelled without it makes every later seed of that stand refuse.
+        assert!(codes.iter().all(|code| code.starts_with("operator-")));
     }
 
     #[test]

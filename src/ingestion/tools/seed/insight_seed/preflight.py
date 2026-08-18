@@ -14,7 +14,9 @@ Two signals, because neither sees everything:
 * `persons` rows in the target tenant whose `reason` is outside this seeder's
   namespace. Identity rows are additive, so this one is about not mixing demo
   people into somebody's directory — but it is also the ONLY signal that works
-  on a single-tenant stand, so the silver step consults it too.
+  on a single-tenant stand, so the silver step consults it too. An operator
+  decision does not count: it is a judgement about a person already in the
+  tenant, so whoever put that person there is what this counts instead.
 * Rows in the reset surface belonging to a different tenant. Silver rows are
   NOT additive: the generators TRUNCATE each table before writing, across every
   tenant, because a partially rewritten silver table produces metrics that are
@@ -39,6 +41,7 @@ import pymysql
 
 from . import config
 from .config import (
+    OPERATOR_REASON_PREFIX,
     PERSONS_SEED_LINK_REASON,
     SEED_REASON_PREFIX,
     ClickHouse,
@@ -76,10 +79,11 @@ def table_missing_problem(database: str, table: str, *, needed_for: str) -> str:
 def foreign_rows_problem(count: int, tenant: str, database: str) -> str:
     return (
         f"tenant {tenant} already holds {count} `{database}.persons` row(s) this seeder "
-        f"did not write (their `reason` does not start with {SEED_REASON_PREFIX!r} and is "
-        f"not the persons-seed's {PERSONS_SEED_LINK_REASON!r}), so this stand carries "
-        "identity data from somewhere else. Seed a tenant of your own, "
-        f"or set {config.FORCE_ENV}=1 to add demo people to this one anyway."
+        f"did not write (their `reason` does not start with {SEED_REASON_PREFIX!r} or "
+        f"{OPERATOR_REASON_PREFIX!r} and is not the persons-seed's "
+        f"{PERSONS_SEED_LINK_REASON!r}), so this stand carries identity data from "
+        f"somewhere else. Seed a tenant of your own, or set {config.FORCE_ENV}=1 to add "
+        "demo people to this one anyway."
     )
 
 
@@ -96,8 +100,13 @@ def _count_foreign_persons(cur: pymysql.cursors.Cursor, tenant: str) -> int:
     cur.execute(
         "SELECT COUNT(*) FROM persons "
         "WHERE insight_tenant_id = %s "
-        "AND (reason IS NULL OR (reason NOT LIKE %s AND reason != %s))",
-        (uuid_mod.UUID(tenant).bytes, f"{SEED_REASON_PREFIX}%", PERSONS_SEED_LINK_REASON),
+        "AND (reason IS NULL OR (reason NOT LIKE %s AND reason != %s AND reason NOT LIKE %s))",
+        (
+            uuid_mod.UUID(tenant).bytes,
+            f"{SEED_REASON_PREFIX}%",
+            PERSONS_SEED_LINK_REASON,
+            f"{OPERATOR_REASON_PREFIX}%",
+        ),
     )
     row = cur.fetchone()
     return int(row[0]) if row else 0

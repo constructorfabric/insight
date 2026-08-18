@@ -29,6 +29,12 @@ SEED_REASON_PREFIX = "seed.py "
 #: The persons-seed's email-link reason (AUTO_SEED_LINK_REASON): a rebuildable projection, not foreign data.
 PERSONS_SEED_LINK_REASON = "auto-seed-link"
 
+#: Prefix on the `reason` identity-resolution writes for an operator decision
+#: (`operator-bind`, `-merge`, `-detach`, `-exclude`). A decision is not identity
+#: data from elsewhere: the service refuses one whose person it does not already
+#: know, so the person it acts on is counted on its own rows.
+OPERATOR_REASON_PREFIX = "operator-"
+
 TENANT_ENV = "TENANT_DEFAULT_ID"
 ANALYTICS_DB_ENV = "MARIADB_ANALYTICS_DB"
 IDENTITY_DB_ENV = "MARIADB_DB"
