@@ -167,8 +167,10 @@ def deterministic_int(*parts: str) -> int:
 #: than quietly widening what a seed run destroys.
 RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("bronze_bamboohr", "employees"),
+    ("bronze_claude_team_invoices", "claude_team_invoice_lines"),
     ("silver", "class_ai_assistant_usage"),
     ("silver", "class_ai_dev_usage"),
+    ("silver", "class_ai_invoice"),
     ("silver", "class_ai_overage"),
     ("silver", "class_collab_chat_activity"),
     ("silver", "class_collab_email_activity"),
@@ -191,6 +193,9 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("silver", "class_wiki_activity"),
     ("silver", "class_wiki_engagement"),
     ("silver", "class_wiki_pages"),
+    # The only staging target: invoices are the one generator that seeds bronze and
+    # lets dbt build the layers above, so a re-seed has to clear them itself.
+    ("staging", "claude_team__ai_invoice"),
 )
 
 

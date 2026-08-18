@@ -24,7 +24,7 @@ vi.mock("@/auth/session-scope", () => ({
     s == null ? null : (s as { scope: string }).scope,
 }));
 
-import { useBindAccount } from "./identity-resolution";
+import { listsAnyone, useBindAccount, usePersonList } from "./identity-resolution";
 
 const bindAccount = vi.mocked(identityClient.bindAccount);
 
@@ -132,4 +132,78 @@ describe("useBindAccount cache behavior", () => {
     expect(keys).toContainEqual(["identity", "resolution"]);
     expect(keys).toContainEqual(["identity", "persons", "search"]);
   });
+});
+
+describe("usePersonList", () => {
+  const searchPersons = vi.mocked(identityClient.searchPersons);
+
+  function roster(): identityClient.PersonSearchResponse {
+    return { items: [{ person_id: "01900000-0000-7000-8000-0000000000b0" }] };
+  }
+
+  it.each([
+    ["browse", true],
+    ["match", false],
+  ] as const)(
+    "a blank query asks for the roster under %s intent: %s",
+    async (intent, asks) => {
+      const { wrapper } = harness();
+      searchPersons.mockResolvedValue(roster());
+
+      const { result } = renderHook(() => usePersonList("", intent), { wrapper });
+
+      if (asks) {
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      }
+      expect(searchPersons.mock.calls.length > 0).toBe(asks);
+    },
+  );
+
+  // The bug this key exists to prevent: `enabled: false` stops a request and
+  // NOT a cache read, so a shared key let the dialog's picker render the roster
+  // the person mode had just cached — the tenant listed into a dropdown.
+  it("does not serve the browsed roster to a match-intent caller", async () => {
+    const { queryClient, wrapper } = harness();
+    searchPersons.mockResolvedValue(roster());
+    const browsed = renderHook(() => usePersonList("", "browse"), { wrapper });
+    await waitFor(() => expect(browsed.result.current.isSuccess).toBe(true));
+
+    const matching = renderHook(() => usePersonList("", "match"), { wrapper });
+
+    expect(matching.result.current.data).toBeUndefined();
+    expect(matching.result.current.hasNextPage).toBe(false);
+    expect(
+      queryClient.getQueryData(["identity", "persons", "search", "tenant-a", "browse", ""]),
+    ).toBeDefined();
+  });
+
+  it("pages with the cursor the service returned", async () => {
+    const { wrapper } = harness();
+    searchPersons
+      .mockResolvedValueOnce({ ...roster(), next_cursor: "c1" })
+      .mockResolvedValueOnce(roster());
+
+    const { result } = renderHook(() => usePersonList("iva", "match"), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.hasNextPage).toBe(true);
+    await result.current.fetchNextPage();
+
+    expect(searchPersons.mock.calls.map((c) => c[1]?.cursor)).toEqual([
+      undefined,
+      "c1",
+    ]);
+  });
+
+  it.each([
+    ["browse", "", true],
+    ["browse", "   ", true],
+    ["match", "", false],
+    ["match", "   ", false],
+    ["match", "iva", true],
+  ] as const)(
+    "listsAnyone(%s intent, %o) is %s",
+    (intent, q, expected) => {
+      expect(listsAnyone(q, intent)).toBe(expected);
+    },
+  );
 });

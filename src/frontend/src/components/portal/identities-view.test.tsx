@@ -28,11 +28,26 @@ const attention = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
 }));
-vi.mock("@/queries/identity-resolution", () => ({
+vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useAttention: () => attention.q,
-  useAccountSearch: () => ({ data: undefined, isFetching: false, isError: false }),
+  useAccountList: () => ({
+    data: undefined,
+    isFetching: false,
+    isFetchingNextPage: false,
+    isError: false,
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
+  }),
   // The people mode has its own test file; here it only has to mount.
-  usePersonSearch: () => ({ data: undefined, isFetching: false, isError: false }),
+  usePersonList: () => ({
+    data: undefined,
+    isFetching: false,
+    isFetchingNextPage: false,
+    isError: false,
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
+  }),
   usePersonAccounts: () => ({
     data: undefined,
     isLoading: false,
@@ -510,7 +525,11 @@ describe("IdentitiesView", () => {
     expect(portalRouter.search.mode).toBe("people");
     // A case picked in the queue means nothing in a list it is not part of.
     expect(portalRouter.search.acct).toBeUndefined();
-    expect(screen.getByText(/nobody chosen yet/i)).toBeInTheDocument();
+    // The mode it switched TO is on screen, so the cleared selection is not
+    // just an empty URL over the old surface.
+    expect(
+      screen.getByRole("searchbox", { name: /search people/i }),
+    ).toBeInTheDocument();
   });
 
   it("falls back to the queue when the URL names a mode that does not exist", () => {

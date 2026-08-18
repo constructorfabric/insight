@@ -154,6 +154,12 @@ _SESSION_START_TRUNCATE = [
     # claude_team__ai_overage (cc_overage) is also incremental `append` with a
     # dbt `unique` test — reset it too for warm-rerun determinism.
     ("staging", "claude_team__ai_overage"),
+    # claude_team__ai_invoice and its class are both incremental behind a strict
+    # `_airbyte_extracted_at >` watermark. A warm re-run re-seeds the same
+    # timestamps, so without a reset the watermark admits nothing and every
+    # assertion below reads the previous session's rows instead of this one's.
+    ("staging", "claude_team__ai_invoice"),
+    ("silver", "class_ai_invoice"),
     # claude_enterprise specs build staging.claude_enterprise__ai_dev_usage — an
     # incremental `append` model with a dbt `unique` test on unique_key.
     # Session-start reset keeps warm re-runs (reused CH volume, no `./e2e.sh

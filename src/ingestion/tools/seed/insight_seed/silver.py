@@ -40,7 +40,7 @@ from pathlib import Path
 import clickhouse_connect
 
 from . import config
-from .generators import ai, collab, crm, git, hr, people, support, task, wiki
+from .generators import ai, ai_cost, collab, crm, git, hr, people, support, task, wiki
 from .generators.base import seed_days
 from .profiles import build_roster, get_dev_user_email
 
@@ -113,6 +113,10 @@ def apply_create_bronze_placeholders() -> None:
 # silver:identity_inputs tag marks only its staging feeders.
 IDENTITY_INPUTS_SELECT = "+identity_inputs"
 
+# By model name, never by the connector tag: a tag materialises sibling
+# staging models too, and the placeholder-drop hook then empties their class.
+AI_INVOICE_SELECT = "claude_team__ai_invoice+"
+
 
 def apply_ch_migrations(dbt_select: str | None = None) -> None:
     """Apply gold-view migrations + build dbt-owned gold models.
@@ -169,6 +173,7 @@ def generate_rows(
     totals.update(collab.generate(client, roster, tenant_uuid, days))
     totals.update(hr.generate(client, roster, tenant_uuid, days))
     totals.update(ai.generate(client, roster, tenant_uuid, days))
+    totals.update(ai_cost.generate(client, roster, tenant_uuid, days))
     totals.update(task.generate(client, roster, tenant_uuid, days))
     totals.update(support.generate(client, roster, tenant_uuid, days))
     totals.update(wiki.generate(client, roster, tenant_uuid, days))
@@ -193,7 +198,7 @@ def run() -> None:
         # 3. Real deploy mechanism: migrations + gold + identity inputs. Gold
         #    builds unresolved here — the orchestrator runs the persons-seed/
         #    sync pair and then the `gold` subcommand to rebuild it.
-        apply_ch_migrations(dbt_select=f"tag:gold {IDENTITY_INPUTS_SELECT}")
+        apply_ch_migrations(dbt_select=f"tag:gold {IDENTITY_INPUTS_SELECT} {AI_INVOICE_SELECT}")
     finally:
         client.close()
     LOG.info("DONE: silver rows seeded + gold layer built via deploy scripts.")

@@ -3108,6 +3108,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "base64 0.23.1",
  "cf-gears-api-gateway",
  "cf-gears-authn-resolver",
  "cf-gears-authz-resolver",
