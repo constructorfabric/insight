@@ -1,0 +1,32 @@
+##
+## Shared Gateway API entry point for the functional K3s smoke, applied by
+## `make bootstrap-envoy-gateway`. HTTP only — nothing here is browser-facing,
+## and the release's HTTPRoute (gateway.route in values.yaml) attaches to the
+## `insight` listener below by the chart's default parentRef.
+##
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: insight
+  namespace: insight-infra
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [insight, insight-infra]

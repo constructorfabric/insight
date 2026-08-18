@@ -1,0 +1,54 @@
+##
+## ClusterIssuers for the functional K3s smoke.
+##
+## environments/functional-ci/values.yaml points the authenticator's
+## tlsDiscovery at a `local-ca` ClusterIssuer, so this file has to define one
+## under that name. Same two-step chain as bootstrap/local:
+##
+## - selfsigned-cluster-issuer: cert-manager's built-in self-signed issuer,
+##   used once to mint the root below.
+## - local-ca: a self-signed root CA kept as a Secret in cert-manager's
+##   namespace, then re-exposed as a CA ClusterIssuer that signs leaf certs
+##   (here: the authenticator's authn-tls SANs).
+##
+## Nothing in this env is browser-facing — the chain exists so downstream
+## verifiers can resolve the JWKS over https and trust the leaf.
+##
+## Applied by `make bootstrap-cert-manager ENV=functional-ci`, after the
+## chart is up and the webhook is ready.
+##
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-cluster-issuer
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: local-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: insight-functional-ci-ca
+  secretName: local-ca-key-pair
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  # The cluster is torn down with the job, so renewal never comes up; these
+  # are the shortest values that keep cert-manager from renewing mid-run.
+  duration: 8760h         # 1 year
+  renewBefore: 720h       # 30 days
+  issuerRef:
+    name: selfsigned-cluster-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: local-ca
+spec:
+  ca:
+    secretName: local-ca-key-pair
