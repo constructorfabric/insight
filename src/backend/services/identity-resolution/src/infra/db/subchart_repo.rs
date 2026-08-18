@@ -19,6 +19,8 @@ use sea_orm::prelude::DateTime;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 use uuid::Uuid;
 
+use crate::config::VisibilityPolicy;
+
 use super::sql_named::bind_named;
 
 /// One flat node of a subchart traversal. `parent_person_id` is `None` for a
@@ -66,6 +68,7 @@ pub async fn is_target_in_visible_set(
     target_person_id: Uuid,
     org_source_type: &str,
     valid_at: Option<DateTime>,
+    policy: VisibilityPolicy,
 ) -> anyhow::Result<bool> {
     const SQL: &str = r"
         WITH RECURSIVE visible_set (person_id) AS (
@@ -89,6 +92,14 @@ pub async fn is_target_in_visible_set(
                   AND (valid_to IS NULL OR valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
             )
             UNION
+            -- SAFETY: scoped to the tenant's persons, not to the id asked
+            -- about — an unscoped arm confirms any UUID a caller can type.
+            SELECT person_id
+            FROM persons
+            WHERE insight_tenant_id = @tenant_id
+              AND person_id         = @target_person_id
+              AND @flat_tenant
+            UNION
             SELECT oc.child_person_id
             FROM visible_set vs
             JOIN org_chart oc
@@ -109,6 +120,7 @@ pub async fn is_target_in_visible_set(
             ("valid_at", valid_at.into()),
             ("target_person_id", bytes(target_person_id)),
             ("org_source_type", org_source_type.into()),
+            ("flat_tenant", policy.is_flat().into()),
         ],
     )?;
 
@@ -169,6 +181,7 @@ pub async fn visible_targets(
     viewer_person_id: Uuid,
     candidates: &[Uuid],
     org_source_type: &str,
+    policy: VisibilityPolicy,
 ) -> anyhow::Result<Vec<Uuid>> {
     const SQL: &str = r"
         WITH RECURSIVE visible_set (person_id) AS (
@@ -185,14 +198,14 @@ pub async fn visible_targets(
             SELECT DISTINCT person_id
             FROM persons
             WHERE insight_tenant_id = @tenant_id
-              AND EXISTS (
+              AND (@flat_tenant OR EXISTS (
                   SELECT 1 FROM visibility
                   WHERE insight_tenant_id = @tenant_id
                     AND viewer_person_id  = @viewer_person_id
                     AND viewed_person_id  IS NULL
                     AND valid_from <= UTC_TIMESTAMP(6)
                     AND (valid_to IS NULL OR valid_to > UTC_TIMESTAMP(6))
-              )
+              ))
             UNION
             SELECT oc.child_person_id
             FROM visible_set vs
@@ -223,6 +236,7 @@ pub async fn visible_targets(
         ("viewer_person_id", bytes(viewer_person_id)),
         ("tenant_id", bytes(tenant_id)),
         ("org_source_type", org_source_type.into()),
+        ("flat_tenant", policy.is_flat().into()),
     ];
     params.extend(
         names
@@ -351,6 +365,7 @@ pub async fn get_forest_flat(
     source_type: &str,
     max_depth: Option<i32>,
     valid_at: Option<DateTime>,
+    policy: VisibilityPolicy,
 ) -> anyhow::Result<Vec<SubchartFlatNode>> {
     const SQL: &str = r"
         WITH RECURSIVE
@@ -367,14 +382,14 @@ pub async fn get_forest_flat(
             UNION
             SELECT DISTINCT person_id FROM persons
             WHERE insight_tenant_id = @tenant_id
-              AND EXISTS (
+              AND (@flat_tenant OR EXISTS (
                   SELECT 1 FROM visibility
                   WHERE insight_tenant_id = @tenant_id
                     AND viewer_person_id  = @viewer_person_id
                     AND viewed_person_id  IS NULL
                     AND valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
                     AND (valid_to IS NULL OR valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
-              )
+              ))
             UNION
             SELECT oc.child_person_id
             FROM visible_set vs
@@ -469,6 +484,7 @@ pub async fn get_forest_flat(
             ("valid_at", valid_at.into()),
             ("source_type", source_type.into()),
             ("max_depth", max_depth.into()),
+            ("flat_tenant", policy.is_flat().into()),
         ],
     )?;
 

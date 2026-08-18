@@ -27,7 +27,7 @@ use toolkit::api::OpenApiRegistryImpl;
 use toolkit_security::SecurityContext;
 
 use super::AppState;
-use crate::config::GearConfig;
+use crate::config::{GearConfig, VisibilityPolicy};
 use crate::domain::resolution::EXCLUDED_PERSON;
 use crate::infra::db::test_fixture::{FIXTURE_REASON, Fixture, fixture_or_skip};
 use crate::infra::db::{person_roles_repo, roles_repo};
@@ -42,20 +42,36 @@ struct Caller {
 }
 
 fn app(f: &Fixture, caller: Uuid) -> Router {
+    app_with(f, caller, GearConfig::default())
+}
+
+fn flat_app(f: &Fixture, caller: Uuid) -> Router {
+    app_with(
+        f,
+        caller,
+        GearConfig {
+            visibility_policy: VisibilityPolicy::Flat,
+            ..GearConfig::default()
+        },
+    )
+}
+
+fn app_with(f: &Fixture, caller: Uuid, config: GearConfig) -> Router {
     app_for(
         f,
         Caller {
             person_id: caller,
             tenant: f.tenant,
         },
+        config,
     )
 }
 
-fn app_for(f: &Fixture, caller: Caller) -> Router {
+fn app_for(f: &Fixture, caller: Caller, config: GearConfig) -> Router {
     let openapi = OpenApiRegistryImpl::new();
     let state = Arc::new(AppState {
         db: f.db.clone(),
-        config: GearConfig::default(),
+        config,
     });
     let api = super::build_operations(Router::new(), &openapi)
         .layer(from_fn_with_state(caller, inject_host_context))
@@ -778,5 +794,47 @@ async fn a_cut_page_offers_the_next_one_and_a_whole_answer_does_not() -> TestRes
         full["next_cursor"].is_null(),
         "a whole answer offers no next page: {full}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_flat_policy_resolves_a_profile_outside_the_reporting_line() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("flat-caller@http-live.test").await?;
+    let unrelated = f.person("flat-unrelated@http-live.test").await?;
+
+    let (org_chart, _) = post(app(&f, caller), "/v1/profiles", &by_person_id(unrelated)).await?;
+    let (flat, _) = post(
+        flat_app(&f, caller),
+        "/v1/profiles",
+        &by_person_id(unrelated),
+    )
+    .await?;
+
+    assert_eq!(
+        org_chart,
+        StatusCode::NOT_FOUND,
+        "reporting-line rule hides them"
+    );
+    assert_eq!(flat, StatusCode::OK, "flat policy resolves them");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_flat_policy_keeps_another_tenants_profile_not_found() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("flat-boundary@http-live.test").await?;
+    let foreign = f
+        .in_another_tenant()
+        .person("flat-foreign@http-live.test")
+        .await?;
+
+    let (status, _) = post(flat_app(&f, caller), "/v1/profiles", &by_person_id(foreign)).await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
     Ok(())
 }

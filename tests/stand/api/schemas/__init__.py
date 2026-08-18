@@ -74,6 +74,7 @@ from .identity import (
     PersonAccountsResponse,
     PersonListResponse,
     SubchartNode,
+    VisibilityPolicy,
 )
 from .identity import (
     PersonRoleListResponse as PersonRoleList,
@@ -157,5 +158,6 @@ __all__: Sequence[str] = (
     "UsageSummaryResponse",
     "Visibility",
     "VisibilityList",
+    "VisibilityPolicy",
     "VisiblePersons",
 )

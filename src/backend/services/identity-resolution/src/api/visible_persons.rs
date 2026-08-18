@@ -53,10 +53,13 @@ pub async fn filter_visible_persons(
     // as visible — and analytics treats this answer as authorization. Not an
     // existence oracle beyond what the grant already implies: a wildcard
     // holder may see every person the tenant has.
-    let visible = if subchart_repo::has_wildcard_grant(&state.db, tenant, caller)
-        .await
-        .map_err(read_err)?
-    {
+    let policy = state.config.visibility_policy;
+    let whole_tenant = policy.is_flat()
+        || subchart_repo::has_wildcard_grant(&state.db, tenant, caller)
+            .await
+            .map_err(read_err)?;
+
+    let visible = if whole_tenant {
         persons_repo::persons_in_tenant(&state.db, tenant, &requested)
             .await
             .map_err(read_err)?
@@ -67,6 +70,7 @@ pub async fn filter_visible_persons(
             caller,
             &requested,
             &state.config.org_chart_source_type,
+            policy,
         )
         .await
         .map_err(read_err)?
