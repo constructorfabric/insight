@@ -8,10 +8,10 @@ name: Functional K3s Smoke
 
 on:
   workflow_dispatch:
-  # Merge-queue builds are where the cluster actually comes up. The
-  # pull_request trigger stays so the check reports on every PR — the job
-  # below skips there, and branch protection counts a skipped job as a pass —
-  # but the deploy smoke itself runs once per queue batch, not on every push.
+  # Merge-queue builds always bring the cluster up. The pull_request trigger
+  # stays unfiltered so the check reports on every PR — `scope` below decides
+  # which PRs get a cluster, and branch protection counts the skip as a pass
+  # for the ones that do not.
   merge_group:
   pull_request:
     branches: [main]
@@ -43,10 +43,59 @@ env:
   REDIS_PASSWORD: insightpass123
 
 jobs:
+  # Filtering here rather than with `paths:` on the trigger is deliberate: a
+  # workflow that never starts never reports a check, and this one is required.
+  scope:
+    name: Deploy surface touched?
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Decide whether this event needs a cluster
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "${GITHUB_EVENT_NAME} always deploys." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Everything the deploy reads: the gitops environment and the
+          # Makefile that drives it, the umbrella chart plus the service
+          # subcharts it packages from src/backend/services/*/helm, and this
+          # workflow. Service SOURCE is out — the smoke deploys published
+          # images, which reach it through a chart descriptor bump.
+          surface='^(deploy/gitops/|charts/|src/backend/services/[^/]+/helm/|\.github/workflows/functional-k3s\.yml$)'
+
+          changed=$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+            --jq '.[].filename')
+          matched=$(grep -E "$surface" <<<"$changed" || true)
+
+          if [[ -n "$matched" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "Deploy surface touched — bringing a cluster up:"
+              echo
+              sed 's/^/- /' <<<"$matched"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No deploy surface in this PR — the cluster smoke is skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   cluster-smoke:
     name: K3s GitOps Deploy
-    # Skipped on pull_request by design — see the trigger comment above.
-    if: github.event_name != 'pull_request'
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
