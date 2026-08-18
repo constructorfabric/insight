@@ -19,9 +19,7 @@
 --
 -- depends_on: {{ ref('claude_team__ai_invoice') }}
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_ai_invoice') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['insight_tenant_id', 'source_id']) }}
