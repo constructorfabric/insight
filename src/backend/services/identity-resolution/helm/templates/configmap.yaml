@@ -122,6 +122,7 @@ data:
           org_chart_source_type: {{ .Values.orgChartSourceType | quote }}
           expand_subordinates: {{ .Values.expandSubordinates }}
           max_depth: {{ .Values.maxDepth }}
+          visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}
           clickhouse_url: ""
           clickhouse_database: "identity"
           clickhouse_user: ""

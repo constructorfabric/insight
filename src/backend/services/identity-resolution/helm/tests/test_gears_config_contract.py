@@ -64,3 +64,20 @@ def test_a_top_level_override_reaches_the_gear_config(
     config = _gear_config("--set", flag)
 
     assert config[key] == expected, f"should honour --set {flag}"
+
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [(None, "org_chart"), ("visibilityPolicy=flat", "flat"), ("visibilityPolicy=org_chart", "org_chart")],
+)
+def test_the_visibility_policy_reaches_the_gear_config(
+    flag: str | None, expected: str
+) -> None:
+    config = _gear_config(*(("--set", flag) if flag else ()))
+
+    assert config["visibility_policy"] == expected
+
+
+def test_the_visibility_policy_is_never_rendered_empty() -> None:
+    config = _gear_config("--set", "visibilityPolicy=")
+
+    assert config["visibility_policy"] == "org_chart"

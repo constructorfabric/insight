@@ -4,7 +4,22 @@
 //! `gears.identity-resolution.config` YAML section. Env overrides are
 //! `APP__gears__identity_resolution__config__<field>`.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VisibilityPolicy {
+    #[default]
+    OrgChart,
+    Flat,
+}
+
+impl VisibilityPolicy {
+    #[must_use]
+    pub fn is_flat(self) -> bool {
+        matches!(self, Self::Flat)
+    }
+}
 
 /// Configuration consumed by the identity-resolution gear. Deserialized from
 /// `gears.identity-resolution.config`.
@@ -38,6 +53,10 @@ pub struct GearConfig {
     /// active `admin` assignment in `tenant_default_id` unless one already
     /// exists. Empty = disabled.
     pub bootstrap_admin_person_id: String,
+    /// Whose data a caller may see: the reporting line plus explicit grants
+    /// (`org_chart`), or every person in the tenant (`flat`). Nothing is
+    /// written to `visibility`, so the choice is reversible.
+    pub visibility_policy: VisibilityPolicy,
 }
 
 impl Default for GearConfig {
@@ -53,6 +72,55 @@ impl Default for GearConfig {
             clickhouse_password: String::new(),
             tenant_default_id: String::new(),
             bootstrap_admin_person_id: String::new(),
+            visibility_policy: VisibilityPolicy::OrgChart,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(json: serde_json::Value) -> Result<GearConfig, serde_json::Error> {
+        serde_json::from_value(json)
+    }
+
+    #[test]
+    fn an_absent_policy_reads_as_org_chart() -> anyhow::Result<()> {
+        let config = config(serde_json::json!({}))?;
+
+        assert_eq!(config.visibility_policy, VisibilityPolicy::OrgChart);
+        Ok(())
+    }
+
+    #[test]
+    fn each_policy_is_named_as_the_wire_names_it() -> anyhow::Result<()> {
+        for (value, expected) in [
+            ("org_chart", VisibilityPolicy::OrgChart),
+            ("flat", VisibilityPolicy::Flat),
+        ] {
+            let config = config(serde_json::json!({ "visibility_policy": value }))?;
+
+            assert_eq!(config.visibility_policy, expected, "for: {value}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_policy_refuses_to_load() {
+        // A policy decides who may see whom, so an unreadable one must stop the
+        // service rather than resolve to whichever branch the type defaults to.
+        for value in ["Flat", "FLAT", "flatt", "", "org-chart"] {
+            assert!(
+                config(serde_json::json!({ "visibility_policy": value })).is_err(),
+                "should refuse: {value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_flat_policy_reports_itself_flat() {
+        assert!(VisibilityPolicy::Flat.is_flat());
+        assert!(!VisibilityPolicy::OrgChart.is_flat());
     }
 }

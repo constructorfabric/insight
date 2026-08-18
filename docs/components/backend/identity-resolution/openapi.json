@@ -490,12 +490,16 @@
               "$ref": "#/components/schemas/MeRoleResponse"
             },
             "type": "array"
+          },
+          "visibility_policy": {
+            "$ref": "#/components/schemas/VisibilityPolicy"
           }
         },
         "required": [
           "person_id",
           "insight_tenant_id",
-          "roles"
+          "roles",
+          "visibility_policy"
         ],
         "type": "object"
       },
@@ -1455,6 +1459,13 @@
           "items"
         ],
         "type": "object"
+      },
+      "VisibilityPolicy": {
+        "enum": [
+          "org_chart",
+          "flat"
+        ],
+        "type": "string"
       },
       "VisibilityResponse": {
         "description": "One visibility grant.",

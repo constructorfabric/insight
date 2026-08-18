@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::domain::seed::SourceAccountKey;
 
 use super::{connect_single, roles_repo, subchart_repo};
+use crate::config::VisibilityPolicy;
 
 /// The all-zero author every automatic binding carries.
 const AUTOMATION: Uuid = Uuid::nil();
@@ -240,7 +241,47 @@ impl Fixture {
         viewer: Uuid,
         candidates: &[Uuid],
     ) -> anyhow::Result<Vec<Uuid>> {
-        subchart_repo::visible_targets(&self.db, self.tenant, viewer, candidates, SOURCE_TYPE).await
+        self.visible_under(viewer, candidates, VisibilityPolicy::OrgChart)
+            .await
+    }
+
+    pub(crate) async fn visible_flat(
+        &self,
+        viewer: Uuid,
+        candidates: &[Uuid],
+    ) -> anyhow::Result<Vec<Uuid>> {
+        self.visible_under(viewer, candidates, VisibilityPolicy::Flat)
+            .await
+    }
+
+    async fn visible_under(
+        &self,
+        viewer: Uuid,
+        candidates: &[Uuid],
+        policy: VisibilityPolicy,
+    ) -> anyhow::Result<Vec<Uuid>> {
+        subchart_repo::visible_targets(
+            &self.db,
+            self.tenant,
+            viewer,
+            candidates,
+            SOURCE_TYPE,
+            policy,
+        )
+        .await
+    }
+
+    pub(crate) async fn can_see_flat(&self, viewer: Uuid, target: Uuid) -> anyhow::Result<bool> {
+        subchart_repo::is_target_in_visible_set(
+            &self.db,
+            self.tenant,
+            viewer,
+            target,
+            SOURCE_TYPE,
+            None,
+            VisibilityPolicy::Flat,
+        )
+        .await
     }
 
     async fn exec(&self, sql: &str, values: impl IntoIterator<Item = Value>) -> anyhow::Result<()> {
