@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 import requests_mock as rm_module
+from source_claude_team_invoices import streams as streams_module
 from source_claude_team_invoices.streams import BOOTSTRAP_HOST, STRIPE_API, STRIPE_VERSION, InvoiceLines
 
 CONFIG = {
@@ -145,6 +146,24 @@ def test_line_pages_are_walked_until_the_endpoint_stops_offering_more(
     line_requests = [r for r in http.request_history if "api.stripe.com" in r.url]
     assert len(line_requests) == 2
     assert "starting_after=il_first" in line_requests[1].url, "the second page resumes after the first page's last id"
+
+
+def test_the_chain_is_paced_between_invoices_but_not_before_the_first(
+    stream: InvoiceLines, http: rm_module.Mocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bootstrap host is undocumented and a run walks the whole history, so the
+    chain is the one part whose request rate is ours to choose."""
+    slept: list[float] = []
+    monkeypatch.setattr(streams_module.time, "sleep", slept.append)
+
+    second = wrapper_invoice(payment_intent="pi_SECOND")
+    http.get(INVOICES_URL, json={"invoices": [wrapper_invoice(), second], "next_page": None})
+    http.get(BOOTSTRAP_URL, json={"invoice_id": INVOICE_ID, "ephemeral_key": EPHEMERAL_KEY})
+    http.get(LINES_URL, json={"data": [subscription_line()], "has_more": False})
+
+    list(stream.read_records(sync_mode="full_refresh"))
+
+    assert slept == [streams_module.CHAIN_DELAY_SECS], "two invoices, one pause, none before the first"
 
 
 def test_a_hop_that_fails_leaves_a_gap_and_does_not_end_the_run(

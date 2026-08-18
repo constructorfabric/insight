@@ -30,6 +30,7 @@ socket.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
@@ -49,6 +50,9 @@ PER_PAGE = 12
 MAX_PAGES = 50
 MAX_LINE_PAGES = 20
 TIMEOUT = 30
+# Paced between invoices, not inside one: the bootstrap host is undocumented and
+# a run walks every invoice, so the chain is the only part whose rate we choose.
+CHAIN_DELAY_SECS = 0.25
 
 
 def _now_iso() -> str:
@@ -56,7 +60,7 @@ def _now_iso() -> str:
 
 
 class InvoiceLines(Stream):
-    """`claude_team_invoice_lines` — one record per invoice line."""
+    """`claude_team_invoice_lines` — one record per invoice, plus one per line."""
 
     primary_key = "unique_key"
 
@@ -67,6 +71,7 @@ class InvoiceLines(Stream):
         self._tenant_id = config["insight_tenant_id"]
         self._source_id = config["insight_source_id"]
         self._session = requests.Session()
+        self._chained = False
 
     @property
     def name(self) -> str:
@@ -102,6 +107,10 @@ class InvoiceLines(Stream):
 
     def _fetch_lines(self, acct: str, token: str) -> tuple[str, Sequence[Mapping[str, Any]]]:
         """Run the Stripe hops and return the invoice id with its full line set."""
+        if self._chained:
+            time.sleep(CHAIN_DELAY_SECS)
+        self._chained = True
+
         bootstrap = self._get_json(f"{BOOTSTRAP_HOST}/hosted_invoice_page/{acct}/{token}")
         invoice_id, ephemeral_key = read_bootstrap(bootstrap)
 
