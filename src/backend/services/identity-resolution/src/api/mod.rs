@@ -281,8 +281,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param_typed(
             "q",
             false,
-            "Needle matched against the account's current address, handle, id \
-             and observed name. Absent or blank lists every open account.",
+            "Needle matched against every value the account's row shows: its \
+             current address, handle, id, observed name (whole or composed from \
+             parts) and the source it came from — `github` lists that \
+             connector's accounts. Case-insensitive substring. Absent or blank \
+             lists every open account.",
             "string",
         )
         .query_param_typed(

@@ -2673,7 +2673,7 @@
         "operationId": "identity_resolution.resolution.search_accounts",
         "parameters": [
           {
-            "description": "Needle matched against the account's current address, handle, id and observed name. Absent or blank lists every open account.",
+            "description": "Needle matched against every value the account's row shows: its current address, handle, id, observed name (whole or composed from parts) and the source it came from — `github` lists that connector's accounts. Case-insensitive substring. Absent or blank lists every open account.",
             "in": "query",
             "name": "q",
             "required": false,

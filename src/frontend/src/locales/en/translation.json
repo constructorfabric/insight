@@ -540,7 +540,7 @@
       "back": "‹ Back to the roster"
     },
     "accounts": {
-      "placeholder": "Find an account by address, handle, id or observed name…",
+      "placeholder": "Find an account by source, address, handle, id or observed name…",
       "no_matches": "No observed account carries that",
       "unbound": "bound to nobody",
       "failed": "Account search failed. Try again.",
