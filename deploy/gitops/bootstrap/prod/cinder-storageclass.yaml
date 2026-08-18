@@ -1,3 +1,17 @@
+# The default class backs every datastore on this stand: MariaDB, ClickHouse
+# and its Keeper, Redis, Redpanda, and Airbyte's own database and object store.
+#
+# INVARIANT: reclaimPolicy stays Retain. With Delete, removing a PVC — a
+# `kubectl delete`, an operator recreating a StatefulSet, a namespace teardown —
+# destroys the Cinder volume with it and the data is gone at once. The
+# mariadb CR's pvcRetentionPolicy: Retain guards the PVC, not the volume
+# underneath it. The cost is that a released volume must be deleted by hand.
+#
+# INVARIANT: durable volumes must keep naming THIS class. A PVC's
+# storageClassName is immutable once bound, so an existing datastore cannot be
+# moved onto a differently named retaining class without recreating its volume
+# — which is the loss the policy exists to prevent. Retention belongs on the
+# class they already name, not on a second one beside it.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -5,7 +19,7 @@ metadata:
   annotations:
     storageclass.kubernetes.io/is-default-class: "true"
 provisioner: cinder.csi.openstack.org
-reclaimPolicy: Delete
+reclaimPolicy: Retain
 allowVolumeExpansion: true
 volumeBindingMode: WaitForFirstConsumer
 ---
@@ -16,9 +30,14 @@ volumeBindingMode: WaitForFirstConsumer
 # parameters, so volumes from it are owned root:root and a non-root workload
 # cannot write them without a chown Job. Consumers must also request
 # ReadWriteOnce — ReadWriteOncePod does not satisfy the policy.
+#
 # INVARIANT: StorageClass parameters are immutable. This is a second class
 # rather than an fstype added to `cinder` so that re-running bootstrap-storage
 # against the existing default class keeps working.
+#
+# Reclaimed on delete, unlike the default class: this backs the git-cli-proxy
+# clone cache, which is rebuildable from the remote. A durable volume that also
+# needs fsGroup needs a retaining ext4 class of its own — do not put it here.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:

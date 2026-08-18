@@ -182,7 +182,23 @@ confirm:
 bootstrap: kube-ctx bootstrap-storage bootstrap-envoy-gateway bootstrap-cert-manager bootstrap-sealed-secrets
 
 bootstrap-storage: kube-ctx
+	@# reclaimPolicy is immutable, so changing it means deleting and recreating
+	@# the class. Bound PVCs and their PVs survive that — a PV carries its own
+	@# copy of the policy — but a PVC still waiting to be provisioned does not.
+	@want=$$(yq -r 'select(.metadata.name == "cinder") | .reclaimPolicy' $(BOOTSTRAP_DIR)/cinder-storageclass.yaml); \
+	have=$$(kubectl --context $(KUBE_CTX) get storageclass cinder -o jsonpath='{.reclaimPolicy}' 2>/dev/null || true); \
+	if [ -n "$$have" ] && [ "$$have" != "$$want" ]; then \
+	  unbound=$$(kubectl --context $(KUBE_CTX) get pvc -A -o jsonpath='{range .items[?(@.status.phase!="Bound")]}{.metadata.namespace}/{.metadata.name} {end}'); \
+	  [ -z "$$unbound" ] || { echo "ERROR: recreating the cinder class would strand unbound PVCs: $$unbound"; exit 1; }; \
+	  echo "cinder reclaimPolicy $$have -> $$want; recreating the class"; \
+	  kubectl --context $(KUBE_CTX) delete storageclass cinder; \
+	fi
 	kubectl --context $(KUBE_CTX) apply -f $(BOOTSTRAP_DIR)/cinder-storageclass.yaml
+	@# A PV keeps the policy it was provisioned under, so the class change does
+	@# not reach volumes that already exist. On a PV the field is mutable.
+	@for pv in $$(kubectl --context $(KUBE_CTX) get pv -o go-template='{{range .items}}{{if and (eq .spec.storageClassName "cinder") (ne .spec.persistentVolumeReclaimPolicy "Retain")}}{{.metadata.name}}{{"\n"}}{{end}}{{end}}'); do \
+	  kubectl --context $(KUBE_CTX) patch pv $$pv -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'; \
+	done
 
 bootstrap-envoy-gateway: kube-ctx
 	helm upgrade --kube-context $(KUBE_CTX) --install $(ENVOY_GATEWAY_RELEASE) $(ENVOY_GATEWAY_CHART) \
