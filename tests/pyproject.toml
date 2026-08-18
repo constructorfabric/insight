@@ -89,7 +89,6 @@ markers = [
     "requires_service_principal: needs a stand whose authenticator token listener this runner can reach, so a service principal can be obtained; skipped with a reason when it cannot",
     "stand_smoke: the post-deploy gate — a handful of tests from this same suite (a login-derived identity check, /auth/me, one metric with real data) selected with `-m stand_smoke` to prove a freshly deployed stand works, rather than a separate package",
     "rebuild_lane: the serialized rebuild lane — the test triggers a scoped dbt rebuild of one gold evidence relation through the stand's own seed image, so it needs docker beside the local compose stand and a run nothing else shares. OPT-IN: skipped unless --rebuild-lane is passed (tests/stand/conftest.py)",
-    "legacy_shell: the journey still asserts the retired dashboard shell, so tests/stand/ui/conftest.py pins `insight.portal` off for it. Porting debt, not a supported target for a new journey — the modules carrying it are the backlog, and the marker comes off as each is ported to the portal",
     # Quality vectors — every stand api/ui test carries exactly one: a module-level
     # pytestmark where the whole module shares a vector, per-test markers throughout
     # a mixed module (never both — markers are additive, so a default plus an

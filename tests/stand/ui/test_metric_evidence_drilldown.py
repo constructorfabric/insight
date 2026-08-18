@@ -21,9 +21,8 @@ from .downloads import Table, claimed_row_count, download_export, rendered_rows
 from .flows import sign_in
 from .pages.person_view import PersonView
 
-# Quality vector of this module's tests, plus the porting debt: the journey
-# still asserts the retired dashboard shell (tests/stand/ui/conftest.py).
-pytestmark = [pytest.mark.reliability, pytest.mark.legacy_shell]
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
 
 
 @pytest.mark.requires_seed("dev_lead")

@@ -1,6 +1,6 @@
 """The portal shell — the lens rail, the contextual pane, and the screens they reach.
 
-Layout, measured on a mock-mode build of `src/frontend` at this commit:
+Layout, measured on a stand serving the SPA from `src/frontend` at this commit:
 
     [ lens rail ] [ zone-contextual pane ] [ content ]
 
@@ -18,14 +18,14 @@ attribute here (the component library emits it and it survives restyles); the
 rule this suite bans is hashed classes and Tailwind utilities.
 
 **The rail widens on hover, and the words are the hit area.** A rail entry is
-inside the hover target, so `hover_rail()` comes before a real click — a click
+inside the hover target, so `hover()` comes before a real click — a click
 dispatched at a collapsed rail lands on the icon strip, which is what the
 component's own vitest tests hover before clicking too.
 
 **A screen is a URL, and the URL shape is not one path per screen.** Portal
 screens differ only by the `zone` and `item` search params, which is why
-`main.tsx` subscribes to history to record them. Measured, with the mock
-viewer's uuid abbreviated:
+`main.tsx` subscribes to history to record them. Measured, with the person's uuid
+abbreviated:
 
     zone Overview      /portal?zone=overview
     zone Directions    /portal?zone=directions
@@ -38,10 +38,10 @@ viewer's uuid abbreviated:
     item Git output    /ic/<uuid>/personal?scope=<uuid>&item=git_output
     item Platform usage  /portal?scope=<uuid>&zone=manage&item=platform-usage
 
-`screen_of()` reduces one of those to the string the product records, and
-`recorded_path_of()` strips it the way the SPA does before it leaves the browser.
-Both live here because both are properties of the portal's URLs; a journey that
-sweeps navigation reads them off `page.url` rather than predicting them.
+`recorded_path_of()` reduces one of those to the string the product records and
+strips the person out of it, the way the SPA does before the beacon leaves. It
+lives here because it is a property of the portal's URLs; a journey that sweeps
+navigation reads it off `page.url` rather than predicting it.
 """
 
 from __future__ import annotations
@@ -60,8 +60,6 @@ PANE_GROUP = '[data-slot="sidebar-group"]'
 PANE_ITEM = f"{PANE_GROUP} {MENU_BUTTON}"
 
 PANE_VIEW = f"{PANE_GROUP} button{MENU_BUTTON}"
-
-PANE_PERSON = f"{PANE_GROUP} a{MENU_BUTTON}"
 
 #: The person key in a `/ic/<key>/…` path, whatever shape it arrives in — the SPA
 #: strips the segment after `/ic` by position, so matching on shape alone here
@@ -87,9 +85,6 @@ class LensRail:
     def zones(self) -> Locator:
         return self.rail.locator(MENU_BUTTON)
 
-    def settings(self) -> Locator:
-        return self.rail.get_by_role("button", name="Settings")
-
     def open_zone(self, label: str) -> None:
         """Hover, then click — the two steps a person performs to reach a zone."""
         self.hover()
@@ -99,8 +94,8 @@ class LensRail:
 class ContextPane:
     """The zone-contextual pane. Its entries are the screens inside a zone.
 
-    With `insight.portal.showPlanned` pinned off (see `ui/conftest.py`) the
-    entries it renders are exactly the built ones, so `item_labels()` is a
+    With `insight.portal.showPlanned` pinned off by the caller's context, the
+    entries it renders are exactly the built ones, so `view_labels()` is a
     denominator a journey can trust rather than a list to maintain.
     """
 
@@ -113,22 +108,16 @@ class ContextPane:
     def views(self) -> Locator:
         """The zone's own screens, without the org chart's people.
 
-        Measured in the People pane: its "Views" group renders `<button>`
-        entries ("People (roster)", "Employees") while the "WorkChart" group
-        renders `<a>` entries per person, which navigate to that person's own
-        route and so replace the pane they were clicked from. Both carry
-        `sidebar-menu-button`, and the element is what separates them.
+        Measured in the People pane: its "Views" group renders `<button>` entries
+        ("People (roster)", "Employees") while the "WorkChart" group renders `<a>`
+        entries per person, which navigate to that person's own route and so
+        replace the pane they were clicked from. Both carry `sidebar-menu-button`,
+        and the element is what separates them.
         """
         return self.page.locator(PANE_VIEW)
 
-    def people(self) -> Locator:
-        return self.page.locator(PANE_PERSON)
-
     def item(self, label: str) -> Locator:
         return self.items().filter(has_text=re.compile(rf"^{re.escape(label)}$"))
-
-    def item_labels(self) -> list[str]:
-        return [text.strip() for text in self.items().all_inner_texts()]
 
     def view_labels(self) -> list[str]:
         return [text.strip() for text in self.views().all_inner_texts()]
@@ -205,41 +194,33 @@ class PortalShell:
     def content(self) -> Locator:
         """The screen's own content area.
 
-        Measured: the shell renders TWO `main` elements — the sidebar inset is
-        one and the zone content is nested inside it — so a bare `main` locator
-        is a strict-mode violation rather than a wait.
+        Measured: the shell renders TWO `main` elements — the sidebar inset is one
+        and the zone content is nested inside it — so a bare `main` locator is a
+        strict-mode violation rather than a wait.
         """
         return self.page.locator("main").last
-
-    def screen(self) -> str:
-        return screen_of(self.page.url)
 
     def recorded_path(self) -> str:
         return recorded_path_of(self.page.url)
 
 
-def screen_of(url: str) -> str:
-    """The string the product records for a URL — `currentScreen()` in `main.tsx`.
+def recorded_path_of(url: str) -> str:
+    """The string the product records for a URL, with the person stripped out.
 
-    Only `zone` and `item` take part: every other search param (`scope`,
-    `period`, `filter`) is absent from the recorded screen, so two readers with
-    different scopes on the same view count as one screen rather than two.
+    Two rules, both the product's. `currentScreen()` in `main.tsx` builds the
+    screen from the pathname plus only the `zone` and `item` search params — every
+    other param (`scope`, `period`, `dir`, `lens`) is absent, so two readers with
+    different scopes on one view count as one screen. `screenPath()` in
+    `telemetry.ts` then replaces the segment after `/ic` and any
+    identifier-shaped segment with `:id`, so adoption counting cannot become a
+    record of who read whose profile. A journey asserts against this, never
+    against the raw url, because the raw url is what must NOT be recorded.
     """
     parts = urlsplit(url)
     query = parse_qs(parts.query)
     named = [values[0] for key in ("zone", "item") if (values := query.get(key)) and values[0]]
-    return f"{parts.path}/{'/'.join(named)}" if named else parts.path
-
-
-def recorded_path_of(url: str) -> str:
-    """`screen_of()` with the person stripped — `screenPath()` in `telemetry.ts`.
-
-    Adoption counting must not become a record of who read whose profile, so the
-    segment after `/ic` and any identifier-shaped segment become `:id` before the
-    beacon leaves the browser. A journey asserts against this, never against the
-    raw url, because the raw url is what must NOT be recorded.
-    """
-    segments = screen_of(url).split("/")
+    screen = f"{parts.path}/{'/'.join(named)}" if named else parts.path
+    segments = screen.split("/")
     return "/".join(
         ":id" if _is_person_key(segments, index) else segment
         for index, segment in enumerate(segments)
