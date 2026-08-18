@@ -106,6 +106,7 @@ jobs:
           base: ${{ github.ref_name }}
           filters: |
             analytics:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/analytics/**'
               - 'src/backend/libs/insight-clickhouse/**'
               # The shared entrypoint is baked into the image.
@@ -113,22 +114,26 @@ jobs:
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             authenticator:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/authenticator/**'
               - 'src/backend/libs/authenticator-sdk/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             gateway:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/gateway/**'
               - 'src/backend/tools/routegen/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             git_cli_proxy:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/git-cli-proxy/**'
               # The shared entrypoint is baked into the image.
               - 'src/backend/docker-entrypoint.sh'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             identity_resolution:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/identity-resolution/**'
               # The image compiles the path-dependency lib in — a lib change
               # must republish this image (same for analytics above).
@@ -140,8 +145,10 @@ jobs:
             # Includes src/frontend/helm/, so a subchart edit rebuilds and
             # republishes as it does for the services above.
             frontend:
+              - '.github/workflows/build-images.yml'
               - 'src/frontend/**'
             toolbox:
+              - '.github/workflows/build-images.yml'
               - 'src/ingestion/**'
             # The sample-data seeder's own image. It COPYs a subset of the
             # ingestion tree (scripts, dbt, silver, gold, connectors, the tool
@@ -150,8 +157,10 @@ jobs:
             # Dockerfile's COPY lines, and the failure mode of forgetting is a
             # silently stale published image.
             seed:
+              - '.github/workflows/build-images.yml'
               - 'src/ingestion/**'
             umbrella:
+              - '.github/workflows/build-images.yml'
               - 'charts/insight/**'
 
       # Compute the canonical build tag once per workflow run so every
@@ -259,6 +268,8 @@ jobs:
           # regardless of changed paths.
           ALL_FLAG=""
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            ALL_FLAG="--all"
+          elif grep -Fxq '.github/workflows/build-images.yml' /tmp/changed.txt; then
             ALL_FLAG="--all"
           fi
 
