@@ -7,9 +7,8 @@ vi.mock("@/telemetry", () => ({ recordPageView: mocks.recordPageView }));
 
 import { recordScreens } from "./usage-collection";
 
-// The router calls `win.history.pushState` unbound, which jsdom rejects with
-// "called on an object that is not a valid instance of History" — a strictness
-// real browsers do not have.
+// WORKAROUND: the router calls `win.history.pushState` unbound, which jsdom
+// rejects and real browsers accept.
 window.history.pushState = window.history.pushState.bind(window.history);
 window.history.replaceState = window.history.replaceState.bind(window.history);
 
