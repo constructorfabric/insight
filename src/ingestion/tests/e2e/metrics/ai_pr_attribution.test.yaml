@@ -1,0 +1,96 @@
+spec_version: 1
+description: >
+  Metrics: ai.prs_with_assistant, ai.prs_total.
+  How they're computed (bronze → silver → gold):
+    • bronze: Claude Team per-user daily code metrics carrying the vendor's
+              pull-request attribution counters (prs_with_cc / total_prs)
+    • silver: deduped to one row per user/day; the rows qualify on the PR
+              counters alone, with no lines and no cost
+    • gold:   each metric = sum of its counter over the window
+
+  Team (median/range = the person's department):
+    with-assistant  alice 6 · bob 3 · carol 1
+    total           alice 10 · bob 8 · carol 4
+
+  The seat_status breakdown is asserted here because this is the only metric
+  pair whose source populates it: the vendor status is carried into the class
+  contract rather than filtered on, so it must reach gold as a dimension.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_claude_team.claude_team_code_metrics:
+    - $ref: templates/claude_team_usage.yaml#/templates/alice
+      unique_key: cc-prs-alice-20260105
+      metric_date: "2026-01-05"
+      prs_with_cc: 6
+      total_prs: 10
+    - $ref: templates/claude_team_usage.yaml#/templates/alice   # re-sync dup → must NOT double
+      unique_key: cc-prs-alice-20260105
+      metric_date: "2026-01-05"
+      prs_with_cc: 6
+      total_prs: 10
+    - $ref: templates/claude_team_usage.yaml#/templates/bob
+      unique_key: cc-prs-bob-20260105
+      metric_date: "2026-01-05"
+      prs_with_cc: 3
+      total_prs: 8
+    - $ref: templates/claude_team_usage.yaml#/templates/carol
+      unique_key: cc-prs-carol-20260105
+      metric_date: "2026-01-05"
+      prs_with_cc: 1
+      total_prs: 4
+
+cases:
+  - name: AI pull-request attribution
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-01-01", to: "2026-01-31" }
+        metrics:
+          - metric_key: ai.prs_with_assistant
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [seat_status] }
+          - metric_key: ai.prs_total
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [tool] }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.prs_with_assistant
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 6 }
+      - metric: ai.prs_with_assistant
+        view: peer
+        find: { entity_id: alice@example.com }
+        equal: { target_value: 6, p25: null, median: null, p75: null, min: null, max: null, n: 3 }
+      - metric: ai.prs_with_assistant
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 6.0))"
+      - metric: ai.prs_with_assistant
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'alice@example.com' && v.dimensions.exists(d, d.key == 'seat_status' && d.value == 'active') && double(v.value) == 6.0)"
+      - metric: ai.prs_total
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 10 }
+      - metric: ai.prs_total
+        view: peer
+        find: { entity_id: alice@example.com }
+        equal: { target_value: 10, p25: null, median: null, p75: null, min: null, max: null, n: 3 }
+      - metric: ai.prs_total
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 10.0))"
+      - metric: ai.prs_total
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'alice@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'claude_code') && double(v.value) == 10.0)"

@@ -559,8 +559,9 @@ rest classified but unattributed. *Confirming the real value distribution on pro
 would make the rule exhaustive rather than defensive.*
 
 **OD-5 — Seat state filter.** *(resolved — recorded for traceability)* A deactivated person
-keeps an overage row but loses activity rows, so they would read as an unused seat. The
-filter must live inside the overage branch. `is_enabled` was the candidate; its semantics
+keeps an overage row and, since the seat status became a carried column rather than a filter,
+keeps their activity rows too. The filter must still live inside the overage branch, because a
+seat with no usage has no activity row to inherit a state from. `is_enabled` was the candidate; its semantics
 remain undocumented and one observation cannot separate "extra usage is disabled" from "the
 seat is not assigned", so it is carried as a dimension and never used as a filter. Seat state
 gates on `credit_limit_cents IS NOT NULL` instead.

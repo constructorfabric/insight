@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::{Extension, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
@@ -66,6 +66,12 @@ pub struct TelemetryRecord {
     pub context_app_name: Option<String>,
     #[serde(default)]
     pub context_app_version: Option<String>,
+    /// Epoch milliseconds on the browser's clock: when the event happened.
+    #[serde(default)]
+    pub time_triggered: Option<i64>,
+    /// Epoch milliseconds on the same clock: when the batch was flushed.
+    #[serde(default)]
+    pub time_sent: Option<i64>,
     #[serde(default)]
     pub data: Option<serde_json::Value>,
 }
@@ -81,12 +87,13 @@ pub async fn ingest_usage_events(
 
     let tenant_id = ctx.subject_tenant_id();
     let person_id = ctx.subject_id();
+    let arrival = Utc::now();
 
     let rows: Vec<UsageEventRow> = req
         .records
         .iter()
         .take(MAX_RECORDS)
-        .map(|record| to_row(record, &req.meta, tenant_id, person_id))
+        .map(|record| to_row(record, &req.meta, tenant_id, person_id, arrival))
         .filter(is_recordable)
         .collect();
 
@@ -100,9 +107,11 @@ pub async fn ingest_usage_events(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// INVARIANT: `event_id` and `ts` are omitted so the table's DEFAULTs apply.
+/// INVARIANT: `event_id` is omitted so the table's DEFAULT applies.
 #[derive(Debug, Serialize, clickhouse::Row)]
 struct UsageEventRow {
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
+    ts: DateTime<Utc>,
     #[serde(with = "clickhouse::serde::uuid")]
     tenant_id: Uuid,
     #[serde(with = "clickhouse::serde::uuid")]
@@ -113,6 +122,27 @@ struct UsageEventRow {
     target: String,
     app_name: String,
     app_version: String,
+}
+
+/// How long a record may plausibly have waited in the browser's buffer. Past
+/// this the correction cannot place it in the right day, which is the only
+/// thing it exists to protect.
+const MAX_BUFFERED_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// Both stamps come off the browser's clock, so their difference — how long the
+/// record waited to be flushed — survives a clock that is hours out. Anchoring
+/// that to the arrival instant keeps the timestamp ours while still separating
+/// records the SDK sent in one beacon.
+fn event_time(record: &TelemetryRecord, arrival: DateTime<Utc>) -> DateTime<Utc> {
+    let (Some(triggered), Some(sent)) = (record.time_triggered, record.time_sent) else {
+        return arrival;
+    };
+    match sent.checked_sub(triggered) {
+        Some(buffered) if (0..=MAX_BUFFERED_MS).contains(&buffered) => {
+            arrival - Duration::milliseconds(buffered)
+        }
+        _ => arrival,
+    }
 }
 
 /// A field the SDK hoists into `meta` is cloned into every record of the batch,
@@ -126,9 +156,11 @@ fn to_row(
     meta: &TelemetryRecord,
     tenant_id: Uuid,
     person_id: Uuid,
+    arrival: DateTime<Utc>,
 ) -> UsageEventRow {
     let data = record.data.as_ref().or(meta.data.as_ref());
     UsageEventRow {
+        ts: event_time(record, arrival),
         tenant_id,
         person_id,
         session_id: shared(

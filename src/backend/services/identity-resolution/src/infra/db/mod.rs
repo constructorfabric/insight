@@ -22,6 +22,7 @@
 pub mod bootstrap;
 pub mod entities;
 pub mod ops_repo;
+pub mod person_listing;
 pub mod person_roles_repo;
 pub mod persons_log_repo;
 pub mod persons_repo;
@@ -32,6 +33,8 @@ pub mod sql_named;
 pub mod subchart_repo;
 pub mod visibility_repo;
 
+#[cfg(test)]
+mod binding_reads_live_tests;
 #[cfg(test)]
 pub(crate) mod test_fixture;
 #[cfg(test)]

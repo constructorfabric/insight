@@ -243,6 +243,23 @@ def _foreign_silver_rows(
     return sum(count for _, count in rows), rows[:limit], unattributable
 
 
+def _existing_targets(client: object) -> set[tuple[str, str]]:
+    """Which reset targets the stand actually holds a relation for.
+
+    A target can legitimately not exist yet: the staging one is a dbt model, so it
+    first appears at the end of the very step this runs before. `system.tables`
+    answers with an empty result for a database that does not exist, the same
+    property the tenant scan relies on.
+    """
+    from .generators.base import RESET_TARGETS
+
+    found = client.query(  # type: ignore[attr-defined]
+        "SELECT database, name FROM system.tables WHERE database IN {dbs:Array(String)}",
+        parameters={"dbs": sorted({schema for schema, _ in RESET_TARGETS})},
+    )
+    return {(str(database), str(name)) for database, name in found.result_rows}
+
+
 def _reset_surface_rows(client: object) -> int:
     """How many rows the silver step would clear, across every reset target.
 
@@ -252,11 +269,21 @@ def _reset_surface_rows(client: object) -> int:
     """
     from .generators.base import RESET_TARGETS
 
+    try:
+        existing = _existing_targets(client)
+    except Exception as exc:
+        LOG.info("could not list the reset surface: %s", exc)
+        return 0
+
     parts = [
         f"SELECT count() AS n FROM `{schema}`.`{table}`"
         for schema, table in RESET_TARGETS
-        if _IDENTIFIER.match(schema) and _IDENTIFIER.match(table)
+        if (schema, table) in existing and _IDENTIFIER.match(schema) and _IDENTIFIER.match(table)
     ]
+    # One absent relation would otherwise fail the whole UNION, and an empty one
+    # is not a query at all — a stand where none of them exists clears nothing.
+    if not parts:
+        return 0
     try:
         result = client.query(f"SELECT sum(n) FROM ({' UNION ALL '.join(parts)})")  # type: ignore[attr-defined]
     except Exception as exc:

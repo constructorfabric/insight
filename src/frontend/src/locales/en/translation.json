@@ -521,8 +521,9 @@
     "picker": {
       "placeholder": "Search people by name, email, handle or person id…",
       "no_matches": "Nobody matches those terms.",
-      "truncated": "More people matched than shown — narrow the terms.",
-      "failed": "Search failed. Try again."
+      "failed": "Search failed. Try again.",
+      "load_more": "Show more people",
+      "loading_more": "Loading…"
     },
     "gate": {
       "title": "Identities is an admin surface",
@@ -535,8 +536,6 @@
       "accounts": "An account and whose it is"
     },
     "people": {
-      "no_person": "Nobody chosen yet",
-      "no_person_description": "Find a person to see every account bound to them — and correct any of it.",
       "accounts": "Accounts bound to this person",
       "no_accounts": "No account is bound to this person.",
       "by_operator": "decided by an operator",
@@ -547,12 +546,13 @@
     "accounts": {
       "placeholder": "Find an account by address, handle, id or observed name…",
       "no_matches": "No observed account carries that",
-      "truncated": "More accounts matched than shown — narrow the terms.",
       "unbound": "bound to nobody",
       "failed": "Account search failed. Try again.",
-      "no_query": "Nothing searched yet",
-      "no_query_description": "Find an account by any value it carries — an address, a handle, its id, or the name its source gives it. At least three characters.",
+      "none_observed": "Nothing to list here yet",
+      "none_observed_description": "Accounts appear once a connector reports them. If you expected some, the identity build may not have run yet.",
       "no_matches_description": "Only accounts a connector has seen can be found here.",
+      "load_more": "Show more accounts",
+      "loading_more": "Loading…",
       "excluded": "excluded — bot / CI"
     }
   }

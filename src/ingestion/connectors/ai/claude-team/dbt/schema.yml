@@ -28,9 +28,12 @@ models:
       Bronze → Silver step 1: Claude Team per-user per-day Claude Code usage
       → class_ai_dev_usage. Sourced from claude_team_code_metrics (daily
       aggregates pulled via the customer-deployed claude-team-proxy from the
-      claude.ai web API). Filtered to status='active' AND non-empty email.
-      One row per (tenant, email, metric_date).
-      session_count ← total_sessions; lines_added ← total_lines_accepted;
+      claude.ai web API). Filtered to non-empty email AND at least one non-zero
+      activity counter; the vendor `status` is carried in seat_status, not
+      filtered on. One row per (tenant, email, metric_date).
+      session_count ← total_sessions; conversation_count ← total_sessions
+      (the Team plan reports no separate conversation counter);
+      lines_added ← total_lines_accepted;
       cost_cents ← total_cost (decimal-as-string → cents, first per-user-per-day
       cost source in Silver); prs_with_cc_count ← prs_with_cc;
       prs_total_count ← total_prs.
@@ -69,6 +72,12 @@ models:
           even when lines_added > 0 — Anthropic excludes those from the counter.
         tests:
           - not_null
+      - name: conversation_count
+        description: >
+          total_sessions again — for Claude Code a session is the unit of
+          conversation and the Team plan exposes no separate counter. This is
+          the column ai.dev_conversations sums, so that metric reports session
+          counts for this source.
       - name: lines_added
         description: "total_lines_accepted — AI-accepted lines added"
         tests:
@@ -128,6 +137,11 @@ models:
         description: "ReplacingMergeTree version — toUnixTimestamp64Milli(_airbyte_extracted_at) per ADR-0001."
         tests:
           - not_null
+      - name: seat_status
+        description: >
+          Vendor `status`, lower-cased. Describes the seat as of the read, not
+          as of `day` — the endpoint restates it for every day in the rolling
+          window, so it is not a per-day fact and must not be filtered on.
 
   - name: claude_team__ai_overage
     description: >
@@ -202,7 +216,9 @@ models:
           assigned". Not used as a state filter — seat state is credit_limit_cents IS NOT
           NULL.
       - name: overage_metrics_json
-        description: "Raw vendor extras: limit_type, used_credits_basis, out_of_credits, seat_tier"
+        description: >
+          Raw vendor extras: limit_type, used_credits_basis, out_of_credits,
+          seat_tier, disabled_reason, disabled_until, account_name.
       - name: source
         description: "Always 'claude_team'"
         tests:

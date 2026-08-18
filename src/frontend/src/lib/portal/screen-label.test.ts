@@ -26,6 +26,14 @@ describe("screenLabel", () => {
     expect(screenLabel("/ic/:id/team/git_output")).toBe("Person › Team › Git output");
   });
 
+  it("names a section reached without a zone in the url", () => {
+    expect(screenLabel("/portal/collaboration")).toBe("Collaboration");
+    expect(screenLabel("/portal/git_output")).toBe("Git output");
+    expect(screenLabel("/portal/ai_adoption")).toBe("AI adoption");
+    expect(screenLabel("/portal/wiki")).toBe("Wiki");
+    expect(screenLabel("/portal/task_delivery")).toBe("Task delivery");
+  });
+
   it("keeps a path it cannot name rather than inventing one", () => {
     expect(screenLabel("/some/new/route")).toBe("/some/new/route");
     expect(screenLabel("/portal/manage/not-a-real-item")).toBe(

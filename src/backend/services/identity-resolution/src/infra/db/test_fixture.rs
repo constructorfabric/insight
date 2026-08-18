@@ -1,5 +1,6 @@
 //! Live-DB fixture shared by the identity test suites (the repo-level
-//! `visible_set_live_tests` and the API-level `api::http_live_tests`).
+//! `visible_set_live_tests` and `binding_reads_live_tests`, and the API-level
+//! `api::http_live_tests`).
 //!
 //! INVARIANT: tests built on this fixture are never `#[ignore]`d — the identity
 //! CI job runs `cargo test` without `--include-ignored`, so an ignored case
@@ -10,7 +11,12 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 use uuid::Uuid;
 
+use crate::domain::seed::SourceAccountKey;
+
 use super::{connect_single, roles_repo, subchart_repo};
+
+/// The all-zero author every automatic binding carries.
+const AUTOMATION: Uuid = Uuid::nil();
 
 const ENV_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
 pub(crate) const FIXTURE_REASON: &str = "visible-set-live-test";
@@ -89,6 +95,69 @@ impl Fixture {
             ],
         )
         .await
+    }
+
+    /// Append an automatic binding observation: this account is held by this
+    /// person, as observed `seconds_ago`. The age is explicit so a test can
+    /// write an older observation AFTER a newer one — the shape that tells the
+    /// latest-by-time rule apart from "the row inserted last".
+    pub(crate) async fn bound_at(
+        &self,
+        account_id: &str,
+        person: Uuid,
+        reason: &str,
+        seconds_ago: u32,
+    ) -> anyhow::Result<SourceAccountKey> {
+        self.bind(account_id, person, AUTOMATION, reason, seconds_ago)
+            .await
+    }
+
+    /// The same, authored by an operator — the fact the review surface reads to
+    /// tell a human's decision from automation's.
+    pub(crate) async fn bound_by_operator_at(
+        &self,
+        account_id: &str,
+        person: Uuid,
+        operator: Uuid,
+        seconds_ago: u32,
+    ) -> anyhow::Result<SourceAccountKey> {
+        self.bind(account_id, person, operator, FIXTURE_REASON, seconds_ago)
+            .await
+    }
+
+    async fn bind(
+        &self,
+        account_id: &str,
+        person: Uuid,
+        author: Uuid,
+        reason: &str,
+        seconds_ago: u32,
+    ) -> anyhow::Result<SourceAccountKey> {
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason, created_at)
+             VALUES ('id', ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6) - INTERVAL ? SECOND)",
+            [
+                SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                account_id.into(),
+                bytes(person),
+                bytes(author),
+                reason.into(),
+                seconds_ago.into(),
+            ],
+        )
+        .await?;
+        Ok(self.account(account_id))
+    }
+
+    pub(crate) fn account(&self, account_id: &str) -> SourceAccountKey {
+        SourceAccountKey {
+            source_type: SOURCE_TYPE.to_owned(),
+            source_id: self.source_id,
+            account_id: account_id.to_owned(),
+        }
     }
 
     /// A person the log knows without an email observation — the shape the
