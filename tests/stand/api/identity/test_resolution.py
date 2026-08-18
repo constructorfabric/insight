@@ -54,9 +54,7 @@ SCRATCH_SOURCE_ID = "01900000-0000-7000-8000-00000000feed"
 
 
 def _account_path(account_id: str) -> str:
-    return identity_path(
-        f"/v1/resolution/accounts/github/{SCRATCH_SOURCE_ID}/{account_id}"
-    )
+    return identity_path(f"/v1/resolution/accounts/github/{SCRATCH_SOURCE_ID}/{account_id}")
 
 
 @pytest.mark.security
@@ -89,13 +87,63 @@ def test_the_realm_admin_is_refused_the_account_search(
 
 @pytest.mark.requires_seed("admin_operator")
 @pytest.mark.reliability
-def test_a_short_account_search_needle_is_refused(
+def test_no_needle_lists_the_observed_accounts_a_page_at_a_time(
     admin_operator_session: PersonaSession,
 ) -> None:
-    """Under three characters the needle would scan the whole fold to answer
-    with everything; the service refuses rather than obliging."""
-    response = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"q": "ab"})
-    assert response.status_code == 400, f"{response.status_code} {response.text[:300]}"
+    """A short or absent needle used to be refused because it would answer with
+    everything. It still answers with everything — one bounded page of it — so
+    an operator can read what the connectors reported instead of guessing a
+    value to search for."""
+    for params in (None, {"q": "ab"}):
+        response = admin_operator_session.client.get(ACCOUNT_SEARCH, params=params)
+        assert response.status_code == 200, (
+            f"q={params!r} answered {response.status_code}: {response.text[:300]}"
+        )
+        listing = response.parse(AccountSearchResponse)
+        # An empty list would satisfy the bound too, and the service answers one
+        # for a fold it cannot read — so a query aimed at the wrong relation, or
+        # a stand whose identity build never ran, would read as a pass here.
+        assert listing.items, f"q={params!r} listed no observed account"
+        assert len(listing.items) <= 20, "the default page is the bound"
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_the_account_listing_pages_without_repeating_an_account(
+    admin_operator_session: PersonaSession,
+) -> None:
+    """The fold has no order of its own, so paging over it is only sound
+    because the listing imposes one. A repeat here would mean an operator sees
+    the same account twice and a skip would hide one entirely."""
+    seen: list[str] = []
+    cursor: str | None = None
+    for _ in range(4):
+        params: dict[str, object] = {"limit": 1}
+        if cursor:
+            params["cursor"] = cursor
+        page = admin_operator_session.client.get(ACCOUNT_SEARCH, params=params)
+        assert page.status_code == 200, f"{page.status_code} {page.text[:300]}"
+        listing = page.parse(AccountSearchResponse)
+        seen.extend(f"{item.source}:{item.source_id}:{item.account_id}" for item in listing.items)
+        cursor = listing.next_cursor
+        if not cursor:
+            break
+
+    # A walk that stops on page one proves nothing about a boundary, and one
+    # account never repeats itself.
+    assert len(seen) > 1, "the walk never left the first page — no cursor was issued"
+    assert len(seen) == len(set(seen)), f"an account appeared on two pages: {seen}"
+
+    # Uniqueness alone cannot see a skip: a cursor that jumps forward still
+    # returns distinct accounts. Retracing against one whole page can.
+    whole_page = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"limit": len(seen)})
+    listed = [
+        f"{item.source}:{item.source_id}:{item.account_id}"
+        for item in whole_page.parse(AccountSearchResponse).items
+    ]
+    assert seen == listed, (
+        "walking one row at a time must retrace the same accounts in the same order"
+    )
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead")
@@ -129,9 +177,9 @@ def test_account_search_finds_a_seeded_account_and_names_its_holder(
         )
     bound = [match for match in found.items if match.person is not None]
     assert bound, "the seeded address resolves to a bound account, so a holder must appear"
-    assert any(
-        (match.person.email or "").lower() == lowered for match in bound
-    ), f"no holder card carries the searched address: {bound!r}"
+    assert any((match.person.email or "").lower() == lowered for match in bound), (
+        f"no holder card carries the searched address: {bound!r}"
+    )
 
 
 @pytest.mark.requires_seed("admin_operator")
@@ -249,9 +297,9 @@ def test_bind_confirm_and_exclude_round_trip(
         assert exclude.status_code == 200, f"exclude: {exclude.status_code} {exclude.text[:300]}"
         assert exclude.parse(CorrectionResponse).applied == 1
 
-    owned = client.get(
-        identity_path(f"/v1/resolution/persons/{lead.uuid}/accounts")
-    ).parse(PersonAccountsResponse)
+    owned = client.get(identity_path(f"/v1/resolution/persons/{lead.uuid}/accounts")).parse(
+        PersonAccountsResponse
+    )
     assert account_id not in [a.account_id for a in owned.accounts], (
         "the excluded scratch account still lists under the person — the stand is dirty"
     )

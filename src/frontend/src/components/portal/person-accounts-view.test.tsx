@@ -28,14 +28,18 @@ const hooks = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
   search: {
-    data: undefined as { items: unknown[]; truncated?: boolean } | undefined,
+    data: undefined as { pages: { items: unknown[] }[] } | undefined,
     isFetching: false,
+    isFetchingNextPage: false,
     isError: false,
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
   },
 }));
-vi.mock("@/queries/identity-resolution", () => ({
+vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   usePersonAccounts: () => hooks.accounts,
-  usePersonSearch: () => hooks.search,
+  usePersonList: () => hooks.search,
   // The window's own behaviour belongs to account-detail.test.
   useAccountBinding: () => ({
     data: undefined,
@@ -75,15 +79,24 @@ beforeEach(() => {
 });
 
 describe("PersonAccountsView", () => {
-  it("asks for a person before showing anything", () => {
+  // With nobody chosen the mode IS the roster: an operator reviewing
+  // identities needs to see who exists, not guess a name to type.
+  it("lists the roster before anyone is chosen", () => {
+    hooks.search.data = {
+      pages: [
+        { items: [{ person_id: ANN, display_name: "Ann Lee", email: "ann@example.com" }] },
+      ],
+    };
     render(<PersonAccountsView />);
 
-    expect(screen.getByText(/nobody chosen yet/i)).toBeInTheDocument();
+    expect(screen.getByText("Ann Lee")).toBeInTheDocument();
   });
 
   it("puts the chosen person in the URL, so the view is a link", async () => {
     hooks.search.data = {
-      items: [{ person_id: ANN, display_name: "Ann Lee", email: "ann@example.com" }],
+      pages: [
+        { items: [{ person_id: ANN, display_name: "Ann Lee", email: "ann@example.com" }] },
+      ],
     };
     render(<PersonAccountsView />);
 

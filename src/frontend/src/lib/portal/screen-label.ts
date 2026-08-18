@@ -26,7 +26,7 @@ export function screenLabel(path: string): string {
   if (first === "portal") {
     if (!second) return "Portal";
     const zone = zoneById(second);
-    if (!zone) return path;
+    if (!zone) return GROUPS.find((group) => group.id === second)?.title ?? path;
     return third ? `${zone.label}${SEPARATOR}${itemLabel(second, third)}` : zone.label;
   }
 

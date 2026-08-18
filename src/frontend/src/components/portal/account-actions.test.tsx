@@ -36,16 +36,24 @@ const hooks = vi.hoisted(() => {
       isError: false,
       refetch: vi.fn(),
     },
-    search: { data: undefined, isFetching: false, isError: false },
+    search: {
+      data: undefined,
+      isFetching: false,
+      isFetchingNextPage: false,
+      isError: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+    },
   };
 });
-vi.mock("@/queries/identity-resolution", () => ({
+vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useBindAccount: () => hooks.bind,
   useMergePersons: () => hooks.merge,
   useDetachAccount: () => hooks.detach,
   useExcludeAccount: () => hooks.exclude,
   usePersonAccounts: () => hooks.personAccounts,
-  usePersonSearch: () => hooks.search,
+  usePersonList: () => hooks.search,
 }));
 
 import { AccountActions } from "./account-actions";

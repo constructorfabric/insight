@@ -212,15 +212,26 @@ pub async fn headers_for(
     Ok(headers)
 }
 
-/// Seconds since the epoch for an ISO-8601 timestamp with an explicit offset
-/// (`%cI`) or a `Z` suffix. `None` for anything else — an unparseable bound
-/// filters nothing, and an unparseable row is kept rather than silently
-/// dropped.
+/// Seconds since the epoch for an ISO-8601 timestamp carrying an explicit
+/// offset, in either the extended spelling RFC 3339 requires (`+00:00`, `Z`)
+/// or the basic one it does not (`+0000`). `None` for anything else — an
+/// unparseable bound filters nothing, and an unparseable row is kept rather
+/// than silently dropped.
+///
+/// Both spellings name the same instant, and a caller cannot always choose:
+/// Python's `strftime` renders an offset only as `%z`, without the colon, and
+/// has no directive that inserts one.
 pub(crate) fn parse_instant(raw: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(raw.trim())
+    let raw = raw.trim();
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .or_else(|_| chrono::DateTime::parse_from_str(raw, BASIC_OFFSET))
         .ok()
         .map(|at| at.timestamp())
 }
+
+/// `%z` accepts an offset without the colon RFC 3339 mandates; `%.f` makes the
+/// fractional seconds optional.
+const BASIC_OFFSET: &str = "%Y-%m-%dT%H:%M:%S%.f%z";
 
 /// Which of `shas` are reachable from the default branch.
 ///
@@ -584,6 +595,42 @@ mod tests {
             1,
             "an unparseable bound must not silently drop everything"
         );
+    }
+
+    #[test]
+    fn parse_instant_reads_both_spellings_of_the_same_offset() {
+        let extended = parse_instant("2026-08-01T10:00:00+02:00");
+        assert!(extended.is_some(), "RFC 3339 spelling must parse");
+        assert_eq!(
+            parse_instant("2026-08-01T10:00:00+0200"),
+            extended,
+            "a colonless offset names the same instant"
+        );
+        assert_eq!(
+            parse_instant("2026-08-01T10:00:00+0000"),
+            parse_instant("2026-08-01T10:00:00Z"),
+            "+0000 and Z name the same instant"
+        );
+        assert_eq!(
+            parse_instant("2026-08-01T10:00:00.123456+0000"),
+            parse_instant("2026-08-01T10:00:00Z"),
+            "fractional seconds are optional and do not shift the second"
+        );
+    }
+
+    #[test]
+    fn retain_keys_since_honours_a_colonless_bound() {
+        let keys = vec![
+            at("2026-08-01T08:00:00+00:00"),
+            at("2026-08-01T10:00:00+00:00"),
+        ];
+        let kept = retain_keys_since(keys, Some("2026-08-01T09:00:00+0000"));
+        assert_eq!(
+            kept.len(),
+            1,
+            "a bound spelled without the colon must still bound the walk"
+        );
+        assert_eq!(kept[0].committed_date, "2026-08-01T10:00:00+00:00");
     }
 
     #[test]

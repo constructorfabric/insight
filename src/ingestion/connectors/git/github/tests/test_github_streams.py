@@ -907,3 +907,80 @@ def test_commit_authors_drops_an_email_github_matches_to_nobody(
 
     assert not output.errors
     assert len(output.records) == 0, "an unmatched e-mail claims no account"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_roster_skips_a_repository_untouched_since_the_start_date(
+    http_mocker: HttpMocker,
+) -> None:
+    """The proxy streams partition over this roster, so a repository whose last
+    push predates the start date would be cloned for nothing: it has no commit,
+    file change or author inside the window."""
+    config = GithubConfigBuilder().build()
+    stale = _repo() | {
+        "id": 45,
+        "full_name": "acme/dormant",
+        "name": "dormant",
+        "clone_url": "https://github.com/acme/dormant.git",
+        "pushed_at": "2024-01-01T00:00:00Z",
+    }
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([_repo(), stale]), status_code=200),
+    )
+    # Every partition that IS walked yields a branch stamped with its clone URL.
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/branches", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "items": [
+                        {
+                            "name": "main",
+                            "head_sha": "f" * 40,
+                            "head_committed_date": "2026-06-20T10:00:00Z",
+                            "is_default": True,
+                        }
+                    ],
+                    "next_page_token": None,
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "branches", config)
+
+    assert not output.errors
+    walked = {record.record.data["repository"] for record in output.records}
+    assert walked == {"https://github.com/acme/app.git"}, (
+        f"only repositories pushed since the start date may be walked: {walked}"
+    )
+
+
+def test_every_dated_stream_floors_on_the_start_date() -> None:
+    """The start date is one bound in one direction: fetch everything since it,
+    nothing before it. A stream that floors on anything else — a rolling window,
+    an epoch — either discards data inside the window or fetches outside it, and
+    both failures are silent."""
+    manifest = load_manifest(_CONNECTOR)
+    offenders: list[str] = []
+
+    def walk(node, name="?"):
+        if isinstance(node, dict):
+            if node.get("type") == "DeclarativeStream":
+                name = node.get("name", name)
+                start = ((node.get("incremental_sync") or {}).get("start_datetime") or {})
+                declared = start.get("datetime") if isinstance(start, dict) else start
+                if declared and "github_start_date" not in str(declared):
+                    offenders.append(f"{name}: {declared}")
+            for value in node.values():
+                walk(value, name)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, name)
+
+    walk(manifest)
+    assert not offenders, "streams flooring on something other than the start date: " + "; ".join(
+        offenders
+    )

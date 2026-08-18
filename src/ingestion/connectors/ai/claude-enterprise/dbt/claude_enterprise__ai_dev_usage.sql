@@ -54,6 +54,8 @@ SELECT
     toDate(parseDateTimeBestEffortOrNull(date))                        AS day,
     'claude_code'                                                      AS tool,
     toUInt32(coalesce(code_session_count, 0))                          AS session_count,
+    -- Same counter: a Claude Code session is the unit of conversation and the
+    -- analytics API publishes no separate conversation count.
     toUInt32OrNull(toString(code_session_count))                       AS conversation_count,
     toUInt32(coalesce(code_lines_added, 0))                            AS lines_added,
     toNullable(toUInt32(coalesce(code_lines_removed, 0)))              AS lines_removed,
@@ -92,7 +94,9 @@ SELECT
     'claude_enterprise'                                                AS source,
     'insight_claude_enterprise'                                        AS data_source,
     parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3)     AS collected_at,
-    toUnixTimestamp64Milli(_airbyte_extracted_at)                      AS _version
+    toUnixTimestamp64Milli(_airbyte_extracted_at)                      AS _version,
+    -- The Enterprise analytics endpoint carries no seat lifecycle state.
+    CAST(NULL AS Nullable(String))                                     AS seat_status
 FROM (
     -- Bronze deduplication: bronze_claude_enterprise.claude_enterprise_users
     -- is plain MergeTree (Airbyte default). Re-emitted days under the 3-day

@@ -7,13 +7,22 @@
 -- (email, metric_date) — metrics already aggregated to daily grain by the API.
 --
 -- Filters:
---   status = 'active'             — drop deactivated seats (per PR #553)
+--   any activity counter > 0      — the class contract admits a person-day row
+--                                   only for real activity
 --   email IS NOT NULL / != ''     — rows without email cannot be attributed
 --   metric_date IS NOT NULL       — guard against phantom 1970-01-01 rows
 --
--- session_count: `total_sessions`. DQ note: 5/34 sample users had
---   sessions=0 while lines_accepted>0 — headless / `cc -p` invocations are
---   excluded from the session counter by Anthropic. Not a model bug.
+-- seat_status: `status`, carried rather than filtered on. The vendor restates
+--   it on every read of the rolling window, so it describes the seat as of the
+--   read, not as of `day` — filtering on it retroactively erases the whole
+--   history of a person whose seat is later deactivated.
+--
+-- session_count / conversation_count: both `total_sessions`. The Team plan
+--   reports no separate conversation counter — for Claude Code a session IS
+--   the unit of conversation — so the same number feeds the class contract's
+--   activity column and its conversations metric-feed column.
+--   DQ note: a session counter can read 0 while lines_accepted > 0 —
+--   Anthropic excludes headless / `cc -p` invocations from it. Not a model bug.
 --
 -- lines_added: `total_lines_accepted` — AI-accepted lines. Same semantics as
 --   Enterprise `code_lines_added`. Total keystrokes not available → NULL.
@@ -88,14 +97,21 @@ SELECT
     'claude_team'                                       AS source,
     data_source,
     CAST(_airbyte_extracted_at AS Nullable(DateTime64(3))) AS collected_at,
-    toUnixTimestamp64Milli(_airbyte_extracted_at)          AS _version
+    toUnixTimestamp64Milli(_airbyte_extracted_at)          AS _version,
+    nullIf(lower(trim(coalesce(status, ''))), '')          AS seat_status
 FROM {{ source('bronze_claude_team', 'claude_team_code_metrics') }}
-WHERE status = 'active'
-  AND email IS NOT NULL
+WHERE email IS NOT NULL
   AND trim(email) != ''
   -- Guard against NULL metric_date: toDate(NULL) → 1970-01-01 silently
   -- corrupts the incremental boundary (same guard as cursor__ai_dev_usage).
   AND metric_date IS NOT NULL
+  -- Activity gate over the same counters assert_ai_dev_usage_rows_active
+  -- checks, so a roster row with no work on `day` never reaches the class.
+  AND (coalesce(total_sessions, 0) > 0
+       OR coalesce(total_lines_accepted, 0) > 0
+       OR coalesce(toFloat64OrNull(toString(total_cost)), 0) > 0
+       OR coalesce(prs_with_cc, 0) > 0
+       OR coalesce(total_prs, 0) > 0)
 {% if is_incremental() %}
   -- Empty-table guard. Over an empty `this` (the e2e rig resets staging between
   -- tests) `max(day)` is the Date epoch (1970-01-01) and `- INTERVAL 3 DAY`
