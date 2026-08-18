@@ -133,8 +133,15 @@ const MAX_BUFFERED_MS: i64 = 24 * 60 * 60 * 1000;
 /// record waited to be flushed — survives a clock that is hours out. Anchoring
 /// that to the arrival instant keeps the timestamp ours while still separating
 /// records the SDK sent in one beacon.
-fn event_time(record: &TelemetryRecord, arrival: DateTime<Utc>) -> DateTime<Utc> {
-    let (Some(triggered), Some(sent)) = (record.time_triggered, record.time_sent) else {
+fn event_time(
+    record: &TelemetryRecord,
+    meta: &TelemetryRecord,
+    arrival: DateTime<Utc>,
+) -> DateTime<Utc> {
+    let (Some(triggered), Some(sent)) = (
+        record.time_triggered.or(meta.time_triggered),
+        record.time_sent.or(meta.time_sent),
+    ) else {
         return arrival;
     };
     match sent.checked_sub(triggered) {
@@ -160,7 +167,7 @@ fn to_row(
 ) -> UsageEventRow {
     let data = record.data.as_ref().or(meta.data.as_ref());
     UsageEventRow {
-        ts: event_time(record, arrival),
+        ts: event_time(record, meta, arrival),
         tenant_id,
         person_id,
         session_id: shared(

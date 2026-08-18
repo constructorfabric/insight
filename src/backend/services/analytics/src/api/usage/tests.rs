@@ -308,3 +308,27 @@ fn an_event_held_longer_than_a_day_is_not_trusted() {
 
     assert_eq!(row.ts, arrival);
 }
+
+#[test]
+fn a_batch_whose_flush_stamp_was_hoisted_into_meta_keeps_its_own_times() {
+    let arrival = Utc::now();
+    let sent = arrival.timestamp_millis();
+
+    let meta = TelemetryRecord {
+        time_sent: Some(sent),
+        ..TelemetryRecord::default()
+    };
+
+    let mut first = record("session_start", serde_json::json!({}));
+    first.time_triggered = Some(sent - 4_000);
+    let mut second = record("page_view", serde_json::json!({ "path": "/portal" }));
+    second.time_triggered = Some(sent - 1_000);
+
+    let rows = [
+        to_row(&first, &meta, Uuid::now_v7(), Uuid::now_v7(), arrival),
+        to_row(&second, &meta, Uuid::now_v7(), Uuid::now_v7(), arrival),
+    ];
+
+    assert_eq!(rows[0].ts, arrival - Duration::milliseconds(4_000));
+    assert_eq!(rows[1].ts, arrival - Duration::milliseconds(1_000));
+}
