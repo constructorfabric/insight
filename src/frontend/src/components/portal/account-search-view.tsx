@@ -34,25 +34,43 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { accountKey } from "@/lib/identities/account-key";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalSearch } from "@/lib/portal/portal-search";
-import { useAccountList } from "@/queries/identity-resolution";
+import {
+  belowAccountFloor,
+  listsAnyAccount,
+  MIN_SEARCH_CHARS,
+  SEARCH_DEBOUNCE_MS,
+  useAccountList,
+} from "@/queries/identity-resolution";
 import { cn } from "@/lib/utils";
-
-// Past the gap between two keystrokes of ordinary typing (150-300 ms), so a
-// typed word costs one search of the journal rather than one per letter.
-const DEBOUNCE_MS = 400;
 
 export function AccountSearchView() {
   const { t } = useTranslation();
   const { acct } = usePortalSearch();
   const { setAcct } = usePortalNavActions();
   const [query, setQuery] = useState("");
-  const debounced = useDebouncedValue(query, DEBOUNCE_MS);
+  const debounced = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
   const search = useAccountList(debounced);
 
-  const items = (search.data?.pages ?? []).flatMap((page) => page.items);
+  // Never rows the query did not ask for: under the floor the listing is not
+  // this field's answer, and kept pages would be the previous term's.
+  const items = listsAnyAccount(debounced)
+    ? (search.data?.pages ?? []).flatMap((page) => page.items)
+    : [];
   const ordered = items.map((item) => accountKey(item));
   const loading = search.isFetching && !search.isFetchingNextPage;
-  const asked = debounced.trim().length > 0;
+  // A needle actually reached the service, so an empty answer means "nothing
+  // matched" rather than "nothing is observed". The floor comes from the shared
+  // rule, or the two disagree about what counts as one character.
+  const asked = debounced.trim() !== "" && listsAnyAccount(debounced);
+  // Reads the live field rather than the debounced one: the answer to "why is
+  // nothing happening" should not wait for the debounce to expire. Only while
+  // nothing is listed, though — for one debounce the rows are still the ones
+  // the shorter field asked for, and a notice above them contradicts them.
+  const tooShort = items.length === 0 && belowAccountFloor(query);
+  // What is listed answers the term the query key carries, not the one in the
+  // field, until the debounce fires AND the fetch lands. Neither emptiness below
+  // is a claim about the field's own needle while that is true.
+  const stale = query !== debounced || search.isPlaceholderData;
   // The window takes queue-shaped rows; a listed account adapts. This is also
   // the voucher that the account exists — without it an unbound, never-decided
   // account the list just showed would open as a stale link with no verbs.
@@ -84,6 +102,12 @@ export function AccountSearchView() {
         ) : null}
       </div>
 
+      {tooShort ? (
+        <p className="text-sm text-muted-foreground">
+          {t("identities.accounts.min_chars", { min: MIN_SEARCH_CHARS })}
+        </p>
+      ) : null}
+
       {search.isError ? (
         <ComingSoon
           variant="card"
@@ -96,7 +120,7 @@ export function AccountSearchView() {
           list. The second one does not claim the tenant is empty — the service
           answers an empty list for a fold it cannot read yet, and an operator
           cannot tell that from a tenant nobody has connected. */}
-      {!loading && items.length === 0 && !search.isError ? (
+      {!loading && !tooShort && !stale && items.length === 0 && !search.isError ? (
         <Empty className="rounded-lg border">
           <EmptyHeader>
             {asked ? null : (

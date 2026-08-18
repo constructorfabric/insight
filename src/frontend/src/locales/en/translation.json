@@ -514,7 +514,7 @@
     },
     "picker": {
       "placeholder": "Search people by name, email, handle or person id…",
-      "min_chars": "Type at least {{min}} characters to search.",
+      "min_chars": "Each word needs at least {{min}} characters to search.",
       "no_matches": "Nobody matches those terms.",
       "failed": "Search failed. Try again.",
       "load_more": "Show more people",
@@ -541,6 +541,7 @@
     },
     "accounts": {
       "placeholder": "Find an account by source, address, handle, id or observed name…",
+      "min_chars": "Type at least {{min}} characters to search.",
       "no_matches": "No observed account carries that",
       "unbound": "bound to nobody",
       "failed": "Account search failed. Try again.",

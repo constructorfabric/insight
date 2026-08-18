@@ -25,15 +25,13 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
+  belowPersonFloor,
   listsAnyone,
   MIN_SEARCH_CHARS,
+  SEARCH_DEBOUNCE_MS,
   usePersonList,
 } from "@/queries/identity-resolution";
 import { cn } from "@/lib/utils";
-
-// Past the gap between two keystrokes of ordinary typing (150-300 ms), so a
-// typed word costs one search of the journal rather than one per letter.
-const DEBOUNCE_MS = 400;
 
 export function PersonPicker({
   onPick,
@@ -50,7 +48,7 @@ export function PersonPicker({
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
-  const debounced = useDebouncedValue(query, DEBOUNCE_MS);
+  const debounced = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
   const intent = browseWhenEmpty ? "browse" : "match";
   const asked = listsAnyone(debounced, intent);
   const list = usePersonList(debounced, intent);
@@ -66,10 +64,14 @@ export function PersonPicker({
   // nothing happening" should not wait for the debounce to expire. Only while
   // nothing is listed, though — deleting a character from a searched term keeps
   // its rows for one debounce, and a notice above them contradicts them.
-  const tooShort =
-    results.length === 0 &&
-    query.trim().length > 0 &&
-    query.trim().length < MIN_SEARCH_CHARS;
+  const tooShort = results.length === 0 && belowPersonFloor(query);
+  // These rows answer the term the query key carries, which is not the one in
+  // the field until the debounce fires AND the fetch lands. Kept on screen so
+  // the list does not blank between keystrokes — see `placeholderData` — and
+  // marked, or the operator reads a list that is one term behind as the answer.
+  // Marked, NOT disabled: a click lands on a row they can read, and picking is
+  // a step towards a verb rather than the verb itself.
+  const behind = query !== debounced || list.isPlaceholderData;
   // A page whose every row was excluded is not "nobody matches" while more
   // pages are unread — the button below is the answer, not the message.
   const exhausted = !list.hasNextPage;
@@ -102,15 +104,22 @@ export function PersonPicker({
           {t("identities.picker.failed")}
         </p>
       ) : null}
-      {asked && list.data && results.length === 0 && !loading && exhausted ? (
+      {asked &&
+      list.data &&
+      results.length === 0 &&
+      !loading &&
+      !behind &&
+      exhausted ? (
         <p className="text-sm text-muted-foreground">
           {t("identities.picker.no_matches")}
         </p>
       ) : null}
       {results.length > 0 ? (
         <ul
+          aria-busy={behind}
           className={cn(
             "flex max-h-64 flex-col gap-1 overflow-y-auto",
+            behind && "opacity-60",
             className,
           )}
         >

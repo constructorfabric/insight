@@ -36,7 +36,10 @@
 //! A term half the roster matches is not narrowed by anything, so the probe
 //! stops at [`MAX_CANDIDATES`] and the ranking reads the tenant instead. Its own
 //! LIMIT makes finding that out nearly free, which is what keeps the two-step
-//! shape from costing more than it saves.
+//! shape from costing more than it saves. Note what reaches the cap: the probe
+//! counts persons a SUPERSEDED value matched too, so a long-lived journal gets
+//! there on accumulated history and not only on how common the term is. That
+//! costs a fallback, never a wrong answer.
 //!
 //! An id-named search skips the probe entirely: the ids ARE the set, and the
 //! tightest one there is.

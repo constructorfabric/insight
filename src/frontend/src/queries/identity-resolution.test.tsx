@@ -24,7 +24,12 @@ vi.mock("@/auth/session-scope", () => ({
     s == null ? null : (s as { scope: string }).scope,
 }));
 
-import { listsAnyone, useBindAccount, usePersonList } from "./identity-resolution";
+import {
+  listsAnyAccount,
+  listsAnyone,
+  useBindAccount,
+  usePersonList,
+} from "./identity-resolution";
 
 const searchPersons = vi.mocked(identityClient.searchPersons);
 
@@ -205,19 +210,43 @@ describe("usePersonList", () => {
     // Too short to be worth a pass over the journal — in either intent, and
     // whichever side of the debounce the value came from.
     ["browse", "i", false],
-    ["browse", "iv", false],
-    ["browse", "iva", true],
+    ["browse", "iv", true],
     ["match", "i", false],
-    ["match", "iv", false],
-    // Trimmed before it is measured, so trailing space does not buy a search.
-    ["match", "iv ", false],
+    ["match", "iv", true],
+    // Trimmed before it is measured, so surrounding space neither buys nor
+    // costs a search.
+    ["match", "i ", false],
     ["match", " iva ", true],
+    // THE FLOOR IS PER TERM, because the service matches each one against the
+    // journal on its own. Measuring the field instead would read `a b` as three
+    // characters and wave through two one-character passes.
+    ["match", "a b", false],
+    ["match", "iva b", false],
+    ["match", "iv an", true],
+    // Counted as the person typing counts: one glyph is one character, not the
+    // two UTF-16 units it occupies.
+    ["match", "🙂", false],
+    ["match", "🙂🙂", true],
   ] as const)(
     "listsAnyone(%s intent, %o) is %s",
     (intent, q, expected) => {
       expect(listsAnyone(q, intent)).toBe(expected);
     },
   );
+
+  // The account listing has one intent — a blank field lists every open account
+  // — and its needle is ONE predicate, spaces included, so the field itself is
+  // what the floor measures. `ad ex` matches a display name across the gap.
+  it.each([
+    ["", true],
+    ["   ", true],
+    ["o", false],
+    ["oc", true],
+    [" oc ", true],
+    ["a b", true],
+  ] as const)("listsAnyAccount(%o) is %s", (q, expected) => {
+    expect(listsAnyAccount(q)).toBe(expected);
+  });
 });
 
 describe("usePersonList while a term is being typed", () => {

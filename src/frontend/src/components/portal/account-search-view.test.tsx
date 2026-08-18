@@ -34,6 +34,7 @@ const hooks = vi.hoisted(() => {
         | undefined,
       isFetching: false,
       isFetchingNextPage: false,
+      isPlaceholderData: false,
       isError: false,
       hasNextPage: false,
       fetchNextPage: vi.fn(),
@@ -48,6 +49,11 @@ const hooks = vi.hoisted(() => {
     verb,
   };
 });
+// The debounce is a pure timing concern with its own unit test; identity here
+// keeps this suite about behaviour, not timers.
+vi.mock("@/hooks/use-debounced-value", () => ({
+  useDebouncedValue: <T,>(value: T) => value,
+}));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useAccountList: () => hooks.search,
@@ -101,6 +107,7 @@ beforeEach(() => {
   hooks.search.data = undefined;
   hooks.search.isFetching = false;
   hooks.search.isFetchingNextPage = false;
+  hooks.search.isPlaceholderData = false;
   hooks.search.isError = false;
   hooks.search.hasNextPage = false;
   hooks.search.fetchNextPage = vi.fn();
@@ -132,6 +139,56 @@ describe("AccountSearchView", () => {
     expect(
       screen.queryByText(/no account has been observed/i),
     ).not.toBeInTheDocument();
+  });
+
+  // One letter reaches most of what the connectors reported and costs the fold a
+  // pass to say so. Going silent would read as a broken field, so the mode says
+  // what it is waiting for — and shows no rows it did not ask for.
+  it("asks for a second character instead of searching on one", async () => {
+    hooks.search.data = page([match()]);
+    render(<AccountSearchView />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "o");
+
+    expect(screen.getByText(/at least 2 characters/i)).toBeInTheDocument();
+    expect(screen.queryByText("octocat")).not.toBeInTheDocument();
+    // Neither emptiness applies while the field is still being typed into.
+    expect(screen.queryByText(/nothing to list here yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/carries that/i)).not.toBeInTheDocument();
+  });
+
+  it("searches, and drops the notice, on the second character", async () => {
+    hooks.search.data = page([match()]);
+    render(<AccountSearchView />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "oc");
+
+    expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
+    expect(screen.getByText("octocat")).toBeInTheDocument();
+  });
+
+  // The needle is one predicate, spaces and all, so a space is a character like
+  // any other here — unlike the person search, which matches term by term.
+  it("searches a needle that spans a space", async () => {
+    hooks.search.data = page([match()]);
+    render(<AccountSearchView />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "a b");
+
+    expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
+    expect(screen.getByText("octocat")).toBeInTheDocument();
+  });
+
+  // Kept rows are the previous needle's answer for one debounce, so an empty
+  // list is not yet a fact about the field: "nothing to list here yet" would
+  // read as "no connector has reported", which is a claim about the tenant.
+  it("claims neither emptiness while the listing is still the previous answer", () => {
+    hooks.search.data = page([]);
+    hooks.search.isPlaceholderData = true;
+    render(<AccountSearchView />);
+
+    expect(screen.queryByText(/nothing to list here yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/carries that/i)).not.toBeInTheDocument();
   });
 
   it("answers whose an account is", async () => {

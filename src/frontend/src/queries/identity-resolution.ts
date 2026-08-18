@@ -137,11 +137,50 @@ export type PersonListIntent = "browse" | "match";
 /**
  * How much has to be typed before a term searches at all.
  *
- * One or two characters name most of the roster, so the answer is no use to the
+ * A single character names most of the roster, so the answer is no use to the
  * operator — and the service still pays a pass over the person journal to
- * produce it. A blank field is a different question and keeps its own answer.
+ * produce it. Two is where a term starts to mean something: it is also the whole
+ * of a name in scripts that write one glyph per syllable, which a higher floor
+ * would put out of reach entirely. A blank field is a different question and
+ * keeps its own answer.
  */
-export const MIN_SEARCH_CHARS = 3;
+export const MIN_SEARCH_CHARS = 2;
+
+/**
+ * How long a field waits before it searches. Past the gap between two
+ * keystrokes of ordinary typing (150-300 ms), so a typed word costs one search
+ * of the journal rather than one per letter.
+ */
+export const SEARCH_DEBOUNCE_MS = 400;
+
+/**
+ * Characters as the person typing counts them. `String.length` counts UTF-16
+ * units, so one astral glyph reads as two and would buy a search on its own.
+ */
+function typedLength(q: string): number {
+  return [...q].length;
+}
+
+/**
+ * The shortest predicate the person search would actually send.
+ *
+ * INVARIANT: measured per TERM, not per field. The service splits `q` on
+ * whitespace and matches every term against the journal on its own, so `a b` is
+ * two one-character passes — the field length would call that three characters
+ * and wave through exactly the query the floor exists to stop.
+ */
+function shortestTerm(q: string): number {
+  const terms = q.split(/\s+/).filter((term) => term.length > 0);
+  return terms.length === 0 ? 0 : Math.min(...terms.map(typedLength));
+}
+
+/**
+ * The account needle is ONE predicate, its spaces included — `ada ex` matches a
+ * display name across the gap — so there the field's own length is the measure.
+ */
+function needleLength(q: string): number {
+  return typedLength(q.trim());
+}
 
 /**
  * Whether these terms ask for anything under this intent.
@@ -152,9 +191,40 @@ export const MIN_SEARCH_CHARS = 3;
  * search is showing the answer to a different question.
  */
 export function listsAnyone(q: string, intent: PersonListIntent): boolean {
-  const typed = q.trim();
-  if (typed.length === 0) return intent === "browse";
-  return typed.length >= MIN_SEARCH_CHARS;
+  return searches(shortestTerm(q), intent === "browse");
+}
+
+/**
+ * The same question for the account listing, which has one intent: a blank
+ * field lists every open account, since that is what an operator reviewing a
+ * connector's output came to see.
+ */
+export function listsAnyAccount(q: string): boolean {
+  return searches(needleLength(q), true);
+}
+
+/**
+ * Typed something, but not yet enough to search — what the person field says
+ * instead of going silent. The message names the term, because that is what the
+ * floor measures.
+ */
+export function belowPersonFloor(q: string): boolean {
+  return belowFloor(shortestTerm(q));
+}
+
+/** The same for the account field, over its single needle. */
+export function belowAccountFloor(q: string): boolean {
+  return belowFloor(needleLength(q));
+}
+
+/** The floor itself: blank asks for a listing only where one is wanted. */
+function searches(measured: number, blankLists: boolean): boolean {
+  if (measured === 0) return blankLists;
+  return measured >= MIN_SEARCH_CHARS;
+}
+
+function belowFloor(measured: number): boolean {
+  return measured > 0 && measured < MIN_SEARCH_CHARS;
 }
 
 export function usePersonList(
@@ -203,7 +273,7 @@ export function useAccountList(
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     staleTime: ATTENTION_STALE_TIME,
     placeholderData: keepPreviousData,
-    enabled: sessionScope != null,
+    enabled: sessionScope != null && listsAnyAccount(trimmed),
   });
 }
 

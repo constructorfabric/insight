@@ -19,6 +19,7 @@ const list = vi.hoisted(() => ({
     data: undefined as { pages: PersonSearchResponse[] } | undefined,
     isFetching: false,
     isFetchingNextPage: false,
+    isPlaceholderData: false,
     isError: false,
     hasNextPage: false,
     fetchNextPage: vi.fn(),
@@ -64,6 +65,7 @@ beforeEach(() => {
     data: undefined,
     isFetching: false,
     isFetchingNextPage: false,
+    isPlaceholderData: false,
     isError: false,
     hasNextPage: false,
     fetchNextPage: vi.fn(),
@@ -71,28 +73,40 @@ beforeEach(() => {
 });
 
 describe("PersonPicker", () => {
-  // Two letters name most of the roster: the answer is no use and the service
+  // One letter names most of the roster: the answer is no use and the service
   // pays a pass over the journal for it. Going silent instead would read as a
   // broken field, so the picker says what it is waiting for.
-  it("asks for a third character instead of searching on two", async () => {
+  it("asks for a second character instead of searching on one", async () => {
+    list.state.data = { pages: [page([BOB])] };
+    render(<PersonPicker onPick={vi.fn()} />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "b");
+
+    expect(screen.getByText(/at least 2 characters/i)).toBeInTheDocument();
+    expect(screen.queryByText("Bob Park")).not.toBeInTheDocument();
+    expect(screen.queryByText(/nobody matches/i)).not.toBeInTheDocument();
+  });
+
+  it("searches, and drops the notice, on the second character", async () => {
     list.state.data = { pages: [page([BOB])] };
     render(<PersonPicker onPick={vi.fn()} />);
 
     await userEvent.type(screen.getByRole("searchbox"), "bo");
 
-    expect(screen.getByText(/at least 3 characters/i)).toBeInTheDocument();
-    expect(screen.queryByText("Bob Park")).not.toBeInTheDocument();
-    expect(screen.queryByText(/nobody matches/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Bob Park")).toBeInTheDocument();
   });
 
-  it("searches, and drops the notice, on the third character", async () => {
+  // The service matches every term against the journal on its own, so a term
+  // under the floor is a pass over the journal no matter what precedes it.
+  it("holds back while any one word is still a single character", async () => {
     list.state.data = { pages: [page([BOB])] };
     render(<PersonPicker onPick={vi.fn()} />);
 
-    await userEvent.type(screen.getByRole("searchbox"), "bob");
+    await userEvent.type(screen.getByRole("searchbox"), "bob p");
 
-    expect(screen.queryByText(/at least 3 characters/i)).not.toBeInTheDocument();
-    expect(screen.getByText("Bob Park")).toBeInTheDocument();
+    expect(screen.getByText(/at least 2 characters/i)).toBeInTheDocument();
+    expect(screen.queryByText("Bob Park")).not.toBeInTheDocument();
   });
 
   // The roster is not a search, so the console's own mode still opens with it.
@@ -101,7 +115,7 @@ describe("PersonPicker", () => {
     render(<PersonPicker onPick={vi.fn()} browseWhenEmpty />);
 
     expect(screen.getByText("Bob Park")).toBeInTheDocument();
-    expect(screen.queryByText(/at least 3 characters/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
   });
 
   it("hands the picked person to the caller and fires nothing else", async () => {
@@ -113,6 +127,39 @@ describe("PersonPicker", () => {
     await userEvent.click(screen.getByRole("button", { name: /bob park/i }));
 
     expect(onPick).toHaveBeenCalledWith(BOB);
+  });
+
+  // The rows survive a keystroke so the list does not blank mid-word, which
+  // means what is on screen can be the PREVIOUS term's answer. Say so, or the
+  // operator reads a list one term behind as the answer to what they typed.
+  it("marks the list as busy while it answers the previous term", () => {
+    list.state.data = { pages: [page([BOB])] };
+    list.state.isPlaceholderData = true;
+    render(<PersonPicker onPick={vi.fn()} browseWhenEmpty />);
+
+    expect(screen.getByRole("list")).toHaveAttribute("aria-busy", "true");
+  });
+
+  // Marked, not disabled: the row carries the name the operator read off it, so
+  // the click is never for the wrong person — and picking only opens the step
+  // that fires a verb. Swallowing it would make the picker feel broken.
+  it("still picks a row while the list is one term behind", async () => {
+    list.state.data = { pages: [page([BOB])] };
+    list.state.isPlaceholderData = true;
+    const onPick = vi.fn();
+    render(<PersonPicker onPick={onPick} browseWhenEmpty />);
+
+    await userEvent.click(screen.getByRole("button", { name: /bob park/i }));
+
+    expect(onPick).toHaveBeenCalledWith(BOB);
+  });
+
+  it("drops the busy mark once the rows answer the field", () => {
+    list.state.data = { pages: [page([BOB])] };
+    list.state.isPlaceholderData = false;
+    render(<PersonPicker onPick={vi.fn()} browseWhenEmpty />);
+
+    expect(screen.getByRole("list")).toHaveAttribute("aria-busy", "false");
   });
 
   it("does not repeat persons the panel already shows", async () => {
