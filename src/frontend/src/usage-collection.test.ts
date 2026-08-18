@@ -12,7 +12,7 @@ function historyStub(
   search = "",
 ): {
   history: RouterHistory;
-  navigate: (pathname: string, search?: string) => void;
+  navigateRouterOnly: (pathname: string, search?: string) => void;
 } {
   window.history.pushState({}, "", `${pathname}${search}`);
   const subscribers = new Set<() => void>();
@@ -26,8 +26,7 @@ function historyStub(
   } as unknown as RouterHistory;
   return {
     history,
-    // `window` stays on the previous screen, as it does in the real router.
-    navigate: (nextPathname: string, nextSearch = "") => {
+    navigateRouterOnly: (nextPathname: string, nextSearch = "") => {
       location.pathname = nextPathname;
       location.search = nextSearch;
       subscribers.forEach((cb) => cb());
@@ -53,20 +52,38 @@ describe("recordScreens", () => {
   });
 
   it("records a screen once however often history fires", () => {
-    const { history, navigate } = historyStub("/portal", "?zone=directions");
+    const { history, navigateRouterOnly } = historyStub("/portal", "?zone=directions");
     recordScreens(history);
-    navigate("/portal", "?zone=directions");
+    navigateRouterOnly("/portal", "?zone=directions");
 
     expect(mocks.recordPageView).toHaveBeenCalledTimes(1);
   });
 
   it("records a zone change as the screen it opened, not the one it left", () => {
-    const { history, navigate } = historyStub("/portal", "?zone=overview&item=trend");
+    const { history, navigateRouterOnly } = historyStub("/portal", "?zone=overview&item=trend");
     recordScreens(history);
     mocks.recordPageView.mockClear();
 
-    navigate("/portal", "?zone=manage&item=identities");
+    navigateRouterOnly("/portal", "?zone=manage&item=identities");
 
     expect(mocks.recordPageView).toHaveBeenCalledWith("/portal/manage/identities");
+  });
+
+  it("composes a person group item into the screen", () => {
+    recordScreens(historyStub("/ic/:id/personal", "?item=git_output").history);
+
+    expect(mocks.recordPageView).toHaveBeenCalledWith("/ic/:id/personal/git_output");
+  });
+
+  it("drops a zone that names no screen in the rail", () => {
+    recordScreens(historyStub("/portal", "?zone=user@example.com").history);
+
+    expect(mocks.recordPageView).toHaveBeenCalledWith("/portal");
+  });
+
+  it("drops an item that names no screen in the rail", () => {
+    recordScreens(historyStub("/portal", "?zone=manage&item=user@example.com").history);
+
+    expect(mocks.recordPageView).toHaveBeenCalledWith("/portal/manage");
   });
 });

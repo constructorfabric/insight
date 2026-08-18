@@ -70,7 +70,6 @@ function isIdentifier(segment: string): boolean {
   );
 }
 
-/** Zone/item live in search params; `window.location` cannot rebuild this. */
 let lastPath = "";
 
 export function recordPageView(path: string): void {

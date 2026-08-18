@@ -130,7 +130,7 @@ class PortalShell:
 def recorded_path_of(url: str) -> str:
     """The string the product records for a URL, with the person stripped out.
 
-    Mirrors `currentScreen()` in main.tsx and `screenPath()` in telemetry.ts.
+    Mirrors `screenOf()` in usage-collection.ts and `screenPath()` in telemetry.ts.
     """
     parts = urlsplit(url)
     query = parse_qs(parts.query)
