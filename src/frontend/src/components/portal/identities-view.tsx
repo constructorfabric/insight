@@ -200,8 +200,10 @@ function RatesStrip({
   const { t } = useTranslation();
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
+      {/* A backend a release behind this bundle does not carry the total; an
+          unknown figure reads as one rather than as the word "undefined". */}
       <Tile
-        figure={String(rates.persons)}
+        figure={String(rates.persons ?? "—")}
         label={t("identities.rates.persons")}
         status="neutral"
       />

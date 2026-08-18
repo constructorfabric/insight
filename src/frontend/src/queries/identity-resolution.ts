@@ -6,6 +6,7 @@
  * revoked mid-session — surfaced as an error state, not silently retried.
  */
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -134,14 +135,26 @@ const PAGE_SIZE = 50;
 export type PersonListIntent = "browse" | "match";
 
 /**
+ * How much has to be typed before a term searches at all.
+ *
+ * One or two characters name most of the roster, so the answer is no use to the
+ * operator — and the service still pays a pass over the person journal to
+ * produce it. A blank field is a different question and keeps its own answer.
+ */
+export const MIN_SEARCH_CHARS = 3;
+
+/**
  * Whether these terms ask for anything under this intent.
  *
  * INVARIANT: one rule, used by both the query's fetch gate and the caller's
  * display. A picker that renders rows the query never asked for is showing
- * another caller's cache.
+ * another caller's cache — and one that renders rows for terms too short to
+ * search is showing the answer to a different question.
  */
 export function listsAnyone(q: string, intent: PersonListIntent): boolean {
-  return intent === "browse" || q.trim().length > 0;
+  const typed = q.trim();
+  if (typed.length === 0) return intent === "browse";
+  return typed.length >= MIN_SEARCH_CHARS;
 }
 
 export function usePersonList(
@@ -160,11 +173,17 @@ export function usePersonList(
   const trimmed = q.trim();
   return useInfiniteQuery({
     queryKey: ["identity", "persons", "search", sessionScope, intent, trimmed],
-    queryFn: ({ pageParam }) =>
-      searchPersons(trimmed, { cursor: pageParam, limit: PAGE_SIZE }),
+    // The signal is the point, not hygiene: a search-as-you-type field
+    // supersedes its own request, and each one costs the service a scan of the
+    // person journal. Dropped on the client, they would all still be answered.
+    queryFn: ({ pageParam, signal }) =>
+      searchPersons(trimmed, { cursor: pageParam, limit: PAGE_SIZE }, signal),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     staleTime: ATTENTION_STALE_TIME,
+    // One more keystroke is a new key: without this the list empties to a
+    // spinner between every pair of letters.
+    placeholderData: keepPreviousData,
     enabled: sessionScope != null && listsAnyone(trimmed, intent),
   });
 }
@@ -178,11 +197,12 @@ export function useAccountList(
   const trimmed = q.trim();
   return useInfiniteQuery({
     queryKey: [...RESOLUTION_KEY, "account-search", sessionScope, trimmed],
-    queryFn: ({ pageParam }) =>
-      searchAccounts(trimmed, { cursor: pageParam, limit: PAGE_SIZE }),
+    queryFn: ({ pageParam, signal }) =>
+      searchAccounts(trimmed, { cursor: pageParam, limit: PAGE_SIZE }, signal),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     staleTime: ATTENTION_STALE_TIME,
+    placeholderData: keepPreviousData,
     enabled: sessionScope != null,
   });
 }

@@ -157,10 +157,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             false,
             "Search terms, at most 8 (200 characters total); every \
              whitespace-separated term must match one of the person's current \
-             identity values — email, username, display/first/last name or \
-             employee id (case-insensitive substring). Titles and statuses are \
-             displayed on the card but not searched. Absent or blank lists \
-             every person of the tenant.",
+             identity values — email, username or display/first/last name \
+             (case-insensitive substring), the same five the row's own label is \
+             built from. Titles, statuses and the HR employee id are served on \
+             the profile but not searched. A term that parses as a UUID names a \
+             person id instead. Absent or blank lists every person of the \
+             tenant.",
         )
         .query_param_typed(
             "limit",

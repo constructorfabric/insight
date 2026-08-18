@@ -118,6 +118,18 @@ describe("IdentitiesView", () => {
     expect(strip()).toHaveLength(4);
   });
 
+  // Mid-rollout the bundle can be a release ahead of the service, and a total
+  // it does not send yet must not print as the word "undefined".
+  it("shows the person total as unknown when the answer omits it", () => {
+    attention.q.data = {
+      items: [item({})],
+      rates: { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 },
+    };
+    render(<IdentitiesView />);
+
+    expect(strip()[0]).toBe("—Persons");
+  });
+
   it("shows the backlog as a floor when the server cut the list", () => {
     attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
     render(<IdentitiesView />);

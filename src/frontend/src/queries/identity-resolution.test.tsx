@@ -26,6 +26,8 @@ vi.mock("@/auth/session-scope", () => ({
 
 import { listsAnyone, useBindAccount, usePersonList } from "./identity-resolution";
 
+const searchPersons = vi.mocked(identityClient.searchPersons);
+
 const bindAccount = vi.mocked(identityClient.bindAccount);
 
 const ATTENTION_KEY = ["identity", "resolution", "attention", "tenant-a"];
@@ -200,10 +202,73 @@ describe("usePersonList", () => {
     ["match", "", false],
     ["match", "   ", false],
     ["match", "iva", true],
+    // Too short to be worth a pass over the journal — in either intent, and
+    // whichever side of the debounce the value came from.
+    ["browse", "i", false],
+    ["browse", "iv", false],
+    ["browse", "iva", true],
+    ["match", "i", false],
+    ["match", "iv", false],
+    // Trimmed before it is measured, so trailing space does not buy a search.
+    ["match", "iv ", false],
+    ["match", " iva ", true],
   ] as const)(
     "listsAnyone(%s intent, %o) is %s",
     (intent, q, expected) => {
       expect(listsAnyone(q, intent)).toBe(expected);
     },
   );
+});
+
+describe("usePersonList while a term is being typed", () => {
+  function page(...names: string[]): identityClient.PersonSearchResponse {
+    return {
+      items: names.map((display_name, i) => ({
+        person_id: `01900000-0000-7000-8000-0000000000${10 + i}`,
+        display_name,
+      })),
+      next_cursor: null,
+    };
+  }
+
+  // Every keystroke is its own query key. Without kept data the list empties to
+  // a spinner between letters, which reads as "no matches" to the operator
+  // mid-word.
+  it("keeps the rows it already has while the next term loads", async () => {
+    const { wrapper } = harness();
+    searchPersons.mockResolvedValueOnce(page("Ada Example"));
+    const { result, rerender } = renderHook(({ q }) => usePersonList(q, "match"), {
+      wrapper,
+      initialProps: { q: "ada" },
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    let resolveNext: (value: identityClient.PersonSearchResponse) => void = () => {};
+    searchPersons.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveNext = resolve;
+      }),
+    );
+    rerender({ q: "adam" });
+
+    expect(result.current.data?.pages[0]?.items[0]?.display_name).toBe("Ada Example");
+    expect(result.current.isFetching).toBe(true);
+
+    resolveNext(page("Adam Other"));
+    await waitFor(() =>
+      expect(result.current.data?.pages[0]?.items[0]?.display_name).toBe("Adam Other"),
+    );
+  });
+
+  // The service answers a dropped request all the same, so the cancellation has
+  // to reach it: one journal scan per abandoned keystroke is the cost otherwise.
+  it("passes an abort signal the query can cancel with", async () => {
+    const { wrapper } = harness();
+    searchPersons.mockResolvedValueOnce(page("Ada Example"));
+
+    const { result } = renderHook(() => usePersonList("ada", "match"), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(searchPersons.mock.calls[0][2]).toBeInstanceOf(AbortSignal);
+  });
 });

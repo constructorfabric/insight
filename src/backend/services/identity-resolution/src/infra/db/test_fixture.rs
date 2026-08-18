@@ -104,6 +104,35 @@ impl Fixture {
         .await
     }
 
+    /// The same, observed `seconds_ago`. Explicit age is what tells "superseded"
+    /// apart from "inserted first": the currency rule reads the timestamp, and
+    /// two rows written in one test would otherwise differ by microseconds.
+    pub(crate) async fn observed_at(
+        &self,
+        person: Uuid,
+        value_type: &str,
+        value: &str,
+        seconds_ago: u32,
+    ) -> anyhow::Result<()> {
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6) - INTERVAL ? SECOND)",
+            [
+                value_type.into(),
+                SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                value.into(),
+                bytes(person),
+                bytes(person),
+                FIXTURE_REASON.into(),
+                seconds_ago.into(),
+            ],
+        )
+        .await
+    }
+
     /// Append an automatic binding observation: this account is held by this
     /// person, as observed `seconds_ago`. The age is explicit so a test can
     /// write an older observation AFTER a newer one — the shape that tells the

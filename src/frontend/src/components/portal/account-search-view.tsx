@@ -37,7 +37,9 @@ import { usePortalSearch } from "@/lib/portal/portal-search";
 import { useAccountList } from "@/queries/identity-resolution";
 import { cn } from "@/lib/utils";
 
-const DEBOUNCE_MS = 250;
+// Past the gap between two keystrokes of ordinary typing (150-300 ms), so a
+// typed word costs one search of the journal rather than one per letter.
+const DEBOUNCE_MS = 400;
 
 export function AccountSearchView() {
   const { t } = useTranslation();

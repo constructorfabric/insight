@@ -38,6 +38,8 @@ mod binding_reads_live_tests;
 #[cfg(test)]
 mod person_count_live_tests;
 #[cfg(test)]
+mod person_listing_live_tests;
+#[cfg(test)]
 pub(crate) mod test_fixture;
 #[cfg(test)]
 mod visible_set_live_tests;

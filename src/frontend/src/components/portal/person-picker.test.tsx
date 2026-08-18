@@ -71,6 +71,39 @@ beforeEach(() => {
 });
 
 describe("PersonPicker", () => {
+  // Two letters name most of the roster: the answer is no use and the service
+  // pays a pass over the journal for it. Going silent instead would read as a
+  // broken field, so the picker says what it is waiting for.
+  it("asks for a third character instead of searching on two", async () => {
+    list.state.data = { pages: [page([BOB])] };
+    render(<PersonPicker onPick={vi.fn()} />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "bo");
+
+    expect(screen.getByText(/at least 3 characters/i)).toBeInTheDocument();
+    expect(screen.queryByText("Bob Park")).not.toBeInTheDocument();
+    expect(screen.queryByText(/nobody matches/i)).not.toBeInTheDocument();
+  });
+
+  it("searches, and drops the notice, on the third character", async () => {
+    list.state.data = { pages: [page([BOB])] };
+    render(<PersonPicker onPick={vi.fn()} />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "bob");
+
+    expect(screen.queryByText(/at least 3 characters/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Bob Park")).toBeInTheDocument();
+  });
+
+  // The roster is not a search, so the console's own mode still opens with it.
+  it("keeps the roster on an empty field where the caller asked for one", () => {
+    list.state.data = { pages: [page([BOB])] };
+    render(<PersonPicker onPick={vi.fn()} browseWhenEmpty />);
+
+    expect(screen.getByText("Bob Park")).toBeInTheDocument();
+    expect(screen.queryByText(/at least 3 characters/i)).not.toBeInTheDocument();
+  });
+
   it("hands the picked person to the caller and fires nothing else", async () => {
     list.state.data = { pages: [page([BOB])] };
     const onPick = vi.fn();

@@ -357,6 +357,19 @@ describe("searchPersons", () => {
       body: { error: "malformed_search" },
     });
   });
+
+  // The caller's signal is how a superseded keystroke stops costing the service
+  // a scan of the person journal; dropped here, every one of them is answered.
+  it("hands the caller's abort signal to the request", async () => {
+    mockFetch.mockResolvedValueOnce(response({ items: [] }));
+    const controller = new AbortController();
+
+    await searchPersons("iva", { limit: 50 }, controller.signal);
+
+    expect(mockFetch.mock.calls[0][1]).toMatchObject({
+      signal: controller.signal,
+    });
+  });
 });
 
 describe("getPersonAccounts", () => {

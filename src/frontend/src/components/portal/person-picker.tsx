@@ -24,10 +24,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { listsAnyone, usePersonList } from "@/queries/identity-resolution";
+import {
+  listsAnyone,
+  MIN_SEARCH_CHARS,
+  usePersonList,
+} from "@/queries/identity-resolution";
 import { cn } from "@/lib/utils";
 
-const DEBOUNCE_MS = 250;
+// Past the gap between two keystrokes of ordinary typing (150-300 ms), so a
+// typed word costs one search of the journal rather than one per letter.
+const DEBOUNCE_MS = 400;
 
 export function PersonPicker({
   onPick,
@@ -56,6 +62,14 @@ export function PersonPicker({
         .filter((p) => !excluded.has(p.person_id))
     : [];
   const loading = list.isFetching && !list.isFetchingNextPage;
+  // Reads the live field rather than the debounced one: the answer to "why is
+  // nothing happening" should not wait for the debounce to expire. Only while
+  // nothing is listed, though — deleting a character from a searched term keeps
+  // its rows for one debounce, and a notice above them contradicts them.
+  const tooShort =
+    results.length === 0 &&
+    query.trim().length > 0 &&
+    query.trim().length < MIN_SEARCH_CHARS;
   // A page whose every row was excluded is not "nobody matches" while more
   // pages are unread — the button below is the answer, not the message.
   const exhausted = !list.hasNextPage;
@@ -77,6 +91,11 @@ export function PersonPicker({
         <div className="flex justify-center py-2">
           <Spinner className="size-4" />
         </div>
+      ) : null}
+      {tooShort ? (
+        <p className="text-sm text-muted-foreground">
+          {t("identities.picker.min_chars", { min: MIN_SEARCH_CHARS })}
+        </p>
       ) : null}
       {asked && list.isError ? (
         <p className="text-sm text-destructive">
