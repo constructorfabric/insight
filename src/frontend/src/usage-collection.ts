@@ -8,7 +8,9 @@ import { recordPageView } from "@/telemetry";
 export function recordScreens(history: RouterHistory): void {
   let recorded: string | null = null;
   const record = () => {
-    const screen = currentScreen();
+    // The router defers its pushState to a microtask, so `window` still holds
+    // the previous screen here.
+    const screen = screenOf(history.location);
     if (screen === recorded) return;
     recorded = screen;
     recordPageView(screen);
@@ -17,12 +19,12 @@ export function recordScreens(history: RouterHistory): void {
   record();
 }
 
-function currentScreen(): string {
+function screenOf(location: { pathname: string; search: string }): string {
   const { zone, item } = validatePortalSearch(
-    Object.fromEntries(new URLSearchParams(window.location.search)),
+    Object.fromEntries(new URLSearchParams(location.search)),
   );
   const parts = [zone, item].filter((value): value is string => Boolean(value));
   return parts.length
-    ? `${window.location.pathname}/${parts.join("/")}`
-    : window.location.pathname;
+    ? `${location.pathname}/${parts.join("/")}`
+    : location.pathname;
 }
