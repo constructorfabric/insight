@@ -4,6 +4,9 @@ connections/*.yaml
 
 # Generated schemas and catalogs (can be regenerated)
 connectors/**/schemas/
+# A CDK connector's schemas/ is not generated: the source package reads it at
+# discover time, so it has to ship with the code.
+!connectors/**/source_*/schemas/
 connectors/**/configured_catalog.json
 connectors/**/state.json
 

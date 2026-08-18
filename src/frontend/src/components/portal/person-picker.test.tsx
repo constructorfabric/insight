@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 /**
  * The picker finds, it never decides: picking hands the person to the caller
- * and fires nothing. Short input asks nobody; already-shown persons are not
- * repeated; a truncated answer says "narrow the terms" instead of posing as
- * complete.
+ * and fires nothing. Already-shown persons are not repeated; a list longer
+ * than a page keeps going instead of asking for narrower terms; and an empty
+ * field means the roster only where the caller said it should.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -12,18 +12,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@/i18n";
 import type { PersonSearchResponse } from "@/api/identity-client";
 
-const search = vi.hoisted(() => ({
+const list = vi.hoisted(() => ({
   q: "",
+  intent: "browse" as "browse" | "match",
   state: {
-    data: undefined as PersonSearchResponse | undefined,
+    data: undefined as { pages: PersonSearchResponse[] } | undefined,
     isFetching: false,
+    isFetchingNextPage: false,
     isError: false,
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
   },
 }));
-vi.mock("@/queries/identity-resolution", () => ({
-  usePersonSearch: (q: string) => {
-    search.q = q;
-    return search.state;
+// Only the hook is stubbed: `listsAnyone` stays the real rule, since what the
+// picker displays and what the query asks for must not drift apart.
+vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
+  usePersonList: (q: string, intent: "browse" | "match" = "browse") => {
+    list.q = q;
+    list.intent = intent;
+    return list.state;
   },
 }));
 // The debounce is a pure timing concern with its own unit test; identity here
@@ -45,14 +53,26 @@ const CAROL = {
   email: "carol.chen@example.com",
 };
 
+function page(items: PersonSearchResponse["items"]): PersonSearchResponse {
+  return { items };
+}
+
 beforeEach(() => {
-  search.q = "";
-  search.state = { data: undefined, isFetching: false, isError: false };
+  list.q = "";
+  list.intent = "browse";
+  list.state = {
+    data: undefined,
+    isFetching: false,
+    isFetchingNextPage: false,
+    isError: false,
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
+  };
 });
 
 describe("PersonPicker", () => {
   it("hands the picked person to the caller and fires nothing else", async () => {
-    search.state.data = { items: [BOB], truncated: false };
+    list.state.data = { pages: [page([BOB])] };
     const onPick = vi.fn();
     render(<PersonPicker onPick={onPick} />);
 
@@ -63,7 +83,7 @@ describe("PersonPicker", () => {
   });
 
   it("does not repeat persons the panel already shows", async () => {
-    search.state.data = { items: [BOB, CAROL], truncated: false };
+    list.state.data = { pages: [page([BOB, CAROL])] };
     render(<PersonPicker onPick={vi.fn()} excludeIds={[BOB.person_id]} />);
 
     await userEvent.type(screen.getByRole("searchbox"), "park");
@@ -72,20 +92,77 @@ describe("PersonPicker", () => {
     expect(screen.queryByText("Bob Park")).not.toBeInTheDocument();
   });
 
-  it("a truncated answer asks for narrower terms", async () => {
-    search.state.data = { items: [BOB], truncated: true };
-    render(<PersonPicker onPick={vi.fn()} />);
+  it("shows every page fetched so far as one list", () => {
+    list.state.data = { pages: [page([BOB]), page([CAROL])] };
+    render(<PersonPicker onPick={vi.fn()} browseWhenEmpty />);
 
-    await userEvent.type(screen.getByRole("searchbox"), "pa");
-
-    expect(screen.getByText(/narrow the terms/i)).toBeInTheDocument();
+    expect(screen.getByText("Bob Park")).toBeInTheDocument();
+    expect(screen.getByText("Carol Chen")).toBeInTheDocument();
   });
 
-  it("passes the typed query through to the search hook", async () => {
+  it("asks for the next page instead of telling the operator to narrow the terms", async () => {
+    list.state.data = { pages: [page([BOB])] };
+    list.state.hasNextPage = true;
+    render(<PersonPicker onPick={vi.fn()} browseWhenEmpty />);
+
+    await userEvent.click(screen.getByRole("button", { name: /show more/i }));
+
+    expect(list.state.fetchNextPage).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the dialog's field", false, "match" as const],
+    ["the console's own mode", true, "browse" as const],
+  ])(
+    "tells the listing what an empty field means in %s",
+    (_case, browseWhenEmpty, expected) => {
+      render(
+        <PersonPicker onPick={vi.fn()} browseWhenEmpty={browseWhenEmpty} />,
+      );
+
+      expect(list.intent).toBe(expected);
+    },
+  );
+
+  // The tenant may sit in the cache under the browse key. Whatever the hook
+  // hands back, a field that asked for nothing shows nothing — otherwise the
+  // assign dialog lists the roster the person mode just browsed.
+  it("shows nothing where an empty field means matches, even with rows in hand", () => {
+    list.state.data = { pages: [page([BOB, CAROL])] };
+    list.state.hasNextPage = true;
+
+    render(<PersonPicker onPick={vi.fn()} />);
+
+    expect(screen.queryByText("Bob Park")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /show more/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still searches once terms are typed into that same field", async () => {
+    list.state.data = { pages: [page([BOB])] };
     render(<PersonPicker onPick={vi.fn()} />);
 
     await userEvent.type(screen.getByRole("searchbox"), "iva example");
 
-    expect(search.q).toBe("iva example");
+    expect(list.q).toBe("iva example");
+    expect(list.intent).toBe("match");
+    expect(screen.getByText("Bob Park")).toBeInTheDocument();
+  });
+
+  // Excluding is client-side, so a page can arrive whole and leave empty while
+  // later pages hold matches. "Nobody matches" beside a live button is a
+  // contradiction the operator can only resolve by guessing.
+  it("offers the next page instead of claiming nobody matches", async () => {
+    list.state.data = { pages: [page([BOB])] };
+    list.state.hasNextPage = true;
+    render(<PersonPicker onPick={vi.fn()} excludeIds={[BOB.person_id]} />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "park");
+
+    expect(screen.queryByText(/nobody matches/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /show more/i }),
+    ).toBeInTheDocument();
   });
 });

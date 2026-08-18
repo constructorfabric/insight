@@ -92,6 +92,20 @@ function byKeyFor(...metrics: MetricResult[]) {
 }
 
 describe("MembersGrid", () => {
+  it("indents the legend to the person column, so a full-bleed card doesn't leave it on the border", () => {
+    render(
+      <MembersGrid
+        members={MEMBERS}
+        metricKeys={["ai.active_days"]}
+        byKey={byKeyFor(
+          metric("ai.active_days", [{ id: "ann@x.com", value: 20 }]),
+        )}
+        caption="Members grid"
+      />,
+    );
+    expect(screen.getByText("Top 25%").closest("div")).toHaveClass("px-3");
+  });
+
   it("renders a semantic table: sortable metric columns, member row headers linking to the IC view", () => {
     render(
       <MembersGrid

@@ -28,7 +28,8 @@ use toolkit_security::SecurityContext;
 
 use super::AppState;
 use crate::config::GearConfig;
-use crate::infra::db::test_fixture::{Fixture, fixture_or_skip};
+use crate::domain::resolution::EXCLUDED_PERSON;
+use crate::infra::db::test_fixture::{FIXTURE_REASON, Fixture, fixture_or_skip};
 use crate::infra::db::{person_roles_repo, roles_repo};
 
 type TestResult = anyhow::Result<()>;
@@ -552,15 +553,24 @@ async fn persons_search_requires_the_admin_row() -> TestResult {
 }
 
 #[tokio::test]
-async fn persons_search_without_terms_is_a_client_error() -> TestResult {
+async fn a_request_without_terms_lists_the_roster() -> TestResult {
+    // No terms is not a malformed search, it is the console's person mode:
+    // an operator reviewing identities needs to see who exists rather than
+    // guess a name to type.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
     let operator = admin_operator(&f).await?;
+    let listed = f.person("rostered@http-live.test").await?;
 
     for uri in ["/v1/persons", "/v1/persons?q=%20%20"] {
-        let (status, _) = get(app(&f, operator), uri).await?;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "should reject: {uri}");
+        let (status, body) = get(app(&f, operator), uri).await?;
+
+        assert_eq!(status, StatusCode::OK, "should list: {uri}");
+        assert!(
+            found_ids(&body)?.contains(&listed.to_string()),
+            "the roster is missing a person of the tenant: {uri}"
+        );
     }
     Ok(())
 }
@@ -671,38 +681,74 @@ async fn every_term_must_match_though_not_the_same_value() -> TestResult {
 }
 
 #[tokio::test]
-async fn named_persons_sort_before_email_only_ones() -> TestResult {
-    // The named-first display contract: a person with a display_name lists
-    // before one the journal only knows by email, whatever their ids or
-    // email spellings say.
+async fn the_listing_is_ordered_by_the_label_each_row_shows() -> TestResult {
+    // Alphabetical by the label the row displays — display name, else the
+    // address — so the order can be followed down the column. A person the
+    // journal knows by nothing but a binding has no label to place, and sits
+    // after everyone who has one rather than under an id nobody reads.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
     let operator = admin_operator(&f).await?;
     let marker = Uuid::now_v7().simple().to_string();
 
+    // The addresses and the name are deliberately in opposite orders: `named`
+    // has the EARLIER address and the LATER name. Sorting by the address would
+    // put them first, sorting by the label they show puts them second — so the
+    // assertion can tell the two rules apart, which a same-direction pair
+    // cannot.
     let email_only = f
-        .person(&format!("aaa-order-{marker}@http-live.test"))
+        .person(&format!("mmm-order-{marker}@http-live.test"))
         .await?;
     let named = f
-        .person(&format!("zzz-order-{marker}@http-live.test"))
+        .person(&format!("aaa-order-{marker}@http-live.test"))
         .await?;
-    f.observed(named, "display_name", &format!("Orderly Named {marker}"))
+    f.observed(named, "display_name", &format!("Zzz Named {marker}"))
         .await?;
+    let unlabelled = f.emailless_person().await?;
 
-    let (status, body) = get(app(&f, operator), &format!("/v1/persons?q=order-{marker}")).await?;
+    let (status, body) = get(app(&f, operator), "/v1/persons").await?;
 
     assert_eq!(status, StatusCode::OK);
+    let expected = [email_only, named, unlabelled].map(|id| id.to_string());
+    let listed: Vec<String> = found_ids(&body)?
+        .into_iter()
+        .filter(|id| expected.contains(id))
+        .collect();
     assert_eq!(
-        found_ids(&body)?,
-        vec![named.to_string(), email_only.to_string()],
-        "named first, even though the email-only person's email sorts earlier"
+        listed,
+        expected.to_vec(),
+        "the displayed name places the named person, not their address, and the \
+         label-less person comes last"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn a_cut_page_says_so_instead_of_posing_as_the_answer() -> TestResult {
+async fn the_roster_leaves_out_the_person_that_stands_for_exclusion() -> TestResult {
+    // Excluding an account binds it to a sentinel person id. It is a marker, not
+    // somebody: listed, it would be a nameless row an operator could pick as a
+    // bind or merge target, and every excluded account would look like theirs.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let operator = admin_operator(&f).await?;
+    let account = format!("excluded-{}", Uuid::now_v7().simple());
+    f.bound_at(&account, EXCLUDED_PERSON, FIXTURE_REASON, 60)
+        .await?;
+
+    let (status, body) = get(app(&f, operator), "/v1/persons").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !found_ids(&body)?.contains(&EXCLUDED_PERSON.to_string()),
+        "the exclusion sentinel is not a person to list"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cut_page_offers_the_next_one_and_a_whole_answer_does_not() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -721,10 +767,16 @@ async fn a_cut_page_says_so_instead_of_posing_as_the_answer() -> TestResult {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(found_ids(&body)?.len(), 2, "the page honours the limit");
-    assert_eq!(body["truncated"], true, "the cut is announced");
+    assert!(
+        body["next_cursor"].is_string(),
+        "a cut page offers the way on: {body}"
+    );
 
     let (_, full) = get(app(&f, operator), &format!("/v1/persons?q=cut-{marker}")).await?;
     assert_eq!(found_ids(&full)?.len(), 3);
-    assert_eq!(full["truncated"], false);
+    assert!(
+        full["next_cursor"].is_null(),
+        "a whole answer offers no next page: {full}"
+    );
     Ok(())
 }

@@ -19,19 +19,74 @@ use crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON;
 use crate::domain::resolution::{BINDING_VALUE_TYPE, BindingRow};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
 
-/// Current binding of each requested account — the latest `value_type='id'`
-/// observation, with its author so the caller can tell an operator decision
-/// from an automatic one. Accounts never observed are simply absent.
+/// Ceiling for a request handler's whole-tenant read, which holds every row it
+/// gets in memory. Paired with the evidence fold's own cap: the review can only
+/// look up accounts the fold reported, so bindings past that many are unusable
+/// anyway. Reaching it truncates what the operator sees and is reported, not
+/// passed off as a complete answer.
+pub const MAX_TENANT_BINDINGS: u64 = 200_000;
+
+/// How much of the tenant a whole-tenant read may return.
+#[derive(Debug, Clone, Copy)]
+pub enum Ceiling {
+    /// Stop after this many and say so. For a reader that can honestly show a
+    /// prefix — a console page, a rate with a "partial" flag beside it.
+    Bounded(u64),
+    /// Every binding, whatever it costs. For a batch whose decisions are wrong
+    /// without them: one missed binding and it mints a second person for an
+    /// account that already has one.
+    Unbounded,
+}
+
+impl Ceiling {
+    const fn rows(self) -> u64 {
+        match self {
+            Self::Bounded(rows) => rows,
+            Self::Unbounded => u64::MAX,
+        }
+    }
+}
+
+/// How many accounts one statement may name.
 ///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored id column is not 16 bytes.
-pub async fn current_bindings(
-    db: &DatabaseConnection,
-    tenant_id: Uuid,
-    accounts: &[SourceAccountKey],
-) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
-    const SQL_PREFIX: &str = r"
+/// INVARIANT: keep this small. A statement's cost grows faster than the number
+/// of accounts it names, so raising it to save round trips trades a cheap cost
+/// for an expensive one.
+pub(crate) const LOOKUP_CHUNK: usize = 100;
+
+/// Which accounts a binding read covers — the one difference between the two
+/// readers below, kept a value so a caller cannot hand the query a fragment.
+#[derive(Debug, Clone, Copy)]
+enum Scope {
+    /// These many accounts, named as a bound tuple list.
+    Named(usize),
+    /// Every account of the tenant, up to a bound [`Ceiling`].
+    WholeTenant,
+}
+
+/// The latest `value_type='id'` observation per account, with its author so the
+/// caller can tell an operator decision from an automatic one.
+fn current_bindings_sql(scope: Scope) -> String {
+    // Ordering only where the ceiling can cut: a bounded read has to return the
+    // same prefix twice, or the queue's counts would move with no data change.
+    let (accounts, page) = match scope {
+        Scope::Named(count) => (
+            format!(
+                "\n              AND (insight_source_type, insight_source_id, value_id) IN ({})",
+                vec!["(?, ?, ?)"; count].join(", ")
+            ),
+            String::new(),
+        ),
+        Scope::WholeTenant => (
+            String::new(),
+            "\n        ORDER BY insight_source_type, insight_source_id, source_account_id\
+             \n        LIMIT ?"
+                .to_owned(),
+        ),
+    };
+
+    format!(
+        r"
         WITH ranked AS (
             SELECT
                 insight_source_type,
@@ -47,25 +102,35 @@ pub async fn current_bindings(
             FROM persons
             WHERE value_type = 'id'
               AND value_id IS NOT NULL
-              AND insight_tenant_id = ?
-              AND (insight_source_type, insight_source_id, value_id) IN (";
-    const SQL_SUFFIX: &str = r")
+              AND insight_tenant_id = ?{accounts}
         )
         SELECT insight_source_type, insight_source_id, source_account_id, person_id,
                author_person_id, reason
         FROM ranked
-        WHERE rn = 1
-    ";
+        WHERE rn = 1{page}
+    "
+    )
+}
 
-    // The review surface asks about every observed account, so the list is as
-    // long as the tenant is wide: chunk it rather than build one statement
-    // whose placeholder count grows without bound.
-    const LOOKUP_CHUNK: usize = 500;
-
+/// Current binding of each requested account. Accounts never observed are simply
+/// absent.
+///
+/// For a handful of accounts — a verb's targets, a page of the listing. A caller
+/// after most of the tenant reads it whole instead
+/// ([`current_bindings_in_tenant`]), because a statement's cost grows faster
+/// than the number of accounts it names.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored id column is not 16 bytes.
+pub async fn current_bindings(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    accounts: &[SourceAccountKey],
+) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
     let mut map = HashMap::with_capacity(accounts.len());
     for chunk in accounts.chunks(LOOKUP_CHUNK) {
-        let tuples = vec!["(?, ?, ?)"; chunk.len()].join(", ");
-        let sql = format!("{SQL_PREFIX}{tuples}{SQL_SUFFIX}");
+        let sql = current_bindings_sql(Scope::Named(chunk.len()));
 
         let mut params: Vec<Value> = Vec::with_capacity(chunk.len() * 3 + 1);
         params.push(tenant_id.as_bytes().to_vec().into());
@@ -86,6 +151,64 @@ pub async fn current_bindings(
         collect_bindings(rows, &mut map)?;
     }
     Ok(map)
+}
+
+/// Every account's current binding in the tenant, and whether the ceiling cut
+/// the read.
+#[derive(Debug, Default)]
+pub struct BindingSnapshot {
+    pub by_account: HashMap<SourceAccountKey, KnownBinding>,
+    /// [`MAX_TENANT_BINDINGS`] was reached: these are a prefix of the tenant's
+    /// bindings, so anything derived from them describes a prefix too.
+    pub truncated: bool,
+}
+
+/// Current binding of every account in the tenant — for the callers that ask
+/// about all of them: the review surface, and the persons-seed.
+///
+/// INVARIANT: this answers exactly what naming every account would, plus
+/// accounts nobody asked about. The filter it drops sits on the ranking's own
+/// partition key, so removing it cannot change which observation wins for an
+/// account — only which accounts appear. A caller that must not see beyond its
+/// own keys looks them up rather than iterating the map.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored id column is not 16 bytes.
+pub async fn current_bindings_in_tenant(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    ceiling: Ceiling,
+) -> anyhow::Result<BindingSnapshot> {
+    // Ask for one row past the ceiling: its presence is what says another row
+    // exists. Counting the rows against the ceiling instead calls a read that
+    // ended exactly on it truncated, and a caller that refuses to answer on
+    // truncation would then refuse a complete answer.
+    let probe = ceiling.rows().saturating_add(1);
+    let mut rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            current_bindings_sql(Scope::WholeTenant),
+            [tenant_id.as_bytes().to_vec().into(), probe.into()],
+        ))
+        .await?;
+
+    let truncated = rows.len() as u64 >= probe;
+    if truncated {
+        rows.truncate(usize::try_from(ceiling.rows()).unwrap_or(usize::MAX));
+        tracing::warn!(
+            cap = ceiling.rows(),
+            "tenant bindings: read cap reached; anything derived from these \
+             describes only this many accounts, not the whole tenant"
+        );
+    }
+
+    let mut by_account = HashMap::with_capacity(rows.len());
+    collect_bindings(rows, &mut by_account)?;
+    Ok(BindingSnapshot {
+        by_account,
+        truncated,
+    })
 }
 
 fn collect_bindings(
@@ -464,12 +587,12 @@ pub async fn present_rows(
            AND (insight_source_type, insight_source_id, value_id, person_id, \
                 author_person_id, created_at) IN (";
     const ROW_TUPLE: &str = "(?, ?, ?, ?, ?, ?)";
-    const LOOKUP_CHUNK: usize = 200;
+    const PRESENCE_CHUNK: usize = 200;
 
     let mut found: HashSet<(String, Uuid, String, Uuid, Uuid, sea_orm::prelude::DateTime)> =
         HashSet::new();
 
-    for chunk in rows.chunks(LOOKUP_CHUNK) {
+    for chunk in rows.chunks(PRESENCE_CHUNK) {
         let tuples = vec![ROW_TUPLE; chunk.len()].join(", ");
         let sql = format!("{SQL_PREFIX}{tuples})");
 

@@ -1,5 +1,8 @@
 name: cursor
-version: "2.0.0"
+# 2.1.0: emits the new class-contract column seat_status, constant NULL — this
+#   source reports a per-day active flag, not a seat lifecycle state. MINOR per
+#   ADR-0015: a full refresh would reproduce the same NULLs.
+version: "2.1.0"
 schedule: 0 2 * * *
 dbt_select: tag:cursor+
 workflow: sync

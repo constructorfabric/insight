@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use super::page::PageToken;
-use super::read::commits::CommitKey;
+use super::read::commits::{CommitKey, parse_instant};
 
 /// One record of the per-generation page index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,12 +231,6 @@ fn parse_row(line: &str) -> std::io::Result<IndexRow> {
         },
         in_default_branch: membership == "1",
     })
-}
-
-fn parse_instant(raw: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(raw.trim())
-        .ok()
-        .map(|at| at.timestamp())
 }
 
 fn remove_superseded(git_dir: &Path, keep: u64) {

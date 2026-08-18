@@ -779,7 +779,7 @@ function ColumnHeader({
 
 function Legend() {
   return (
-    <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-4 px-3 text-xs text-muted-foreground">
       <LegendSwatch className={PEER_FILL.top}>Top 25%</LegendSwatch>
       <LegendSwatch className={PEER_FILL.in_pack}>Near the median</LegendSwatch>
       <LegendSwatch className={PEER_FILL.bottom}>Bottom 25%</LegendSwatch>

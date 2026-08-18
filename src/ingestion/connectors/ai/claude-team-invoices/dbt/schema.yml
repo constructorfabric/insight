@@ -1,0 +1,133 @@
+version: 2
+
+sources:
+  - name: bronze_claude_team_invoices
+    # Source freshness (TAF #1322). Invoices are monthly, so sync-liveness on
+    # _airbyte_extracted_at is the right anchor: the connector re-reads the full
+    # list daily and a stall means the proxy or the chain stopped working, not
+    # that the vendor stopped invoicing.
+    freshness:
+      warn_after: {count: 36, period: hour}
+      error_after: {count: 72, period: hour}
+    loaded_at_field: _airbyte_extracted_at
+    schema: bronze_claude_team_invoices
+    tables:
+      - name: claude_team_invoice_lines
+
+models:
+  - name: claude_team_invoices__bronze_promoted
+    description: >
+      Bootstrap view promoting this connector's bronze table to
+      ReplacingMergeTree (ADR-0002). Idempotent — an already-RMT table is
+      detected and skipped.
+
+  - name: claude_team__ai_invoice
+    description: >
+      Bronze → Silver: Claude Team vendor invoices → class_ai_invoice.
+      Sourced from claude_team_invoice_lines (the claude.ai invoice wrapper plus
+      the Stripe hosted chain behind each hosted_invoice_url). One row per
+      (tenant, source, invoice) carrying that invoice's money, plus one row per
+      (tenant, source, invoice, line); an invoice whose chain failed contributes
+      its own row and no line. First contributor to class_ai_invoice — DEFINES
+      its positional contract.
+      UNITS: Stripe amounts are already cents; mapped through with NO ×100.
+    columns:
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: source_id
+        tests:
+          - not_null
+      - name: unique_key
+        description: >
+          Dedup key: tenant-source-invoice-line for a line, and
+          tenant-source-invoice-created-payment_intent-total-due for an invoice's
+          own row. The invoice key carries no chain outcome, so the row an
+          unenriched run wrote is the row an enriched run replaces.
+        tests:
+          - not_null
+          - unique
+      - name: invoice_id
+        description: "Stripe invoice id (in_…). NULL until the chain completes — the wrapper carries no id."
+      - name: line_id
+        description: "Stripe invoice line id (il_…). NULL on an invoice's own row."
+      - name: tool
+        description: "Always 'claude'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude']
+      - name: invoice_status
+        description: "Vendor invoice status — 'paid', 'void', 'open', …"
+      - name: chain_status
+        description: >
+          How far the Stripe chain got for this invoice: 'ok' (lines retrieved),
+          'failed' (a hop raised), 'unparsable_url' (the vendor offered a hosted
+          URL that no longer matches the expected form), 'no_hosted_url' (the
+          vendor offered none, which a draft invoice legitimately does). Rows
+          other than 'ok' are the invoice's own row with no line, so an
+          unenriched invoice is visible rather than silently absent.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ok', 'failed', 'unparsable_url', 'no_hosted_url']
+      - name: category
+        description: >
+          From the structural Stripe parent, never the description: a
+          subscription-item parent is 'subscriptions', an invoice-item parent is
+          'overusage'. NULL on rows with no line.
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['subscriptions', 'overusage']
+      - name: tier_label
+        description: "Seat tier the line prices (hosted_invoice_tier_label). One invoice can carry several."
+      - name: is_proration
+        description: >
+          1 when the line is a mid-period adjustment. Prorations are real money
+          and stay on the ledger, but carry no unit price — seat pricing skips them.
+      - name: currency
+        description: "ISO currency of the *_cents amounts"
+        tests:
+          - not_null
+      - name: period_month
+        description: "First day of the month the line CHARGES for, not the month the invoice was raised"
+        tests:
+          - not_null
+      - name: amount_cents
+        description: "Line amount in cents, already minor units. Negative on a proration credit."
+      - name: seat_unit_cents
+        description: >
+          Per-seat price stated on the line (hosted_invoice_unit_amount). NULL
+          wherever the line prices no seat — extra usage, prorations, or a
+          subscription line the vendor left unpriced. Never derived by dividing
+          amount by quantity, which on a proration yields a partial-period figure.
+      - name: seat_quantity
+        description: "Seats the line covers. Not the wrapper's num_seats, which names one line's quantity across a multi-tier invoice."
+      - name: invoice_net_cents
+        description: >
+          Invoice total excluding tax, carried by the invoice's own row alone —
+          NULL on every line row. Summing it over a tenant-month is therefore the
+          invoice-level spend with no dedup needed.
+      - name: invoice_metrics_json
+        description: "Raw vendor extras: product_name, description, num_seats, invoice_total, period_end_ts. The invoice-level ones are empty on a line row."
+      - name: source
+        description: "Always 'claude_team'"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_team']
+      - name: data_source
+        tests:
+          - not_null
+      - name: collected_at
+        description: "_airbyte_extracted_at"
+        tests:
+          - not_null
+      - name: _version
+        description: "ReplacingMergeTree version — toUnixTimestamp64Milli(_airbyte_extracted_at) per ADR-0001"
+        tests:
+          - not_null

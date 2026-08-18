@@ -36,6 +36,28 @@ feeds the shared `class_git_*` silver models.
 connector already syncs the org roster for identity resolution. Folding it in
 here is a separate migration.
 
+## What `github_start_date` bounds
+
+One bound, one direction: every stream fetches everything from the start date to
+now, and nothing before it. It is a floor on age, not a window size — a stream
+that stops short of it discards data inside the range that was asked for, and
+one that reaches behind it spends requests on data nobody wants.
+
+Two consequences worth stating, because both are easy to get wrong:
+
+- **A repository whose last push predates the start date is not walked at all.**
+  It has no commit, file change or author inside the window, so the clone the
+  proxy streams would spend on it buys nothing.
+- **A pull request's reviews, commits and lifecycle events reach as far back as
+  the pull requests themselves do**, as do a deployment's statuses. Each of
+  those streams carries its own cursor and sets `incremental_dependency`, which
+  is what makes that affordable: the first sync walks the whole window once,
+  and later syncs resume from stored state instead of re-reading it.
+
+Sub-resources of an item inside the window are fetched whole — every review of
+an in-window pull request, including one submitted before the start date. The
+item is what the bound applies to.
+
 ## Commit attribution
 
 A commit carries a name and an e-mail; it never carries an account, because git

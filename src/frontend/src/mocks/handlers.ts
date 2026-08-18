@@ -12,6 +12,36 @@ import { buildIdentityTree, PEOPLE, PEOPLE_BY_EMAIL } from "./registry";
 
 const defaultPerson = PEOPLE[0];
 
+/**
+ * A mock page holds far fewer rows than a real one. The synthetic roster is
+ * smaller than the console's page size, so honouring `?limit=` would put every
+ * row on page one and leave "show more" unreachable in mock mode — the affordance
+ * would have no dev or Storybook path at all.
+ */
+const MOCK_PAGE_SIZE = 8;
+
+/**
+ * One page of a listing, cursor and all — the mock pages the way the service
+ * does so the console's "show more" is exercised in mock mode too. The cursor
+ * carries the query it was issued for, and a mismatched one restarts, which is
+ * the behaviour the real cursor enforces by refusing.
+ */
+function pageOf<T>(items: T[], params: URLSearchParams, query: string) {
+  const limit = Math.min(Number(params.get("limit") ?? 20), MOCK_PAGE_SIZE);
+  const cursor = params.get("cursor");
+  const decoded = cursor ? JSON.parse(atob(cursor)) : null;
+  const offset = decoded?.q === query ? Number(decoded.at) : 0;
+
+  const slice = items.slice(offset, offset + limit);
+  const next = offset + slice.length;
+  const more = next < items.length;
+
+  return {
+    items: slice,
+    next_cursor: more ? btoa(JSON.stringify({ q: query, at: next })) : null,
+  };
+}
+
 // Stable synthetic session for mock/Storybook runs. The old in-code
 // MOCKS_ENABLED viewer path is gone; an authenticated viewer now comes from
 // the same `/auth/me` probe the real app uses, so the boot `loadSession()`
@@ -474,16 +504,12 @@ export const handlers = [
       });
     },
   ),
-  // Person search for the picker: multi-term AND over the seeded roster.
+  // The person listing: a blank query is the whole roster, terms narrow it,
+  // and both are paged the way the service pages them.
   http.get("/api/identity/v1/persons", ({ request }) => {
-    const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-    if (!q) {
-      return HttpResponse.json(
-        { type: "urn:insight:error:invalid_argument" },
-        { status: 400 },
-      );
-    }
-    const terms = q.toLowerCase().split(/\s+/);
+    const params = new URL(request.url).searchParams;
+    const q = params.get("q")?.trim() ?? "";
+    const terms = q ? q.toLowerCase().split(/\s+/) : [];
     // A term that parses as an id names a person, mirroring the service: it is
     // the only way to reach someone the journal holds no values for.
     const items = PEOPLE.filter((p) =>
@@ -493,7 +519,6 @@ export const handlers = [
           : [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(term)),
       ),
     )
-      .slice(0, 20)
       .map((p) => ({
         person_id: p.person_id,
         email: p.email,
@@ -501,21 +526,19 @@ export const handlers = [
         display_name: p.name,
         job_title: p.role,
         status: "active",
-      }));
-    return HttpResponse.json({ items, truncated: false, next_cursor: null });
-  }),
-  // Account search: the same roster, matched by what an account carries.
-  http.get("/api/identity/v1/resolution/accounts", ({ request }) => {
-    const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-    if (q.length < 3) {
-      return HttpResponse.json(
-        { type: "urn:insight:error:invalid_argument" },
-        { status: 400 },
+      }))
+      .sort((left, right) =>
+        (left.display_name ?? "").localeCompare(right.display_name ?? ""),
       );
-    }
+    return HttpResponse.json(pageOf(items, params, q));
+  }),
+  // The account listing: the same roster seen as accounts; blank lists them all.
+  http.get("/api/identity/v1/resolution/accounts", ({ request }) => {
+    const params = new URL(request.url).searchParams;
+    const q = params.get("q")?.trim() ?? "";
     const needle = q.toLowerCase();
-    const items = PEOPLE.filter((p) =>
-      [p.name, p.email].some((v) => v.toLowerCase().includes(needle)),
+    const items = PEOPLE.filter(
+      (p) => !needle || [p.name, p.email].some((v) => v.toLowerCase().includes(needle)),
     ).map((p, index) => ({
       source: index % 2 === 0 ? "github" : "gitlab",
       source_id: "01900000-0000-7000-8000-00000000aa01",
@@ -531,7 +554,12 @@ export const handlers = [
       },
       bound_by_operator: index % 3 === 0,
     }));
-    return HttpResponse.json({ items, truncated: false });
+    // The service orders by the label each row shows; the mock mirrors it so a
+    // mock run does not demonstrate an order the real listing never produces.
+    items.sort((left, right) =>
+      (left.email ?? left.account_id).localeCompare(right.email ?? right.account_id),
+    );
+    return HttpResponse.json(pageOf(items, params, q));
   }),
   // A merge preview's substance: two synthetic accounts for anyone.
   http.get(

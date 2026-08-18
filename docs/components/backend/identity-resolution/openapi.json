@@ -208,14 +208,16 @@
             },
             "type": "array"
           },
-          "truncated": {
-            "description": "More accounts matched than `limit` allowed — narrow the terms.",
-            "type": "boolean"
+          "next_cursor": {
+            "description": "Pass back as `?cursor=` for the next page; absent on the last one. Only\nvalid for the query that issued it — narrowing `q` starts over.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "items",
-          "truncated"
+          "items"
         ],
         "type": "object"
       },
@@ -235,7 +237,7 @@
             "$ref": "#/components/schemas/ResolutionRatesResponse"
           },
           "truncated": {
-            "description": "The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide.",
+            "description": "The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide. (The binding read cannot be a\nprefix — a partial one would misclassify, so it fails the request.)",
             "type": "boolean"
           }
         },
@@ -601,20 +603,15 @@
             "type": "array"
           },
           "next_cursor": {
-            "description": "Wire parity with the other listings: declared, always `null`.",
+            "description": "Pass back as `?cursor=` for the next page; absent on the last one. Only\nvalid for the query that issued it — narrowing the terms starts over.",
             "type": [
               "string",
               "null"
             ]
-          },
-          "truncated": {
-            "description": "More persons matched than `limit` allowed — the page is a cut, not the\nanswer, and the UI should ask for narrower terms. Without this flag a\ntruncated page reads as \"the person does not exist\".",
-            "type": "boolean"
           }
         },
         "required": [
-          "items",
-          "truncated"
+          "items"
         ],
         "type": "object"
       },
@@ -1999,10 +1996,10 @@
         "operationId": "identity_resolution.persons.search",
         "parameters": [
           {
-            "description": "Search terms, at most 8 (200 characters total); every whitespace-separated term must match one of the person's current identity values — email, username, display/first/last name or employee id (case-insensitive substring). Titles and statuses are displayed on the card but not searched.",
+            "description": "Search terms, at most 8 (200 characters total); every whitespace-separated term must match one of the person's current identity values — email, username, display/first/last name or employee id (case-insensitive substring). Titles and statuses are displayed on the card but not searched. Absent or blank lists every person of the tenant.",
             "in": "query",
             "name": "q",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -2015,6 +2012,15 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "description": "Opaque `next_cursor` from the previous page. Valid only for the query that issued it: changing `q` restarts the listing.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2026,7 +2032,7 @@
                 }
               }
             },
-            "description": "Matching persons, named-first"
+            "description": "One page of persons, ordered by the name each row shows"
           },
           "400": {
             "content": {
@@ -2104,7 +2110,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Search persons by their current observed values (admin)"
+        "summary": "List the tenant's persons, narrowed by search terms (admin)"
       }
     },
     "/v1/persons-seed": {
@@ -2650,21 +2656,30 @@
         "operationId": "identity_resolution.resolution.search_accounts",
         "parameters": [
           {
-            "description": "Needle matched against the account's current address, handle, id              and observed name (at least 3 characters).",
+            "description": "Needle matched against the account's current address, handle, id and observed name. Absent or blank lists every open account.",
             "in": "query",
             "name": "q",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string"
             }
           },
           {
-            "description": "Cap on returned matches (1..=100, default 20); `truncated` says              whether it cut the list.",
+            "description": "Cap on returned accounts (1..=100, default 20)",
             "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque `next_cursor` from the previous page. Valid only for the query that issued it: changing `q` restarts the listing.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -2677,7 +2692,7 @@
                 }
               }
             },
-            "description": "Matching accounts with their holders"
+            "description": "One page of accounts with their holders"
           },
           "400": {
             "content": {
@@ -2755,7 +2770,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Find an observed account by a value it carries, and whose it is"
+        "summary": "List the observed accounts and whose each one is"
       }
     },
     "/v1/resolution/accounts/{source}/{source_id}/{account_id}": {
