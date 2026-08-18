@@ -34,6 +34,7 @@ env:
   GITOPS_ENV: functional-ci
   INSIGHT_NAMESPACE: insight
   INFRA_NAMESPACE: insight-infra
+  EDGE_PORT: "18080"
   YQ_VERSION: v4.44.3
   KUBESEAL_VERSION: v0.27.2
   CLICKHOUSE_PASSWORD: insightpass123
@@ -140,9 +141,12 @@ jobs:
       - name: Create K3s cluster
         run: |
           set -euo pipefail
+          # 8080 -> the Gateway's LoadBalancer Service, so the edge check below
+          # reaches Envoy the way a caller outside the cluster would.
           k3d cluster create "${CLUSTER_NAME}" \
             --image "${K3S_IMAGE}" \
             --k3s-arg "--disable=traefik@server:0" \
+            --port "${EDGE_PORT}:80@loadbalancer" \
             --agents 1 \
             --wait \
             --timeout 120s
@@ -292,6 +296,45 @@ jobs:
               --timeout=5m
           done < <(kubectl -n "${INSIGHT_NAMESPACE}" get jobs -o name)
 
+      # The chart publishes itself as an HTTPRoute, so a green rollout still
+      # says nothing about whether anything can reach it. This is the only step
+      # that leaves the cluster's own network.
+      - name: Verify the Envoy edge
+        run: |
+          set -euo pipefail
+
+          kubectl -n "${INFRA_NAMESPACE}" wait gateway/insight \
+            --for=condition=Programmed --timeout=180s
+
+          # HTTPRoute conditions hang off .status.parents[], where
+          # `kubectl wait --for=condition=` cannot see them.
+          route=$(kubectl -n "${INSIGHT_NAMESPACE}" get httproute -o name | head -1)
+          for _ in $(seq 1 30); do
+            accepted=$(kubectl -n "${INSIGHT_NAMESPACE}" get "${route}" \
+              -o jsonpath='{.status.parents[0].conditions[?(@.type=="Accepted")].status}')
+            [[ "${accepted}" == "True" ]] && break
+            sleep 4
+          done
+          kubectl -n "${INSIGHT_NAMESPACE}" get "${route}" -o yaml
+          [[ "${accepted}" == "True" ]] || { echo "${route} was never accepted by the Gateway" >&2; exit 1; }
+
+          # A 404 is Envoy answering for itself — the request never reached the
+          # gateway pod — so it fails here rather than counting as a response.
+          for _ in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+              "http://localhost:${EDGE_PORT}/" || true)
+            case "${code}" in
+              200|301|302|303|307|308|401|403)
+                echo "edge answered ${code}"
+                exit 0
+                ;;
+            esac
+            sleep 5
+          done
+
+          echo "edge never answered (last status: ${code:-none})" >&2
+          exit 1
+
       - name: Dump diagnostics on failure
         if: failure()
         run: |
@@ -325,6 +368,12 @@ jobs:
               kubectl -n "${namespace}" logs "${pod}" --all-containers --prefix --tail=200 || true
             done < <(kubectl -n "${namespace}" get pods -o name 2>/dev/null || true)
           done
+          echo "::endgroup::"
+
+          echo "::group::edge"
+          kubectl -n "${INFRA_NAMESPACE}" get gateway -o yaml || true
+          kubectl -n "${INSIGHT_NAMESPACE}" get httproute -o yaml || true
+          kubectl -n envoy-gateway-system get pods,svc -o wide || true
           echo "::endgroup::"
 
           echo "::group::cluster events"

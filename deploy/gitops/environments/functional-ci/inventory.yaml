@@ -23,14 +23,14 @@ deploy:
 
 bootstrap:
   namespaces: true
-  envoyGateway: false
+  # The edge every stand runs: the chart expresses it as an HTTPRoute, so a
+  # cluster without the controller and its Gateway API CRDs cannot serve the
+  # release it just installed. Bootstrap installs this before cert-manager,
+  # whose gateway-shim needs those CRDs to start.
+  envoyGateway: true
   # The authenticator's tlsDiscovery front (values.yaml) asks cert-manager for
   # its authn-tls leaf, so the controller and its CRDs have to be here.
   certManager: true
-  # No Gateway API CRDs on this cluster (envoyGateway above is off, and it is
-  # what ships them), and no Gateway to program — so the shim would only stop
-  # cert-manager from starting.
-  certManagerGatewayShim: false
   sealedSecrets: true
 
 system:
