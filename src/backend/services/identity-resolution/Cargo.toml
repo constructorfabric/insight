@@ -52,6 +52,8 @@ sea-orm-migration = { workspace = true }
 uuid = { workspace = true }
 # Timestamps: `now` for the in-memory 202 body + the zombie-sweep cutoff.
 chrono = { workspace = true }
+# Opaque page cursors for the list endpoints (URL-safe, no padding).
+base64 = { workspace = true }
 
 # ClickHouse: read the raw `identity_inputs` stream (persons-seed input source).
 # `insight-clickhouse` wraps the client; the direct `clickhouse` dep is for the

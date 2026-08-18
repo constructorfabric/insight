@@ -6,9 +6,12 @@
  * revoked mid-session — surfaced as an error state, not silently retried.
  */
 import {
+  useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
+  type InfiniteData,
+  type UseInfiniteQueryResult,
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
@@ -115,29 +118,72 @@ export const useMergePersons = () => useCorrection(mergePersons);
 export const useDetachAccount = () => useCorrection(detachAccount);
 export const useExcludeAccount = () => useCorrection(excludeAccount);
 
-/** Live person search for the picker; the component debounces the input. */
-export function usePersonSearch(q: string): UseQueryResult<PersonSearchResponse> {
+/** Rows per page. Enough to fill the panel, small enough to stay one screen. */
+const PAGE_SIZE = 50;
+
+/**
+ * The person listing, a page at a time. A blank query lists the whole tenant —
+ * the terms narrow the same list, which is why they share one hook rather than
+ * a separate "browse" one.
+ *
+ * The query is part of the key, so narrowing the terms starts a new walk: the
+ * service refuses a cursor issued for a different query, since resuming one
+ * mid-alphabet would skip people.
+ */
+/** What a blank query means to a caller of {@link usePersonList}. */
+export type PersonListIntent = "browse" | "match";
+
+/**
+ * Whether these terms ask for anything under this intent.
+ *
+ * INVARIANT: one rule, used by both the query's fetch gate and the caller's
+ * display. A picker that renders rows the query never asked for is showing
+ * another caller's cache.
+ */
+export function listsAnyone(q: string, intent: PersonListIntent): boolean {
+  return intent === "browse" || q.trim().length > 0;
+}
+
+export function usePersonList(
+  q: string,
+  /** `browse` lists the tenant on a blank query; `match` answers nothing until
+   *  terms are typed — the assign picker inside a dialog wants matches, and a
+   *  roster would bury the one name the operator came to type.
+   *
+   *  INVARIANT: part of the query key, not only the fetch gate. `enabled: false`
+   *  stops a request and not a cache read, so one shared key would render the
+   *  roster that browse mode cached inside the dialog. */
+  intent: PersonListIntent = "browse",
+): UseInfiniteQueryResult<InfiniteData<PersonSearchResponse>> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
   const trimmed = q.trim();
-  return useQuery({
-    queryKey: ["identity", "persons", "search", sessionScope, trimmed],
-    queryFn: () => searchPersons(trimmed),
+  return useInfiniteQuery({
+    queryKey: ["identity", "persons", "search", sessionScope, intent, trimmed],
+    queryFn: ({ pageParam }) =>
+      searchPersons(trimmed, { cursor: pageParam, limit: PAGE_SIZE }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
     staleTime: ATTENTION_STALE_TIME,
-    enabled: sessionScope != null && trimmed.length >= 2,
+    enabled: sessionScope != null && listsAnyone(trimmed, intent),
   });
 }
 
-/** Live account search for the account mode; the component debounces. */
-export function useAccountSearch(q: string): UseQueryResult<AccountSearchResponse> {
+/** The observed accounts, a page at a time; a blank query lists them all. */
+export function useAccountList(
+  q: string,
+): UseInfiniteQueryResult<InfiniteData<AccountSearchResponse>> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
   const trimmed = q.trim();
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: [...RESOLUTION_KEY, "account-search", sessionScope, trimmed],
-    queryFn: () => searchAccounts(trimmed),
+    queryFn: ({ pageParam }) =>
+      searchAccounts(trimmed, { cursor: pageParam, limit: PAGE_SIZE }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
     staleTime: ATTENTION_STALE_TIME,
-    enabled: sessionScope != null && trimmed.length >= 3,
+    enabled: sessionScope != null,
   });
 }
 

@@ -5,6 +5,10 @@
  * answers the question an operator gets handed instead — a git login from a
  * review, an address from a ticket — which neither of the others can, because
  * both are entered through a person.
+ *
+ * With nothing typed it lists what the connectors reported, a page at a time:
+ * the accounts nobody has asked about are exactly the ones an operator never
+ * finds by searching for them.
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -30,12 +34,10 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { accountKey } from "@/lib/identities/account-key";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalSearch } from "@/lib/portal/portal-search";
-import { useAccountSearch } from "@/queries/identity-resolution";
+import { useAccountList } from "@/queries/identity-resolution";
 import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 250;
-/** The service's own floor: a shorter needle scans the fold to answer with everything. */
-const MIN_QUERY_CHARS = 3;
 
 export function AccountSearchView() {
   const { t } = useTranslation();
@@ -43,14 +45,15 @@ export function AccountSearchView() {
   const { setAcct } = usePortalNavActions();
   const [query, setQuery] = useState("");
   const debounced = useDebouncedValue(query, DEBOUNCE_MS);
-  const search = useAccountSearch(debounced);
+  const search = useAccountList(debounced);
 
-  const items = search.data?.items ?? [];
+  const items = (search.data?.pages ?? []).flatMap((page) => page.items);
   const ordered = items.map((item) => accountKey(item));
-  const asked = debounced.trim().length >= MIN_QUERY_CHARS;
-  // The window takes queue-shaped rows; a search hit adapts. This is also the
-  // voucher that the account exists — without it an unbound, never-decided
-  // account the search just FOUND would open as a stale link with no verbs.
+  const loading = search.isFetching && !search.isFetchingNextPage;
+  const asked = debounced.trim().length > 0;
+  // The window takes queue-shaped rows; a listed account adapts. This is also
+  // the voucher that the account exists — without it an unbound, never-decided
+  // account the list just showed would open as a stale link with no verbs.
   const asCases: AttentionItem[] = items.map((m) => ({
     kind: "match",
     source: m.source,
@@ -74,7 +77,7 @@ export function AccountSearchView() {
           aria-label={t("identities.accounts.placeholder")}
           className="ps-9"
         />
-        {search.isFetching ? (
+        {loading ? (
           <Spinner className="absolute end-3 top-1/2 size-4 -translate-y-1/2" />
         ) : null}
       </div>
@@ -87,28 +90,31 @@ export function AccountSearchView() {
         />
       ) : null}
 
-      {/* Before anything is asked the mode has nothing to show, and a bare
-          gap reads as a surface that failed to load. */}
-      {!asked && !search.isError ? (
+      {/* Two different emptinesses: terms that matched nothing, and nothing to
+          list. The second one does not claim the tenant is empty — the service
+          answers an empty list for a fold it cannot read yet, and an operator
+          cannot tell that from a tenant nobody has connected. */}
+      {!loading && items.length === 0 && !search.isError ? (
         <Empty className="rounded-lg border">
           <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <ScanSearch />
-            </EmptyMedia>
-            <EmptyTitle>{t("identities.accounts.no_query")}</EmptyTitle>
+            {asked ? null : (
+              <EmptyMedia variant="icon">
+                <ScanSearch />
+              </EmptyMedia>
+            )}
+            <EmptyTitle>
+              {t(
+                asked
+                  ? "identities.accounts.no_matches"
+                  : "identities.accounts.none_observed",
+              )}
+            </EmptyTitle>
             <EmptyDescription>
-              {t("identities.accounts.no_query_description")}
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : null}
-
-      {asked && !search.isFetching && items.length === 0 && !search.isError ? (
-        <Empty className="rounded-lg border">
-          <EmptyHeader>
-            <EmptyTitle>{t("identities.accounts.no_matches")}</EmptyTitle>
-            <EmptyDescription>
-              {t("identities.accounts.no_matches_description")}
+              {t(
+                asked
+                  ? "identities.accounts.no_matches_description"
+                  : "identities.accounts.none_observed_description",
+              )}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -125,10 +131,22 @@ export function AccountSearchView() {
                 onOpen={() => setAcct(accountKey(item))}
               />
             ))}
-            {search.data?.truncated ? (
-              <p className="p-2 text-xs text-muted-foreground">
-                {t("identities.accounts.truncated")}
-              </p>
+            {search.hasNextPage ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="m-2 self-start"
+                // Not `disabled`: disabling the element that has focus blurs it,
+                // and the operator's next Tab restarts from the page chrome —
+                // a whole page of rows away from the button they just pressed.
+                aria-busy={search.isFetchingNextPage}
+                onClick={() => void search.fetchNextPage()}
+              >
+                {search.isFetchingNextPage
+                  ? t("identities.accounts.loading_more")
+                  : t("identities.accounts.load_more")}
+              </Button>
             ) : null}
           </CardContent>
         </Card>
@@ -161,9 +179,16 @@ function AccountRow({
     item.display_name?.trim() ||
     item.account_id;
   return (
+    // Fixed columns, not content-sized ones: a list is read down a column, and
+    // holders whose names differ in length would otherwise step the cards and
+    // the verbs sideways on every row. Only where there is room for all four —
+    // the trailing tracks are ~29rem, and taking them from a narrower window
+    // would leave the address, the one value this mode answers with, an
+    // ellipsis. Below that the row stacks instead.
     <div
       className={cn(
-        "flex flex-wrap items-center gap-2 rounded-md border p-3",
+        "grid grid-cols-1 items-center gap-2 rounded-md border p-3",
+        "lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)_minmax(0,11rem)_auto]",
         selected ? "border-ring bg-muted" : "border-transparent",
       )}
     >
@@ -177,19 +202,19 @@ function AccountRow({
           too, and exclusion is a third one: an operator's recorded decision,
           which "bound to nobody" would invite undoing. */}
       {item.person ? (
-        <PersonCell person={item.person} className="ms-auto max-w-xs" />
+        <PersonCell person={item.person} />
       ) : item.excluded ? (
-        <Badge variant="secondary" className="ms-auto font-normal">
+        <Badge variant="secondary" className="justify-self-start font-normal">
           {t("identities.accounts.excluded")}
         </Badge>
       ) : (
-        <span className="ms-auto text-xs text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {t("identities.accounts.unbound")}
         </span>
       )}
       <Badge
         variant={item.bound_by_operator ? "secondary" : "outline"}
-        className="shrink-0 font-normal"
+        className="justify-self-start font-normal"
       >
         {item.bound_by_operator
           ? t("identities.people.by_operator")

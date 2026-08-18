@@ -508,7 +508,7 @@ class AccountSearchResponse(BaseModel):
         extra='forbid',
     )
     items: list[AccountMatchResponse]
-    truncated: bool = Field(..., description='More accounts matched than `limit` allowed — narrow the terms.')
+    next_cursor: str | None = Field(None, description='Pass back as `?cursor=` for the next page; absent on the last one. Only\nvalid for the query that issued it — narrowing `q` starts over.')
 
 
 class AttentionResponse(BaseModel):
@@ -518,7 +518,7 @@ class AttentionResponse(BaseModel):
     items: list[QueueItemResponse]
     items_truncated: bool = Field(..., description='`limit` cut the item list — more accounts await a decision than are\nlisted here. Distinct from `truncated`: the rates stay whole-tenant,\nonly this page is short.')
     rates: ResolutionRatesResponse
-    truncated: bool = Field(..., description='The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide.')
+    truncated: bool = Field(..., description='The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide. (The binding read cannot be a\nprefix — a partial one would misclassify, so it fails the request.)')
 
 
 class CorrectionResponse(BaseModel):
@@ -564,8 +564,7 @@ class PersonListResponse(BaseModel):
         extra='forbid',
     )
     items: list[PersonSummaryResponse]
-    next_cursor: str | None = Field(None, description='Wire parity with the other listings: declared, always `null`.')
-    truncated: bool = Field(..., description='More persons matched than `limit` allowed — the page is a cut, not the\nanswer, and the UI should ask for narrower terms. Without this flag a\ntruncated page reads as "the person does not exist".')
+    next_cursor: str | None = Field(None, description='Pass back as `?cursor=` for the next page; absent on the last one. Only\nvalid for the query that issued it — narrowing the terms starts over.')
 
 
 class PersonRoleListResponse(BaseModel):

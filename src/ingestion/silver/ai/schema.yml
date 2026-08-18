@@ -332,6 +332,41 @@ models:
         tests:
           - not_null
 
+  - name: class_ai_invoice
+    description: >
+      Unified vendor invoice lines — the invoiced layer, as opposed to
+      consumption priced at vendor rates (class_ai_dev_usage) or spend against a
+      seat's ceiling (class_ai_overage). Grain: one row per (tenant, source,
+      invoice, line). Amounts in minor units + ISO currency. seat_unit_cents is
+      the per-seat price the vendor stated, NULL wherever a line prices no seat.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: tool
+        tests:
+          - not_null
+      - name: chain_status
+        description: "'ok' | 'failed' | 'unparsable_url' — how far the enrichment got for the invoice this line belongs to"
+        tests:
+          - not_null
+      - name: currency
+        tests:
+          - not_null
+      - name: period_month
+        tests:
+          - not_null
+      - name: source
+        tests:
+          - not_null
+      - name: _version
+        tests:
+          - not_null
+
   - name: class_ai_overage
     description: >
       Unified per-person per-month AI spend-vs-limit (overage) across vendors.

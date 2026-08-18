@@ -146,8 +146,8 @@ export interface ResolutionRates {
 export interface AttentionResponse {
   items: AttentionItem[];
   rates: ResolutionRates;
-  /** The server's evidence read hit its safety cap: the queue and the rates
-   *  describe only a prefix of the tenant's accounts. Optional so a client
+  /** One of the reads behind the queue hit its safety cap: the queue and the
+   *  rates describe only part of the tenant's accounts. Optional so a client
    *  deployed ahead of the backend keeps working; absent reads as complete. */
   truncated?: boolean;
   /** `limit` cut the item list — the rates are still whole-tenant, only this
@@ -198,21 +198,22 @@ export interface AccountMatch {
 
 export interface AccountSearchResponse {
   items: AccountMatch[];
-  /** More matched than the limit allowed — narrow the terms. */
-  truncated: boolean;
+  /** Pass back as `cursor` for the next page; absent on the last one. */
+  next_cursor?: string | null;
 }
 
 /**
- * Find an observed account by a value it carries (`GET /resolution/accounts`).
- * The person search answers "which person is this"; this answers the question
- * an operator arrives with when they hold an account instead.
+ * The observed accounts and whose each one is (`GET /resolution/accounts`).
+ * The person listing answers "which person is this"; this answers the question
+ * an operator arrives with when they hold an account instead. Blank `q` lists
+ * every open account.
  */
 export async function searchAccounts(
   q: string,
-  limit = 20,
+  page: PageRequest = {},
 ): Promise<AccountSearchResponse> {
   const res = await fetchWithAuth(
-    `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}&limit=${limit}`,
+    `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}${pageParams(page)}`,
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -398,16 +399,36 @@ export async function excludeAccount(args: {
 
 export interface PersonSearchResponse {
   items: PersonSummary[];
-  /** More persons matched than the limit allowed — ask for narrower terms. */
-  truncated: boolean;
+  /** Pass back as `cursor` for the next page; absent on the last one. */
+  next_cursor?: string | null;
+}
+
+/** One page of a listing: where to resume and how many rows to ask for. */
+export interface PageRequest {
+  cursor?: string;
+  limit?: number;
+}
+
+function pageParams(page: PageRequest): string {
+  const params = new URLSearchParams();
+  if (page.cursor) params.set("cursor", page.cursor);
+  if (page.limit != null) params.set("limit", String(page.limit));
+  const query = params.toString();
+  return query ? `&${query}` : "";
 }
 
 /**
- * The operator person picker (`GET /persons?q=`) — tenant-wide, admin-gated,
- * matching every whitespace-separated term against current identity values.
+ * The operator's person listing (`GET /persons`) — tenant-wide, admin-gated.
+ * Blank `q` lists everyone; terms narrow the same list, and a page is walked
+ * with the cursor the previous one returned.
  */
-export async function searchPersons(q: string): Promise<PersonSearchResponse> {
-  const res = await fetchWithAuth(`${BASE}/persons?q=${encodeURIComponent(q)}`);
+export async function searchPersons(
+  q: string,
+  page: PageRequest = {},
+): Promise<PersonSearchResponse> {
+  const res = await fetchWithAuth(
+    `${BASE}/persons?q=${encodeURIComponent(q)}${pageParams(page)}`,
+  );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new IdentityApiError(res.status, body);

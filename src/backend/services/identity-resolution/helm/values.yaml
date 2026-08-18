@@ -60,12 +60,9 @@ gateway:
   # `/etc/insight/authn-ca/ca.crt`. The umbrella wires both automatically.
   caCertSecret: ""
 
-# Org-chart source + subordinates expansion (mirrors the .NET AppOptions;
-# rendered into the gear config in the ConfigMap).
-identityResolution:
-  orgChartSourceType: "bamboohr"
-  expandSubordinates: true
-  maxDepth: 16
+orgChartSourceType: "bamboohr"
+expandSubordinates: true
+maxDepth: 16
 
 # Scheduled persons-seed (#1690): a CronJob runs `identity-resolution seed`
 # to rebuild the identity org projection from ClickHouse identity_inputs.
