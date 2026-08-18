@@ -64,6 +64,11 @@ orgChartSourceType: "bamboohr"
 expandSubordinates: true
 maxDepth: 16
 
+# Whose data a caller may see: "org_chart" (the reporting line plus explicit
+# visibility grants) or "flat" (every person in the tenant). An unreadable
+# value stops the service rather than resolving to a policy.
+visibilityPolicy: "org_chart"
+
 # Scheduled persons-seed (#1690): a CronJob runs `identity-resolution seed`
 # to rebuild the identity org projection from ClickHouse identity_inputs.
 # Requires tenant_default_id in the config Secret (the seed refuses to run

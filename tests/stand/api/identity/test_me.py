@@ -21,7 +21,7 @@ from __future__ import annotations
 import pytest
 from insight_stand import ADMIN_ROLE, ApiClient, PersonaSession, identity_path
 
-from ..schemas import MeResponse
+from ..schemas import MeResponse, VisibilityPolicy
 from .test_admin import _admin_role_id
 
 ME = identity_path("/v1/me")
@@ -99,4 +99,24 @@ def test_the_realm_admin_role_does_not_leak_into_the_answer(
     assert me.roles == [], (
         f"{realm_admin_session.name} holds {ADMIN_ROLE} in the realm only, yet "
         f"/v1/me lists {me.roles}"
+    )
+
+
+@pytest.mark.reliability
+def test_the_visibility_policy_this_stand_runs_is_named_in_the_answer(
+    lead_session: PersonaSession,
+) -> None:
+    """The SPA reads the policy here instead of inferring it from an empty tree.
+
+    A leaf IC and a member of a hierarchy-less organisation are served the same
+    empty `subordinates`, so the two are indistinguishable to a consumer that
+    guesses. This stand seeds a reporting line, and every persona-reach
+    assertion in this suite presumes the reporting-line rule — `flat` here
+    would mean those tests describe a different product.
+    """
+    me = _me(lead_session.client)
+
+    assert me.visibility_policy == VisibilityPolicy.org_chart, (
+        f"stand serves {me.visibility_policy}, but the suite's reach "
+        f"assertions presume {VisibilityPolicy.org_chart}"
     )

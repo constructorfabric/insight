@@ -25,6 +25,7 @@ from __future__ import annotations
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from uuid import UUID
 from typing import Any
+from enum import StrEnum
 
 
 class AccountRef(BaseModel):
@@ -427,6 +428,11 @@ class SubchartResponse(BaseModel):
     root: SubchartNode
 
 
+class VisibilityPolicy(StrEnum):
+    org_chart = 'org_chart'
+    flat = 'flat'
+
+
 class VisibilityResponse(BaseModel):
     """
     One visibility grant.
@@ -557,6 +563,7 @@ class MeResponse(BaseModel):
     insight_tenant_id: UUID
     person_id: UUID
     roles: list[MeRoleResponse]
+    visibility_policy: VisibilityPolicy
 
 
 class PersonListResponse(BaseModel):
