@@ -11,11 +11,9 @@ name: E2E — Compose stand
 # A ref that changes one of those trees has to build it or the lane reports on
 # code it never ran. `up` guards that, but the guard needs origin/main and these
 # lanes clone at depth 1 — so `changes` decides instead, per tree, and the lanes
-# pass --build-backend (~28 min, hence the wider timeout) and --build-frontend
-# (a pnpm build) independently.
+# pass --build-backend and --build-frontend independently.
 #
-# Two independently-reporting checks, split by what they need rather than by
-# what they cover:
+# INVARIANT: Both lane checks report independently from one stand lifecycle.
 #
 #   api-smoke    tests/stand/api — 267 HTTP contract tests, plus the harness's
 #                own 17 (tests/stand/meta) and the coverage gate. No browser.
@@ -176,20 +174,23 @@ jobs:
   # image. `--ignore` rather than a path argument: `test-stand test` always
   # passes `tests/stand` to pytest and forwards this on top, so naming a
   # subdirectory would ADD to the full collection instead of narrowing it.
-  # Measured: 273 collected here, 10 in ui-journeys, 283 for the whole suite.
-  api-smoke:
-    name: api-smoke
+  stand-runner:
+    name: shared stand runner
     needs: [changes, resolve-target]
     if: needs.resolve-target.outputs.target == 'compose'
     runs-on: ubuntu-latest
-    # Measured over 60 runs: pull-path jobs 3-6m, build-path jobs 25-34m. 45
-    # absorbs a cold runner and a slow registry; 75 keeps ~2x over the worst
-    # build, without letting a hung stand burn an hour and a half.
+    outputs:
+      api: ${{ steps.results.outputs.api }}
+      ui: ${{ steps.results.outputs.ui }}
     timeout-minutes: ${{ needs.changes.outputs.backend == 'true' && 75 || 45 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12" # runs the redaction script only — stdlib alone
 
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -212,6 +213,8 @@ jobs:
       # The gate covers ClickHouse only. A service that failed to start is not
       # its business and will surface as a test failure instead.
       - name: Bring the stand up
+        id: stand-up
+        continue-on-error: true
         env:
           BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
           BUILD_FRONTEND: ${{ needs.changes.outputs.frontend }}
@@ -225,6 +228,9 @@ jobs:
           ./dev-compose.sh test-stand up "${flags[@]}"
 
       - name: Run the API suite
+        id: api-tests
+        if: steps.stand-up.outcome == 'success'
+        continue-on-error: true
         run: ./dev-compose.sh test-stand test --ignore=tests/stand/ui
 
       # `always()`: the ledger a FAILING run wrote is the more useful of the
@@ -236,7 +242,9 @@ jobs:
       # design, so it does not need the suite's environment and cannot be
       # broken by it.
       - name: API coverage gate
+        id: api-coverage
         if: always()
+        continue-on-error: true
         run: |
           set -uo pipefail
           [ -f .artifacts/stand_observed_endpoints.json ] || {
@@ -260,7 +268,9 @@ jobs:
       # ledger, which is how you tell a coverage regression from a reshuffle,
       # needs the inputs and not the summary.
       - name: Upload the coverage ledger
+        id: api-coverage-upload
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: api-smoke-coverage
@@ -272,8 +282,64 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Install the suite's browser
+        id: browser-install
+        if: always() && steps.stand-up.outcome == 'success'
+        continue-on-error: true
+        run: |
+          uv sync --project tests
+          uv run --project tests --frozen playwright install --with-deps chromium
+
+      - name: Run the browser journeys
+        id: ui-tests
+        if: always() && steps.browser-install.outcome == 'success'
+        continue-on-error: true
+        run: |
+          ./dev-compose.sh test-stand test \
+            --ignore=tests/stand/api --ignore=tests/stand/meta \
+            --browser chromium \
+            --tracing=retain-on-failure \
+            --screenshot=only-on-failure \
+            --video=retain-on-failure
+
+      - name: Strip credentials from traces
+        id: redact
+        if: always()
+        continue-on-error: true
+        run: python3 .github/workflows/scripts/redact-playwright-trace.py test-results
+
+      - name: Upload traces and screenshots
+        id: ui-traces-upload
+        if: always() && steps.redact.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-journeys-traces
+          path: |
+            test-results/**/*.zip
+            test-results/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload video
+        if: always() && steps.ui-tests.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-journeys-video
+          path: test-results/**/*.webm
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Dump diagnostics on failure
-        if: failure()
+        if: >-
+          always() && (
+            steps.stand-up.outcome != 'success' ||
+            steps.api-tests.outcome != 'success' ||
+            steps.api-coverage.outcome != 'success' ||
+            steps.browser-install.outcome != 'success' ||
+            steps.ui-tests.outcome != 'success' ||
+            steps.redact.outcome != 'success'
+          )
         run: |
           set -uo pipefail
           mkdir -p compose-logs
@@ -295,10 +361,30 @@ jobs:
           echo "::endgroup::"
 
       - name: Upload compose logs
-        if: failure()
+        if: >-
+          always() && (
+            steps.stand-up.outcome != 'success' ||
+            steps.api-tests.outcome != 'success' ||
+            steps.api-coverage.outcome != 'success'
+          )
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: api-smoke-compose-logs
+          path: compose-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload UI compose logs
+        if: >-
+          always() && (
+            steps.stand-up.outcome != 'success' ||
+            steps.browser-install.outcome != 'success' ||
+            steps.ui-tests.outcome != 'success' ||
+            steps.redact.outcome != 'success'
+          )
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-journeys-compose-logs
           path: compose-logs/
           if-no-files-found: ignore
           retention-days: 7
@@ -307,158 +393,94 @@ jobs:
       # down, and `down` passes --volumes so the next run starts from empty
       # databases rather than inheriting this one's rows.
       - name: Tear the stand down
+        id: teardown
         if: always()
         run: |
           [ -f .env.compose.test-stand ] || { echo "no stand env file — nothing to tear down"; exit 0; }
           ./dev-compose.sh test-stand down
 
-  # ─── ui-journeys ──────────────────────────────────────────────────────────
-  # No `needs` on api-smoke and none from it: each is an independently
-  # reportable check, so a red API contract does not hide a broken login.
-  #
-  # Host-side, from the checkout, on every event — so the lane always tests
-  # the test code of the ref it runs for. The suite once ran inside a
-  # published `insight-ui-tests` image, but the image baked the suite in and
-  # `:latest` only moved on a main push, so a PR lane ran main's old test
-  # code against the PR's stand; when checkout mode replaced that, the image
-  # had no consumer left and was removed. The cookie constraint the image's
-  # netns join once served is met here too: the stand publishes the gateway
-  # on the runner's own localhost, and localhost is the one plain-http origin
-  # a browser stores a `__Host-` cookie from.
-  ui-journeys:
-    name: ui-journeys
-    needs: [changes, resolve-target]
-    if: needs.resolve-target.outputs.target == 'compose'
-    runs-on: ubuntu-latest
-    # Same reasoning as api-smoke's, plus the Chromium install. The journeys
-    # themselves took 28s.
-    timeout-minutes: ${{ needs.changes.outputs.backend == 'true' && 75 || 45 }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12" # runs the redaction script only — stdlib alone
-
-      # `test-stand up` forces Keycloak, and the realm is generated by the seed
-      # package's own entry point (`insight-seed-realm`), which dev-compose.sh
-      # runs through uv. The API job above installs uv for the suite; this job
-      # needs it for the bring-up itself.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          cache-suffix: stand-ui
-
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Bring the stand up
+      - name: Record lane results
+        id: results
+        if: always()
         env:
-          BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
-          BUILD_FRONTEND: ${{ needs.changes.outputs.frontend }}
+          STAND: ${{ steps.stand-up.outcome }}
+          API_TESTS: ${{ steps.api-tests.outcome }}
+          API_COVERAGE: ${{ steps.api-coverage.outcome }}
+          API_COVERAGE_UPLOAD: ${{ steps.api-coverage-upload.outcome }}
+          BROWSER_INSTALL: ${{ steps.browser-install.outcome }}
+          UI_TESTS: ${{ steps.ui-tests.outcome }}
+          REDACTION: ${{ steps.redact.outcome }}
+          UI_TRACES_UPLOAD: ${{ steps.ui-traces-upload.outcome }}
+          TEARDOWN: ${{ steps.teardown.outcome }}
         run: |
           set -euo pipefail
-          # `if` blocks, not `[ … ] && flags+=(…)`: under set -e a false test as
-          # the last command of an && list ends the step.
-          flags=()
-          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
-          if [ "$BUILD_FRONTEND" = "true" ]; then flags+=(--build-frontend); fi
-          ./dev-compose.sh test-stand up "${flags[@]}"
+          api=failure
+          ui=failure
+          if [ "$STAND" = success ] && [ "$API_TESTS" = success ] && [ "$API_COVERAGE" = success ] && [ "$API_COVERAGE_UPLOAD" = success ] && [ "$TEARDOWN" = success ]; then
+            api=success
+          fi
+          if [ "$STAND" = success ] && [ "$BROWSER_INSTALL" = success ] && [ "$UI_TESTS" = success ] && [ "$REDACTION" = success ] && [ "$UI_TRACES_UPLOAD" = success ] && [ "$TEARDOWN" = success ]; then
+            ui=success
+          fi
+          printf 'api=%s\nui=%s\n' "$api" "$ui" >> "$GITHUB_OUTPUT"
 
-      # The suite's own Chromium, resolved by the locked test environment so
-      # every runner installs the same browser build. `--with-deps` installs
-      # the runner's system libraries.
-      - name: Install the suite's browser
+  # ─── stable lane checks ──────────────────────────────────────────────────
+  # INVARIANT: These job names are stable branch-protection check identities.
+  api-smoke:
+    name: api-smoke
+    needs: [changes, stand-runner]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report the API lane
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          LANE: ${{ needs.stand-runner.outputs.api }}
         run: |
-          uv sync --project tests
-          uv run --project tests --frozen playwright install --with-deps chromium
+          set -euo pipefail
+          if [ "$CHANGES" != success ]; then
+            echo "::error::stand relevance is unknown because the changes job did not pass"
+            exit 1
+          fi
+          if [ "$RELEVANT" = false ]; then
+            echo "API smoke is not relevant to this change"
+            exit 0
+          fi
+          if [ "$LANE" != success ]; then
+            echo "::error::API smoke did not pass"
+            exit 1
+          fi
+          echo "API smoke passed"
 
-      # `--ignore` rather than a path argument for the same reason as
-      # api-smoke's: the verb always passes tests/stand and unions paths.
-      #
-      # retain-on-failure for trace and video: a green run then carries no
-      # session credentials off the runner at all, which is a smaller problem
-      # than redacting one.
-      - name: Run the browser journeys
+  ui-journeys:
+    name: ui-journeys
+    needs: [changes, stand-runner]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report the UI lane
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          LANE: ${{ needs.stand-runner.outputs.ui }}
         run: |
-          ./dev-compose.sh test-stand test \
-            --ignore=tests/stand/api --ignore=tests/stand/meta \
-            --browser chromium \
-            --tracing=retain-on-failure \
-            --screenshot=only-on-failure \
-            --video=retain-on-failure
-
-      # BETWEEN capture and upload, and always — a failed run is exactly when a
-      # trace exists. A Playwright trace replays a real signed-in session: it
-      # carries the `__Host-sid` cookie and every Authorization header, twice
-      # over (raw headers and a parsed HAR `cookies` array). The script fails
-      # closed — a trace it cannot rewrite and verify is deleted, not uploaded.
-      - name: Strip credentials from traces
-        id: redact
-        if: always()
-        run: python3 .github/workflows/scripts/redact-playwright-trace.py test-results
-
-      - name: Upload traces and screenshots
-        # Gated on redaction having SUCCEEDED, not merely run: a non-zero exit
-        # means at least one artifact was not proven clean.
-        if: always() && steps.redact.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ui-journeys-traces
-          path: |
-            test-results/**/*.zip
-            test-results/**/*.png
-          # A green run keeps neither, by the capture policy above.
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Upload video
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ui-journeys-video
-          path: test-results/**/*.webm
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Dump diagnostics on failure
-        if: failure()
-        run: |
-          set -uo pipefail
-          mkdir -p compose-logs
-          echo "::group::containers"
-          docker ps -a || true
-          echo "::endgroup::"
-          echo "::group::container logs"
-          for name in $(docker ps -a --filter "name=insight-" --format '{{.Names}}' || true); do
-            docker logs --tail=400 "$name" > "compose-logs/${name}.log" 2>&1 || true
-            echo "----- ${name} -----"
-            tail -n 120 "compose-logs/${name}.log" || true
-          done
-          echo "::endgroup::"
-          echo "::group::stand configuration"
-          grep -E '^(FRONTEND_MODE|FRONTEND_IMAGE|AUTH_MODE|GATEWAY_PORT|AUTHENTICATOR_OIDC_ISSUER)=' \
-            .env.compose.test-stand || true
-          echo "::endgroup::"
-
-      - name: Upload compose logs
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ui-journeys-compose-logs
-          path: compose-logs/
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Tear the stand down
-        if: always()
-        run: |
-          [ -f .env.compose.test-stand ] || { echo "no stand env file — nothing to tear down"; exit 0; }
-          ./dev-compose.sh test-stand down
+          set -euo pipefail
+          if [ "$CHANGES" != success ]; then
+            echo "::error::stand relevance is unknown because the changes job did not pass"
+            exit 1
+          fi
+          if [ "$RELEVANT" = false ]; then
+            echo "UI journeys are not relevant to this change"
+            exit 0
+          fi
+          if [ "$LANE" != success ]; then
+            echo "::error::UI journeys did not pass"
+            exit 1
+          fi
+          echo "UI journeys passed"
 
   # ─── the required check ───────────────────────────────────────────────────
   # One stable context name for branch protection on both pull_request and
