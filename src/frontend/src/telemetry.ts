@@ -70,8 +70,12 @@ function isIdentifier(segment: string): boolean {
   );
 }
 
+/** Zone/item live in search params; `window.location` cannot rebuild this. */
+let lastPath = "";
+
 export function recordPageView(path: string): void {
-  emit("page_view", { path: screenPath(path) });
+  lastPath = screenPath(path);
+  emit("page_view", { path: lastPath });
 }
 
 /** The shape of a scope, never the person it is rooted at. */
@@ -86,5 +90,5 @@ export function scopeLabel(scope: {
 }
 
 export function recordUsageEvent(name: string, target: string): void {
-  emit(name, { target });
+  emit(name, { target, path: lastPath });
 }
