@@ -44,7 +44,7 @@ edge:
 # the reference insight-gitops repo). This stand validates connectors against
 # recent charts, so bump deliberately per release; CLI INSIGHT_VERSION=… still
 # overrides for one-offs.
-chartVersion: "0.5.174"
+chartVersion: "0.5.176"
 
 namespaces:
   services: insight
