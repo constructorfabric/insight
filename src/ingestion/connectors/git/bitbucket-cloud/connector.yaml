@@ -232,7 +232,7 @@ streams:
           # Trim the payload: the full repository object is large and only
           # these fields are used (identity, cursor, clone link).
           fields: >-
-            next,values.uuid,values.slug,values.name,values.full_name,values.is_private,values.has_issues,values.has_wiki,values.language,values.size,values.created_on,values.updated_on,values.mainbranch.name,values.workspace.slug,values.links.clone
+            next,values.uuid,values.slug,values.name,values.full_name,values.is_private,values.has_issues,values.has_wiki,values.language,values.size,values.created_on,values.updated_on,values.mainbranch.name,values.workspace.slug,values.workspace.uuid,values.links.clone,values.description,values.website,values.scm,values.fork_policy,values.enforced_signed_commits,values.owner.username,values.owner.uuid,values.parent.full_name,values.project.key,values.project.name,values.project.uuid
         error_handler: *discovery_error_handler
       record_selector:
         type: RecordSelector
@@ -955,7 +955,7 @@ streams:
           q: >-
             updated_on >= "{{ stream_interval.start_time }}"
           fields: >-
-            next,values.id,values.title,values.state,values.draft,values.author.uuid,values.author.display_name,values.created_on,values.updated_on,values.merge_commit.hash,values.closed_by.uuid,values.source.branch.name,values.source.commit.hash,values.destination.branch.name,values.comment_count,values.task_count
+            next,values.id,values.title,values.state,values.draft,values.author.uuid,values.author.display_name,values.author.account_id,values.author.nickname,values.created_on,values.updated_on,values.description,values.reason,values.close_source_branch,values.merge_commit.hash,values.closed_by.uuid,values.closed_by.account_id,values.closed_by.display_name,values.source.branch.name,values.source.commit.hash,values.source.repository.full_name,values.destination.branch.name,values.destination.commit.hash,values.destination.repository.full_name,values.participants.role,values.participants.state,values.participants.approved,values.participants.participated_on,values.participants.user.uuid,values.participants.user.display_name,values.comment_count,values.task_count
         error_handler:
           type: DefaultErrorHandler
           max_retries: 5
@@ -1235,7 +1235,7 @@ streams:
         request_parameters:
           pagelen: "100"
           fields: >-
-            next,values.id,values.user.uuid,values.user.display_name,values.created_on,values.updated_on,values.deleted,values.parent.id,values.inline.path
+            next,values.id,values.user.uuid,values.user.display_name,values.user.account_id,values.user.nickname,values.content.raw,values.created_on,values.updated_on,values.deleted,values.parent.id,values.inline.path,values.inline.from,values.inline.to
         error_handler:
           type: DefaultErrorHandler
           max_retries: 5
@@ -1857,7 +1857,6 @@ streams:
           - [hash]
           - [type]
           - [date]
-          - [message]
           - [summary]
           - [author]
           - [parents]

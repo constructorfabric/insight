@@ -235,8 +235,9 @@ def test_comments_store_trimmed_bodies_and_inline(http_mocker: HttpMocker) -> No
 
 @freezegun.freeze_time(_FROZEN)
 def test_pull_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> None:
-    """PR<->commit membership is vendor-only; the commit payload belongs to
-    the proxy streams, so bronze keeps the sha and the PR identity alone."""
+    """PR<->commit membership is vendor-only, and the raw nested payload stays
+    out of bronze — but the commit message is kept, because a declined pull
+    request's head never merges and the proxy walk never reaches it."""
     config = BitbucketCloudConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.get(
@@ -279,7 +280,11 @@ def test_pull_request_commits_store_only_the_edge(http_mocker: HttpMocker) -> No
     assert rec["pr_id"] == 9
     assert rec["repo_full_name"] == "acme/app"
     assert rec["unique_key"].endswith(f":acme/app:9:{'a' * 12}")
-    assert "message" not in rec and "links" not in rec
+    # The head commits of an unmerged or declined pull request are reachable
+    # from no branch the proxy clones, so the message has to survive here or
+    # it is captured nowhere.
+    assert rec["message"] == "feat: x"
+    assert "links" not in rec and "parents" not in rec and "rendered" not in rec
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "pull_request_commits", strict=True)
 
