@@ -803,7 +803,7 @@
             "type": "string"
           },
           "provisional": {
-            "description": "The journal holds nothing but a login-mint for this person: they exist\nso somebody could sign in, and may duplicate one the roster knows. Not\na merge target — the history is on the other side.",
+            "description": "The journal holds nothing but an automatic mint for this person — a\nsign-in that needed somebody to enter as, or a roster listing an account\nwith no address. They may duplicate one the roster knows, so they are not\na merge target: the history is on the other side.",
             "type": "boolean"
           },
           "status": {
@@ -1214,7 +1214,7 @@
             ]
           },
           "kind": {
-            "description": "`contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.",
+            "description": "`contested` | `binding_conflict` | `provisioned_at_login` |\n`minted_from_roster` | `no_evidence`.",
             "type": "string"
           },
           "manager_email": {

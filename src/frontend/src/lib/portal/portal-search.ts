@@ -30,7 +30,7 @@ export interface PortalSearch {
   filter?: string;
   /** Which Identities mode is open (the review queue, a person). */
   mode?: string;
-  /** Person under inspection in the Identities people mode. */
+  /** Person under inspection in the Identities person mode. */
   person?: string;
   /** Expanded direction + its active lens, within the Directions zone. */
   dir?: string;

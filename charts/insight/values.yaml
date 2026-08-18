@@ -596,6 +596,14 @@ identityResolution:
   # `global.tenantDefaultId`, idempotently. The person row must already
   # exist in `persons` for that tenant. Empty string disables the runner.
   bootstrapAdminPersonId: ""
+  # The ONE source trusted to say who exists: the persons-seed mints a person for
+  # its accounts even with no address to match on, and the identities console
+  # asks an operator to confirm each one. Empty (the default) mints from an
+  # address only, and enabling it is not undone by disabling it — `persons` is
+  # append-only. A `source_type` as the connectors emit it, and it must be a
+  # source that can report deactivation, or leavers stay minted and queued. See
+  # the identity DESIGN §4.1.
+  rosterSourceType: ""
   # The umbrella generates `insight-identity-resolution-config` with every
   # APP__gears__identity_resolution__config__* env var filled in from the
   # auto-generated credentials (see templates/secrets.yaml). The subchart

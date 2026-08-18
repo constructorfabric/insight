@@ -120,6 +120,7 @@ data:
         config:
           database_url: ""
           org_chart_source_type: {{ .Values.orgChartSourceType | quote }}
+          roster_source_type: {{ .Values.rosterSourceType | quote }}
           expand_subordinates: {{ .Values.expandSubordinates }}
           max_depth: {{ .Values.maxDepth }}
           visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}

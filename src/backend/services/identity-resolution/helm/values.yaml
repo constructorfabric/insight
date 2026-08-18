@@ -69,6 +69,16 @@ maxDepth: 16
 # value stops the service rather than resolving to a policy.
 visibilityPolicy: "org_chart"
 
+# The ONE source trusted to say who exists: the persons-seed mints a person for
+# its accounts even with no address to match on, and the identities console asks
+# an operator to confirm each one. Empty (the default) mints from an address
+# only. Full rationale and the requirements a roster must meet: DESIGN §4.1.
+#
+# A `source_type` as the connectors emit it, not the connector package name — the
+# GitHub roster package emits `github`. From the umbrella:
+# `identityResolution.rosterSourceType`.
+rosterSourceType: ""
+
 # Scheduled persons-seed (#1690): a CronJob runs `identity-resolution seed`
 # to rebuild the identity org projection from ClickHouse identity_inputs.
 # Requires tenant_default_id in the config Secret (the seed refuses to run

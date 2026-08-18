@@ -176,6 +176,27 @@ describe("AccountDetail", () => {
     expect(screen.queryByText("login-bootstrap")).not.toBeInTheDocument();
   });
 
+  // The batch mints this binding because the roster lists the account, not
+  // because anything matched it. Same problem as above: a raw `roster-mint`
+  // tells an operator nothing about what they are being asked to confirm.
+  it("names the roster-mint reason", () => {
+    binding.q.data = bound({
+      history: [
+        {
+          person_id: BOB.person_id,
+          author_person_id: "00000000-0000-0000-0000-000000000000",
+          by_operator: false,
+          reason: "roster-mint",
+          recorded_at: "2026-08-01T10:15:00.000000",
+        },
+      ],
+    });
+    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
+
+    expect(screen.getByText(/added from the roster/i)).toBeInTheDocument();
+    expect(screen.queryByText("roster-mint")).not.toBeInTheDocument();
+  });
+
   // The comment is the one thing no other record holds — why a human did
   // this — and it was written to the operations journal from the first verb,
   // never read back. The reach matters beside it: a merge lands one row here

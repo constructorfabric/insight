@@ -50,10 +50,23 @@ def test_org_chart_knobs_default_into_the_gear_config() -> None:
     assert config["max_depth"] == 16
 
 
+def test_no_roster_source_is_trusted_unless_one_is_named() -> None:
+    """Minting a person for an addressless account is opt-in.
+
+    The default must render an empty string rather than fall back to the
+    org-chart source: an upgrade that started minting persons by itself would
+    write journal rows no downgrade removes.
+    """
+    config = _gear_config()
+
+    assert config["roster_source_type"] == ""
+
+
 @pytest.mark.parametrize(
     ("flag", "key", "expected"),
     [
         ("orgChartSourceType=github", "org_chart_source_type", "github"),
+        ("rosterSourceType=bamboohr", "roster_source_type", "bamboohr"),
         ("expandSubordinates=false", "expand_subordinates", False),
         ("maxDepth=4", "max_depth", 4),
     ],

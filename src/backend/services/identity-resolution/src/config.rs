@@ -32,6 +32,12 @@ pub struct GearConfig {
     /// Source instance whose `org_chart` edges populate the supervisor/parent
     /// fields of a profile (matches the .NET `AppOptions.OrgChartSourceType`).
     pub org_chart_source_type: String,
+    /// The one source trusted to say who exists: the persons-seed mints a person
+    /// for its accounts even when they carry no address to match on, and asks an
+    /// operator to confirm each one. Empty — the default — mints from an address
+    /// only. Naming more than one source is not possible on purpose: two
+    /// rosters give one addressless human two persons and nothing joins them.
+    pub roster_source_type: String,
     /// Whether a profile response expands the recursive subordinates subtree.
     pub expand_subordinates: bool,
     /// Max org-tree recursion depth (cycle-safe; mirrors the .NET `MaxDepth`).
@@ -64,6 +70,7 @@ impl Default for GearConfig {
         Self {
             database_url: String::new(),
             org_chart_source_type: "bamboohr".to_owned(),
+            roster_source_type: String::new(),
             expand_subordinates: true,
             max_depth: 16,
             clickhouse_url: String::new(),

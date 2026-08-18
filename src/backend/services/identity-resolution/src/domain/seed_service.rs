@@ -3,15 +3,16 @@
 //! The input source and the store are behind traits so this is unit-testable
 //! with fakes (no `ClickHouse` / MariaDB).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use serde::Serialize;
 use uuid::Uuid;
 
+use super::roster::RosterSource;
 use super::seed::{
-    IdentityInputRow, KnownBinding, SeedObservationRow, SourceAccountKey, assignments_to_rows,
-    build_profiles, group_by_email, resolve_assignments,
+    IdentityInputRow, KnownBinding, ResolveOutcome, SeedObservationRow, SeedProfile,
+    SourceAccountKey, assignments_to_rows, build_profiles, group_by_email, resolve_assignments,
 };
 
 /// Streams the raw `identity_inputs` observations for a tenant, delivered
@@ -83,6 +84,9 @@ pub struct SeedSummary {
     /// Accounts bound to the excluded person (nothing re-emitted, values link
     /// nobody).
     pub skipped_excluded: usize,
+    /// Addressless roster accounts minted a person; each reaches the queue.
+    #[serde(rename = "accounts_minted_from_roster")]
+    pub minted_from_roster: usize,
 }
 
 /// Run one persons-seed over an already-read input: fold to per-account
@@ -100,6 +104,7 @@ pub async fn seed_from_rows<S>(
     store: &S,
     tenant_id: Uuid,
     author_person_id: Uuid,
+    roster: Option<&RosterSource>,
     mint: impl FnMut() -> Uuid,
 ) -> anyhow::Result<SeedSummary>
 where
@@ -108,22 +113,26 @@ where
     // 1. Build per-account profiles from the (latest-first) input stream.
     let profiles = build_profiles(rows);
     let accounts_read = profiles.len();
+    warn_if_roster_spans_instances(&profiles, roster);
 
     // 2. Group by email; resolve each group against the current bindings/emails.
     let groups = group_by_email(profiles);
     let known = store.known_account_bindings(tenant_id).await?;
     let email_to_person = store.latest_email_to_person(tenant_id).await?;
-    let outcome = resolve_assignments(groups, &known, &email_to_person, mint);
+    let outcome = resolve_assignments(groups, &known, &email_to_person, roster, mint);
     tracing::info!(
         accounts = accounts_read,
         minted = outcome.minted,
+        minted_from_roster = outcome.minted_from_roster,
         reused = outcome.reused_known,
         linked = outcome.linked_by_email,
+        roster = roster.map(RosterSource::name),
         "persons-seed: resolved"
     );
+    warn_if_roster_matched_nothing(&outcome, roster);
 
     // 3. Materialize the resolved observations and apply them.
-    let observation_rows = assignments_to_rows(&outcome.assignments, author_person_id);
+    let observation_rows = assignments_to_rows(&outcome.assignments, author_person_id, &known);
     tracing::info!(
         observation_rows = observation_rows.len(),
         "persons-seed: applying"
@@ -150,13 +159,64 @@ where
         operator_settled_groups: outcome.operator_settled_groups,
         skipped_contested_email: outcome.skipped_contested_email,
         skipped_excluded: outcome.skipped_excluded,
+        minted_from_roster: outcome.minted_from_roster,
     })
+}
+
+/// A configured roster that matched nothing is indistinguishable from one that
+/// had nothing to do — and the likeliest cause is a name that does not exist. A
+/// source type is not the connector package it ships in (the GitHub roster
+/// package emits `github`), so a plausible-looking value can match no account.
+fn warn_if_roster_matched_nothing(outcome: &ResolveOutcome, roster: Option<&RosterSource>) {
+    let Some(roster) = roster else {
+        return;
+    };
+    if outcome.minted_from_roster > 0 || outcome.skipped_no_email == 0 {
+        return;
+    }
+
+    tracing::warn!(
+        roster = roster.name(),
+        addressless_accounts = outcome.skipped_no_email,
+        "persons-seed: the configured roster minted nothing while addressless \
+         accounts were skipped; check the name against the source_type the \
+         connector emits"
+    );
+}
+
+/// The roster is named by source type, but an account is keyed by type AND
+/// connector instance — so two instances of the roster's type would each mint
+/// their own person for one addressless human, and nothing could join them.
+/// Naming the type cannot prevent that; saying so can.
+fn warn_if_roster_spans_instances(profiles: &[SeedProfile], roster: Option<&RosterSource>) {
+    let Some(roster) = roster else {
+        return;
+    };
+
+    let instances: HashSet<Uuid> = profiles
+        .iter()
+        .filter(|p| roster.speaks_for(&p.account.source_type))
+        .map(|p| p.account.source_id)
+        .collect();
+    if instances.len() < 2 {
+        return;
+    }
+
+    tracing::warn!(
+        roster = roster.name(),
+        instances = instances.len(),
+        "persons-seed: the configured roster covers several connector instances; \
+         an addressless person listed by more than one of them will be minted \
+         once per instance, and no automation can join those persons"
+    );
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use sea_orm::prelude::DateTime;
+
+    use super::*;
+    use crate::domain::provenance::Provenance;
 
     struct FakeStore {
         known: HashMap<SourceAccountKey, KnownBinding>,
@@ -230,6 +290,7 @@ mod tests {
             &store,
             Uuid::from_u128(9),
             Uuid::from_u128(99),
+            None,
             counter(),
         )
         .await?;
@@ -260,7 +321,7 @@ mod tests {
             KnownBinding {
                 person_id: Uuid::from_u128(7),
                 author_person_id: Uuid::nil(),
-                provisioned_at_login: false,
+                provenance: Provenance::Resolved,
             },
         );
         let store = FakeStore {
@@ -273,12 +334,73 @@ mod tests {
             &store,
             Uuid::from_u128(9),
             Uuid::from_u128(99),
+            None,
             counter(),
         )
         .await?;
         assert_eq!(summary.reused_known, 1);
         assert_eq!(summary.minted, 0);
         assert_eq!(summary.observations_inserted, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_roster_this_service_is_handed_is_the_one_that_mints() -> anyhow::Result<()> {
+        // The pipeline is what carries the configured roster to the decision, and
+        // every other roster test calls the resolver directly — so without this
+        // one, dropping the argument here leaves the feature dead and the suite
+        // green.
+        let at: DateTime = "2026-01-01T00:00:00".parse()?;
+        let rows = vec![input("bamboohr", "e-1", "id", "e-1", at)];
+        let store = FakeStore {
+            known: HashMap::new(),
+            emails: HashMap::new(),
+        };
+        let Some(roster) = RosterSource::parse("bamboohr") else {
+            panic!("a named source must parse");
+        };
+
+        let summary = seed_from_rows(
+            rows,
+            &store,
+            Uuid::from_u128(9),
+            Uuid::from_u128(99),
+            Some(&roster),
+            counter(),
+        )
+        .await?;
+
+        assert_eq!(summary.minted_from_roster, 1, "the roster reached the mint");
+        assert_eq!(summary.skipped_no_email, 0);
+        assert_eq!(
+            summary.minted, 0,
+            "counted apart from an address-matched mint"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn without_a_roster_the_same_input_resolves_to_nothing() -> anyhow::Result<()> {
+        let at: DateTime = "2026-01-01T00:00:00".parse()?;
+        let rows = vec![input("bamboohr", "e-1", "id", "e-1", at)];
+        let store = FakeStore {
+            known: HashMap::new(),
+            emails: HashMap::new(),
+        };
+
+        let summary = seed_from_rows(
+            rows,
+            &store,
+            Uuid::from_u128(9),
+            Uuid::from_u128(99),
+            None,
+            counter(),
+        )
+        .await?;
+
+        assert_eq!(summary.minted_from_roster, 0);
+        assert_eq!(summary.skipped_no_email, 1);
+        assert_eq!(summary.observations_inserted, 0, "nothing to write");
         Ok(())
     }
 }

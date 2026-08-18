@@ -34,6 +34,7 @@ import { usePersonAccounts } from "@/queries/identity-resolution";
 import { cn } from "@/lib/utils";
 
 export function PersonAccountsView() {
+  const { t } = useTranslation();
   const { person } = usePortalSearch();
   const setSearch = useSetPortalSearch();
   // The URL owns which person is open; this remembers the card the operator
@@ -43,6 +44,20 @@ export function PersonAccountsView() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {/* Choosing a person replaces the roster with their accounts AND clears
+          the terms that found them, so the way back is not on screen anywhere:
+          without this, leaving a person means editing the URL. */}
+      {person ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="-ms-2 self-start"
+          onClick={() => setSearch({ person: undefined, acct: undefined })}
+        >
+          {t("identities.person_accounts.back")}
+        </Button>
+      ) : null}
       <PersonPicker
         // Remounted per person so choosing one clears the terms that found
         // them: the results are a way in, not a view worth keeping open.
@@ -84,7 +99,7 @@ function PersonAccounts({
       <ComingSoon
         variant="card"
         state="error"
-        label={t("identities.people.load_failed")}
+        label={t("identities.person_accounts.load_failed")}
         onRetry={() => void accounts.refetch()}
       />
     );
@@ -109,7 +124,7 @@ function PersonAccounts({
     <Card>
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
-          {t("identities.people.accounts")}
+          {t("identities.person_accounts.accounts")}
           <Badge variant="secondary">{entries.length}</Badge>
           <PersonCell person={card ?? { person_id: personId }} className="ms-auto" />
         </CardTitle>
@@ -117,7 +132,7 @@ function PersonAccounts({
       <CardContent className="flex flex-col gap-1 p-2 pt-0">
         {entries.length === 0 ? (
           <p className="p-3 text-sm text-muted-foreground">
-            {t("identities.people.no_accounts")}
+            {t("identities.person_accounts.no_accounts")}
           </p>
         ) : (
           entries.map((entry) => (
@@ -176,11 +191,11 @@ function AccountRow({
         className="justify-self-start font-normal"
       >
         {entry.bound_by_operator
-          ? t("identities.people.by_operator")
-          : t("identities.people.by_automation")}
+          ? t("identities.person_accounts.by_operator")
+          : t("identities.person_accounts.by_automation")}
       </Badge>
       <Button type="button" size="xs" variant="outline" onClick={onOpen}>
-        {t("identities.people.open")}
+        {t("identities.person_accounts.open")}
       </Button>
     </div>
   );

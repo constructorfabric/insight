@@ -217,11 +217,11 @@ function AccountRow({
         className="justify-self-start font-normal"
       >
         {item.bound_by_operator
-          ? t("identities.people.by_operator")
-          : t("identities.people.by_automation")}
+          ? t("identities.person_accounts.by_operator")
+          : t("identities.person_accounts.by_automation")}
       </Badge>
       <Button type="button" size="xs" variant="outline" onClick={onOpen}>
-        {t("identities.people.open")}
+        {t("identities.person_accounts.open")}
       </Button>
     </div>
   );

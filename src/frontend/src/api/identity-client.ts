@@ -100,9 +100,10 @@ function isMeRole(role: unknown): role is MeRole {
 /** A person as operator surfaces display them — the wire `PersonSummaryResponse`. */
 export interface PersonSummary {
   person_id: string;
-  /** The journal holds nothing but a login-mint for them: they exist so
-   *  somebody could sign in, and may duplicate a person the roster knows.
-   *  Never a merge target — the history is on the other side. */
+  /** The journal holds nothing but an automatic mint for them — a sign-in that
+   *  needed somebody to enter as, or a roster listing an account with no
+   *  address. They may duplicate a person the roster knows, so never a merge
+   *  target: the history is on the other side. */
   provisional?: boolean;
   email?: string | null;
   username?: string | null;
@@ -113,7 +114,8 @@ export interface PersonSummary {
 
 /** One account awaiting an operator decision. */
 export interface AttentionItem {
-  /** `contested` | `binding_conflict` | `no_evidence` — open vocabulary. */
+  /** `contested` | `binding_conflict` | `provisioned_at_login` |
+   *  `minted_from_roster` | `no_evidence` — open vocabulary. */
   kind: string;
   source: string;
   source_id: string;

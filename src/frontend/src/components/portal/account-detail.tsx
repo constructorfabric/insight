@@ -40,6 +40,7 @@ const VERB_KEYS: Record<string, string> = {
   "operator-detach": "identities.history.detach",
   "operator-exclude": "identities.history.exclude",
   "login-bootstrap": "identities.history.login_bootstrap",
+  "roster-mint": "identities.history.roster_mint",
 };
 
 export function AccountDetail({

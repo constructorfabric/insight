@@ -422,6 +422,7 @@
       "contested": "Contested — more than one person claims the account",
       "binding_conflict": "Binding conflicts — evidence disagrees with the current binding",
       "provisioned_at_login": "Given a person at first sign-in — not yet confirmed",
+      "minted_from_roster": "Added from the roster without an address — not yet confirmed",
       "no_evidence": "No address to match on — only an operator can bind these",
       "other": "Needs review"
     },
@@ -461,7 +462,7 @@
       "terminated": "terminated",
       "unnamed": "Unnamed person",
       "copy_id": "Copy the person id",
-      "provisional": "provisional — created at a first sign-in"
+      "provisional": "provisional — created by automation, not confirmed"
     },
     "history": {
       "bind": "Bound",
@@ -472,6 +473,7 @@
       "to": "to",
       "by_operator": "by an operator",
       "login_bootstrap": "First sign-in",
+      "roster_mint": "Added from the roster",
       "by": "by",
       "by_name": "by {{name}}",
       "accounts_touched_one": "{{count}} account in this call",
@@ -532,16 +534,17 @@
     },
     "modes": {
       "queue": "Review queue",
-      "people": "A person and their accounts",
+      "person": "A person and their accounts",
       "accounts": "An account and whose it is"
     },
-    "people": {
+    "person_accounts": {
       "accounts": "Accounts bound to this person",
       "no_accounts": "No account is bound to this person.",
       "by_operator": "decided by an operator",
       "by_automation": "bound automatically",
       "open": "Open",
-      "load_failed": "Unable to load this person’s accounts"
+      "load_failed": "Unable to load this person’s accounts",
+      "back": "‹ Back to the roster"
     },
     "accounts": {
       "placeholder": "Find an account by address, handle, id or observed name…",

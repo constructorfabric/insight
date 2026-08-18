@@ -77,6 +77,7 @@ const KIND_ORDER = [
   "contested",
   "binding_conflict",
   "provisioned_at_login",
+  "minted_from_roster",
   "no_evidence",
 ] as const;
 
@@ -106,14 +107,25 @@ function opensTheCase(event: React.MouseEvent<HTMLElement>): boolean {
  * the queue arrives at them from a problem, the person view from a name — so
  * adding one is an entry here and a component, nothing else.
  */
-const MODES = ["queue", "people", "accounts"] as const;
+const MODES = ["queue", "person", "accounts"] as const;
 const DEFAULT_MODE = MODES[0];
+
+/** What earlier releases put in the URL. A link somebody already sent must open
+ *  the screen it was sent from, not fall through to the default. */
+const RETIRED_MODES: Readonly<Record<string, (typeof MODES)[number]>> = {
+  people: "person",
+};
+
+function resolveMode(mode: string | undefined): string {
+  if (mode === undefined) return DEFAULT_MODE;
+  return MODES.find((m) => m === mode) ?? RETIRED_MODES[mode] ?? DEFAULT_MODE;
+}
 
 export function IdentitiesView() {
   const { t } = useTranslation();
   const { mode } = usePortalSearch();
   const setSearch = useSetPortalSearch();
-  const active: string = MODES.find((m) => m === mode) ?? DEFAULT_MODE;
+  const active: string = resolveMode(mode);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
@@ -142,7 +154,7 @@ export function IdentitiesView() {
           ))}
         </TabsList>
       </Tabs>
-      {active === "people" ? <PersonAccountsView /> : null}
+      {active === "person" ? <PersonAccountsView /> : null}
       {active === "accounts" ? <AccountSearchView /> : null}
       {active === "queue" ? <ReviewQueue /> : null}
     </div>

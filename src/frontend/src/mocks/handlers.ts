@@ -424,6 +424,35 @@ export const handlers = [
   http.get(
     "/api/identity/v1/resolution/accounts/:source/:sourceId/:accountId",
     ({ params }) => {
+      // The roster mint: bound, by the batch, with nothing but its own
+      // creation on the trail — the state an operator is asked to confirm.
+      if (params.accountId === "874") {
+        const minted = {
+          person_id: "01900000-0000-7000-8000-0000000000d0",
+          display_name: "Ravi Menon",
+          job_title: "Facilities Lead",
+        };
+        return HttpResponse.json({
+          source: params.source,
+          source_id: params.sourceId,
+          account_id: params.accountId,
+          person_id: minted.person_id,
+          history: [
+            {
+              person_id: minted.person_id,
+              // No `provisional` here: the server builds trail cards from the
+              // journal alone and never marks them, so claiming it would have
+              // the console verified against a shape it will not receive.
+              person: minted,
+              author_person_id: "00000000-0000-0000-0000-000000000000",
+              by_operator: false,
+              reason: "roster-mint",
+              recorded_at: "2026-08-14T06:30:00.000000",
+            },
+          ],
+          operations: [],
+        });
+      }
       if (params.accountId !== "dev-42") {
         return HttpResponse.json({
           source: params.source,
@@ -666,6 +695,36 @@ export const handlers = [
           username: "new-joiner",
           bound_to: carol?.person_id,
           candidates: [card(carol, { provisional: true })],
+        },
+        {
+          // Added because the roster lists the account, not because anything
+          // matched: no address, so the person may already be on the roster
+          // under a different account. Bound, and still nobody's decision.
+          kind: "minted_from_roster",
+          source: "hr",
+          source_id: "01900000-0000-7000-8000-00000000aa03",
+          account_id: "874",
+          email: null,
+          username: null,
+          display_name: "Ravi Menon",
+          job_title: "Facilities Lead",
+          department: "Operations",
+          status: "Active",
+          manager_email: "carol.chen@example.com",
+          bound_to: "01900000-0000-7000-8000-0000000000d0",
+          candidates: [
+            {
+              person_id: "01900000-0000-7000-8000-0000000000d0",
+              email: null,
+              username: null,
+              display_name: "Ravi Menon",
+              job_title: "Facilities Lead",
+              status: "active",
+              // Minted for this very account, so nothing else is known about
+              // them and they may be someone the roster already lists.
+              provisional: true,
+            },
+          ],
         },
         {
           // Neither address nor handle — nothing automation can match on. The

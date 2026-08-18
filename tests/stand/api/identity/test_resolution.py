@@ -206,8 +206,20 @@ def test_the_queue_answers_with_coherent_tenant_wide_rates(
     assert rates.observed == rates.bound + rates.pending + rates.no_evidence + rates.excluded, (
         f"resolution states do not partition the observed set: {rates}"
     )
-    assert len(queue.items) <= rates.pending + rates.no_evidence, (
-        "more queue items than undecided accounts"
+    # Over distinct ACCOUNTS, and only the unbound ones. Two reasons the naive
+    # count is not an invariant: an item can be a bound account still awaiting a
+    # human (an automatic mint, which `rates` counts under `bound`), and one
+    # unbound account can hold TWO items — the conflict pass lists every account
+    # of a divergent e-mail group, including the unbound member the main pass
+    # already reported as contested. `rates` counts each account once, so the
+    # comparison only means anything per account.
+    unbound_accounts = {
+        (item.source, item.source_id, item.account_id)
+        for item in queue.items
+        if item.bound_to is None
+    }
+    assert len(unbound_accounts) <= rates.pending + rates.no_evidence, (
+        "more unbound accounts in the queue than undecided accounts"
     )
     assert queue.truncated is False, (
         "the seeded roster is far below the evidence cap — a truncated answer "

@@ -648,7 +648,8 @@ pub struct AttentionParams {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct QueueItemResponse {
-    /// `contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.
+    /// `contested` | `binding_conflict` | `provisioned_at_login` |
+    /// `minted_from_roster` | `no_evidence`.
     pub kind: String,
     pub source: String,
     pub source_id: Uuid,
@@ -678,9 +679,10 @@ pub struct QueueItemResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonSummaryResponse {
     pub person_id: Uuid,
-    /// The journal holds nothing but a login-mint for this person: they exist
-    /// so somebody could sign in, and may duplicate one the roster knows. Not
-    /// a merge target — the history is on the other side.
+    /// The journal holds nothing but an automatic mint for this person — a
+    /// sign-in that needed somebody to enter as, or a roster listing an account
+    /// with no address. They may duplicate one the roster knows, so they are not
+    /// a merge target: the history is on the other side.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub provisional: bool,
     pub email: Option<String>,
@@ -1267,6 +1269,7 @@ fn kind_label(kind: ItemKind) -> &'static str {
         ItemKind::Contested => "contested",
         ItemKind::BindingConflict => "binding_conflict",
         ItemKind::ProvisionedAtLogin => "provisioned_at_login",
+        ItemKind::MintedFromRoster => "minted_from_roster",
         ItemKind::NoEvidence => "no_evidence",
     }
 }
@@ -1348,4 +1351,25 @@ async fn read_evidence(state: &AppState) -> Result<EvidenceSnapshot, CanonicalEr
         .accounts()
         .await
         .map_err(|e| internal(&e, "failed to read connector evidence"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_queue_kind_has_the_wire_label_its_consumers_switch_on() {
+        // The console groups by this exact string and drops anything it does not
+        // know into a catch-all "needs review" bucket, so a typo here is not a
+        // broken response — it is a queue that quietly stops explaining itself.
+        for (kind, expected) in [
+            (ItemKind::Contested, "contested"),
+            (ItemKind::BindingConflict, "binding_conflict"),
+            (ItemKind::ProvisionedAtLogin, "provisioned_at_login"),
+            (ItemKind::MintedFromRoster, "minted_from_roster"),
+            (ItemKind::NoEvidence, "no_evidence"),
+        ] {
+            assert_eq!(kind_label(kind), expected, "wrong label for {kind:?}");
+        }
+    }
 }
