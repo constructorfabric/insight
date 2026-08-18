@@ -82,23 +82,20 @@ pub async fn is_target_in_visible_set(
               AND valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
               AND (valid_to IS NULL OR valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
             UNION
-            SELECT @target_person_id
-            WHERE EXISTS (
-                SELECT 1 FROM visibility
-                WHERE insight_tenant_id = @tenant_id
-                  AND viewer_person_id  = @viewer_person_id
-                  AND viewed_person_id  IS NULL
-                  AND valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
-                  AND (valid_to IS NULL OR valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
-            )
-            UNION
             -- SAFETY: scoped to the tenant's persons, not to the id asked
             -- about — an unscoped arm confirms any UUID a caller can type.
             SELECT person_id
             FROM persons
             WHERE insight_tenant_id = @tenant_id
               AND person_id         = @target_person_id
-              AND @flat_tenant
+              AND (@flat_tenant OR EXISTS (
+                  SELECT 1 FROM visibility
+                  WHERE insight_tenant_id = @tenant_id
+                    AND viewer_person_id  = @viewer_person_id
+                    AND viewed_person_id  IS NULL
+                    AND valid_from <= COALESCE(@valid_at, UTC_TIMESTAMP(6))
+                    AND (valid_to IS NULL OR valid_to > COALESCE(@valid_at, UTC_TIMESTAMP(6)))
+              ))
             UNION
             SELECT oc.child_person_id
             FROM visible_set vs

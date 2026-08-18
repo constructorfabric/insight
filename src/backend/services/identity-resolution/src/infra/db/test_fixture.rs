@@ -292,7 +292,20 @@ impl Fixture {
         .await
     }
 
+    pub(crate) async fn can_see(&self, viewer: Uuid, target: Uuid) -> anyhow::Result<bool> {
+        self.probe(viewer, target, VisibilityPolicy::OrgChart).await
+    }
+
     pub(crate) async fn can_see_flat(&self, viewer: Uuid, target: Uuid) -> anyhow::Result<bool> {
+        self.probe(viewer, target, VisibilityPolicy::Flat).await
+    }
+
+    async fn probe(
+        &self,
+        viewer: Uuid,
+        target: Uuid,
+        policy: VisibilityPolicy,
+    ) -> anyhow::Result<bool> {
         subchart_repo::is_target_in_visible_set(
             &self.db,
             self.tenant,
@@ -300,7 +313,7 @@ impl Fixture {
             target,
             SOURCE_TYPE,
             None,
-            VisibilityPolicy::Flat,
+            policy,
         )
         .await
     }
