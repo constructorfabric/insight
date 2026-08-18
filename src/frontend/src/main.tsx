@@ -18,10 +18,10 @@ import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { LoginError } from "@/components/login-error";
 import { ThemeProvider } from "@/components/theme-provider";
 import i18n from "@/i18n";
-import { validatePortalSearch } from "@/lib/portal/portal-search";
 import { queryClient } from "@/query-client";
 import { initSentry } from "@/sentry";
-import { recordPageView, startUsageTelemetry } from "@/telemetry";
+import { startUsageTelemetry } from "@/telemetry";
+import { recordScreens } from "@/usage-collection";
 import { router } from "./router";
 
 async function enableMocking(): Promise<void> {
@@ -78,28 +78,8 @@ function bootstrap(): void {
 function startUsageCollection(): void {
   const { session } = authStore.getSnapshot();
   if (!session) return;
-  // INVARIANT: portal screens differ only by the zone/item search params, so
-  // only a history subscription sees them change.
-  let recorded: string | null = null;
-  const recordScreen = () => {
-    const screen = currentScreen();
-    if (screen === recorded) return;
-    recorded = screen;
-    recordPageView(screen);
-  };
-  router.history.subscribe(recordScreen);
-  recordScreen();
+  recordScreens(router.history);
   void startUsageTelemetry(session);
-}
-
-function currentScreen(): string {
-  const { zone, item } = validatePortalSearch(
-    Object.fromEntries(new URLSearchParams(window.location.search)),
-  );
-  const parts = [zone, item].filter((value): value is string => Boolean(value));
-  return parts.length
-    ? `${window.location.pathname}/${parts.join("/")}`
-    : window.location.pathname;
 }
 
 function renderApp(): void {
