@@ -254,6 +254,22 @@ streams:
             type:
               - boolean
               - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
         required:
           - id
         additionalProperties: true
