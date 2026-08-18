@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
+use super::provenance::Provenance;
 use super::resolution::EXCLUDED_PERSON;
 use super::seed::{KnownBinding, SourceAccountKey, normalize_email};
 
@@ -27,6 +28,11 @@ pub enum ItemKind {
     /// them, since the account carries no address — and only an operator can
     /// say whether it is its own person or the same human.
     ProvisionedAtLogin,
+    /// The batch minted a person for this account because the roster lists it,
+    /// not because anything matched: the account carries no address. The person
+    /// may duplicate one already on the roster under a different account, and
+    /// only an operator can say which it is.
+    MintedFromRoster,
     /// The account carries no identity evidence automation can match on —
     /// e-mail is the only matching key today, so a username-only account is
     /// here too (shown with its username). Visible, never hidden: nothing
@@ -124,17 +130,7 @@ pub fn build(
             Some(binding) if binding.person_id == EXCLUDED_PERSON => rates.excluded += 1,
             Some(binding) => {
                 rates.bound += 1;
-                // Bound, and still undecided: a login mint trades "cannot sign
-                // in" for "possibly a duplicate person", and the trade is only
-                // closed when a human says which it is.
-                if binding.provisioned_at_login && !binding.is_operator_authored() {
-                    items.push(item(
-                        ItemKind::ProvisionedAtLogin,
-                        account,
-                        Some(binding.person_id),
-                        vec![binding.person_id],
-                    ));
-                }
+                items.extend(unconfirmed_item(account, binding));
             }
             None if !has_matchable_evidence(account) => {
                 rates.no_evidence += 1;
@@ -244,6 +240,31 @@ fn has_matchable_evidence(account: &EvidenceAccount) -> bool {
     account.email.is_some()
 }
 
+/// The item an already-bound account earns, when its binding still awaits a
+/// human. An operator's own decision never does, whatever wrote the row before
+/// it: re-asserting a binding IS the confirm act.
+fn unconfirmed_item(account: &EvidenceAccount, binding: &KnownBinding) -> Option<QueueItem> {
+    if binding.is_operator_authored() {
+        return None;
+    }
+
+    // Both trade an unusable account for a possibly duplicate person: a login
+    // mint so its owner could get in, a roster mint so the roster is complete.
+    // Neither trade is closed until a human says which person it is.
+    let kind = match binding.provenance {
+        Provenance::Resolved => return None,
+        Provenance::LoginBootstrap => ItemKind::ProvisionedAtLogin,
+        Provenance::RosterMint => ItemKind::MintedFromRoster,
+    };
+
+    Some(item(
+        kind,
+        account,
+        Some(binding.person_id),
+        vec![binding.person_id],
+    ))
+}
+
 fn item(
     kind: ItemKind,
     account: &EvidenceAccount,
@@ -298,7 +319,7 @@ mod tests {
         KnownBinding {
             person_id: Uuid::from_u128(person),
             author_person_id: Uuid::nil(),
-            provisioned_at_login: false,
+            provenance: Provenance::Resolved,
         }
     }
 
@@ -306,16 +327,137 @@ mod tests {
         KnownBinding {
             person_id: Uuid::from_u128(person),
             author_person_id: Uuid::nil(),
-            provisioned_at_login: true,
+            provenance: Provenance::LoginBootstrap,
         }
     }
 
+    /// An operator's own decision. Its provenance is `Resolved` because a verb
+    /// appends a NEW row carrying `operator-bind`, never a mint reason — so this
+    /// is what the binding read actually returns after a confirm.
     fn operator_bound(person: u128) -> KnownBinding {
         KnownBinding {
             person_id: Uuid::from_u128(person),
             author_person_id: Uuid::from_u128(0xAD_1119),
-            provisioned_at_login: false,
+            provenance: Provenance::Resolved,
         }
+    }
+
+    fn roster_bound(person: u128) -> KnownBinding {
+        KnownBinding {
+            person_id: Uuid::from_u128(person),
+            author_person_id: Uuid::nil(),
+            provenance: Provenance::RosterMint,
+        }
+    }
+
+    #[test]
+    fn a_roster_mint_asks_the_operator_whose_person_it_is() {
+        // The roster said a human exists and the batch gave them a person so the
+        // organisation is complete. Whether that person is already on the roster
+        // under another account is a question only a human can answer.
+        let mut bindings = HashMap::new();
+        bindings.insert(account("bamboohr", "e-1"), roster_bound(7));
+
+        let review = build(vec![described("bamboohr", "e-1", "Sam Example")], &bindings);
+
+        assert_eq!(review.items.len(), 1);
+        assert_eq!(review.items[0].kind, ItemKind::MintedFromRoster);
+        assert_eq!(review.items[0].bound_to, Some(Uuid::from_u128(7)));
+        assert_eq!(
+            review.items[0].candidates,
+            vec![Uuid::from_u128(7)],
+            "the minted person is the one being confirmed"
+        );
+        assert_eq!(
+            review.items[0].description.display_name.as_deref(),
+            Some("Sam Example")
+        );
+        assert_eq!(review.rates.bound, 1);
+        assert_eq!(review.rates.no_evidence, 0, "bound, so not unmatched");
+    }
+
+    #[test]
+    fn the_authorship_guard_outranks_any_provenance() {
+        // Defensive, and deliberately a state no writer produces today: a verb
+        // appends `operator-bind`, so an operator-authored row never carries a
+        // mint reason. Pinning the precedence means a future writer that does
+        // produce this pair cannot resurrect a decided account into the queue.
+        let mut bindings = HashMap::new();
+        bindings.insert(
+            account("bamboohr", "e-1"),
+            KnownBinding {
+                person_id: Uuid::from_u128(7),
+                author_person_id: Uuid::from_u128(0xAD_1119),
+                provenance: Provenance::RosterMint,
+            },
+        );
+
+        let review = build(vec![observed("bamboohr", "e-1", None)], &bindings);
+
+        assert!(
+            review.items.is_empty(),
+            "a human has said whose it is; nothing left to ask"
+        );
+    }
+
+    #[test]
+    fn a_binding_the_resolver_matched_asks_nothing() {
+        let mut bindings = HashMap::new();
+        bindings.insert(account("bamboohr", "e-1"), seed_bound(7));
+
+        let review = build(
+            vec![observed("bamboohr", "e-1", Some("sam@example.com"))],
+            &bindings,
+        );
+
+        assert!(
+            review.items.is_empty(),
+            "an address is the evidence; there is nothing to confirm"
+        );
+    }
+
+    #[test]
+    fn the_queue_orders_the_operators_work_before_the_unanswerable() {
+        // The discriminant is the sort key, so this pins the working order a
+        // reordered enum would silently change.
+        let contested_a = observed("github", "gh-1", Some("shared@example.com"));
+        let contested_b = observed("jira", "jr-1", Some("shared@example.com"));
+        // Unbound, and its address is claimed by both of the above: the one kind
+        // the enum ranks first, and the one a five-kind order test cannot omit.
+        let newcomer = observed("slack", "slk-1", Some("shared@example.com"));
+        let login = observed("github", "gh-9", None);
+        let roster = observed("bamboohr", "e-1", None);
+        let orphan = observed("zoom", "z-1", None);
+
+        let mut bindings = HashMap::new();
+        bindings.insert(contested_a.account.clone(), seed_bound(17));
+        bindings.insert(contested_b.account.clone(), seed_bound(23));
+        bindings.insert(login.account.clone(), login_bound(31));
+        bindings.insert(roster.account.clone(), roster_bound(37));
+
+        let review = build(
+            vec![contested_a, contested_b, newcomer, login, roster, orphan],
+            &bindings,
+        );
+
+        let kinds: Vec<ItemKind> = review.items.iter().map(|i| i.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ItemKind::Contested,
+                // Three conflicts for two bound accounts: the conflict pass
+                // shows every account of the divergent group, the newcomer
+                // included, so ONE account can hold two items. Anything
+                // comparing the queue's length against the rates has to survive
+                // that — the rates count each account once.
+                ItemKind::BindingConflict,
+                ItemKind::BindingConflict,
+                ItemKind::BindingConflict,
+                ItemKind::ProvisionedAtLogin,
+                ItemKind::MintedFromRoster,
+                ItemKind::NoEvidence,
+            ],
+        );
     }
 
     #[test]
@@ -467,7 +609,7 @@ mod tests {
             KnownBinding {
                 person_id: Uuid::from_u128(7),
                 author_person_id: Uuid::from_u128(99),
-                provisioned_at_login: true,
+                provenance: Provenance::LoginBootstrap,
             },
         );
 
@@ -549,7 +691,7 @@ mod tests {
             KnownBinding {
                 person_id: EXCLUDED_PERSON,
                 author_person_id: Uuid::from_u128(0xAD_1119),
-                provisioned_at_login: false,
+                provenance: Provenance::Resolved,
             },
         );
 

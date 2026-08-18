@@ -58,9 +58,9 @@ describe("PersonCell", () => {
     ).toBeInTheDocument();
   });
 
-  // A person minted at first sign-in carries no attributes until the resolver
-  // attaches the roster's; printing its id as a name would state the id twice
-  // and imply the journal knows something it does not.
+  // A person automation minted may carry no attributes at all; printing its id
+  // as a name would state the id twice and imply the journal knows something it
+  // does not.
   it("reads an attribute-less person as unnamed rather than naming it by its id", () => {
     render(<PersonCell person={person({})} />);
 
@@ -70,14 +70,21 @@ describe("PersonCell", () => {
     ).toHaveLength(1);
   });
 
-  // The picker is where the wrong person gets chosen, and a stub minted at a
-  // sign-in is the wrong side of a merge — its counterpart holds the history.
-  it("marks a person the journal knows only from a first sign-in", () => {
+  // The picker is where the wrong person gets chosen, and a stub automation
+  // minted is the wrong side of a merge — its counterpart holds the history.
+  // The badge must not name one origin: a sign-in and a roster listing both
+  // produce such a person, and the wording is the same warning either way.
+  it("marks a person the journal knows only from an automatic mint", () => {
     render(
       <PersonCell person={person({ display_name: "New Joiner", provisional: true })} />,
     );
 
-    expect(screen.getByText(/provisional/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/created by automation, not confirmed/i),
+    ).toBeInTheDocument();
+    // A roster mint is not a sign-in. Naming one origin tells an operator the
+    // wrong story about half of these people.
+    expect(screen.queryByText(/first sign-in/i)).not.toBeInTheDocument();
   });
 
   it("marks a terminated person", () => {

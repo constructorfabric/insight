@@ -60,7 +60,9 @@ echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
 # incremental inserts, positional union). Labels left the contract (they
 # derive in gold — macros/ai_labels.sql): DROP converges every table
-# state. conversation_count is data: ADD/MODIFY pin its position.
+# state. conversation_count and seat_status are data: ADD/MODIFY pin their
+# position. All four contributors in one deploy — a class unions them
+# positionally, so healing per-sync mismatches the column counts.
 # Guarded (staging tables exist only after the connector's first run);
 # idempotent (re-runs are no-ops).
 heal_ai_dev_staging() {
@@ -71,6 +73,8 @@ heal_ai_dev_staging() {
 ALTER TABLE staging.${table} DROP COLUMN IF EXISTS tool_label;
 ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS conversation_count Nullable(UInt32) AFTER session_count;
 ALTER TABLE staging.${table} MODIFY COLUMN conversation_count Nullable(UInt32) AFTER session_count;
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS seat_status Nullable(String) AFTER _version;
+ALTER TABLE staging.${table} MODIFY COLUMN seat_status Nullable(String) AFTER _version;
 SQL
 }
 

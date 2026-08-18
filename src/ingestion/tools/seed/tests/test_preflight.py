@@ -121,16 +121,24 @@ class _FakeClickHouse:
         columns: list[tuple[str, str, str]],
         counts: list[tuple[str, int]],
         total_rows: int = 0,
+        tables: list[tuple[str, str]] | None = None,
     ) -> None:
         self._columns = columns
         self._counts = counts
         self._total_rows = total_rows
+        # None means "the stand holds every target", which is the ordinary case.
+        self._tables = tables
         self.queries: list[str] = []
 
     def query(self, sql: str, parameters: dict[str, object] | None = None) -> _FakeResult:
         self.queries.append(sql)
         if "system.columns" in sql:
             return _FakeResult(list(self._columns))
+        if "system.tables" in sql:
+            from insight_seed.generators.base import RESET_TARGETS
+
+            present = list(RESET_TARGETS) if self._tables is None else self._tables
+            return _FakeResult([(schema, table) for schema, table in present])
         if sql.startswith("SELECT sum(n)"):
             return _FakeResult([(self._total_rows,)])
         return _FakeResult([(name, count) for name, count in self._counts])
@@ -321,6 +329,28 @@ class GuardCoverageTests(unittest.TestCase):
     def test_the_reset_surface_is_sized_for_the_operator(self) -> None:
         client = _FakeClickHouse(columns=[], counts=[], total_rows=4321)
         self.assertEqual(preflight._reset_surface_rows(client), 4321)
+
+    def test_a_target_the_stand_does_not_hold_yet_is_left_out_of_the_sizing(self) -> None:
+        """One absent relation fails the whole UNION, and the staging target is a
+        dbt model — it does not exist until the step this runs before has finished."""
+        client = _FakeClickHouse(
+            columns=[],
+            counts=[],
+            total_rows=7,
+            tables=[("silver", "class_people")],
+        )
+        self.assertEqual(preflight._reset_surface_rows(client), 7)
+
+        sizing = client.queries[-1]
+        self.assertIn("`silver`.`class_people`", sizing)
+        self.assertNotIn("claude_team__ai_invoice", sizing)
+
+    def test_a_stand_holding_none_of_the_targets_is_sized_as_nothing(self) -> None:
+        """`SELECT sum(n) FROM ()` is a syntax error, so an empty set must not
+        become a query at all."""
+        client = _FakeClickHouse(columns=[], counts=[], total_rows=7, tables=[])
+        self.assertEqual(preflight._reset_surface_rows(client), 0)
+        self.assertFalse([q for q in client.queries if q.startswith("SELECT sum(n)")])
 
 
 class SeedReasonNamespaceTests(unittest.TestCase):

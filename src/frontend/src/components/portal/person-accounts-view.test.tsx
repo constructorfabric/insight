@@ -28,14 +28,18 @@ const hooks = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
   search: {
-    data: undefined as { items: unknown[]; truncated?: boolean } | undefined,
+    data: undefined as { pages: { items: unknown[] }[] } | undefined,
     isFetching: false,
+    isFetchingNextPage: false,
     isError: false,
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
   },
 }));
-vi.mock("@/queries/identity-resolution", () => ({
+vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   usePersonAccounts: () => hooks.accounts,
-  usePersonSearch: () => hooks.search,
+  usePersonList: () => hooks.search,
   // The window's own behaviour belongs to account-detail.test.
   useAccountBinding: () => ({
     data: undefined,
@@ -71,19 +75,54 @@ beforeEach(() => {
   hooks.accounts.refetch.mockClear();
   hooks.search.data = undefined;
   portalRouter.reset();
-  portalRouter.set({ zone: "manage", item: "identities", mode: "people" });
+  portalRouter.set({ zone: "manage", item: "identities", mode: "person" });
 });
 
 describe("PersonAccountsView", () => {
-  it("asks for a person before showing anything", () => {
+  // With nobody chosen the mode IS the roster: an operator reviewing
+  // identities needs to see who exists, not guess a name to type.
+  it("lists the roster before anyone is chosen", () => {
+    hooks.search.data = {
+      pages: [
+        { items: [{ person_id: ANN, display_name: "Ann Lee", email: "ann@example.com" }] },
+      ],
+    };
     render(<PersonAccountsView />);
 
-    expect(screen.getByText(/nobody chosen yet/i)).toBeInTheDocument();
+    expect(screen.getByText("Ann Lee")).toBeInTheDocument();
+  });
+
+  // Choosing a person swaps the roster for their accounts and clears the terms
+  // that found them, so nothing on screen leads back — an operator comparing
+  // two people would be retyping, or editing the URL.
+  it("offers the way back to the roster once a person is chosen", async () => {
+    // A value the window cannot open, so the control is not under a modal: a
+    // live account key opens the case dialog, whose own Close is the way out of
+    // that. What this pins is that returning to the roster leaves no account
+    // selection behind, not that it can dismiss an open one.
+    portalRouter.set({ person: ANN, acct: "malformed" });
+    hooks.accounts.data = { person_id: ANN, accounts: [] };
+    render(<PersonAccountsView />);
+
+    await userEvent.click(screen.getByRole("button", { name: /back to the roster/i }));
+
+    expect(portalRouter.search.person).toBeUndefined();
+    expect(portalRouter.search.acct).toBeUndefined();
+  });
+
+  it("shows no way back while the roster itself is on screen", () => {
+    render(<PersonAccountsView />);
+
+    expect(
+      screen.queryByRole("button", { name: /back to the roster/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("puts the chosen person in the URL, so the view is a link", async () => {
     hooks.search.data = {
-      items: [{ person_id: ANN, display_name: "Ann Lee", email: "ann@example.com" }],
+      pages: [
+        { items: [{ person_id: ANN, display_name: "Ann Lee", email: "ann@example.com" }] },
+      ],
     };
     render(<PersonAccountsView />);
 

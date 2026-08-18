@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use crate::domain::seed::{KnownBinding, SeedObservationRow, SourceAccountKey, normalize_email};
 use crate::domain::seed_service::{ApplyCounts, SeedStore};
+use crate::infra::db::resolution_repo;
 
 /// MariaDB-backed [`SeedStore`] — wraps a connection so the persons-seed service
 /// can be driven against the real DB (or a fake in tests).
@@ -146,56 +147,18 @@ pub async fn known_account_bindings(
     db: &DatabaseConnection,
     tenant_id: Uuid,
 ) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
-    const SQL: &str = r"
-        WITH ranked AS (
-            SELECT
-                insight_source_type,
-                insight_source_id,
-                value_id AS source_account_id,
-                person_id,
-                author_person_id,
-                ROW_NUMBER() OVER (
-                    PARTITION BY insight_tenant_id, insight_source_type, insight_source_id, value_id
-                    ORDER BY created_at DESC, id DESC
-                ) AS rn
-            FROM persons
-            WHERE value_type = 'id'
-              AND value_id IS NOT NULL
-              AND insight_tenant_id = ?
-        )
-        SELECT insight_source_type, insight_source_id, source_account_id, person_id, author_person_id
-        FROM ranked
-        WHERE rn = 1
-    ";
-
-    let stmt = Statement::from_sql_and_values(
-        DbBackend::MySql,
-        SQL,
-        [tenant_id.as_bytes().to_vec().into()],
-    );
-
-    let rows = db.query_all(stmt).await?;
-    let mut map = HashMap::with_capacity(rows.len());
-    for row in rows {
-        let source_type: String = row.try_get("", "insight_source_type")?;
-        let source_id: Vec<u8> = row.try_get("", "insight_source_id")?;
-        let account_id: String = row.try_get("", "source_account_id")?;
-        let person_id: Vec<u8> = row.try_get("", "person_id")?;
-        let author_person_id: Vec<u8> = row.try_get("", "author_person_id")?;
-        map.insert(
-            SourceAccountKey {
-                source_type,
-                source_id: Uuid::from_slice(&source_id)?,
-                account_id,
-            },
-            KnownBinding {
-                person_id: Uuid::from_slice(&person_id)?,
-                author_person_id: Uuid::from_slice(&author_person_id)?,
-                provisioned_at_login: false,
-            },
-        );
-    }
-    Ok(map)
+    // One ranking of the journal's bindings, shared with the review surface: two
+    // copies would be two answers to "who holds this account", and the seed and
+    // the console must not disagree about that. Unbounded where the console
+    // accepts a ceiling — a binding this batch does not see is an account it
+    // mints a second person for.
+    Ok(resolution_repo::current_bindings_in_tenant(
+        db,
+        tenant_id,
+        resolution_repo::Ceiling::Unbounded,
+    )
+    .await?
+    .by_account)
 }
 
 /// Current `email → person_id` map for the tenant — the latest

@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.17.16.29-422c808" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.18.16.05-55c816a" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.17.16.29-422c808" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.18.16.05-55c816a" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -596,6 +596,14 @@ identityResolution:
   # `global.tenantDefaultId`, idempotently. The person row must already
   # exist in `persons` for that tenant. Empty string disables the runner.
   bootstrapAdminPersonId: ""
+  # The ONE source trusted to say who exists: the persons-seed mints a person for
+  # its accounts even with no address to match on, and the identities console
+  # asks an operator to confirm each one. Empty (the default) mints from an
+  # address only, and enabling it is not undone by disabling it — `persons` is
+  # append-only. A `source_type` as the connectors emit it, and it must be a
+  # source that can report deactivation, or leavers stay minted and queued. See
+  # the identity DESIGN §4.1.
+  rosterSourceType: ""
   # The umbrella generates `insight-identity-resolution-config` with every
   # APP__gears__identity_resolution__config__* env var filled in from the
   # auto-generated credentials (see templates/secrets.yaml). The subchart

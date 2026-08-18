@@ -3356,9 +3356,12 @@ spec:
       git_proxy_url:
         type: string
         description: >-
-          Base URL of the git-cli-proxy service (cluster-internal, e.g.
-          http://insight-git-cli-proxy:8085). No default: a wrong or absent
-          value must fail the check, not fall back somewhere.
+          Base URL of the git-cli-proxy service. Cluster-internal and
+          namespace-qualified, because the connector pod resolving it runs in
+          the Airbyte namespace rather than the proxy's, e.g.
+          http://insight-git-cli-proxy.insight.svc.cluster.local:8084. No
+          default: a wrong or absent value must fail the check, not fall back
+          somewhere.
         title: Git Proxy URL
         order: 4
       git_proxy_token:

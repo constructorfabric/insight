@@ -12,6 +12,36 @@ import { buildIdentityTree, PEOPLE, PEOPLE_BY_EMAIL } from "./registry";
 
 const defaultPerson = PEOPLE[0];
 
+/**
+ * A mock page holds far fewer rows than a real one. The synthetic roster is
+ * smaller than the console's page size, so honouring `?limit=` would put every
+ * row on page one and leave "show more" unreachable in mock mode — the affordance
+ * would have no dev or Storybook path at all.
+ */
+const MOCK_PAGE_SIZE = 8;
+
+/**
+ * One page of a listing, cursor and all — the mock pages the way the service
+ * does so the console's "show more" is exercised in mock mode too. The cursor
+ * carries the query it was issued for, and a mismatched one restarts, which is
+ * the behaviour the real cursor enforces by refusing.
+ */
+function pageOf<T>(items: T[], params: URLSearchParams, query: string) {
+  const limit = Math.min(Number(params.get("limit") ?? 20), MOCK_PAGE_SIZE);
+  const cursor = params.get("cursor");
+  const decoded = cursor ? JSON.parse(atob(cursor)) : null;
+  const offset = decoded?.q === query ? Number(decoded.at) : 0;
+
+  const slice = items.slice(offset, offset + limit);
+  const next = offset + slice.length;
+  const more = next < items.length;
+
+  return {
+    items: slice,
+    next_cursor: more ? btoa(JSON.stringify({ q: query, at: next })) : null,
+  };
+}
+
 // Stable synthetic session for mock/Storybook runs. The old in-code
 // MOCKS_ENABLED viewer path is gone; an authenticated viewer now comes from
 // the same `/auth/me` probe the real app uses, so the boot `loadSession()`
@@ -394,6 +424,35 @@ export const handlers = [
   http.get(
     "/api/identity/v1/resolution/accounts/:source/:sourceId/:accountId",
     ({ params }) => {
+      // The roster mint: bound, by the batch, with nothing but its own
+      // creation on the trail — the state an operator is asked to confirm.
+      if (params.accountId === "874") {
+        const minted = {
+          person_id: "01900000-0000-7000-8000-0000000000d0",
+          display_name: "Ravi Menon",
+          job_title: "Facilities Lead",
+        };
+        return HttpResponse.json({
+          source: params.source,
+          source_id: params.sourceId,
+          account_id: params.accountId,
+          person_id: minted.person_id,
+          history: [
+            {
+              person_id: minted.person_id,
+              // No `provisional` here: the server builds trail cards from the
+              // journal alone and never marks them, so claiming it would have
+              // the console verified against a shape it will not receive.
+              person: minted,
+              author_person_id: "00000000-0000-0000-0000-000000000000",
+              by_operator: false,
+              reason: "roster-mint",
+              recorded_at: "2026-08-14T06:30:00.000000",
+            },
+          ],
+          operations: [],
+        });
+      }
       if (params.accountId !== "dev-42") {
         return HttpResponse.json({
           source: params.source,
@@ -474,16 +533,12 @@ export const handlers = [
       });
     },
   ),
-  // Person search for the picker: multi-term AND over the seeded roster.
+  // The person listing: a blank query is the whole roster, terms narrow it,
+  // and both are paged the way the service pages them.
   http.get("/api/identity/v1/persons", ({ request }) => {
-    const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-    if (!q) {
-      return HttpResponse.json(
-        { type: "urn:insight:error:invalid_argument" },
-        { status: 400 },
-      );
-    }
-    const terms = q.toLowerCase().split(/\s+/);
+    const params = new URL(request.url).searchParams;
+    const q = params.get("q")?.trim() ?? "";
+    const terms = q ? q.toLowerCase().split(/\s+/) : [];
     // A term that parses as an id names a person, mirroring the service: it is
     // the only way to reach someone the journal holds no values for.
     const items = PEOPLE.filter((p) =>
@@ -493,7 +548,6 @@ export const handlers = [
           : [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(term)),
       ),
     )
-      .slice(0, 20)
       .map((p) => ({
         person_id: p.person_id,
         email: p.email,
@@ -501,21 +555,19 @@ export const handlers = [
         display_name: p.name,
         job_title: p.role,
         status: "active",
-      }));
-    return HttpResponse.json({ items, truncated: false, next_cursor: null });
-  }),
-  // Account search: the same roster, matched by what an account carries.
-  http.get("/api/identity/v1/resolution/accounts", ({ request }) => {
-    const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-    if (q.length < 3) {
-      return HttpResponse.json(
-        { type: "urn:insight:error:invalid_argument" },
-        { status: 400 },
+      }))
+      .sort((left, right) =>
+        (left.display_name ?? "").localeCompare(right.display_name ?? ""),
       );
-    }
+    return HttpResponse.json(pageOf(items, params, q));
+  }),
+  // The account listing: the same roster seen as accounts; blank lists them all.
+  http.get("/api/identity/v1/resolution/accounts", ({ request }) => {
+    const params = new URL(request.url).searchParams;
+    const q = params.get("q")?.trim() ?? "";
     const needle = q.toLowerCase();
-    const items = PEOPLE.filter((p) =>
-      [p.name, p.email].some((v) => v.toLowerCase().includes(needle)),
+    const items = PEOPLE.filter(
+      (p) => !needle || [p.name, p.email].some((v) => v.toLowerCase().includes(needle)),
     ).map((p, index) => ({
       source: index % 2 === 0 ? "github" : "gitlab",
       source_id: "01900000-0000-7000-8000-00000000aa01",
@@ -531,7 +583,12 @@ export const handlers = [
       },
       bound_by_operator: index % 3 === 0,
     }));
-    return HttpResponse.json({ items, truncated: false });
+    // The service orders by the label each row shows; the mock mirrors it so a
+    // mock run does not demonstrate an order the real listing never produces.
+    items.sort((left, right) =>
+      (left.email ?? left.account_id).localeCompare(right.email ?? right.account_id),
+    );
+    return HttpResponse.json(pageOf(items, params, q));
   }),
   // A merge preview's substance: two synthetic accounts for anyone.
   http.get(
@@ -638,6 +695,36 @@ export const handlers = [
           username: "new-joiner",
           bound_to: carol?.person_id,
           candidates: [card(carol, { provisional: true })],
+        },
+        {
+          // Added because the roster lists the account, not because anything
+          // matched: no address, so the person may already be on the roster
+          // under a different account. Bound, and still nobody's decision.
+          kind: "minted_from_roster",
+          source: "hr",
+          source_id: "01900000-0000-7000-8000-00000000aa03",
+          account_id: "874",
+          email: null,
+          username: null,
+          display_name: "Ravi Menon",
+          job_title: "Facilities Lead",
+          department: "Operations",
+          status: "Active",
+          manager_email: "carol.chen@example.com",
+          bound_to: "01900000-0000-7000-8000-0000000000d0",
+          candidates: [
+            {
+              person_id: "01900000-0000-7000-8000-0000000000d0",
+              email: null,
+              username: null,
+              display_name: "Ravi Menon",
+              job_title: "Facilities Lead",
+              status: "active",
+              // Minted for this very account, so nothing else is known about
+              // them and they may be someone the roster already lists.
+              provisional: true,
+            },
+          ],
         },
         {
           // Neither address nor handle — nothing automation can match on. The

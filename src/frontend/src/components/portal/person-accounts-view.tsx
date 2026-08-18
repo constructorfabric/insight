@@ -7,13 +7,12 @@
  * not theirs"). The verbs already accept those accounts; this is the door to
  * them.
  *
- * Deliberately entered through a person rather than a list of every binding:
- * an operator arrives holding a name, and a decision reached that way stays
- * attached to the question that prompted it.
+ * Entered through a person rather than through a list of every binding: the
+ * roster is browsable here, but a decision still starts from whose accounts
+ * these are, so it stays attached to the question that prompted it.
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { UserSearch } from "lucide-react";
 
 import type {
   AttentionItem,
@@ -26,13 +25,6 @@ import { PersonPicker } from "@/components/portal/person-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { accountKey } from "@/lib/identities/account-key";
@@ -52,10 +44,28 @@ export function PersonAccountsView() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {/* Choosing a person replaces the roster with their accounts AND clears
+          the terms that found them, so the way back is not on screen anywhere:
+          without this, leaving a person means editing the URL. */}
+      {person ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="-ms-2 self-start"
+          onClick={() => setSearch({ person: undefined, acct: undefined })}
+        >
+          {t("identities.person_accounts.back")}
+        </Button>
+      ) : null}
       <PersonPicker
         // Remounted per person so choosing one clears the terms that found
         // them: the results are a way in, not a view worth keeping open.
         key={person ?? "none"}
+        // With nobody chosen this mode IS the roster: an operator reviewing
+        // identities needs to see who exists, not guess a name to type.
+        browseWhenEmpty={!person}
+        className={person ? undefined : "max-h-[32rem]"}
         onPick={(next: PersonSummary) => {
           setPicked(next);
           setSearch({ person: next.person_id, acct: undefined });
@@ -66,19 +76,7 @@ export function PersonAccountsView() {
           personId={person}
           card={picked?.person_id === person ? picked : null}
         />
-      ) : (
-        <Empty className="rounded-lg border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <UserSearch />
-            </EmptyMedia>
-            <EmptyTitle>{t("identities.people.no_person")}</EmptyTitle>
-            <EmptyDescription>
-              {t("identities.people.no_person_description")}
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -101,7 +99,7 @@ function PersonAccounts({
       <ComingSoon
         variant="card"
         state="error"
-        label={t("identities.people.load_failed")}
+        label={t("identities.person_accounts.load_failed")}
         onRetry={() => void accounts.refetch()}
       />
     );
@@ -126,7 +124,7 @@ function PersonAccounts({
     <Card>
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
-          {t("identities.people.accounts")}
+          {t("identities.person_accounts.accounts")}
           <Badge variant="secondary">{entries.length}</Badge>
           <PersonCell person={card ?? { person_id: personId }} className="ms-auto" />
         </CardTitle>
@@ -134,7 +132,7 @@ function PersonAccounts({
       <CardContent className="flex flex-col gap-1 p-2 pt-0">
         {entries.length === 0 ? (
           <p className="p-3 text-sm text-muted-foreground">
-            {t("identities.people.no_accounts")}
+            {t("identities.person_accounts.no_accounts")}
           </p>
         ) : (
           entries.map((entry) => (
@@ -170,9 +168,13 @@ function AccountRow({
   const { t } = useTranslation();
   const label = entry.email?.trim() || entry.username?.trim() || entry.account_id;
   return (
+    // Same fixed columns, and the same width to earn them, as the account
+    // listing: the two lists sit one tab apart and reading either one down a
+    // column should feel the same.
     <div
       className={cn(
-        "flex items-center gap-2 rounded-md border p-3",
+        "grid grid-cols-1 items-center gap-2 rounded-md border p-3",
+        "lg:grid-cols-[minmax(0,1fr)_minmax(0,11rem)_auto]",
         selected ? "border-ring bg-muted" : "border-transparent",
       )}
     >
@@ -186,14 +188,14 @@ function AccountRow({
           it: undoing automation is routine, overruling a colleague is not. */}
       <Badge
         variant={entry.bound_by_operator ? "secondary" : "outline"}
-        className="ms-auto shrink-0 font-normal"
+        className="justify-self-start font-normal"
       >
         {entry.bound_by_operator
-          ? t("identities.people.by_operator")
-          : t("identities.people.by_automation")}
+          ? t("identities.person_accounts.by_operator")
+          : t("identities.person_accounts.by_automation")}
       </Badge>
       <Button type="button" size="xs" variant="outline" onClick={onOpen}>
-        {t("identities.people.open")}
+        {t("identities.person_accounts.open")}
       </Button>
     </div>
   );

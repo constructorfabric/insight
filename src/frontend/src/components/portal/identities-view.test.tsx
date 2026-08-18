@@ -28,11 +28,26 @@ const attention = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
 }));
-vi.mock("@/queries/identity-resolution", () => ({
+vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useAttention: () => attention.q,
-  useAccountSearch: () => ({ data: undefined, isFetching: false, isError: false }),
-  // The people mode has its own test file; here it only has to mount.
-  usePersonSearch: () => ({ data: undefined, isFetching: false, isError: false }),
+  useAccountList: () => ({
+    data: undefined,
+    isFetching: false,
+    isFetchingNextPage: false,
+    isError: false,
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
+  }),
+  // The person mode has its own test file; here it only has to mount.
+  usePersonList: () => ({
+    data: undefined,
+    isFetching: false,
+    isFetchingNextPage: false,
+    isError: false,
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
+  }),
   usePersonAccounts: () => ({
     data: undefined,
     isLoading: false,
@@ -279,6 +294,40 @@ describe("IdentitiesView", () => {
     expect(screen.getByRole("button", { name: /new-joiner/i })).toBeInTheDocument();
   });
 
+  // A roster mint completes the organisation before anyone matched the account
+  // to a human. Bound is not decided here either: the person may already be on
+  // the roster under another account, so the mint needs a group of its own
+  // rather than the one that says "nothing to match on".
+  it("keeps a roster-minted binding on the queue as its own kind", () => {
+    attention.q.data = {
+      items: [
+        item({
+          kind: "minted_from_roster",
+          account_id: "874",
+          email: null,
+          username: null,
+          display_name: "Ravi Menon",
+          bound_to: "01900000-0000-7000-8000-0000000000d0",
+          candidates: [
+            {
+              person_id: "01900000-0000-7000-8000-0000000000d0",
+              display_name: "Ravi Menon",
+            },
+          ],
+        }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    expect(
+      screen.getByText(/added from the roster without an address/i),
+    ).toBeInTheDocument();
+    // Its own group, not the catch-all: an unknown kind falls into "Needs
+    // review", which is exactly what dropping it from KIND_ORDER would do.
+    expect(screen.queryByText(/needs review/i)).not.toBeInTheDocument();
+  });
+
   it("renders candidates as person cells", () => {
     attention.q.data = {
       items: [
@@ -507,10 +556,14 @@ describe("IdentitiesView", () => {
 
     await userEvent.click(screen.getByRole("tab", { name: /a person and their accounts/i }));
 
-    expect(portalRouter.search.mode).toBe("people");
+    expect(portalRouter.search.mode).toBe("person");
     // A case picked in the queue means nothing in a list it is not part of.
     expect(portalRouter.search.acct).toBeUndefined();
-    expect(screen.getByText(/nobody chosen yet/i)).toBeInTheDocument();
+    // The mode it switched TO is on screen, so the cleared selection is not
+    // just an empty URL over the old surface.
+    expect(
+      screen.getByRole("searchbox", { name: /search people/i }),
+    ).toBeInTheDocument();
   });
 
   it("falls back to the queue when the URL names a mode that does not exist", () => {
@@ -519,6 +572,22 @@ describe("IdentitiesView", () => {
     render(<IdentitiesView />);
 
     expect(screen.getByRole("button", { name: /dev42@example\.com/i })).toBeInTheDocument();
+  });
+
+  // A mode value this console used to publish. Anyone holding such a link would
+  // otherwise land on the queue while the address bar still claimed the person
+  // view — the URL and the screen disagreeing is worse than either alone.
+  it("opens the person view for the mode value an earlier release published", () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    portalRouter.set({ zone: "manage", item: "identities", mode: "people" });
+    render(<IdentitiesView />);
+
+    expect(
+      screen.getByRole("searchbox", { name: /search people/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /dev42@example\.com/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers a retry on a failed load", async () => {
