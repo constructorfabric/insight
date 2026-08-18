@@ -1,4 +1,4 @@
-# `prod` — the InsightCfabric stand (insight-beta.cfabric.org)
+# `prod` — the InsightCfabric stand (insight.cfabric.org)
 
 Gitops environment for the production-like stand, shaped after the
 insight-gitops reference flow: inventory-driven targets, flat per-env

@@ -94,7 +94,7 @@ clients:
       - insight
     optionalClientScopes: []
     redirectUris:
-      - https://insight-beta.cfabric.org/auth/callback
+      - https://insight.cfabric.org/auth/callback
     webOrigins: []
 
 # GitHub login, brokered (this realm's only IdP — there are no realm users,

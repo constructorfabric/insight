@@ -6,7 +6,7 @@
 # is a Gateway API spec guarantee now: across every HTTPRoute attached to a
 # listener, the longest PathPrefix match wins.
 #
-# This file is a TEMPLATE: insight-beta.cfabric.org is substituted per stand by
+# This file is a TEMPLATE: insight.cfabric.org is substituted per stand by
 # render_manifest from INSIGHT_HOST in stands/*.env. Apply it through
 # scripts/deploy-envoy-gateway.sh, never with a bare `kubectl apply -f` - the
 # placeholder is not a valid hostname and the Gateway would reject it.
@@ -43,7 +43,7 @@ spec:
     - name: https
       protocol: HTTPS
       port: 443
-      hostname: insight-beta.cfabric.org
+      hostname: insight.cfabric.org
       tls:
         mode: Terminate
         certificateRefs:

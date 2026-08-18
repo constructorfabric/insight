@@ -2,7 +2,7 @@
 ## `prod` — the InsightCfabric production-like stand.
 ##
 ## OpenStack Magnum Kubernetes 1.35 (Cilium), 3 masters + 3 workers at
-## 16 vCPU / 32 GB, published at insight-beta.cfabric.org behind Cloudflare
+## 16 vCPU / 32 GB, published at insight.cfabric.org behind Cloudflare
 ## (SSL mode "Full"; the origin certificate is a self-signed in-cluster CA).
 ##
 ## TOPOLOGY DEVIATION from the two-namespace layout this inventory schema
@@ -31,7 +31,7 @@ protected: true # production-like: destructive make targets must refuse
 # gitignored secrets.local.env (APISERVER / EDGE_LB_IP) — see
 # secrets.local.env.template. Only the public hostname stays here.
 edge:
-  host: insight-beta.cfabric.org
+  host: insight.cfabric.org
 
 # Public edge notes: Cloudflare-proxied; zone SSL mode must stay "Full" (origin
 # cert is the self-signed insight-ca chain — "Full (strict)" rejects it,

@@ -1,6 +1,6 @@
 ##
 ## Chart values for the `prod` environment — the InsightCfabric stand
-## (public host insight-beta.cfabric.org, GitHub broker login, ADR-0003).
+## (public host insight.cfabric.org, GitHub broker login, ADR-0003).
 ##
 ## Snapshot of insight-deployment's insight/values.yaml rendered for this
 ## stand's hostname, merged with its stands/prod/insight-values.yaml sizing
@@ -14,7 +14,7 @@ credentials:
 
 keycloak:
   deploy: true
-  hostname: https://insight-beta.cfabric.org/kc
+  hostname: https://insight.cfabric.org/kc
   admin:
     existingSecret: insight-keycloak-admin
   database:
@@ -27,7 +27,7 @@ keycloak:
       key: mariadb-password
   route:
     enabled: true
-    host: insight-beta.cfabric.org
+    host: insight.cfabric.org
     parentRef:
       name: insight
       namespace: envoy-gateway-system
@@ -107,7 +107,7 @@ gateway:
   replicaCount: 1
   route:
     enabled: true
-    host: insight-beta.cfabric.org
+    host: insight.cfabric.org
     parentRef:
       name: insight
       namespace: envoy-gateway-system
@@ -129,17 +129,17 @@ authenticator:
   # with explicit authorization and audit logging instead of flipping this.
   overrideEnabled: false
   csrfOrigins:
-    - https://insight-beta.cfabric.org
+    - https://insight.cfabric.org
   tlsDiscovery:
     enabled: true
     issuerRef:
       name: insight-ca
       kind: ClusterIssuer
   oidc:
-    issuerUrl: https://insight-beta.cfabric.org/kc/realms/insight-broker
+    issuerUrl: https://insight.cfabric.org/kc/realms/insight-broker
     clientId: insight-authenticator
     clientSecret: ''
-    redirectUri: https://insight-beta.cfabric.org/auth/callback
+    redirectUri: https://insight.cfabric.org/auth/callback
     scopes:
       - openid
     sourceType: github
