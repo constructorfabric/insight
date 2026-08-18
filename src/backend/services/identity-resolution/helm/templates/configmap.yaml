@@ -119,9 +119,9 @@ data:
       identity-resolution:
         config:
           database_url: ""
-          org_chart_source_type: {{ .Values.identityResolution.orgChartSourceType | quote }}
-          expand_subordinates: {{ .Values.identityResolution.expandSubordinates }}
-          max_depth: {{ .Values.identityResolution.maxDepth }}
+          org_chart_source_type: {{ .Values.orgChartSourceType | quote }}
+          expand_subordinates: {{ .Values.expandSubordinates }}
+          max_depth: {{ .Values.maxDepth }}
           clickhouse_url: ""
           clickhouse_database: "identity"
           clickhouse_user: ""
