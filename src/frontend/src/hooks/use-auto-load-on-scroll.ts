@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Load the next page when the end of a list scrolls into view.
@@ -23,7 +23,11 @@ export function useAutoLoadOnScroll({
   fetchNextPage: () => unknown;
   root?: React.RefObject<HTMLElement | null>;
 }): (node: HTMLElement | null) => void {
-  const marker = useRef<HTMLElement | null>(null);
+  // State, not a ref: the observer has to be re-created for a marker element
+  // that was replaced — remounted with the list it sits in, say — and a ref
+  // would leave it watching a node no longer in the document, which reports
+  // nothing and stops the list loading for good.
+  const [marker, setMarker] = useState<HTMLElement | null>(null);
   // Read through a ref inside the observer: the callback outlives the render it
   // was created in, and a stale `hasNextPage` there would either stop loading
   // for good or ask for a page past the last one.
@@ -33,8 +37,7 @@ export function useAutoLoadOnScroll({
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   useEffect(() => {
-    const node = marker.current;
-    if (node === null) return;
+    if (marker === null) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -48,13 +51,17 @@ export function useAutoLoadOnScroll({
       // reaches the bottom rather than after they have already stopped there.
       { root: root?.current ?? null, rootMargin: "200px" },
     );
-    observer.observe(node);
+    observer.observe(marker);
     return () => observer.disconnect();
-    // `hasNextPage` re-runs it because the marker unmounts with the last page:
-    // the observer has to pick the new node up when there is more to load.
-  }, [hasNextPage, root]);
+    // INVARIANT: every dep here exists to RE-OBSERVE, which is the only way to
+    // re-read a marker that never moved — an observer reports a crossing, and
+    // `observe()` reporting the current state is what stands in for one.
+    //
+    // `isFetchingNextPage` is the load-bearing one. A page that lands without
+    // pushing the marker out of view — every row filtered out by `excludeIds`,
+    // or a list shorter than its own scroller — crosses nothing, so without
+    // re-observing here the list would stop after exactly one page.
+  }, [marker, hasNextPage, isFetchingNextPage, root]);
 
-  return useCallback((node: HTMLElement | null) => {
-    marker.current = node;
-  }, []);
+  return setMarker;
 }

@@ -184,10 +184,19 @@ export function PersonPicker({
               ))}
             </ul>
             {/* The page after this one is asked for when this marker nears the
-                viewport, so the roster continues instead of ending in a button. */}
+                viewport, so the roster continues instead of ending in a button.
+                The marker is always there while a page is unread — the observer
+                needs an element — but it only SAYS anything while that page is
+                on its way. */}
             {asked && list.hasNextPage ? (
-              <p ref={loadMore} className="p-2 text-sm text-muted-foreground">
-                {t("identities.picker.loading_more")}
+              <p
+                ref={loadMore}
+                aria-live="polite"
+                className="p-2 text-sm text-muted-foreground"
+              >
+                {list.isFetchingNextPage
+                  ? t("identities.picker.loading_more")
+                  : null}
               </p>
             ) : null}
           </div>

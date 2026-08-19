@@ -10,9 +10,15 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 
-import { installIntersectionObserver } from "./intersection-observer";
+import {
+  installIntersectionObserver,
+  scrollEndOutOfView,
+} from "./intersection-observer";
 
 installIntersectionObserver();
+// The stub keeps "the end is in view" across observers, so it has to be reset
+// between tests or one case that scrolled leaks into the next.
+afterEach(scrollEndOutOfView);
 
 // jsdom in vitest's worker pool can race against module init: modules
 // that read `window.localStorage` at top level (e.g. `use-settings.ts`)
