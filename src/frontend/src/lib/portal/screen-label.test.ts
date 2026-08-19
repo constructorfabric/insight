@@ -34,6 +34,38 @@ describe("screenLabel", () => {
     expect(screenLabel("/portal/task_delivery")).toBe("Task delivery");
   });
 
+  it("names a direction and the lens inside it", () => {
+    expect(screenLabel("/portal/directions/dev")).toBe("Directions › Development");
+    expect(screenLabel("/portal/directions/dev/git-output")).toBe(
+      "Directions › Development › Git output",
+    );
+    expect(screenLabel("/portal/directions/collab/files-sharing")).toBe(
+      "Directions › Collaboration › Files & sharing",
+    );
+  });
+
+  it("names the mode the identities console was opened in", () => {
+    expect(screenLabel("/portal/manage/identities/queue")).toBe(
+      "Manage › Identities › Review queue",
+    );
+    expect(screenLabel("/portal/manage/identities/person")).toBe(
+      "Manage › Identities › A person and their accounts",
+    );
+    expect(screenLabel("/portal/manage/identities/accounts")).toBe(
+      "Manage › Identities › An account and whose it is",
+    );
+  });
+
+  it("keeps a direction, lens or mode it cannot name rather than inventing one", () => {
+    expect(screenLabel("/portal/directions/nope")).toBe("Directions › nope");
+    expect(screenLabel("/portal/directions/dev/nope")).toBe(
+      "Directions › Development › nope",
+    );
+    expect(screenLabel("/portal/manage/identities/nope")).toBe(
+      "Manage › Identities › nope",
+    );
+  });
+
   it("keeps a path it cannot name rather than inventing one", () => {
     expect(screenLabel("/some/new/route")).toBe("/some/new/route");
     expect(screenLabel("/portal/manage/not-a-real-item")).toBe(

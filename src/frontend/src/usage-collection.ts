@@ -2,7 +2,13 @@ import type { RouterHistory } from "@tanstack/react-router";
 
 import { GROUPS } from "@/lib/insight/groups";
 import { resolveMode } from "@/lib/portal/identity-modes";
-import { DIRECTIONS, ZONES, zoneById, zoneItems } from "@/lib/portal/nav-model";
+import {
+  DIRECTIONS,
+  ZONES,
+  lensSlug,
+  zoneById,
+  zoneItems,
+} from "@/lib/portal/nav-model";
 import { type PortalSearch, validatePortalSearch } from "@/lib/portal/portal-search";
 import { recordPageView } from "@/telemetry";
 
@@ -62,11 +68,4 @@ function detailOf(
     return [resolveMode(search.mode)];
   }
   return [];
-}
-
-function lensSlug(lens: string): string {
-  return lens
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
 }
