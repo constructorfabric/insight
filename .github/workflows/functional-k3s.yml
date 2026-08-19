@@ -1,6 +1,6 @@
 name: Functional K3s Smoke
 
-# Fork-safe deployment smoke for the Insight gitops path:
+# Deployment smoke for the Insight gitops path, run after the merge:
 # 1. create a GitHub-hosted ephemeral K3s cluster
 # 2. use the committed functional-ci gitops environment
 # 3. run deploy/gitops Makefile targets for bootstrap, sealing, L2, and L3
@@ -8,20 +8,28 @@ name: Functional K3s Smoke
 
 on:
   workflow_dispatch:
-  # Merge-queue builds always bring the cluster up. The pull_request trigger
-  # stays unfiltered so the check reports on every PR — `changes` below decides
-  # which PRs get a cluster, and branch protection counts the skip as a pass
-  # for the ones that do not.
-  merge_group:
-  pull_request:
+  # Post-merge lane: the smoke deploys published images, so a pull request's
+  # unbuilt code cannot change its outcome — main is the cheapest place to
+  # prove the deploy surface. The check is not in the ruleset, so a plain
+  # paths filter can decide which pushes get a cluster; a push that skips
+  # reports nothing and blocks nothing.
+  push:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    # Everything the deploy reads: the gitops environment and the Makefile
+    # that drives it, the umbrella chart plus the service subcharts it
+    # packages, and this workflow. Service SOURCE is out — the smoke deploys
+    # published images, which reach the chart through a descriptor bump.
+    paths:
+      - "deploy/gitops/**"
+      - "charts/**"
+      - "src/backend/services/*/helm/**"
+      - ".github/workflows/functional-k3s.yml"
 
-# One run per PR; merge-queue builds get a unique group so a queue rebuild
-# can never cancel a batch mid-run.
+# A main run is the only proof that its own commit deploys — later pushes
+# queue behind it instead of cancelling it.
 concurrency:
-  group: functional-k3s-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+  group: functional-k3s-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -44,44 +52,8 @@ env:
   REDIS_PASSWORD: insightpass123
 
 jobs:
-  # Filtering here rather than with `paths:` on the trigger is deliberate: a
-  # workflow that never starts never reports a check, and this one is required.
-  changes:
-    name: Detect deploy-surface changes
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-    outputs:
-      run: ${{ steps.decide.outputs.run }}
-    steps:
-      - id: decide
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          # Everything the deploy reads: the gitops environment and the Makefile
-          # that drives it, the umbrella chart plus the service subcharts it
-          # packages, and this workflow. Service SOURCE is out — the smoke
-          # deploys published images, which reach it through a descriptor bump.
-          SURFACE: '^(deploy/gitops/|charts/|src/backend/services/[^/]+/helm/|\.github/workflows/functional-k3s\.yml$)'
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          touched=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
-            --jq '.[].filename' | grep -cE "${SURFACE}" || true)
-          [[ "${touched}" -gt 0 ]] && run=true || run=false
-
-          echo "run=${run}" >> "$GITHUB_OUTPUT"
-          echo "${touched} deploy-surface file(s) changed — cluster: ${run}" >> "$GITHUB_STEP_SUMMARY"
-
   cluster-smoke:
     name: K3s GitOps Deploy
-    needs: changes
-    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
