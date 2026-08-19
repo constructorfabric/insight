@@ -50,6 +50,24 @@ vi.mock("@/lib/portal/use-cohort-label", () => ({
 vi.mock("@/queries/ic-dashboard", () => ({
   useIcPerson: () => ({ data: mocks.tree, isPending: false, isLoading: false, isError: false, refetch: vi.fn() }),
 }));
+// `useOrgScope` reads the deployment's visibility policy, and its flat branch
+// reads the roster. This suite is about the view, so both answer statically.
+vi.mock("@/queries/identity-me", () => ({
+  useVisibilityPolicy: () => ({
+    policy: "org_chart",
+    isFlat: false,
+    isPending: false,
+  }),
+}));
+vi.mock("@/queries/visible-roster", () => ({
+  useVisibleRoster: () => ({
+    roster: [],
+    truncated: false,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
+}));
 vi.mock("@/queries/team-view", () => ({
   useTeamMembers: () => ({ data: mocks.members, isPending: false, isLoading: false, isError: false, refetch: vi.fn() }),
 }));
