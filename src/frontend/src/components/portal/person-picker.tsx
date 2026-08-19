@@ -14,7 +14,7 @@
  * name the operator came to type.
  */
 import { Search } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { PersonSummary } from "@/api/identity-client";
@@ -48,15 +48,36 @@ export function PersonPicker({
    * take the dialog over.
    */
   asSurface = false,
+  initialQuery = "",
+  onSettled,
 }: {
   onPick: (person: PersonSummary) => void;
   excludeIds?: string[];
   browseWhenEmpty?: boolean;
   asSurface?: boolean;
+  /** What the field starts with — a caller that remembers the terms elsewhere
+   *  hands them back here on the way in. Read once, on mount: while the field
+   *  is on screen it is the only source of truth for what it holds. */
+  initialQuery?: string;
+  /** The terms once the reader has stopped typing, for a caller that outlives
+   *  this field and wants them back when it returns. Fired debounced, not per
+   *  keystroke: a caller that stores them in the URL would otherwise navigate
+   *  on every letter. */
+  onSettled?: (query: string) => void;
 }) {
   const { t } = useTranslation();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const debounced = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
+  // Reported from an effect, not from the change handler: `debounced` is what
+  // the search itself runs on, so the caller is told exactly what was asked.
+  const settled = useRef(onSettled);
+  useEffect(() => {
+    settled.current = onSettled;
+  }, [onSettled]);
+  useEffect(() => {
+    settled.current?.(debounced);
+  }, [debounced]);
+
   const intent = browseWhenEmpty ? "browse" : "match";
   const asked = listsAnyone(debounced, intent);
   const list = usePersonList(debounced, intent);

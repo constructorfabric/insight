@@ -30,6 +30,14 @@ export interface PortalSearch {
   mode?: string;
   /** Person under inspection in the Identities person mode. */
   person?: string;
+  /**
+   * What was typed into the Identities person roster.
+   *
+   * In the URL rather than in the field's own state because choosing a person
+   * replaces the roster with their accounts — the field unmounts, and coming
+   * back to a blank one means finding the same person twice.
+   */
+  find?: string;
   /** Expanded direction + its active lens, within the Directions zone. */
   dir?: string;
   lens?: string;
@@ -79,6 +87,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     acct: str(raw.acct),
     mode: str(raw.mode),
     person: str(raw.person)?.toLowerCase(),
+    find: str(raw.find),
     dir: str(raw.dir),
     lens: str(raw.lens),
     // Lower-cased to match `normalizePersonId`: the same id reaches us from a
@@ -104,6 +113,7 @@ export const PORTAL_SEARCH_KEYS = [
   "acct",
   "mode",
   "person",
+  "find",
   "dir",
   "lens",
   "scope",

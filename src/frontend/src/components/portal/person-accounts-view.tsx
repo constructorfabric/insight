@@ -36,7 +36,7 @@ import { cn } from "@/lib/utils";
 
 export function PersonAccountsView() {
   const { t } = useTranslation();
-  const { person } = usePortalSearch();
+  const { person, find } = usePortalSearch();
   const setSearch = useSetPortalSearch();
   // The URL owns which person is open; this remembers the card the operator
   // picked, so the heading names them. Arriving by link there is no card —
@@ -45,9 +45,10 @@ export function PersonAccountsView() {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
-      {/* Choosing a person replaces the roster with their accounts AND clears
-          the terms that found them, so the way back is not on screen anywhere:
-          without this, leaving a person means editing the URL. */}
+      {/* Choosing a person replaces the roster with their accounts, so the way
+          back is not on screen anywhere: without this, leaving a person means
+          editing the URL. The terms that found them are kept, so coming back
+          lands on the same list rather than on a blank field. */}
       {person ? (
         <Button
           type="button"
@@ -74,6 +75,13 @@ export function PersonAccountsView() {
         <PersonPicker
           browseWhenEmpty
           asSurface
+          // The roster's terms live in the URL: picking a person unmounts this
+          // field, and a reader who comes back should not have to find the same
+          // person twice. `replace`, because typing is not a place to go back to.
+          initialQuery={find ?? ""}
+          onSettled={(query) =>
+            setSearch({ find: query || undefined }, { replace: true })
+          }
           onPick={(next: PersonSummary) => {
             setPicked(next);
             setSearch({ person: next.person_id, acct: undefined });
