@@ -60,5 +60,19 @@
    it lands as a real bronze table and needs the same RMT dedup. No staging
    model reads it — promotion only caps its growth. #}
 {% do promote_bronze_to_rmt(table='bronze_jira.jira_issue_keys',    order_by='unique_key') %}
+{# Boards and the four Jira catalogues are full-refresh streams: every sync
+   re-appends the whole set, so a plain MergeTree grows by one copy per sync
+   and `FINAL` on it raises `Storage MergeTree doesn't support FINAL` (#1886).
+   They were absent from this list, so they never left MergeTree.
+   jira_boards additionally needs the NULL-key filter: its inline schema only
+   just gained the AddFields columns, so rows synced before that carry a NULL
+   unique_key — and RMT treats NULL keys as equal, which would collapse them
+   into one phantom row. The stream is full refresh, so the first post-deploy
+   sync rewrites the complete keyed set and the filtered rows lose nothing. #}
+{% do promote_bronze_to_rmt(table='bronze_jira.jira_boards',        order_by='unique_key', where='unique_key IS NOT NULL') %}
+{% do promote_bronze_to_rmt(table='bronze_jira.jira_statuses',      order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_jira.jira_issuetypes',    order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_jira.jira_priorities',    order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_jira.jira_resolutions',   order_by='unique_key') %}
 
 SELECT 1 AS promoted

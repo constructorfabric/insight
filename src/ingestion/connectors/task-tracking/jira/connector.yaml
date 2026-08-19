@@ -40,9 +40,7 @@ definitions:
         # jira_project_discovery partition router (see definitions), not from
         # config — the manual jira_project_keys allowlist is gone.
         jql: >-
-          project = "{{ stream_partition.project_key }}" AND updated >= "{{
-          stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time
-          }}" ORDER BY updated ASC
+          project = "{{ stream_partition.project_key }}" AND updated >= "{{ stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time }}" ORDER BY updated ASC
         expand: names
         fields: "*all"
     SimpleRetriever:
@@ -123,8 +121,7 @@ definitions:
             path:
               - last_issue_update_time
             value: >-
-              {{ (record.get('insight') or {}).get('lastIssueUpdateTime') or
-              '1970-01-01T00:00:00.000+0000' }}
+              {{ (record.get('insight') or {}).get('lastIssueUpdateTime') or '1970-01-01T00:00:00.000+0000' }}
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: last_issue_update_time
@@ -254,6 +251,22 @@ streams:
             type:
               - boolean
               - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
         required:
           - id
         additionalProperties: true
@@ -274,8 +287,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - collected_at
@@ -318,8 +330,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - field_id
@@ -522,8 +533,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - project_id
@@ -730,8 +740,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['accountId'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['accountId'] }}
           - type: AddedFieldDefinition
             path:
               - account_id
@@ -949,8 +958,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['key'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['key'] }}
           - type: AddedFieldDefinition
             path:
               - jira_id
@@ -983,14 +991,12 @@ streams:
             path:
               - assignee_id
             value: >-
-              {{ ((record.get('fields') or {}).get('assignee') or
-              {}).get('accountId') }}
+              {{ ((record.get('fields') or {}).get('assignee') or {}).get('accountId') }}
           - type: AddedFieldDefinition
             path:
               - reporter_id
             value: >-
-              {{ ((record.get('fields') or {}).get('reporter') or
-              {}).get('accountId') }}
+              {{ ((record.get('fields') or {}).get('reporter') or {}).get('accountId') }}
           - type: AddedFieldDefinition
             path:
               - parent_id
@@ -1003,8 +1009,7 @@ streams:
             path:
               - story_points
             value: >-
-              {{ (record.get('fields') or {}).get(config.get('jira_story_points_field_id',
-              'customfield_10016')) or (record.get('fields') or {}).get('story_points') }}
+              {{ (record.get('fields') or {}).get(config.get('jira_story_points_field_id', 'customfield_10016')) or (record.get('fields') or {}).get('story_points') }}
           - type: AddedFieldDefinition
             path:
               - due_date
@@ -6447,8 +6452,7 @@ streams:
         error_handler:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
         url: >-
-          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{
-          stream_partition.id_readable }}/changelog
+          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{ stream_partition.id_readable }}/changelog
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
@@ -6491,8 +6495,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - id_readable
@@ -6665,8 +6668,7 @@ streams:
         error_handler:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
         url: >-
-          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{
-          stream_partition.id_readable }}/comment
+          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{ stream_partition.id_readable }}/comment
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
@@ -6709,8 +6711,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - comment_id
@@ -6809,134 +6810,8 @@ streams:
                   - "null"
           body:
             type:
-              - object
+              - string
               - "null"
-            properties:
-              version:
-                type:
-                  - number
-                  - "null"
-              type:
-                type:
-                  - string
-                  - "null"
-              content:
-                type:
-                  - array
-                  - "null"
-                items:
-                  type:
-                    - object
-                    - "null"
-                  properties:
-                    type:
-                      type:
-                        - string
-                        - "null"
-                    content:
-                      type:
-                        - array
-                        - "null"
-                      items:
-                        type:
-                          - object
-                          - "null"
-                        properties:
-                          type:
-                            type:
-                              - string
-                              - "null"
-                          text:
-                            type:
-                              - string
-                              - "null"
-                          marks:
-                            type:
-                              - array
-                              - "null"
-                            items:
-                              type:
-                                - object
-                                - "null"
-                              properties:
-                                type:
-                                  type:
-                                    - string
-                                    - "null"
-                                attrs:
-                                  type:
-                                    - object
-                                    - "null"
-                                  properties:
-                                    href:
-                                      type:
-                                        - string
-                                        - "null"
-                          attrs:
-                            type:
-                              - object
-                              - "null"
-                            properties:
-                              url:
-                                type:
-                                  - string
-                                  - "null"
-                          content:
-                            type:
-                              - array
-                              - "null"
-                            items:
-                              type:
-                                - object
-                                - "null"
-                              properties:
-                                type:
-                                  type:
-                                    - string
-                                    - "null"
-                                content:
-                                  type:
-                                    - array
-                                    - "null"
-                                  items:
-                                    type:
-                                      - object
-                                      - "null"
-                                    properties:
-                                      type:
-                                        type:
-                                          - string
-                                          - "null"
-                                      text:
-                                        type:
-                                          - string
-                                          - "null"
-                                      marks:
-                                        type:
-                                          - array
-                                          - "null"
-                                        items:
-                                          type:
-                                            - object
-                                            - "null"
-                                          properties:
-                                            type:
-                                              type:
-                                                - string
-                                                - "null"
-                    attrs:
-                      type:
-                        - object
-                        - "null"
-                      properties:
-                        level:
-                          type:
-                            - number
-                            - "null"
-                        order:
-                          type:
-                            - number
-                            - "null"
           updateAuthor:
             type:
               - object
@@ -7065,8 +6940,7 @@ streams:
         error_handler:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
         url: >-
-          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{
-          stream_partition.id_readable }}/worklog
+          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{ stream_partition.id_readable }}/worklog
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
@@ -7109,8 +6983,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - worklog_id
@@ -7135,8 +7008,7 @@ streams:
             path:
               - comment
             value: >-
-              {{ record.get('comment', '') | tojson if record.get('comment') is
-              mapping else record.get('comment', '') }}
+              {{ record.get('comment', '') | tojson if record.get('comment') is mapping else record.get('comment', '') }}
           - type: AddedFieldDefinition
             path:
               - collected_at
@@ -7346,8 +7218,7 @@ streams:
         error_handler:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
         url: >-
-          {{ config['jira_instance_url'] }}/rest/agile/1.0/board/{{
-          stream_partition.board_id }}/sprint
+          {{ config['jira_instance_url'] }}/rest/agile/1.0/board/{{ stream_partition.board_id }}/sprint
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
@@ -7399,8 +7270,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - sprint_id
@@ -7559,8 +7429,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - status_id
@@ -7729,8 +7598,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - priority_id
@@ -7832,8 +7700,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - issuetype_id
@@ -7977,8 +7844,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - resolution_id
@@ -8088,9 +7954,7 @@ streams:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
         request_parameters:
           jql: >-
-            project = "{{ stream_partition.project_key }}" AND updated >= "{{
-            stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time
-            }}" ORDER BY updated ASC
+            project = "{{ stream_partition.project_key }}" AND updated >= "{{ stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time }}" ORDER BY updated ASC
           fields: updated
         url: "{{ config['jira_instance_url'] }}/rest/api/3/search/jql"
       partition_router:
@@ -8157,8 +8021,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['key'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['key'] }}
           - type: AddedFieldDefinition
             path:
               - id_readable
@@ -8267,8 +8130,7 @@ spec:
       jira_story_points_field_id:
         type: string
         description: >-
-          Instance-specific custom field ID for Story Points (e.g.,
-          customfield_10016 for Next-gen). Leave default if unsure.
+          Instance-specific custom field ID for Story Points (e.g., customfield_10016 for Next-gen). Leave default if unsure.
         title: Story Points Field ID
         default: customfield_10016
         order: 8

@@ -27,5 +27,5 @@ SELECT
 FROM (
     SELECT * FROM {{ source('bronze_jira', 'jira_comments') }}
     ORDER BY _airbyte_extracted_at DESC
-    LIMIT 1 BY _airbyte_raw_id
+    LIMIT 1 BY unique_key
 ) c
