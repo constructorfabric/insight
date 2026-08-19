@@ -35,9 +35,12 @@
 -- descriptor bump. Silver still rebuilds freely: it reads this model, not
 -- Bronze. To rebuild deliberately, drop the table — the empty-table guard below
 -- then reloads the whole Bronze window.
+-- The `delete+insert` strategy does not weaken that: it deletes only the keys
+-- the incoming set carries, which is the re-evaluated window below, so a month
+-- outside it is never in the delete's scope.
 {{ config(
     materialized='incremental',
-    incremental_strategy='append',
+    incremental_strategy='delete+insert',
     unique_key='unique_key',
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
