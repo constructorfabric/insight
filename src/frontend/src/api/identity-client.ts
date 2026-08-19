@@ -213,9 +213,11 @@ export interface AccountSearchResponse {
 export async function searchAccounts(
   q: string,
   page: PageRequest = {},
+  signal?: AbortSignal,
 ): Promise<AccountSearchResponse> {
   const res = await fetchWithAuth(
     `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}${pageParams(page)}`,
+    { signal },
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -364,6 +366,30 @@ export async function bindAccount(args: {
   });
 }
 
+/** One binding per account, in one call — the wire shape `bind` always took. */
+export interface WireBinding {
+  account: WireAccountRef;
+  person_id: string;
+}
+
+/**
+ * Bind MANY accounts in one call.
+ *
+ * The endpoint caps a call at 1000 bindings; a caller with more sends more than
+ * one call and folds the answers, since one operator decision is owed one answer.
+ */
+export const MAX_BINDINGS_PER_CALL = 1000;
+
+export async function bindAccounts(args: {
+  bindings: WireBinding[];
+  comment?: string;
+}): Promise<CorrectionResponse> {
+  return postCorrection("bind", {
+    bindings: args.bindings,
+    comment: args.comment ?? "",
+  });
+}
+
 /** Declare two persons one human: every account of `source` moves to `target`. */
 export async function mergePersons(args: {
   source_person_id: string;
@@ -427,9 +453,11 @@ function pageParams(page: PageRequest): string {
 export async function searchPersons(
   q: string,
   page: PageRequest = {},
+  signal?: AbortSignal,
 ): Promise<PersonSearchResponse> {
   const res = await fetchWithAuth(
     `${BASE}/persons?q=${encodeURIComponent(q)}${pageParams(page)}`,
+    { signal },
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);

@@ -5,10 +5,10 @@
  * unknown kind still shows up (the vocabulary is open by contract); accounts
  * arguing over the same people are ONE case rather than as many rows as the
  * server sends; selection lives in the URL so an operator can share a link;
- * and the strip leads with the queue's own size — the one figure the operator
- * can act on — over tenant-wide binding states.
+ * and the strip sizes the tenant in four figures, colouring only the one that
+ * is the operator's own work.
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -27,10 +27,28 @@ const attention = vi.hoisted(() => ({
     isError: false,
     refetch: vi.fn(),
   },
+  merge: { mutateAsync: vi.fn() },
+  bulkBind: { mutateAsync: vi.fn(), reset: vi.fn() },
 }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useAttention: () => attention.q,
+  useMergePersons: () => attention.merge,
+  useBindAccounts: () => attention.bulkBind,
+  usePersonAccountsMany: () => ({
+    ready: true,
+    failed: false,
+    accounts: [
+      {
+        source: "github",
+        source_id: "01900000-0000-7000-8000-00000000aa01",
+        account_id: "dev-42",
+        email: "dev42@example.com",
+      },
+    ],
+    refetch: vi.fn(),
+  }),
   useAccountList: () => ({
     data: undefined,
     isFetching: false,
@@ -83,6 +101,12 @@ function item(over: Partial<AttentionItem>): AttentionItem {
   };
 }
 
+/** The strip's tiles in DOM order, each as its figure followed by its label. */
+function strip(): string[] {
+  const grid = screen.getByText("Accounts").closest("div.grid");
+  return [...(grid?.children ?? [])].map((tile) => tile.textContent ?? "");
+}
+
 beforeEach(() => {
   attention.q.data = undefined;
   attention.q.isLoading = false;
@@ -93,6 +117,42 @@ beforeEach(() => {
 });
 
 describe("IdentitiesView", () => {
+  it("sizes the tenant in one strip: every account, the backlog, the excluded", () => {
+    attention.q.data = { items: [item({}), item({ account_id: "a2" })], rates: RATES };
+    render(<IdentitiesView />);
+
+    expect(strip()).toEqual(["60Accounts", "2Needs attention", "1Excluded"]);
+  });
+
+  // A journal-wide person count never falls after a merge and only rises after a
+  // detach, so it read as a roster size while measuring something else. A figure
+  // that has to be explained every time it is read is worse than none.
+  it("prints no person total at all", () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    render(<IdentitiesView />);
+
+    expect(screen.queryByText(/persons/i)).not.toBeInTheDocument();
+  });
+
+  // The resolver's own intermediate states are its business, not the
+  // operator's: they were tiles once, and putting them back buries the one
+  // figure that is work.
+  it("keeps the resolver's internal states out of the strip", () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    render(<IdentitiesView />);
+
+    expect(screen.queryByText(/bound to a person/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unbound/i)).not.toBeInTheDocument();
+    expect(strip()).toHaveLength(3);
+  });
+
+  it("shows the backlog as a floor when the server cut the list", () => {
+    attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
+    render(<IdentitiesView />);
+
+    expect(strip()[1]).toBe("1+Needs attention");
+  });
+
   it("celebrates the empty queue instead of rendering a blank table", () => {
     attention.q.data = { items: [], rates: RATES };
     render(<IdentitiesView />);
@@ -236,6 +296,106 @@ describe("IdentitiesView", () => {
     expect(screen.getAllByRole("button", { name: /dev42@example\.com/i })).toHaveLength(3);
   });
 
+  // The merge lives on the CASE, not on the account: the case is where the
+  // people are listed, and pressing a person's row is what states the
+  // direction — that one stays and the rest go into them.
+  it("offers a merge on each person of a disputed case, naming what it absorbs", () => {
+    const candidates = [
+      { person_id: "01900000-0000-7000-8000-0000000000a0", display_name: "Ann Lee" },
+      { person_id: "01900000-0000-7000-8000-0000000000b0", display_name: "Bob Park" },
+    ];
+    attention.q.data = {
+      items: [item({ kind: "contested", account_id: "a1", candidates })],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    expect(
+      screen.getAllByRole("button", { name: /keep this person/i }),
+    ).toHaveLength(2);
+    // Two people, so the caption can name the other one rather than count them.
+    expect(screen.getByText(/Bob Park's accounts move here/i)).toBeInTheDocument();
+    expect(screen.getByText(/Ann Lee's accounts move here/i)).toBeInTheDocument();
+  });
+
+  // The one place a click becomes a merge DIRECTION. Without this, swapping the
+  // survivor and the absorbed here — "Keep Ann Lee" erasing Ann — leaves every
+  // other test in the repo green, because the dialog is only ever tested with
+  // props handed to it directly.
+  it("merges the rest into the person whose row was pressed", async () => {
+    const ANN = {
+      person_id: "01900000-0000-7000-8000-0000000000a0",
+      display_name: "Ann Lee",
+    };
+    const BOB = {
+      person_id: "01900000-0000-7000-8000-0000000000b0",
+      display_name: "Bob Park",
+    };
+    attention.merge.mutateAsync.mockResolvedValue({
+      applied: 1,
+      already_decided: 0,
+      items: [
+        {
+          source: "github",
+          source_id: "01900000-0000-7000-8000-00000000aa01",
+          account_id: "dev-42",
+          outcome: "applied",
+        },
+      ],
+    });
+    attention.q.data = {
+      items: [item({ kind: "contested", account_id: "a1", candidates: [ANN, BOB] })],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    const rows = screen.getAllByRole("button", { name: /keep this person/i });
+    // Ann is listed first, so her row's button is the first one.
+    await userEvent.click(rows[0]);
+
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText(/keep ann lee and merge the rest/i),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Merge persons" }),
+    );
+
+    expect(attention.merge.mutateAsync).toHaveBeenCalledWith({
+      source_person_id: BOB.person_id,
+      target_person_id: ANN.person_id,
+    });
+  });
+
+  // A case naming one person has nobody to absorb: the evidence disagrees with a
+  // binding there, which is a question about the account, not about two people
+  // being one human.
+  it("offers no merge where the case argues over a single person", () => {
+    attention.q.data = {
+      items: [
+        item({
+          // A `binding_conflict` needs two persons by construction; the kinds
+          // that really carry one are the automatic mints.
+          kind: "provisioned_at_login",
+          account_id: "a1",
+          candidates: [
+            {
+              person_id: "01900000-0000-7000-8000-0000000000a0",
+              display_name: "Ann Lee",
+            },
+          ],
+        }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    expect(
+      screen.queryByRole("button", { name: /keep this person/i }),
+    ).not.toBeInTheDocument();
+  });
+
   // Nothing here is matchable, which is exactly why it is on the queue: only
   // a person can bind these, and an account id names nobody.
   it("names an account with nothing to match on by what the source says it is", () => {
@@ -361,29 +521,6 @@ describe("IdentitiesView", () => {
     expect(portalRouter.search.acct).toBeUndefined();
   });
 
-  // The tiles count binding states; only the queue is work. A tile promising
-  // "review" for accounts the resolver binds by itself sent an operator
-  // looking for something they cannot do.
-  it("leads with the number the operator can act on — the queue's own size", () => {
-    attention.q.data = { items: [item({}), item({ account_id: "a2" })], rates: RATES };
-    render(<IdentitiesView />);
-
-    const tile = screen
-      .getByText(/needs a decision/i)
-      .closest("div")?.parentElement;
-    expect(within(tile as HTMLElement).getByText("2")).toBeInTheDocument();
-    // The state tiles say what they count, never "review".
-    expect(screen.getByText(/unbound · has an address/i)).toBeInTheDocument();
-    expect(screen.queryByText(/pending review/i)).not.toBeInTheDocument();
-  });
-
-  it("marks the decision count as a floor when the server cut the list", () => {
-    attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
-    render(<IdentitiesView />);
-
-    expect(screen.getByText("1+")).toBeInTheDocument();
-  });
-
   // The row carries the values an operator copies out, so it cannot be a
   // <button>: its text would not be selectable and the cards' copy controls
   // would be interactive content nested inside a control.
@@ -421,44 +558,13 @@ describe("IdentitiesView", () => {
     expect(portalRouter.search.acct).toBeUndefined();
   });
 
-  it("narrows the queue by anything on a row, and carries the filter in the URL", async () => {
-    attention.q.data = {
-      items: [
-        item({ account_id: "a1", email: "ann@example.com" }),
-        item({ account_id: "a2", email: "bob@example.com" }),
-      ],
-      rates: RATES,
-    };
-    render(<IdentitiesView />);
-
-    await userEvent.type(screen.getByRole("searchbox"), "ann@");
-    await waitFor(() => expect(portalRouter.search.filter).toBe("ann@"));
-    expect(screen.getByRole("button", { name: /ann@example\.com/i })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /bob@example\.com/i }),
-    ).not.toBeInTheDocument();
-  });
-
-  // Celebrating here would tell an operator the backlog is done because they
-  // mistyped a filter.
-  it("does not celebrate an empty result — a filter that matches nothing says so", () => {
-    attention.q.data = { items: [item({})], rates: RATES };
-    portalRouter.set({ zone: "manage", item: "identities", filter: "nobody" });
-    render(<IdentitiesView />);
-
-    expect(screen.getByText(/nothing matches those terms/i)).toBeInTheDocument();
-    expect(screen.queryByText(/everything is resolved/i)).not.toBeInTheDocument();
-  });
-
-  // A colleague's link points at a row the reader's own filter hides; the
-  // case must still open, or the link is only as good as the recipient's
-  // current view.
-  it("answers a shared ?acct= link even while a filter hides its row", () => {
+  // A colleague's link points at a case; it must open on arrival, or the link
+  // is only as good as the recipient's own scroll position.
+  it("answers a shared ?acct= link by opening its case", () => {
     attention.q.data = { items: [item({})], rates: RATES };
     portalRouter.set({
       zone: "manage",
       item: "identities",
-      filter: "nobody",
       acct: "github:01900000-0000-7000-8000-00000000aa01:dev-42",
     });
     render(<IdentitiesView />);

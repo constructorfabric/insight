@@ -24,10 +24,16 @@
 -- was issued — a monthly invoice is raised at the period boundary and would
 -- otherwise land in the neighbouring month. Rows carrying no line fall back to
 -- the invoice date.
--- STRATEGY: delete+insert, not append. An invoice's row is rewritten whenever its
--- chain gets further, so the same unique_key arrives twice; appending would leave
--- both versions standing until a background merge collapsed them, and the
--- `unique` test reads without FINAL.
+-- STRATEGY: delete+insert, not append. A deliberate departure from the staging
+-- convention (check-dbt-conventions prescribes delete+insert for silver and
+-- append for staging), because this model carries an invariant the convention
+-- does not anticipate: an invoice's row is REWRITTEN as its chain gets further,
+-- so a later sync must replace the row an earlier one wrote rather than stand
+-- beside it. Appending leaves both versions until a background merge collapses
+-- them, which makes the replacement unobservable — the `unique` test reads
+-- without FINAL. The models this convention was written for restate a value
+-- under a key that never moves, which union_by_tag already resolves by
+-- _version; that is not this case. See #2668.
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',
@@ -80,6 +86,7 @@ SELECT
     toJSONString(map(
         'product_name',  ifNull(toString(product_name), ''),
         'description',   ifNull(toString(description), ''),
+        'invoice_ref',   ifNull(toString(invoice_ref), ''),
         'num_seats',     ifNull(toString(invoice_num_seats), ''),
         'invoice_total', ifNull(toString(invoice_total), ''),
         'period_end_ts', ifNull(toString(period_end_ts), '')

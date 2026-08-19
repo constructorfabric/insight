@@ -5,6 +5,7 @@ about what reaches bronze when a hop fails is decided here, so none of it needs
 a network, a cluster or the CDK to verify.
 """
 
+import base64
 import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -22,10 +23,23 @@ from source_claude_team_invoices.stripe_chain import (
 )
 from tests.test_stripe_chain import EXTRA_USAGE_LINE, SUBSCRIPTION_LINE
 
-GOOD_URL = "https://invoice.stripe.com/i/acct_1ABC/live_TOKEN?s=ap"
-FAILING_TOKEN = "live_FAILS"
-FAILING_URL = f"https://invoice.stripe.com/i/acct_1ABC/{FAILING_TOKEN}?s=ap"
 EPHEMERAL_KEY = "ek_live_super_secret_value"
+
+
+def _hosted(entity: str, nonce: str = "n1", acct: str = "acct_1ABC") -> tuple[str, str]:
+    """A hosted URL shaped the way the vendor's are, plus its path segment.
+
+    The segment is base64 of `<acct>,_<entity>,<rotating>`; the vendor regenerates
+    that trailing part on every list call, so two calls for one invoice differ in
+    the URL and still decode to the same identity.
+    """
+    payload = f"{acct},_{entity},{nonce}"
+    segment = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    return f"https://invoice.stripe.com/i/{acct}/live_{segment}?s=ap", f"live_{segment}"
+
+
+GOOD_URL, _GOOD_TOKEN = _hosted("ent1ABC")
+FAILING_URL, FAILING_TOKEN = _hosted("entFAILS")
 
 
 def invoice(url: str | None = GOOD_URL, **over: Any) -> dict[str, Any]:
@@ -130,6 +144,65 @@ def test_a_failed_chain_does_not_stop_the_run(caplog: pytest.LogCaptureFixture) 
     assert "stripe chain failed" in caplog.text
 
 
+def test_a_seat_price_of_an_unexpected_type_degrades_the_invoice_visibly(caplog: pytest.LogCaptureFixture) -> None:
+    """Returning absence instead would put every seat price at NULL while the
+    chain still read as complete — indistinguishable from a vendor pricing no seats."""
+
+    def lines_with_a_string_price(acct, token):
+        return "in_1ABC", [dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount="1000")]
+
+    with caplog.at_level(logging.WARNING):
+        records = list(build_records([invoice()], lines_with_a_string_price))
+
+    assert [r["chain_status"] for r in records] == [CHAIN_FAILED]
+    assert records[0]["invoice_total_excluding_tax"] == 3000, "the ledger survives"
+    # The type it arrived as, by name — a `failed` row alone would send the
+    # operator to the egress and Stripe-Version checks the remediation names.
+    assert "hosted_invoice_unit_amount arrived as str" in caplog.text
+
+
+def test_a_seat_line_the_vendor_left_unpriced_does_not_degrade_the_invoice() -> None:
+    """Absence is a state this connector reports; only a changed type is a fault."""
+
+    def lines_unpriced(acct, token):
+        return "in_1ABC", [dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount=None)]
+
+    records = list(build_records([invoice()], lines_unpriced))
+    assert [r["chain_status"] for r in records] == [CHAIN_OK, CHAIN_OK]
+    assert [r["seat_unit_amount"] for r in records] == [None, None]
+
+
+def test_a_draft_is_not_emitted_at_all(caplog: pytest.LogCaptureFixture) -> None:
+    """Its total can still change and it has no payment intent — two of the fields
+    an invoice's row is keyed on — so it would duplicate on finalisation."""
+    with caplog.at_level(logging.INFO):
+        records = list(build_records([invoice(status="draft", payment_intent=None, url=None)], lines_ok))
+
+    assert records == []
+    assert "skipped 1 draft invoice(s)" in caplog.text
+
+
+def test_a_draft_does_not_hide_the_invoices_beside_it() -> None:
+    drafts = [invoice(status="draft", payment_intent=None, url=None) for _ in range(2)]
+    records = list(build_records([*drafts, invoice()], lines_ok))
+    assert [r["chain_status"] for r in records] == [CHAIN_OK, CHAIN_OK, CHAIN_OK]
+    assert [r["line_id"] for r in records] == [None, "il_standard", "il_prepaid"]
+
+
+def test_a_draft_stays_out_of_the_drift_ratio() -> None:
+    """Counted in, two drafts beside one bad URL would tip a healthy run into drift."""
+    drafts = [invoice(status="draft", url=None) for _ in range(2)]
+    records = list(build_records([*drafts, invoice(url="bad"), invoice()], lines_ok))
+    assert sum(1 for r in records if r["chain_status"] == CHAIN_UNPARSABLE) == 1
+    assert sum(1 for r in records if r["chain_status"] == CHAIN_OK) == 3
+
+
+def test_a_finalised_invoice_without_a_url_is_still_reported() -> None:
+    """The status exists for this case now that drafts never reach it."""
+    records = list(build_records([invoice(url=None)], lines_ok))
+    assert [r["chain_status"] for r in records] == [CHAIN_NO_URL]
+
+
 def test_a_run_of_unparsable_urls_fails_instead_of_writing_priceless_rows() -> None:
     invoices = [invoice(url="https://elsewhere.example/x") for _ in range(3)] + [invoice()]
     with pytest.raises(UrlFormatDrift) as raised:
@@ -200,11 +273,23 @@ def test_an_invoice_keeps_one_key_across_a_failure_and_a_later_recovery() -> Non
     assert unenriched["invoice_id"] is None and enriched["invoice_id"] == "in_1ABC"
 
 
-def test_an_invoice_failing_two_different_ways_stays_one_key() -> None:
-    """The outcome is not part of the key, so two attempts cannot become two rows."""
-    failed = next(iter(build_records([invoice()], lines_raise)))
+def test_two_scrapes_of_one_invoice_share_a_key_though_its_url_rotated() -> None:
+    """The vendor re-issues a fresh URL on every list call; only the identity
+    inside it is the invoice, so that is what the key is built from."""
+    first, _ = _hosted("ent1ABC", nonce="1756771200-n1")
+    later, _ = _hosted("ent1ABC", nonce="1756800000-n2")
+    assert first != later, "the fixture must actually rotate the URL"
+
+    a = next(iter(build_records([invoice(url=first)], lines_raise)))
+    b = next(iter(build_records([invoice(url=later)], lines_raise)))
+    assert unique_key_parts(a) == unique_key_parts(b) == ("invoice", "acct_1ABC,_ent1ABC")
+
+
+def test_an_invoice_whose_url_carries_no_identity_falls_back_to_the_wrapper() -> None:
+    """A documented limit, not a bug: with no identity the invoice cannot be tied
+    to its own enriched row, so the mutable fields are all that is left."""
     without_url = next(iter(build_records([invoice(url=None)], lines_ok)))
-    assert unique_key_parts(failed) == unique_key_parts(without_url)
+    assert unique_key_parts(without_url) == ("invoice", 1756771200, "pi_1", 3300, None)
 
 
 def test_two_gaps_of_one_batch_stay_two_rows() -> None:
@@ -213,7 +298,11 @@ def test_two_gaps_of_one_batch_stay_two_rows() -> None:
     def lines_fail(acct, token):
         raise RuntimeError("a hop answered badly")
 
-    same_second = [invoice(payment_intent=None, total=3300), invoice(payment_intent=None, total=4400)]
+    # Distinct invoices carry distinct identities, which is what separates them.
+    same_second = [
+        invoice(url=_hosted("entONE")[0], payment_intent=None, total=3300),
+        invoice(url=_hosted("entTWO")[0], payment_intent=None, total=4400),
+    ]
     keys = {unique_key_parts(r) for r in build_records(same_second, lines_fail)}
     assert len(keys) == 2, "two invoices sharing a second must not collapse into one key"
 

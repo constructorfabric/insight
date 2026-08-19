@@ -732,8 +732,12 @@ pub async fn mark_provisional(
     Ok(())
 }
 
-/// Share of observed accounts per resolution state — the operator-visible match
-/// rate.
+/// How the tenant's observed accounts are split across the resolution states.
+///
+/// Deliberately no person total. A journal-wide count answers "how many ids have
+/// we ever written", which after a merge never falls and after a detach only
+/// rises — so it read as a roster size while measuring something else. A figure
+/// that would have to be explained every time it is read is worse than none.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ResolutionRatesResponse {
     pub observed: usize,

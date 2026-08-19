@@ -252,7 +252,7 @@ spec:
       insight_source_id:
         type: string
         title: Source Instance ID
-        description: Connector instance identifier (e.g. `github-directory-main`). Set by the reconcile loop from the K8s Secret annotation `insight.cyberfabric.com/source-id`.
+        description: Connector instance identifier, shared with the `github` connector (`github-main`) because both describe accounts of the same organization. Set by the reconcile loop from the K8s Secret annotation `insight.cyberfabric.com/source-id`.
         default: ""
         order: 1
       github_token:

@@ -83,6 +83,17 @@ export const ZONES: readonly Zone[] = [
 ];
 
 /** The zone a URL names, or undefined for an id no longer in the rail. */
+export function lensSlug(lens: string): string {
+  return lens
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+export function lensBySlug(direction: Direction, slug: string): string | undefined {
+  return direction.lenses.find((lens) => lensSlug(lens) === slug);
+}
+
 export function zoneById(id: string | null): Zone | undefined {
   if (!id) return undefined;
   return ZONES.find((z) => z.id === id);

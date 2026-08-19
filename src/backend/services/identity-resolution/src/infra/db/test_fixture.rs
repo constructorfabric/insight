@@ -54,6 +54,13 @@ impl Fixture {
 
     pub(crate) async fn person(&self, email: &str) -> anyhow::Result<Uuid> {
         let person_id = Uuid::now_v7();
+        self.person_as(person_id, email).await?;
+        Ok(person_id)
+    }
+
+    /// The same row under an id the caller picked — for the cases where WHICH id
+    /// the journal carries is the point, the excluded sentinel above all.
+    pub(crate) async fn person_as(&self, person_id: Uuid, email: &str) -> anyhow::Result<()> {
         self.exec(
             "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
                  insight_tenant_id, value_id, person_id, author_person_id, reason)
@@ -68,8 +75,7 @@ impl Fixture {
                 FIXTURE_REASON.into(),
             ],
         )
-        .await?;
-        Ok(person_id)
+        .await
     }
 
     /// Append one observation of `value_type` for an existing person — the
@@ -93,6 +99,35 @@ impl Fixture {
                 bytes(person),
                 bytes(person),
                 FIXTURE_REASON.into(),
+            ],
+        )
+        .await
+    }
+
+    /// The same, observed `seconds_ago`. Explicit age is what tells "superseded"
+    /// apart from "inserted first": the currency rule reads the timestamp, and
+    /// two rows written in one test would otherwise differ by microseconds.
+    pub(crate) async fn observed_at(
+        &self,
+        person: Uuid,
+        value_type: &str,
+        value: &str,
+        seconds_ago: u32,
+    ) -> anyhow::Result<()> {
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6) - INTERVAL ? SECOND)",
+            [
+                value_type.into(),
+                SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                value.into(),
+                bytes(person),
+                bytes(person),
+                FIXTURE_REASON.into(),
+                seconds_ago.into(),
             ],
         )
         .await

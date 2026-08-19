@@ -19,6 +19,7 @@ from source_claude_team_invoices.stripe_chain import (
     read_bootstrap,
     seat_unit_amount,
     shape_line,
+    unreadable_seat_prices,
 )
 
 SUBSCRIPTION_LINE = {
@@ -111,6 +112,25 @@ def test_a_subscription_line_the_vendor_left_unpriced_yields_absence() -> None:
 def test_a_boolean_unit_amount_is_absence_not_a_price(value: bool) -> None:
     """`bool` is an `int` in Python, so an unguarded check prices a seat at 1."""
     assert seat_unit_amount(dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount=value)) is None
+
+
+@pytest.mark.parametrize("value", [2500.0, "2500", True, [], {}])
+def test_a_unit_amount_of_another_type_is_reported_as_unreadable(value: object) -> None:
+    """Absence and a changed type look the same downstream; only one is a fault."""
+    lines = [dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount=value)]
+    assert unreadable_seat_prices(lines) == [type(value).__name__]
+
+
+def test_an_unpriced_seat_line_is_absence_not_an_unreadable_type() -> None:
+    """The vendor leaving a subscription line unpriced is a state we report."""
+    assert unreadable_seat_prices([dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount=None)]) == []
+    assert unreadable_seat_prices([SUBSCRIPTION_LINE]) == []
+
+
+def test_only_seat_pricing_lines_are_judged_on_their_unit_amount() -> None:
+    """Extra usage and prorations never state a seat price, so their type is not ours."""
+    assert unreadable_seat_prices([dict(EXTRA_USAGE_LINE, hosted_invoice_unit_amount="2000")]) == []
+    assert unreadable_seat_prices([dict(PRORATION_CREDIT, hosted_invoice_unit_amount="1500")]) == []
 
 
 def test_proration_is_read_from_the_structural_flag() -> None:

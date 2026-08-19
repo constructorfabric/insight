@@ -68,9 +68,14 @@ the money on the ledger without a fabricated price, and the invoice keeps one ro
 across attempts — a later run that enriches it replaces that row instead of
 adding its money a second time.
 
+A draft is not invoiced and is skipped entirely. Its total can still change and
+it carries no payment intent, and both are part of the key an invoice's row is
+identified by — so emitting one would leave the draft's copy standing beside the
+finalised invoice, counting that money twice.
+
 `chain_status` distinguishes four outcomes: `ok`, `failed` (a hop answered
 badly), `unparsable_url` (a hosted URL was offered but no longer matches), and
-`no_hosted_url` (none was offered, as on a draft invoice). Only URLs that were
-offered count towards drift: if more than half of them fail to parse the run
-fails instead, because that is a format change, and a run of unpriced rows would
-read as the vendor having stopped charging for seats.
+`no_hosted_url` (none was offered for an invoice the vendor has finalised). Only
+URLs that were offered count towards drift: if more than half of them fail to
+parse the run fails instead, because that is a format change, and a run of
+unpriced rows would read as the vendor having stopped charging for seats.

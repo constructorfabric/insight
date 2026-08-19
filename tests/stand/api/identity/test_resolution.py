@@ -1,7 +1,7 @@
 """The operator correction surface — the manual-resolution routes on the deployed path.
 
     GET  /v1/resolution/attention                         200 rates arithmetic · 403 realm admin
-    GET  /v1/resolution/accounts                          200 search + holder · 400 short q · 403 realm admin
+    GET  /v1/resolution/accounts                          200 search + holder + by source · 403 realm admin
     GET  /v1/resolution/accounts/{source}/{sid}/{aid}     200 binding + history (round trip)
     GET  /v1/resolution/persons/{id}/accounts             200 for a seeded person
     POST /v1/resolution/bind                              200 applied → already_decided (round trip) · 400 excluded sentinel
@@ -109,6 +109,54 @@ def test_no_needle_lists_the_observed_accounts_a_page_at_a_time(
 
 @pytest.mark.requires_seed("admin_operator")
 @pytest.mark.reliability
+def test_a_connector_name_lists_the_accounts_it_reported(
+    admin_operator_session: PersonaSession,
+) -> None:
+    """The row prints the source beside the account id, so typing a connector's
+    name is a question the list already looks like it answers. The name comes
+    from what this stand actually reports rather than a constant: a source that
+    is not installed here would make the assertion vacuous.
+    """
+    seen = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"limit": 100})
+    assert seen.status_code == 200, f"{seen.status_code} {seen.text[:300]}"
+    sources = sorted({item.source for item in seen.parse(AccountSearchResponse).items})
+    assert sources, "a seeded stand reports no observed accounts"
+    source = sources[0]
+
+    response = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"q": source})
+    assert response.status_code == 200, f"{response.status_code} {response.text[:300]}"
+
+    found = response.parse(AccountSearchResponse)
+    assert found.items, f"searching {source!r} lists none of that connector's accounts"
+    assert any(match.source == source for match in found.items), (
+        f"no match actually comes from {source!r}: {found.items[:3]}"
+    )
+    # A connector name can also occur inside an address or a handle, so the rule
+    # is the needle reaching SOME searched value — not the source alone. The one
+    # searched value this response cannot show is the name composed from first +
+    # last, so a match reachable only through that would fail here despite the
+    # server behaving: read a failure as "check which value carried it" before
+    # reading it as a filter defect.
+    lowered = source.lower()
+    for match in found.items:
+        carried = [
+            value
+            for value in (
+                match.source,
+                match.email,
+                match.username,
+                match.display_name,
+                match.account_id,
+            )
+            if value is not None
+        ]
+        assert any(lowered in value.lower() for value in carried), (
+            f"match carries the needle in no searched value: {match!r}"
+        )
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
 def test_the_account_listing_pages_without_repeating_an_account(
     admin_operator_session: PersonaSession,
 ) -> None:
@@ -169,7 +217,13 @@ def test_account_search_finds_a_seeded_account_and_names_its_holder(
     for match in found.items:
         carried = [
             value
-            for value in (match.email, match.username, match.display_name, match.account_id)
+            for value in (
+                match.source,
+                match.email,
+                match.username,
+                match.display_name,
+                match.account_id,
+            )
             if value is not None
         ]
         assert any(lowered in value.lower() for value in carried), (

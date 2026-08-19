@@ -28,6 +28,10 @@
                   `_airbyte_extracted_at` (added by Airbyte to every row, monotonic
                   across syncs). Pass '' for versionless RMT.
     partition_by: Optional PARTITION BY expression. Defaults to none.
+    where:        Optional filter applied during the CTAS copy. Use it to drop
+                  rows whose dedup key is NULL when the key column was added
+                  after rows already existed - RMT treats NULL keys as equal
+                  and would collapse them into one row.
 
   Caveats:
     - Race with concurrent Airbyte sync: rows inserted into the original table
@@ -63,7 +67,7 @@
 -#}
 
 -- @cpt-principle:cpt-dataflow-principle-promote-bronze:p1
-{% macro promote_bronze_to_rmt(table, order_by, version_col='_airbyte_extracted_at', partition_by=none) %}
+{% macro promote_bronze_to_rmt(table, order_by, version_col='_airbyte_extracted_at', partition_by=none, where=none) %}
     {%- set parts = table.split('.') -%}
     {%- if parts | length != 2 -%}
         {{ exceptions.raise_compiler_error(
@@ -113,6 +117,7 @@
         ORDER BY {{ order_by }}
         SETTINGS allow_nullable_key = 1
         AS SELECT * FROM `{{ db }}`.`{{ tbl }}`
+        {{ ('WHERE ' ~ where) if where else '' }}
     {% endset %}
     {% do run_query(ctas) %}
 

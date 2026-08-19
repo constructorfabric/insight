@@ -74,32 +74,16 @@ beforeEach(() => {
 });
 
 describe("AccountDetail", () => {
-  it("shows the bound person as a card when the queue knows them", () => {
+  // The bound card and the verbs live in `AccountActions` now — see its suite.
+  // What stays this window's job is handing the queue's candidates down.
+  it("passes the queue's candidates to the decision surface", () => {
     binding.q.data = bound();
     render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
 
-    expect(screen.getByText(/currently bound to/i)).toBeInTheDocument();
-    expect(screen.getByText("Bob Park")).toBeInTheDocument();
     expect(screen.getByTestId("account-actions")).toHaveAttribute(
       "data-candidates",
       "1",
     );
-  });
-
-  it("keeps an unknown bound person an honest bare id", () => {
-    binding.q.data = bound({ person_id: "01900000-0000-7000-8000-00000000ffff" });
-    render(<AccountDetail accountRef={REF} queueItem={queueItem({ candidates: [] })} />);
-
-    expect(
-      screen.getByText("01900000-0000-7000-8000-00000000ffff"),
-    ).toBeInTheDocument();
-  });
-
-  it("states an unbound account as a fact", () => {
-    binding.q.data = bound({ person_id: null });
-    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
-
-    expect(screen.getByText(/account is unresolved/i)).toBeInTheDocument();
   });
 
   it("names known verbs and passes unknown reasons through verbatim", () => {
