@@ -41,6 +41,9 @@ vi.mock("@/hooks/use-debounced-value", () => ({
   useDebouncedValue: <T,>(value: T) => value,
 }));
 
+import { SCROLL_ENDS_AFTER_ROWS } from "@/components/widgets/scroll-to-ends";
+import { scrollEndIntoView } from "@/test/intersection-observer";
+
 import { PersonPicker } from "./person-picker";
 
 const BOB = {
@@ -180,14 +183,86 @@ describe("PersonPicker", () => {
     expect(screen.getByText("Carol Chen")).toBeInTheDocument();
   });
 
-  it("asks for the next page instead of telling the operator to narrow the terms", async () => {
+  // A roster is read by scrolling it, so the next page arrives on the way down
+  // rather than behind a button the reader has to notice and press.
+  it("asks for the next page when the end of the list comes into view", () => {
     list.state.data = { pages: [page([BOB])] };
     list.state.hasNextPage = true;
     render(<PersonPicker onPick={vi.fn()} browseWhenEmpty />);
 
-    await userEvent.click(screen.getByRole("button", { name: /show more/i }));
+    scrollEndIntoView();
 
     expect(list.state.fetchNextPage).toHaveBeenCalled();
+  });
+
+  it("asks once, not once per frame, while a page is already in flight", () => {
+    list.state.data = { pages: [page([BOB])] };
+    list.state.hasNextPage = true;
+    list.state.isFetchingNextPage = true;
+    render(<PersonPicker onPick={vi.fn()} browseWhenEmpty />);
+
+    scrollEndIntoView();
+    scrollEndIntoView();
+
+    expect(list.state.fetchNextPage).not.toHaveBeenCalled();
+  });
+
+  // The marker is what asks for the next page, and a page whose every row was
+  // excluded has no rows for it to sit under — so it has to be rendered anyway,
+  // or the reader is stuck on a list that is empty and has more to give.
+  it("still reaches the next page when every row of this one was excluded", () => {
+    list.state.data = { pages: [page([BOB])] };
+    list.state.hasNextPage = true;
+    render(<PersonPicker onPick={vi.fn()} excludeIds={[BOB.person_id]} browseWhenEmpty />);
+
+    scrollEndIntoView();
+
+    expect(list.state.fetchNextPage).toHaveBeenCalled();
+  });
+
+  // Scrolling back by hand up a roster that keeps growing is the cost this
+  // exists to remove, so it appears only once the list is actually long.
+  it("offers the jump-to-either-end control only on a long list", () => {
+    const many = Array.from({ length: SCROLL_ENDS_AFTER_ROWS + 1 }, (_, i) => ({
+      person_id: `01900000-0000-7000-8000-${String(i).padStart(12, "0")}`,
+      display_name: `Person ${i}`,
+    }));
+    list.state.data = { pages: [page([BOB])] };
+    render(<PersonPicker onPick={vi.fn()} browseWhenEmpty asSurface />);
+    expect(
+      screen.queryByRole("button", { name: /back to the top/i }),
+    ).not.toBeInTheDocument();
+
+    list.state.data = { pages: [page(many)] };
+    render(<PersonPicker onPick={vi.fn()} browseWhenEmpty asSurface />);
+
+    expect(
+      screen.getAllByRole("button", { name: /back to the top/i }),
+    ).not.toHaveLength(0);
+    expect(
+      screen.getAllByRole("button", { name: /jump to the end/i }),
+    ).not.toHaveLength(0);
+  });
+
+  // Inside a panel it is a field with a short list under it; a full-height
+  // scroller with its own card would take the dialog over.
+  it("stays a plain short list inside a panel", () => {
+    list.state.data = { pages: [page([BOB])] };
+    render(<PersonPicker onPick={vi.fn()} browseWhenEmpty />);
+
+    expect(
+      screen.queryByRole("button", { name: /back to the top/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("stops asking once the listing says there is no next page", () => {
+    list.state.data = { pages: [page([BOB])] };
+    list.state.hasNextPage = false;
+    render(<PersonPicker onPick={vi.fn()} browseWhenEmpty />);
+
+    scrollEndIntoView();
+
+    expect(list.state.fetchNextPage).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -241,8 +316,8 @@ describe("PersonPicker", () => {
     await userEvent.type(screen.getByRole("searchbox"), "park");
 
     expect(screen.queryByText(/nobody matches/i)).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /show more/i }),
-    ).toBeInTheDocument();
+    // The unread pages are the answer, and they arrive by scrolling.
+    scrollEndIntoView();
+    expect(list.state.fetchNextPage).toHaveBeenCalled();
   });
 });

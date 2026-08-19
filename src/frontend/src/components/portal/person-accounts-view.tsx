@@ -43,7 +43,7 @@ export function PersonAccountsView() {
   const [picked, setPicked] = useState<PersonSummary | null>(null);
 
   return (
-    <div className="flex min-w-0 flex-col gap-4">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
       {/* Choosing a person replaces the roster with their accounts AND clears
           the terms that found them, so the way back is not on screen anywhere:
           without this, leaving a person means editing the URL. */}
@@ -65,7 +65,11 @@ export function PersonAccountsView() {
         // With nobody chosen this mode IS the roster: an operator reviewing
         // identities needs to see who exists, not guess a name to type.
         browseWhenEmpty={!person}
-        className={person ? undefined : "max-h-[32rem]"}
+        // With nobody chosen the roster IS this mode, so it takes the surface:
+        // the card and the full height the other two modes' listings have.
+        // Once a person is chosen it goes back to being a field above their
+        // accounts, which are what the reader came for.
+        asSurface={!person}
         onPick={(next: PersonSummary) => {
           setPicked(next);
           setSearch({ person: next.person_id, acct: undefined });

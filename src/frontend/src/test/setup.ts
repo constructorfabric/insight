@@ -10,6 +10,10 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 
+import { installIntersectionObserver } from "./intersection-observer";
+
+installIntersectionObserver();
+
 // jsdom in vitest's worker pool can race against module init: modules
 // that read `window.localStorage` at top level (e.g. `use-settings.ts`)
 // occasionally see `window.localStorage` as undefined when imported

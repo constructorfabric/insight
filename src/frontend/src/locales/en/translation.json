@@ -59,7 +59,9 @@
       "try_again": "Try again",
       "reload": "Reload",
       "retry": "Retry",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "scroll_to_top": "Back to the top of the list",
+      "scroll_to_bottom": "Jump to the end of the list"
     },
     "ui_components": {
       "sidebar": {
@@ -514,7 +516,6 @@
       "min_chars": "Each word needs at least {{min}} characters to search.",
       "no_matches": "Nobody matches those terms.",
       "failed": "Search failed. Try again.",
-      "load_more": "Show more people",
       "loading_more": "Loading…"
     },
     "gate": {
@@ -545,7 +546,6 @@
       "none_observed": "Nothing to list here yet",
       "none_observed_description": "Accounts appear once a connector reports them. If you expected some, the identity build may not have run yet.",
       "no_matches_description": "Only accounts a connector has seen can be found here.",
-      "load_more": "Show more accounts",
       "loading_more": "Loading…",
       "excluded": "excluded — bot / CI"
     }

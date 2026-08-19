@@ -80,6 +80,8 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
 
 import { portalRouter } from "@/test/portal-router";
 
+import { scrollEndIntoView } from "@/test/intersection-observer";
+
 import { AccountSearchView } from "./account-search-view";
 
 function match(over: Partial<AccountMatch> = {}): AccountMatch {
@@ -270,13 +272,25 @@ describe("AccountSearchView", () => {
 
   // A cut list used to end the road; now it continues, so the control is an
   // offer to read on rather than an instruction to retype.
-  it("offers the next page instead of asking for narrower terms", async () => {
+  // Reading the fold means scrolling it, so the next page comes on the way down
+  // rather than behind a button at the bottom of the one before it.
+  it("asks for the next page when the end of the list comes into view", () => {
     hooks.search.data = page([match()]);
     hooks.search.hasNextPage = true;
     render(<AccountSearchView />);
 
-    await userEvent.click(screen.getByRole("button", { name: /show more/i }));
+    scrollEndIntoView();
 
     expect(hooks.search.fetchNextPage).toHaveBeenCalled();
+  });
+
+  it("stops asking once the listing says there is no next page", () => {
+    hooks.search.data = page([match()]);
+    hooks.search.hasNextPage = false;
+    render(<AccountSearchView />);
+
+    scrollEndIntoView();
+
+    expect(hooks.search.fetchNextPage).not.toHaveBeenCalled();
   });
 });

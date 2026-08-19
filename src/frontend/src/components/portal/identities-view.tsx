@@ -8,6 +8,11 @@
  * tenant — its people, its accounts, and how many of those accounts are the
  * operator's own backlog.
  *
+ * One layout for all three modes: the heading, the tabs and the mode's own
+ * search stay put, and only the list under them scrolls. A reader working a
+ * long list must not lose the field they are typing into, or the tabs that
+ * switch what they are looking at.
+ *
  * The queue picks a case; the window decides it. Selection lives in `?acct=`
  * so an operator can hand a colleague a link to the exact account under
  * discussion — and that link answers whatever the queue looks like by then,
@@ -40,6 +45,7 @@ import {
 } from "@/components/ui/empty";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
 import {
   usePortalSearch,
   useSetPortalSearch,
@@ -98,8 +104,8 @@ export function IdentitiesView() {
   const active: string = resolveMode(mode);
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
-      <header>
+    <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 p-6">
+      <header className="shrink-0">
         <h1 className="text-lg font-semibold tracking-tight">
           {t("identities.title")}
         </h1>
@@ -108,6 +114,7 @@ export function IdentitiesView() {
         </p>
       </header>
       <Tabs
+        className="shrink-0"
         value={active}
         // A mode change drops the open account: a case picked in one mode
         // means nothing in another, and carrying it would open a window the
@@ -152,7 +159,7 @@ function ReviewQueue() {
   const { items, rates, truncated, items_truncated: itemsTruncated } =
     attention.data;
   return (
-    <div className="flex min-w-0 flex-col gap-6">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-6">
       {truncated ? (
         <Alert variant="destructive" role="status">
           <TriangleAlert />
@@ -325,22 +332,28 @@ function Queue({ items }: { items: AttentionItem[] }) {
   // has to answer even then, and the backlog reaching zero is exactly when a
   // colleague opens the link they were sent.
   return (
-    <div
-      ref={listRef}
-      onKeyDown={onArrow}
-      className="flex min-w-0 flex-col gap-4"
-    >
-      {items.length === 0 ? <AllResolved /> : null}
-      {groups.map((group) => (
-        <QueueGroup
-          key={group.kind}
-          kind={group.kind}
-          items={group.items}
-          selectedKey={acct}
-          visited={visited}
-          onSelect={(key) => select(key === acct ? null : key)}
-        />
-      ))}
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      {/* Blocks, not a flex column: inside a bounded scroller a flex child
+          shrinks to fit, and a group card is `overflow-hidden` — so every group
+          would render its heading over a clipped stump of its own rows. */}
+      <div
+        ref={listRef}
+        onKeyDown={onArrow}
+        className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto"
+      >
+        {items.length === 0 ? <AllResolved /> : null}
+        {groups.map((group) => (
+          <QueueGroup
+            key={group.kind}
+            kind={group.kind}
+            items={group.items}
+            selectedKey={acct}
+            visited={visited}
+            onSelect={(key) => select(key === acct ? null : key)}
+          />
+        ))}
+      </div>
+      <ScrollToEnds scroller={listRef} rows={items.length} />
       <CaseDialog
         acct={acct}
         items={items}

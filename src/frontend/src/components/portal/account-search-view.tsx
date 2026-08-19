@@ -10,7 +10,7 @@
  * the accounts nobody has asked about are exactly the ones an operator never
  * finds by searching for them.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ScanSearch, Search } from "lucide-react";
 
@@ -30,6 +30,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
+import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { accountKey } from "@/lib/identities/account-key";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
@@ -71,6 +73,13 @@ export function AccountSearchView() {
   // field, until the debounce fires AND the fetch lands. Neither emptiness below
   // is a claim about the field's own needle while that is true.
   const stale = query !== debounced || search.isPlaceholderData;
+  const scroller = useRef<HTMLDivElement>(null);
+  const loadMore = useAutoLoadOnScroll({
+    hasNextPage: search.hasNextPage,
+    isFetchingNextPage: search.isFetchingNextPage,
+    fetchNextPage: () => void search.fetchNextPage(),
+    root: scroller,
+  });
   // The window takes queue-shaped rows; a listed account adapts. This is also
   // the voucher that the account exists — without it an unbound, never-decided
   // account the list just showed would open as a stale link with no verbs.
@@ -86,8 +95,8 @@ export function AccountSearchView() {
   }));
 
   return (
-    <div className="flex min-w-0 flex-col gap-4">
-      <div className="relative">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+      <div className="relative shrink-0">
         <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"
@@ -146,9 +155,15 @@ export function AccountSearchView() {
         </Empty>
       ) : null}
 
-      {items.length > 0 ? (
-        <Card>
-          <CardContent className="flex flex-col gap-1 p-2">
+      {/* Rendered for an unread next page even with nothing listed: the marker
+          asks for that page, and an observer only reports a target inside its
+          own root. */}
+      {items.length > 0 || (listsAnyAccount(debounced) && search.hasNextPage) ? (
+        <Card className="relative min-h-0 flex-1 overflow-hidden py-0">
+          <CardContent
+            ref={scroller}
+            className="flex flex-col gap-1 overflow-y-auto p-2"
+          >
             {items.map((item) => (
               <AccountRow
                 key={accountKey(item)}
@@ -157,24 +172,15 @@ export function AccountSearchView() {
                 onOpen={() => setAcct(accountKey(item))}
               />
             ))}
+            {/* The page after this one is asked for when this marker nears the
+                viewport, so the list continues instead of ending in a button. */}
             {search.hasNextPage ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="m-2 self-start"
-                // Not `disabled`: disabling the element that has focus blurs it,
-                // and the operator's next Tab restarts from the page chrome —
-                // a whole page of rows away from the button they just pressed.
-                aria-busy={search.isFetchingNextPage}
-                onClick={() => void search.fetchNextPage()}
-              >
-                {search.isFetchingNextPage
-                  ? t("identities.accounts.loading_more")
-                  : t("identities.accounts.load_more")}
-              </Button>
+              <div ref={loadMore} className="p-2 text-sm text-muted-foreground">
+                {t("identities.accounts.loading_more")}
+              </div>
             ) : null}
           </CardContent>
+          <ScrollToEnds scroller={scroller} rows={items.length} />
         </Card>
       ) : null}
 

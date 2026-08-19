@@ -14,15 +14,17 @@
  * name the operator came to type.
  */
 import { Search } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { PersonSummary } from "@/api/identity-client";
 import { PersonCell } from "@/components/portal/person-cell";
 import { personDisplayName } from "@/lib/identities/person-display";
-import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
+import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import {
   belowPersonFloor,
@@ -38,13 +40,19 @@ export function PersonPicker({
   /** Persons already shown elsewhere in the panel — filtered out, not repeated. */
   excludeIds = [],
   browseWhenEmpty = false,
-  /** Taller where the picker IS the view rather than a field inside a dialog. */
-  className,
+  /**
+   * The picker IS the surface rather than a field inside a panel: the list gets
+   * the card the console's other listings have, fills the height it is given,
+   * and carries the jump-to-either-end control a long roster needs. In a panel
+   * it stays a short list under a field, where a full-height scroller would
+   * take the dialog over.
+   */
+  asSurface = false,
 }: {
   onPick: (person: PersonSummary) => void;
   excludeIds?: string[];
   browseWhenEmpty?: boolean;
-  className?: string;
+  asSurface?: boolean;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -73,12 +81,24 @@ export function PersonPicker({
   // a step towards a verb rather than the verb itself.
   const behind = query !== debounced || list.isPlaceholderData;
   // A page whose every row was excluded is not "nobody matches" while more
-  // pages are unread — the button below is the answer, not the message.
+  // pages are unread — the next page is the answer, not the message.
   const exhausted = !list.hasNextPage;
+  const scroller = useRef<HTMLDivElement>(null);
+  const loadMore = useAutoLoadOnScroll({
+    hasNextPage: Boolean(asked && list.hasNextPage),
+    isFetchingNextPage: list.isFetchingNextPage,
+    fetchNextPage: () => void list.fetchNextPage(),
+    root: scroller,
+  });
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="relative w-full">
+    <div
+      className={cn(
+        "flex flex-col gap-2",
+        asSurface && "min-h-0 flex-1",
+      )}
+    >
+      <div className="relative w-full shrink-0">
         <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"
@@ -114,61 +134,84 @@ export function PersonPicker({
           {t("identities.picker.no_matches")}
         </p>
       ) : null}
-      {results.length > 0 ? (
-        <ul
-          aria-busy={behind}
-          className={cn(
-            "flex max-h-64 flex-col gap-1 overflow-y-auto",
-            behind && "opacity-60",
-            className,
-          )}
-        >
-          {results.map((person) => (
-            <li key={person.person_id}>
-              {/* Not a <button>: the card inside carries its own copy control,
-                  and a button may not nest a button — the same rule the queue
-                  rows follow. */}
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={(event) => {
-                  if (
-                    event.target instanceof Element &&
-                    event.target.closest("button, a")
-                  ) {
-                    return;
-                  }
-                  onPick(person);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" && event.key !== " ") return;
-                  if (event.target !== event.currentTarget) return;
-                  event.preventDefault();
-                  onPick(person);
-                }}
-                aria-label={personDisplayName(person)}
-                className="w-full cursor-pointer rounded-md border border-transparent p-2 text-start select-text hover:bg-muted/60"
-              >
-                <PersonCell person={person} />
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {asked && list.hasNextPage ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="self-start"
-          aria-busy={list.isFetchingNextPage}
-          onClick={() => void list.fetchNextPage()}
-        >
-          {list.isFetchingNextPage
-            ? t("identities.picker.loading_more")
-            : t("identities.picker.load_more")}
-        </Button>
+      {/* Rendered for an unread next page even with nothing visible: a page
+          whose every row was excluded has no rows to scroll, and the marker is
+          the only thing that can ask for the page that does. It has to live
+          INSIDE the scroller — an observer never reports a target that is not a
+          descendant of its root. */}
+      {results.length > 0 || (asked && list.hasNextPage) ? (
+        <ListShell asSurface={asSurface}>
+          <div
+            ref={scroller}
+            className={cn(
+              "overflow-y-auto",
+              asSurface ? "min-h-0 flex-1 p-2" : "max-h-64",
+            )}
+          >
+            <ul
+              aria-busy={behind}
+              className={cn("flex flex-col gap-1", behind && "opacity-60")}
+            >
+              {results.map((person) => (
+                <li key={person.person_id}>
+                  {/* Not a <button>: the card inside carries its own copy control,
+                      and a button may not nest a button — the same rule the queue
+                      rows follow. */}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={(event) => {
+                      if (
+                        event.target instanceof Element &&
+                        event.target.closest("button, a")
+                      ) {
+                        return;
+                      }
+                      onPick(person);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      if (event.target !== event.currentTarget) return;
+                      event.preventDefault();
+                      onPick(person);
+                    }}
+                    aria-label={personDisplayName(person)}
+                    className="w-full cursor-pointer rounded-md border border-transparent p-2 text-start select-text hover:bg-muted/60"
+                  >
+                    <PersonCell person={person} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {/* The page after this one is asked for when this marker nears the
+                viewport, so the roster continues instead of ending in a button. */}
+            {asked && list.hasNextPage ? (
+              <p ref={loadMore} className="p-2 text-sm text-muted-foreground">
+                {t("identities.picker.loading_more")}
+              </p>
+            ) : null}
+          </div>
+          {asSurface ? (
+            <ScrollToEnds scroller={scroller} rows={results.length} />
+          ) : null}
+        </ListShell>
       ) : null}
     </div>
+  );
+}
+
+/** The card every listing in the console sits in — absent inside a panel. */
+function ListShell({
+  asSurface,
+  children,
+}: {
+  asSurface: boolean;
+  children: React.ReactNode;
+}) {
+  if (!asSurface) return children;
+  return (
+    <Card className="relative flex min-h-0 flex-1 flex-col overflow-hidden py-0">
+      {children}
+    </Card>
   );
 }
