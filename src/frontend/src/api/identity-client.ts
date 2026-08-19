@@ -497,6 +497,38 @@ export async function searchPersons(
   return found;
 }
 
+/**
+ * The persons the caller may see (`GET /visible-persons`) — one page, ordered by
+ * the label each is shown under. Any signed-in caller may ask; the answer is
+ * their own visible set, so it needs no admin role.
+ */
+export async function listVisiblePersons(
+  page: PageRequest & { q?: string } = {},
+): Promise<PersonSearchResponse> {
+  const params = new URLSearchParams();
+  if (page.q) params.set("q", page.q);
+  if (page.cursor) params.set("cursor", page.cursor);
+  if (page.limit != null) params.set("limit", String(page.limit));
+  const query = params.toString();
+  const res = await fetchWithAuth(
+    `${BASE}/visible-persons${query ? `?${query}` : ""}`,
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let listed: PersonSearchResponse;
+  try {
+    listed = (await res.json()) as PersonSearchResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(listed.items)) {
+    throw new IdentityApiError(res.status, { error: "malformed_roster" });
+  }
+  return listed;
+}
+
 export interface PersonAccountEntry {
   source: string;
   source_id: string;
