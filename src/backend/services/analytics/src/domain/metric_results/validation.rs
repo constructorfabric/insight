@@ -693,8 +693,8 @@ mod tests {
     use super::super::dto::MetricResultsEntity;
     use super::*;
     use crate::domain::metric_definitions::definition::{
-        ComputationSpec, MetricBase, MetricDefinition, MetricDirection, MetricFormat, MetricInput,
-        MetricInputRole, ObservationRelation, ObservationSource,
+        AliasCollapse, ComputationSpec, MetricBase, MetricDefinition, MetricDirection,
+        MetricFormat, MetricInput, MetricInputRole, ObservationRelation, ObservationSource,
     };
 
     fn shape_request(
@@ -748,6 +748,7 @@ mod tests {
                     ),
                     source_key: "ai_usage".to_owned(),
                     measure_key: "accepted_lines".to_owned(),
+                    alias_collapse: AliasCollapse::Sum,
                 },
             },
         }
@@ -762,6 +763,7 @@ mod tests {
             ),
             source_key: "ai_usage".to_owned(),
             measure_key: measure_key.to_owned(),
+            alias_collapse: AliasCollapse::Sum,
         }
     }
 

@@ -11,6 +11,7 @@ sources:
         evidence_granularity: source_summary
       - key: active_day
         evidence_granularity: derived_population
+        alias_collapse: max
       - key: cost_usd
         evidence_granularity: source_summary
       - key: accepted_edit_actions
@@ -43,6 +44,7 @@ sources:
         evidence_granularity: event
       - key: commit_day
         evidence_granularity: source_summary
+        alias_collapse: max
       - key: commit_change_size
         evidence_granularity: event
       - key: code_lines_added
@@ -111,8 +113,10 @@ sources:
         evidence_granularity: derived_population
       - key: chat_active_day
         evidence_granularity: source_summary
+        alias_collapse: max
       - key: meeting_free_day
         evidence_granularity: derived_population
+        alias_collapse: min
       - key: focus_hours
         evidence_granularity: derived_population
       - key: working_hours

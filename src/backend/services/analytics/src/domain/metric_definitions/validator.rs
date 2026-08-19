@@ -928,6 +928,7 @@ fn all_measures_covered(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::metric_definitions::definition::AliasCollapse;
     use crate::domain::metric_definitions::definition::MetricInputRole;
 
     fn input(source_key: &str, measure_key: &str) -> MetricInput {
@@ -936,6 +937,7 @@ mod tests {
             observation: ObservationSource::Managed(relation()),
             source_key: source_key.to_owned(),
             measure_key: measure_key.to_owned(),
+            alias_collapse: AliasCollapse::Sum,
         }
     }
 

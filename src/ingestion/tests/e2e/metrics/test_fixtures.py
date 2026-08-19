@@ -258,6 +258,10 @@ def test_metric_smoke(
     identity_stub.allow_visible(persona_emails)
     _seed_identity_persons(ch_seeder.cfg, all_person_ids)
 
+    # Selected without upstream: `identity_inputs` is hand-created above and
+    # excluded from the silver selection.
+    dbt_runner.run("tag:identity:map", worker_ctx=worker_ctx)
+
     if staging or silver_set or ran_enrich_steps:
         dbt_runner.run("tag:gold", worker_ctx=worker_ctx)
 

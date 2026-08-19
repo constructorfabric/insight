@@ -200,6 +200,9 @@ else
 # DBT_GOLD_SELECT widens the selection (space-separated dbt selectors);
 # the seed's silver step adds +identity_inputs, deploys leave it unset.
 read -r -a _dbt_select <<<"${DBT_GOLD_SELECT:-tag:gold}"
+# SAFETY: appended after the override so no caller can narrow the selector and
+# leave the map views at the snapshot's point-in-time bodies.
+_dbt_select+=("tag:identity:map")
 echo "=== Building gold models (dbt run --select ${_dbt_select[*]}) ==="
 # Gold views are dbt-owned but must exist at DEPLOY time, not first-sync
 # time: the analytics service marks metric definitions schema-error while

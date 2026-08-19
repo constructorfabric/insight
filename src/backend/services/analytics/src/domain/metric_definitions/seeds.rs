@@ -41,16 +41,18 @@ async fn reconcile_source(
         db.execute(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_source_measures \
-                (id, source_id, measure_key, evidence_granularity, is_enabled) \
-             VALUES (?, ?, ?, ?, TRUE) \
+                (id, source_id, measure_key, evidence_granularity, alias_collapse, is_enabled) \
+             VALUES (?, ?, ?, ?, ?, TRUE) \
              ON DUPLICATE KEY UPDATE \
                 evidence_granularity = VALUES(evidence_granularity), \
+                alias_collapse = VALUES(alias_collapse), \
                 is_enabled = VALUES(is_enabled)",
             [
                 uuid_value(Uuid::now_v7()),
                 uuid_value(source_id),
                 Value::from(measure.key.as_str()),
                 Value::from(measure.evidence_granularity.as_db()),
+                Value::from(measure.alias_collapse.as_db()),
             ],
         ))
         .await?;

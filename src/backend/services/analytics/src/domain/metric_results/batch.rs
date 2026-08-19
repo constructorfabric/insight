@@ -396,8 +396,8 @@ mod tests {
     use serde_json::json;
 
     use crate::domain::metric_definitions::definition::{
-        ComputationSpec, MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
-        ObservationRelation, ObservationSource,
+        AliasCollapse, ComputationSpec, MetricBase, MetricDirection, MetricFormat, MetricInput,
+        MetricInputRole, ObservationRelation, ObservationSource,
     };
     use crate::domain::metric_results::validation::ValidatedMetricRequest;
 
@@ -426,6 +426,7 @@ mod tests {
                     ),
                     source_key: "ai_usage".to_owned(),
                     measure_key: format!("{key}_measure"),
+                    alias_collapse: AliasCollapse::Sum,
                 },
             },
         }
