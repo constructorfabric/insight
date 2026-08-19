@@ -1722,12 +1722,7 @@ TEST_STAND_GATEWAY_CONTAINER=insight-gateway
 # --output flag to keep in step.
 TEST_STAND_ARTIFACT_DIR="test-results"
 
-# Run the suite inside a container image against the running stand.
-#
-# The image is never built here, and none is published anymore (CI runs the
-# suite host-side from the checkout) — a developer builds one by hand if they
-# want this mode. This function only wires it to the stand, and the wiring is
-# the part that is easy to get wrong.
+# Run the suite inside a browser runner image against the running stand.
 #
 # Network namespace, not the compose network. The session cookie is
 # `__Host-`-prefixed, so the browser stores it only from a trustworthy origin,
@@ -1736,9 +1731,6 @@ TEST_STAND_ARTIFACT_DIR="test-results"
 # browser and the HTTP clients alike, with no Chromium flags (which do not lift
 # the restriction anyway — measured, see tests/stand/ui/conftest.py).
 #
-# Arguments are passed to pytest verbatim and are IMAGE-SIDE paths: the suite
-# lives at /tests/stand in the image, so select with /tests/stand/ui, not
-# tests/stand/ui.
 test_stand_test_in_image() {
   local image="$1" gw_port="$2"
   shift 2
@@ -1778,6 +1770,8 @@ test_stand_test_in_image() {
     # cannot write into it — and the traces a failed journey uploads are the
     # whole reason that mount exists.
     --user "$(id -u):$(id -g)"
+    --init
+    --ipc=host
     --network "container:${TEST_STAND_GATEWAY_CONTAINER}"
     -e "INSIGHT_STAND_BASE_URL=http://localhost:${TEST_STAND_GATEWAY_CONTAINER_PORT}"
     # Mounted at a stable path and NAMED, rather than reproducing the suite's
@@ -1785,13 +1779,15 @@ test_stand_test_in_image() {
     # /tests and there is nothing above it.
     -v "$PWD/${manifest}:/stand/manifest.json:ro"
     -e "INSIGHT_STAND_MANIFEST=/stand/manifest.json"
-    -v "$PWD/${TEST_STAND_ARTIFACT_DIR}:/tests/${TEST_STAND_ARTIFACT_DIR}"
-    # Named, not inferred. The suite otherwise resolves this by walking up from
-    # its own file to the directory holding `tests/` — which is the repo root in
-    # a checkout and `/` in this image, where the suite lives at /tests with
-    # nothing above it. That wrote the ledger to /.artifacts, outside the mount,
-    # and only worked at all because the image used to run as root.
-    -e "INSIGHT_STAND_ARTIFACT_DIR=/tests/${TEST_STAND_ARTIFACT_DIR}"
+    -v "$PWD/tests:/workspace/tests:ro"
+    -v "$PWD/${TEST_STAND_ARTIFACT_DIR}:/workspace/${TEST_STAND_ARTIFACT_DIR}"
+    -w /workspace
+    -e "INSIGHT_STAND_ARTIFACT_DIR=/workspace/${TEST_STAND_ARTIFACT_DIR}"
+    -e HOME=/tmp
+    -e XDG_CACHE_HOME=/tmp/.cache
+    -e UV_PYTHON_INSTALL_DIR=/tmp/uv-python
+    -e UV_PROJECT_ENVIRONMENT=/tmp/stand-tests
+    -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
   )
 
   # The persona password comes from the generated realm export when it is
@@ -1799,7 +1795,7 @@ test_stand_test_in_image() {
   # keycloak stand working with no secret to distribute; the env var stays the
   # path for a stand whose realm this checkout cannot see.
   local realm="deploy/compose/keycloak/realm-insight.generated.json"
-  [[ -f "$realm" ]] && run_args+=(-v "$PWD/${realm}:/${realm}:ro")
+  [[ -f "$realm" ]] && run_args+=(-v "$PWD/${realm}:/workspace/${realm}:ro")
   [[ -n "${INSIGHT_STAND_PERSONA_PASSWORD:-}" ]] && run_args+=(-e INSIGHT_STAND_PERSONA_PASSWORD)
 
   # Service-principal tests need the `testclient` private key to sign their
@@ -1820,7 +1816,14 @@ test_stand_test_in_image() {
   fi
 
   echo "=== running the suite in ${image} (namespace: ${TEST_STAND_GATEWAY_CONTAINER}) ==="
-  docker run "${run_args[@]}" "$image" "$@"
+  docker run "${run_args[@]}" "$image" sh -ceu '
+    python -m pip install --user --no-cache-dir "uv==0.12.0"
+    export PATH="$HOME/.local/bin:$PATH"
+    uv sync --project /workspace/tests --frozen --no-dev --no-install-project
+    export PYTHONPATH="/workspace/tests/lib${PYTHONPATH:+:$PYTHONPATH}"
+    uv run --project /workspace/tests --no-sync \
+      pytest /workspace/tests/stand "$@"
+  ' sh "$@"
 }
 
 cmd_test_stand() {
@@ -1903,10 +1906,8 @@ cmd_test_stand() {
       # tears it down, so a failing suite leaves the stand intact to inspect.
       #
       # Two runners, one verb. On the host (default) the suite runs from
-      # tests/ with uv — CI does the same. With --image it runs inside an
-      # already-pulled suite image instead: the browser, its version and the
-      # locked dependency set then come from that artefact rather than
-      # from whatever the runner happens to have installed.
+      # tests/ with uv. With --image, it runs the checkout's test source in a
+      # browser runner image instead.
       local image=""
       while [[ $# -gt 0 ]]; do
         case "$1" in

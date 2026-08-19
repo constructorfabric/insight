@@ -30,7 +30,19 @@ name: claude-team
 #   this same change — it has to be on main before any major bump reads it.
 #   Rows written before this version keep an empty seat_status and reach gold as
 #   'unknown', which is what they honestly are.
-version: "2.2.0"
+# 3.0.0: no schema change of its own. MAJOR is the only way to dispatch the
+#   one-shot scoped `dbt --full-refresh` (reconcile-connectors) that 2.0.0 and
+#   2.2.0 each deferred, and four things need it. Rows written before 2.2.0
+#   carry an empty seat_status; the seats the pre-2.2.0 `status = 'active'`
+#   filter dropped at staging time are still in Bronze and reach the class only
+#   on a re-read; the roster rows written before the activity gate violate the
+#   contract assert_ai_dev_usage_rows_active states; and the rows the old
+#   table-wide silver watermark stranded return only when staging re-emits them
+#   — the per-source boundary stopped the loss, it does not undo it.
+#   Safe now and not before: full_refresh=false on claude_team__ai_overage
+#   landed in 2.2.0, so the one relation holding a past month's closing spend is
+#   skipped by the rebuild while class_ai_overage re-materialises from it.
+version: "3.0.0"
 # Daily at 23:50 UTC, as late in the day as the boundary allows. The seat
 # endpoint reports the billing month in progress and carries no history, so a
 # month's spend is frozen at the last read INSIDE it and whatever follows is

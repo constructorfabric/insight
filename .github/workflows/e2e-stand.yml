@@ -71,6 +71,9 @@ permissions:
   actions: read # downloads images produced earlier in this workflow run
   packages: read # pulls the pinned service images (via compose)
 
+env:
+  UI_TESTS_IMAGE: mcr.microsoft.com/playwright/python@sha256:aa81288e738725378becba5b3e06cb0f3a7f012a610e87e8d767a090ea3f740d
+
 jobs:
   # Stages 2 (CI stand) and 3 (E2E stand) are meant to add a target to
   # `resolve-target` below rather than copy this file.
@@ -400,9 +403,7 @@ jobs:
         id: browser-install
         if: always() && steps.stand-up.outcome == 'success'
         continue-on-error: true
-        run: |
-          uv sync --project tests
-          uv run --project tests --frozen playwright install --with-deps chromium
+        run: docker pull "$UI_TESTS_IMAGE"
 
       - name: Run the browser journeys
         id: ui-tests
@@ -410,6 +411,7 @@ jobs:
         continue-on-error: true
         run: |
           ./dev-compose.sh test-stand test \
+            --image "$UI_TESTS_IMAGE" \
             --ignore=tests/stand/api --ignore=tests/stand/meta \
             --browser chromium \
             --tracing=retain-on-failure \

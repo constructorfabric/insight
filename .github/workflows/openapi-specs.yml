@@ -47,6 +47,7 @@ jobs:
       identity_resolution: ${{ steps.all.outputs.all || steps.filter.outputs.identity_resolution || steps.filter.outputs.shared_backend }}
       git_cli_proxy: ${{ steps.all.outputs.all || steps.filter.outputs.git_cli_proxy || steps.filter.outputs.shared_backend }}
       generated_models: ${{ steps.all.outputs.all || steps.filter.outputs.generated_models }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
