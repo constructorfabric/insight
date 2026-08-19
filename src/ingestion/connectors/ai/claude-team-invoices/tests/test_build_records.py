@@ -5,6 +5,7 @@ about what reaches bronze when a hop fails is decided here, so none of it needs
 a network, a cluster or the CDK to verify.
 """
 
+import base64
 import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -22,10 +23,23 @@ from source_claude_team_invoices.stripe_chain import (
 )
 from tests.test_stripe_chain import EXTRA_USAGE_LINE, SUBSCRIPTION_LINE
 
-GOOD_URL = "https://invoice.stripe.com/i/acct_1ABC/live_TOKEN?s=ap"
-FAILING_TOKEN = "live_FAILS"
-FAILING_URL = f"https://invoice.stripe.com/i/acct_1ABC/{FAILING_TOKEN}?s=ap"
 EPHEMERAL_KEY = "ek_live_super_secret_value"
+
+
+def _hosted(entity: str, nonce: str = "n1", acct: str = "acct_1ABC") -> tuple[str, str]:
+    """A hosted URL shaped the way the vendor's are, plus its path segment.
+
+    The segment is base64 of `<acct>,_<entity>,<rotating>`; the vendor regenerates
+    that trailing part on every list call, so two calls for one invoice differ in
+    the URL and still decode to the same identity.
+    """
+    payload = f"{acct},_{entity},{nonce}"
+    segment = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    return f"https://invoice.stripe.com/i/{acct}/live_{segment}?s=ap", f"live_{segment}"
+
+
+GOOD_URL, _GOOD_TOKEN = _hosted("ent1ABC")
+FAILING_URL, FAILING_TOKEN = _hosted("entFAILS")
 
 
 def invoice(url: str | None = GOOD_URL, **over: Any) -> dict[str, Any]:
@@ -259,11 +273,23 @@ def test_an_invoice_keeps_one_key_across_a_failure_and_a_later_recovery() -> Non
     assert unenriched["invoice_id"] is None and enriched["invoice_id"] == "in_1ABC"
 
 
-def test_an_invoice_failing_two_different_ways_stays_one_key() -> None:
-    """The outcome is not part of the key, so two attempts cannot become two rows."""
-    failed = next(iter(build_records([invoice()], lines_raise)))
+def test_two_scrapes_of_one_invoice_share_a_key_though_its_url_rotated() -> None:
+    """The vendor re-issues a fresh URL on every list call; only the identity
+    inside it is the invoice, so that is what the key is built from."""
+    first, _ = _hosted("ent1ABC", nonce="1756771200-n1")
+    later, _ = _hosted("ent1ABC", nonce="1756800000-n2")
+    assert first != later, "the fixture must actually rotate the URL"
+
+    a = next(iter(build_records([invoice(url=first)], lines_raise)))
+    b = next(iter(build_records([invoice(url=later)], lines_raise)))
+    assert unique_key_parts(a) == unique_key_parts(b) == ("invoice", "acct_1ABC,_ent1ABC")
+
+
+def test_an_invoice_whose_url_carries_no_identity_falls_back_to_the_wrapper() -> None:
+    """A documented limit, not a bug: with no identity the invoice cannot be tied
+    to its own enriched row, so the mutable fields are all that is left."""
     without_url = next(iter(build_records([invoice(url=None)], lines_ok)))
-    assert unique_key_parts(failed) == unique_key_parts(without_url)
+    assert unique_key_parts(without_url) == ("invoice", 1756771200, "pi_1", 3300, None)
 
 
 def test_two_gaps_of_one_batch_stay_two_rows() -> None:
@@ -272,7 +298,11 @@ def test_two_gaps_of_one_batch_stay_two_rows() -> None:
     def lines_fail(acct, token):
         raise RuntimeError("a hop answered badly")
 
-    same_second = [invoice(payment_intent=None, total=3300), invoice(payment_intent=None, total=4400)]
+    # Distinct invoices carry distinct identities, which is what separates them.
+    same_second = [
+        invoice(url=_hosted("entONE")[0], payment_intent=None, total=3300),
+        invoice(url=_hosted("entTWO")[0], payment_intent=None, total=4400),
+    ]
     keys = {unique_key_parts(r) for r in build_records(same_second, lines_fail)}
     assert len(keys) == 2, "two invoices sharing a second must not collapse into one key"
 

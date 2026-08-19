@@ -80,6 +80,7 @@ SELECT
     toJSONString(map(
         'product_name',  ifNull(toString(product_name), ''),
         'description',   ifNull(toString(description), ''),
+        'invoice_ref',   ifNull(toString(invoice_ref), ''),
         'num_seats',     ifNull(toString(invoice_num_seats), ''),
         'invoice_total', ifNull(toString(invoice_total), ''),
         'period_end_ts', ifNull(toString(period_end_ts), '')

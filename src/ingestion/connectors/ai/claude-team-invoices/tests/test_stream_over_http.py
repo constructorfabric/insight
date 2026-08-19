@@ -9,6 +9,7 @@ Every request is matched or the test fails: `requests_mock` raises NoMockAddress
 on an unregistered URL, so a hop that silently changes shape cannot pass.
 """
 
+import base64
 import json
 import logging
 from collections.abc import Iterator, Mapping, Sequence
@@ -27,7 +28,11 @@ CONFIG = {
     "insight_source_id": "claude-team-invoices-1",
 }
 
-ACCT, TOKEN = "acct_1EXAMPLE", "live_EXAMPLETOKEN"
+ACCT = "acct_1EXAMPLE"
+# base64 of `acct_1EXAMPLE,_entEXAMPLE,<rotating>` — the shape the vendor emits, so
+# the connector can decode an invoice identity out of it.
+_PAYLOAD = f"{ACCT},_entEXAMPLE,1785456000-n1"
+TOKEN = "live_" + base64.urlsafe_b64encode(_PAYLOAD.encode()).decode().rstrip("=")
 INVOICE_ID = "in_1EXAMPLE"
 EPHEMERAL_KEY = "ek_live_EXAMPLESECRET"
 
