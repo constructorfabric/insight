@@ -88,6 +88,8 @@ Read connector package files and verify each item:
 - [ ] AddFields includes `source_id` from `config['insight_source_id']`
 - [ ] AddFields includes `unique_key` with pattern: `{tenant_id}-{source_id}-{natural_key}`
 - [ ] InlineSchemaLoader has `additionalProperties: true`
+- [ ] Every `AddFields` target is declared `string` (+ `"null"`) in the inline schema — Jinja emits strings; a target declared `object` gets NULLED by the destination (`DESTINATION_SERIALIZATION_ERROR` in `_airbyte_meta`) on every sync.
+- [ ] No `AddFields` re-projects a field the payload already carries (snake_case aliases of `emailAddress`, `displayName`, ...). Injected fields are limited to extraction-time values: config, `unique_key`, `stream_partition.*`, cursor hoists. Renames live in dbt.
 - [ ] Schema includes `tenant_id`, `source_id`, `unique_key` as string fields
 - [ ] Nullable types used only where API actually returns null (not all fields)
 - [ ] EVERY top-level stream — including lightweight substream parents added for cache hygiene — carries the full identity stamp and a `promote_bronze_to_rmt` line. Reconcile (ADR-0015) auto-selects every discovered stream, so "helper" top-level streams land as real bronze tables; without the stamp + RMT promotion they accumulate unbounded duplicates. Parent streams that must NOT become tables go inline inside `partition_router.parent_stream_configs[].stream` instead (invisible to discover).
