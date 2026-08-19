@@ -630,7 +630,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             StatusCode::OK,
             "One page of visible persons",
         )
-        .standard_errors(openapi)
+        // Only what this operation can answer: a rejected `q`/`cursor` or an
+        // unresolved tenant (400), no identified caller (401), a failed read
+        // (500). It has no body to refuse, no resource to miss and no conflict.
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
         .handler(visible_persons::list_visible_persons)
         .register(router, openapi);
 
