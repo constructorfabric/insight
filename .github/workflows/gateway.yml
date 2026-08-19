@@ -23,6 +23,20 @@ on:
       - ".github/workflows/build-images.yml"
       - "scripts/ci/prebuilt_images.py"
       - "scripts/ci/test_prebuilt_images.py"
+  push:
+    branches: [main]
+    paths:
+      - "src/backend/tools/routegen/**"
+      - "src/backend/services/gateway/**"
+      - "src/backend/services/authenticator/**"
+      - "src/backend/libs/authenticator-sdk/**"
+      - "src/backend/Cargo.toml"
+      - "src/backend/Cargo.lock"
+      - "src/ingestion/tools/seed/insight_seed/**"
+      - ".github/workflows/gateway.yml"
+      - ".github/workflows/build-images.yml"
+      - "scripts/ci/prebuilt_images.py"
+      - "scripts/ci/test_prebuilt_images.py"
   workflow_dispatch:
 
 concurrency:
@@ -52,6 +66,7 @@ jobs:
         with:
           workspaces: src/backend -> target
           key: routegen
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Test pre-built image selection
         run: PYTHONPATH=scripts/ci python3 -m unittest scripts/ci/test_prebuilt_images.py
@@ -154,6 +169,8 @@ jobs:
       # `uv run --project`: the generator is a console script of the seed
       # package, and uv resolves and installs it on first use.
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          save-cache: ${{ github.event_name == 'push' }}
 
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         if: github.event_name == 'pull_request'
