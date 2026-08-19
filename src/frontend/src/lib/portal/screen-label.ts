@@ -13,7 +13,6 @@ const SEPARATOR = " › ";
 
 const PERSON_VIEWS: Record<string, string> = {
   personal: "Personal",
-  team: "Team",
 };
 
 function itemLabel(zone: string, item: string): string {
@@ -54,6 +53,13 @@ export function screenLabel(path: string): string {
   }
 
   if (first === "ic" && second) {
+    // `usePortalZone` reads the team route as the People zone.
+    if (third === "team") {
+      const people = zoneById("people")!.label;
+      if (!fourth) return people;
+      const item = PEOPLE_ITEMS.find((candidate) => candidate.id === fourth);
+      return `${people}${SEPARATOR}${item?.label ?? sectionLabel(fourth)}`;
+    }
     const view = PERSON_VIEWS[third ?? ""];
     if (!view) return path;
     const person = `Person${SEPARATOR}${view}`;

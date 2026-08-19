@@ -19,11 +19,22 @@ describe("screenLabel", () => {
 
   it("tells the two person views apart", () => {
     expect(screenLabel("/ic/:id/personal")).toBe("Person › Personal");
-    expect(screenLabel("/ic/:id/team")).toBe("Person › Team");
     expect(screenLabel("/ic/:id/personal/git_output")).toBe(
       "Person › Personal › Git output",
     );
-    expect(screenLabel("/ic/:id/team/git_output")).toBe("Person › Team › Git output");
+  });
+
+  it("names the team route by the zone it opens — People, not Person", () => {
+    expect(screenLabel("/ic/:id/team")).toBe("People");
+    expect(screenLabel("/ic/:id/team/roster")).toBe("People › People (roster)");
+    expect(screenLabel("/ic/:id/team/employees")).toBe("People › Employees");
+    expect(screenLabel("/ic/:id/team/median-by-role")).toBe(
+      "People › Median by Role",
+    );
+  });
+
+  it("names a metric group reached on the team route", () => {
+    expect(screenLabel("/ic/:id/team/git_output")).toBe("People › Git output");
   });
 
   it("names a section reached without a zone in the url", () => {
