@@ -132,9 +132,9 @@ fn publish_after_seed(
             tracing::warn!(%msg, "persons-sync refused the publish");
             Ok(())
         }
-        Err(SyncRunError::Failed(e)) => {
-            Err(e.context("the seed completed but its publish failed; the resolver snapshot is stale"))
-        }
+        Err(SyncRunError::Failed(e)) => Err(
+            e.context("the seed completed but its publish failed; the resolver snapshot is stale")
+        ),
     }
 }
 
