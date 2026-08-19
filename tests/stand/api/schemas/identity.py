@@ -351,8 +351,8 @@ class QueueItemResponse(BaseModel):
 
 class ResolutionRatesResponse(BaseModel):
     """
-    Share of observed accounts per resolution state — the operator-visible match
-    rate.
+    The tenant's identity picture: how many persons it knows, and how its
+    observed accounts are split across the resolution states.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -362,6 +362,7 @@ class ResolutionRatesResponse(BaseModel):
     no_evidence: int = Field(..., ge=0)
     observed: int = Field(..., ge=0)
     pending: int = Field(..., ge=0)
+    persons: int = Field(..., description='Persons in the tenant, counted from the person journal rather than the\nevidence fold — `truncated` never applies to this figure.', ge=0)
 
 
 class ResolveProfileRequest(BaseModel):

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AttentionItem } from "@/api/identity-client";
 
-import { dropDecided, filterQueue, groupIntoCases } from "./cases";
+import { dropDecided, groupIntoCases } from "./cases";
 
 const ANN = { person_id: "01900000-0000-7000-8000-0000000000a0", display_name: "Ann Lee" };
 const BOB = { person_id: "01900000-0000-7000-8000-0000000000b0", display_name: "Bob Park" };
@@ -68,46 +68,6 @@ describe("groupIntoCases", () => {
     ]);
 
     expect(cases).toHaveLength(2);
-  });
-});
-
-describe("filterQueue", () => {
-  it("matches the account's own values and its source", () => {
-    const items = [
-      item({ account_id: "a1", email: "ann@example.com", source: "hr" }),
-      item({ account_id: "a2", email: "bob@example.com", source: "wiki" }),
-    ];
-
-    expect(filterQueue(items, "wiki").map((i) => i.account_id)).toEqual(["a2"]);
-    expect(filterQueue(items, "ann@").map((i) => i.account_id)).toEqual(["a1"]);
-  });
-
-  // An operator hunting the accounts of one split person searches by the
-  // person — and by the id they copied off the card, which is the one term
-  // that cannot land on a namesake.
-  it("matches a candidate by name and by person id", () => {
-    const items = [
-      item({ account_id: "a1", candidates: [ANN] }),
-      item({ account_id: "a2", candidates: [BOB] }),
-    ];
-
-    expect(filterQueue(items, "ann lee").map((i) => i.account_id)).toEqual(["a1"]);
-    expect(filterQueue(items, BOB.person_id).map((i) => i.account_id)).toEqual(["a2"]);
-  });
-
-  it("requires every term, so a second word narrows rather than widens", () => {
-    const items = [
-      item({ account_id: "a1", source: "hr", candidates: [ANN] }),
-      item({ account_id: "a2", source: "wiki", candidates: [ANN] }),
-    ];
-
-    expect(filterQueue(items, "ann wiki").map((i) => i.account_id)).toEqual(["a2"]);
-  });
-
-  it("returns everything for a blank query", () => {
-    const items = [item({ account_id: "a1" })];
-
-    expect(filterQueue(items, "   ")).toHaveLength(1);
   });
 });
 

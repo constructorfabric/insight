@@ -138,6 +138,10 @@ export interface AttentionItem {
 
 /** Counts over EVERY observed account, regardless of the item cap. */
 export interface ResolutionRates {
+  /** Persons in the tenant — from the person journal, not the evidence fold.
+   *  Optional so a client deployed ahead of the backend keeps working; absent
+   *  reads as unknown, never as zero. */
+  persons?: number;
   observed: number;
   bound: number;
   pending: number;
@@ -213,9 +217,11 @@ export interface AccountSearchResponse {
 export async function searchAccounts(
   q: string,
   page: PageRequest = {},
+  signal?: AbortSignal,
 ): Promise<AccountSearchResponse> {
   const res = await fetchWithAuth(
     `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}${pageParams(page)}`,
+    { signal },
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -427,9 +433,11 @@ function pageParams(page: PageRequest): string {
 export async function searchPersons(
   q: string,
   page: PageRequest = {},
+  signal?: AbortSignal,
 ): Promise<PersonSearchResponse> {
   const res = await fetchWithAuth(
     `${BASE}/persons?q=${encodeURIComponent(q)}${pageParams(page)}`,
+    { signal },
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);

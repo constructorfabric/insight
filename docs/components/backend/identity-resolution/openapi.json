@@ -1253,7 +1253,7 @@
         "type": "object"
       },
       "ResolutionRatesResponse": {
-        "description": "Share of observed accounts per resolution state — the operator-visible match\nrate.",
+        "description": "The tenant's identity picture: how many persons it knows, and how its\nobserved accounts are split across the resolution states.",
         "properties": {
           "bound": {
             "minimum": 0,
@@ -1274,9 +1274,15 @@
           "pending": {
             "minimum": 0,
             "type": "integer"
+          },
+          "persons": {
+            "description": "Persons in the tenant, counted from the person journal rather than the\nevidence fold — `truncated` never applies to this figure.",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
+          "persons",
           "observed",
           "bound",
           "pending",
@@ -2029,7 +2035,7 @@
         "operationId": "identity_resolution.persons.search",
         "parameters": [
           {
-            "description": "Search terms, at most 8 (200 characters total); every whitespace-separated term must match one of the person's current identity values — email, username, display/first/last name or employee id (case-insensitive substring). Titles and statuses are displayed on the card but not searched. Absent or blank lists every person of the tenant.",
+            "description": "Search terms, at most 8 (200 characters total); every whitespace-separated term must match one of the person's current identity values — email, username or display/first/last name (case-insensitive substring), the same five the row's own label is built from. Titles, statuses and the HR employee id are served on the profile but not searched. A term that parses as a UUID names a person id instead. Absent or blank lists every person of the tenant.",
             "in": "query",
             "name": "q",
             "required": false,
@@ -2689,7 +2695,7 @@
         "operationId": "identity_resolution.resolution.search_accounts",
         "parameters": [
           {
-            "description": "Needle matched against the account's current address, handle, id and observed name. Absent or blank lists every open account.",
+            "description": "Needle matched against every value the account's row shows, case-insensitively: a substring of the current address, handle, id or observed name (whole, or composed from parts). The source is the exception — it matches a whole `_`/`-` separated segment from its start, so `github` and `entra` list those connectors' accounts while `hub` lists none. Absent or blank lists every open account.",
             "in": "query",
             "name": "q",
             "required": false,

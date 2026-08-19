@@ -1,7 +1,7 @@
 """The operator correction surface — the manual-resolution routes on the deployed path.
 
-    GET  /v1/resolution/attention                         200 rates arithmetic · 403 realm admin
-    GET  /v1/resolution/accounts                          200 search + holder · 400 short q · 403 realm admin
+    GET  /v1/resolution/attention                         200 rates arithmetic + person total · 403 realm admin
+    GET  /v1/resolution/accounts                          200 search + holder + by source · 403 realm admin
     GET  /v1/resolution/accounts/{source}/{sid}/{aid}     200 binding + history (round trip)
     GET  /v1/resolution/persons/{id}/accounts             200 for a seeded person
     POST /v1/resolution/bind                              200 applied → already_decided (round trip) · 400 excluded sentinel
@@ -36,10 +36,18 @@ from ..schemas import (
     AttentionResponse,
     CorrectionResponse,
     PersonAccountsResponse,
+    PersonListResponse,
 )
 
 ATTENTION = identity_path("/v1/resolution/attention")
 ACCOUNT_SEARCH = identity_path("/v1/resolution/accounts")
+PERSONS = identity_path("/v1/persons")
+
+#: Pages of the roster the person-total reconciliation is willing to walk, at
+#: the listing's own maximum page. A seeded stand is far below this; a walk that
+#: runs out says the budget is stale, not that the total is wrong.
+PERSON_PAGE_LIMIT = 100
+PERSON_WALK_PAGES = 10
 
 #: The reserved excluded-person sentinel (`Uuid::from_u128(u128::MAX)` in the
 #: service). Once any account was ever excluded it exists in the journal, so
@@ -109,6 +117,54 @@ def test_no_needle_lists_the_observed_accounts_a_page_at_a_time(
 
 @pytest.mark.requires_seed("admin_operator")
 @pytest.mark.reliability
+def test_a_connector_name_lists_the_accounts_it_reported(
+    admin_operator_session: PersonaSession,
+) -> None:
+    """The row prints the source beside the account id, so typing a connector's
+    name is a question the list already looks like it answers. The name comes
+    from what this stand actually reports rather than a constant: a source that
+    is not installed here would make the assertion vacuous.
+    """
+    seen = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"limit": 100})
+    assert seen.status_code == 200, f"{seen.status_code} {seen.text[:300]}"
+    sources = sorted({item.source for item in seen.parse(AccountSearchResponse).items})
+    assert sources, "a seeded stand reports no observed accounts"
+    source = sources[0]
+
+    response = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"q": source})
+    assert response.status_code == 200, f"{response.status_code} {response.text[:300]}"
+
+    found = response.parse(AccountSearchResponse)
+    assert found.items, f"searching {source!r} lists none of that connector's accounts"
+    assert any(match.source == source for match in found.items), (
+        f"no match actually comes from {source!r}: {found.items[:3]}"
+    )
+    # A connector name can also occur inside an address or a handle, so the rule
+    # is the needle reaching SOME searched value — not the source alone. The one
+    # searched value this response cannot show is the name composed from first +
+    # last, so a match reachable only through that would fail here despite the
+    # server behaving: read a failure as "check which value carried it" before
+    # reading it as a filter defect.
+    lowered = source.lower()
+    for match in found.items:
+        carried = [
+            value
+            for value in (
+                match.source,
+                match.email,
+                match.username,
+                match.display_name,
+                match.account_id,
+            )
+            if value is not None
+        ]
+        assert any(lowered in value.lower() for value in carried), (
+            f"match carries the needle in no searched value: {match!r}"
+        )
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
 def test_the_account_listing_pages_without_repeating_an_account(
     admin_operator_session: PersonaSession,
 ) -> None:
@@ -169,7 +225,13 @@ def test_account_search_finds_a_seeded_account_and_names_its_holder(
     for match in found.items:
         carried = [
             value
-            for value in (match.email, match.username, match.display_name, match.account_id)
+            for value in (
+                match.source,
+                match.email,
+                match.username,
+                match.display_name,
+                match.account_id,
+            )
             if value is not None
         ]
         assert any(lowered in value.lower() for value in carried), (
@@ -231,6 +293,42 @@ def test_the_queue_answers_with_coherent_tenant_wide_rates(
     assert queue.items_truncated is False, (
         "the queue reports its item cap was hit on a roster far below it"
     )
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_the_person_total_counts_the_persons_the_listing_serves(
+    admin_operator_session: PersonaSession,
+) -> None:
+    """The console prints this total beside the list it pages through, so the
+    two must describe one set. A COUNT that filters differently from the
+    listing sends an operator hunting for people no page will ever show — and
+    it is the kind of disagreement only two independent reads can catch."""
+    response = admin_operator_session.client.get(ATTENTION)
+    assert response.status_code == 200, f"{response.status_code} {response.text[:300]}"
+
+    total = response.parse(AttentionResponse).rates.persons
+    assert total > 0, "a seeded stand knows persons"
+
+    walked: set[str] = set()
+    cursor: str | None = None
+    for _ in range(PERSON_WALK_PAGES):
+        params: dict[str, object] = {"limit": PERSON_PAGE_LIMIT}
+        if cursor:
+            params["cursor"] = cursor
+        page = admin_operator_session.client.get(PERSONS, params=params)
+        assert page.status_code == 200, f"{page.status_code} {page.text[:300]}"
+        listing = page.parse(PersonListResponse)
+        walked.update(str(person.person_id) for person in listing.items)
+        cursor = listing.next_cursor
+        if not cursor:
+            break
+
+    assert cursor is None, (
+        f"the roster outgrew {PERSON_WALK_PAGES} pages — raise the budget, the "
+        "reconciliation below is only valid over a complete walk"
+    )
+    assert len(walked) == total, f"the total says {total} persons, the listing serves {len(walked)}"
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead")

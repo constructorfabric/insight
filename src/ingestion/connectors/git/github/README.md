@@ -83,10 +83,12 @@ source joins an HR-rostered organization.
 Three things to know before deploying:
 
 - **When `github-directory` is deployed, both connectors must share one
-  `insight_source_id`.** The seed and the resolver key an account on (source
-  type, source id, login); under different ids the roster bindings and these
-  claims describe different accounts, and a member with no published e-mail
-  can end up as two persons.
+  `insight_source_id` — `github-main` in the shipped examples.** The seed and
+  the resolver key an account on (source type, source id, login); under
+  different ids the roster bindings and these claims describe different
+  accounts, and a member with no published e-mail can end up as two persons.
+  The id comes from the Secret's `insight.cyberfabric.com/source-id`
+  annotation, so this is a deployment decision, not a code one.
 - **An unmatched active account is minted as a new person.** An outside
   contributor, or a member committing under an address no roster carries,
   becomes a fresh person and shows up in the seed's `accounts_minted_new`

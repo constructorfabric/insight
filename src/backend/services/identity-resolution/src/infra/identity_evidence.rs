@@ -138,10 +138,20 @@ const LIST_SQL: &str = r"
     LIMIT ?
 ";
 
-/// INVARIANT: probes every value a row can DISPLAY, the composed name included.
-/// A row shown as a name assembled from parts must be findable by that name —
-/// searching only the whole-name column leaves those rows visible and
-/// unreachable, and they are exactly the ones an operator has to bind by hand.
+/// INVARIANT: probes every value a row can DISPLAY — the source it came from
+/// and the composed name included. The row prints the source beside the account
+/// id, so "show me the accounts from this connector" is a question the list
+/// already looks like it answers; and a row shown as a name assembled from parts
+/// must be findable by that name, or it stays visible and unreachable, which is
+/// exactly the row an operator has to bind by hand.
+///
+/// The source is the one probe that is NOT a plain substring. A connector name
+/// is an identifier, not prose: `hub` inside `github` would answer with every
+/// account of that connector, and on a 20-row page the handle the operator
+/// actually typed can be pushed off it. Matching a `_`/`-` separated segment
+/// instead keeps `entra` reaching `ms_entra` — the compound names are exactly
+/// the ones a prefix match would strand — while `hub` reaches nothing. Both
+/// sides are normalised, so the separator an operator types does not matter.
 ///
 /// Unicode-aware to match the order key: an operator who types `ü` must reach
 /// the row that shows `Ü`, the way the person listing's collation already does.
@@ -150,7 +160,15 @@ const FILTER_SQL: &str = "
            OR positionCaseInsensitiveUTF8(username, ?) > 0
            OR positionCaseInsensitiveUTF8(account_id, ?) > 0
            OR positionCaseInsensitiveUTF8(display_name, ?) > 0
+           OR positionCaseInsensitiveUTF8({SOURCE_SEGMENTS}, {NEEDLE_SEGMENT}) > 0
            OR positionCaseInsensitiveUTF8({COMPOSED}, ?) > 0)";
+
+/// The source name with every segment boundary made explicit, so a needle
+/// anchored the same way can only match at one.
+const SOURCE_SEGMENTS_SQL: &str = "concat('_', replaceAll(source_type, '-', '_'))";
+
+/// The needle anchored to a segment start, normalised like the haystack.
+const NEEDLE_SEGMENT_SQL: &str = "concat('_', replaceAll(?, '-', '_'))";
 
 /// Tuple comparison, so the tie-break on the account key is part of the same
 /// predicate: two accounts sharing a label must not both sit on the boundary.
@@ -397,6 +415,8 @@ fn list_sql(filtered: bool, resuming: bool) -> String {
         .replace("{FILTER}", if filtered { FILTER_SQL } else { "" })
         .replace("{RESUME}", if resuming { RESUME_SQL } else { "" })
         .replace("{LABEL}", ORDER_LABEL_SQL)
+        .replace("{SOURCE_SEGMENTS}", SOURCE_SEGMENTS_SQL)
+        .replace("{NEEDLE_SEGMENT}", NEEDLE_SEGMENT_SQL)
         .replace("{COMPOSED}", COMPOSED_NAME_SQL)
 }
 
@@ -404,7 +424,7 @@ fn list_sql(filtered: bool, resuming: bool) -> String {
 /// Counted from the template so adding a probe cannot leave a placeholder
 /// unbound, which would slide the resume values into the needle's slots.
 fn needle_probes() -> usize {
-    FILTER_SQL.matches('?').count()
+    FILTER_SQL.matches('?').count() + NEEDLE_SEGMENT_SQL.matches('?').count()
 }
 
 /// A source that sends the parts but no whole name still names the person.
@@ -730,8 +750,9 @@ mod tests {
 
         assert_eq!(
             needle_probes(),
-            5,
-            "one probe per displayable value: address, handle, id, name, composed name"
+            6,
+            "one probe per displayable value: address, handle, id, name, source, \
+             composed name"
         );
         assert_eq!(
             sql.matches("positionCaseInsensitiveUTF8").count(),
@@ -743,6 +764,15 @@ mod tests {
                 "positionCaseInsensitiveUTF8({COMPOSED_NAME_SQL}, ?)"
             )),
             "the composed name is not searched: {sql}"
+        );
+        // The row prints it beside the account id, so a connector name typed
+        // into the field has to reach the accounts that came from it — and only
+        // at a segment boundary, or `hub` answers with every `github` account.
+        assert!(
+            sql.contains(&format!(
+                "positionCaseInsensitiveUTF8({SOURCE_SEGMENTS_SQL}, {NEEDLE_SEGMENT_SQL})"
+            )),
+            "the source is not probed by segment: {sql}"
         );
     }
 

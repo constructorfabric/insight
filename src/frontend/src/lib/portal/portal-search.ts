@@ -26,8 +26,6 @@ export interface PortalSearch {
   item?: string;
   /** Selected account inside the Identities surface (an opaque account key). */
   acct?: string;
-  /** Free-text narrowing of the Identities queue. */
-  filter?: string;
   /** Which Identities mode is open (the review queue, a person). */
   mode?: string;
   /** Person under inspection in the Identities person mode. */
@@ -79,7 +77,6 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     zone: str(raw.zone),
     item: str(raw.item),
     acct: str(raw.acct),
-    filter: str(raw.filter),
     mode: str(raw.mode),
     person: str(raw.person)?.toLowerCase(),
     dir: str(raw.dir),
@@ -105,7 +102,6 @@ export const PORTAL_SEARCH_KEYS = [
   "zone",
   "item",
   "acct",
-  "filter",
   "mode",
   "person",
   "dir",

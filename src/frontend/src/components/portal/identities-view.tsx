@@ -4,16 +4,21 @@
  *
  * A triage surface, not a roster: the operator lands in what NEEDS a
  * decision, grouped by why it does, and works the backlog to zero — the
- * empty queue is the goal state and renders as one. The rates strip on top
- * counts binding states across the tenant; only its first figure, the queue's
- * own size, is work the operator can do.
+ * empty queue is the goal state and renders as one. The strip on top sizes the
+ * tenant — its people, its accounts, and how many of those accounts are the
+ * operator's own backlog.
+ *
+ * One layout for all three modes: the heading, the tabs and the mode's own
+ * search stay put, and only the list under them scrolls. A reader working a
+ * long list must not lose the field they are typing into, or the tabs that
+ * switch what they are looking at.
  *
  * The queue picks a case; the window decides it. Selection lives in `?acct=`
  * so an operator can hand a colleague a link to the exact account under
  * discussion — and that link answers whatever the queue looks like by then,
  * an emptied backlog included.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { AttentionItem, ResolutionRates } from "@/api/identity-client";
@@ -26,7 +31,6 @@ import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import {
   Collapsible,
   CollapsibleContent,
@@ -40,14 +44,8 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
 import {
   usePortalSearch,
   useSetPortalSearch,
@@ -55,22 +53,12 @@ import {
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { itemKey } from "@/lib/identities/account-key";
 import { personDisplayName } from "@/lib/identities/person-display";
-import {
-  filterQueue,
-  groupIntoCases,
-  type QueueCase,
-} from "@/lib/identities/cases";
+import { groupIntoCases, type QueueCase } from "@/lib/identities/cases";
 import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import {
-  ChevronDown,
-  Info,
-  PartyPopper,
-  Search,
-  TriangleAlert,
-} from "lucide-react";
+import { ChevronDown, PartyPopper, TriangleAlert } from "lucide-react";
 
 /** Queue groups in working order: conflicts first, then the unknowns. */
 const KIND_ORDER = [
@@ -80,18 +68,6 @@ const KIND_ORDER = [
   "minted_from_roster",
   "no_evidence",
 ] as const;
-
-// Binding states, not workloads: every one of these counts accounts the
-// resolver has already placed or will place by itself. The only number an
-// operator can act on is the queue's own size, which is why it leads the strip
-// and is the only one carrying a status colour.
-const RATE_TILES: ReadonlyArray<{ key: keyof ResolutionRates; status: Status }> = [
-  { key: "observed", status: "neutral" },
-  { key: "bound", status: "good" },
-  { key: "pending", status: "neutral" },
-  { key: "no_evidence", status: "neutral" },
-  { key: "excluded", status: "neutral" },
-];
 
 /** A click selects the case — unless it pressed a control or ended a selection. */
 function opensTheCase(event: React.MouseEvent<HTMLElement>): boolean {
@@ -128,8 +104,8 @@ export function IdentitiesView() {
   const active: string = resolveMode(mode);
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
-      <header>
+    <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 p-6">
+      <header className="shrink-0">
         <h1 className="text-lg font-semibold tracking-tight">
           {t("identities.title")}
         </h1>
@@ -138,6 +114,7 @@ export function IdentitiesView() {
         </p>
       </header>
       <Tabs
+        className="shrink-0"
         value={active}
         // A mode change drops the open account: a case picked in one mode
         // means nothing in another, and carrying it would open a window the
@@ -182,7 +159,7 @@ function ReviewQueue() {
   const { items, rates, truncated, items_truncated: itemsTruncated } =
     attention.data;
   return (
-    <div className="flex min-w-0 flex-col gap-6">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-6">
       {truncated ? (
         <Alert variant="destructive" role="status">
           <TriangleAlert />
@@ -223,63 +200,55 @@ function RatesStrip({
 }) {
   const { t } = useTranslation();
   return (
-    <TooltipProvider>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
-        <Tile
-          figure={decisionsCapped ? `${decisions}+` : String(decisions)}
-          label={t("identities.rates.decisions")}
-          hint={t("identities.rates.decisions_hint")}
-          status="warn"
-        />
-        {RATE_TILES.map(({ key, status }) => (
-          <Tile
-            key={key}
-            figure={String(rates[key])}
-            label={t(`identities.rates.${key}`)}
-            hint={t(`identities.rates.${key}_hint`)}
-            status={status}
-          />
-        ))}
-      </div>
-    </TooltipProvider>
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
+      {/* A backend a release behind this bundle does not carry the total; an
+          unknown figure reads as one rather than as the word "undefined". */}
+      <Tile
+        figure={String(rates.persons ?? "—")}
+        label={t("identities.rates.persons")}
+        status="neutral"
+      />
+      <Tile
+        figure={String(rates.observed)}
+        label={t("identities.rates.observed")}
+        status="neutral"
+      />
+      {/* The one figure here that is the operator's own work, and the only one
+          carrying a status colour. */}
+      <Tile
+        figure={decisionsCapped ? `${decisions}+` : String(decisions)}
+        label={t("identities.rates.decisions")}
+        status="warn"
+      />
+      <Tile
+        figure={String(rates.excluded)}
+        label={t("identities.rates.excluded")}
+        status="neutral"
+      />
+    </div>
   );
 }
 
 function Tile({
   figure,
   label,
-  hint,
   status,
 }: {
   figure: string;
   label: string;
-  hint: string;
   status: Status;
 }) {
   return (
     <div className="rounded-lg border bg-card p-4">
       <div className={TEXT_FIGURE}>{figure}</div>
-      <span className="mt-1 inline-flex items-center gap-1">
-        <span
-          className={cn(
-            TEXT_LABEL,
-            "inline-block rounded px-1.5 py-0.5",
-            STATUS_SURFACE_CLASS[status],
-          )}
-        >
-          {label}
-        </span>
-        <Tooltip>
-          {/* Focusable, or the hint — which carries the tile's actual
-              meaning — exists for mouse users only. */}
-          <TooltipTrigger
-            render={<span className="inline-flex text-muted-foreground" tabIndex={0} />}
-            aria-label={hint}
-          >
-            <Info className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent className="max-w-xs">{hint}</TooltipContent>
-        </Tooltip>
+      <span
+        className={cn(
+          TEXT_LABEL,
+          "mt-1 inline-block rounded px-1.5 py-0.5",
+          STATUS_SURFACE_CLASS[status],
+        )}
+      >
+        {label}
       </span>
     </div>
   );
@@ -303,18 +272,13 @@ function AllResolved() {
   );
 }
 
-function Queue({ items: everything }: { items: AttentionItem[] }) {
-  const { t } = useTranslation();
-  const { acct, filter } = usePortalSearch();
+function Queue({ items }: { items: AttentionItem[] }) {
+  const { acct } = usePortalSearch();
   const { setAcct } = usePortalNavActions();
   const listRef = useRef<HTMLDivElement>(null);
   // Session-scoped on purpose: "have I looked at this one" is about the sitting
   // an operator is in, not a preference worth outliving it.
   const [visited, setVisited] = useState<ReadonlySet<string>>(new Set());
-  const items = useMemo(
-    () => filterQueue(everything, filter ?? ""),
-    [everything, filter],
-  );
   const groups: Array<{ kind: string; items: AttentionItem[] }> = KIND_ORDER.map(
     (kind) => ({ kind, items: items.filter((i) => i.kind === kind) }),
   ).filter((g) => g.items.length > 0);
@@ -368,40 +332,31 @@ function Queue({ items: everything }: { items: AttentionItem[] }) {
   // has to answer even then, and the backlog reaching zero is exactly when a
   // colleague opens the link they were sent.
   return (
-    <div
-      ref={listRef}
-      onKeyDown={onArrow}
-      className="flex min-w-0 flex-col gap-4"
-    >
-      {everything.length > 0 ? <QueueFilter /> : null}
-      {/* A filter that matches nothing is not an emptied backlog. Celebrating
-          there would tell an operator the work is done because they mistyped. */}
-      {items.length === 0 && everything.length > 0 ? (
-        <Empty className="rounded-lg border">
-          <EmptyHeader>
-            <EmptyTitle>{t("identities.queue.no_matches")}</EmptyTitle>
-            <EmptyDescription>
-              {t("identities.queue.no_matches_description")}
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : null}
-      {items.length === 0 && everything.length === 0 ? <AllResolved /> : null}
-      {groups.map((group) => (
-        <QueueGroup
-          key={group.kind}
-          kind={group.kind}
-          items={group.items}
-          selectedKey={acct}
-          visited={visited}
-          onSelect={(key) => select(key === acct ? null : key)}
-        />
-      ))}
-      {/* Fed from the unfiltered set: a link stays answerable even when the
-          reader's own filter hides the row it points at. */}
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      {/* Blocks, not a flex column: inside a bounded scroller a flex child
+          shrinks to fit, and a group card is `overflow-hidden` — so every group
+          would render its heading over a clipped stump of its own rows. */}
+      <div
+        ref={listRef}
+        onKeyDown={onArrow}
+        className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto"
+      >
+        {items.length === 0 ? <AllResolved /> : null}
+        {groups.map((group) => (
+          <QueueGroup
+            key={group.kind}
+            kind={group.kind}
+            items={group.items}
+            selectedKey={acct}
+            visited={visited}
+            onSelect={(key) => select(key === acct ? null : key)}
+          />
+        ))}
+      </div>
+      <ScrollToEnds scroller={listRef} rows={items.length} />
       <CaseDialog
         acct={acct}
-        items={everything}
+        items={items}
         ordered={ordered}
         onSelect={select}
         onClose={() => {
@@ -414,59 +369,8 @@ function Queue({ items: everything }: { items: AttentionItem[] }) {
   );
 }
 
-/**
- * Narrow the queue by anything visible on a row — an address, a source, a
- * candidate's name, a person id pasted back from a card.
- *
- * The query rides in the URL like every other portal state, so a narrowed
- * queue is shareable; it is written on a pause in typing rather than per
- * keystroke, and replaces rather than pushes, so Back leaves the surface
- * instead of walking the operator backwards through their own typing.
- */
-function QueueFilter() {
-  const { t } = useTranslation();
-  const { filter } = usePortalSearch();
-  const setSearch = useSetPortalSearch();
-  const [query, setQuery] = useState(filter ?? "");
-  const debounced = useDebouncedValue(query, FILTER_DEBOUNCE_MS);
-  // What this component last wrote to the URL. Distinguishes its own write
-  // landing (ignore) from an external change — Back, a pasted link — which
-  // must reach the input, or the box shows a filter the list stopped using.
-  const lastWritten = useRef(filter ?? "");
-
-  useEffect(() => {
-    lastWritten.current = debounced.trim();
-    setSearch({ filter: debounced.trim() || undefined }, { replace: true });
-  }, [debounced, setSearch]);
-
-  useEffect(() => {
-    const external = filter ?? "";
-    if (external !== lastWritten.current) {
-      lastWritten.current = external;
-      setQuery(external);
-    }
-  }, [filter]);
-
-  return (
-    <div className="relative">
-      <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-      <Input
-        type="search"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder={t("identities.queue.filter_placeholder")}
-        aria-label={t("identities.queue.filter_placeholder")}
-        className="ps-9"
-      />
-    </div>
-  );
-}
-
-
 /** Cases rendered before the group asks to be expanded further. */
 const CASE_PAGE = 10;
-
-const FILTER_DEBOUNCE_MS = 250;
 
 function QueueGroup({
   kind,

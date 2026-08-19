@@ -47,6 +47,8 @@ export function AccountDetail({
   accountRef,
   queueItem,
   observed = false,
+  holder,
+  bindTo,
 }: {
   accountRef: AccountRef;
   /** The queue row for this account, when it is still in the queue — the
@@ -57,6 +59,15 @@ export function AccountDetail({
    *  and no history reads as a stale link — offering verbs there would let a
    *  mistyped `?acct=` pre-register a typo as a real account. */
   observed?: boolean;
+  /**
+   * Whoever holds the account, for the surfaces that know it without having any
+   * candidates — the binding read answers with an id and no card, so without
+   * this the section below could only name the holder by finding them among the
+   * queue's candidates.
+   */
+  holder?: PersonSummary | null;
+  /** Bind straight to the person the surface has open. See `AccountActions`. */
+  bindTo?: PersonSummary | null;
 }) {
   const { t } = useTranslation();
   const binding = useAccountBinding(accountRef);
@@ -90,9 +101,14 @@ export function AccountDetail({
   }
 
   const candidates = queueItem?.candidates ?? [];
-  const boundCard = candidates.find(
-    (c) => c.person_id === binding.data.person_id,
-  );
+  // The holder the surface passed is a card for the id it read; the binding read
+  // is who holds the account NOW. Naming that card for a different id would
+  // caption a fresh binding — a detach mints a person the surface never saw —
+  // with the person it was just moved away from.
+  const boundCard =
+    holder?.person_id === binding.data.person_id
+      ? holder
+      : candidates.find((c) => c.person_id === binding.data.person_id);
 
   return (
     // One column, not two: the people are what an operator reads across, and
@@ -119,6 +135,8 @@ export function AccountDetail({
           accountRef={accountRef}
           binding={binding.data}
           candidates={candidates}
+          holder={boundCard ?? null}
+          bindTo={bindTo}
         />
       </div>
       <section className="flex min-h-0 flex-1 flex-col">
@@ -137,7 +155,7 @@ export function AccountDetail({
                 <HistoryRow
                   key={row.key}
                   entry={row.entry}
-                  candidates={candidates}
+                  known={boundCard ? [...candidates, boundCard] : candidates}
                 />
               ) : (
                 <OperationRow key={row.key} operation={row.operation} />
@@ -233,10 +251,11 @@ function OperationRow({ operation }: { operation: AccountOperation }) {
 
 function HistoryRow({
   entry,
-  candidates,
+  known,
 }: {
   entry: BindingHistoryEntry;
-  candidates: PersonSummary[];
+  /** Cards the surface already holds, to name a row the service left as an id. */
+  known: PersonSummary[];
 }) {
   const { t } = useTranslation();
   // The resolver stores no reason for its own rows — as an empty string, not
@@ -244,10 +263,10 @@ function HistoryRow({
   // entry, which is most of them.
   const reason = entry.reason?.trim() || undefined;
   const verbKey = reason ? VERB_KEYS[reason] : undefined;
-  // The card the service resolved wins; the queue's candidates are the
-  // fallback for a backend that does not send one yet.
+  // The card the service resolved wins; whatever cards the surface already has
+  // are the fallback for a backend that does not send one yet.
   const target =
-    entry.person ?? candidates.find((c) => c.person_id === entry.person_id);
+    entry.person ?? known.find((c) => c.person_id === entry.person_id);
   return (
     <li className="rounded-md border p-2">
       <div className="flex items-center gap-2">

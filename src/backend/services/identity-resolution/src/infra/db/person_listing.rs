@@ -22,12 +22,36 @@
 //! A person renamed in one system stays findable by the name another system
 //! still reports, which is exactly what an operator arrives holding.
 //!
-//! This is a deliberate tenant-wide scan, not a missing index: a substring match
-//! over the journal cannot use a B-tree, and a derived current-values table
-//! would be one more cache to keep in sync with every write path. The page
-//! bounds what is returned and not the work — every page ranks the tenant's
-//! observations again — so the consumer is the admin console, one operator at a
-//! time. A derived table is the answer if that stops being true.
+//! A substring match over the journal cannot use a B-tree, and the ranking is
+//! the expensive half — two window passes over every observation it is handed.
+//! So a term is answered in two steps: a probe over the raw rows names the
+//! persons it could possibly reach, and the ranking is restricted to those.
+//!
+//! INVARIANT: the probe must stay a SUPERSET of the exact filter. It reads raw
+//! observations where the filter reads current ones, so it can only ever admit
+//! too many, and the filter below still decides who is returned. Narrowing the
+//! probe to current values would drop rows the filter would have kept — a wrong
+//! answer rather than a slow one.
+//!
+//! A term half the roster matches is not narrowed by anything, so the probe
+//! stops at [`MAX_CANDIDATES`] and the ranking reads the tenant instead. Its own
+//! LIMIT makes finding that out nearly free, which is what keeps the two-step
+//! shape from costing more than it saves. Note what reaches the cap: the probe
+//! counts persons a SUPERSEDED value matched too, so a long-lived journal gets
+//! there on accumulated history and not only on how common the term is. That
+//! costs a fallback, never a wrong answer.
+//!
+//! An id-named search skips the probe entirely: the ids ARE the set, and the
+//! tightest one there is.
+//!
+//! A listing restricted to one caller's visible set narrows the ranking too, but
+//! never the probe: the probe only has to stay a superset, and a visibility
+//! filter it does not carry can only leave it wider than it needs to be.
+//!
+//! Browsing with no terms has nothing to narrow by and ranks the whole tenant —
+//! the page bounds what is returned, not the work. That is the one case a
+//! derived current-values table would fix, and it is a cache to keep in sync
+//! with every write path, so it waits until the roster outgrows one operator.
 
 use sea_orm::{ConnectionTrait as _, DatabaseConnection, DbBackend, QueryResult, Statement};
 use uuid::Uuid;
@@ -49,15 +73,22 @@ const ORDER_KEY_CHARS: usize = 255;
 // the band digit, inside MariaDB's default `max_sort_length`.
 const _: () = assert!(ORDER_KEY_CHARS * 4 < 1024);
 
-/// Observation attributes a term may match. Wider than the label's inputs:
-/// `employee_id` is worth searching by and worth nothing to sort by.
-const FILTERABLE_VALUE_TYPES: [&str; 6] = [
+/// How many persons the probe may name before the listing stops believing the
+/// term is selective. Past this, restricting the ranking costs more than the
+/// tenant-wide pass it replaces, so the probe's own LIMIT ends the argument.
+const MAX_CANDIDATES: usize = 2_000;
+
+/// One row past the cap — what tells a complete candidate set from a cut one.
+const PROBE_LIMIT: u64 = MAX_CANDIDATES as u64 + 1;
+
+/// Observation attributes a term may match — the same five the card's label is
+/// built from, so everything searchable is also visible on the row that answers.
+const FILTERABLE_VALUE_TYPES: [&str; 5] = [
     "email",
     "username",
     "display_name",
     "first_name",
     "last_name",
-    "employee_id",
 ];
 
 /// Restrict a listing to what one caller may see. Absent, it is the tenant's.
@@ -127,9 +158,12 @@ pub struct After<'a> {
 /// the id-named search path. `visible_to` restricts it to one caller's visible
 /// set. `after` resumes a previous page.
 ///
+/// Two statements when there are terms and no ids: the probe, then the page over
+/// what it named. One when there is nothing to narrow by.
+///
 /// # Errors
 ///
-/// Returns an error if the query fails.
+/// Returns an error if either query fails.
 pub async fn list_persons(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -139,82 +173,194 @@ pub async fn list_persons(
     after: Option<After<'_>>,
     limit: u64,
 ) -> anyhow::Result<Vec<PersonListRow>> {
-    let (sql, values) = build_query(tenant_id, terms, within, visible_to, after, limit);
+    match narrowing(db, tenant_id, terms, within).await? {
+        Narrowing::Nobody => Ok(Vec::new()),
+        Narrowing::Tenant => page(db, tenant_id, terms, None, visible_to, after, limit).await,
+        Narrowing::Persons(ids) => {
+            page(db, tenant_id, terms, Some(&ids), visible_to, after, limit).await
+        }
+    }
+}
+
+/// What the ranking is allowed to read.
+#[derive(Debug)]
+enum Narrowing {
+    /// Nothing narrows it — the tenant is the set.
+    Tenant,
+    /// Only these persons can appear. Never empty: that state is `Nobody`.
+    Persons(Vec<Uuid>),
+    /// The probe named nobody, so no person can pass the filter either and the
+    /// page is empty without asking the database a second time.
+    Nobody,
+}
+
+async fn page(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    terms: &[String],
+    narrowed_to: Option<&[Uuid]>,
+    visible_to: Option<VisibleTo<'_>>,
+    after: Option<After<'_>>,
+    limit: u64,
+) -> anyhow::Result<Vec<PersonListRow>> {
+    let (sql, values) = build_query(tenant_id, terms, narrowed_to, visible_to, after, limit);
     let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
     rows_from(db.query_all(stmt).await?)
 }
 
-struct VisibleScopeSql {
-    /// `RECURSIVE `, so the `WITH` admits the recursive CTE.
-    recursive: &'static str,
-    cte: String,
-    filter: &'static str,
-    /// In placeholder order.
-    values: Vec<sea_orm::Value>,
-}
-
-/// INVARIANT: these values bind between `people`'s and the filters' — the
-/// position the CTE occupies in the statement.
-fn visible_scope(visible_to: Option<VisibleTo<'_>>, tenant_id: Uuid) -> VisibleScopeSql {
-    let Some(scope) = visible_to else {
-        return VisibleScopeSql {
-            recursive: "",
-            cte: String::new(),
-            filter: "",
-            values: Vec::new(),
-        };
+/// Decide what the ranking may read.
+///
+/// Named ids answer this by themselves and skip the probe. Otherwise the probe
+/// runs, and a set it could not keep under [`MAX_CANDIDATES`] is no narrowing at
+/// all: the term reaches too much of the roster to be worth restricting by.
+async fn narrowing(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    terms: &[String],
+    within: &[Uuid],
+) -> anyhow::Result<Narrowing> {
+    if !within.is_empty() {
+        return Ok(Narrowing::Persons(within.to_vec()));
+    }
+    let Some((first, rest)) = terms.split_first() else {
+        return Ok(Narrowing::Tenant);
     };
 
-    let tenant = || sea_orm::Value::from(tenant_id.as_bytes().to_vec());
-    let viewer = || sea_orm::Value::from(scope.viewer_person_id.as_bytes().to_vec());
+    Ok(from_probe(
+        candidate_persons(db, tenant_id, first, rest).await?,
+    ))
+}
 
-    VisibleScopeSql {
-        recursive: "RECURSIVE ",
-        cte: format!(",\n{VISIBLE_SET_CTE}"),
-        filter: " AND EXISTS (SELECT 1 FROM visible_set vs WHERE vs.person_id = p.person_id)",
-        values: vec![
-            viewer(),
-            tenant(),
-            viewer(),
-            tenant(),
-            scope.policy.is_flat().into(),
-            tenant(),
-            viewer(),
-            tenant(),
-            scope.org_source_type.into(),
-        ],
+/// Read the probe's answer: nobody, a set worth ranking by, or a term so common
+/// that the set it collected is neither complete nor worth ranking by.
+fn from_probe(candidates: Vec<Uuid>) -> Narrowing {
+    if candidates.is_empty() {
+        return Narrowing::Nobody;
     }
+    if candidates.len() > MAX_CANDIDATES {
+        return Narrowing::Tenant;
+    }
+    Narrowing::Persons(candidates)
 }
 
-struct StatementParts<'a> {
-    recursive: &'a str,
-    type_list: &'a str,
-    visible_cte: &'a str,
-    filters: &'a str,
-    resume: &'a str,
+/// Every person a term could possibly reach, read straight off the raw
+/// observations with no window in sight. One row past the cap is enough to know
+/// the term is not selective, so that is where the probe stops.
+async fn candidate_persons(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    first: &str,
+    rest: &[String],
+) -> anyhow::Result<Vec<Uuid>> {
+    let (sql, values) = build_probe(tenant_id, first, rest);
+    let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
+
+    let rows = db.query_all(stmt).await?;
+    let mut found = Vec::with_capacity(rows.len());
+    for row in rows {
+        let raw: Vec<u8> = row.try_get("", "person_id")?;
+        found.push(Uuid::from_slice(&raw)?);
+    }
+    Ok(found)
 }
 
-/// The statement text, apart from the binding order that can silently drift.
-fn statement_sql(parts: &StatementParts<'_>) -> String {
-    let StatementParts {
-        recursive,
-        type_list,
-        visible_cte,
-        filters,
-        resume,
-    } = *parts;
-    format!(
+/// The probe statement: the first term narrows, every further one is a lookup
+/// per surviving person. Ordering does not matter — the caller only counts and
+/// restricts by the set.
+fn build_probe(tenant_id: Uuid, first: &str, rest: &[String]) -> (String, Vec<sea_orm::Value>) {
+    let type_list = searched_types();
+    let mut values: Vec<sea_orm::Value> = vec![tenant_id.as_bytes().to_vec().into()];
+
+    values.push(like_pattern(first).into());
+
+    // Every further term is the same clause with its own placeholder, so the
+    // text repeats and only the binds differ — in the order the clauses appear.
+    let clause = format!(
+        "\n              AND EXISTS (SELECT 1 FROM persons t \
+         WHERE t.insight_tenant_id = p.insight_tenant_id \
+           AND t.person_id = p.person_id \
+           AND t.value_type IN ({type_list}) \
+           AND t.value_effective LIKE ? ESCAPE '!')"
+    );
+    let also = clause.repeat(rest.len());
+    values.extend(rest.iter().map(|term| like_pattern(term).into()));
+
+    values.push(PROBE_LIMIT.into());
+
+    let sql = format!(
         r"
-        WITH {recursive}ranked AS (
-            SELECT person_id, value_type, value_effective, created_at, id,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY person_id, insight_source_type, insight_source_id, value_type
-                       ORDER BY created_at DESC, id DESC
-                   ) AS rn
-            FROM persons
-            WHERE insight_tenant_id = ?
-              AND value_type IN ({type_list})
-        ),
+        SELECT DISTINCT p.person_id
+        FROM persons p
+        WHERE p.insight_tenant_id = ?
+          AND p.value_type IN ({type_list})
+          AND p.value_effective LIKE ? ESCAPE '!'{also}
+        LIMIT ?
+    "
+    );
+
+    (sql, values)
+}
+
+/// The listing with the probe deliberately skipped — the shape a term that names
+/// more than [`MAX_CANDIDATES`] persons falls back to.
+///
+/// Test-only: the fallback must answer exactly what the narrowed path answers,
+/// and only a live case over a real journal can say whether it does.
+#[cfg(test)]
+pub(super) async fn list_persons_unnarrowed(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    terms: &[String],
+    after: Option<After<'_>>,
+    limit: u64,
+) -> anyhow::Result<Vec<PersonListRow>> {
+    page(db, tenant_id, terms, None, None, after, limit).await
+}
+
+fn searched_types() -> String {
+    FILTERABLE_VALUE_TYPES
+        .iter()
+        .map(|t| format!("'{t}'"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// How many persons the tenant has — the total behind the listing above.
+///
+/// INVARIANT: the set must stay identical to `build_query`'s `people` CTE. The
+/// console prints this figure beside the list an operator pages through, so a
+/// filter added to one side only makes the total disagree with what that list
+/// can reach.
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub async fn count_persons(db: &DatabaseConnection, tenant_id: Uuid) -> anyhow::Result<usize> {
+    const SQL: &str = "SELECT COUNT(DISTINCT person_id) AS persons FROM persons \
+                       WHERE insight_tenant_id = ? AND person_id != ?";
+
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [
+            tenant_id.as_bytes().to_vec().into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
+        ],
+    );
+
+    let Some(row) = db.query_one(stmt).await? else {
+        return Ok(0);
+    };
+    Ok(usize::try_from(row.try_get::<i64>("", "persons")?).unwrap_or(0))
+}
+
+/// The label half of the listing, the same for every query it serves: the value
+/// current for each person × source × attribute, then the latest of those per
+/// attribute, pivoted into the one label the row shows.
+///
+/// INVARIANT: this is `person_card`'s rule, and the module doc says why the two
+/// steps cannot collapse into one.
+const LABEL_CTES: &str = r"
         current_vals AS (
             SELECT person_id, value_type, value_effective, created_at, id
             FROM ranked
@@ -249,61 +395,92 @@ fn statement_sql(parts: &StatementParts<'_>) -> String {
                 WHERE rn = 1
                 GROUP BY person_id
             ) pivoted
-        ),
-        people AS (
-            SELECT DISTINCT person_id
-            FROM persons
-            WHERE insight_tenant_id = ? AND person_id != ?
-        ){visible_cte}
-        SELECT person_id, order_key FROM (
-            SELECT p.person_id AS person_id,
-                   CONCAT(
-                       IF(c.label IS NULL, '1', '0'),
-                       LEFT(LOWER(COALESCE(c.label, '')), {ORDER_KEY_CHARS})
-                   ) AS order_key
-            FROM people p
-            LEFT JOIN card c ON c.person_id = p.person_id
-            WHERE 1 = 1{filters}
-        ) keyed{resume}
-        ORDER BY order_key, person_id
-        LIMIT ?
-    "
-    )
+        )";
+
+struct VisibleScopeSql {
+    /// `RECURSIVE `, so the `WITH` admits the recursive CTE.
+    recursive: &'static str,
+    cte: String,
+    filter: &'static str,
+    /// In placeholder order.
+    values: Vec<sea_orm::Value>,
+}
+
+/// INVARIANT: these values bind after the ranking's and before the filters' —
+/// the position the CTE occupies in the statement.
+fn visible_scope(visible_to: Option<VisibleTo<'_>>, tenant_id: Uuid) -> VisibleScopeSql {
+    let Some(scope) = visible_to else {
+        return VisibleScopeSql {
+            recursive: "",
+            cte: String::new(),
+            filter: "",
+            values: Vec::new(),
+        };
+    };
+
+    let tenant = || sea_orm::Value::from(tenant_id.as_bytes().to_vec());
+    let viewer = || sea_orm::Value::from(scope.viewer_person_id.as_bytes().to_vec());
+
+    VisibleScopeSql {
+        recursive: "RECURSIVE ",
+        cte: format!(",\n{VISIBLE_SET_CTE}"),
+        filter: " AND EXISTS (SELECT 1 FROM visible_set vs WHERE vs.person_id = p.person_id)",
+        values: vec![
+            viewer(),
+            tenant(),
+            viewer(),
+            tenant(),
+            scope.policy.is_flat().into(),
+            tenant(),
+            viewer(),
+            tenant(),
+            scope.org_source_type.into(),
+        ],
+    }
 }
 
 fn build_query(
     tenant_id: Uuid,
     terms: &[String],
-    within: &[Uuid],
+    narrowed_to: Option<&[Uuid]>,
     visible_to: Option<VisibleTo<'_>>,
     after: Option<After<'_>>,
     limit: u64,
 ) -> (String, Vec<sea_orm::Value>) {
+    // INVARIANT: values are pushed in the order their placeholders appear in the
+    // assembled statement — the roster, the ranking, the visible set, the
+    // filters, the resume position, the limit. A fragment moved in the text moves
+    // here too; a mismatch does not fail, it shifts every later binding by one.
     let mut values: Vec<sea_orm::Value> = Vec::new();
+    let type_list = searched_types();
 
-    let type_list = FILTERABLE_VALUE_TYPES
-        .iter()
-        .map(|t| format!("'{t}'"))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    // Bound in the order the placeholders appear: ranked's tenant, people's
-    // tenant + excluded sentinel, the visible-set CTE, then the filters.
-    values.push(tenant_id.as_bytes().to_vec().into());
     values.push(tenant_id.as_bytes().to_vec().into());
     values.push(EXCLUDED_PERSON.as_bytes().to_vec().into());
+    let roster = match narrowed_to {
+        None => String::new(),
+        Some(ids) => {
+            let placeholders = vec!["?"; ids.len()].join(", ");
+            values.extend(ids.iter().map(|id| id.as_bytes().to_vec().into()));
+            format!("\n              AND person_id IN ({placeholders})")
+        }
+    };
+
+    values.push(tenant_id.as_bytes().to_vec().into());
+    // Ranking a narrowed roster is the whole point; reaching an unnarrowed one
+    // through a semi-join is not — with nothing to narrow by, the plain scan the
+    // browse case had all along stays.
+    let ranked_within = if roster.is_empty() {
+        ""
+    } else {
+        "\n              AND person_id IN (SELECT person_id FROM people)"
+    };
 
     let scope = visible_scope(visible_to, tenant_id);
+    let visible_cte = scope.cte;
+    let recursive = scope.recursive;
     values.extend(scope.values);
 
     let mut filters = String::from(scope.filter);
-    if !within.is_empty() {
-        let placeholders = vec!["?"; within.len()].join(", ");
-        filters.push_str(" AND p.person_id IN (");
-        filters.push_str(&placeholders);
-        filters.push(')');
-        values.extend(within.iter().map(|id| id.as_bytes().to_vec().into()));
-    }
     for term in terms {
         filters.push_str(
             " AND EXISTS (SELECT 1 FROM current_vals t \
@@ -322,13 +499,38 @@ fn build_query(
 
     values.push(limit.into());
 
-    let sql = statement_sql(&StatementParts {
-        recursive: scope.recursive,
-        type_list: &type_list,
-        visible_cte: &scope.cte,
-        filters: &filters,
-        resume: &resume,
-    });
+    let sql = format!(
+        r"
+        WITH {recursive}people AS (
+            SELECT DISTINCT person_id
+            FROM persons
+            WHERE insight_tenant_id = ? AND person_id != ?{roster}
+        ),
+        ranked AS (
+            SELECT person_id, value_type, value_effective, created_at, id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY person_id, insight_source_type, insight_source_id, value_type
+                       ORDER BY created_at DESC, id DESC
+                   ) AS rn
+            FROM persons
+            WHERE insight_tenant_id = ?
+              AND value_type IN ({type_list}){ranked_within}
+        ),
+{LABEL_CTES}{visible_cte}
+        SELECT person_id, order_key FROM (
+            SELECT p.person_id AS person_id,
+                   CONCAT(
+                       IF(c.label IS NULL, '1', '0'),
+                       LEFT(LOWER(COALESCE(c.label, '')), {ORDER_KEY_CHARS})
+                   ) AS order_key
+            FROM people p
+            LEFT JOIN card c ON c.person_id = p.person_id
+            WHERE 1 = 1{filters}
+        ) keyed{resume}
+        ORDER BY order_key, person_id
+        LIMIT ?
+    "
+    );
 
     (sql, values)
 }
@@ -360,13 +562,29 @@ fn rows_from(rows: Vec<QueryResult>) -> anyhow::Result<Vec<PersonListRow>> {
 mod tests {
     use super::*;
 
-    fn query(terms: &[String], within: &[Uuid], after: Option<After<'_>>) -> String {
-        build_query(Uuid::nil(), terms, within, None, after, 50).0
+    fn query(terms: &[String], narrowed_to: Option<&[Uuid]>, after: Option<After<'_>>) -> String {
+        build_query(Uuid::nil(), terms, narrowed_to, None, after, 50).0
+    }
+
+    fn visible_query(policy: VisibilityPolicy) -> String {
+        build_query(
+            Uuid::nil(),
+            &[],
+            None,
+            Some(VisibleTo {
+                viewer_person_id: Uuid::from_u128(7),
+                org_source_type: "bamboohr",
+                policy,
+            }),
+            None,
+            50,
+        )
+        .0
     }
 
     #[test]
     fn a_query_with_no_terms_filters_nothing_and_still_pages() {
-        let sql = query(&[], &[], None);
+        let sql = query(&[], None, None);
 
         assert!(!sql.contains("EXISTS"), "no term filter when browsing");
         assert!(!sql.contains("order_key >"), "no resume on a first page");
@@ -380,13 +598,93 @@ mod tests {
         // the AND is what the count of clauses cannot see.
         let terms = ["iva".to_owned(), "example.com".to_owned()];
 
-        let sql = query(&terms, &[], None);
+        let sql = query(&terms, None, None);
 
-        assert_eq!(sql.matches("EXISTS").count(), 2);
+        assert_eq!(
+            sql.matches("FROM current_vals t").count(),
+            terms.len(),
+            "the exact filter must probe once per term: {sql}"
+        );
         assert!(
             !sql.contains("OR EXISTS"),
             "a person must match both terms, not either: {sql}"
         );
+    }
+
+    #[test]
+    fn a_narrowed_page_ranks_the_named_persons_and_not_the_tenant() {
+        // The whole point of the two-step shape: the window passes see the
+        // persons the probe named. A ranking that reads the tenant anyway is the
+        // slow query this exists to avoid.
+        let ids = [Uuid::from_u128(0xB2), Uuid::from_u128(0xB3)];
+
+        let sql = query(&["iva".to_owned()], Some(&ids), None);
+
+        assert!(
+            sql.contains("AND person_id IN (?, ?)"),
+            "the roster must be cut to the named persons: {sql}"
+        );
+        assert!(
+            sql.contains("AND person_id IN (SELECT person_id FROM people)"),
+            "the ranking must read the cut roster: {sql}"
+        );
+    }
+
+    #[test]
+    fn an_unnarrowed_page_ranks_the_tenant_without_a_semi_join() {
+        // Browsing, and the fallback a term too common to narrow by lands in:
+        // there is no set to join against, and adding one would make the plain
+        // scan slower for no gain.
+        let sql = query(&["iva".to_owned()], None, None);
+
+        assert!(
+            !sql.contains("IN (SELECT person_id FROM people)"),
+            "an unnarrowed roster must stay a plain scan: {sql}"
+        );
+        assert!(
+            sql.contains("FROM current_vals t"),
+            "the exact filter still applies: {sql}"
+        );
+    }
+
+    #[test]
+    fn the_probe_requires_every_term_of_a_person() {
+        let terms = ["iva".to_owned(), "example.com".to_owned()];
+
+        let (sql, values) = build_probe(Uuid::nil(), &terms[0], &terms[1..]);
+
+        assert_eq!(
+            sql.matches("LIKE ?").count(),
+            terms.len(),
+            "one probe per term: {sql}"
+        );
+        assert!(!sql.contains("OR "), "terms are ANDed, never ORed: {sql}");
+        assert!(
+            sql.contains("LIMIT ?"),
+            "the probe must stop at the cap: {sql}"
+        );
+        assert_eq!(
+            values.last(),
+            Some(&sea_orm::Value::from(PROBE_LIMIT)),
+            "the probe reads one row past the cap, so a full set is recognisable"
+        );
+    }
+
+    #[test]
+    fn the_probes_answer_decides_which_shape_runs() {
+        let under: Vec<Uuid> = (0..3).map(Uuid::from_u128).collect();
+        let over: Vec<Uuid> = (0..=MAX_CANDIDATES as u128).map(Uuid::from_u128).collect();
+
+        assert!(
+            matches!(from_probe(under.clone()), Narrowing::Persons(ids) if ids == under),
+            "a small set narrows the ranking"
+        );
+        assert!(
+            matches!(from_probe(over), Narrowing::Tenant),
+            "a set past the cap falls back to the tenant"
+        );
+        // Not an empty `IN ()`, and not a statement at all: nobody can match.
+        assert!(matches!(from_probe(Vec::new()), Narrowing::Nobody));
     }
 
     #[test]
@@ -402,7 +700,7 @@ mod tests {
         let (sql, values) = build_query(
             tenant,
             &terms,
-            &within,
+            Some(&within),
             None,
             Some(After {
                 order_key: "0ivanov",
@@ -420,10 +718,13 @@ mod tests {
         assert_eq!(
             values,
             vec![
-                bytes(tenant),
+                // the roster, cut to the persons the caller narrowed to
                 bytes(tenant),
                 bytes(EXCLUDED_PERSON),
                 bytes(within[0]),
+                // the ranking over that roster
+                bytes(tenant),
+                // the exact filter, then the page position
                 sea_orm::Value::from("%iva%".to_owned()),
                 sea_orm::Value::from("0ivanov".to_owned()),
                 sea_orm::Value::from("0ivanov".to_owned()),
@@ -442,7 +743,7 @@ mod tests {
         // those rows.
         let sql = query(
             &[],
-            &[],
+            None,
             Some(After {
                 order_key: "0ivanov",
                 person_id: Uuid::nil(),
@@ -458,40 +759,12 @@ mod tests {
         // resume predicate in full. Cutting the label to a length that fits is
         // what stops a long-label boundary from skipping a person for good; the
         // budget itself is checked at compile time beside the constant.
-        assert!(query(&[], &[], None).contains(&format!("), {ORDER_KEY_CHARS})")));
-    }
-
-    #[test]
-    fn like_pattern_neutralises_wildcards() {
-        for (term, expected) in [
-            ("alice", "%alice%"),
-            ("50%", "%50!%%"),
-            ("a_b", "%a!_b%"),
-            ("!", "%!!%"),
-        ] {
-            assert_eq!(like_pattern(term), expected, "should escape: {term:?}");
-        }
-    }
-
-    fn visible_query(policy: VisibilityPolicy) -> String {
-        build_query(
-            Uuid::nil(),
-            &[],
-            &[],
-            Some(VisibleTo {
-                viewer_person_id: Uuid::from_u128(7),
-                org_source_type: "bamboohr",
-                policy,
-            }),
-            None,
-            50,
-        )
-        .0
+        assert!(query(&[], None, None).contains(&format!("), {ORDER_KEY_CHARS})")));
     }
 
     #[test]
     fn an_unrestricted_listing_asks_nothing_about_visibility() {
-        let sql = query(&[], &[], None);
+        let sql = query(&[], None, None);
 
         assert!(
             !sql.contains("visible_set"),
@@ -519,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn the_visible_set_values_land_between_the_people_and_the_filters() {
+    fn the_visible_set_values_land_between_the_ranking_and_the_filters() {
         // The CTE sits between them in the SQL, so its values must too.
         let tenant = Uuid::from_u128(0xA1);
         let viewer = Uuid::from_u128(0x7);
@@ -528,7 +801,7 @@ mod tests {
         let (sql, values) = build_query(
             tenant,
             &["iva".to_owned()],
-            &within,
+            Some(&within),
             Some(VisibleTo {
                 viewer_person_id: viewer,
                 org_source_type: "bamboohr",
@@ -543,9 +816,12 @@ mod tests {
         assert_eq!(
             values,
             vec![
-                bytes(tenant),
+                // the roster, cut to the persons the caller narrowed to
                 bytes(tenant),
                 bytes(EXCLUDED_PERSON),
+                bytes(within[0]),
+                // the ranking over that roster
+                bytes(tenant),
                 // the visible-set union
                 bytes(viewer),
                 bytes(tenant),
@@ -557,7 +833,6 @@ mod tests {
                 bytes(tenant),
                 sea_orm::Value::from("bamboohr"),
                 // then the filters it narrows
-                bytes(within[0]),
                 sea_orm::Value::from("%iva%".to_owned()),
                 sea_orm::Value::from(50u64),
             ],
@@ -574,7 +849,7 @@ mod tests {
             let (_, values) = build_query(
                 Uuid::nil(),
                 &[],
-                &[],
+                None,
                 Some(VisibleTo {
                     viewer_person_id: Uuid::from_u128(7),
                     org_source_type: "bamboohr",
@@ -588,6 +863,18 @@ mod tests {
                 values.contains(&sea_orm::Value::from(expected)),
                 "{policy:?} must bind {expected}"
             );
+        }
+    }
+
+    #[test]
+    fn like_pattern_neutralises_wildcards() {
+        for (term, expected) in [
+            ("alice", "%alice%"),
+            ("50%", "%50!%%"),
+            ("a_b", "%a!_b%"),
+            ("!", "%!!%"),
+        ] {
+            assert_eq!(like_pattern(term), expected, "should escape: {term:?}");
         }
     }
 }
