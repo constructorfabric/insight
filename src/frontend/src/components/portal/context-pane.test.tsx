@@ -103,6 +103,27 @@ describe("ContextPane", () => {
     expect(lens.result.current).toBe("Git output");
   });
 
+  it("expands a direction and its first lens in one navigation", async () => {
+    mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
+    pane();
+    portalRouter.navigations.length = 0;
+
+    await userEvent.click(screen.getByText("Knowledge / Wiki"));
+
+    expect(portalRouter.navigations).toHaveLength(1);
+    expect(portalRouter.search).toMatchObject({ dir: "wiki", lens: "Overview" });
+  });
+
+  it("picks a lens in one navigation", async () => {
+    mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
+    pane();
+    portalRouter.navigations.length = 0;
+
+    await userEvent.click(screen.getByText("Git output"));
+
+    expect(portalRouter.navigations).toHaveLength(1);
+  });
+
   it("switches direction when another domain is clicked", async () => {
     mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
     pane();

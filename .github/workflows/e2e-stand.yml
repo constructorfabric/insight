@@ -8,10 +8,10 @@ name: E2E — Compose stand
 #
 # Nothing here builds by default: `test-stand up` pulls the frontend and the
 # four backend services at their charts' appVersions, which name main's build.
-# A ref that changes one of those trees has to build it or the lane reports on
-# code it never ran. `up` guards that, but the guard needs origin/main and these
-# lanes clone at depth 1 — so `changes` decides instead, per tree, and the lanes
-# pass --build-backend and --build-frontend independently.
+# A ref that changes one of those trees has to run it or the lane reports on
+# code it never tested. Pull requests load backend images already built for the
+# same commit; events without that image workflow retain the source-build path.
+# Frontend changes continue to build the SPA in this job.
 #
 # INVARIANT: Both lane checks report independently from one stand lifecycle.
 #
@@ -68,6 +68,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read # downloads images produced earlier in this workflow run
   packages: read # pulls the pinned service images (via compose)
 
 jobs:
@@ -90,6 +91,12 @@ jobs:
       relevant: ${{ steps.filter.outputs.relevant }}
       # One per buildable tree; the lanes turn each into its own --build-* flag.
       backend: ${{ steps.filter.outputs.backend }}
+      backend_artifacts: ${{ steps.filter.outputs.backend_artifacts }}
+      analytics: ${{ steps.filter.outputs.analytics }}
+      authenticator: ${{ steps.filter.outputs.authenticator }}
+      identity_resolution: ${{ steps.filter.outputs.identity_resolution }}
+      gateway: ${{ steps.filter.outputs.gateway }}
+      gateway_checks: ${{ steps.filter.outputs.gateway_checks }}
       frontend: ${{ steps.filter.outputs.frontend }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -102,9 +109,12 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          emit() { # emit <relevant> <backend> <frontend>
-            printf 'relevant=%s\nbackend=%s\nfrontend=%s\n' "$1" "$2" "$3" >> "$GITHUB_OUTPUT"
-            echo "relevant=$1 backend=$2 frontend=$3"
+          emit() {
+            printf 'relevant=%s\nbackend=%s\nfrontend=%s\nbackend_artifacts=%s\nanalytics=%s\nauthenticator=%s\nidentity_resolution=%s\ngateway=%s\ngateway_checks=%s\n' \
+              "$relevant" "$backend" "$frontend" "$backend_artifacts" \
+              "$analytics" "$authenticator" "$identity_resolution" "$gateway" "$gateway_checks" >> "$GITHUB_OUTPUT"
+            echo "relevant=$relevant backend=$backend frontend=$frontend backend_artifacts=$backend_artifacts"
+            echo "analytics=$analytics authenticator=$authenticator identity_resolution=$identity_resolution gateway=$gateway"
           }
           # Match pull_request path-filter semantics: compare the branch from
           # its merge base, not from the current base-branch tip. A two-dot diff
@@ -125,7 +135,16 @@ jobs:
           # was never made.
           if [ -z "$base_point" ]; then
             echo "no comparison point — running the stand and building the product"
-            emit true true true
+            relevant=true
+            backend=true
+            frontend=true
+            backend_artifacts=false
+            analytics=false
+            authenticator=false
+            identity_resolution=false
+            gateway=false
+            gateway_checks=false
+            emit
             exit 0
           fi
           changed="$(git diff --name-only "$base_point" "$HEAD")"
@@ -133,7 +152,13 @@ jobs:
           relevant="$forced"
           backend=false
           frontend=false
-          if echo "$changed" | grep -qE '^(tests/|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/|docs/components/backend/.*/openapi\.json|\.github/workflows/e2e-stand\.yml|\.github/workflows/scripts/redact-playwright-trace\.py)'; then
+          backend_artifacts=false
+          analytics=false
+          authenticator=false
+          identity_resolution=false
+          gateway=false
+          gateway_checks=false
+          if echo "$changed" | grep -qE '^(tests/|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/|docs/components/backend/.*/openapi\.json|\.github/workflows/(build-images|e2e-stand)\.yml|\.github/workflows/scripts/redact-playwright-trace\.py|scripts/ci/prebuilt_images\.py)'; then
             relevant=true
           elif [ "$forced" = true ]; then
             echo "nothing the stand covers changed — running anyway, this event has no pull request to filter"
@@ -142,7 +167,64 @@ jobs:
           fi
           if echo "$changed" | grep -q '^src/backend/'; then backend=true; fi
           if echo "$changed" | grep -q '^src/frontend/'; then frontend=true; fi
-          emit "$relevant" "$backend" "$frontend"
+          if echo "$changed" | grep -qE '^(src/backend/services/analytics/|src/backend/libs/insight-clickhouse/|src/backend/docker-entrypoint\.sh$|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(build-images|e2e-stand)\.yml$)'; then analytics=true; fi
+          if echo "$changed" | grep -qE '^(src/backend/services/authenticator/|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/prebuilt_images\.py$)'; then authenticator=true; fi
+          if echo "$changed" | grep -qE '^(src/backend/services/identity-resolution/|src/backend/libs/insight-clickhouse/|src/backend/docker-entrypoint\.sh$|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(build-images|e2e-stand)\.yml$)'; then identity_resolution=true; fi
+          if echo "$changed" | grep -qE '^(src/backend/services/gateway/|src/backend/tools/routegen/|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/prebuilt_images\.py$)'; then gateway=true; fi
+          if echo "$changed" | grep -qE '^(src/backend/tools/routegen/|src/backend/services/gateway/|src/backend/services/authenticator/|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|src/ingestion/tools/seed/insight_seed/|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/(prebuilt_images|test_prebuilt_images)\.py$)'; then gateway_checks=true; fi
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]] && \
+             [[ "$analytics" == true || "$authenticator" == true || "$identity_resolution" == true || "$gateway" == true ]]; then
+            backend_artifacts=true
+          fi
+          emit
+
+  build-pr-images:
+    name: Build PR images
+    needs: changes
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/build-images.yml
+
+  bronze-to-api:
+    name: Bronze to API
+    needs: build-pr-images
+    if: github.event_name == 'pull_request' && needs.build-pr-images.result == 'success'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/e2e-bronze-to-api.yml
+
+  bronze-to-api-report:
+    name: Run E2E suite
+    needs: bronze-to-api
+    if: github.event_name == 'pull_request' && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the Bronze-to-API workflow to pass
+        env:
+          RESULT: ${{ needs.bronze-to-api.result }}
+        run: |
+          if [ "$RESULT" != success ]; then
+            echo "::error::Bronze-to-API checks did not pass ($RESULT)."
+            exit 1
+          fi
+
+  gateway:
+    name: Gateway checks
+    needs: [changes, build-pr-images]
+    if: |
+      always()
+      && github.event_name == 'pull_request'
+      && needs.changes.outputs.gateway_checks == 'true'
+      && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/gateway.yml
 
   resolve-target:
     name: resolve-target
@@ -176,8 +258,12 @@ jobs:
   # subdirectory would ADD to the full collection instead of narrowing it.
   stand-runner:
     name: shared stand runner
-    needs: [changes, resolve-target]
-    if: needs.resolve-target.outputs.target == 'compose'
+    needs: [changes, resolve-target, build-pr-images]
+    if: |
+      always()
+      && needs.resolve-target.result == 'success'
+      && needs.resolve-target.outputs.target == 'compose'
+      && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
     runs-on: ubuntu-latest
     outputs:
       api: ${{ steps.results.outputs.api }}
@@ -203,6 +289,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Load PR-built backend images
+        if: needs.changes.outputs.backend_artifacts == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          ANALYTICS_POLICY: ${{ needs.changes.outputs.analytics == 'true' && 'required' || 'unchanged' }}
+          AUTHENTICATOR_POLICY: ${{ needs.changes.outputs.authenticator == 'true' && 'required' || 'unchanged' }}
+          IDENTITY_POLICY: ${{ needs.changes.outputs.identity_resolution == 'true' && 'required' || 'unchanged' }}
+          GATEWAY_POLICY: ${{ needs.changes.outputs.gateway == 'true' && 'required' || 'unchanged' }}
+        run: |
+          python3 scripts/ci/prebuilt_images.py \
+            --run-id "$RUN_ID" --registry ghcr.io/constructorfabric \
+            --destination /tmp/e2e-prebuilt \
+            --image "insight-analytics:${ANALYTICS_POLICY}" \
+            --image "insight-authenticator:${AUTHENTICATOR_POLICY}" \
+            --image "insight-identity-resolution:${IDENTITY_POLICY}" \
+            --image "insight-gateway:${GATEWAY_POLICY}"
+
       # `up` writes .env.compose.test-stand, forces the pinned frontend and
       # Keycloak, seeds, and then blocks until EVERY gold observation table the
       # seed populates proves dbt rebuilt it for THIS run and left a positive
@@ -218,13 +322,22 @@ jobs:
         continue-on-error: true
         env:
           BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
+          PREBUILT_BACKEND: ${{ needs.changes.outputs.backend_artifacts }}
           BUILD_FRONTEND: ${{ needs.changes.outputs.frontend }}
+          ANALYTICS_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-analytics:e2e-prebuilt' || '' }}
+          AUTHENTICATOR_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-authenticator:e2e-prebuilt' || '' }}
+          IDENTITY_RESOLUTION_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-identity-resolution:e2e-prebuilt' || '' }}
+          GATEWAY_IMAGE: ${{ needs.changes.outputs.backend_artifacts == 'true' && 'insight-gateway:e2e-prebuilt' || '' }}
         run: |
           set -euo pipefail
           # `if` blocks, not `[ … ] && flags+=(…)`: under set -e a false test as
           # the last command of an && list ends the step.
           flags=()
-          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
+          if [ "$PREBUILT_BACKEND" = "true" ]; then
+            flags+=(--prebuilt-backend)
+          elif [ "$BUILD_BACKEND" = "true" ]; then
+            flags+=(--build-backend)
+          fi
           if [ "$BUILD_FRONTEND" = "true" ]; then flags+=(--build-frontend); fi
           ./dev-compose.sh test-stand up "${flags[@]}"
 

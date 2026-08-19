@@ -332,3 +332,48 @@ fn a_batch_whose_flush_stamp_was_hoisted_into_meta_keeps_its_own_times() {
     assert_eq!(rows[0].ts, arrival - Duration::milliseconds(4_000));
     assert_eq!(rows[1].ts, arrival - Duration::milliseconds(1_000));
 }
+
+#[test]
+fn a_batch_keeps_every_record_the_sdks_duplicate_rides_with() {
+    let tenant = Uuid::now_v7();
+    let person = Uuid::now_v7();
+    // Neither page view carries its own name: the SDK hoists the one they share.
+    let req = UsageIngestRequest {
+        meta: TelemetryRecord {
+            name: Some("page_view".to_owned()),
+            context_session_id: Some("session-1".to_owned()),
+            ..TelemetryRecord::default()
+        },
+        records: vec![
+            TelemetryRecord {
+                data: Some(serde_json::json!({ "path": "\"/ic/:id/team\"" })),
+                ..TelemetryRecord::default()
+            },
+            TelemetryRecord {
+                data: Some(serde_json::json!({
+                    "url": "\"/ic/bbbbbbbb-0000-0000-0000-000000010001/team\""
+                })),
+                ..TelemetryRecord::default()
+            },
+            record(
+                "drill",
+                serde_json::json!({ "target": "git.commits", "path": "\"/ic/:id/team\"" }),
+            ),
+        ],
+    };
+
+    let rows = recordable_rows(&req, tenant, person, Utc::now());
+
+    let kept: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|row| (row.event_name.as_str(), row.path.as_str()))
+        .collect();
+    assert_eq!(
+        kept,
+        vec![("page_view", "/ic/:id/team"), ("drill", "/ic/:id/team")]
+    );
+    assert!(
+        rows.iter().all(|row| !row.path.contains("bbbbbbbb")),
+        "a raw person id must never reach a stored row"
+    );
+}
