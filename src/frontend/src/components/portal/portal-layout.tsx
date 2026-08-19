@@ -13,7 +13,7 @@ import {
 } from "@/lib/portal/portal-nav";
 import { landingDecision } from "@/lib/portal/landing-zone";
 import { useShellLayout, type ShellLayout } from "@/lib/portal/use-shell-layout";
-import { useViewerIsManager } from "@/lib/portal/use-viewer-is-manager";
+import { useViewerReach } from "@/lib/portal/use-viewer-reach";
 import { useIsAdmin } from "@/queries/identity-me";
 
 /**
@@ -30,7 +30,7 @@ export function PortalLayout() {
   // zone stays route-driven (their own Person page) — EXCEPT Manage, which
   // the admin role opens regardless of reports. The rules live in
   // `landingDecision` (pure, table-tested); this effect only applies them.
-  const { isManager, isPending } = useViewerIsManager();
+  const { canSeeOthers, isPending } = useViewerReach();
   const { isAdmin, isPending: adminPending, isError: adminError } = useIsAdmin();
   const zone = usePortalZone();
   const landed = useRef(false);
@@ -39,7 +39,7 @@ export function PortalLayout() {
     const decision = landingDecision({
       zone,
       mgrPending: isPending,
-      isManager,
+      canSeeOthers,
       // An errored check is "unknown", not "no": the landing decision is
       // one-shot, so resetting on it would permanently rewrite a URL an
       // admin deliberately opened. Waiting costs nothing — the me query
@@ -51,7 +51,7 @@ export function PortalLayout() {
     landed.current = true;
     if (decision.kind === "pin-overview") replaceZone("overview");
     if (decision.kind === "reset") replaceZone(null);
-  }, [isPending, isManager, adminPending, adminError, isAdmin, zone, replaceZone]);
+  }, [isPending, canSeeOthers, adminPending, adminError, isAdmin, zone, replaceZone]);
 
   return (
     <SidebarProvider
