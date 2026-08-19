@@ -254,6 +254,22 @@ streams:
             type:
               - boolean
               - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
         required:
           - id
         additionalProperties: true
@@ -6809,134 +6825,8 @@ streams:
                   - "null"
           body:
             type:
-              - object
+              - string
               - "null"
-            properties:
-              version:
-                type:
-                  - number
-                  - "null"
-              type:
-                type:
-                  - string
-                  - "null"
-              content:
-                type:
-                  - array
-                  - "null"
-                items:
-                  type:
-                    - object
-                    - "null"
-                  properties:
-                    type:
-                      type:
-                        - string
-                        - "null"
-                    content:
-                      type:
-                        - array
-                        - "null"
-                      items:
-                        type:
-                          - object
-                          - "null"
-                        properties:
-                          type:
-                            type:
-                              - string
-                              - "null"
-                          text:
-                            type:
-                              - string
-                              - "null"
-                          marks:
-                            type:
-                              - array
-                              - "null"
-                            items:
-                              type:
-                                - object
-                                - "null"
-                              properties:
-                                type:
-                                  type:
-                                    - string
-                                    - "null"
-                                attrs:
-                                  type:
-                                    - object
-                                    - "null"
-                                  properties:
-                                    href:
-                                      type:
-                                        - string
-                                        - "null"
-                          attrs:
-                            type:
-                              - object
-                              - "null"
-                            properties:
-                              url:
-                                type:
-                                  - string
-                                  - "null"
-                          content:
-                            type:
-                              - array
-                              - "null"
-                            items:
-                              type:
-                                - object
-                                - "null"
-                              properties:
-                                type:
-                                  type:
-                                    - string
-                                    - "null"
-                                content:
-                                  type:
-                                    - array
-                                    - "null"
-                                  items:
-                                    type:
-                                      - object
-                                      - "null"
-                                    properties:
-                                      type:
-                                        type:
-                                          - string
-                                          - "null"
-                                      text:
-                                        type:
-                                          - string
-                                          - "null"
-                                      marks:
-                                        type:
-                                          - array
-                                          - "null"
-                                        items:
-                                          type:
-                                            - object
-                                            - "null"
-                                          properties:
-                                            type:
-                                              type:
-                                                - string
-                                                - "null"
-                    attrs:
-                      type:
-                        - object
-                        - "null"
-                      properties:
-                        level:
-                          type:
-                            - number
-                            - "null"
-                        order:
-                          type:
-                            - number
-                            - "null"
           updateAuthor:
             type:
               - object

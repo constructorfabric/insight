@@ -28,7 +28,7 @@ this file and the registry disagree.
 - Shape: integer, higher_is_better, unit days
 - Notes: Distinct days with person-attributed AI activity across dev and assistant tools.
 
-## ai.cost — AI usage cost
+## ai.cost — AI potential usage cost
 
 - Source: ai_usage (ai_metric_observations)
 - Reads: cost_usd
@@ -44,7 +44,7 @@ this file and the registry disagree.
 - Shape: currency, lower_is_better
 - Notes: The invoiced price of a person's seat for a billing month, read from the per-seat amount on the invoice's subscription lines — the only place the vendor states a price for one seat. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction, and a window spanning two months returns both fees. Distinct from ai.extra_usage_cost, which is what the vendor billed on top of this fee; the two add up to what a seat cost in total. A seat carrying no tier returns no value, as does a month whose invoice priced several tiers and none of them is the seat's — a share of the invoice total would be an invention. Attribution mode is derived — the invoice prices a tier, not a person.
 
-## ai.extra_usage_cost — AI extra usage
+## ai.extra_usage_cost — AI actual usage cost
 
 - Source: ai_cost (ai_cost_metric_observations)
 - Reads: extra_usage_usd

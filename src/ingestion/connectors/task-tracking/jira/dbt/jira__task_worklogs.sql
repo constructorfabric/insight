@@ -25,5 +25,5 @@ SELECT
 FROM (
     SELECT * FROM {{ source('bronze_jira', 'jira_worklogs') }}
     ORDER BY _airbyte_extracted_at DESC
-    LIMIT 1 BY _airbyte_raw_id
+    LIMIT 1 BY unique_key
 ) w

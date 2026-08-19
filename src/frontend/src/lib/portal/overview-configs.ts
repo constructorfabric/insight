@@ -31,6 +31,7 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
           "tasks.closed",
           "collab.messages_sent",
           "ai.cost",
+          "ai.extra_usage_cost",
         ],
       },
       // The old header's "N using AI" stat, now an honest participation card
