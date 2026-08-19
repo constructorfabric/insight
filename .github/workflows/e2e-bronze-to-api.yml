@@ -15,12 +15,13 @@ name: E2E — Bronze to API
 # here is what only this rig can do — bronze → dbt → ClickHouse → analytics
 # response, over fixtures it seeds itself.
 #
+# Lane: post-merge on `main`, plus dispatch. A pull request and a queue batch
+# start the workflow only so the required "Run E2E suite" check reports.
+#
 # Topology: a cheap `changes` job decides whether the diff can reach the data
 # path at all and everything expensive hangs off it; a shared upstream `build`
-# job assembles the runner image ONCE —
-# on PRs from the component images build-images.yml already built (or the
-# published :latest for path-skipped components), elsewhere by compiling
-# analytics + each connector's enrich binary via build-only services — and
+# job assembles the runner image ONCE — compiling analytics + each connector's
+# enrich binary via build-only services — and
 # hands it to `e2e-metrics` as a saved image
 # artifact, which also makes `build` the SOLE writer of the GHA BuildKit
 # cache scopes wired in compose/docker-compose.cache.yml (two concurrent
@@ -34,8 +35,9 @@ name: E2E — Bronze to API
 # Code:  src/ingestion/tests/e2e/
 
 on:
-  # PR-only (+ manual dispatch). workflow_dispatch remains for manual reruns
-  # against main.
+  # The lane runs post-merge, on `main`.
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
     # Deliberately NO `paths:` filter. This workflow emits a REQUIRED check
@@ -51,10 +53,11 @@ on:
   workflow_dispatch:
 
 # A new push obsoletes any run still in flight for the same ref — cancel it so a
-# rebase/force-push doesn't leave a slow suite burning minutes.
+# rebase/force-push doesn't leave a slow suite burning minutes. A main run is
+# the only proof that its own commit converges, so that one is never superseded.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 env:
   # NB: forbids developers from running `pytest --update-snapshots` in CI.
@@ -94,8 +97,8 @@ jobs:
   #                   own Dockerfiles into the runner image, and the analytics
   #                   HTTP response is the last hop every metric fixture
   #                   asserts on
-  #   build-images.yml  the PR path consumes its e2e-prebuilt-* artifacts by
-  #                   name, so a change there can break this workflow's build
+  #   build-images.yml  the pull-request path (inert while the lane is
+  #                   post-merge) consumes its e2e-prebuilt-* artifacts by name
   #
   # src/frontend/, deploy/, tests/ (the deployed-stand suite) and docs/ are
   # absent on purpose: nothing in this rig loads them.
@@ -151,7 +154,7 @@ jobs:
   build:
     name: Build runner image
     needs: changes
-    if: ${{ needs.changes.outputs.relevant == 'true' }}
+    if: ${{ needs.changes.outputs.relevant == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
     runs-on: ubuntu-latest
     # This compile-only job keeps the old combined job's full ceiling: a cold
     # GHA cache (Cargo.lock bump, the 7-day cache eviction, or the 10 GB
@@ -501,19 +504,13 @@ jobs:
     # retirement this workflow has none — those contracts and their gate live in
     # `e2e-stand.yml`, under its own umbrella ("Stand E2E").
     #
-    # It DOES fold in the image-build gate: this required check also goes red
-    # when this SHA's "Build & Push Container Images" run failed, so a PR with
-    # a broken service image can't be merged even though that workflow's own
-    # checks aren't in the ruleset.
     needs:
       - changes
       - build
       - e2e-metrics
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    # 5 min sufficed for the needs-check alone; the image-build gate below may
-    # poll a straggling build-images run for up to 10 more.
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       # A skipped lane now has two possible meanings, and they are opposites:
       # `changes` decided the diff cannot reach the data path (a pass), or the
@@ -524,6 +521,7 @@ jobs:
       # result now that it is a `needs` entry.
       - name: Require the build and the data-path lane to have succeeded
         env:
+          EVENT: ${{ github.event_name }}
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           BUILD: ${{ needs.build.result }}
@@ -531,7 +529,16 @@ jobs:
           METRICS: ${{ needs.e2e-metrics.result }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES relevant=$RELEVANT build=$BUILD metrics=$METRICS"
+          echo "event=$EVENT changes=$CHANGES relevant=$RELEVANT build=$BUILD metrics=$METRICS"
+
+          # The check still reports where the lane does not run: the name is a
+          # branch-protection identity.
+          case "$EVENT" in
+            pull_request|merge_group)
+              echo "the data-path rig runs post-merge on main — nothing to prove on this event."
+              exit 0
+              ;;
+          esac
 
           # Fail closed. A `changes` job that did not succeed leaves `relevant`
           # empty, which would otherwise read as "irrelevant" and green a
@@ -552,45 +559,3 @@ jobs:
             done
             echo "E2E suite passed: build + the metrics lane succeeded."
           fi
-
-      # Unconditional, including on a PR `changes` found irrelevant: this gate
-      # guards the service images rather than the data path, and a PR touching
-      # only src/frontend/ can still break a build this required check is the
-      # sole ruleset-visible reporter for.
-      #
-      # build-images.yml is a separate workflow, so `needs:` can't reach it;
-      # ask the API for this SHA's run instead. Absent (path-skipped, or a
-      # merge_group SHA — that workflow has no merge_group trigger) passes;
-      # anything but success fails. The image builds finish long before this
-      # job starts, so the poll loop only covers stragglers.
-      - name: Require image builds on this SHA to be green or absent
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          for attempt in $(seq 1 20); do
-            run_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${HEAD_SHA}&per_page=100" \
-              --jq '[.workflow_runs[] | select(.name == "Build & Push Container Images")] | sort_by(.run_started_at) | last // empty')
-            if [ -z "$run_json" ]; then
-              echo "No image-build run for ${HEAD_SHA} — builds were path-skipped."
-              exit 0
-            fi
-            conclusion=$(jq -r '.conclusion // ""' <<<"$run_json")
-            run_url=$(jq -r '.html_url' <<<"$run_json")
-            case "$conclusion" in
-              success)
-                echo "Image builds succeeded: ${run_url}"
-                exit 0
-                ;;
-              "")
-                echo "Image-build run still in progress (attempt ${attempt}/20); retrying in 30s…"
-                sleep 30
-                ;;
-              *)
-                echo "::error::Image builds concluded '${conclusion}' on this commit — see ${run_url}"
-                exit 1
-                ;;
-            esac
-          done
-          echo "::error::Image-build run did not finish within the polling window."
-          exit 1

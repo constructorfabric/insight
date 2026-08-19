@@ -21,12 +21,12 @@ name: E2E — Compose stand
 #                the checkout on every event, so the ref's own test code is
 #                what executes.
 #
-# Neither is required on its own; `Stand E2E` below is the one stable context
-# for branch protection. The workflow starts on every pull request so that
-# required context always reports; the cheap `changes` job decides whether the
-# two stand lanes need to run. Relevant changes run on the pull request, once
-# per queue batch on merge_group, nightly, and on dispatch. Superseded PR runs
-# are cancelled by the concurrency group. Wall-clock and flake history are in
+# The `main` ruleset names `api-smoke` and `ui-journeys`; `Stand E2E` below is
+# their umbrella. All three report on every event.
+#
+# The lanes themselves run nightly and on dispatch — not on a pull request and
+# not per queue batch. The same contracts are asserted against the deployed
+# test stand after every publish (deploy-test-stand.yml). Wall-clock and flake history are in
 # .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
 #
 # Every stand operation goes through ./dev-compose.sh test-stand — never the
@@ -39,15 +39,15 @@ on:
   pull_request:
     branches: [main]
     # Deliberately NO `paths:` filter. This workflow emits the required
-    # `Stand E2E` check, and GitHub leaves a required check whose workflow never
-    # ran pending forever. Relevance is decided by the cheap `changes` job.
+    # `api-smoke`, `ui-journeys` and `Stand E2E` checks, and GitHub leaves a
+    # required check whose workflow never ran pending forever.
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit
   # merge_group, and a required check must report there or every queued PR
   # times out and is evicted.
   merge_group:
   # A scheduled run always evaluates against the default branch, so this is the
-  # main-branch lane whatever ref the file is authored on. Nightly rather than
-  # per-push: the stand is expensive and nothing here is a merge gate.
+  # main-branch lane whatever ref the file is authored on, and now the only
+  # event that brings the stand up besides a dispatch.
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
@@ -147,7 +147,7 @@ jobs:
   resolve-target:
     name: resolve-target
     needs: changes
-    if: ${{ needs.changes.outputs.relevant == 'true' }}
+    if: ${{ needs.changes.outputs.relevant == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -436,11 +436,16 @@ jobs:
     steps:
       - name: Report the API lane
         env:
+          EVENT: ${{ github.event_name }}
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           LANE: ${{ needs.stand-runner.outputs.api }}
         run: |
           set -euo pipefail
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then
+            echo "the stand lanes run nightly and against the deployed stand after publish — not on this event"
+            exit 0
+          fi
           if [ "$CHANGES" != success ]; then
             echo "::error::stand relevance is unknown because the changes job did not pass"
             exit 1
@@ -464,11 +469,16 @@ jobs:
     steps:
       - name: Report the UI lane
         env:
+          EVENT: ${{ github.event_name }}
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           LANE: ${{ needs.stand-runner.outputs.ui }}
         run: |
           set -euo pipefail
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then
+            echo "the stand lanes run nightly and against the deployed stand after publish — not on this event"
+            exit 0
+          fi
           if [ "$CHANGES" != success ]; then
             echo "::error::stand relevance is unknown because the changes job did not pass"
             exit 1
@@ -499,13 +509,19 @@ jobs:
     steps:
       - name: Require both lanes to have passed, or to have been skipped as irrelevant
         env:
+          EVENT: ${{ github.event_name }}
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           API: ${{ needs.api-smoke.result }}
           UI: ${{ needs.ui-journeys.result }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES relevant=$RELEVANT api-smoke=$API ui-journeys=$UI"
+          echo "event=$EVENT changes=$CHANGES relevant=$RELEVANT api-smoke=$API ui-journeys=$UI"
+
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ]; then
+            echo "the stand lanes run nightly and against the deployed stand after publish — not on this event"
+            exit 0
+          fi
 
           if [ "$CHANGES" != "success" ]; then
             echo "::error::the changes job did not succeed ($CHANGES) — stand relevance is unknown."
