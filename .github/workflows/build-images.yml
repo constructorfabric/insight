@@ -71,17 +71,19 @@ jobs:
       authenticator: ${{ steps.filter.outputs.authenticator }}
       gateway: ${{ steps.filter.outputs.gateway }}
       identity_resolution: ${{ steps.filter.outputs.identity_resolution }}
-      git_cli_proxy: ${{ steps.filter.outputs.git_cli_proxy }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-      toolbox: ${{ steps.filter.outputs.toolbox }}
-      seed: ${{ steps.filter.outputs.seed }}
-      umbrella: ${{ steps.filter.outputs.umbrella }}
+      git_cli_proxy: ${{ github.event_name != 'merge_group' && steps.filter.outputs.git_cli_proxy == 'true' }}
+      frontend: ${{ github.event_name != 'merge_group' && steps.filter.outputs.frontend == 'true' }}
+      toolbox: ${{ github.event_name != 'merge_group' && steps.filter.outputs.toolbox == 'true' }}
+      seed: ${{ github.event_name != 'merge_group' && steps.filter.outputs.seed == 'true' }}
+      umbrella: ${{ github.event_name != 'merge_group' && steps.filter.outputs.umbrella == 'true' }}
       arches: ${{ steps.arches.outputs.arches }}
       build_tag: ${{ steps.tag.outputs.build_tag }}
+      export_artifacts: ${{ steps.tag.outputs.export_artifacts }}
       # Single push-policy switch consumed by every build/merge job below:
       # 'true' for a main push and for ANY workflow_dispatch (including a
       # branch dispatch — that is what branch image builds are, #1994);
-      # 'false' for pull_request runs, which build without pushing.
+      # 'false' for pull_request and merge_group runs, which build without
+      # pushing.
       # Publishing side-effects are gated per-ref: bump-descriptors and
       # publish-chart run on main AND release-** (branch builds get pinned
       # into the branch's chart, #1994 follow-up); the `latest` tag and the
@@ -94,7 +96,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ "$EVENT_NAME" = "pull_request" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; then
             echo 'arches=["amd64"]' >> "$GITHUB_OUTPUT"
           else
             echo 'arches=["amd64","arm64"]' >> "$GITHUB_OUTPUT"
@@ -106,8 +108,10 @@ jobs:
           # branch (dorny's default base). On a release-** push the default
           # would diff the whole branch against main and mark every service
           # changed on every push; base=ref_name keeps the per-push diff
-          # semantics main has always had. Ignored on pull_request events.
-          base: ${{ github.ref_name }}
+          # semantics main has always had. Pull requests ignore this input;
+          # merge groups use the event's base SHA so the queue result is diffed
+          # against the exact main commit it includes.
+          base: ${{ github.event.merge_group.base_sha || github.ref_name }}
           filters: |
             analytics:
               - '.github/workflows/build-images.yml'
@@ -217,15 +221,20 @@ jobs:
             fi
             BUILD_TAG="${BUILD_TAG}.${SAFE_BRANCH}"
           fi
-          # Push policy: pull_request builds are compile-only; push (main is
-          # the only on.push branch) and workflow_dispatch (any ref) push.
-          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+          # Pull request and merge-group builds export loadable validation
+          # artifacts without publishing. Push and workflow_dispatch publish.
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] || [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; then
             SHOULD_PUSH=false
+            EXPORT_ARTIFACTS=true
           else
             SHOULD_PUSH=true
+            EXPORT_ARTIFACTS=false
           fi
-          echo "build_tag=${BUILD_TAG}" >> "$GITHUB_OUTPUT"
-          echo "should_push=${SHOULD_PUSH}" >> "$GITHUB_OUTPUT"
+          {
+            echo "build_tag=${BUILD_TAG}"
+            echo "should_push=${SHOULD_PUSH}"
+            echo "export_artifacts=${EXPORT_ARTIFACTS}"
+          } >> "$GITHUB_OUTPUT"
           echo "Build tag for this run: ${BUILD_TAG} (push: ${SHOULD_PUSH})"
 
   # ─── Connector image discovery (ADR-0016) ──────────────────────────────────
@@ -245,7 +254,7 @@ jobs:
   # entirely — build-image, merge-image and bump-descriptors all key off
   # `outputs.any`, so they cascade-skip with it.
   discover-images:
-    if: github.event_name != 'workflow_dispatch' || !inputs.frontend_only
+    if: github.event_name != 'merge_group' && (github.event_name != 'workflow_dispatch' || !inputs.frontend_only)
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.scan.outputs.matrix }}
@@ -344,18 +353,17 @@ jobs:
           context: src/backend
           file: src/backend/services/analytics/Dockerfile
           platforms: linux/${{ matrix.arch }}
-          # PR amd64 legs write a loadable tarball instead of discarding the
-          # result — the e2e rig consumes it (see "Upload image for the e2e
-          # rig" below). Other legs keep the push-by-digest output.
-          tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-analytics:e2e-prebuilt' || '' }}
-          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-analytics,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          # PR and merge-group amd64 legs write a loadable tarball instead of
+          # discarding the result. Other legs keep the push-by-digest output.
+          tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-analytics:e2e-prebuilt' || '' }}
+          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-analytics,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           cache-from: type=gha,scope=analytics-${{ matrix.arch }}
           # Cache writes from PR runs land in branch-isolated caches invisible to other refs, yet still consume the shared 10 GB repo quota — only main/dispatch runs export.
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=analytics-{0},ignore-error=true', matrix.arch) || '' }}
       # Hand the PR-built image to e2e-bronze-to-api.yml's runner build so it
       # doesn't recompile the same source (registry has no PR images to pull).
       - name: Upload image for the e2e rig
-        if: github.event_name == 'pull_request' && matrix.arch == 'amd64'
+        if: needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-prebuilt-insight-analytics
@@ -470,12 +478,12 @@ jobs:
           context: src/backend
           file: src/backend/services/authenticator/Dockerfile
           platforms: linux/${{ matrix.arch }}
-          tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-authenticator:e2e-prebuilt' || '' }}
-          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-authenticator,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-authenticator:e2e-prebuilt' || '' }}
+          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-authenticator,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           cache-from: type=gha,scope=authenticator-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=authenticator-{0},ignore-error=true', matrix.arch) || '' }}
       - name: Upload image for E2E workflows
-        if: github.event_name == 'pull_request' && matrix.arch == 'amd64'
+        if: needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-prebuilt-insight-authenticator
@@ -588,12 +596,12 @@ jobs:
           context: src/backend
           file: src/backend/services/gateway/Dockerfile
           platforms: linux/${{ matrix.arch }}
-          tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-gateway:e2e-prebuilt' || '' }}
-          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-gateway,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-gateway:e2e-prebuilt' || '' }}
+          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-gateway,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           cache-from: type=gha,scope=gateway-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=gateway-{0},ignore-error=true', matrix.arch) || '' }}
       - name: Upload image for E2E workflows
-        if: github.event_name == 'pull_request' && matrix.arch == 'amd64'
+        if: needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-prebuilt-insight-gateway
@@ -832,12 +840,12 @@ jobs:
           file: src/backend/services/identity-resolution/Dockerfile
           platforms: linux/${{ matrix.arch }}
           # PR amd64 legs feed the e2e rig — see backend-analytics.
-          tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-identity-resolution:e2e-prebuilt' || '' }}
-          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-identity-resolution:e2e-prebuilt' || '' }}
+          outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           cache-from: type=gha,scope=identity-resolution-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=identity-resolution-{0},ignore-error=true', matrix.arch) || '' }}
       - name: Upload image for the e2e rig
-        if: github.event_name == 'pull_request' && matrix.arch == 'amd64'
+        if: needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-prebuilt-insight-identity-resolution
