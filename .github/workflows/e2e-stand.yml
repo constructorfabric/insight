@@ -312,10 +312,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # The one step here that can block on a system package manager
+      # (`--with-deps` installs the browser's apt dependencies) while
+      # continue-on-error hides the difference between slow and stuck. Without a
+      # ceiling of its own, a stall spends the job's whole budget: no browser,
+      # no journeys, and no lane reported at all. Bounded, `outcome` becomes
+      # failure, which the UI lane reports honestly while the API lane still
+      # reports on its own — see `Record lane results` below.
       - name: Install the suite's browser
         id: browser-install
         if: always() && steps.stand-up.outcome == 'success'
         continue-on-error: true
+        timeout-minutes: 10
         run: |
           uv sync --project tests
           uv run --project tests --frozen playwright install --with-deps chromium
