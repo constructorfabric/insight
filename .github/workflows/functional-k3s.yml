@@ -53,6 +53,7 @@ jobs:
       pull-requests: read
     outputs:
       run: ${{ steps.decide.outputs.run }}
+    timeout-minutes: 60
     steps:
       - id: decide
         env:

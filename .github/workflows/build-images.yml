@@ -85,6 +85,7 @@ jobs:
       # into the branch's chart, #1994 follow-up); the `latest` tag and the
       # strict suffix-less appVersion regex stay main-only.
       should_push: ${{ steps.tag.outputs.should_push }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Select build architectures
@@ -244,6 +245,7 @@ jobs:
     outputs:
       matrix: ${{ steps.scan.outputs.matrix }}
       any: ${{ steps.scan.outputs.any }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -323,6 +325,7 @@ jobs:
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -381,6 +384,7 @@ jobs:
       && needs.backend-analytics.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
         if: needs.backend-analytics.result != 'success'
@@ -449,6 +453,7 @@ jobs:
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -499,6 +504,7 @@ jobs:
       && needs.backend-authenticator.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
         if: needs.backend-authenticator.result != 'success'
@@ -567,6 +573,7 @@ jobs:
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -617,6 +624,7 @@ jobs:
       && needs.backend-gateway.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
         if: needs.backend-gateway.result != 'success'
@@ -686,6 +694,7 @@ jobs:
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -739,6 +748,7 @@ jobs:
       && needs.backend-git-cli-proxy.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
         if: needs.backend-git-cli-proxy.result != 'success'
@@ -808,6 +818,7 @@ jobs:
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -861,6 +872,7 @@ jobs:
       && needs.backend-identity-resolution.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
         if: needs.backend-identity-resolution.result != 'success'
@@ -993,6 +1005,7 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+    timeout-minutes: 60
     steps:
       # Fail loudly rather than resolving to `skipped` — publish-chart accepts a
       # skipped merge, and would pin an appVersion to a manifest never assembled.
@@ -1069,6 +1082,7 @@ jobs:
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1166,6 +1180,7 @@ jobs:
       && needs.toolbox.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
         if: needs.toolbox.result != 'success'
@@ -1243,6 +1258,7 @@ jobs:
       matrix:
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1328,6 +1344,7 @@ jobs:
       && needs.seed.result != 'skipped'
       && needs.changes.outputs.should_push == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
         if: needs.seed.result != 'success'
@@ -1392,6 +1409,7 @@ jobs:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
         arch: ${{ fromJson(needs.changes.outputs.arches) }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -1454,6 +1472,7 @@ jobs:
       fail-fast: false
       matrix:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
+    timeout-minutes: 60
     steps:
       - name: Require the platform builds to have passed
         if: needs.build-image.result != 'success'
@@ -1570,6 +1589,7 @@ jobs:
       # descriptors. This avoids a double umbrella publish (one with stale
       # toolbox content, one with fresh).
       committed: ${{ steps.commit.outputs.committed }}
+    timeout-minutes: 60
     steps:
       - name: Mint chart-release App token
         id: app-token
@@ -1764,6 +1784,7 @@ jobs:
         || needs.changes.outputs.umbrella     == 'true'
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       # Mint a short-lived (1h) installation token from the
       # insight-chart-release-bot GitHub App so the auto-commit push at the

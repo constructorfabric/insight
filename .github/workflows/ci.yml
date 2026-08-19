@@ -73,6 +73,7 @@ jobs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
       js: ${{ steps.detect.outputs.js }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -111,6 +112,7 @@ jobs:
   jwt-provider-guard:
     name: JWT crypto-provider invariant
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -140,6 +142,7 @@ jobs:
   connector-wiring-guard:
     name: Connector wiring invariants
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -165,6 +168,7 @@ jobs:
       fail-fast: false
       matrix:
         entry: ${{ fromJson(needs.changes.outputs.rust) }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -321,6 +325,7 @@ jobs:
       fail-fast: false
       matrix:
         entry: ${{ fromJson(needs.changes.outputs.python) }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -477,6 +482,7 @@ jobs:
     needs: [changes, rust, python, js]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       # If detection failed, or any CHANGED component's producer job failed
       # (compile error, test failure, crash), the report set is incomplete — fail
