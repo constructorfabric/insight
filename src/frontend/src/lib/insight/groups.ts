@@ -136,6 +136,10 @@ const AI_ADOPTION_COLLECTION: MetricCollectionConfig = {
     { key: "ai.active_days", views: [{ view: "period" }, { view: "peer" }] },
     { key: "ai.cost", views: [{ view: "period" }, { view: "peer" }] },
     {
+      key: "ai.extra_usage_cost",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
       key: "ai.accepted_edit_actions",
       views: [{ view: "period" }, { view: "peer" }],
     },
@@ -461,7 +465,16 @@ export const GROUPS: readonly MetricGroup[] = [
     title: "AI adoption",
     collection: AI_ADOPTION_COLLECTION,
     card: {
-      preview: ["ai.active_days", "ai.accepted_lines", "ai.cost"],
+      // The two cost figures are adjacent and ahead of the line count: the card
+      // trims this list to four once a lead row joins it, and a trim that keeps
+      // the potential cost while dropping the actual one leaves the reader with
+      // the half that is not an invoice.
+      preview: [
+        "ai.active_days",
+        "ai.cost",
+        "ai.extra_usage_cost",
+        "ai.accepted_lines",
+      ],
     },
     drilldown: [
       {

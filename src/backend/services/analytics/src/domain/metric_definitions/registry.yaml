@@ -251,8 +251,9 @@ metrics:
   - metric_key: ai.cost
     source_key: ai_usage
     subject: cost
-    label: AI usage cost
-    description: AI usage priced at vendor token/usage rates
+    label: AI potential usage cost
+    short_label: Potential cost
+    description: Potential cost of all AI usage at vendor rates, never the actual invoice
     explanation: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person. Overlaps ai.extra_usage_cost, which is the part of that same consumption the vendor actually billed on top of the seat fee — the two are served side by side and are never added, since adding them counts the billed part twice.
     format: currency
     direction: lower_is_better
@@ -267,9 +268,9 @@ metrics:
   - metric_key: ai.extra_usage_cost
     source_key: ai_cost
     subject: cost
-    label: AI extra usage
-    short_label: Extra usage
-    description: Spend above the usage included in the seat fee
+    label: AI actual usage cost
+    short_label: Actual cost
+    description: Actual cost billed on top of the seat fee, part of the potential total
     explanation: What the vendor billed a person on top of their seat fee, once the usage included in that fee was exhausted, priced at API rates. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction. Distinct from ai.cost, which prices all consumption including what the seat fee already covered — the two are never summed. Attribution mode is direct — the vendor reports this amount per seat.
     format: currency
     direction: lower_is_better
