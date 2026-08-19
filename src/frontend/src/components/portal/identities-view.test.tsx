@@ -27,10 +27,26 @@ const attention = vi.hoisted(() => ({
     isError: false,
     refetch: vi.fn(),
   },
+  merge: { mutateAsync: vi.fn() },
 }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useAttention: () => attention.q,
+  useMergePersons: () => attention.merge,
+  usePersonAccountsMany: () => ({
+    ready: true,
+    failed: false,
+    accounts: [
+      {
+        source: "github",
+        source_id: "01900000-0000-7000-8000-00000000aa01",
+        account_id: "dev-42",
+        email: "dev42@example.com",
+      },
+    ],
+    refetch: vi.fn(),
+  }),
   useAccountList: () => ({
     data: undefined,
     isFetching: false,
@@ -278,6 +294,106 @@ describe("IdentitiesView", () => {
     expect(screen.getAllByText(/held by Bob Park/i)).toHaveLength(2);
     // Each account still has its own row: a decision is taken per account.
     expect(screen.getAllByRole("button", { name: /dev42@example\.com/i })).toHaveLength(3);
+  });
+
+  // The merge lives on the CASE, not on the account: the case is where the
+  // people are listed, and pressing a person's row is what states the
+  // direction — that one stays and the rest go into them.
+  it("offers a merge on each person of a disputed case, naming what it absorbs", () => {
+    const candidates = [
+      { person_id: "01900000-0000-7000-8000-0000000000a0", display_name: "Ann Lee" },
+      { person_id: "01900000-0000-7000-8000-0000000000b0", display_name: "Bob Park" },
+    ];
+    attention.q.data = {
+      items: [item({ kind: "contested", account_id: "a1", candidates })],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    expect(
+      screen.getAllByRole("button", { name: /keep this person/i }),
+    ).toHaveLength(2);
+    // Two people, so the caption can name the other one rather than count them.
+    expect(screen.getByText(/Bob Park's accounts move here/i)).toBeInTheDocument();
+    expect(screen.getByText(/Ann Lee's accounts move here/i)).toBeInTheDocument();
+  });
+
+  // The one place a click becomes a merge DIRECTION. Without this, swapping the
+  // survivor and the absorbed here — "Keep Ann Lee" erasing Ann — leaves every
+  // other test in the repo green, because the dialog is only ever tested with
+  // props handed to it directly.
+  it("merges the rest into the person whose row was pressed", async () => {
+    const ANN = {
+      person_id: "01900000-0000-7000-8000-0000000000a0",
+      display_name: "Ann Lee",
+    };
+    const BOB = {
+      person_id: "01900000-0000-7000-8000-0000000000b0",
+      display_name: "Bob Park",
+    };
+    attention.merge.mutateAsync.mockResolvedValue({
+      applied: 1,
+      already_decided: 0,
+      items: [
+        {
+          source: "github",
+          source_id: "01900000-0000-7000-8000-00000000aa01",
+          account_id: "dev-42",
+          outcome: "applied",
+        },
+      ],
+    });
+    attention.q.data = {
+      items: [item({ kind: "contested", account_id: "a1", candidates: [ANN, BOB] })],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    const rows = screen.getAllByRole("button", { name: /keep this person/i });
+    // Ann is listed first, so her row's button is the first one.
+    await userEvent.click(rows[0]);
+
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText(/keep ann lee and merge the rest/i),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Merge persons" }),
+    );
+
+    expect(attention.merge.mutateAsync).toHaveBeenCalledWith({
+      source_person_id: BOB.person_id,
+      target_person_id: ANN.person_id,
+    });
+  });
+
+  // A case naming one person has nobody to absorb: the evidence disagrees with a
+  // binding there, which is a question about the account, not about two people
+  // being one human.
+  it("offers no merge where the case argues over a single person", () => {
+    attention.q.data = {
+      items: [
+        item({
+          // A `binding_conflict` needs two persons by construction; the kinds
+          // that really carry one are the automatic mints.
+          kind: "provisioned_at_login",
+          account_id: "a1",
+          candidates: [
+            {
+              person_id: "01900000-0000-7000-8000-0000000000a0",
+              display_name: "Ann Lee",
+            },
+          ],
+        }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    expect(
+      screen.queryByRole("button", { name: /keep this person/i }),
+    ).not.toBeInTheDocument();
   });
 
   // Nothing here is matchable, which is exactly why it is on the queue: only

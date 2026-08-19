@@ -33,6 +33,7 @@ import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
 import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { accountKey } from "@/lib/identities/account-key";
+import { KIND_SEARCH_MATCH } from "@/lib/identities/cases";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import {
@@ -122,7 +123,7 @@ export function AccountFinder({
   // The holder travels as the holder, so the window names them without the
   // window mistaking them for somebody to bind the account to.
   const asCases: CaseRow[] = items.map((m) => ({
-    kind: "match",
+    kind: KIND_SEARCH_MATCH,
     source: m.source,
     source_id: m.source_id,
     account_id: m.account_id,

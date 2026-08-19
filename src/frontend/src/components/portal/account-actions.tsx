@@ -6,17 +6,24 @@
  * - Bind — attach THIS account to a person. On the current person it is the
  *   "confirm" act: re-asserting an automatic binding records the operator's
  *   decision and clears the queue item.
- * - Merge — declare the currently bound person and a candidate one human;
- *   EVERY account of the absorbed person moves, so the dialog previews the
- *   list before anything happens.
  * - Detach — mint a fresh person for this account.
  * - Exclude — not a person at all (bot / CI).
  *
- * Outcomes are never collapsed into a success toast: `already_decided` and
- * `refused` are real states the operator must see (#2424).
+ * Merge is deliberately NOT here. It is a claim about people, and this window
+ * argues about one account: the button sat in the row of the person who would
+ * survive while the absorbed one was named in a section above it, so nothing on
+ * screen said which way round it went. It lives on the queue's case, where the
+ * people are listed — see `MergeCaseDialog`.
+ *
+ * A verb that changed everything it named reports by toast and hands the window
+ * back (`onDecided`): the surface it was taken from re-reads, and the operator
+ * never acts twice on a candidate list the server has already moved past.
+ * A `refused` item is different — the account kept its binding, so the window
+ * stays and states the counters verbatim (#2424).
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
 import type {
   AccountBinding,
@@ -31,20 +38,25 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { AccountRef } from "@/lib/identities/account-key";
-import { personDisplayName } from "@/lib/identities/person-display";
+import { fullyDecided, refusedCount } from "@/lib/identities/outcomes";
 import { apiErrorReason } from "@/lib/query-console/api-error";
 import {
   useBindAccount,
   useDetachAccount,
   useExcludeAccount,
-  useMergePersons,
-  usePersonAccounts,
 } from "@/queries/identity-resolution";
+
+/** Long enough to read a UUID off and paste it somewhere. */
+const MINTED_ID_TOAST_MS = 15_000;
+
+/** Join the sentences a description is built from, skipping the absent ones. */
+function sentences(...parts: (string | null)[]): string {
+  return parts.filter(Boolean).join(" ");
+}
 
 type PendingAction =
   | { kind: "closed" }
   | { kind: "bind"; person: PersonSummary }
-  | { kind: "merge"; target: PersonSummary }
   | { kind: "detach" }
   | { kind: "exclude" };
 
@@ -54,6 +66,8 @@ export function AccountActions({
   candidates,
   holder,
   bindTo,
+  queued = false,
+  onDecided,
 }: {
   accountRef: AccountRef;
   binding: AccountBinding;
@@ -68,15 +82,30 @@ export function AccountActions({
    * inside that person, so asking them to find them again is asking twice.
    */
   bindTo?: PersonSummary | null;
+  /**
+   * This account really is on the review queue, so a verb really does take it
+   * off. The same window opens over settled accounts from the search and from a
+   * person's own list, and promising them the queue would describe a queue they
+   * were never in.
+   */
+  queued?: boolean;
+  /**
+   * Every account the verb named was decided. The surface hands the window back
+   * — its candidate list and its binding are both a read the server has now
+   * moved past, and offering them again invites the same decision twice.
+   */
+  onDecided?: () => void;
 }) {
   const { t } = useTranslation();
   const [action, setAction] = useState<PendingAction>({ kind: "closed" });
   const [outcome, setOutcome] = useState<CorrectionResponse | null>(null);
 
   const bind = useBindAccount();
-  const merge = useMergePersons();
   const detach = useDetachAccount();
   const exclude = useExcludeAccount();
+  // A verb is in flight. The confirmation over these buttons is modal, so this
+  // is belt-and-braces rather than the only guard.
+  const busy = bind.isPending || detach.isPending || exclude.isPending;
 
   const wireRef: WireAccountRef = {
     source: accountRef.source,
@@ -86,25 +115,56 @@ export function AccountActions({
   const boundId = binding.person_id ?? null;
   // Only when it is a card for the id the binding read answers with: the surface
   // learnt its holder from a listing, and a verb taken here can move the account
-  // under it — a detach names a person no listing has yet.
+  // under it — a detach binds it to a person no listing has yet. Needed for the
+  // picker, which must not offer to move the account to whoever already has it.
   const boundCard =
     holder?.person_id === boundId
       ? holder
       : candidates.find((c) => c.person_id === boundId);
-  const boundName = boundCard ? personDisplayName(boundCard) : boundId;
 
   const close = () => {
     setAction({ kind: "closed" });
     // A dialog's error belongs to the attempt made in THAT dialog; without a
     // reset the next dialog opens already wearing the previous failure.
     bind.reset();
-    merge.reset();
     detach.reset();
     exclude.reset();
   };
   const done = (result: CorrectionResponse) => {
-    setOutcome(result);
     close();
+
+    // Not "no refusals": the outcome vocabulary is open by contract, so a value
+    // this build has never heard of must not pass for success.
+    if (!fullyDecided(result)) {
+      // The account kept its binding, so the window keeps its verbs: the
+      // operator has something left to decide and needs the counters to see it.
+      setOutcome(result);
+      const refused = refusedCount(result);
+      toast.error(
+        refused > 0
+          ? t("identities.outcomes.toast_refused", { count: refused })
+          : t("identities.dialogs.failed"),
+      );
+      return;
+    }
+
+    // An earlier attempt's counters have nothing to say about this one. Today
+    // `onDecided` unmounts this window, but the prop is optional.
+    setOutcome(null);
+    const message =
+      result.applied > 0
+        ? t("identities.outcomes.toast_applied", { count: result.applied })
+        : t("identities.outcomes.toast_already");
+    // The minted person's id is the one thing a detach reports that nothing else
+    // on the page can name yet, and the window that used to hold it now closes —
+    // so the toast carrying it stays up long enough to be copied out.
+    toast.success(message, {
+      description: result.new_person_id
+        ? `${t("identities.outcomes.new_person")} ${result.new_person_id}`
+        : undefined,
+      duration: result.new_person_id ? MINTED_ID_TOAST_MS : undefined,
+    });
+    onDecided?.();
   };
 
   return (
@@ -126,22 +186,13 @@ export function AccountActions({
                     type="button"
                     size="xs"
                     variant={isBound ? "default" : "outline"}
+                    disabled={busy}
                     onClick={() => setAction({ kind: "bind", person: candidate })}
                   >
                     {isBound
                       ? t("identities.actions.confirm")
                       : t("identities.actions.bind")}
                   </Button>
-                  {boundId && !isBound ? (
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      onClick={() => setAction({ kind: "merge", target: candidate })}
-                    >
-                      {t("identities.actions.merge")}
-                    </Button>
-                  ) : null}
                 </div>
               );
             })}
@@ -165,6 +216,7 @@ export function AccountActions({
             <Button
               type="button"
               size="sm"
+              disabled={busy}
               onClick={() => setAction({ kind: "bind", person: bindTo })}
             >
               {t("identities.actions.bind_to")}
@@ -188,6 +240,7 @@ export function AccountActions({
           type="button"
           size="sm"
           variant="outline"
+          disabled={busy}
           onClick={() => setAction({ kind: "detach" })}
         >
           {t("identities.actions.detach")}
@@ -196,6 +249,7 @@ export function AccountActions({
           type="button"
           size="sm"
           variant="destructive"
+          disabled={busy}
           onClick={() => setAction({ kind: "exclude" })}
         >
           {t("identities.actions.exclude")}
@@ -211,13 +265,14 @@ export function AccountActions({
               ? t("identities.dialogs.confirm_title")
               : t("identities.dialogs.bind_title")
           }
-          description={
+          description={sentences(
             action.person.person_id === boundId
               ? t("identities.dialogs.confirm_description")
-              : t("identities.dialogs.bind_description", {
-                  name: personDisplayName(action.person),
-                })
-          }
+              : boundId
+                ? t("identities.dialogs.rebind_description")
+                : t("identities.dialogs.bind_description"),
+            queued ? t("identities.dialogs.leaves_queue") : null,
+          )}
           confirmLabel={
             action.person.person_id === boundId
               ? t("identities.actions.confirm")
@@ -240,45 +295,15 @@ export function AccountActions({
         </ConfirmDialog>
       ) : null}
 
-      {action.kind === "merge" ? (
-        <MergeDialog
-          sourceId={boundId ?? ""}
-          sourceName={boundName ?? ""}
-          target={action.target}
-          isPending={merge.isPending}
-          error={
-            merge.isError
-              ? apiErrorReason(merge.error, t("identities.dialogs.failed"))
-              : null
-          }
-          onClose={close}
-          onConfirm={() =>
-            merge.mutate(
-              {
-                source_person_id: boundId ?? "",
-                target_person_id: action.target.person_id,
-              },
-              { onSuccess: done },
-            )
-          }
-        />
-      ) : null}
-
       {action.kind === "detach" ? (
         <ConfirmDialog
           open
           onOpenChange={(open) => !open && close()}
           title={t("identities.dialogs.detach_title")}
-          // Naming who it stops counting towards is the consequence; without
-          // the current holder the sentence would describe only the new row.
-          description={[
+          description={sentences(
             t("identities.dialogs.detach_description"),
-            boundName
-              ? t("identities.dialogs.detach_away_from", { name: boundName })
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" ")}
+            queued ? t("identities.dialogs.leaves_queue") : null,
+          )}
           confirmLabel={t("identities.actions.detach_confirm")}
           isPending={detach.isPending}
           error={
@@ -295,7 +320,10 @@ export function AccountActions({
           open
           onOpenChange={(open) => !open && close()}
           title={t("identities.dialogs.exclude_title")}
-          description={t("identities.dialogs.exclude_description")}
+          description={sentences(
+            t("identities.dialogs.exclude_description"),
+            queued ? t("identities.dialogs.leaves_queue") : null,
+          )}
           confirmLabel={t("identities.actions.exclude_confirm")}
           destructive
           isPending={exclude.isPending}
@@ -308,90 +336,6 @@ export function AccountActions({
         />
       ) : null}
     </div>
-  );
-}
-
-/** The merge preview: name what moves BEFORE anything happens. */
-function MergeDialog({
-  sourceId,
-  sourceName,
-  target,
-  isPending,
-  error,
-  onClose,
-  onConfirm,
-}: {
-  sourceId: string;
-  /** The absorbed person, named — the dialog must state both sides, or the
-   *  operator has to infer which person a wrong-direction merge erases. */
-  sourceName: string;
-  target: PersonSummary;
-  isPending: boolean;
-  error: string | null;
-  onClose: () => void;
-  onConfirm: () => void;
-}) {
-  const { t } = useTranslation();
-  const owned = usePersonAccounts(sourceId || null);
-  const accounts = owned.data?.accounts ?? [];
-  return (
-    <ConfirmDialog
-      open
-      onOpenChange={(open) => !open && onClose()}
-      title={t("identities.dialogs.merge_title")}
-      description={t("identities.dialogs.merge_description", {
-        source: sourceName,
-        target: personDisplayName(target),
-      })}
-      confirmLabel={t("identities.actions.merge_confirm")}
-      destructive
-      isPending={isPending}
-      // The preview IS the consent: a merge confirmed before the list loads
-      // (or over a failed load rendering as "0 accounts move") would move
-      // accounts the operator never saw named.
-      confirmDisabled={owned.data == null}
-      error={error}
-      onConfirm={onConfirm}
-    >
-      {owned.isError ? (
-        <div className="flex items-center gap-2 text-sm text-destructive">
-          <span>{t("identities.dialogs.merge_preview_failed")}</span>
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={() => void owned.refetch()}
-          >
-            {t("common.actions.retry")}
-          </Button>
-        </div>
-      ) : owned.data == null ? (
-        <p className="text-sm text-muted-foreground">
-          {t("identities.dialogs.merge_preview_loading")}
-        </p>
-      ) : (
-        <div className="text-sm">
-          <p>{t("identities.dialogs.merge_preview", { count: accounts.length })}</p>
-          <ul className="mt-1.5 flex flex-col gap-1">
-            {accounts.slice(0, 5).map((account) => (
-              <li
-                key={`${account.source}:${account.source_id}:${account.account_id}`}
-                className="font-mono text-xs text-muted-foreground"
-              >
-                {account.source} · {account.email ?? account.username ?? account.account_id}
-              </li>
-            ))}
-          </ul>
-          {accounts.length > 5 ? (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t("identities.dialogs.merge_preview_more", {
-                count: accounts.length - 5,
-              })}
-            </p>
-          ) : null}
-        </div>
-      )}
-    </ConfirmDialog>
   );
 }
 

@@ -28,6 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { accountKey } from "@/lib/identities/account-key";
+import { KIND_PERSON_MEMBER } from "@/lib/identities/cases";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalSearch, useSetPortalSearch } from "@/lib/portal/portal-search";
 import { usePersonAccounts } from "@/queries/identity-resolution";
@@ -116,7 +117,7 @@ function PersonAccounts({
   // list saying so invites re-asserting the binding — the confirm act, which the
   // queue lists the accounts for.
   const asCases: CaseRow[] = entries.map((entry) => ({
-    kind: "member",
+    kind: KIND_PERSON_MEMBER,
     source: entry.source,
     source_id: entry.source_id,
     account_id: entry.account_id,

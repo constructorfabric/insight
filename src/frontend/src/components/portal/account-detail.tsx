@@ -29,6 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import type { AccountRef } from "@/lib/identities/account-key";
+import { isQueueItem } from "@/lib/identities/cases";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { formatUtcAge, formatUtcInstant } from "@/lib/format";
 import { useAccountBinding } from "@/queries/identity-resolution";
@@ -49,6 +50,7 @@ export function AccountDetail({
   observed = false,
   holder,
   bindTo,
+  onDecided,
 }: {
   accountRef: AccountRef;
   /** The queue row for this account, when it is still in the queue — the
@@ -68,6 +70,8 @@ export function AccountDetail({
   holder?: PersonSummary | null;
   /** Bind straight to the person the surface has open. See `AccountActions`. */
   bindTo?: PersonSummary | null;
+  /** A verb decided every account it named. See `AccountActions`. */
+  onDecided?: () => void;
 }) {
   const { t } = useTranslation();
   const binding = useAccountBinding(accountRef);
@@ -136,7 +140,11 @@ export function AccountDetail({
           binding={binding.data}
           candidates={candidates}
           holder={boundCard ?? null}
+          // The accounts and persons modes reuse this window for settled
+          // accounts, and their rows carry a kind of the console's own making.
+          queued={queueItem != null && isQueueItem(queueItem.kind)}
           bindTo={bindTo}
+          onDecided={onDecided}
         />
       </div>
       <section className="flex min-h-0 flex-1 flex-col">
