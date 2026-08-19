@@ -61,10 +61,12 @@ enum Commands {
     /// The Helm chart runs this as an initContainer before the server pod
     /// (same pattern as the analytics service).
     Migrate,
-    /// Run one persons-seed and exit (issue #1690). The Helm chart runs this
-    /// as a `CronJob`; operators run it manually via `kubectl create job
-    /// --from=cronjob/...`. Exit codes: 0 ok / 1 failed / 2 another run holds
-    /// the lock / 3 refused by an input guard.
+    /// Run one persons-seed and exit (issue #1690), publishing the refreshed
+    /// log to ClickHouse as its final step — one run resolves AND publishes.
+    /// The Helm chart runs this as a `CronJob` and the ingestion pipeline as a
+    /// step; operators run it manually via `kubectl create job
+    /// --from=cronjob/...`. Exit codes: 0 ok / 1 failed (seed or publish) /
+    /// 2 another run holds the lock / 3 refused by an input guard.
     Seed {
         /// Seed mode; only `link-by-email` is implemented.
         #[arg(long, default_value = seed_runner::LINK_BY_EMAIL_MODE)]

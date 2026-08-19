@@ -84,8 +84,9 @@ pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<
     Ok(())
 }
 
-/// `seed` subcommand: run one persons-seed via [`crate::seed_runner`] and
-/// exit. Same out-of-lifecycle config extraction as `migrate`.
+/// `seed` subcommand: run one persons-seed via [`crate::seed_runner`], publish
+/// the refreshed log via [`crate::sync_runner`], and exit. Same
+/// out-of-lifecycle config extraction as `migrate`.
 ///
 /// # Errors
 ///
@@ -104,7 +105,43 @@ pub async fn run_seed(
     }
     let summary = crate::seed_runner::run(&cfg, mode, force).await?;
     tracing::info!(?summary, "persons-seed run finished");
-    Ok(())
+    // The seed rewrites the log; publishing it is part of the same run, so a
+    // pipeline step (or the CronJob) needs no second job and no ordering.
+    publish_after_seed(crate::sync_runner::run(&cfg, false).await)
+        .map_err(crate::seed_runner::SeedRunError::Failed)
+}
+
+/// Fold the publish that follows a seed into the seed's own outcome.
+///
+/// A busy lock means another publisher is copying the same log — its snapshot
+/// is ours. A guard refusal means an empty log — nothing to publish is a
+/// legitimate state on a fresh install. A failed publish fails the run: a
+/// completed seed whose decisions never reach the resolver leaves every gold
+/// build on a stale snapshot, and a green step must not mean that.
+fn publish_after_seed(
+    result: Result<crate::domain::sync_service::SyncSummary, crate::sync_runner::SyncRunError>,
+) -> anyhow::Result<()> {
+    use crate::sync_runner::SyncRunError;
+    match result {
+        Ok(summary) => {
+            tracing::info!(?summary, "persons-sync published the seeded log");
+            Ok(())
+        }
+        Err(SyncRunError::LockBusy) => {
+            tracing::warn!(
+                "another persons-sync holds the publish lock; skipping — that run \
+                 publishes the same log"
+            );
+            Ok(())
+        }
+        Err(SyncRunError::Guard(msg)) => {
+            tracing::warn!(%msg, "persons-sync refused the publish");
+            Ok(())
+        }
+        Err(SyncRunError::Failed(e)) => {
+            Err(e.context("the seed completed but its publish failed; the resolver snapshot is stale"))
+        }
+    }
 }
 
 /// `sync` subcommand: copy the `persons` log into ClickHouse
@@ -143,5 +180,54 @@ impl RestApiCapability for IdentityResolutionGear {
             .ok_or_else(|| anyhow::anyhow!("identity-resolution gear not initialized"))?
             .clone();
         Ok(crate::api::register_routes(router, openapi, state))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::sync_service::SyncSummary;
+    use crate::sync_runner::SyncRunError;
+
+    fn summary() -> SyncSummary {
+        SyncSummary {
+            rows: 1,
+            max_id: Some(1),
+            max_created_at: Some("2026-01-01T00:00:00".to_owned()),
+            synced_at: "2026-01-01T00:00:01".to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_published_seed_is_a_success() {
+        assert!(publish_after_seed(Ok(summary())).is_ok());
+    }
+
+    #[test]
+    fn a_busy_publish_lock_does_not_fail_the_seed() {
+        assert!(publish_after_seed(Err(SyncRunError::LockBusy)).is_ok());
+    }
+
+    #[test]
+    fn a_guard_refusal_does_not_fail_the_seed() {
+        let refusal = SyncRunError::Guard("persons log is empty".to_owned());
+        assert!(publish_after_seed(Err(refusal)).is_ok());
+    }
+
+    #[test]
+    fn a_failed_publish_fails_the_seed_run() {
+        let failed = SyncRunError::Failed(anyhow::anyhow!("clickhouse unreachable"));
+        let Err(err) = publish_after_seed(Err(failed)) else {
+            panic!("a stale snapshot must surface as a failed run");
+        };
+        assert!(format!("{err:#}").contains("publish failed"), "{err:#}");
+    }
+
+    #[test]
+    fn a_failure_mentioning_the_guard_stays_a_failure() {
+        // Only the Guard VARIANT is tolerated; a Failed whose text happens to
+        // mention the empty log must stay a failure. Pins the arm order.
+        let failed = SyncRunError::Failed(anyhow::anyhow!("persons log is empty"));
+        assert!(publish_after_seed(Err(failed)).is_err());
     }
 }
