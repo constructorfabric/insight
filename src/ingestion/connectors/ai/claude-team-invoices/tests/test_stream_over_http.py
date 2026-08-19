@@ -201,3 +201,82 @@ def test_the_ephemeral_key_reaches_neither_a_record_nor_a_log_line(
     blob = json.dumps(records) + ours
     assert EPHEMERAL_KEY not in blob
     assert TOKEN not in blob, "the hosted-invoice token authorises the bootstrap hop and is a credential too"
+
+
+def test_a_sync_remembers_what_the_chain_found_so_the_next_one_can_skip_it(
+    stream: InvoiceLines, http: rm_module.Mocker
+) -> None:
+    """State is an index into bronze: the invoice id is the key its rows carry."""
+    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+
+    list(stream.read_records(sync_mode="incremental"))
+
+    remembered = stream.state["enriched"]
+    assert list(remembered) == [f"{ACCT},_entEXAMPLE"]
+    assert remembered[f"{ACCT},_entEXAMPLE"]["invoice_id"] == INVOICE_ID
+
+
+def test_a_remembered_invoice_costs_no_stripe_request(stream: InvoiceLines, http: rm_module.Mocker) -> None:
+    """The saving, asserted by request count rather than by how long a run took."""
+    stream.state = {
+        "enriched": {f"{ACCT},_entEXAMPLE": {"invoice_id": INVOICE_ID, "period_start_ts": 1, "period_end_ts": 2}}
+    }
+    listing = http.get(INVOICES_URL, json={"invoices": [wrapper_invoice()], "next_page": None})
+
+    records = list(stream.read_records(sync_mode="incremental"))
+
+    assert listing.call_count == 1, "the listing is still read in full"
+    stripe_calls = [r for r in http.request_history if r.netloc != "proxy.example"]
+    assert stripe_calls == [], "neither the bootstrap nor the line hop was issued"
+    assert [r["chain_status"] for r in records] == ["ok"], "its own row, and no line rows"
+    assert records[0]["invoice_id"] == INVOICE_ID
+
+
+def test_an_empty_state_chains_everything(stream: InvoiceLines, http: rm_module.Mocker) -> None:
+    """The first sync after a deploy carries nothing, so it behaves as before."""
+    assert stream.state == {"enriched": {}}
+    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+
+    records = list(stream.read_records(sync_mode="incremental"))
+
+    assert len(records) == 2
+    assert any(r.netloc == "invoicedata.stripe.com" for r in http.request_history)
+
+
+def test_a_failed_chain_is_not_remembered_and_is_tried_again(
+    stream: InvoiceLines, http: rm_module.Mocker, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Otherwise a transient failure would freeze that invoice unenriched."""
+    http.get(INVOICES_URL, json={"invoices": [wrapper_invoice()], "next_page": None})
+    http.get(BOOTSTRAP_URL, status_code=502)
+
+    with caplog.at_level(logging.WARNING):
+        records = list(stream.read_records(sync_mode="incremental"))
+
+    assert [r["chain_status"] for r in records] == ["failed"]
+    assert stream.state == {"enriched": {}}
+
+
+def test_state_carries_no_credential(stream: InvoiceLines, http: rm_module.Mocker) -> None:
+    """It rides the same wire as a record, so the same rule applies to it."""
+    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+
+    list(stream.read_records(sync_mode="incremental"))
+
+    blob = json.dumps(stream.state)
+    assert EPHEMERAL_KEY not in blob
+    assert TOKEN not in blob, "the token authorises the bootstrap hop"
+
+
+def test_what_a_run_learns_does_not_change_what_that_run_chains(stream: InvoiceLines, http: rm_module.Mocker) -> None:
+    """The map is read as it stood when the run began. Written to mid-run, an
+    invoice would be skipped because an earlier record in the same run had just
+    enriched it — letting a run's own output decide its own behaviour."""
+    two = [wrapper_invoice(), wrapper_invoice(payment_intent="pi_2")]
+    http.get(INVOICES_URL, json={"invoices": two, "next_page": None})
+    bootstrap = http.get(BOOTSTRAP_URL, json={"invoice_id": INVOICE_ID, "ephemeral_key": EPHEMERAL_KEY})
+    http.get(LINES_URL, json={"data": [subscription_line()], "has_more": False})
+
+    list(stream.read_records(sync_mode="incremental"))
+
+    assert bootstrap.call_count == 2, "both were chained; neither was skipped by the other"
