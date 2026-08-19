@@ -17,9 +17,9 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_boards
     `unique_key` Nullable(String),
     `collected_at` Nullable(String)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
-SETTINGS index_granularity = 8192
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_comments
