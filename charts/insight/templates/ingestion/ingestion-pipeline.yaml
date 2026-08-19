@@ -57,9 +57,72 @@ spec:
                 - name: airbyte_url
                   value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
 
-          # ------ Jira: sync → dbt(tag:jira) → jira-enrich → dbt(tag:silver) ------
-          - name: transform-jira-staging
+          - name: transform
             depends: sync
+            template: transform
+            arguments:
+              parameters:
+                - name: insight_source_id
+                  value: {{ `"{{inputs.parameters.insight_source_id}}"` }}
+                - name: data_source
+                  value: {{ `"{{inputs.parameters.data_source}}"` }}
+                - name: dbt_select_staging
+                  value: {{ `"{{inputs.parameters.dbt_select_staging}}"` }}
+                - name: dbt_select
+                  value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+                - name: dbt_full_refresh
+                  value: {{ `"{{inputs.parameters.dbt_full_refresh}}"` }}
+                - name: toolbox_image
+                  value: {{ `"{{inputs.parameters.toolbox_image}}"` }}
+                - name: jira_enrich_image
+                  value: {{ `"{{inputs.parameters.jira_enrich_image}}"` }}
+                - name: clickhouse_host
+                  value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
+                - name: clickhouse_port
+                  value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
+                - name: clickhouse_user
+                  value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+
+    # Everything AFTER the Airbyte sync: staging dbt → identity seed (which
+    # publishes) → gold dbt. A named entrypoint of its own so a sync started
+    # outside the pipeline (Airbyte UI, ad-hoc) still gets the exact same
+    # transform chain — submit this template with `entrypoint: transform` and
+    # one parameter (kubectl or the Argo UI's Submit form):
+    #
+    #   spec:
+    #     workflowTemplateRef: {name: ingestion-pipeline}
+    #     entrypoint: transform
+    #     arguments: {parameters: [{name: data_source, value: <connector-slug>}]}
+    #
+    # Every other parameter defaults; jira submissions must also pass
+    # dbt_select_staging, dbt_select, insight_source_id and jira_enrich_image
+    # (the reconcile-rendered CronWorkflow always does).
+    - name: transform
+      inputs:
+        parameters:
+          - name: data_source
+          - name: insight_source_id
+            default: ""  # RULE-DEFAULTS-OK: consumed by the jira enrich step only
+          - name: dbt_select_staging
+            default: ""  # RULE-DEFAULTS-OK: same sentinel as on `pipeline`
+          - name: dbt_select
+            default: ""  # RULE-DEFAULTS-OK: consumed by the jira silver step only
+          - name: dbt_full_refresh
+            default: "false"
+          - name: toolbox_image
+            default: {{ required "ingestion.toolboxImage is required when ingestion.templates.enabled=true" .Values.ingestion.toolboxImage | quote }}
+          - name: jira_enrich_image
+            default: ""  # RULE-DEFAULTS-OK: consumed by the jira enrich step only
+          - name: clickhouse_host
+            default: {{ include "insight.clickhouse.fqdn" . | quote }}
+          - name: clickhouse_port
+            default: {{ include "insight.clickhouse.port" . | quote }}
+          - name: clickhouse_user
+            default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+      dag:
+        tasks:
+          # ------ Jira: dbt(tag:jira) → jira-enrich → dbt(tag:silver) ------
+          - name: transform-jira-staging
             when: {{ `"'{{inputs.parameters.data_source}}' == 'jira'"` }}
             templateRef:
               name: dbt-run
@@ -104,7 +167,6 @@ spec:
 
           # ------ Non-Jira: connector staging + identity_inputs before the seed ------
           - name: transform-staging
-            depends: sync
             when: {{ `"'{{inputs.parameters.data_source}}' != 'jira'"` }}
             templateRef:
               name: dbt-run
