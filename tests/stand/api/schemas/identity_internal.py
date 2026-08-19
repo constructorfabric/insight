@@ -1,9 +1,9 @@
 """Identity shapes that no OpenAPI document describes — hand-written.
 
 The service registers its two `/internal/persons/*` S2S resolvers as raw routes,
-deliberately kept out of the generated document (the .NET contract excluded them
-the same way). They therefore cannot be generated into `identity.py`, and a model
-for them has to be written from the Rust DTO by hand.
+deliberately kept out of the generated document. They therefore cannot be
+generated into `identity.py`, and a model for them has to be written from the
+Rust DTO by hand.
 
 `extra` stays at its default here, unlike the generated models: nothing
 regenerates this file when the DTO gains a field, so forbidding the unknown would

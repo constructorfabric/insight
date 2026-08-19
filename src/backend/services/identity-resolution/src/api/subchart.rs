@@ -1,14 +1,14 @@
 //! Org subchart HTTP surface — single-root subtree + forest (#348 / #344).
 //!
-//! Ported 1:1 from the .NET `SubchartEndpoints`. Both routes are authenticated
+//! Both routes are authenticated
 //! (any identified caller); what they return is shaped by the caller's
 //! visibility grants. `GET /v1/subchart/{person_id}` gates the root through
 //! [`crate::infra::db::subchart_repo::is_target_in_visible_set`] and returns 404
 //! (not 403) on deny so the target's existence does not leak. `GET /v1/subchart`
 //! is the forest variant — every visible top, empty array (200) when the caller
-//! sees nothing. `depth` (>= 0) and `valid_at` (point-in-time lens, #582) mirror
-//! the .NET query contract, except `depth` is **capped at the server's
-//! `max_depth`** (and defaults to it when omitted) — the `UNION ALL` subtree CTEs
+//! sees nothing. `depth` (>= 0) and `valid_at` (point-in-time lens, #582) are
+//! query params; `depth` is **capped at the server's `max_depth`** (and
+//! defaults to it when omitted) — the `UNION ALL` subtree CTEs
 //! would otherwise let a caller pull a whole large-tenant tree in one request, or
 //! recurse until `cte_max_recursion_depth` on cyclic `org_chart` data. (The
 //! visibility gate's CTE is `UNION`/distinct, so it self-terminates on cycles.)
@@ -124,7 +124,7 @@ fn not_found(person_id: Uuid) -> CanonicalError {
 }
 
 // Takes the error by value so it can be used directly as `.map_err(read_err)`.
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
 fn read_err(e: anyhow::Error) -> CanonicalError {
     tracing::error!(error = %e, "subchart query failed");
     CanonicalError::internal("failed to read subchart").create()
@@ -132,8 +132,7 @@ fn read_err(e: anyhow::Error) -> CanonicalError {
 
 /// Validate the `depth` query param: `None` → unspecified (the caller omitted
 /// it — [`effective_depth`] then applies the server cap); negative → 400
-/// `invalid_depth`; out-of-`i32`-range → 400. Mirrors the .NET `depth is < 0`
-/// guard (with the extra range check the .NET `int?` binder does implicitly).
+/// `invalid_depth`; out-of-`i32`-range → 400.
 fn validate_depth(depth: Option<i64>) -> Result<Option<i32>, CanonicalError> {
     match depth {
         None => Ok(None),
@@ -161,8 +160,7 @@ fn effective_depth(requested: Option<i32>, cap: usize) -> i32 {
 }
 
 /// Parse + validate the optional `valid_at`: normalise to naive-UTC and reject
-/// future values (one-minute clock-skew slack), matching the .NET
-/// `NormalizeValidAtToUtc` + `ValidateValidAtNotFuture`.
+/// future values (one-minute clock-skew slack).
 fn resolve_valid_at(raw: Option<&str>) -> Result<Option<NaiveDateTime>, CanonicalError> {
     let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);

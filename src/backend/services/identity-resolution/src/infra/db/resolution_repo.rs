@@ -1,9 +1,9 @@
 //! Operator-correction write store (MariaDB).
 //!
 //! Corrections append binding observations to `persons`. Nothing here updates
-//! or deletes a journal row, and nothing here rebuilds the derived caches:
-//! those stay the persons-seed's to own, on its own schedule, the way the
-//! ClickHouse mirror already works. The journal is the source of truth and
+//! or deletes a journal row, and nothing here rebuilds `org_chart`: that stays
+//! the persons-seed's to own, on its own schedule, the way the ClickHouse
+//! mirror already works. The journal is the source of truth and
 //! every read path — the correction verbs, the review queue, the history —
 //! reads it directly, so a correction is visible the moment it commits.
 
@@ -326,14 +326,14 @@ pub async fn person_exists(
 /// actually appended (a re-emitted identical observation is ignored by the
 /// natural key).
 ///
-/// The tenant's derived caches are deliberately NOT rebuilt here. The rebuild
-/// is whole-tenant — it deletes and re-derives `account_person_map` and
-/// `org_chart` from the entire journal — and it grows far worse than linearly,
-/// so putting it in a request path makes one operator decision cost minutes on
-/// a large tenant. It also buys nothing: a correction appends only
-/// `value_type='id'` rows, while `org_chart` is derived from the parent, status
-/// and e-mail observations a correction never touches. The caches stay the
-/// seed's to refresh on its own schedule, like the ClickHouse mirror.
+/// The tenant's `org_chart` is deliberately NOT rebuilt here. The rebuild is
+/// whole-tenant — it deletes and re-derives the edges from the entire journal
+/// — and it grows far worse than linearly, so putting it in a request path
+/// makes one operator decision cost minutes on a large tenant. It also buys
+/// nothing: a correction appends only `value_type='id'` rows, while `org_chart`
+/// is derived from the parent, status and e-mail observations a correction
+/// never touches. It stays the seed's to refresh on its own schedule, like the
+/// ClickHouse mirror.
 ///
 /// # Errors
 ///

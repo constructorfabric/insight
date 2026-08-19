@@ -658,16 +658,15 @@ authenticator:
 #  Identity Resolution — the only identity service, plus its two CronJobs
 # ═══════════════════════════════════════════════════════════════════════════
 #
-# There is no `identity:` block anywhere in this file. The .NET identity
-# service was removed from the umbrella; `identity.*` keys are no longer read
-# by anything, so one written here would be silently ignored rather than
+# There is no `identity:` block anywhere in this file: `identity.*` keys are
+# read by nothing, so one written here would be silently ignored rather than
 # rejected.
 identityResolution:
   deploy: true
   databaseName: "identity"
 
-  # persons-seed: rebuilds the identity org projection — `persons`,
-  # `account_person_map`, `org_chart` — in MariaDB from the ClickHouse
+  # persons-seed: rebuilds the identity org projection — `persons` and
+  # `org_chart` — in MariaDB from the ClickHouse
   # `identity_inputs` observation history the seeder populates.
   #
   # ON so its CronJob object EXISTS for seed-stand.sh to force once,
@@ -689,7 +688,7 @@ identityResolution:
   # already wrote it under — so the roster UUID the login resolves to is the
   # same UUID gold attributes activity to. Safe over a seeded stand: it APPENDS
   # to `persons` (INSERT IGNORE — seed_repo.rs), so the login rows survive and
-  # logins keep resolving; it rebuilds account_person_map/org_chart from
+  # logins keep resolving; it rebuilds org_chart from
   # `persons`, and the HR directory's supervisorEmail reaches `identity_inputs`,
   # so the org_chart it derives matches the seeder's. This is the same flow the
   # compose stand runs (dev-compose.sh `seed_identity_projection`).

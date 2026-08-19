@@ -1,14 +1,13 @@
-//! Named-parameter binding for raw SQL ported verbatim from the .NET service.
+//! Named-parameter binding for raw SQL.
 //!
-//! The .NET repositories use `MySqlConnector` named params (`@tenant_id`,
-//! `@valid_at`, …) that repeat many times inside one statement (a recursive CTE
-//! references `@tenant_id`/`@valid_at` on every level). SeaORM's `Statement`
+//! The subchart / visibility statements are written with named params
+//! (`@tenant_id`, `@valid_at`, …) that repeat many times inside one statement
+//! (a recursive CTE references them on every level). SeaORM's `Statement`
 //! takes only **positional** `?` placeholders, so [`bind_named`] rewrites each
-//! `@name` occurrence to a `?` and emits the bound value once **per occurrence**,
-//! in left-to-right order — the shape SeaORM expects. This lets us keep the
-//! subchart / visibility SQL character-for-character identical to the .NET
-//! source (the resolution logic stays provably the same) while running it on the
-//! self-managed pool. See `infra::db` module docs + constructorfabric/gears-rust#4239.
+//! `@name` occurrence to a `?` and emits the bound value once **per
+//! occurrence**, in left-to-right order — the shape SeaORM expects. Keeping
+//! the named form makes those long CTEs readable. See `infra::db` module docs
+//! + constructorfabric/gears-rust#4239.
 
 use sea_orm::Value;
 

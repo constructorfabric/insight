@@ -6,15 +6,14 @@
 //! entity-builder nor run as raw SQL (it intentionally exposes no raw-SQL path —
 //! `DbConn`/`DbTx` are builder-only). Specifically:
 //!   * window functions (`ROW_NUMBER()` / `LEAD() OVER (…)`) — the resolver reads
-//!     and the SCD2 `account_person_map` / `org_chart` rebuilds;
+//!     and the SCD2 `org_chart` rebuild;
 //!   * `WITH RECURSIVE` — the org-subchart / visibility traversals;
 //!   * atomic conditional DML with a correlated subquery — the role in-use and
 //!     last-admin lockout guards.
 //!
 //! See constructorfabric/gears-rust#4239 for the capability request.
 //!
-//! All SQL here is **verbatim from the .NET service** (cutover parity). It is
-//! injection-safe despite being raw: every value is a **bound parameter**
+//! The raw SQL here is injection-safe: every value is a **bound parameter**
 //! (`Statement::from_sql_and_values`, no string interpolation) and the tenant is
 //! always pinned in the `WHERE`. The `identity` database schema is owned by THIS
 //! service's migrator — see the ownership-transfer docs in `crate::migration`.
@@ -221,11 +220,7 @@ const MIGRATION_LOCK_TIMEOUT_SECS: i32 = 300;
 ///
 /// The lock serializes concurrent RUST migrators (two initContainers of two
 /// replicas) — MariaDB DDL is not transactional, so without it two racers
-/// could double-apply a pending script. It does NOT serialize against the
-/// frozen .NET service: its `DbUp`/`BootstrapAdminRunner` startup pass takes
-/// no advisory lock (there, safety rests on every script being idempotent,
-/// and on single bootstrap OWNERSHIP — the umbrella render fails when both
-/// services configure a bootstrap admin). The bootstrap runs INSIDE the same
+/// could double-apply a pending script. The bootstrap runs INSIDE the same
 /// critical section: its
 /// `INSERT … WHERE NOT EXISTS` has no unique constraint backing the active
 /// `(tenant, person, role)` triple, so two replicas racing after the lock was

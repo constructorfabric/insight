@@ -2,10 +2,9 @@
 
 Read from the route tables in
 `src/backend/services/{analytics,identity-resolution}/src/api/`, not from the
-committed OpenAPI documents — the identity one is still the .NET contract and
-is stale in both directions (it declares `/v1/persons/{email}`, which identity
-answers 404 for and analytics actually serves; it omits both persons-sync
-operations; and every operation in it lists only `200`).
+committed OpenAPI documents: the catalogue must list what the gateway ROUTES,
+which includes the `/internal/*` S2S pair that is deliberately outside the
+generated document.
 
 Two consumers, and the reason this is one list rather than two:
 

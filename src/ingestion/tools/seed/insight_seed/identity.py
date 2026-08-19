@@ -1,9 +1,8 @@
 """
-MariaDB identity seed: persons, org_chart, person_roles, account_person_map.
+MariaDB identity seed: persons, org_chart, person_roles.
 
 All UUIDs are stored as BINARY(16) in RFC 4122 big-endian — the
-convention the identity-resolution service's schema uses (inherited
-from the retired .NET service's `Guid.ToByteArray(bigEndian: true)`).
+convention the identity-resolution service's schema uses.
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ from .profiles import (
     DEV_SEED_SOURCE_ID,
     DEV_SEED_SOURCE_TYPE,
     ORG_CHART_SOURCE_TYPE,
-    TEAM_PROFILES,
     TENANT_OTHER,
     Person,
     build_other_tenant_roster,
@@ -44,7 +42,6 @@ _REASON_LOGIN_ID = f"{config.SEED_REASON_PREFIX}login id"
 _REASON_NAMES = f"{config.SEED_REASON_PREFIX}demo names"
 _REASON_ORG_CHART = f"{config.SEED_REASON_PREFIX}demo org-chart"
 _REASON_ADMIN = f"{config.SEED_REASON_PREFIX}admin operator"
-_REASON_ACCOUNT_MAP = f"{config.SEED_REASON_PREFIX}account-person map"
 
 
 def _bin(u: str) -> bytes:
@@ -259,9 +256,9 @@ def seed_person_names(
     """Insert display_name / first_name / last_name observations per person.
 
     The identity service routes these value_types into `value_full_text`
-    (not `value_id`); see seed-persons-from-identity-input.py's
-    VALUE_TYPES_FOR_VALUE_FULL_TEXT. Without them the persons API returns
-    empty names and the UI falls back to email.
+    (not `value_id`) — see `route_value` in the service's `domain/seed.rs`.
+    Without them the persons API returns empty names and the UI falls back
+    to email.
     """
     sql = """
         INSERT INTO persons (
@@ -387,47 +384,6 @@ def seed_person_roles(
     return cur.rowcount
 
 
-def seed_account_person_map(
-    cur: pymysql.cursors.Cursor,
-    tenant_uuid: str,
-    roster: Iterable[Person],
-) -> int:
-    """Per (person, source_type) row where the team has non-zero weight."""
-    sql = """
-        INSERT IGNORE INTO account_person_map (
-            insight_tenant_id, insight_source_type, insight_source_id,
-            source_account_id, person_id,
-            author_person_id, reason, valid_from
-        ) VALUES (
-            %s, %s, %s, %s, %s, %s, %s, '2000-01-01 00:00:00'
-        )
-    """
-    rows: list[tuple[object, ...]] = []
-    for p in roster:
-        # CEO doesn't get source accounts — observed via roll-ups only.
-        if not p.team:
-            continue
-        profile = TEAM_PROFILES.get(p.team)
-        if not profile:
-            continue
-        for source_type, weight in profile.weights.items():
-            if weight <= 0:
-                continue
-            rows.append(
-                (
-                    _bin(tenant_uuid),
-                    source_type,
-                    _bin(DEV_SEED_SOURCE_ID),
-                    p.email,
-                    _bin(p.uuid),
-                    _bin(AUTHOR_PERSON_UUID),
-                    _REASON_ACCOUNT_MAP,
-                )
-            )
-    cur.executemany(sql, rows)
-    return cur.rowcount
-
-
 def run() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -474,7 +430,6 @@ def run() -> None:
         n_names = seed_person_names(cur, tenant, roster)
         n_org = seed_org_chart(cur, tenant, roster)
         n_roles = seed_person_roles(cur, tenant, roster)
-        n_acct = seed_account_person_map(cur, tenant, roster)
 
         # No org_chart and no person_roles for them: they are a caller, not a
         # subject. An edge would put them in somebody's subtree, and a role
@@ -483,17 +438,15 @@ def run() -> None:
             n_persons += seed_persons(cur, TENANT_OTHER, other_roster)
             n_login_id += seed_login_ids(cur, TENANT_OTHER, other_roster)
             n_names += seed_person_names(cur, TENANT_OTHER, other_roster)
-            n_acct += seed_account_person_map(cur, TENANT_OTHER, other_roster)
 
     LOG.info(
         "DONE: persons=%d (new), login_id=%d (new), names=%d (new), "
-        "org_chart=%d (new), person_roles=%d (new), account_person_map=%d (new)",
+        "org_chart=%d (new), person_roles=%d (new)",
         n_persons,
         n_login_id,
         n_names,
         n_org,
         n_roles,
-        n_acct,
     )
 
 

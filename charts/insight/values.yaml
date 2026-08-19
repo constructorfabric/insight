@@ -505,9 +505,9 @@ analytics:
     caCertPaths:
       - /etc/insight/authn-ca/ca.crt
 # ─── Identity Resolution (Rust identity service, epic #1602) ─────────────
-# The persons-store API. Reads from MariaDB `persons` written by the seed
-# pipeline (src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py)
-# fed off ClickHouse `identity.identity_inputs`. NOT an OIDC provider.
+# The persons-store API. Reads from MariaDB `persons`, written by the seed
+# CronJob (the service's own `seed` subcommand) fed off ClickHouse
+# `identity.identity_inputs`. NOT an OIDC provider.
 # Consumers reach it at `http://<release>-identity-resolution:8082`.
 # `deploy: true` is mandatory: the authenticator's login-bootstrap resolve
 # (GET /internal/persons/by-external-id / by-email-override) lives here
@@ -610,8 +610,8 @@ identityResolution:
   # consumes it via envFrom (overriding its mounted config ConfigMap).
   existingSecret: "insight-identity-resolution-config"
   # Scheduled persons-seed (#1690): a CronJob runs `identity-resolution seed`
-  # daily to rebuild the identity org projection (persons / account_person_map
-  # / org_chart) from ClickHouse identity_inputs — without it the projection
+  # daily to rebuild the identity org projection (persons / org_chart) from
+  # ClickHouse identity_inputs — without it the projection
   # freezes at the last manual run and Team-view rosters go stale. Runs
   # serialize on a per-tenant MariaDB advisory lock; input guards abort on an
   # empty identity_inputs read or a tenant mismatch (`--force` overrides).

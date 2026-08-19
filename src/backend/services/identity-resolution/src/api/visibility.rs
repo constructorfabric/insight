@@ -1,6 +1,6 @@
 //! Visibility grants HTTP surface — create / list / revoke.
 //!
-//! Admin-gated; ported 1:1 from the .NET `VisibilityEndpoints` (ADR-0012).
+//! Admin-gated (ADR-0012).
 //! `viewed_person_id` null = viewer sees the whole tenant tree. Revoke is a
 //! plain soft-delete (no lockout guard).
 
@@ -66,11 +66,11 @@ impl From<Visibility> for VisibilityResponse {
             insight_tenant_id: v.insight_tenant_id,
             viewer_person_id: v.viewer_person_id,
             viewed_person_id: v.viewed_person_id,
-            valid_from: fmt_ts(v.valid_from),
-            valid_to: v.valid_to.map(fmt_ts),
+            valid_from: super::datetime::fmt_ts(v.valid_from),
+            valid_to: v.valid_to.map(super::datetime::fmt_ts),
             author_person_id: v.author_person_id,
             reason: v.reason,
-            created_at: fmt_ts(v.created_at),
+            created_at: super::datetime::fmt_ts(v.created_at),
         }
     }
 }
@@ -79,9 +79,8 @@ impl From<Visibility> for VisibilityResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct VisibilityListResponse {
     pub items: Vec<VisibilityResponse>,
-    /// Wire parity with the .NET `ListResponse`: the cursor is declared
-    /// but pagination is not implemented — always `null` (both
-    /// implementations return every row; consumers already tolerate it).
+    /// The cursor is declared but pagination is not implemented — always
+    /// `null`; the route returns every row.
     pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for VisibilityListResponse {}
@@ -99,8 +98,8 @@ pub struct ListParams {
     pub viewer: Option<Uuid>,
     pub viewed: Option<Uuid>,
     pub active: Option<bool>,
-    // Signed so a negative `?limit=` clamps to 1 (parity with the .NET `int?`
-    // clamp) rather than failing query deserialization.
+    // Signed so a negative `?limit=` clamps to 1 rather than failing query
+    // deserialization.
     pub limit: Option<i64>,
 }
 
@@ -178,7 +177,7 @@ pub async fn list_visibility(
     let tenant = ctx.subject_tenant_id();
     require_admin(&state.db, &ctx).await?;
 
-    let limit = clamp_limit(params.limit);
+    let limit = super::listing::clamp_limit(params.limit, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT);
     let rows = visibility_repo::list(
         &state.db,
         tenant,
@@ -211,7 +210,7 @@ pub async fn delete_visibility(
     }
 
     // 404 only if the grant never existed; otherwise soft-delete + 204 (a
-    // second revoke of an already-revoked grant is a no-op 204). Parity w/ .NET.
+    // second revoke of an already-revoked grant is a no-op 204).
     if visibility_repo::get_by_id(&state.db, tenant, id)
         .await
         .map_err(read_err)?
@@ -233,14 +232,13 @@ pub async fn delete_visibility(
 }
 
 // Takes the error by value so it can be used directly as `.map_err(read_err)`.
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
 fn read_err(e: anyhow::Error) -> CanonicalError {
     tracing::error!(error = %e, "visibility query failed");
     CanonicalError::internal("failed to read grants").create()
 }
 
-/// `reason`, when present, must be at most 500 chars — mirrors the .NET
-/// `MaximumLength(500)` on the create + `RevokeReasonValidator`.
+/// `reason`, when present, must be at most 500 chars.
 fn reason_valid(reason: Option<&str>) -> bool {
     reason.is_none_or(|r| r.chars().count() <= MAX_REASON_LEN)
 }
@@ -253,19 +251,6 @@ fn reason_too_long() -> CanonicalError {
             "invalid_reason",
         )
         .create()
-}
-
-/// Clamp `?limit=` to `[1, 500]`; negatives → 1, absent → 50 (parity with the
-/// .NET `int?` clamp).
-fn clamp_limit(limit: Option<i64>) -> u64 {
-    limit.map_or(LIST_DEFAULT_LIMIT, |l| {
-        u64::try_from(l).unwrap_or(1).clamp(1, LIST_MAX_LIMIT)
-    })
-}
-
-/// Format a DB `DateTime` (naive) as ISO-8601 with a `T` separator.
-fn fmt_ts(dt: DateTime) -> String {
-    dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }
 
 #[cfg(test)]
@@ -285,10 +270,28 @@ mod tests {
 
     #[test]
     fn limit_clamping() {
-        assert_eq!(clamp_limit(None), LIST_DEFAULT_LIMIT);
-        assert_eq!(clamp_limit(Some(10)), 10);
-        assert_eq!(clamp_limit(Some(0)), 1, "zero → 1");
-        assert_eq!(clamp_limit(Some(-5)), 1, "negative → 1");
-        assert_eq!(clamp_limit(Some(9999)), LIST_MAX_LIMIT, "over cap → 500");
+        assert_eq!(
+            crate::api::listing::clamp_limit(None, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            LIST_DEFAULT_LIMIT
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(10), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            10
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(0), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            1,
+            "zero → 1"
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(-5), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            1,
+            "negative → 1"
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(9999), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            LIST_MAX_LIMIT,
+            "over cap → 500"
+        );
     }
 }

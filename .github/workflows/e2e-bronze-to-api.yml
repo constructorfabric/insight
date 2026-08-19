@@ -7,7 +7,7 @@ name: E2E — Bronze to API
 # defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
 # image is used for local development via src/ingestion/tests/e2e/e2e.sh.
 #
-# This is now the DATA-PATH rig, and only that. The `api` and `identity-rust`
+# This is now the DATA-PATH rig, and only that. The `api` and `identity`
 # lanes retired with the HTTP contract suites they ran: those contracts are
 # asserted against a deployed stand in `e2e-stand.yml` (tests/stand), which
 # crosses a real gateway with a real Keycloak session and can therefore prove
