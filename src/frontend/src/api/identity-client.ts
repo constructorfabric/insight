@@ -55,10 +55,18 @@ export interface MeRole {
  * login token's realm roles, which no identity endpoint reads. An empty list
  * IS the "not an admin" answer; the endpoint never 403s.
  */
+/**
+ * Whose data a caller may see, as the identity service decides it: the
+ * reporting line plus explicit grants, or every person in the tenant.
+ */
+export type VisibilityPolicy = "org_chart" | "flat";
+
 export interface MeResponse {
   person_id: string;
   insight_tenant_id: string;
   roles: MeRole[];
+  /** Absent from an older service; readers treat that as `org_chart`. */
+  visibility_policy?: VisibilityPolicy;
 }
 
 /**
