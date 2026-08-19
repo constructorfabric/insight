@@ -26,7 +26,13 @@ name: E2E — Compose stand
 # required context always reports; the cheap `changes` job decides whether the
 # two stand lanes need to run. Relevant changes run on the pull request, once
 # per queue batch on merge_group, nightly, and on dispatch. Superseded PR runs
-# are cancelled by the concurrency group. Wall-clock and flake history are in
+# are cancelled by the concurrency group.
+#
+# A DRAFT pull request reports the required check without running the lanes: a
+# draft is re-pushed while the shape of the change is still moving, and a stand
+# run costs 45+ minutes of runner each time. The stand runs from the moment it
+# is marked ready for review, and on every push after that — so nothing merges
+# on a draft's verdict. Wall-clock and flake history are in
 # .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
 #
 # Every stand operation goes through ./dev-compose.sh test-stand — never the
@@ -41,6 +47,13 @@ on:
     # Deliberately NO `paths:` filter. This workflow emits the required
     # `Stand E2E` check, and GitHub leaves a required check whose workflow never
     # ran pending forever. Relevance is decided by the cheap `changes` job.
+    #
+    # `ready_for_review` is load-bearing, not tidiness: the default type list
+    # stops at synchronize, and `changes` skips the lanes while a pull request
+    # is a draft. Without this type, marking one ready fires no event, so the
+    # last draft run's green `Stand E2E` would stand as the required check and
+    # the stand would never run for that pull request at all.
+    types: [opened, synchronize, reopened, ready_for_review]
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit
   # merge_group, and a required check must report there or every queued PR
   # times out and is evicted.
@@ -89,6 +102,10 @@ jobs:
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
+      # Whether the lanes were held back because the pull request is a draft.
+      # Read BEFORE `relevant` downstream: a draft reports irrelevant so that
+      # nothing runs, and that value describes the hold rather than the diff.
+      draft: ${{ steps.filter.outputs.draft }}
       # One per buildable tree; the lanes turn each into its own --build-* flag.
       backend: ${{ steps.filter.outputs.backend }}
       backend_artifacts: ${{ steps.filter.outputs.backend_artifacts }}
@@ -107,6 +124,7 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          DRAFT: ${{ github.event.pull_request.draft }}
         run: |
           set -euo pipefail
           emit() {
@@ -116,6 +134,17 @@ jobs:
             echo "relevant=$relevant backend=$backend frontend=$frontend backend_artifacts=$backend_artifacts"
             echo "analytics=$analytics authenticator=$authenticator identity_resolution=$identity_resolution gateway=$gateway"
           }
+
+          # A draft is work in progress: the stand costs 45+ minutes of runner
+          # and the answer is asked again on every push. Empty on merge_group
+          # and on the scheduled and dispatched runs, which carry no pull
+          # request and are therefore never held back.
+          printf 'draft=%s\n' "${DRAFT:-false}" >> "$GITHUB_OUTPUT"
+          if [ "${DRAFT:-false}" = true ]; then
+            echo "draft pull request — the stand lanes wait until it is marked ready for review"
+            emit false false false
+            exit 0
+          fi
           # Match pull_request path-filter semantics: compare the branch from
           # its merge base, not from the current base-branch tip. A two-dot diff
           # would attribute unrelated commits that landed on main after this
@@ -396,10 +425,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # The one step here that can block on a system package manager
+      # (`--with-deps` installs the browser's apt dependencies) while
+      # continue-on-error hides the difference between slow and stuck. Without a
+      # ceiling of its own, a stall spends the job's whole budget: no browser,
+      # no journeys, and no lane reported at all. Bounded, `outcome` becomes
+      # failure, which the UI lane reports honestly while the API lane still
+      # reports on its own — see `Record lane results` below.
       - name: Install the suite's browser
         id: browser-install
         if: always() && steps.stand-up.outcome == 'success'
         continue-on-error: true
+        timeout-minutes: 10
         run: |
           uv sync --project tests
           uv run --project tests --frozen playwright install --with-deps chromium
@@ -551,12 +588,17 @@ jobs:
         env:
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
+          DRAFT: ${{ needs.changes.outputs.draft }}
           LANE: ${{ needs.stand-runner.outputs.api }}
         run: |
           set -euo pipefail
           if [ "$CHANGES" != success ]; then
             echo "::error::stand relevance is unknown because the changes job did not pass"
             exit 1
+          fi
+          if [ "$DRAFT" = true ]; then
+            echo "draft pull request — API smoke runs when it is marked ready for review"
+            exit 0
           fi
           if [ "$RELEVANT" = false ]; then
             echo "API smoke is not relevant to this change"
@@ -579,12 +621,17 @@ jobs:
         env:
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
+          DRAFT: ${{ needs.changes.outputs.draft }}
           LANE: ${{ needs.stand-runner.outputs.ui }}
         run: |
           set -euo pipefail
           if [ "$CHANGES" != success ]; then
             echo "::error::stand relevance is unknown because the changes job did not pass"
             exit 1
+          fi
+          if [ "$DRAFT" = true ]; then
+            echo "draft pull request — the journeys run when it is marked ready for review"
+            exit 0
           fi
           if [ "$RELEVANT" = false ]; then
             echo "UI journeys are not relevant to this change"
@@ -614,15 +661,20 @@ jobs:
         env:
           CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
+          DRAFT: ${{ needs.changes.outputs.draft }}
           API: ${{ needs.api-smoke.result }}
           UI: ${{ needs.ui-journeys.result }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES relevant=$RELEVANT api-smoke=$API ui-journeys=$UI"
+          echo "changes=$CHANGES relevant=$RELEVANT draft=$DRAFT api-smoke=$API ui-journeys=$UI"
 
           if [ "$CHANGES" != "success" ]; then
             echo "::error::the changes job did not succeed ($CHANGES) — stand relevance is unknown."
             exit 1
+          fi
+          if [ "$DRAFT" = "true" ]; then
+            echo "draft pull request — nothing to prove until it is marked ready for review."
+            exit 0
           fi
           if [ "$RELEVANT" = "false" ]; then
             echo "nothing the stand covers changed — nothing to prove."
