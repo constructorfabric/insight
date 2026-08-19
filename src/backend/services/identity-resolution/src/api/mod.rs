@@ -157,10 +157,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             false,
             "Search terms, at most 8 (200 characters total); every \
              whitespace-separated term must match one of the person's current \
-             identity values — email, username, display/first/last name or \
-             employee id (case-insensitive substring). Titles and statuses are \
-             displayed on the card but not searched. Absent or blank lists \
-             every person of the tenant.",
+             identity values — email, username or display/first/last name \
+             (case-insensitive substring), the same five the row's own label is \
+             built from. Titles, statuses and the HR employee id are served on \
+             the profile but not searched. A term that parses as a UUID names a \
+             person id instead. Absent or blank lists every person of the \
+             tenant.",
         )
         .query_param_typed(
             "limit",
@@ -279,8 +281,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param_typed(
             "q",
             false,
-            "Needle matched against the account's current address, handle, id \
-             and observed name. Absent or blank lists every open account.",
+            "Needle matched against every value the account's row shows, \
+             case-insensitively: a substring of the current address, handle, id \
+             or observed name (whole, or composed from parts). The source is the \
+             exception — it matches a whole `_`/`-` separated segment from its \
+             start, so `github` and `entra` list those connectors' accounts \
+             while `hub` lists none. Absent or blank lists every open account.",
             "string",
         )
         .query_param_typed(

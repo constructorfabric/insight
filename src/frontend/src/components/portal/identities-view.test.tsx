@@ -5,10 +5,10 @@
  * unknown kind still shows up (the vocabulary is open by contract); accounts
  * arguing over the same people are ONE case rather than as many rows as the
  * server sends; selection lives in the URL so an operator can share a link;
- * and the strip leads with the queue's own size — the one figure the operator
- * can act on — over tenant-wide binding states.
+ * and the strip sizes the tenant in four figures, colouring only the one that
+ * is the operator's own work.
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -68,7 +68,7 @@ import { portalRouter } from "@/test/portal-router";
 
 import { IdentitiesView } from "./identities-view";
 
-const RATES = { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 };
+const RATES = { persons: 41, observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 };
 
 function item(over: Partial<AttentionItem>): AttentionItem {
   return {
@@ -83,6 +83,12 @@ function item(over: Partial<AttentionItem>): AttentionItem {
   };
 }
 
+/** The strip's tiles in DOM order, each as its figure followed by its label. */
+function strip(): string[] {
+  const grid = screen.getByText("Persons").closest("div.grid");
+  return [...(grid?.children ?? [])].map((tile) => tile.textContent ?? "");
+}
+
 beforeEach(() => {
   attention.q.data = undefined;
   attention.q.isLoading = false;
@@ -93,6 +99,44 @@ beforeEach(() => {
 });
 
 describe("IdentitiesView", () => {
+  it("sizes the tenant in one strip: persons, every account, the backlog, the excluded", () => {
+    attention.q.data = { items: [item({}), item({ account_id: "a2" })], rates: RATES };
+    render(<IdentitiesView />);
+
+    expect(strip()).toEqual(["41Persons", "60Accounts", "2Needs attention", "1Excluded"]);
+  });
+
+  // The resolver's own intermediate states are its business, not the
+  // operator's: they were tiles once, and putting them back buries the one
+  // figure that is work.
+  it("keeps the resolver's internal states out of the strip", () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    render(<IdentitiesView />);
+
+    expect(screen.queryByText(/bound to a person/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unbound/i)).not.toBeInTheDocument();
+    expect(strip()).toHaveLength(4);
+  });
+
+  // Mid-rollout the bundle can be a release ahead of the service, and a total
+  // it does not send yet must not print as the word "undefined".
+  it("shows the person total as unknown when the answer omits it", () => {
+    attention.q.data = {
+      items: [item({})],
+      rates: { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 },
+    };
+    render(<IdentitiesView />);
+
+    expect(strip()[0]).toBe("—Persons");
+  });
+
+  it("shows the backlog as a floor when the server cut the list", () => {
+    attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
+    render(<IdentitiesView />);
+
+    expect(strip()[2]).toBe("1+Needs attention");
+  });
+
   it("celebrates the empty queue instead of rendering a blank table", () => {
     attention.q.data = { items: [], rates: RATES };
     render(<IdentitiesView />);
@@ -361,29 +405,6 @@ describe("IdentitiesView", () => {
     expect(portalRouter.search.acct).toBeUndefined();
   });
 
-  // The tiles count binding states; only the queue is work. A tile promising
-  // "review" for accounts the resolver binds by itself sent an operator
-  // looking for something they cannot do.
-  it("leads with the number the operator can act on — the queue's own size", () => {
-    attention.q.data = { items: [item({}), item({ account_id: "a2" })], rates: RATES };
-    render(<IdentitiesView />);
-
-    const tile = screen
-      .getByText(/needs a decision/i)
-      .closest("div")?.parentElement;
-    expect(within(tile as HTMLElement).getByText("2")).toBeInTheDocument();
-    // The state tiles say what they count, never "review".
-    expect(screen.getByText(/unbound · has an address/i)).toBeInTheDocument();
-    expect(screen.queryByText(/pending review/i)).not.toBeInTheDocument();
-  });
-
-  it("marks the decision count as a floor when the server cut the list", () => {
-    attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
-    render(<IdentitiesView />);
-
-    expect(screen.getByText("1+")).toBeInTheDocument();
-  });
-
   // The row carries the values an operator copies out, so it cannot be a
   // <button>: its text would not be selectable and the cards' copy controls
   // would be interactive content nested inside a control.
@@ -421,44 +442,13 @@ describe("IdentitiesView", () => {
     expect(portalRouter.search.acct).toBeUndefined();
   });
 
-  it("narrows the queue by anything on a row, and carries the filter in the URL", async () => {
-    attention.q.data = {
-      items: [
-        item({ account_id: "a1", email: "ann@example.com" }),
-        item({ account_id: "a2", email: "bob@example.com" }),
-      ],
-      rates: RATES,
-    };
-    render(<IdentitiesView />);
-
-    await userEvent.type(screen.getByRole("searchbox"), "ann@");
-    await waitFor(() => expect(portalRouter.search.filter).toBe("ann@"));
-    expect(screen.getByRole("button", { name: /ann@example\.com/i })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /bob@example\.com/i }),
-    ).not.toBeInTheDocument();
-  });
-
-  // Celebrating here would tell an operator the backlog is done because they
-  // mistyped a filter.
-  it("does not celebrate an empty result — a filter that matches nothing says so", () => {
-    attention.q.data = { items: [item({})], rates: RATES };
-    portalRouter.set({ zone: "manage", item: "identities", filter: "nobody" });
-    render(<IdentitiesView />);
-
-    expect(screen.getByText(/nothing matches those terms/i)).toBeInTheDocument();
-    expect(screen.queryByText(/everything is resolved/i)).not.toBeInTheDocument();
-  });
-
-  // A colleague's link points at a row the reader's own filter hides; the
-  // case must still open, or the link is only as good as the recipient's
-  // current view.
-  it("answers a shared ?acct= link even while a filter hides its row", () => {
+  // A colleague's link points at a case; it must open on arrival, or the link
+  // is only as good as the recipient's own scroll position.
+  it("answers a shared ?acct= link by opening its case", () => {
     attention.q.data = { items: [item({})], rates: RATES };
     portalRouter.set({
       zone: "manage",
       item: "identities",
-      filter: "nobody",
       acct: "github:01900000-0000-7000-8000-00000000aa01:dev-42",
     });
     render(<IdentitiesView />);

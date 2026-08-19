@@ -59,7 +59,9 @@
       "try_again": "Try again",
       "reload": "Reload",
       "retry": "Retry",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "scroll_to_top": "Back to the top of the list",
+      "scroll_to_bottom": "Jump to the end of the list"
     },
     "ui_components": {
       "sidebar": {
@@ -405,18 +407,10 @@
     "title": "Identities",
     "subtitle": "Who each account belongs to — review what the resolver could not decide, and correct what it did.",
     "rates": {
-      "decisions": "Needs a decision",
-      "decisions_hint": "Accounts waiting for you. This is the queue below — the only number here you can act on.",
-      "observed": "Observed",
-      "observed_hint": "Every account a connector currently reports, closed ones excluded.",
-      "bound": "Bound to a person",
-      "bound_hint": "The account belongs to a person. Its activity counts towards them.",
-      "pending": "Unbound · has an address",
-      "pending_hint": "Waiting for the resolver, not for you: an address is present, so the next run binds it. Only the contested ones reach the queue.",
-      "no_evidence": "Unbound · nothing to match on",
-      "no_evidence_hint": "No address, so automation has no key to match on. Only an operator can bind these — they are in the queue.",
-      "excluded": "Excluded",
-      "excluded_hint": "Declared not a person — a bot, CI or service account. Dropped from every person metric."
+      "persons": "Persons",
+      "observed": "Accounts",
+      "decisions": "Needs attention",
+      "excluded": "Excluded"
     },
     "kind": {
       "contested": "Contested — more than one person claims the account",
@@ -436,9 +430,6 @@
       "show_more_other": "Show {{count}} more cases",
       "case_count_one": "{{count}} case · {{accounts}} accounts",
       "case_count_other": "{{count}} cases · {{accounts}} accounts",
-      "filter_placeholder": "Filter by address, source, person or person id…",
-      "no_matches": "Nothing matches those terms",
-      "no_matches_description": "Clear the filter to see the whole queue.",
       "previous_case": "‹ Previous account",
       "next_case": "Next account ›",
       "reports_to": "reports to {{manager}}",
@@ -490,6 +481,7 @@
       "exclude": "Exclude (bot / CI)",
       "exclude_confirm": "Exclude",
       "assign_other": "Assign to someone else",
+      "bind_to": "Bind to selected person",
       "assign_person": "Assign to a person"
     },
     "dialogs": {
@@ -522,9 +514,9 @@
     },
     "picker": {
       "placeholder": "Search people by name, email, handle or person id…",
+      "min_chars": "Each word needs at least {{min}} characters to search.",
       "no_matches": "Nobody matches those terms.",
       "failed": "Search failed. Try again.",
-      "load_more": "Show more people",
       "loading_more": "Loading…"
     },
     "gate": {
@@ -544,17 +536,18 @@
       "by_automation": "bound automatically",
       "open": "Open",
       "load_failed": "Unable to load this person’s accounts",
-      "back": "‹ Back to the roster"
+      "back": "‹ Back to the roster",
+      "find_account": "Find an account to bind to this person…"
     },
     "accounts": {
-      "placeholder": "Find an account by address, handle, id or observed name…",
+      "placeholder": "Find an account by source, address, handle, id or observed name…",
+      "min_chars": "Type at least {{min}} characters to search.",
       "no_matches": "No observed account carries that",
       "unbound": "bound to nobody",
       "failed": "Account search failed. Try again.",
       "none_observed": "Nothing to list here yet",
       "none_observed_description": "Accounts appear once a connector reports them. If you expected some, the identity build may not have run yet.",
       "no_matches_description": "Only accounts a connector has seen can be found here.",
-      "load_more": "Show more accounts",
       "loading_more": "Loading…",
       "excluded": "excluded — bot / CI"
     }

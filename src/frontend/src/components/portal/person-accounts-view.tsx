@@ -15,12 +15,12 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
-  AttentionItem,
   PersonAccountEntry,
   PersonSummary,
 } from "@/api/identity-client";
-import { CaseDialog } from "@/components/portal/case-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
+import { AccountFinder } from "@/components/portal/account-search-view";
+import type { CaseRow } from "@/components/portal/case-dialog";
 import { PersonPicker } from "@/components/portal/person-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,7 @@ export function PersonAccountsView() {
   const [picked, setPicked] = useState<PersonSummary | null>(null);
 
   return (
-    <div className="flex min-w-0 flex-col gap-4">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
       {/* Choosing a person replaces the roster with their accounts AND clears
           the terms that found them, so the way back is not on screen anywhere:
           without this, leaving a person means editing the URL. */}
@@ -58,25 +58,27 @@ export function PersonAccountsView() {
           {t("identities.person_accounts.back")}
         </Button>
       ) : null}
-      <PersonPicker
-        // Remounted per person so choosing one clears the terms that found
-        // them: the results are a way in, not a view worth keeping open.
-        key={person ?? "none"}
-        // With nobody chosen this mode IS the roster: an operator reviewing
-        // identities needs to see who exists, not guess a name to type.
-        browseWhenEmpty={!person}
-        className={person ? undefined : "max-h-[32rem]"}
-        onPick={(next: PersonSummary) => {
-          setPicked(next);
-          setSearch({ person: next.person_id, acct: undefined });
-        }}
-      />
+      {/* Two different questions, so two different fields — never both. With
+          nobody chosen the roster IS this mode, and it takes the surface: the
+          card and the full height the other two modes' listings have. Inside a
+          person, searching for people again is asking the reader to find
+          somebody they already have open; what they need there is an ACCOUNT,
+          to bind it to them. */}
       {person ? (
         <PersonAccounts
           personId={person}
           card={picked?.person_id === person ? picked : null}
         />
-      ) : null}
+      ) : (
+        <PersonPicker
+          browseWhenEmpty
+          asSurface
+          onPick={(next: PersonSummary) => {
+            setPicked(next);
+            setSearch({ person: next.person_id, acct: undefined });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -106,53 +108,65 @@ function PersonAccounts({
   }
 
   const entries = accounts.data.accounts;
-  const ordered = entries.map((entry) => accountKey(entry));
+  const person = card ?? { person_id: personId };
   // Queue-shaped rows for the window: the voucher that each account exists
   // (they are read from the person's own bindings), plus the person as the
-  // one candidate so the current binding renders as a card, not a bare id.
-  const asCases: AttentionItem[] = entries.map((entry) => ({
+  // HOLDER so the current binding renders as a card rather than a bare id.
+  // Never as a candidate: every account here is already theirs, and a candidate
+  // list saying so invites re-asserting the binding — the confirm act, which the
+  // queue lists the accounts for.
+  const asCases: CaseRow[] = entries.map((entry) => ({
     kind: "member",
     source: entry.source,
     source_id: entry.source_id,
     account_id: entry.account_id,
     email: entry.email,
     username: entry.username,
-    candidates: [card ?? { person_id: personId }],
+    candidates: [],
+    holder: person,
   }));
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
-          {t("identities.person_accounts.accounts")}
-          <Badge variant="secondary">{entries.length}</Badge>
-          <PersonCell person={card ?? { person_id: personId }} className="ms-auto" />
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-1 p-2 pt-0">
-        {entries.length === 0 ? (
-          <p className="p-3 text-sm text-muted-foreground">
-            {t("identities.person_accounts.no_accounts")}
-          </p>
-        ) : (
-          entries.map((entry) => (
-            <AccountRow
-              key={accountKey(entry)}
-              entry={entry}
-              selected={accountKey(entry) === acct}
-              onOpen={() => setAcct(accountKey(entry))}
-            />
-          ))
-        )}
-      </CardContent>
-      <CaseDialog
-        acct={acct}
-        items={asCases}
-        ordered={ordered}
-        onSelect={setAcct}
-        onClose={() => setAcct(null)}
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+      {/* The field here searches ACCOUNTS, and it owns the one case window on
+          this surface — so the rows below open in it too, rather than in a
+          second window `?acct=` would open beside the first. */}
+      <AccountFinder
+        intent="match"
+        placeholder={t("identities.person_accounts.find_account")}
+        alsoOpenable={asCases}
+        bindTo={person}
+        className="flex-none"
       />
-    </Card>
+      {/* Shrinkable, not fixed: with more accounts than fit, a card that refuses
+          to shrink runs off the bottom of the mode and takes the field and the
+          tabs above it out of reach. Sized to its rows while they fit. */}
+      <Card className="min-h-0 overflow-hidden">
+        <CardHeader>
+          <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+            {t("identities.person_accounts.accounts")}
+            <Badge variant="secondary">{entries.length}</Badge>
+            <PersonCell person={person} className="ms-auto" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex min-h-0 flex-col gap-1 overflow-y-auto p-2 pt-0">
+          {entries.length === 0 ? (
+            <p className="p-3 text-sm text-muted-foreground">
+              {t("identities.person_accounts.no_accounts")}
+            </p>
+          ) : (
+            entries.map((entry) => (
+              <AccountRow
+                key={accountKey(entry)}
+                entry={entry}
+                selected={accountKey(entry) === acct}
+                onOpen={() => setAcct(accountKey(entry))}
+              />
+            ))
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

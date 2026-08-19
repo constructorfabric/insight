@@ -15,6 +15,7 @@ on:
       - ".github/workflows/build-images.yml"
       - ".github/workflows/scripts/discover-image-matrix.py"
       - ".github/workflows/scripts/bump-service-appversions.sh"
+      - "scripts/ci/prebuilt_images.py"
   pull_request:
     branches: [main, "release-**"]
     paths:
@@ -25,6 +26,7 @@ on:
       - ".github/workflows/build-images.yml"
       - ".github/workflows/scripts/discover-image-matrix.py"
       - ".github/workflows/scripts/bump-service-appversions.sh"
+      - "scripts/ci/prebuilt_images.py"
   # A manual dispatch is a full rebuild by default: every service and
   # connector image is rebuilt regardless of changed paths, and publish-chart
   # pins them all. With `frontend_only` checked it instead builds and pushes
@@ -119,12 +121,18 @@ jobs:
               - 'src/backend/libs/authenticator-sdk/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
+              - '.github/workflows/gateway.yml'
+              - '.github/workflows/build-images.yml'
+              - 'scripts/ci/prebuilt_images.py'
             gateway:
               - '.github/workflows/build-images.yml'
               - 'src/backend/services/gateway/**'
               - 'src/backend/tools/routegen/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
+              - '.github/workflows/gateway.yml'
+              - '.github/workflows/build-images.yml'
+              - 'scripts/ci/prebuilt_images.py'
             git_cli_proxy:
               - '.github/workflows/build-images.yml'
               - 'src/backend/services/git-cli-proxy/**'
@@ -456,9 +464,19 @@ jobs:
           context: src/backend
           file: src/backend/services/authenticator/Dockerfile
           platforms: linux/${{ matrix.arch }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-authenticator,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-authenticator:e2e-prebuilt' || '' }}
+          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-authenticator,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           cache-from: type=gha,scope=authenticator-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=authenticator-{0},ignore-error=true', matrix.arch) || '' }}
+      - name: Upload image for E2E workflows
+        if: github.event_name == 'pull_request' && matrix.arch == 'amd64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-prebuilt-insight-authenticator
+          path: /tmp/e2e-prebuilt.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |
@@ -564,9 +582,19 @@ jobs:
           context: src/backend
           file: src/backend/services/gateway/Dockerfile
           platforms: linux/${{ matrix.arch }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-gateway,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-gateway:e2e-prebuilt' || '' }}
+          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-gateway,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
           cache-from: type=gha,scope=gateway-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=gateway-{0},ignore-error=true', matrix.arch) || '' }}
+      - name: Upload image for E2E workflows
+        if: github.event_name == 'pull_request' && matrix.arch == 'amd64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-prebuilt-insight-gateway
+          path: /tmp/e2e-prebuilt.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
       - name: Export digest
         if: needs.changes.outputs.should_push == 'true'
         run: |

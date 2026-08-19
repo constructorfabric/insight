@@ -364,6 +364,9 @@ function customMetricHandlers() {
 // handler factories close over, and the factories are CALLED right here —
 // an earlier array literal hits the temporal dead zone (seen live as
 // `Cannot access 'QUERIES_BASE' before initialization`).
+/** Whoever the person mode has open holds the two accounts it lists for them. */
+const HELD_BY = "2517cd48-4961-52b3-a401-b0e5a03858a4";
+
 export const handlers = [
   http.get("/auth/me", () =>
     HttpResponse.json({ ...MOCK_SESSION, ...mockSessionTiming() }),
@@ -447,6 +450,28 @@ export const handlers = [
               author_person_id: "00000000-0000-0000-0000-000000000000",
               by_operator: false,
               reason: "roster-mint",
+              recorded_at: "2026-08-14T06:30:00.000000",
+            },
+          ],
+          operations: [],
+        });
+      }
+      // The two accounts the person listing above claims for whoever is open:
+      // reporting them as unbound here would have the console demonstrate a
+      // state the service cannot produce — an account in a person's own list
+      // that the binding read says nobody holds.
+      if (params.accountId === "gh-main" || params.accountId === "gl-alt") {
+        return HttpResponse.json({
+          source: params.source,
+          source_id: params.sourceId,
+          account_id: params.accountId,
+          person_id: HELD_BY,
+          history: [
+            {
+              person_id: HELD_BY,
+              author_person_id: "00000000-0000-0000-0000-000000000000",
+              by_operator: params.accountId === "gl-alt",
+              reason: "seed",
               recorded_at: "2026-08-14T06:30:00.000000",
             },
           ],
@@ -744,7 +769,7 @@ export const handlers = [
           candidates: [],
         },
       ],
-      rates: { observed: 60, bound: 55, pending: 3, no_evidence: 2, excluded: 1 },
+      rates: { persons: 41, observed: 60, bound: 55, pending: 3, no_evidence: 2, excluded: 1 },
       truncated: false,
       items_truncated: false,
     });

@@ -30,44 +30,6 @@ function caseKey(item: AttentionItem): string {
   return `people:${ids.join("|")}`;
 }
 
-function haystack(item: AttentionItem): string {
-  return [
-    item.email,
-    item.username,
-    item.account_id,
-    item.source,
-    ...item.candidates.flatMap((c) => [
-      c.display_name,
-      c.email,
-      c.username,
-      c.person_id,
-    ]),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
-/**
- * Narrow the queue to the rows a query names, all terms required.
- *
- * The candidates are part of what a row IS — an operator hunting the accounts
- * of one split person searches by that person, not by the addresses of the
- * accounts. The person id matches too, since that is what they can copy off
- * a card and paste back.
- */
-export function filterQueue(
-  items: AttentionItem[],
-  query: string,
-): AttentionItem[] {
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return items;
-  return items.filter((item) => {
-    const text = haystack(item);
-    return terms.every((term) => text.includes(term));
-  });
-}
-
 /**
  * Drop the rows the server just said are decided.
  *

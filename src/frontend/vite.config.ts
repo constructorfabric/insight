@@ -6,6 +6,8 @@ import { execSync } from "child_process";
 import path from "path";
 import { defineConfig, loadEnv } from "vite";
 
+import { backendProxy } from "./vite.backend-proxy";
+
 // CI passes the image tag as VITE_APP_RELEASE. Everywhere else, name the
 // release after the commit built from. `.dockerignore` drops `.git`, so this
 // finds nothing inside the image build.
@@ -22,14 +24,8 @@ function localRelease(): string | undefined {
   }
 }
 
-export default defineConfig(({ mode, command }) => {
+export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  // Dev serve defaults to the compose gateway so /auth + /api always have an
-  // upstream; without one, vite's SPA fallback serves /auth/login itself and
-  // the login redirect loops. Builds never need a proxy.
-  const proxyTarget =
-    env.VITE_API_PROXY_TARGET ||
-    (command === "serve" ? "http://localhost:8080" : undefined);
   const release = env.VITE_APP_RELEASE || localRelease();
   // Assigning undefined would store the literal string "undefined".
   if (release) process.env.VITE_APP_RELEASE = release;
@@ -43,31 +39,12 @@ export default defineConfig(({ mode, command }) => {
       react(),
       babel({ presets: [reactCompilerPreset()] }),
       tailwindcss(),
+      backendProxy(env),
     ],
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
       },
     },
-    server: proxyTarget
-      ? {
-          // Proxy both /api and /auth to the gateway dev target so the
-          // cookie/BFF flow works under `pnpm dev`: /auth/login, /auth/me,
-          // /auth/logout and all /api/* calls hit the same gateway origin.
-          // changeOrigin keeps the upstream Host correct; the `__Host-sid`
-          // cookie works over http://localhost because the proxy leaves the
-          // response Set-Cookie untouched (no cookie-domain rewrite).
-          proxy: {
-            "/api": {
-              target: proxyTarget,
-              changeOrigin: true,
-            },
-            "/auth": {
-              target: proxyTarget,
-              changeOrigin: true,
-            },
-          },
-        }
-      : undefined,
   };
 });

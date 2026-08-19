@@ -72,6 +72,15 @@ def _compose(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run([*COMPOSE, *args], check=check, capture_output=True, text=True)
 
 
+def _compose_up_args() -> list[str]:
+    mode = os.environ.get("GATEWAY_E2E_PREBUILT")
+    if mode == "true":
+        return ["up", "-d", "--no-build", *CORE_SERVICES]
+    if mode in {None, "false"}:
+        return ["up", "-d", "--build", *CORE_SERVICES]
+    raise ValueError("GATEWAY_E2E_PREBUILT must be 'true' or 'false'")
+
+
 class GatewayClient:
     """Minimal HTTP client: no auto-redirects, case-insensitive headers, and an
     OIDC login helper that drives Keycloak's HTML login form, rewriting
@@ -243,7 +252,7 @@ def stack():
     kc_import = HERE / "keycloak-import"
     _generate_realm(kc_import)
     try:
-        _compose("up", "-d", "--build", *CORE_SERVICES)
+        _compose(*_compose_up_args())
         # Keycloak start + realm import runs tens of seconds; the realm
         # discovery document answers only once its import committed. The
         # authenticator discovers per-op, so it needs no restart after this.

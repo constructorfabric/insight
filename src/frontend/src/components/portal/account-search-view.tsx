@@ -1,21 +1,20 @@
 /**
- * The console's third mode: an account in hand, and whose it is.
+ * Finding an account, and the window it is decided in.
  *
- * The queue arrives from a problem and the person mode from a name. This one
- * answers the question an operator gets handed instead — a git login from a
- * review, an address from a ticket — which neither of the others can, because
- * both are entered through a person.
- *
- * With nothing typed it lists what the connectors reported, a page at a time:
- * the accounts nobody has asked about are exactly the ones an operator never
- * finds by searching for them.
+ * Two surfaces use one field. The accounts mode arrives with a value in hand —
+ * a git login from a review, an address from a ticket — the question neither
+ * other mode can answer, because both are entered through a person; there a
+ * blank field lists what the connectors reported, since the accounts nobody
+ * asks about are exactly the ones nobody finds by searching. Inside one person
+ * the same field is how an account gets re-bound to them, and a blank field
+ * lists nothing: the whole fold would bury the accounts they actually hold.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ScanSearch, Search } from "lucide-react";
 
-import type { AccountMatch, AttentionItem } from "@/api/identity-client";
-import { CaseDialog } from "@/components/portal/case-dialog";
+import type { AccountMatch, PersonSummary } from "@/api/identity-client";
+import { CaseDialog, type CaseRow } from "@/components/portal/case-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,31 +29,99 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
+import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { accountKey } from "@/lib/identities/account-key";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalSearch } from "@/lib/portal/portal-search";
-import { useAccountList } from "@/queries/identity-resolution";
+import {
+  belowAccountFloor,
+  listsAnyAccount,
+  MIN_SEARCH_CHARS,
+  SEARCH_DEBOUNCE_MS,
+  useAccountList,
+  type AccountListIntent,
+} from "@/queries/identity-resolution";
 import { cn } from "@/lib/utils";
 
-const DEBOUNCE_MS = 250;
-
+/** The accounts mode: the field over the whole fold, nothing else on screen. */
 export function AccountSearchView() {
+  const { t } = useTranslation();
+  return (
+    <AccountFinder
+      intent="browse"
+      placeholder={t("identities.accounts.placeholder")}
+    />
+  );
+}
+
+/**
+ * The field, its results, and the one case window they open into.
+ *
+ * INVARIANT: the window lives here and nowhere else on the surface. It is
+ * opened by `?acct=` alone, so a second one on the same screen would open
+ * beside this one on the same link. A surface that lists accounts of its own
+ * hands them over as `alsoOpenable` instead of rendering a window for them.
+ */
+export function AccountFinder({
+  intent,
+  placeholder,
+  /** Rows the surface already lists, so its own accounts open in this window. */
+  alsoOpenable = [],
+  /** Offer binding straight to this person — the one the surface has open. */
+  bindTo,
+  className,
+}: {
+  intent: AccountListIntent;
+  placeholder: string;
+  alsoOpenable?: CaseRow[];
+  bindTo?: PersonSummary | null;
+  className?: string;
+}) {
   const { t } = useTranslation();
   const { acct } = usePortalSearch();
   const { setAcct } = usePortalNavActions();
   const [query, setQuery] = useState("");
-  const debounced = useDebouncedValue(query, DEBOUNCE_MS);
-  const search = useAccountList(debounced);
+  const debounced = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
+  const search = useAccountList(debounced, intent);
 
-  const items = (search.data?.pages ?? []).flatMap((page) => page.items);
-  const ordered = items.map((item) => accountKey(item));
+  // Never rows the query did not ask for: under the floor the listing is not
+  // this field's answer, and kept pages would be the previous term's.
+  const lists = listsAnyAccount(debounced, intent);
+  const items = lists
+    ? (search.data?.pages ?? []).flatMap((page) => page.items)
+    : [];
   const loading = search.isFetching && !search.isFetchingNextPage;
-  const asked = debounced.trim().length > 0;
+  // A needle actually reached the service, so an empty answer means "nothing
+  // matched" rather than "nothing is observed". The floor comes from the shared
+  // rule, or the two disagree about what counts as one character.
+  const asked = debounced.trim() !== "" && lists;
+  // Reads the live field rather than the debounced one: the answer to "why is
+  // nothing happening" should not wait for the debounce to expire. Only while
+  // nothing is listed, though — for one debounce the rows are still the ones
+  // the shorter field asked for, and a notice above them contradicts them.
+  const tooShort = items.length === 0 && belowAccountFloor(query);
+  // What is listed answers the term the query key carries, not the one in the
+  // field, until the debounce fires AND the fetch lands. Neither emptiness below
+  // is a claim about the field's own needle while that is true.
+  const stale = query !== debounced || search.isPlaceholderData;
+  const scroller = useRef<HTMLDivElement>(null);
+  const loadMore = useAutoLoadOnScroll({
+    hasNextPage: search.hasNextPage,
+    isFetchingNextPage: search.isFetchingNextPage,
+    fetchNextPage: () => void search.fetchNextPage(),
+    root: scroller,
+  });
+
   // The window takes queue-shaped rows; a listed account adapts. This is also
   // the voucher that the account exists — without it an unbound, never-decided
   // account the list just showed would open as a stale link with no verbs.
-  const asCases: AttentionItem[] = items.map((m) => ({
+  //
+  // No candidates: this list answers "whose is it", not "whose could it be".
+  // The holder travels as the holder, so the window names them without the
+  // window mistaking them for somebody to bind the account to.
+  const asCases: CaseRow[] = items.map((m) => ({
     kind: "match",
     source: m.source,
     source_id: m.source_id,
@@ -62,25 +129,41 @@ export function AccountSearchView() {
     email: m.email,
     username: m.username,
     display_name: m.display_name,
-    candidates: m.person ? [m.person] : [],
+    candidates: [],
+    holder: m.person ?? null,
   }));
+  // Matches first: they are what the reader just went looking for, and the
+  // prev/next footer walks this order.
+  //
+  // INVARIANT: one entry per account. A match can also be a row the surface
+  // already lists — searching inside a person finds the accounts they hold — and
+  // the footer walks `ordered` by index, so a key listed twice sends `next` back
+  // to the first copy instead of onward.
+  const openable = uniqueByAccount([...asCases, ...alsoOpenable]);
+  const ordered = openable.map((item) => accountKey(item));
 
   return (
-    <div className="flex min-w-0 flex-col gap-4">
-      <div className="relative">
+    <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col gap-4", className)}>
+      <div className="relative shrink-0">
         <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("identities.accounts.placeholder")}
-          aria-label={t("identities.accounts.placeholder")}
+          placeholder={placeholder}
+          aria-label={placeholder}
           className="ps-9"
         />
         {loading ? (
           <Spinner className="absolute end-3 top-1/2 size-4 -translate-y-1/2" />
         ) : null}
       </div>
+
+      {tooShort ? (
+        <p className="text-sm text-muted-foreground">
+          {t("identities.accounts.min_chars", { min: MIN_SEARCH_CHARS })}
+        </p>
+      ) : null}
 
       {search.isError ? (
         <ComingSoon
@@ -93,8 +176,15 @@ export function AccountSearchView() {
       {/* Two different emptinesses: terms that matched nothing, and nothing to
           list. The second one does not claim the tenant is empty — the service
           answers an empty list for a fold it cannot read yet, and an operator
-          cannot tell that from a tenant nobody has connected. */}
-      {!loading && items.length === 0 && !search.isError ? (
+          cannot tell that from a tenant nobody has connected. A field that
+          lists nothing until asked is a third thing: it is simply waiting, and
+          says so by showing nothing at all. */}
+      {!loading &&
+      !tooShort &&
+      !stale &&
+      items.length === 0 &&
+      !search.isError &&
+      (asked || intent === "browse") ? (
         <Empty className="rounded-lg border">
           <EmptyHeader>
             {asked ? null : (
@@ -120,9 +210,15 @@ export function AccountSearchView() {
         </Empty>
       ) : null}
 
-      {items.length > 0 ? (
-        <Card>
-          <CardContent className="flex flex-col gap-1 p-2">
+      {/* Rendered for an unread next page even with nothing listed: the marker
+          asks for that page, and an observer only reports a target inside its
+          own root. */}
+      {items.length > 0 || (lists && search.hasNextPage) ? (
+        <Card className="relative min-h-0 flex-1 overflow-hidden py-0">
+          <CardContent
+            ref={scroller}
+            className="flex flex-col gap-1 overflow-y-auto p-2"
+          >
             {items.map((item) => (
               <AccountRow
                 key={accountKey(item)}
@@ -131,36 +227,49 @@ export function AccountSearchView() {
                 onOpen={() => setAcct(accountKey(item))}
               />
             ))}
+            {/* The page after this one is asked for when this marker nears the
+                viewport, so the list continues instead of ending in a button.
+                The marker is always there while a page is unread — the observer
+                needs an element — but it only SAYS anything while that page is
+                on its way: labelling an idle list "loading" is a lie the reader
+                cannot dismiss. */}
             {search.hasNextPage ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="m-2 self-start"
-                // Not `disabled`: disabling the element that has focus blurs it,
-                // and the operator's next Tab restarts from the page chrome —
-                // a whole page of rows away from the button they just pressed.
-                aria-busy={search.isFetchingNextPage}
-                onClick={() => void search.fetchNextPage()}
+              <div
+                ref={loadMore}
+                aria-live="polite"
+                className="p-2 text-sm text-muted-foreground"
               >
                 {search.isFetchingNextPage
                   ? t("identities.accounts.loading_more")
-                  : t("identities.accounts.load_more")}
-              </Button>
+                  : null}
+              </div>
             ) : null}
           </CardContent>
+          <ScrollToEnds scroller={scroller} rows={items.length} />
         </Card>
       ) : null}
 
       <CaseDialog
         acct={acct}
-        items={asCases}
+        items={openable}
         ordered={ordered}
+        bindTo={bindTo}
         onSelect={setAcct}
         onClose={() => setAcct(null)}
       />
     </div>
   );
+}
+
+/** The first row for each account wins — the earlier one carries the match. */
+function uniqueByAccount(rows: CaseRow[]): CaseRow[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = accountKey(row);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function AccountRow({

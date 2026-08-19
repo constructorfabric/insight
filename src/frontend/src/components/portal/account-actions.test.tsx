@@ -37,15 +37,21 @@ const hooks = vi.hoisted(() => {
       refetch: vi.fn(),
     },
     search: {
-      data: undefined,
+      data: undefined as { pages: { items: unknown[] }[] } | undefined,
       isFetching: false,
       isFetchingNextPage: false,
+      isPlaceholderData: false,
       isError: false,
       hasNextPage: false,
       fetchNextPage: vi.fn(),
     },
   };
 });
+// The picker inside this component debounces its field; identity here keeps the
+// suite about the verbs rather than about timers.
+vi.mock("@/hooks/use-debounced-value", () => ({
+  useDebouncedValue: <T,>(value: T) => value,
+}));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useBindAccount: () => hooks.bind,
@@ -85,6 +91,7 @@ beforeEach(() => {
     verb.isError = false;
     verb.error = null;
   }
+  hooks.search.data = undefined;
   hooks.personAccounts.data = undefined;
   hooks.personAccounts.isLoading = false;
   hooks.personAccounts.isError = false;
@@ -100,6 +107,126 @@ describe("AccountActions", () => {
     expect(screen.getByRole("button", { name: "Confirm" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bind" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Merge…" })).toHaveLength(1);
+  });
+
+  // Candidates answer "whose COULD it be" — a question only an undecided account
+  // has. Where the account is settled the surface sends none, and the window must
+  // not invent one: re-asserting an existing binding is the CONFIRM act, and the
+  // queue is where the accounts that need it are listed.
+  it("offers nothing to confirm where the surface sends no candidates", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        holder={BOB}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /^confirm$/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/candidates/i)).not.toBeInTheDocument();
+  });
+
+  // The holder's card used to reach this component only as a candidate, so the
+  // copy that names them broke the moment the candidate went away.
+  it("still names the holder in the detach copy with no candidates", async () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        holder={BOB}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /detach/i }));
+
+    expect(
+      screen.getByText(/stops counting towards Bob Park/i),
+    ).toBeInTheDocument();
+  });
+
+  // This picker moves an account to somebody ELSE, so the one person it must not
+  // offer is the one who already holds it — with or without a candidate list to
+  // learn that from.
+  it("keeps the holder out of the person search", async () => {
+    hooks.search.data = { pages: [{ items: [BOB, CAROL] }] };
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        holder={BOB}
+      />,
+    );
+
+    await userEvent.type(screen.getByRole("searchbox"), "park");
+
+    expect(
+      screen.getByRole("button", { name: /carol chen/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /bob park/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // Opened from inside a person: they are the whole reason the reader is here,
+  // so binding to them is one press and the search for a person is gone —
+  // finding somebody you already have open is being asked twice.
+  it("binds straight to the person the surface has open, with no search", async () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: null })}
+        candidates={[]}
+        bindTo={CAROL}
+      />,
+    );
+
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: /bind to selected person/i }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^bind$/i }));
+
+    expect(hooks.bind.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ person_id: CAROL.person_id }),
+      expect.anything(),
+    );
+  });
+
+  // A button that reads like a decision and changes nothing is worse than no
+  // button: the account is already theirs, and the trail would gain a row
+  // saying so twice.
+  it("offers nothing to bind when the account is already that person's", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: CAROL.person_id })}
+        candidates={[]}
+        bindTo={CAROL}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /bind to/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    // The other verbs are untouched — it is still an account under review.
+    expect(screen.getByRole("button", { name: /detach/i })).toBeInTheDocument();
+  });
+
+  // Without a person behind the window the picker is the only way in, and the
+  // accounts mode is entered with no person at all.
+  it("keeps the person search where no person is open", () => {
+    render(
+      <AccountActions accountRef={REF} binding={binding()} candidates={[]} />,
+    );
+
+    expect(screen.getByRole("searchbox")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /bind to/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers no Merge when the account is bound to nobody", () => {
