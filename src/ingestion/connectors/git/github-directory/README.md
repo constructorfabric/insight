@@ -9,6 +9,14 @@ the separate `github` connector. The split is deliberate: identity is a
 prerequisite for logging in at all, and it should not wait on a connector with
 a much larger surface and its own dependencies.
 
+Split in deployment, however, the two are one identity space: an account is
+keyed on (source type, source id, login), and this roster binds a login to a
+person while the `github` connector claims the e-mails that login commits
+under. Both Secrets therefore carry the SAME
+`insight.cyberfabric.com/source-id` — `github-main`, not this connector's own
+name. Given different ids the two halves never meet, and a member whose profile
+hides their e-mail resolves to nobody or to a second, nameless person.
+
 ## Stream
 
 | Stream | Mode | Source |

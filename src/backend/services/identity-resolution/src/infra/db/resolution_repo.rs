@@ -15,7 +15,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON;
+use crate::domain::provenance::Provenance;
 use crate::domain::resolution::{BINDING_VALUE_TYPE, BindingRow};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
 
@@ -231,7 +231,7 @@ fn collect_bindings(
             KnownBinding {
                 person_id: Uuid::from_slice(&person_id)?,
                 author_person_id: Uuid::from_slice(&author_person_id)?,
-                provisioned_at_login: reason.as_deref() == Some(LOGIN_BOOTSTRAP_REASON),
+                provenance: Provenance::of_reason(reason.as_deref()),
             },
         );
     }

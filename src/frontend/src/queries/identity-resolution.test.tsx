@@ -24,7 +24,15 @@ vi.mock("@/auth/session-scope", () => ({
     s == null ? null : (s as { scope: string }).scope,
 }));
 
-import { listsAnyone, useBindAccount, usePersonList } from "./identity-resolution";
+import {
+  listsAnyAccount,
+  listsAnyone,
+  useAccountList,
+  useBindAccount,
+  usePersonList,
+} from "./identity-resolution";
+
+const searchPersons = vi.mocked(identityClient.searchPersons);
 
 const bindAccount = vi.mocked(identityClient.bindAccount);
 
@@ -75,7 +83,7 @@ describe("useBindAccount cache behavior", () => {
     const { queryClient, wrapper } = harness();
     queryClient.setQueryData(ATTENTION_KEY, {
       items: [item("a1"), item("a2")],
-      rates: { observed: 2, bound: 0, pending: 2, no_evidence: 0, excluded: 0 },
+      rates: { persons: 2, observed: 2, bound: 0, pending: 2, no_evidence: 0, excluded: 0 },
     });
     bindAccount.mockResolvedValueOnce(outcome("applied"));
 
@@ -99,7 +107,7 @@ describe("useBindAccount cache behavior", () => {
     const { queryClient, wrapper } = harness();
     queryClient.setQueryData(ATTENTION_KEY, {
       items: [item("a1")],
-      rates: { observed: 1, bound: 0, pending: 1, no_evidence: 0, excluded: 0 },
+      rates: { persons: 1, observed: 1, bound: 0, pending: 1, no_evidence: 0, excluded: 0 },
     });
     bindAccount.mockResolvedValueOnce(outcome("refused"));
 
@@ -200,10 +208,157 @@ describe("usePersonList", () => {
     ["match", "", false],
     ["match", "   ", false],
     ["match", "iva", true],
+    // Too short to be worth a pass over the journal — in either intent, and
+    // whichever side of the debounce the value came from.
+    ["browse", "i", false],
+    ["browse", "iv", true],
+    ["match", "i", false],
+    ["match", "iv", true],
+    // Trimmed before it is measured, so surrounding space neither buys nor
+    // costs a search.
+    ["match", "i ", false],
+    ["match", " iva ", true],
+    // THE FLOOR IS PER TERM, because the service matches each one against the
+    // journal on its own. Measuring the field instead would read `a b` as three
+    // characters and wave through two one-character passes.
+    ["match", "a b", false],
+    ["match", "iva b", false],
+    ["match", "iv an", true],
+    // Counted as the person typing counts: one glyph is one character, not the
+    // two UTF-16 units it occupies.
+    ["match", "🙂", false],
+    ["match", "🙂🙂", true],
   ] as const)(
     "listsAnyone(%s intent, %o) is %s",
     (intent, q, expected) => {
       expect(listsAnyone(q, intent)).toBe(expected);
     },
   );
+
+  // The account needle is ONE predicate, spaces included, so the field itself is
+  // what the floor measures — `ad ex` matches a display name across the gap.
+  // What a blank field means is the caller's: the accounts mode reviews the
+  // whole fold, and inside one person that fold would bury the accounts they
+  // actually hold.
+  it.each([
+    ["browse", "", true],
+    ["browse", "   ", true],
+    ["match", "", false],
+    ["match", "   ", false],
+    ["browse", "o", false],
+    ["match", "o", false],
+    ["browse", "oc", true],
+    ["match", "oc", true],
+    ["match", " oc ", true],
+    ["match", "a b", true],
+  ] as const)("listsAnyAccount(%s intent, %o) is %s", (intent, q, expected) => {
+    expect(listsAnyAccount(q, intent)).toBe(expected);
+  });
+});
+
+describe("useAccountList", () => {
+  const searchAccounts = vi.mocked(identityClient.searchAccounts);
+
+  function fold(): identityClient.AccountSearchResponse {
+    return {
+      items: [
+        {
+          source: "github",
+          source_id: "01900000-0000-7000-8000-00000000aa01",
+          account_id: "gh-1",
+          email: "one@example.com",
+          username: null,
+          display_name: null,
+          person: null,
+          bound_by_operator: false,
+        },
+      ],
+      next_cursor: null,
+    };
+  }
+
+  // The same bug the person listing's intent key exists to prevent: `enabled:
+  // false` stops a request and NOT a cache read, so a shared key would let the
+  // in-person field render the whole fold the accounts mode had just browsed.
+  it("does not serve the browsed fold to a match-intent caller", async () => {
+    const { wrapper } = harness();
+    searchAccounts.mockResolvedValue(fold());
+    const browsed = renderHook(() => useAccountList("", "browse"), { wrapper });
+    await waitFor(() => expect(browsed.result.current.isSuccess).toBe(true));
+
+    const matching = renderHook(() => useAccountList("", "match"), { wrapper });
+
+    expect(matching.result.current.data).toBeUndefined();
+  });
+
+  it.each([
+    ["browse", true],
+    ["match", false],
+  ] as const)(
+    "a blank field asks the service under %s intent: %s",
+    async (intent, asks) => {
+      const { wrapper } = harness();
+      searchAccounts.mockResolvedValue(fold());
+
+      const { result } = renderHook(() => useAccountList("", intent), { wrapper });
+
+      if (asks) {
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      }
+      expect(searchAccounts.mock.calls.length > 0).toBe(asks);
+    },
+  );
+});
+
+describe("usePersonList while a term is being typed", () => {
+  function page(...names: string[]): identityClient.PersonSearchResponse {
+    return {
+      items: names.map((display_name, i) => ({
+        person_id: `01900000-0000-7000-8000-0000000000${10 + i}`,
+        display_name,
+      })),
+      next_cursor: null,
+    };
+  }
+
+  // Every keystroke is its own query key. Without kept data the list empties to
+  // a spinner between letters, which reads as "no matches" to the operator
+  // mid-word.
+  it("keeps the rows it already has while the next term loads", async () => {
+    const { wrapper } = harness();
+    searchPersons.mockResolvedValueOnce(page("Ada Example"));
+    const { result, rerender } = renderHook(({ q }) => usePersonList(q, "match"), {
+      wrapper,
+      initialProps: { q: "ada" },
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    let resolveNext: (value: identityClient.PersonSearchResponse) => void = () => {};
+    searchPersons.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveNext = resolve;
+      }),
+    );
+    rerender({ q: "adam" });
+
+    expect(result.current.data?.pages[0]?.items[0]?.display_name).toBe("Ada Example");
+    expect(result.current.isFetching).toBe(true);
+
+    resolveNext(page("Adam Other"));
+    await waitFor(() =>
+      expect(result.current.data?.pages[0]?.items[0]?.display_name).toBe("Adam Other"),
+    );
+  });
+
+  // The service answers a dropped request all the same, so the cancellation has
+  // to reach it: one journal scan per abandoned keystroke is the cost otherwise.
+  it("passes an abort signal the query can cancel with", async () => {
+    const { wrapper } = harness();
+    searchPersons.mockResolvedValueOnce(page("Ada Example"));
+
+    const { result } = renderHook(() => usePersonList("ada", "match"), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(searchPersons.mock.calls[0][2]).toBeInstanceOf(AbortSignal);
+  });
 });

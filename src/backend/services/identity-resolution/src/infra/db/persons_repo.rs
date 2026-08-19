@@ -21,8 +21,8 @@ use sea_orm::{
 use uuid::Uuid;
 
 use super::entities::persons;
-use crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON;
 use crate::domain::person_card::{self, CARD_VALUE_TYPES, PersonCard};
+use crate::domain::provenance::UNCONFIRMED_MINT_REASONS;
 use crate::domain::resolution::EXCLUDED_PERSON;
 
 /// Resolve the set of `person_id`s whose CURRENT email (latest observation per
@@ -325,25 +325,13 @@ pub async fn person_exists(
     Ok(found.is_some())
 }
 
-/// Hydrate person cards for MANY persons in one query — the shared id→display
-/// read behind every operator response that embeds cards (queue candidates,
-/// person search). Only the CURRENT observation per person × source × value
-/// type leaves the database (the same `rn = 1` window the resolvers use): the
-/// journal is append-only, and shipping a person's full re-observation history
-/// to collapse it in Rust would grow every response with tenant age. The Rust
-/// collapse then picks the latest across sources. An id the journal holds no
-/// card attributes for is simply absent from the map, and the caller renders
-/// it via [`PersonCard::empty`].
+/// Of the given persons, those the journal holds nothing but automatic mints for
+/// — a sign-in that needed somebody to enter as, or a roster that listed an
+/// account carrying no address.
 ///
-/// # Errors
-///
-/// Returns an error if the query fails.
-/// Of the given persons, those the journal holds nothing but login-mints for.
-///
-/// Such a person exists so somebody could sign in, and nothing else about them
-/// has been observed or decided yet — so they may well duplicate a person the
-/// roster already knows. Naming one as a merge target is the wrong direction:
-/// the history is on the other side.
+/// Either way nobody has decided who they are, so they may well duplicate a
+/// person the roster already knows. Naming one as a merge target is the wrong
+/// direction: the history is on the other side.
 ///
 /// # Errors
 ///
@@ -358,16 +346,23 @@ pub async fn provisional_persons(
     }
 
     let placeholders = vec!["?"; person_ids.len()].join(", ");
+    // SAFETY: `<=>`, not `=` — migration 009 made `reason` nullable, and `=`
+    // would make the CASE NULL for such a row, the SUM NULL with it, and drop
+    // the person from the answer. A NULL reason is "not an automatic mint".
+    let mint_reasons = vec!["reason <=> ?"; UNCONFIRMED_MINT_REASONS.len()].join(" OR ");
     let sql = format!(
-        "SELECT person_id          FROM persons          WHERE insight_tenant_id = ? AND person_id IN ({placeholders})          GROUP BY person_id          HAVING SUM(CASE WHEN reason <=> ? THEN 0 ELSE 1 END) = 0"
+        "SELECT person_id          FROM persons          WHERE insight_tenant_id = ? AND person_id IN ({placeholders})          GROUP BY person_id          HAVING SUM(CASE WHEN {mint_reasons} THEN 0 ELSE 1 END) = 0"
     );
 
-    let mut params: Vec<sea_orm::Value> = Vec::with_capacity(person_ids.len() + 2);
+    let mut params: Vec<sea_orm::Value> =
+        Vec::with_capacity(person_ids.len() + 1 + UNCONFIRMED_MINT_REASONS.len());
     params.push(tenant_id.as_bytes().to_vec().into());
     for id in person_ids {
         params.push(id.as_bytes().to_vec().into());
     }
-    params.push(LOGIN_BOOTSTRAP_REASON.into());
+    for reason in UNCONFIRMED_MINT_REASONS {
+        params.push(reason.into());
+    }
 
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -385,6 +380,19 @@ pub async fn provisional_persons(
     Ok(provisional)
 }
 
+/// Hydrate person cards for MANY persons in one query — the shared id→display
+/// read behind every operator response that embeds cards (queue candidates,
+/// person search). Only the CURRENT observation per person × source × value
+/// type leaves the database (the same `rn = 1` window the resolvers use): the
+/// journal is append-only, and shipping a person's full re-observation history
+/// to collapse it in Rust would grow every response with tenant age. The Rust
+/// collapse then picks the latest across sources. An id the journal holds no
+/// card attributes for is simply absent from the map, and the caller renders
+/// it via [`PersonCard::empty`].
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
 pub async fn person_cards(
     db: &DatabaseConnection,
     tenant_id: Uuid,

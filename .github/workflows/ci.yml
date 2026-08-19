@@ -1,7 +1,7 @@
 name: Lint, Test & Coverage Gate
 
 on:
-  # PR-only gate (+ manual dispatch). Coverage is reported self-contained via the
+  # PR gate with trusted main cache warming (+ manual dispatch). Coverage is reported self-contained via the
   # GitHub Actions job summary — no external service, and no PR comment (fork PRs
   # only get a read-only token, so a comment post 403s). Works on any plan.
   #
@@ -20,6 +20,16 @@ on:
       - ".github/workflows/ci.yml"
       # Inputs to connector-wiring-guard beyond the connector tree itself: the
       # bootstrap connector registry and the shared class_people union.
+      - "src/ingestion/scripts/bootstrap-db/connectors-config.yaml"
+      - "src/ingestion/silver/_shared/**"
+  push:
+    branches: [main]
+    paths:
+      - "src/backend/**"
+      - "src/frontend/**"
+      - "src/ingestion/connectors/**"
+      - "scripts/ci/**"
+      - ".github/workflows/ci.yml"
       - "src/ingestion/scripts/bootstrap-db/connectors-config.yaml"
       - "src/ingestion/silver/_shared/**"
   # Merge-queue builds. paths filters don't apply to merge_group, so every queue
@@ -73,12 +83,18 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - name: Test component detection
+        run: python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py'
       - id: detect
         env:
           FULL: ${{ github.event.inputs.full }}
+          PUSH_BASE: ${{ github.event.before }}
         run: |
           if [ "$FULL" = "true" ]; then
             changed=$(python3 scripts/ci/changed.py --all)
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            : "${PUSH_BASE:?push event must provide a base revision}"
+            changed=$(python3 scripts/ci/changed.py --compare-ref "$PUSH_BASE")
           else
             changed=$(python3 scripts/ci/changed.py)
           fi
@@ -175,6 +191,7 @@ jobs:
             src/backend -> target
             src/ingestion/connectors/task-tracking/jira/enrich -> target
           key: ${{ matrix.entry.name }}
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Format check (${{ matrix.entry.name }})
         if: ${{ matrix.entry.lint }}
@@ -318,6 +335,7 @@ jobs:
           # Per-connector cache key so parallel setup-uv jobs don't race to
           # reserve one shared key ("Unable to reserve cache …").
           cache-suffix: ${{ matrix.entry.name }}
+          save-cache: ${{ github.event_name == 'push' }}
 
       - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
         working-directory: ${{ matrix.entry.root }}

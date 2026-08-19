@@ -364,6 +364,9 @@ function customMetricHandlers() {
 // handler factories close over, and the factories are CALLED right here —
 // an earlier array literal hits the temporal dead zone (seen live as
 // `Cannot access 'QUERIES_BASE' before initialization`).
+/** Whoever the person mode has open holds the two accounts it lists for them. */
+const HELD_BY = "2517cd48-4961-52b3-a401-b0e5a03858a4";
+
 export const handlers = [
   http.get("/auth/me", () =>
     HttpResponse.json({ ...MOCK_SESSION, ...mockSessionTiming() }),
@@ -424,6 +427,57 @@ export const handlers = [
   http.get(
     "/api/identity/v1/resolution/accounts/:source/:sourceId/:accountId",
     ({ params }) => {
+      // The roster mint: bound, by the batch, with nothing but its own
+      // creation on the trail — the state an operator is asked to confirm.
+      if (params.accountId === "874") {
+        const minted = {
+          person_id: "01900000-0000-7000-8000-0000000000d0",
+          display_name: "Ravi Menon",
+          job_title: "Facilities Lead",
+        };
+        return HttpResponse.json({
+          source: params.source,
+          source_id: params.sourceId,
+          account_id: params.accountId,
+          person_id: minted.person_id,
+          history: [
+            {
+              person_id: minted.person_id,
+              // No `provisional` here: the server builds trail cards from the
+              // journal alone and never marks them, so claiming it would have
+              // the console verified against a shape it will not receive.
+              person: minted,
+              author_person_id: "00000000-0000-0000-0000-000000000000",
+              by_operator: false,
+              reason: "roster-mint",
+              recorded_at: "2026-08-14T06:30:00.000000",
+            },
+          ],
+          operations: [],
+        });
+      }
+      // The two accounts the person listing above claims for whoever is open:
+      // reporting them as unbound here would have the console demonstrate a
+      // state the service cannot produce — an account in a person's own list
+      // that the binding read says nobody holds.
+      if (params.accountId === "gh-main" || params.accountId === "gl-alt") {
+        return HttpResponse.json({
+          source: params.source,
+          source_id: params.sourceId,
+          account_id: params.accountId,
+          person_id: HELD_BY,
+          history: [
+            {
+              person_id: HELD_BY,
+              author_person_id: "00000000-0000-0000-0000-000000000000",
+              by_operator: params.accountId === "gl-alt",
+              reason: "seed",
+              recorded_at: "2026-08-14T06:30:00.000000",
+            },
+          ],
+          operations: [],
+        });
+      }
       if (params.accountId !== "dev-42") {
         return HttpResponse.json({
           source: params.source,
@@ -668,6 +722,36 @@ export const handlers = [
           candidates: [card(carol, { provisional: true })],
         },
         {
+          // Added because the roster lists the account, not because anything
+          // matched: no address, so the person may already be on the roster
+          // under a different account. Bound, and still nobody's decision.
+          kind: "minted_from_roster",
+          source: "hr",
+          source_id: "01900000-0000-7000-8000-00000000aa03",
+          account_id: "874",
+          email: null,
+          username: null,
+          display_name: "Ravi Menon",
+          job_title: "Facilities Lead",
+          department: "Operations",
+          status: "Active",
+          manager_email: "carol.chen@example.com",
+          bound_to: "01900000-0000-7000-8000-0000000000d0",
+          candidates: [
+            {
+              person_id: "01900000-0000-7000-8000-0000000000d0",
+              email: null,
+              username: null,
+              display_name: "Ravi Menon",
+              job_title: "Facilities Lead",
+              status: "active",
+              // Minted for this very account, so nothing else is known about
+              // them and they may be someone the roster already lists.
+              provisional: true,
+            },
+          ],
+        },
+        {
           // Neither address nor handle — nothing automation can match on. The
           // source still describes the human, which is what the fold reads for
           // the operator and what makes this row bindable by hand.
@@ -685,7 +769,7 @@ export const handlers = [
           candidates: [],
         },
       ],
-      rates: { observed: 60, bound: 55, pending: 3, no_evidence: 2, excluded: 1 },
+      rates: { persons: 41, observed: 60, bound: 55, pending: 3, no_evidence: 2, excluded: 1 },
       truncated: false,
       items_truncated: false,
     });

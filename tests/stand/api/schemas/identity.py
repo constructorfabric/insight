@@ -25,6 +25,7 @@ from __future__ import annotations
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from uuid import UUID
 from typing import Any
+from enum import StrEnum
 
 
 class AccountRef(BaseModel):
@@ -218,7 +219,7 @@ class PersonSummaryResponse(BaseModel):
     email: str | None = None
     job_title: str | None = None
     person_id: UUID
-    provisional: bool | None = Field(None, description='The journal holds nothing but a login-mint for this person: they exist\nso somebody could sign in, and may duplicate one the roster knows. Not\na merge target — the history is on the other side.')
+    provisional: bool | None = Field(None, description='The journal holds nothing but an automatic mint for this person — a\nsign-in that needed somebody to enter as, or a roster listing an account\nwith no address. They may duplicate one the roster knows, so they are not\na merge target: the history is on the other side.')
     status: str | None = None
     username: str | None = Field(None, description='Source-native handle (e.g. a git login) — often the only recognisable\nfield of an identity no HR system has observed yet.')
 
@@ -340,7 +341,7 @@ class QueueItemResponse(BaseModel):
     display_name: str | None = Field(None, description='How the source describes the account. Nothing here is matchable — it is\nwhat lets an operator recognise whose account this is when automation\ncannot, which is exactly the case for the ones only they can bind.')
     email: str | None = None
     job_title: str | None = None
-    kind: str = Field(..., description='`contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.')
+    kind: str = Field(..., description='`contested` | `binding_conflict` | `provisioned_at_login` |\n`minted_from_roster` | `no_evidence`.')
     manager_email: str | None = None
     source: str
     source_id: UUID
@@ -350,8 +351,8 @@ class QueueItemResponse(BaseModel):
 
 class ResolutionRatesResponse(BaseModel):
     """
-    Share of observed accounts per resolution state — the operator-visible match
-    rate.
+    The tenant's identity picture: how many persons it knows, and how its
+    observed accounts are split across the resolution states.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -361,6 +362,7 @@ class ResolutionRatesResponse(BaseModel):
     no_evidence: int = Field(..., ge=0)
     observed: int = Field(..., ge=0)
     pending: int = Field(..., ge=0)
+    persons: int = Field(..., description='Persons in the tenant, counted from the person journal rather than the\nevidence fold — `truncated` never applies to this figure.', ge=0)
 
 
 class ResolveProfileRequest(BaseModel):
@@ -427,6 +429,11 @@ class SubchartResponse(BaseModel):
     root: SubchartNode
 
 
+class VisibilityPolicy(StrEnum):
+    org_chart = 'org_chart'
+    flat = 'flat'
+
+
 class VisibilityResponse(BaseModel):
     """
     One visibility grant.
@@ -443,6 +450,17 @@ class VisibilityResponse(BaseModel):
     viewed_person_id: UUID | None = None
     viewer_person_id: UUID
     visibility_id: UUID
+
+
+class VisiblePersonsPageResponse(BaseModel):
+    """
+    One page of the persons the caller may see.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[PersonSummaryResponse]
+    next_cursor: str | None = Field(None, description='Pass back as `?cursor=` for the next page; absent on the last one.')
 
 
 class VisiblePersonsRequest(BaseModel):
@@ -557,6 +575,7 @@ class MeResponse(BaseModel):
     insight_tenant_id: UUID
     person_id: UUID
     roles: list[MeRoleResponse]
+    visibility_policy: VisibilityPolicy
 
 
 class PersonListResponse(BaseModel):

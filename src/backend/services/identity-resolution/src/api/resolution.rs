@@ -24,7 +24,7 @@ use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
-use crate::infra::db::{ops_repo, persons_repo, resolution_repo};
+use crate::infra::db::{ops_repo, person_listing, persons_repo, resolution_repo};
 use crate::infra::identity_evidence::{
     AccountEvidence, AfterAccount, ClickHouseEvidenceReader, EvidenceSnapshot, ListedAccount,
 };
@@ -648,7 +648,8 @@ pub struct AttentionParams {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct QueueItemResponse {
-    /// `contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.
+    /// `contested` | `binding_conflict` | `provisioned_at_login` |
+    /// `minted_from_roster` | `no_evidence`.
     pub kind: String,
     pub source: String,
     pub source_id: Uuid,
@@ -678,9 +679,10 @@ pub struct QueueItemResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonSummaryResponse {
     pub person_id: Uuid,
-    /// The journal holds nothing but a login-mint for this person: they exist
-    /// so somebody could sign in, and may duplicate one the roster knows. Not
-    /// a merge target — the history is on the other side.
+    /// The journal holds nothing but an automatic mint for this person — a
+    /// sign-in that needed somebody to enter as, or a roster listing an account
+    /// with no address. They may duplicate one the roster knows, so they are not
+    /// a merge target: the history is on the other side.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub provisional: bool,
     pub email: Option<String>,
@@ -730,10 +732,13 @@ pub async fn mark_provisional(
     Ok(())
 }
 
-/// Share of observed accounts per resolution state — the operator-visible match
-/// rate.
+/// The tenant's identity picture: how many persons it knows, and how its
+/// observed accounts are split across the resolution states.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ResolutionRatesResponse {
+    /// Persons in the tenant, counted from the person journal rather than the
+    /// evidence fold — `truncated` never applies to this figure.
+    pub persons: usize,
     pub observed: usize,
     pub bound: usize,
     pub pending: usize,
@@ -768,6 +773,9 @@ pub async fn attention(
     let tenant = ctx.subject_tenant_id();
 
     let (review, truncated) = build_review(&state, tenant).await?;
+    let persons = person_listing::count_persons(&state.db, tenant)
+        .await
+        .map_err(|e| internal(&e, "failed to count the tenant's persons"))?;
 
     let limit = params.limit.map_or(DEFAULT_QUEUE_LIMIT, |l| {
         usize::try_from(l).unwrap_or(1).clamp(1, MAX_QUEUE_LIMIT)
@@ -821,6 +829,7 @@ pub async fn attention(
     Ok(Json(AttentionResponse {
         items,
         rates: ResolutionRatesResponse {
+            persons,
             observed: review.rates.observed,
             bound: review.rates.bound,
             pending: review.rates.pending,
@@ -1267,6 +1276,7 @@ fn kind_label(kind: ItemKind) -> &'static str {
         ItemKind::Contested => "contested",
         ItemKind::BindingConflict => "binding_conflict",
         ItemKind::ProvisionedAtLogin => "provisioned_at_login",
+        ItemKind::MintedFromRoster => "minted_from_roster",
         ItemKind::NoEvidence => "no_evidence",
     }
 }
@@ -1348,4 +1358,25 @@ async fn read_evidence(state: &AppState) -> Result<EvidenceSnapshot, CanonicalEr
         .accounts()
         .await
         .map_err(|e| internal(&e, "failed to read connector evidence"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_queue_kind_has_the_wire_label_its_consumers_switch_on() {
+        // The console groups by this exact string and drops anything it does not
+        // know into a catch-all "needs review" bucket, so a typo here is not a
+        // broken response — it is a queue that quietly stops explaining itself.
+        for (kind, expected) in [
+            (ItemKind::Contested, "contested"),
+            (ItemKind::BindingConflict, "binding_conflict"),
+            (ItemKind::ProvisionedAtLogin, "provisioned_at_login"),
+            (ItemKind::MintedFromRoster, "minted_from_roster"),
+            (ItemKind::NoEvidence, "no_evidence"),
+        ] {
+            assert_eq!(kind_label(kind), expected, "wrong label for {kind:?}");
+        }
+    }
 }

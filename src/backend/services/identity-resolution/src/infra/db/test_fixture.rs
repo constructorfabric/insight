@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::domain::seed::SourceAccountKey;
 
 use super::{connect_single, roles_repo, subchart_repo};
+use crate::config::VisibilityPolicy;
 
 /// The all-zero author every automatic binding carries.
 const AUTOMATION: Uuid = Uuid::nil();
@@ -53,6 +54,13 @@ impl Fixture {
 
     pub(crate) async fn person(&self, email: &str) -> anyhow::Result<Uuid> {
         let person_id = Uuid::now_v7();
+        self.person_as(person_id, email).await?;
+        Ok(person_id)
+    }
+
+    /// The same row under an id the caller picked — for the cases where WHICH id
+    /// the journal carries is the point, the excluded sentinel above all.
+    pub(crate) async fn person_as(&self, person_id: Uuid, email: &str) -> anyhow::Result<()> {
         self.exec(
             "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
                  insight_tenant_id, value_id, person_id, author_person_id, reason)
@@ -67,8 +75,7 @@ impl Fixture {
                 FIXTURE_REASON.into(),
             ],
         )
-        .await?;
-        Ok(person_id)
+        .await
     }
 
     /// Append one observation of `value_type` for an existing person — the
@@ -92,6 +99,35 @@ impl Fixture {
                 bytes(person),
                 bytes(person),
                 FIXTURE_REASON.into(),
+            ],
+        )
+        .await
+    }
+
+    /// The same, observed `seconds_ago`. Explicit age is what tells "superseded"
+    /// apart from "inserted first": the currency rule reads the timestamp, and
+    /// two rows written in one test would otherwise differ by microseconds.
+    pub(crate) async fn observed_at(
+        &self,
+        person: Uuid,
+        value_type: &str,
+        value: &str,
+        seconds_ago: u32,
+    ) -> anyhow::Result<()> {
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6) - INTERVAL ? SECOND)",
+            [
+                value_type.into(),
+                SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                value.into(),
+                bytes(person),
+                bytes(person),
+                FIXTURE_REASON.into(),
+                seconds_ago.into(),
             ],
         )
         .await
@@ -182,6 +218,27 @@ impl Fixture {
         Ok(person_id)
     }
 
+    /// A person the log holds nothing but a sign-in binding for.
+    pub(crate) async fn login_minted_person(&self, login: &str) -> anyhow::Result<Uuid> {
+        let person_id = Uuid::now_v7();
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason)
+             VALUES ('id', ?, ?, ?, ?, ?, ?, ?)",
+            [
+                SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                login.into(),
+                bytes(person_id),
+                bytes(Uuid::nil()),
+                crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON.into(),
+            ],
+        )
+        .await?;
+        Ok(person_id)
+    }
+
     pub(crate) async fn reports_to(&self, child: Uuid, parent: Uuid) -> anyhow::Result<()> {
         self.exec(
             "INSERT INTO org_chart (insight_tenant_id, insight_source_type, insight_source_id,
@@ -240,7 +297,60 @@ impl Fixture {
         viewer: Uuid,
         candidates: &[Uuid],
     ) -> anyhow::Result<Vec<Uuid>> {
-        subchart_repo::visible_targets(&self.db, self.tenant, viewer, candidates, SOURCE_TYPE).await
+        self.visible_under(viewer, candidates, VisibilityPolicy::OrgChart)
+            .await
+    }
+
+    pub(crate) async fn visible_flat(
+        &self,
+        viewer: Uuid,
+        candidates: &[Uuid],
+    ) -> anyhow::Result<Vec<Uuid>> {
+        self.visible_under(viewer, candidates, VisibilityPolicy::Flat)
+            .await
+    }
+
+    async fn visible_under(
+        &self,
+        viewer: Uuid,
+        candidates: &[Uuid],
+        policy: VisibilityPolicy,
+    ) -> anyhow::Result<Vec<Uuid>> {
+        subchart_repo::visible_targets(
+            &self.db,
+            self.tenant,
+            viewer,
+            candidates,
+            SOURCE_TYPE,
+            policy,
+        )
+        .await
+    }
+
+    pub(crate) async fn can_see(&self, viewer: Uuid, target: Uuid) -> anyhow::Result<bool> {
+        self.probe(viewer, target, VisibilityPolicy::OrgChart).await
+    }
+
+    pub(crate) async fn can_see_flat(&self, viewer: Uuid, target: Uuid) -> anyhow::Result<bool> {
+        self.probe(viewer, target, VisibilityPolicy::Flat).await
+    }
+
+    async fn probe(
+        &self,
+        viewer: Uuid,
+        target: Uuid,
+        policy: VisibilityPolicy,
+    ) -> anyhow::Result<bool> {
+        subchart_repo::is_target_in_visible_set(
+            &self.db,
+            self.tenant,
+            viewer,
+            target,
+            SOURCE_TYPE,
+            None,
+            policy,
+        )
+        .await
     }
 
     async fn exec(&self, sql: &str, values: impl IntoIterator<Item = Value>) -> anyhow::Result<()> {

@@ -100,9 +100,10 @@ function isMeRole(role: unknown): role is MeRole {
 /** A person as operator surfaces display them — the wire `PersonSummaryResponse`. */
 export interface PersonSummary {
   person_id: string;
-  /** The journal holds nothing but a login-mint for them: they exist so
-   *  somebody could sign in, and may duplicate a person the roster knows.
-   *  Never a merge target — the history is on the other side. */
+  /** The journal holds nothing but an automatic mint for them — a sign-in that
+   *  needed somebody to enter as, or a roster listing an account with no
+   *  address. They may duplicate a person the roster knows, so never a merge
+   *  target: the history is on the other side. */
   provisional?: boolean;
   email?: string | null;
   username?: string | null;
@@ -113,7 +114,8 @@ export interface PersonSummary {
 
 /** One account awaiting an operator decision. */
 export interface AttentionItem {
-  /** `contested` | `binding_conflict` | `no_evidence` — open vocabulary. */
+  /** `contested` | `binding_conflict` | `provisioned_at_login` |
+   *  `minted_from_roster` | `no_evidence` — open vocabulary. */
   kind: string;
   source: string;
   source_id: string;
@@ -136,6 +138,10 @@ export interface AttentionItem {
 
 /** Counts over EVERY observed account, regardless of the item cap. */
 export interface ResolutionRates {
+  /** Persons in the tenant — from the person journal, not the evidence fold.
+   *  Optional so a client deployed ahead of the backend keeps working; absent
+   *  reads as unknown, never as zero. */
+  persons?: number;
   observed: number;
   bound: number;
   pending: number;
@@ -211,9 +217,11 @@ export interface AccountSearchResponse {
 export async function searchAccounts(
   q: string,
   page: PageRequest = {},
+  signal?: AbortSignal,
 ): Promise<AccountSearchResponse> {
   const res = await fetchWithAuth(
     `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}${pageParams(page)}`,
+    { signal },
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -425,9 +433,11 @@ function pageParams(page: PageRequest): string {
 export async function searchPersons(
   q: string,
   page: PageRequest = {},
+  signal?: AbortSignal,
 ): Promise<PersonSearchResponse> {
   const res = await fetchWithAuth(
     `${BASE}/persons?q=${encodeURIComponent(q)}${pageParams(page)}`,
+    { signal },
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);

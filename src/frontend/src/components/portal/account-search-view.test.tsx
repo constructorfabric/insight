@@ -34,6 +34,7 @@ const hooks = vi.hoisted(() => {
         | undefined,
       isFetching: false,
       isFetchingNextPage: false,
+      isPlaceholderData: false,
       isError: false,
       hasNextPage: false,
       fetchNextPage: vi.fn(),
@@ -48,6 +49,11 @@ const hooks = vi.hoisted(() => {
     verb,
   };
 });
+// The debounce is a pure timing concern with its own unit test; identity here
+// keeps this suite about behaviour, not timers.
+vi.mock("@/hooks/use-debounced-value", () => ({
+  useDebouncedValue: <T,>(value: T) => value,
+}));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useAccountList: () => hooks.search,
@@ -73,6 +79,8 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
 }));
 
 import { portalRouter } from "@/test/portal-router";
+
+import { scrollEndIntoView } from "@/test/intersection-observer";
 
 import { AccountSearchView } from "./account-search-view";
 
@@ -101,6 +109,7 @@ beforeEach(() => {
   hooks.search.data = undefined;
   hooks.search.isFetching = false;
   hooks.search.isFetchingNextPage = false;
+  hooks.search.isPlaceholderData = false;
   hooks.search.isError = false;
   hooks.search.hasNextPage = false;
   hooks.search.fetchNextPage = vi.fn();
@@ -131,6 +140,87 @@ describe("AccountSearchView", () => {
     expect(screen.getByText(/may not have run yet/i)).toBeInTheDocument();
     expect(
       screen.queryByText(/no account has been observed/i),
+    ).not.toBeInTheDocument();
+  });
+
+  // One letter reaches most of what the connectors reported and costs the fold a
+  // pass to say so. Going silent would read as a broken field, so the mode says
+  // what it is waiting for — and shows no rows it did not ask for.
+  it("asks for a second character instead of searching on one", async () => {
+    hooks.search.data = page([match()]);
+    render(<AccountSearchView />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "o");
+
+    expect(screen.getByText(/at least 2 characters/i)).toBeInTheDocument();
+    expect(screen.queryByText("octocat")).not.toBeInTheDocument();
+    // Neither emptiness applies while the field is still being typed into.
+    expect(screen.queryByText(/nothing to list here yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/carries that/i)).not.toBeInTheDocument();
+  });
+
+  it("searches, and drops the notice, on the second character", async () => {
+    hooks.search.data = page([match()]);
+    render(<AccountSearchView />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "oc");
+
+    expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
+    expect(screen.getByText("octocat")).toBeInTheDocument();
+  });
+
+  // The needle is one predicate, spaces and all, so a space is a character like
+  // any other here — unlike the person search, which matches term by term.
+  it("searches a needle that spans a space", async () => {
+    hooks.search.data = page([match()]);
+    render(<AccountSearchView />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "a b");
+
+    expect(screen.queryByText(/at least 2 characters/i)).not.toBeInTheDocument();
+    expect(screen.getByText("octocat")).toBeInTheDocument();
+  });
+
+  // Kept rows are the previous needle's answer for one debounce, so an empty
+  // list is not yet a fact about the field: "nothing to list here yet" would
+  // read as "no connector has reported", which is a claim about the tenant.
+  it("claims neither emptiness while the listing is still the previous answer", () => {
+    hooks.search.data = page([]);
+    hooks.search.isPlaceholderData = true;
+    render(<AccountSearchView />);
+
+    expect(screen.queryByText(/nothing to list here yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/carries that/i)).not.toBeInTheDocument();
+  });
+
+  // Candidates answer "whose COULD it be", which is a queue question. This list
+  // answers "whose IS it", so the window it opens must carry no candidates —
+  // otherwise the holder appears as somebody to bind the account to, which is
+  // the confirm act and belongs in the queue.
+  it("opens a listed account with no candidates to confirm", async () => {
+    hooks.search.data = page([match()]);
+    // A real binding, or the window body is a spinner and this proves nothing.
+    hooks.binding.data = {
+      source: "github",
+      source_id: "01900000-0000-7000-8000-00000000aa01",
+      account_id: "gh-main",
+      person_id: "01900000-0000-7000-8000-0000000000a0",
+      history: [],
+    };
+    hooks.binding.isLoading = false;
+    render(<AccountSearchView />);
+
+    await userEvent.click(screen.getByRole("button", { name: /^open$/i }));
+
+    const dialog = screen.getByRole("dialog");
+    // The verbs are on screen — so an absent candidate list means absent, not
+    // "still loading".
+    expect(
+      within(dialog).getByRole("button", { name: /detach into a new person/i }),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/candidates/i)).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("button", { name: /^confirm$/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -213,13 +303,25 @@ describe("AccountSearchView", () => {
 
   // A cut list used to end the road; now it continues, so the control is an
   // offer to read on rather than an instruction to retype.
-  it("offers the next page instead of asking for narrower terms", async () => {
+  // Reading the fold means scrolling it, so the next page comes on the way down
+  // rather than behind a button at the bottom of the one before it.
+  it("asks for the next page when the end of the list comes into view", () => {
     hooks.search.data = page([match()]);
     hooks.search.hasNextPage = true;
     render(<AccountSearchView />);
 
-    await userEvent.click(screen.getByRole("button", { name: /show more/i }));
+    scrollEndIntoView();
 
     expect(hooks.search.fetchNextPage).toHaveBeenCalled();
+  });
+
+  it("stops asking once the listing says there is no next page", () => {
+    hooks.search.data = page([match()]);
+    hooks.search.hasNextPage = false;
+    render(<AccountSearchView />);
+
+    scrollEndIntoView();
+
+    expect(hooks.search.fetchNextPage).not.toHaveBeenCalled();
   });
 });

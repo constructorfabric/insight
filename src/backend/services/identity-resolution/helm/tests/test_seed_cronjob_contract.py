@@ -24,8 +24,10 @@ Covered, per job:
     listens on nothing must never enter the Service's endpoints).
 
 Umbrella: the seed tenant render guard (unchanged — the sync only journals
-under the tenant, so it carries no equivalent guard) and both CronJobs
-rendering when a tenant is configured.
+under the tenant, so it carries no equivalent guard), both CronJobs
+rendering when a tenant is configured, and the gear-config knobs an
+operator sets at the conventional `identityResolution.<key>` path
+actually reaching the gear that reads them.
 """
 
 from __future__ import annotations
@@ -159,6 +161,24 @@ def _subchart_docs(*extra: str) -> list[dict]:
 @pytest.fixture(scope="module")
 def default_docs() -> list[dict]:
     return _subchart_docs()
+
+
+def _umbrella_gear_config(manifests: str) -> dict:
+    """The identity gear's config out of an umbrella render.
+
+    Selected by name: the git-cli-proxy subchart also mounts a gears file called
+    `insight.yaml`, so "the ConfigMap carrying insight.yaml" is two documents.
+    """
+    named = [
+        d
+        for d in _docs(manifests)
+        if d.get("kind") == "ConfigMap"
+        and d["metadata"]["name"].endswith("-identity-resolution-gears-config")
+    ]
+    assert len(named) == 1, f"expected one identity gears ConfigMap, got {len(named)}"
+
+    host = yaml.safe_load(named[0]["data"]["insight.yaml"])
+    return host["gears"]["identity-resolution"]["config"]
 
 
 def _job_container(cronjob: dict) -> dict:
@@ -301,3 +321,34 @@ def test_umbrella_disabled_seed_needs_no_tenant(umbrella_deps) -> None:
     assert not any(
         "identity-resolution" in n and n.endswith("-seed") for n in jobs
     ), sorted(jobs)
+
+
+def test_umbrella_carries_the_roster_source_to_the_gear_that_reads_it(umbrella_deps) -> None:
+    """An operator sets this at `identityResolution.rosterSourceType`.
+
+    Nothing else proves that path: the subchart tests set the key directly, so a
+    value the umbrella dropped would leave the seed minting nothing at all — with
+    a successful run and an empty counter as the only symptom.
+    """
+    rc, out, err = _render(
+        umbrella_deps,
+        *UMBRELLA_BASE,
+        "--set",
+        f"global.tenantDefaultId={TENANT}",
+        "--set",
+        "identityResolution.rosterSourceType=bamboohr",
+    )
+    assert rc == 0, err
+
+    assert _umbrella_gear_config(out)["roster_source_type"] == "bamboohr"
+
+
+def test_umbrella_names_no_roster_by_default(umbrella_deps) -> None:
+    rc, out, err = _render(
+        umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}"
+    )
+    assert rc == 0, err
+
+    assert _umbrella_gear_config(out)["roster_source_type"] == "", (
+        "an upgrade must not start minting persons by itself"
+    )

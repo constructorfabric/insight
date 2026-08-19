@@ -91,14 +91,24 @@ SELECT
 FROM latest_per_key
 {% if is_incremental() %}
   -- A row only ever changes because a newer read produced it, so rows read since
-  -- the last build are the only ones that can carry anything new. The empty-table
-  -- guard mirrors the sibling models: over an empty `this` the max is the epoch
-  -- and every row would be filtered out.
-  WHERE (
-    (SELECT count() FROM {{ this }}) = 0
-    OR _airbyte_extracted_at > (
-        SELECT coalesce(max(collected_at), toDateTime64('1970-01-01 00:00:00', 3))
-        FROM {{ this }}
-    )
-  )
+  -- the last build are the only ones that can carry anything new.
+  --
+  -- Scoped to ONE source instance, for the reason silver_incremental_watermark
+  -- gives at the class above: two instances of this connector write here, each
+  -- stamping its own extraction clock, and a boundary taken over the whole table
+  -- lets whichever ran first put the other's rows below it FOREVER. `coalesce`
+  -- to the epoch is what admits an instance the table has never seen — comparing
+  -- against NULL would drop every row of every new one.
+  LEFT JOIN (
+      SELECT
+          insight_tenant_id,
+          source_id AS watermark_source_id,
+          max(collected_at) AS max_collected
+      FROM {{ this }}
+      GROUP BY insight_tenant_id, source_id
+  ) AS watermarks
+      ON latest_per_key.tenant_id = watermarks.insight_tenant_id
+     AND latest_per_key.source_id = watermarks.watermark_source_id
+  WHERE latest_per_key._airbyte_extracted_at
+      > coalesce(watermarks.max_collected, toDateTime64('1970-01-01 00:00:00', 3))
 {% endif %}

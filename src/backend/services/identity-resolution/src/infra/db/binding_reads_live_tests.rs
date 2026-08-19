@@ -8,6 +8,7 @@
 use uuid::Uuid;
 
 use crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON;
+use crate::domain::provenance::Provenance;
 use crate::domain::seed::KnownBinding;
 
 use super::resolution_repo::{Ceiling, LOOKUP_CHUNK, current_bindings, current_bindings_in_tenant};
@@ -154,7 +155,7 @@ async fn the_tenant_read_carries_what_the_review_surface_reads() -> TestResult {
         Some(&KnownBinding {
             person_id: person,
             author_person_id: operator,
-            provisioned_at_login: false,
+            provenance: Provenance::Resolved,
         })
     );
     assert_eq!(
@@ -162,7 +163,7 @@ async fn the_tenant_read_carries_what_the_review_surface_reads() -> TestResult {
         Some(&KnownBinding {
             person_id: person,
             author_person_id: Uuid::nil(),
-            provisioned_at_login: true,
+            provenance: Provenance::LoginBootstrap,
         })
     );
     Ok(())

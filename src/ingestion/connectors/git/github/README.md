@@ -83,10 +83,12 @@ source joins an HR-rostered organization.
 Three things to know before deploying:
 
 - **When `github-directory` is deployed, both connectors must share one
-  `insight_source_id`.** The seed and the resolver key an account on (source
-  type, source id, login); under different ids the roster bindings and these
-  claims describe different accounts, and a member with no published e-mail
-  can end up as two persons.
+  `insight_source_id` — `github-main` in the shipped examples.** The seed and
+  the resolver key an account on (source type, source id, login); under
+  different ids the roster bindings and these claims describe different
+  accounts, and a member with no published e-mail can end up as two persons.
+  The id comes from the Secret's `insight.cyberfabric.com/source-id`
+  annotation, so this is a deployment decision, not a code one.
 - **An unmatched active account is minted as a new person.** An outside
   contributor, or a member committing under an address no roster carries,
   becomes a fresh person and shows up in the seed's `accounts_minted_new`
@@ -111,8 +113,15 @@ identities) reach no account and stay unattributed.
   repository runs many Retry-After cycles). 404/413 skip the repository;
   409 (superseded snapshot) fails the attempt — the rerun resumes from the
   stored cursor.
-- GraphQL errors arrive as HTTP 200: rate-limit-typed errors back off,
-  anything else fails with GitHub's own message.
+- GraphQL errors arrive as HTTP 200. GitHub types an exhausted budget both
+  `RATE_LIMIT` and `RATE_LIMITED`, so the throttle predicates match either and
+  fall back to the message; anything else fails with GitHub's own message.
+- REST and GraphQL are metered as two separate hourly budgets. `api_budget`
+  paces each one against its own `X-RateLimit-*` headers and waits out a
+  window it exhausts. This is not something the error handlers could do:
+  `DefaultErrorHandler` caps total backoff at 600 seconds and the manifest
+  exposes no field to raise it, so a reset further out than that would
+  exhaust the retries and fail the stream.
 
 ## Known NULL columns
 

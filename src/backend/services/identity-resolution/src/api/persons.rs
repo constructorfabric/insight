@@ -43,11 +43,6 @@ use crate::infra::db::persons_repo;
 
 const DEFAULT_LIMIT: u64 = 20;
 const MAX_LIMIT: u64 = 100;
-/// A picker query is a human typing, not a batch filter.
-const MAX_TERMS: usize = 8;
-/// Generous for anything a human pastes into a picker, and a hard ceiling on
-/// what each LIKE probe of the journal scan has to compare against.
-const MAX_QUERY_CHARS: usize = 200;
 
 #[derive(Debug, Deserialize)]
 pub struct SearchParams {
@@ -122,43 +117,26 @@ async fn page_of_persons(
         person_id: key.person_id,
     });
 
-    person_listing::list_persons(&state.db, tenant, values, named, after, limit + 1)
+    person_listing::list_persons(&state.db, tenant, values, named, None, after, limit + 1)
         .await
         .map_err(|e| read_err(&e))
 }
 
 /// Drop the probe row and, when it was there, mint the cursor that resumes
-/// after the last row actually served.
 fn cut_to_page(
-    mut rows: Vec<PersonListRow>,
+    rows: Vec<PersonListRow>,
     limit: u64,
     tenant: Uuid,
     query: &str,
 ) -> Result<(Vec<PersonListRow>, Option<String>), CanonicalError> {
-    if rows.len() <= usize::try_from(limit).unwrap_or(usize::MAX) {
-        return Ok((rows, None));
-    }
-    rows.pop();
-
-    let next = rows
-        .last()
-        .map(|last| {
-            listing::encode_cursor(
-                tenant,
-                query,
-                &PageKey {
-                    order_key: last.order_key.clone(),
-                    person_id: last.person_id,
-                },
-            )
-        })
-        .transpose()
-        .map_err(|e| {
-            tracing::error!(error = %e, "failed to issue a person page cursor");
-            CanonicalError::internal("failed to list persons").create()
-        })?;
-
-    Ok((rows, next))
+    listing::cut_to_page(rows, limit, tenant, query, |row: &PersonListRow| PageKey {
+        order_key: row.order_key.clone(),
+        person_id: row.person_id,
+    })
+    .map_err(|e| {
+        tracing::error!(error = %e, "failed to issue a person page cursor");
+        CanonicalError::internal("failed to list persons").create()
+    })
 }
 
 /// Cards for the page, in the order the listing put them.
@@ -188,12 +166,7 @@ fn resume_from(
     tenant: Uuid,
     query: &str,
 ) -> Result<Option<PageKey>, CanonicalError> {
-    let Some(cursor) = cursor.map(str::trim).filter(|c| !c.is_empty()) else {
-        return Ok(None);
-    };
-
-    listing::decode_cursor::<PageKey>(cursor, tenant, query)
-        .map(Some)
+    listing::resume_from::<PageKey>(cursor, tenant, query)
         .map_err(|rejected: CursorRejected| invalid("cursor", rejected.message()))
 }
 
@@ -227,23 +200,7 @@ fn partition_terms(terms: &[String]) -> (Vec<Uuid>, Vec<String>) {
 /// Split `q` into terms: non-empty, whitespace-separated, capped in count and
 /// total length. An absent or blank `q` is the whole roster, not an error.
 fn search_terms(q: Option<&str>) -> Result<Vec<String>, CanonicalError> {
-    let q = q.unwrap_or_default();
-    if q.chars().count() > MAX_QUERY_CHARS {
-        return Err(invalid(
-            "q",
-            &format!("at most {MAX_QUERY_CHARS} characters are accepted"),
-        ));
-    }
-
-    let terms: Vec<String> = q.split_whitespace().map(str::to_owned).collect();
-
-    if terms.len() > MAX_TERMS {
-        return Err(invalid(
-            "q",
-            &format!("at most {MAX_TERMS} search terms are accepted"),
-        ));
-    }
-    Ok(terms)
+    listing::search_terms(q.unwrap_or_default()).map_err(|message| invalid("q", &message))
 }
 
 fn invalid(field: &str, message: &str) -> CanonicalError {

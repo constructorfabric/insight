@@ -70,8 +70,11 @@ function isIdentifier(segment: string): boolean {
   );
 }
 
+let lastPath = "";
+
 export function recordPageView(path: string): void {
-  emit("page_view", { path: screenPath(path) });
+  lastPath = screenPath(path);
+  emit("page_view", { path: lastPath });
 }
 
 /** The shape of a scope, never the person it is rooted at. */
@@ -86,5 +89,5 @@ export function scopeLabel(scope: {
 }
 
 export function recordUsageEvent(name: string, target: string): void {
-  emit(name, { target });
+  emit(name, { target, path: lastPath });
 }

@@ -42,6 +42,7 @@ jobs:
       - name: Semgrep scan (full tree — owns the SARIF upload, never blocks)
         # `docker run` rather than a `container:` job so the JS actions keep the runner's Node.
         # `--config auto` needs metrics on to select rules, so `--metrics off` is omitted.
+        if: github.event_name != 'pull_request'
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/src" \
@@ -73,7 +74,7 @@ jobs:
               --baseline-commit "$BASE_SHA"
 
       - name: Summarize findings in the job summary
-        if: always()
+        if: ${{ always() && github.event_name != 'pull_request' }}
         run: |
           [ -f semgrep.sarif ] || exit 0
           [ -n "${GITHUB_STEP_SUMMARY:-}" ] || exit 0
@@ -110,8 +111,7 @@ jobs:
           PY
 
       - name: Upload SARIF to GitHub Code Scanning
-        # Fork PRs get a read-only token and cannot upload.
-        if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        if: ${{ always() && github.event_name != 'pull_request' && hashFiles('semgrep.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           sarif_file: semgrep.sarif

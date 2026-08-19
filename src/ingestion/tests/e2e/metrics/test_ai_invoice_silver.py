@@ -35,6 +35,7 @@ SOURCE = "claude-team-invoices-test"
 # recovery pair is only legible on its own.
 SOURCE_ONE_BUILD = "claude-team-invoices-recovered-one-build"
 SOURCE_TWO_BUILDS = "claude-team-invoices-recovered-two-builds"
+SOURCE_SECOND_INSTANCE = "claude-team-invoices-second-instance"
 
 # 2026-08-01 and 2026-09-01 UTC — the window a monthly line charges for.
 AUG_START, SEP_START = 1785542400, 1788220800
@@ -42,7 +43,7 @@ AUG_START, SEP_START = 1785542400, 1788220800
 # dating by this instead of by the period would file the row in July.
 RAISED_AT = 1785456000
 
-# Staging admits only rows read strictly after what it already holds, and that
+# Staging admits only rows read strictly after what it already holds, and THAT
 # watermark is table-wide. So every instant below is distinct and ascends in the
 # order the fixtures run: reuse one and the watermark, not the model, decides which
 # rows arrive — an assertion about the model would then hold with the model deleted.
@@ -51,6 +52,11 @@ ONE_BUILD_BROKEN_AT = "2026-09-03T00:00:00Z"
 ONE_BUILD_RECOVERED_AT = "2026-09-04T00:00:00Z"
 TWO_BUILDS_BROKEN_AT = "2026-09-05T00:00:00Z"
 TWO_BUILDS_RECOVERED_AT = "2026-09-06T00:00:00Z"
+
+# The class's own boundary is per source instance, so this one deliberately does
+# NOT ascend: it is read before every instant above, which is what a second
+# connector instance stamping `_version` from its own clock looks like.
+SECOND_INSTANCE_READ_AT = "2026-08-20T00:00:00Z"
 
 
 def _base(source_id: str, read_at: str) -> dict:
@@ -388,3 +394,34 @@ def test_a_recovery_across_two_builds_leaves_no_gap_behind(recovered_across_two_
     assert invoice["invoice_id"] == "in_RECOVERED", "the gap row became the enriched one"
     assert invoice["invoice_net_cents"] == 16_000
     assert recovered_across_two_builds[1]["invoice_net_cents"] is None, "counted once, not twice"
+
+
+@pytest.fixture
+def second_instance_silver(
+    ch_migrations_applied: SessionConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner, worker_ctx: WorkerContext
+) -> list[dict]:
+    """A second source instance, read BEFORE everything the class already holds."""
+    rows = [
+        _invoice_row(
+            "pi_second",
+            4_200,
+            4_000,
+            source_id=SOURCE_SECOND_INSTANCE,
+            read_at=SECOND_INSTANCE_READ_AT,
+            invoice_id="in_SECOND",
+            period_start_ts=AUG_START,
+            period_end_ts=SEP_START,
+        )
+    ]
+    _seed_and_build(ch_seeder, dbt_runner, worker_ctx, rows)
+    return _read_class(ch_migrations_applied, SOURCE_SECOND_INSTANCE)
+
+
+def test_a_second_source_instance_is_not_shut_out_by_the_first(second_instance_silver):
+    """The class is written by every connector feeding it, each stamping `_version`
+    from its own clock. A boundary taken over the whole table would leave this
+    instance's rows below whatever the first instance committed — forever, and
+    silently. The boundary is per instance, so an instance the class has never
+    seen has no boundary to clear."""
+    assert [r["invoice_id"] for r in second_instance_silver] == ["in_SECOND"]
+    assert second_instance_silver[0]["invoice_net_cents"] == 4_000
