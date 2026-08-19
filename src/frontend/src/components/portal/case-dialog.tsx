@@ -14,10 +14,28 @@ import {
 } from "@/components/ui/dialog";
 import { itemKey, parseAccountKey } from "@/lib/identities/account-key";
 
+/**
+ * A row this window can open.
+ *
+ * `candidates` is a QUEUE concept — the persons the evidence says could own the
+ * account, which is a question only an undecided account has. The surfaces that
+ * list settled accounts have no such question, so they carry `holder` instead:
+ * the card of whoever holds it, which the binding read answers with an id alone.
+ * Without that channel those surfaces had to pass the holder AS a candidate, and
+ * the window then offered to bind the account to the person already holding it.
+ * That offer belongs in the queue: re-asserting a binding the resolver made is
+ * the confirm act, and the accounts it matters for are queued for exactly that.
+ * Here it either changed nothing at all (the binding was already an operator's)
+ * or only flipped a badge.
+ */
+export interface CaseRow extends AttentionItem {
+  holder?: PersonSummary | null;
+}
+
 /** What the open case keeps when the list under it moves (see below). */
 interface HeldCase {
   acct?: string;
-  item?: AttentionItem;
+  item?: CaseRow;
   at?: number;
 }
 
@@ -44,7 +62,7 @@ export function CaseDialog({
   onClose,
 }: {
   acct: string | undefined;
-  items: AttentionItem[];
+  items: CaseRow[];
   /** Account keys in the order the queue renders them. */
   ordered: string[];
   /** The person the surface behind this window has open, when it has one:
@@ -138,6 +156,7 @@ export function CaseDialog({
             accountRef={ref}
             queueItem={queueItem}
             observed={observed}
+            holder={queueItem?.holder ?? null}
             bindTo={bindTo}
           />
         ) : null}

@@ -193,6 +193,37 @@ describe("AccountSearchView", () => {
     expect(screen.queryByText(/carries that/i)).not.toBeInTheDocument();
   });
 
+  // Candidates answer "whose COULD it be", which is a queue question. This list
+  // answers "whose IS it", so the window it opens must carry no candidates —
+  // otherwise the holder appears as somebody to bind the account to, which is
+  // the confirm act and belongs in the queue.
+  it("opens a listed account with no candidates to confirm", async () => {
+    hooks.search.data = page([match()]);
+    // A real binding, or the window body is a spinner and this proves nothing.
+    hooks.binding.data = {
+      source: "github",
+      source_id: "01900000-0000-7000-8000-00000000aa01",
+      account_id: "gh-main",
+      person_id: "01900000-0000-7000-8000-0000000000a0",
+      history: [],
+    };
+    hooks.binding.isLoading = false;
+    render(<AccountSearchView />);
+
+    await userEvent.click(screen.getByRole("button", { name: /^open$/i }));
+
+    const dialog = screen.getByRole("dialog");
+    // The verbs are on screen — so an absent candidate list means absent, not
+    // "still loading".
+    expect(
+      within(dialog).getByRole("button", { name: /detach into a new person/i }),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/candidates/i)).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("button", { name: /^confirm$/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("answers whose an account is", async () => {
     hooks.search.data = page([match()]);
     render(<AccountSearchView />);

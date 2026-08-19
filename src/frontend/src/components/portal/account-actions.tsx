@@ -52,11 +52,16 @@ export function AccountActions({
   accountRef,
   binding,
   candidates,
+  holder,
   bindTo,
 }: {
   accountRef: AccountRef;
   binding: AccountBinding;
+  /** Persons the evidence says could own this account — a QUEUE question, so
+   *  empty everywhere the account is already settled. */
   candidates: PersonSummary[];
+  /** Whoever holds it now, when the surface knows their card. */
+  holder?: PersonSummary | null;
   /**
    * The person the surface behind this window has open. Binding to them is then
    * one press, and the search for a person is gone: the reader is already
@@ -79,7 +84,13 @@ export function AccountActions({
     id: accountRef.account_id,
   };
   const boundId = binding.person_id ?? null;
-  const boundCard = candidates.find((c) => c.person_id === boundId);
+  // Only when it is a card for the id the binding read answers with: the surface
+  // learnt its holder from a listing, and a verb taken here can move the account
+  // under it — a detach names a person no listing has yet.
+  const boundCard =
+    holder?.person_id === boundId
+      ? holder
+      : candidates.find((c) => c.person_id === boundId);
   const boundName = boundCard ? personDisplayName(boundCard) : boundId;
 
   const close = () => {
@@ -160,7 +171,12 @@ export function AccountActions({
             </Button>
           ) : (
             <PersonPicker
-              excludeIds={candidates.map((c) => c.person_id)}
+              // The holder too: this picker moves an account to somebody
+              // else, and the one person it cannot move it to is the one who
+              // already has it.
+              excludeIds={[...candidates, ...(boundCard ? [boundCard] : [])].map(
+                (c) => c.person_id,
+              )}
               onPick={(person) => setAction({ kind: "bind", person })}
             />
           )}

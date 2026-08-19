@@ -13,12 +13,8 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ScanSearch, Search } from "lucide-react";
 
-import type {
-  AccountMatch,
-  AttentionItem,
-  PersonSummary,
-} from "@/api/identity-client";
-import { CaseDialog } from "@/components/portal/case-dialog";
+import type { AccountMatch, PersonSummary } from "@/api/identity-client";
+import { CaseDialog, type CaseRow } from "@/components/portal/case-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -79,7 +75,7 @@ export function AccountFinder({
 }: {
   intent: AccountListIntent;
   placeholder: string;
-  alsoOpenable?: AttentionItem[];
+  alsoOpenable?: CaseRow[];
   bindTo?: PersonSummary | null;
   className?: string;
 }) {
@@ -121,7 +117,11 @@ export function AccountFinder({
   // The window takes queue-shaped rows; a listed account adapts. This is also
   // the voucher that the account exists — without it an unbound, never-decided
   // account the list just showed would open as a stale link with no verbs.
-  const asCases: AttentionItem[] = items.map((m) => ({
+  //
+  // No candidates: this list answers "whose is it", not "whose could it be".
+  // The holder travels as the holder, so the window names them without the
+  // window mistaking them for somebody to bind the account to.
+  const asCases: CaseRow[] = items.map((m) => ({
     kind: "match",
     source: m.source,
     source_id: m.source_id,
@@ -129,11 +129,17 @@ export function AccountFinder({
     email: m.email,
     username: m.username,
     display_name: m.display_name,
-    candidates: m.person ? [m.person] : [],
+    candidates: [],
+    holder: m.person ?? null,
   }));
   // Matches first: they are what the reader just went looking for, and the
   // prev/next footer walks this order.
-  const openable = [...asCases, ...alsoOpenable];
+  //
+  // INVARIANT: one entry per account. A match can also be a row the surface
+  // already lists — searching inside a person finds the accounts they hold — and
+  // the footer walks `ordered` by index, so a key listed twice sends `next` back
+  // to the first copy instead of onward.
+  const openable = uniqueByAccount([...asCases, ...alsoOpenable]);
   const ordered = openable.map((item) => accountKey(item));
 
   return (
@@ -222,10 +228,20 @@ export function AccountFinder({
               />
             ))}
             {/* The page after this one is asked for when this marker nears the
-                viewport, so the list continues instead of ending in a button. */}
+                viewport, so the list continues instead of ending in a button.
+                The marker is always there while a page is unread — the observer
+                needs an element — but it only SAYS anything while that page is
+                on its way: labelling an idle list "loading" is a lie the reader
+                cannot dismiss. */}
             {search.hasNextPage ? (
-              <div ref={loadMore} className="p-2 text-sm text-muted-foreground">
-                {t("identities.accounts.loading_more")}
+              <div
+                ref={loadMore}
+                aria-live="polite"
+                className="p-2 text-sm text-muted-foreground"
+              >
+                {search.isFetchingNextPage
+                  ? t("identities.accounts.loading_more")
+                  : null}
               </div>
             ) : null}
           </CardContent>
@@ -243,6 +259,17 @@ export function AccountFinder({
       />
     </div>
   );
+}
+
+/** The first row for each account wins — the earlier one carries the match. */
+function uniqueByAccount(rows: CaseRow[]): CaseRow[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = accountKey(row);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function AccountRow({

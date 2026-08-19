@@ -35,6 +35,20 @@ const hooks = vi.hoisted(() => ({
     hasNextPage: false,
     fetchNextPage: vi.fn(),
   },
+  verb: {
+    mutate: vi.fn(),
+    reset: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null as unknown,
+  },
+  binding: {
+    data: undefined as unknown,
+    isLoading: true,
+    isError: false,
+    error: null as unknown,
+    refetch: vi.fn(),
+  },
   accountSearch: {
     data: undefined as { pages: { items: unknown[] }[] } | undefined,
     isFetching: false,
@@ -50,14 +64,15 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   usePersonAccounts: () => hooks.accounts,
   usePersonList: () => hooks.search,
   useAccountList: () => hooks.accountSearch,
-  // The window's own behaviour belongs to account-detail.test.
-  useAccountBinding: () => ({
-    data: undefined,
-    isLoading: true,
-    isError: false,
-    error: null,
-    refetch: vi.fn(),
-  }),
+  // The window's own behaviour belongs to account-detail.test; a case that needs
+  // the verbs on screen sets a binding for itself.
+  useAccountBinding: () => hooks.binding,
+  // The verbs themselves belong to account-actions.test; stubbed so the window
+  // can render them without this suite standing up a query client.
+  useBindAccount: () => hooks.verb,
+  useMergePersons: () => hooks.verb,
+  useDetachAccount: () => hooks.verb,
+  useExcludeAccount: () => hooks.verb,
 }));
 
 import { portalRouter } from "@/test/portal-router";
@@ -84,6 +99,8 @@ beforeEach(() => {
   hooks.accounts.isError = false;
   hooks.accounts.refetch.mockClear();
   hooks.search.data = undefined;
+  hooks.binding.data = undefined;
+  hooks.binding.isLoading = true;
   hooks.accountSearch.data = undefined;
   hooks.accountSearch.hasNextPage = false;
   hooks.accountSearch.isPlaceholderData = false;
@@ -235,6 +252,37 @@ describe("PersonAccountsView", () => {
     await userEvent.click(screen.getByRole("button", { name: /^open$/i }));
 
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+
+  // Every account here is already this person's, so a candidate list saying so
+  // invites re-asserting the binding — the confirm act, which belongs in the
+  // queue. The holder is named in its own section instead.
+  it("opens one of the person's accounts with no candidates to confirm", async () => {
+    portalRouter.set({ person: ANN });
+    hooks.accounts.data = { person_id: ANN, accounts: [entry()] };
+    // A real binding, or the window body is a spinner and this proves nothing.
+    hooks.binding.data = {
+      source: "github",
+      source_id: "01900000-0000-7000-8000-00000000aa01",
+      account_id: "gh-main",
+      person_id: ANN,
+      history: [],
+    };
+    hooks.binding.isLoading = false;
+    render(<PersonAccountsView />);
+
+    await userEvent.click(screen.getByRole("button", { name: /^open$/i }));
+
+    const dialog = screen.getByRole("dialog");
+    // The verbs are on screen — so an absent candidate list means absent, not
+    // "still loading".
+    expect(
+      within(dialog).getByRole("button", { name: /detach into a new person/i }),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/candidates/i)).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole("button", { name: /^confirm$/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("states an empty result rather than an empty card", () => {

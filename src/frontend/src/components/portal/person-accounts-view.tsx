@@ -15,12 +15,12 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
-  AttentionItem,
   PersonAccountEntry,
   PersonSummary,
 } from "@/api/identity-client";
 import { PersonCell } from "@/components/portal/person-cell";
 import { AccountFinder } from "@/components/portal/account-search-view";
+import type { CaseRow } from "@/components/portal/case-dialog";
 import { PersonPicker } from "@/components/portal/person-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -111,15 +111,19 @@ function PersonAccounts({
   const person = card ?? { person_id: personId };
   // Queue-shaped rows for the window: the voucher that each account exists
   // (they are read from the person's own bindings), plus the person as the
-  // one candidate so the current binding renders as a card, not a bare id.
-  const asCases: AttentionItem[] = entries.map((entry) => ({
+  // HOLDER so the current binding renders as a card rather than a bare id.
+  // Never as a candidate: every account here is already theirs, and a candidate
+  // list saying so invites re-asserting the binding — the confirm act, which the
+  // queue lists the accounts for.
+  const asCases: CaseRow[] = entries.map((entry) => ({
     kind: "member",
     source: entry.source,
     source_id: entry.source_id,
     account_id: entry.account_id,
     email: entry.email,
     username: entry.username,
-    candidates: [person],
+    candidates: [],
+    holder: person,
   }));
 
   return (
@@ -134,7 +138,10 @@ function PersonAccounts({
         bindTo={person}
         className="flex-none"
       />
-      <Card className="min-h-0 shrink-0 overflow-hidden">
+      {/* Shrinkable, not fixed: with more accounts than fit, a card that refuses
+          to shrink runs off the bottom of the mode and takes the field and the
+          tabs above it out of reach. Sized to its rows while they fit. */}
+      <Card className="min-h-0 overflow-hidden">
         <CardHeader>
           <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
             {t("identities.person_accounts.accounts")}
@@ -142,7 +149,7 @@ function PersonAccounts({
             <PersonCell person={person} className="ms-auto" />
           </CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-1 overflow-y-auto p-2 pt-0">
+        <CardContent className="flex min-h-0 flex-col gap-1 overflow-y-auto p-2 pt-0">
           {entries.length === 0 ? (
             <p className="p-3 text-sm text-muted-foreground">
               {t("identities.person_accounts.no_accounts")}
