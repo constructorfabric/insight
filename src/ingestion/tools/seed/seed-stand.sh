@@ -541,7 +541,15 @@ wait_for_job() {
       return 0
     fi
     if [[ "${failed:-0}" -ge 1 ]]; then
-      echo "ERROR: Job $job_name failed. Its logs above hold the reason; it is not" >&2
+      # CI publishes only `==>`/`ERROR:` lines from this script's output, so
+      # re-emit the preflight refusal from the failed Job's log with an
+      # ERROR: prefix — otherwise the reason never reaches the CI log.
+      # Bounded on purpose: this is the one place pod output crosses into the
+      # allowlisted channel of a public repository, and a refusal is a handful
+      # of lines. Anything past the cap stays where the rest of the log is.
+      kube -n "$NAMESPACE" logs "job/$job_name" --tail=-1 2>/dev/null \
+        | sed -n '/PreflightError: /,$p' | head -40 | sed 's/^/ERROR: /' >&2 || true
+      echo "ERROR: Job $job_name failed. Its full log holds the reason; it is not" >&2
       echo "       retried (backoffLimit 0) and survives for an hour" >&2
       echo "       (ttlSecondsAfterFinished), so it can be read again until then:" >&2
       echo "         $(kubectl_hint) -n $NAMESPACE logs job/$job_name" >&2

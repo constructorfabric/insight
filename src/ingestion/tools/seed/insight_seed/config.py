@@ -29,6 +29,16 @@ SEED_REASON_PREFIX = "seed.py "
 #: The persons-seed's email-link reason (AUTO_SEED_LINK_REASON): a rebuildable projection, not foreign data.
 PERSONS_SEED_LINK_REASON = "auto-seed-link"
 
+#: The stand test suite's scratch namespace, and the connector instance it writes
+#: its journal rows under. The suite cannot delete what its resolution round trip
+#: appends (the journal is append-only), so preflight recognises those rows by
+#: this triple — a value prefix alone would exempt anything that writes one.
+#: INVARIANT: must match SCRATCH_PREFIX, SCRATCH_SOURCE_TYPE and
+#: SCRATCH_SOURCE_ID in tests/stand/api/scratch.py.
+STAND_SCRATCH_PREFIX = "stand-scratch"
+STAND_SCRATCH_SOURCE_TYPE = "github"
+STAND_SCRATCH_SOURCE_ID = "01900000-0000-7000-8000-00000000feed"
+
 TENANT_ENV = "TENANT_DEFAULT_ID"
 ANALYTICS_DB_ENV = "MARIADB_ANALYTICS_DB"
 IDENTITY_DB_ENV = "MARIADB_DB"
