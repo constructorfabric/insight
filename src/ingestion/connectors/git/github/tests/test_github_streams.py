@@ -20,15 +20,7 @@ import json
 import freezegun
 import pytest
 from config import GH_URL, PROXY_URL, GithubConfigBuilder
-
-from connector_tests import (
-    ANY_QUERY_PARAMS,
-    HttpMocker,
-    HttpRequest,
-    HttpResponse,
-    assert_records_conform,
-    read_stream,
-)
+from connector_tests import ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse, assert_records_conform, read_stream
 from connector_tests.source import load_manifest
 
 _CONNECTOR = "git/github"
@@ -123,7 +115,12 @@ def test_secondary_rate_limit_403_retries_then_succeeds(http_mocker: HttpMocker)
             HttpResponse(
                 body=json.dumps({"message": "You have exceeded a secondary rate limit."}),
                 status_code=403,
-                headers={"Retry-After": "0"},
+                # A real secondary-limit 403 still reports hourly budget left.
+                # Without X-RateLimit-Remaining the api_budget layer reads a
+                # ratelimit-hit status as budget 0 and, with no reset header,
+                # sleeps out the rest of the fixed one-hour window — which
+                # hangs this test for an hour instead of retrying instantly.
+                headers={"Retry-After": "0", "X-RateLimit-Remaining": "4999"},
             ),
             _repos_page(),
         ],
@@ -254,11 +251,18 @@ def test_data_feed_stops_at_start_date_but_boundary_page_tail_emits(http_mocker:
 
     def _pr(num: int, updated: str) -> dict:
         return {
-            "id": 900 + num, "number": num, "state": "open", "draft": False,
-            "title": "t", "body": "b", "user": {"login": "a"},
-            "head": {"ref": "f", "sha": "e" * 40}, "base": {"ref": "main"},
+            "id": 900 + num,
+            "number": num,
+            "state": "open",
+            "draft": False,
+            "title": "t",
+            "body": "b",
+            "user": {"login": "a"},
+            "head": {"ref": "f", "sha": "e" * 40},
+            "base": {"ref": "main"},
             "author_association": "MEMBER",
-            "created_at": "2019-01-01T00:00:00Z", "updated_at": updated,
+            "created_at": "2019-01-01T00:00:00Z",
+            "updated_at": updated,
         }
 
     http_mocker.get(
@@ -279,9 +283,7 @@ def test_data_feed_stops_at_start_date_but_boundary_page_tail_emits(http_mocker:
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_pull_request_commits_carry_the_commit_email_and_its_account(
-    http_mocker: HttpMocker,
-) -> None:
+def test_pull_request_commits_carry_the_commit_email_and_its_account(http_mocker: HttpMocker) -> None:
     """A commit's e-mail and the GitHub account it belongs to appear together
     nowhere else, so both survive alongside the membership edge and the commit's
     own metadata — the proxy cannot see a fork's head commits at all."""
@@ -321,11 +323,7 @@ def test_pull_request_commits_carry_the_commit_email_and_its_account(
                         "node_id": "C_1",
                         "commit": {
                             "message": "feat: x",
-                            "author": {
-                                "name": "Alice",
-                                "email": "alice@example.com",
-                                "date": "2026-06-11T09:00:00Z",
-                            },
+                            "author": {"name": "Alice", "email": "alice@example.com", "date": "2026-06-11T09:00:00Z"},
                             "committer": {
                                 "name": "Alice",
                                 "email": "1234+alice@users.noreply.github.com",
@@ -399,11 +397,7 @@ def test_pull_request_diff_stats_come_from_the_list_node(http_mocker: HttpMocker
                                         "additions": 120,
                                         "deletions": 7,
                                         "changedFiles": 3,
-                                        "author": {
-                                            "login": "alice",
-                                            "databaseId": 4242,
-                                            "email": "alice@example.com",
-                                        },
+                                        "author": {"login": "alice", "databaseId": 4242, "email": "alice@example.com"},
                                         "mergedBy": {"login": "bob", "databaseId": 77},
                                         "reviewDecision": "APPROVED",
                                         "totalCommentsCount": 5,
@@ -498,15 +492,11 @@ def test_review_comments_carry_path_and_line(http_mocker: HttpMocker) -> None:
 
 
 def _pr_timeline_body(cursor: str | None = None) -> dict:
-    return _graphql_body(
-        "pull_request_timeline_events", {"owner": "acme", "name": "app", "number": 31}, cursor
-    )
+    return _graphql_body("pull_request_timeline_events", {"owner": "acme", "name": "app", "number": 31}, cursor)
 
 
 def _issue_timeline_body(cursor: str | None = None) -> dict:
-    return _graphql_body(
-        "issue_timeline_events", {"owner": "acme", "name": "app", "number": 7}, cursor
-    )
+    return _graphql_body("issue_timeline_events", {"owner": "acme", "name": "app", "number": 7}, cursor)
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -735,8 +725,31 @@ def test_issues_filters_out_pull_requests(http_mocker: HttpMocker) -> None:
         HttpResponse(
             body=json.dumps(
                 [
-                    {"id": 1, "number": 10, "state": "open", "title": "real issue", "user": {"login": "alice"}, "assignees": [], "labels": [], "comments": 0, "created_at": "2026-06-10T00:00:00Z", "updated_at": "2026-06-20T00:00:00Z"},
-                    {"id": 2, "number": 11, "state": "open", "title": "a PR in disguise", "user": None, "assignees": [], "labels": [], "comments": 0, "created_at": "2026-06-10T00:00:00Z", "updated_at": "2026-06-20T00:00:00Z", "pull_request": {"url": "..."}},
+                    {
+                        "id": 1,
+                        "number": 10,
+                        "state": "open",
+                        "title": "real issue",
+                        "user": {"login": "alice"},
+                        "assignees": [],
+                        "labels": [],
+                        "comments": 0,
+                        "created_at": "2026-06-10T00:00:00Z",
+                        "updated_at": "2026-06-20T00:00:00Z",
+                    },
+                    {
+                        "id": 2,
+                        "number": 11,
+                        "state": "open",
+                        "title": "a PR in disguise",
+                        "user": None,
+                        "assignees": [],
+                        "labels": [],
+                        "comments": 0,
+                        "created_at": "2026-06-10T00:00:00Z",
+                        "updated_at": "2026-06-20T00:00:00Z",
+                        "pull_request": {"url": "..."},
+                    },
                 ]
             ),
             status_code=200,
@@ -764,7 +777,21 @@ def test_workflow_runs_key_carries_run_attempt(http_mocker: HttpMocker) -> None:
             body=json.dumps(
                 {
                     "workflow_runs": [
-                        {"id": 500, "run_attempt": 2, "name": "ci", "workflow_id": 9, "event": "push", "status": "completed", "conclusion": "success", "head_branch": "main", "head_sha": "e" * 40, "actor": {"login": "alice"}, "run_started_at": "2026-06-28T00:00:00Z", "created_at": "2026-06-28T00:00:00Z", "updated_at": "2026-06-28T01:00:00Z"}
+                        {
+                            "id": 500,
+                            "run_attempt": 2,
+                            "name": "ci",
+                            "workflow_id": 9,
+                            "event": "push",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "head_branch": "main",
+                            "head_sha": "e" * 40,
+                            "actor": {"login": "alice"},
+                            "run_started_at": "2026-06-28T00:00:00Z",
+                            "created_at": "2026-06-28T00:00:00Z",
+                            "updated_at": "2026-06-28T01:00:00Z",
+                        }
                     ]
                 }
             ),
@@ -788,8 +815,7 @@ def test_workflow_runs_key_carries_run_attempt(http_mocker: HttpMocker) -> None:
             id="typed_rate_limit",
         ),
         pytest.param(
-            {"type": "SERVICE_UNAVAILABLE", "message": "API rate limit already exceeded."},
-            id="untyped_message",
+            {"type": "SERVICE_UNAVAILABLE", "message": "API rate limit already exceeded."}, id="untyped_message"
         ),
     ],
 )
@@ -804,11 +830,7 @@ def test_graphql_rate_limit_in_a_200_retries(http_mocker: HttpMocker, error: dic
     http_mocker.post(
         HttpRequest(f"{GH_URL}/graphql", body=_diff_stats_body()),
         [
-            HttpResponse(
-                body=json.dumps({"errors": [error]}),
-                status_code=200,
-                headers={"Retry-After": "0"},
-            ),
+            HttpResponse(body=json.dumps({"errors": [error]}), status_code=200, headers={"Retry-After": "0"}),
             HttpResponse(
                 body=json.dumps(
                     {
@@ -872,8 +894,21 @@ def test_graphql_error_in_a_200_fails_loudly(http_mocker: HttpMocker) -> None:
 @freezegun.freeze_time(_FROZEN)
 def test_projects_v2_graphql_pagination_cursor_in_body(http_mocker: HttpMocker) -> None:
     config = GithubConfigBuilder().build()
-    node = {"id": "PVT_1", "number": 1, "title": "Roadmap", "shortDescription": None, "public": True, "closed": False, "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-06-01T00:00:00Z"}
-    body = {"data": {"organization": {"projectsV2": {"pageInfo": {"hasNextPage": False, "endCursor": "c1"}, "nodes": [node]}}}}
+    node = {
+        "id": "PVT_1",
+        "number": 1,
+        "title": "Roadmap",
+        "shortDescription": None,
+        "public": True,
+        "closed": False,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "updatedAt": "2026-06-01T00:00:00Z",
+    }
+    body = {
+        "data": {
+            "organization": {"projectsV2": {"pageInfo": {"hasNextPage": False, "endCursor": "c1"}, "nodes": [node]}}
+        }
+    }
     http_mocker.post(
         HttpRequest(f"{GH_URL}/graphql", body=_graphql_body("projects_v2", {"org": "acme"})),
         HttpResponse(body=json.dumps(body), status_code=200),
@@ -889,9 +924,7 @@ def test_projects_v2_graphql_pagination_cursor_in_body(http_mocker: HttpMocker) 
 
 
 def _authors_page(*rows: dict) -> HttpResponse:
-    return HttpResponse(
-        body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200
-    )
+    return HttpResponse(body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200)
 
 
 def _author(email: str, sha: str, name: str = "Dev") -> dict:
@@ -947,9 +980,7 @@ def test_commit_authors_resolve_a_proxy_author_to_an_account(http_mocker: HttpMo
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_commit_authors_drops_an_email_github_matches_to_nobody(
-    http_mocker: HttpMocker,
-) -> None:
+def test_commit_authors_drops_an_email_github_matches_to_nobody(http_mocker: HttpMocker) -> None:
     """GitHub answers `author: null` for an e-mail verified on no account — a
     CI or service identity. There is no account to claim the e-mail, so the
     row is dropped rather than stored as an unresolved one."""
@@ -982,9 +1013,7 @@ def test_commit_authors_drops_an_email_github_matches_to_nobody(
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_roster_skips_a_repository_untouched_since_the_start_date(
-    http_mocker: HttpMocker,
-) -> None:
+def test_roster_skips_a_repository_untouched_since_the_start_date(http_mocker: HttpMocker) -> None:
     """The proxy streams partition over this roster, so a repository whose last
     push predates the start date would be cloned for nothing: it has no commit,
     file change or author inside the window."""
@@ -1042,7 +1071,7 @@ def test_every_dated_stream_floors_on_the_start_date() -> None:
         if isinstance(node, dict):
             if node.get("type") == "DeclarativeStream":
                 name = node.get("name", name)
-                start = ((node.get("incremental_sync") or {}).get("start_datetime") or {})
+                start = (node.get("incremental_sync") or {}).get("start_datetime") or {}
                 declared = start.get("datetime") if isinstance(start, dict) else start
                 if declared and "github_start_date" not in str(declared):
                     offenders.append(f"{name}: {declared}")
@@ -1053,6 +1082,4 @@ def test_every_dated_stream_floors_on_the_start_date() -> None:
                 walk(item, name)
 
     walk(manifest)
-    assert not offenders, "streams flooring on something other than the start date: " + "; ".join(
-        offenders
-    )
+    assert not offenders, "streams flooring on something other than the start date: " + "; ".join(offenders)

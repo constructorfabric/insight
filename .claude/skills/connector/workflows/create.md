@@ -144,6 +144,13 @@ transformations:
 
 Only inject: `tenant_id`, `source_id`, `unique_key`, and optionally `raw_data` for configurable streams. Do NOT add `_source` or `_extracted_at` — dbt models handle source tagging, and Airbyte auto-generates `_airbyte_extracted_at`.
 
+Two hard rules for every `AddFields` target, each learned from silent data loss:
+
+- **Declare every `AddFields` target as `string` in the inline schema** (plus `"null"`). Jinja renders to a string, and the destination's typing step coerces it into the declared type: numbers and booleans coerce fine, but a declared `object`/deep ADF shape cannot be built from a string — the destination NULLs the field and records `{"change":"NULLED","reason":"DESTINATION_SERIALIZATION_ERROR"}` in `_airbyte_meta`, on every sync, while the source still has the data. A `tojson` projection is a string; declare it `string`, never the shape of the JSON inside it.
+- **Do not re-project payload fields the record already carries** (`email` ← `emailAddress`-style snake_case aliases). It doubles storage, forces the schema to describe the same value twice, and creates exactly the type-mismatch surface above. Renames and typing belong in the dbt staging model. The only values that may be injected are the ones that exist solely at extraction time: config values (`tenant_id`, `source_id`), `unique_key`, `stream_partition.*` context (a substream's parent id), and cursor hoists for nested `cursor_field` (see Common failure modes).
+
+Detection for the first rule on a live instance: `SELECT count() FROM <bronze_table> WHERE position(_airbyte_meta, 'NULLED') > 0` — anything non-zero means the destination is dropping fields.
+
 **Schema rules** — must match Builder output format:
 
 ```yaml

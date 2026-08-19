@@ -4,6 +4,8 @@
  * cannot honestly contain, never offer a file built from something other than
  * what is on screen, and never hand back a partial one.
  */
+const usageMocks = vi.hoisted(() => ({ recordUsageEvent: vi.fn() }));
+
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,6 +41,11 @@ vi.mock("@/hooks/use-portal-period", () => ({
   }),
 }));
 vi.mock("@/lib/reports/run-report", () => ({ runReport: mocks.run }));
+vi.mock("@/telemetry", async () => {
+  const actual = await vi.importActual<typeof import("@/telemetry")>("@/telemetry");
+  return { ...actual, recordUsageEvent: usageMocks.recordUsageEvent };
+});
+
 vi.mock("@/lib/export/matrix", () => ({
   downloadMatrixCsv: mocks.csv,
   downloadMatrixXlsx: mocks.xlsx,
@@ -119,6 +126,45 @@ describe("ReportBuilderView", () => {
     await user.click(screen.getByRole("button", { name: "Yearly" }));
     expect(isDisabled("Merge rate")).toBe(true);
     expect(isDisabled("Commits")).toBe(false);
+  });
+
+  it("says why it cannot build yet, rather than greying out in silence", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    expect(screen.getByRole("button", { name: "Build report" })).toBeDisabled();
+    expect(screen.getByText("Pick at least one metric")).toBeInTheDocument();
+
+    await user.click(box("Commits"));
+
+    expect(screen.queryByText("Pick at least one metric")).not.toBeInTheDocument();
+  });
+
+  it("says when the scope is what blocks the build, once a metric is picked", async () => {
+    const user = userEvent.setup();
+    mocks.scope = { ...mocks.scope, roster: [] };
+    render(<ReportBuilderView />);
+
+    await user.click(box("Commits"));
+
+    expect(screen.getByRole("button", { name: "Build report" })).toBeDisabled();
+    expect(screen.getByText("This scope has no people")).toBeInTheDocument();
+  });
+
+  it("reports which format a reader took the report out in", async () => {
+    const user = userEvent.setup();
+    usageMocks.recordUsageEvent.mockClear();
+    render(<ReportBuilderView />);
+    await user.click(box("Commits"));
+    await user.click(screen.getByRole("button", { name: "Build report" }));
+    await closeDialog(user);
+    await user.click(await screen.findByRole("button", { name: /rows ·/ }));
+
+    await user.click(await screen.findByRole("button", { name: "CSV" }));
+    expect(usageMocks.recordUsageEvent).toHaveBeenCalledWith("export", "report:csv");
+
+    await user.click(await screen.findByRole("button", { name: "Excel" }));
+    expect(usageMocks.recordUsageEvent).toHaveBeenCalledWith("export", "report:xlsx");
   });
 
   it("cannot build until something is picked", async () => {
