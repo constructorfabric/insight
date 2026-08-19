@@ -12,15 +12,6 @@ on:
       - "src/frontend/**"
       - "src/ingestion/**"
       - "charts/insight/**"
-      # The ui-tests browser runner bakes the stand suite in, so a test change
-      # republishes it. These must be here as well as in the `changes` filter
-      # below: the filter narrows which jobs run, but this list decides whether
-      # the workflow is triggered at all.
-      - "tests/stand/**"
-      - "tests/lib/**"
-      - "tests/pyproject.toml"
-      - "tests/uv.lock"
-      - "deploy/compose/ui-tests.Dockerfile"
       - ".github/workflows/build-images.yml"
       - ".github/workflows/scripts/discover-image-matrix.py"
       - ".github/workflows/scripts/bump-service-appversions.sh"
@@ -31,11 +22,6 @@ on:
       - "src/frontend/**"
       - "src/ingestion/**"
       - "charts/insight/**"
-      - "tests/stand/**"
-      - "tests/lib/**"
-      - "tests/pyproject.toml"
-      - "tests/uv.lock"
-      - "deploy/compose/ui-tests.Dockerfile"
       - ".github/workflows/build-images.yml"
       - ".github/workflows/scripts/discover-image-matrix.py"
       - ".github/workflows/scripts/bump-service-appversions.sh"
@@ -81,11 +67,12 @@ jobs:
       authenticator: ${{ steps.filter.outputs.authenticator }}
       gateway: ${{ steps.filter.outputs.gateway }}
       identity_resolution: ${{ steps.filter.outputs.identity_resolution }}
+      git_cli_proxy: ${{ steps.filter.outputs.git_cli_proxy }}
       frontend: ${{ steps.filter.outputs.frontend }}
       toolbox: ${{ steps.filter.outputs.toolbox }}
       seed: ${{ steps.filter.outputs.seed }}
-      ui_tests: ${{ steps.filter.outputs.ui_tests }}
       umbrella: ${{ steps.filter.outputs.umbrella }}
+      arches: ${{ steps.arches.outputs.arches }}
       build_tag: ${{ steps.tag.outputs.build_tag }}
       # Single push-policy switch consumed by every build/merge job below:
       # 'true' for a main push and for ANY workflow_dispatch (including a
@@ -98,7 +85,17 @@ jobs:
       should_push: ${{ steps.tag.outputs.should_push }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+      - name: Select build architectures
+        id: arches
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo 'arches=["amd64"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'arches=["amd64","arm64"]' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           # Diff against the pushed-to branch itself, NOT the repo default
@@ -109,6 +106,7 @@ jobs:
           base: ${{ github.ref_name }}
           filters: |
             analytics:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/analytics/**'
               - 'src/backend/libs/insight-clickhouse/**'
               # The shared entrypoint is baked into the image.
@@ -116,16 +114,26 @@ jobs:
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             authenticator:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/authenticator/**'
               - 'src/backend/libs/authenticator-sdk/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             gateway:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/gateway/**'
               - 'src/backend/tools/routegen/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
+            git_cli_proxy:
+              - '.github/workflows/build-images.yml'
+              - 'src/backend/services/git-cli-proxy/**'
+              # The shared entrypoint is baked into the image.
+              - 'src/backend/docker-entrypoint.sh'
+              - 'src/backend/Cargo.toml'
+              - 'src/backend/Cargo.lock'
             identity_resolution:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/identity-resolution/**'
               # The image compiles the path-dependency lib in — a lib change
               # must republish this image (same for analytics above).
@@ -137,8 +145,10 @@ jobs:
             # Includes src/frontend/helm/, so a subchart edit rebuilds and
             # republishes as it does for the services above.
             frontend:
+              - '.github/workflows/build-images.yml'
               - 'src/frontend/**'
             toolbox:
+              - '.github/workflows/build-images.yml'
               - 'src/ingestion/**'
             # The sample-data seeder's own image. It COPYs a subset of the
             # ingestion tree (scripts, dbt, silver, gold, connectors, the tool
@@ -147,18 +157,10 @@ jobs:
             # Dockerfile's COPY lines, and the failure mode of forgetting is a
             # silently stale published image.
             seed:
+              - '.github/workflows/build-images.yml'
               - 'src/ingestion/**'
-            # The browser runner for tests/stand (deploy/compose/ui-tests.Dockerfile).
-            # It COPYs tests/lib + tests/stand and installs from the committed
-            # tests/uv.lock, so all four are baked in and any of them changing
-            # makes the published image stale.
-            ui_tests:
-              - 'tests/stand/**'
-              - 'tests/lib/**'
-              - 'tests/pyproject.toml'
-              - 'tests/uv.lock'
-              - 'deploy/compose/ui-tests.Dockerfile'
             umbrella:
+              - '.github/workflows/build-images.yml'
               - 'charts/insight/**'
 
       # Compute the canonical build tag once per workflow run so every
@@ -267,6 +269,8 @@ jobs:
           ALL_FLAG=""
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             ALL_FLAG="--all"
+          elif grep -Fxq '.github/workflows/build-images.yml' /tmp/changed.txt; then
+            ALL_FLAG="--all"
           fi
 
           if ! git rev-parse "$BASE" >/dev/null 2>&1; then
@@ -300,11 +304,7 @@ jobs:
   # work in the gitops promotion flow (see publish-chart for the appVersion
   # logic).
 
-  # Per-arch backend builds run in parallel on native runners (amd64 on
-  # ubuntu-latest, arm64 on ubuntu-24.04-arm). Each leg pushes by digest
-  # only — the tagged multi-arch manifest is assembled by the merge-* job
-  # below once both legs finish. This avoids QEMU emulation entirely:
-  # `cargo build` runs natively on each arch's runner.
+  # INVARIANT: PR validation builds amd64 only; publishing builds both supported architectures on native runners.
   backend-analytics:
     needs: changes
     if: |
@@ -313,14 +313,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -335,7 +329,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/analytics/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           # PR amd64 legs write a loadable tarball instead of discarding the
           # result — the e2e rig consumes it (see "Upload image for the e2e
           # rig" below). Other legs keep the push-by-digest output.
@@ -427,7 +421,7 @@ jobs:
             --format '{{json .Manifest}}' | jq -r .digest)
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-analytics
           subject-digest: ${{ steps.inspect.outputs.digest }}
@@ -445,14 +439,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -467,7 +455,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/authenticator/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-authenticator,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=authenticator-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=authenticator-{0},ignore-error=true', matrix.arch) || '' }}
@@ -541,7 +529,7 @@ jobs:
             --format '{{json .Manifest}}' | jq -r .digest)
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-authenticator
           subject-digest: ${{ steps.inspect.outputs.digest }}
@@ -559,14 +547,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -581,7 +563,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/gateway/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-gateway,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=gateway-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=gateway-{0},ignore-error=true', matrix.arch) || '' }}
@@ -655,7 +637,7 @@ jobs:
             --format '{{json .Manifest}}' | jq -r .digest)
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-gateway
           subject-digest: ${{ steps.inspect.outputs.digest }}
@@ -664,6 +646,128 @@ jobs:
       - name: Report pushed image
         run: |
           echo '- `${{ env.IMAGE_PREFIX }}/insight-gateway:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
+
+  # ─── Git CLI Proxy (clone-based git extraction for nocode connectors) ─────
+  backend-git-cli-proxy:
+    needs: changes
+    if: |
+      needs.changes.outputs.git_cli_proxy == 'true'
+      || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: needs.changes.outputs.should_push == 'true'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        id: build
+        with:
+          context: src/backend
+          file: src/backend/services/git-cli-proxy/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          # PR amd64 legs feed the e2e rig — see backend-analytics.
+          tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-git-cli-proxy:e2e-prebuilt' || '' }}
+          outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-git-cli-proxy,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
+          cache-from: type=gha,scope=git-cli-proxy-${{ matrix.arch }}
+          cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=git-cli-proxy-{0},ignore-error=true', matrix.arch) || '' }}
+      - name: Upload image for the e2e rig
+        if: github.event_name == 'pull_request' && matrix.arch == 'amd64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-prebuilt-insight-git-cli-proxy
+          path: /tmp/e2e-prebuilt.tar
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+      - name: Export digest
+        if: needs.changes.outputs.should_push == 'true'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: needs.changes.outputs.should_push == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-git-cli-proxy-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-git-cli-proxy:
+    needs: [changes, backend-git-cli-proxy]
+    if: |
+      always()
+      && needs.backend-git-cli-proxy.result != 'skipped'
+      && needs.changes.outputs.should_push == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the platform builds to have passed
+        if: needs.backend-git-cli-proxy.result != 'success'
+        run: |
+          echo "::error::backend-git-cli-proxy finished '${{ needs.backend-git-cli-proxy.result }}' — nothing to merge."
+          exit 1
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: /tmp/digests
+          pattern: digests-git-cli-proxy-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: meta
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy
+          tags: |
+            type=raw,value=${{ needs.changes.outputs.build_tag }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fail on a fixable critical before any tag points here
+        uses: ./.github/actions/image-cve-gate
+        with:
+          image: ${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy@sha256:%s ' *)
+      - name: Inspect manifest digest
+        id: inspect
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy:${{ needs.changes.outputs.build_tag }} \
+            --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
+      # Copy-pastable pushed ref on the run's Summary page (#1994).
+      - name: Report pushed image
+        run: |
+          echo '- `${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
   # ─── Identity Resolution (Rust identity service, epic #1602) ──────────────
   backend-identity-resolution:
@@ -674,14 +778,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -698,7 +796,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/identity-resolution/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           # PR amd64 legs feed the e2e rig — see backend-analytics.
           tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-identity-resolution:e2e-prebuilt' || '' }}
           outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
@@ -783,7 +881,7 @@ jobs:
             --format '{{json .Manifest}}' | jq -r .digest)
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-identity-resolution
           subject-digest: ${{ steps.inspect.outputs.digest }}
@@ -810,14 +908,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 30
     # Narrower than the workflow-level set: this job builds PR-authored source.
     permissions:
@@ -839,7 +931,9 @@ jobs:
         id: build
         with:
           context: src/frontend
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            VITE_APP_RELEASE=${{ needs.changes.outputs.build_tag }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-frontend,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=frontend-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=frontend-{0},ignore-error=true', matrix.arch) || '' }}
@@ -921,7 +1015,7 @@ jobs:
             --format '{{json .Manifest}}' | jq -r .digest)
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-frontend
           subject-digest: ${{ steps.inspect.outputs.digest }}
@@ -937,8 +1031,6 @@ jobs:
   # bump-descriptors) MUST re-trigger it. paths-filter for `toolbox` matches
   # `src/ingestion/**` (which includes descriptor.yaml).
   #
-  # Per-arch matrix runs amd64 and arm64 builds in parallel on native
-  # runners; merge-toolbox below assembles the multi-arch manifest.
   toolbox:
     needs: changes
     if: |
@@ -947,14 +1039,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1025,7 +1111,7 @@ jobs:
         with:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-toolbox,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=toolbox-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=toolbox-{0},ignore-error=true', matrix.arch) || '' }}
@@ -1100,7 +1186,7 @@ jobs:
             --format '{{json .Manifest}}' | jq -r .digest)
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-toolbox
           subject-digest: ${{ steps.inspect.outputs.digest }}
@@ -1127,14 +1213,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1174,14 +1254,17 @@ jobs:
         # environment exists.
         #
         # The package's own tests run here rather than in ci.yml's Python
-        # matrix: they are stdlib `unittest` and touch no database, so the
-        # shipped image can run them with nothing installed on top — and this
-        # way what is tested is exactly what is published.
+        # matrix: they touch no database, so the shipped image can run them
+        # against exactly what is published. They are pytest-style, and pytest
+        # deliberately stays out of the image — it is installed into this
+        # throwaway container only, so the runner is added on top while the
+        # package under test remains the published one.
         run: |
           docker run --rm insight-seed:ci-validate --help
           docker run --rm --entrypoint python insight-seed:ci-validate -c \
             'import insight_seed.identity, insight_seed.silver, insight_seed.analytics, insight_seed.preflight, insight_seed.keycloak_realm'
-          docker run --rm --entrypoint python insight-seed:ci-validate -m unittest discover -s tests -t .
+          docker run --rm --entrypoint sh insight-seed:ci-validate -c \
+            'pip install --no-cache-dir --quiet "pytest>=8,<9" && python -m pytest tests -q'
           docker run --rm --entrypoint dbt insight-seed:ci-validate --version
 
       - name: Build and push seed image (by digest)
@@ -1190,7 +1273,7 @@ jobs:
         with:
           context: src/ingestion
           file: src/ingestion/tools/seed/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-seed,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=seed-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=seed-{0},ignore-error=true', matrix.arch) || '' }}
@@ -1256,7 +1339,7 @@ jobs:
             --format '{{json .Manifest}}' | jq -r .digest)
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/insight-seed
           subject-digest: ${{ steps.inspect.outputs.digest }}
@@ -1266,140 +1349,12 @@ jobs:
         run: |
           echo '- `${{ env.IMAGE_PREFIX }}/insight-seed:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
-  # ─── ui-tests browser runner (deployed-stand journeys) ─────────────────────
-  # The Playwright image e2e-stand.yml's `ui-journeys` check pulls. It bakes in
-  # tests/lib + tests/stand and installs from the committed tests/uv.lock, so
-  # it is republished when any of those change — see the `ui_tests` filter.
-  #
-  # NOT a product artefact. It is deliberately absent from bump-descriptors'
-  # and publish-chart's `needs`, and `ui_tests` is deliberately absent from
-  # publish-chart's change allowlist: a test-only change must never bump a
-  # subchart appVersion or republish the umbrella chart, and a red browser
-  # runner must never hold up a release.
-  #
-  # Build context is the repository root because the Dockerfile COPYs
-  # `tests/...` paths.
-  ui-tests:
-    needs: changes
-    if: |
-      needs.changes.outputs.ui_tests == 'true'
-      || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false # don't leave the token in .git/config
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        if: needs.changes.outputs.should_push == 'true'
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # Both pinned bases (playwright/python and astral-sh/uv) publish amd64
-      # and arm64 under the digests the Dockerfile pins, so neither leg of this
-      # matrix needs emulation.
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        id: build
-        with:
-          context: .
-          file: deploy/compose/ui-tests.Dockerfile
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-ui-tests,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
-          cache-from: type=gha,scope=ui-tests-${{ matrix.arch }}
-          cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=ui-tests-{0},ignore-error=true', matrix.arch) || '' }}
-      - name: Export digest
-        if: needs.changes.outputs.should_push == 'true'
-        run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-      - name: Upload digest
-        if: needs.changes.outputs.should_push == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: digests-ui-tests-${{ matrix.arch }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
-  merge-ui-tests:
-    needs: [changes, ui-tests]
-    if: |
-      always()
-      && needs.ui-tests.result != 'skipped'
-      && needs.changes.outputs.should_push == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require the platform builds to have passed
-        if: needs.ui-tests.result != 'success'
-        run: |
-          echo "::error::ui-tests finished '${{ needs.ui-tests.result }}' — nothing to merge."
-          exit 1
-      - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: /tmp/digests
-          pattern: digests-ui-tests-*
-          merge-multiple: true
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # `latest` on main is what e2e-stand.yml pulls, so a merge to main is
-      # what moves the browser runner CI uses.
-      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        id: meta
-        with:
-          images: ${{ env.IMAGE_PREFIX }}/insight-ui-tests
-          tags: |
-            type=raw,value=${{ needs.changes.outputs.build_tag }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-      - name: Create multi-arch manifest and push
-        working-directory: /tmp/digests
-        run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.IMAGE_PREFIX }}/insight-ui-tests@sha256:%s ' *)
-      - name: Inspect manifest digest
-        id: inspect
-        run: |
-          DIGEST=$(docker buildx imagetools inspect \
-            ${{ env.IMAGE_PREFIX }}/insight-ui-tests:${{ needs.changes.outputs.build_tag }} \
-            --format '{{json .Manifest}}' | jq -r .digest)
-          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
-        with:
-          subject-name: ${{ env.IMAGE_PREFIX }}/insight-ui-tests
-          subject-digest: ${{ steps.inspect.outputs.digest }}
-          push-to-registry: true
-      # Copy-pastable pushed ref on the run's Summary page (#1994).
-      - name: Report pushed image
-        run: |
-          echo '- `${{ env.IMAGE_PREFIX }}/insight-ui-tests:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
-
   # ─── Connector image build (matrix-driven, descriptor-discovered) ──────────
   # One matrix leg per `descriptor.yaml.images.<key>` entry × arch that
   # fires this run (see discover-images for the firing rule). Build
   # identity (`name`, `dockerfile`, `context`) is read from the matrix
   # entry — there is no per-connector hardcode in this workflow.
   #
-  # The matrix is a cross-product: every connector entry × {amd64, arm64}.
-  # Each leg pushes by digest; merge-image below assembles the multi-arch
-  # manifest per entry.
   build-image:
     needs: [changes, discover-images]
     if: needs.discover-images.outputs.any == 'true'
@@ -1407,15 +1362,8 @@ jobs:
       fail-fast: false
       matrix:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
-        arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -1430,7 +1378,7 @@ jobs:
         with:
           context: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.context }}
           file: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.dockerfile }}
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           # insight-jira-enrich is the one connector image the e2e rig bakes
           # into its runner — its PR amd64 leg feeds it (see backend-analytics).
           tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && matrix.entry.name == 'insight-jira-enrich' && format('{0}:e2e-prebuilt', matrix.entry.name) || '' }}
@@ -1526,7 +1474,7 @@ jobs:
             --format '{{json .Manifest}}' | jq -r .digest)
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_PREFIX }}/${{ matrix.entry.name }}
           subject-digest: ${{ steps.inspect.outputs.digest }}
@@ -1558,6 +1506,7 @@ jobs:
       - merge-authenticator
       - merge-gateway
       - merge-identity-resolution
+      - merge-git-cli-proxy
       - merge-frontend
       - merge-toolbox
       - merge-image
@@ -1580,6 +1529,7 @@ jobs:
       && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
       && (needs.merge-identity-resolution.result == 'success' || needs.merge-identity-resolution.result == 'skipped')
+      && (needs.merge-git-cli-proxy.result == 'success' || needs.merge-git-cli-proxy.result == 'skipped')
       && (needs.merge-frontend.result      == 'success' || needs.merge-frontend.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
     runs-on: ubuntu-latest
@@ -1662,6 +1612,7 @@ jobs:
           AUTHENTICATOR: ${{ needs.changes.outputs.authenticator }}
           GATEWAY: ${{ needs.changes.outputs.gateway }}
           IDENTITY_RESOLUTION: ${{ needs.changes.outputs.identity_resolution }}
+          GIT_CLI_PROXY: ${{ needs.changes.outputs.git_cli_proxy }}
           FRONTEND: ${{ needs.changes.outputs.frontend }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
@@ -1691,6 +1642,7 @@ jobs:
                   src/backend/services/authenticator/helm/Chart.yaml \
                   src/backend/services/gateway/helm/Chart.yaml \
                   src/backend/services/identity-resolution/helm/Chart.yaml \
+                  src/backend/services/git-cli-proxy/helm/Chart.yaml \
                   src/frontend/helm/Chart.yaml
 
           if git diff --staged --quiet; then
@@ -1741,7 +1693,6 @@ jobs:
   # runs canonically in that follow-up run with toolbox already rebuilt
   # against the patched descriptors.
   #
-  # See ADR-0001 (docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md)
   # and the gitops SPEC §2.4 for the contract.
   publish-chart:
     needs:
@@ -1751,6 +1702,7 @@ jobs:
       - merge-authenticator
       - merge-gateway
       - merge-identity-resolution
+      - merge-git-cli-proxy
       - merge-frontend
       - merge-toolbox
       - merge-seed
@@ -1765,6 +1717,7 @@ jobs:
       && (needs.merge-authenticator.result == 'success' || needs.merge-authenticator.result == 'skipped')
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
       && (needs.merge-identity-resolution.result == 'success' || needs.merge-identity-resolution.result == 'skipped')
+      && (needs.merge-git-cli-proxy.result == 'success' || needs.merge-git-cli-proxy.result == 'skipped')
       && (needs.merge-frontend.result      == 'success' || needs.merge-frontend.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
       && (needs.merge-seed.result          == 'success' || needs.merge-seed.result          == 'skipped')
@@ -1776,6 +1729,7 @@ jobs:
         || needs.changes.outputs.authenticator == 'true'
         || needs.changes.outputs.gateway      == 'true'
         || needs.changes.outputs.identity_resolution == 'true'
+        || needs.changes.outputs.git_cli_proxy == 'true'
         || needs.changes.outputs.frontend     == 'true'
         || needs.changes.outputs.toolbox      == 'true'
         || needs.changes.outputs.seed         == 'true'
@@ -1853,6 +1807,7 @@ jobs:
           AUTHENTICATOR: ${{ needs.changes.outputs.authenticator }}
           GATEWAY: ${{ needs.changes.outputs.gateway }}
           IDENTITY_RESOLUTION: ${{ needs.changes.outputs.identity_resolution }}
+          GIT_CLI_PROXY: ${{ needs.changes.outputs.git_cli_proxy }}
           FRONTEND: ${{ needs.changes.outputs.frontend }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
@@ -1908,6 +1863,7 @@ jobs:
             src/backend/services/authenticator/helm/Chart.yaml \
             src/backend/services/gateway/helm/Chart.yaml \
             src/backend/services/identity-resolution/helm/Chart.yaml \
+            src/backend/services/git-cli-proxy/helm/Chart.yaml \
             src/frontend/helm/Chart.yaml \
             | grep -Ev '^(---|null)$' \
             | sort -V | tail -1)
@@ -1980,7 +1936,7 @@ jobs:
       #   gh attestation verify oci://ghcr.io/constructorfabric/charts/insight:<ver> \
       #     --repo constructorfabric/insight
       - name: Attest chart provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/constructorfabric/charts/insight
           subject-digest: ${{ steps.helm_push.outputs.digest }}
@@ -2002,6 +1958,7 @@ jobs:
                   src/backend/services/authenticator/helm/Chart.yaml \
                   src/backend/services/gateway/helm/Chart.yaml \
                   src/backend/services/identity-resolution/helm/Chart.yaml \
+                  src/backend/services/git-cli-proxy/helm/Chart.yaml \
                   src/frontend/helm/Chart.yaml \
                   deploy/gitops/.insight-version
           # Sample gitops starter under docs/deploy — pin moves with the

@@ -19,7 +19,7 @@ namespaces:
   infra:    insight-infra     # L2 shared stateful
   # Controller namespaces accept upstream-chart defaults; uncomment
   # only to override.
-  # ingressNginx:  ingress-nginx
+  # envoyGateway:  envoy-gateway-system
   # certManager:   cert-manager
   # sealedSecrets: kube-system
 
@@ -29,9 +29,13 @@ release: insight
 # ─── L0 — cluster prereqs (drives `make bootstrap`) ────────────────────
 bootstrap:
   namespaces:    true
-  ingressNginx:  true
+  envoyGateway:  true
   certManager:   true
   sealedSecrets: true
+  # cert-manager's Gateway API shim. Defaults true when omitted; set false on
+  # a cluster with no Gateway API CRDs, where the shim would keep the
+  # controller from starting.
+  # certManagerGatewayShim: true
 
 # ─── L2 — shared infra (drives `make system`) ──────────────────────────
 system:

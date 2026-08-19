@@ -115,10 +115,31 @@ spec:
           # The if/else (instead of `dbt ...; RC=$?`) keeps the terminal
           # dbt.completed event below alive under `set -e`.
           T0=$(date +%s); RC=0
-          if [[ "${DBT_FULL_REFRESH:-false}" == "true" ]]; then
-            dbt run --profiles-dir . --log-format json --full-refresh ${DBT_SELECT:+--select "$DBT_SELECT"} || RC=$?
-          else
-            dbt run --profiles-dir . --log-format json ${DBT_SELECT:+--select "$DBT_SELECT"} || RC=$?
+          # `dbt run` exits 0 when --select resolves to no nodes ("Nothing to
+          # do"), so a stale or misspelled selector reports success while the
+          # connector's rows never leave bronze — silently, under a green
+          # workflow (#2362). Resolve the selection first: `dbt ls` prints one
+          # line per node and exits 0 whether or not anything matched, so empty
+          # output is the unambiguous signal and a non-zero exit is a genuine
+          # failure to resolve. An empty DBT_SELECT is deliberately left alone —
+          # it means "run everything" for manual triggers.
+          if [[ -n "${DBT_SELECT:-}" ]]; then
+            LS_RC=0
+            SELECTED="$(dbt --quiet ls --profiles-dir . --resource-type model --select "$DBT_SELECT")" || LS_RC=$?
+            if [[ "$LS_RC" -ne 0 ]]; then
+              echo "ERROR: could not resolve dbt selector '${DBT_SELECT}' (dbt ls exited ${LS_RC})" >&2
+              RC="$LS_RC"
+            elif [[ -z "$SELECTED" ]]; then
+              echo "ERROR: dbt selector '${DBT_SELECT}' matches no models — refusing to report success for a transform that runs nothing. The pipeline derives this selector as tag:<connector>+, so the connector's models must carry a tag equal to its slug (#2362)." >&2
+              RC=1
+            fi
+          fi
+          if [[ "$RC" -eq 0 ]]; then
+            if [[ "${DBT_FULL_REFRESH:-false}" == "true" ]]; then
+              dbt run --profiles-dir . --log-format json --full-refresh ${DBT_SELECT:+--select "$DBT_SELECT"} || RC=$?
+            else
+              dbt run --profiles-dir . --log-format json ${DBT_SELECT:+--select "$DBT_SELECT"} || RC=$?
+            fi
           fi
           # Lifecycle event for the high-level "dbt run finished after N
           # minutes, success/failed" view; python3 keeps the JSON safe

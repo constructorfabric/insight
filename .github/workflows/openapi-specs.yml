@@ -10,6 +10,9 @@ name: OpenAPI Specs
 #     no HTTP listener; see api::openapi_document).
 #   • authenticator — the offline `authenticator openapi` subcommand (no Redis,
 #     no IdP; see api::openapi_document), same shape as analytics.
+#   • identity-resolution — the offline `identity-resolution openapi`
+#     subcommand (no MariaDB, no ClickHouse; see api::openapi_document),
+#     same shape as analytics.
 
 on:
   # Deliberately NO `paths:` filter — this is meant to be a required status
@@ -18,6 +21,15 @@ on:
   # keeps the gate uniform.
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - "src/backend/**"
+      - "docs/components/backend/**"
+      - "scripts/ci/openapi_spec.py"
+      - "tests/generate_schemas.py"
+      - "tests/stand/api/schemas/**"
+      - ".github/workflows/openapi-specs.yml"
   workflow_dispatch:
 
 # A new push obsoletes any run still in flight for the same ref.
@@ -26,8 +38,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect affected OpenAPI checks
+    runs-on: ubuntu-latest
+    outputs:
+      analytics: ${{ steps.all.outputs.all || steps.filter.outputs.analytics || steps.filter.outputs.shared_backend }}
+      authenticator: ${{ steps.all.outputs.all || steps.filter.outputs.authenticator || steps.filter.outputs.shared_backend }}
+      identity_resolution: ${{ steps.all.outputs.all || steps.filter.outputs.identity_resolution || steps.filter.outputs.shared_backend }}
+      git_cli_proxy: ${{ steps.all.outputs.all || steps.filter.outputs.git_cli_proxy || steps.filter.outputs.shared_backend }}
+      generated_models: ${{ steps.all.outputs.all || steps.filter.outputs.generated_models }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        if: github.event_name != 'workflow_dispatch'
+        id: filter
+        with:
+          filters: |
+            analytics:
+              - 'src/backend/services/analytics/**'
+              - 'docs/components/backend/analytics/openapi.json'
+            authenticator:
+              - 'src/backend/services/authenticator/**'
+              - 'docs/components/backend/authenticator/openapi.json'
+            identity_resolution:
+              - 'src/backend/services/identity-resolution/**'
+              - 'docs/components/backend/identity-resolution/openapi.json'
+            git_cli_proxy:
+              - 'src/backend/services/git-cli-proxy/**'
+              - 'docs/components/backend/git-cli-proxy/openapi.json'
+            shared_backend:
+              - 'src/backend/libs/**'
+              - 'src/backend/plugins/**'
+              - 'src/backend/Cargo.*'
+              - 'scripts/ci/openapi_spec.py'
+              - '.github/workflows/openapi-specs.yml'
+            generated_models:
+              - 'docs/components/backend/**/openapi.json'
+              - 'tests/generate_schemas.py'
+              - 'tests/stand/api/schemas/**'
+              - '.github/workflows/openapi-specs.yml'
+      - name: Select every check
+        if: github.event_name == 'workflow_dispatch'
+        id: all
+        run: |
+          echo "all=true" >> "$GITHUB_OUTPUT"
+
   # ─── analytics — offline emit via the `openapi` subcommand ───────────────
   analytics:
+    needs: changes
+    if: needs.changes.outputs.analytics == 'true'
     name: OpenAPI spec drift gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -38,9 +99,10 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
         with:
           workspaces: src/backend -> target
+          save-if: ${{ github.event_name == 'push' }}
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
@@ -62,6 +124,8 @@ jobs:
 
   # ─── authenticator — offline emit via the `openapi` subcommand ────────────
   authenticator:
+    needs: changes
+    if: needs.changes.outputs.authenticator == 'true'
     name: Authenticator OpenAPI spec drift gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -75,10 +139,11 @@ jobs:
         # cmake-build; librdkafka's OAUTHBEARER path needs curl/curl.h.
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
         with:
           workspaces: src/backend -> target
           key: authenticator-openapi
+          save-if: ${{ github.event_name == 'push' }}
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
@@ -99,13 +164,55 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "::error::Authenticator OpenAPI spec drift — $AUTHENTICATOR_SPEC is stale. Regenerate: (cd src/backend && cargo run -p authenticator --bin authenticator -- openapi) > dump.json && python3 scripts/ci/openapi_spec.py update --file $AUTHENTICATOR_SPEC --live-file dump.json"; fi
           exit "$rc"
 
+  # ─── identity-resolution — offline emit via the `openapi` subcommand ──────
+  identity-resolution:
+    needs: changes
+    if: needs.changes.outputs.identity_resolution == 'true'
+    name: Identity Resolution OpenAPI spec drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        with:
+          workspaces: src/backend -> target
+          key: identity-resolution-openapi
+          save-if: ${{ github.event_name == 'push' }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Generate the OpenAPI doc offline and drift-check it
+        env:
+          IDENTITY_SPEC: docs/components/backend/identity-resolution/openapi.json
+        run: |
+          # `identity-resolution openapi` builds offline and prints the doc; a
+          # build failure here should abort loudly under the runner's default
+          # `set -e`.
+          (cd src/backend && cargo run --quiet -p identity-resolution --bin identity-resolution -- openapi) > identity.openapi.live.json
+          # Relax errexit from here: we capture the drift-check rc ourselves,
+          # write the committed-vs-generated diff to the step summary, and emit a
+          # friendly ::error:: before exiting non-zero.
+          set +e
+          python3 scripts/ci/openapi_spec.py check --file "$IDENTITY_SPEC" --live-file identity.openapi.live.json | tee identity_openapi_drift.txt
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat identity_openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::Identity Resolution OpenAPI spec drift — $IDENTITY_SPEC is stale. Regenerate: (cd src/backend && cargo run -p identity-resolution --bin identity-resolution -- openapi) > dump.json && python3 scripts/ci/openapi_spec.py update --file $IDENTITY_SPEC --live-file dump.json"; fi
+          exit "$rc"
+
   # ─── the models generated FROM those documents ────────────────────────────
   # `tests/stand/api/schemas/` is generated from the same committed documents
-  # the two jobs above gate, so it belongs in this workflow rather than beside
+  # the jobs above gate, so it belongs in this workflow rather than beside
   # the stand suite: a spec change and its models go stale in the same commit,
   # and this is where that commit is already being checked. No Rust — it reads
   # the committed documents, not the services.
   generated-models:
+    needs: changes
+    if: needs.changes.outputs.generated_models == 'true'
     name: Generated schema models drift gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -116,6 +223,7 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           cache-suffix: generated-models
+          save-cache: ${{ github.event_name == 'push' }}
       - name: Regenerate the models and diff them against the committed copy
         run: |
           set +e
@@ -125,4 +233,43 @@ jobs:
           rc=${PIPESTATUS[0]}
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat generated_models.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$rc" -ne 0 ]; then echo "::error::Generated schema models are stale, or a service that was listed as publishing no bodies now does. Regenerate: uv run --project tests --frozen python tests/generate_schemas.py"; fi
+          exit "$rc"
+
+  # ─── git-cli-proxy — offline emit via the `openapi` subcommand ────────────
+  git-cli-proxy:
+    needs: changes
+    if: needs.changes.outputs.git_cli_proxy == 'true'
+    name: Git CLI Proxy OpenAPI spec drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        with:
+          workspaces: src/backend -> target
+          key: git-cli-proxy-openapi
+          save-if: ${{ github.event_name == 'push' }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Generate the OpenAPI doc offline and drift-check it
+        env:
+          GIT_CLI_PROXY_SPEC: docs/components/backend/git-cli-proxy/openapi.json
+        run: |
+          # `git-cli-proxy openapi` builds offline and prints the doc; a build
+          # failure here should abort loudly under the runner's default `set -e`.
+          (cd src/backend && cargo run --quiet -p git-cli-proxy --bin git-cli-proxy -- openapi) > git_cli_proxy.openapi.live.json
+          # Relax errexit from here: we capture the drift-check rc ourselves,
+          # write the committed-vs-generated diff to the step summary, and emit a
+          # friendly ::error:: before exiting non-zero.
+          set +e
+          python3 scripts/ci/openapi_spec.py check --file "$GIT_CLI_PROXY_SPEC" --live-file git_cli_proxy.openapi.live.json | tee git_cli_proxy_openapi_drift.txt
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat git_cli_proxy_openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::Git CLI Proxy OpenAPI spec drift — $GIT_CLI_PROXY_SPEC is stale. Regenerate: (cd src/backend && cargo run -p git-cli-proxy --bin git-cli-proxy -- openapi) > dump.json && python3 scripts/ci/openapi_spec.py update --file $GIT_CLI_PROXY_SPEC --live-file dump.json"; fi
           exit "$rc"

@@ -4,6 +4,8 @@ import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import {
   attentionSummary,
   computeAttentionFlags,
+  groupFlagsByTheme,
+  type AttentionFlag,
   type FlagParams,
 } from "./attention-flags";
 
@@ -57,7 +59,7 @@ describe("computeAttentionFlags", () => {
       name: "Name x",
     });
     expect(flags[0]!.reason).toContain("no commits");
-    expect(flags[0]!.reason).toContain("team median 10");
+    expect(flags[0]!.reason).toContain("the team median is 10");
   });
 
   it("flags a low outlier below the Tukey fence on a higher-is-better metric", () => {
@@ -66,7 +68,8 @@ describe("computeAttentionFlags", () => {
     );
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("outlier");
-    expect(flags[0]!.reason).toContain("unusually low");
+    expect(flags[0]!.reason).toContain("well below");
+    expect(flags[0]!.moved).toBe("down");
   });
 
   it("flags a HIGH outlier when lower is better (e.g. meeting hours)", () => {
@@ -79,7 +82,8 @@ describe("computeAttentionFlags", () => {
     );
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("outlier");
-    expect(flags[0]!.reason).toContain("unusually high");
+    expect(flags[0]!.reason).toContain("well above");
+    expect(flags[0]!.moved).toBe("up");
   });
 
   it("does not flag anyone in a tight, healthy cohort", () => {
@@ -110,6 +114,19 @@ describe("computeAttentionFlags", () => {
     expect(flags).toEqual([]);
   });
 
+  it("ignores a big drop that leaves the person inside the pack", () => {
+    // Halved against their own past, and still sitting on the cohort median.
+    // A quarter of one's own past is ordinary; without the pack agreeing that
+    // something is off, this is movement, not attention.
+    const flags = computeAttentionFlags(
+      params({
+        byKey: new Map([["t.metric", fixture([...BASE, ["x", 10]])]]),
+        previousByKey: new Map([["t.metric", fixture([...BASE, ["x", 20]])]]),
+      }),
+    );
+    expect(flags).toEqual([]);
+  });
+
   it("flags an adverse period-over-period decline", () => {
     const flags = computeAttentionFlags(
       params({
@@ -119,12 +136,37 @@ describe("computeAttentionFlags", () => {
     );
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("decline");
-    expect(flags[0]!.reason).toBe("down 50% vs last period");
+    expect(flags[0]!.reason).toBe("down 50% from last period");
+  });
+
+  it("flags a decline when the cohort is too small to say where the pack is", () => {
+    // Two cohorts of four: A has stats, B's single measured member does not
+    // reach MIN_COHORT, so there is no pack to be inside of and the move
+    // stands on its own.
+    const now: Array<[string, number | null]> = [
+      ["a1", 9], ["a2", 10], ["a3", 11], ["a4", 10],
+      ["b1", 10], ["b2", null], ["b3", null], ["b4", null],
+    ];
+    const before: Array<[string, number | null]> = [
+      ["a1", 9], ["a2", 10], ["a3", 11], ["a4", 10],
+      ["b1", 20], ["b2", null], ["b3", null], ["b4", null],
+    ];
+    const flags = computeAttentionFlags(
+      params({
+        byKey: new Map([["t.metric", fixture(now)]]),
+        previousByKey: new Map([["t.metric", fixture(before)]]),
+        memberIds: now.map(([id]) => id),
+        cohortOf: (id) => (id.startsWith("a") ? "A" : "B"),
+      }),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.personId).toBe("person-b1");
+    expect(flags[0]!.kind).toBe("decline");
   });
 
   it("treats an INCREASE as adverse when lower is better", () => {
     // x=12 stays inside the Tukey fence (so the outlier branch, which is
-    // checked first and wins, stays quiet) but is +50% vs last period.
+    // checked first and wins, stays quiet) but is +50% from last period.
     const flags = computeAttentionFlags(
       params({
         byKey: new Map([
@@ -137,7 +179,8 @@ describe("computeAttentionFlags", () => {
     );
     expect(flags).toHaveLength(1);
     expect(flags[0]!.kind).toBe("decline");
-    expect(flags[0]!.reason).toBe("up 50% vs last period");
+    expect(flags[0]!.reason).toBe("up 50% from last period");
+    expect(flags[0]!.moved).toBe("up");
   });
 
   it("judges members within their own cohort, not the whole roster", () => {
@@ -158,7 +201,7 @@ describe("computeAttentionFlags", () => {
   });
 
   it("keeps only the strongest flag per person+metric and ranks by severity", () => {
-    // x collapses (0 vs median) AND declined vs last period — collapse wins.
+    // x collapses (0 vs median) AND declined from last period — collapse wins.
     const flags = computeAttentionFlags(
       params({
         byKey: new Map([["t.metric", fixture([...BASE, ["x", 0], ["y", 2]])]]),
@@ -177,17 +220,97 @@ describe("computeAttentionFlags", () => {
 describe("attentionSummary", () => {
   it("reports steady when there are no flags", () => {
     expect(attentionSummary([], 0, 12)).toBe(
-      "All 12 people are within their usual range this period.",
+      "All 12 people are in their usual range this period.",
     );
   });
 
-  it("names the top metric themes with counts", () => {
+  it("does not say 'All 1 people' when the scope holds one person", () => {
+    expect(attentionSummary([], 0, 1)).toBe(
+      "The one person in scope is in their usual range this period.",
+    );
+  });
+
+  it("names the top metric themes, counted in people", () => {
+    // The line already opens in people, so the theme has to be in people too:
+    // "most flags on Commits (5)" over "3 of 16 people" holds two units in one
+    // sentence, and leaves a reader to work out that five flags can belong to
+    // two people.
     const flags = computeAttentionFlags(
       params({ byKey: new Map([["t.metric", fixture([...BASE, ["x", 0]])]]) }),
     );
     expect(attentionSummary(flags, 1, 8)).toBe(
-      "1 of 8 people need a look — most flags on Commits (1).",
+      "1 of 8 people stands out this period — most often Commits (1 person).",
     );
+  });
+});
+
+describe("one fact is one flag", () => {
+  /** A metric with its own key and label, so containment can be exercised. */
+  function metric(
+    key: string,
+    label: string,
+    period: Array<[string, number | null]>,
+  ): NormalizedMetricResult {
+    return { ...fixture(period, { label }), metric_key: key };
+  }
+
+  it("keeps the more specific metric when a person trips both", () => {
+    // "All lines added" contains "lines added to code files"; a person whose
+    // output collapses trips both at once, and that is one fact. Reported
+    // twice it doubles their rows and doubles any count of what is wrong.
+    // The NARROWER one survives — it excludes documentation, tests and
+    // configuration, so it says something the wider metric cannot.
+    const flags = computeAttentionFlags(
+      params({
+        headlineKeys: ["git.lines_added", "git.code_lines"],
+        byKey: new Map([
+          ["git.lines_added", metric("git.lines_added", "Lines added", [...BASE, ["x", 0]])],
+          ["git.code_lines", metric("git.code_lines", "Code lines", [...BASE, ["x", 0]])],
+        ]),
+      }),
+    );
+    expect(flags.map((f) => f.metricKey)).toEqual(["git.code_lines"]);
+  });
+
+  it("keeps the same pair for two people as two findings", () => {
+    // Thinning is per person: two people tripping the same related metrics are
+    // two findings, not one.
+    const flags = computeAttentionFlags(
+      params({
+        headlineKeys: ["git.lines_added", "git.code_lines"],
+        memberIds: [...IDS, "y"],
+        byKey: new Map([
+          [
+            "git.lines_added",
+            metric("git.lines_added", "Lines added", [...BASE, ["x", 0], ["y", 0]]),
+          ],
+          [
+            "git.code_lines",
+            metric("git.code_lines", "Code lines", [...BASE, ["x", 0], ["y", 0]]),
+          ],
+        ]),
+      }),
+    );
+    expect(flags).toHaveLength(2);
+    expect(new Set(flags.map((f) => f.personId))).toEqual(
+      new Set(["person-x", "person-y"]),
+    );
+  });
+
+  it("leaves unrelated metrics alone", () => {
+    const flags = computeAttentionFlags(
+      params({
+        headlineKeys: ["git.lines_added", "collab.messages_sent"],
+        byKey: new Map([
+          ["git.lines_added", metric("git.lines_added", "Lines added", [...BASE, ["x", 0]])],
+          [
+            "collab.messages_sent",
+            metric("collab.messages_sent", "Messages sent", [...BASE, ["x", 0]]),
+          ],
+        ]),
+      }),
+    );
+    expect(flags).toHaveLength(2);
   });
 });
 
@@ -240,5 +363,51 @@ describe("severity is scale-free", () => {
     // Everyone identical and at zero: nothing is unusual, and no scale exists to
     // rank by. A flag here would carry a number that means something else.
     expect(flagsFor([["m1", 0], ["m2", 0], ["m3", 0], ["m4", 0]])).toEqual([]);
+  });
+});
+
+describe("groupFlagsByTheme", () => {
+  function f(over: Partial<AttentionFlag>): AttentionFlag {
+    return {
+      personId: "p",
+      name: "Person",
+      metricKey: "t.commits",
+      metricLabel: "Commits",
+      kind: "outlier",
+      moved: "down",
+      valueText: "1",
+      reason: "r",
+      severity: 1,
+      ...over,
+    };
+  }
+
+  it("gathers a metric's flags under one theme, strongest first", () => {
+    const themes = groupFlagsByTheme([
+      f({ personId: "a", severity: 1 }),
+      f({ personId: "b", severity: 5 }),
+    ]);
+    expect(themes).toHaveLength(1);
+    expect(themes[0]!.metricLabel).toBe("Commits");
+    expect(themes[0]!.flags.map((x) => x.personId)).toEqual(["b", "a"]);
+  });
+
+  it("puts the metric that touches more people first, however weak", () => {
+    // The lone flag is the more severe one. People count still wins: the point
+    // of the screen is what is happening broadly, not who is worst.
+    const themes = groupFlagsByTheme([
+      f({ personId: "a", metricKey: "t.meetings", metricLabel: "Meeting hours", severity: 99 }),
+      f({ personId: "b", severity: 1 }),
+      f({ personId: "c", severity: 1 }),
+    ]);
+    expect(themes.map((t) => t.metricLabel)).toEqual(["Commits", "Meeting hours"]);
+  });
+
+  it("breaks a tie in people on the strongest flag", () => {
+    const themes = groupFlagsByTheme([
+      f({ personId: "a", severity: 2 }),
+      f({ personId: "b", metricKey: "t.meetings", metricLabel: "Meeting hours", severity: 7 }),
+    ]);
+    expect(themes.map((t) => t.metricLabel)).toEqual(["Meeting hours", "Commits"]);
   });
 });

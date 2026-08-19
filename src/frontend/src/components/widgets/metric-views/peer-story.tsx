@@ -27,6 +27,7 @@ import {
 import { formatGapMagnitude } from "@/lib/metrics/gap";
 import { PEER_FILL, PEER_TEXT, type PeerCohortLabel } from "@/lib/peers";
 import { STATUS_STRIPE_LEFT, STATUS_STRIPE_TOP } from "@/lib/status";
+import { TEXT_FIGURE, TEXT_LABEL, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 interface PeerStoryProps {
@@ -75,15 +76,15 @@ function HeroCard({
           <span className={cn("size-1.5 rounded-full", PEER_FILL[color])} />
           <span
             className={cn(
-              "text-[10px] font-semibold tracking-widest uppercase",
+              "text-xs font-semibold tracking-widest uppercase",
               PEER_TEXT[color]
             )}
           >
-            {isBad ? "Top issue" : "Top win"}
+            {isBad ? "Furthest behind" : "Furthest ahead"}
           </span>
         </div>
         <div>
-          <h3 className="text-xl font-semibold tracking-tight sm:text-2xl">
+          <h3 className={TEXT_TITLE}>
             {entry.label}
           </h3>
           {entry.sublabel ? (
@@ -96,7 +97,7 @@ function HeroCard({
           <span className="flex items-baseline gap-1">
             <span
               className={cn(
-                "text-4xl font-semibold tracking-tight tabular-nums sm:text-[2.75rem]",
+                TEXT_FIGURE,
                 PEER_TEXT[color]
               )}
             >
@@ -105,7 +106,7 @@ function HeroCard({
                 : formatMetricNumber(entry.value, entry.format)}
             </span>
             {unit ? (
-              <span className="text-base text-muted-foreground">{unit}</span>
+              <span className={TEXT_LABEL}>{unit}</span>
             ) : null}
           </span>
           {entry.stats ? (
@@ -222,7 +223,7 @@ function SideCard({
                 which outgrows these cards), so chips are the only
                 tooltip-gated tier. */}
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="text-2xl font-semibold tabular-nums">
+              <span className={TEXT_FIGURE}>
                 {entry.format === "percent"
                   ? formatMetricValue(entry.value, entry.format, entry.unit)
                   : formatMetricNumber(entry.value, entry.format)}
@@ -262,7 +263,7 @@ function SideCard({
                 </>
               ) : null}
             </div>
-            <div className="mt-1 truncate text-[11px] text-muted-foreground">
+            <div className="mt-1 truncate text-xs text-muted-foreground">
               {outlierText(entry.status)}
             </div>
           </div>
@@ -359,7 +360,7 @@ function FlatGridCard({ entry }: { entry: PeerStoryEntry }) {
           </div>
         ) : null}
       </div>
-      <div className="mt-5 text-2xl font-semibold tabular-nums">
+      <div className={cn("mt-5", TEXT_FIGURE)}>
         {entry.format === "percent"
           ? formatMetricValue(entry.value, entry.format, entry.unit)
           : formatMetricNumber(entry.value, entry.format)}
@@ -414,16 +415,16 @@ function SupportingFold({
   const trueOnParCount = entries.length - neutralCount;
   const summaryLabel =
     neutralCount === 0
-      ? `${entries.length} on-par metric${entries.length === 1 ? "" : "s"}`
+      ? `${entries.length} metric${entries.length === 1 ? "" : "s"} near the median`
       : trueOnParCount === 0
         ? `${entries.length} supporting metric${entries.length === 1 ? "" : "s"}`
-        : `${entries.length} supporting and on-par metric${
+        : `${entries.length} other metric${
             entries.length === 1 ? "" : "s"
           }`;
   const summaryDescription =
     neutralCount === 0
-      ? `Metrics within the ${cohortLabel}'s normal range - no peer outlier`
-      : "Additional metrics without a visible peer outlier";
+      ? `Metrics in the normal range for this ${cohortLabel}`
+      : "Other metrics, with nothing standing out or nothing to compare";
   return (
     <div className="rounded-md border">
       <button
@@ -436,7 +437,7 @@ function SupportingFold({
           <div className="text-sm font-medium">
             {open ? "Hide" : "Show"} {summaryLabel}
           </div>
-          <div className="text-[11px] text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             {summaryDescription}
           </div>
         </div>
@@ -486,7 +487,7 @@ function SupportingRow({
       </div>
       <div className="text-muted-foreground">
         {!entry.stats ? (
-          <span>no peer data</span>
+          <span>no comparison</span>
         ) : !entry.observed ? (
           <span>
             no recorded activity · {cohortLabel} median:{" "}
@@ -494,7 +495,7 @@ function SupportingRow({
           </span>
         ) : entry.status === "in_pack" ? (
           <span>
-            on par · {cohortLabel} median:{" "}
+            near the {cohortLabel} median:{" "}
             {formatMetricValue(entry.stats.p50, entry.format, entry.unit)}
           </span>
         ) : (
@@ -547,9 +548,9 @@ export function PeerStory({
           <SideCards entries={sideCards} cohortLabel={cohortLabel} />
         </div>
       ) : focusMode === "critical" ? (
-        <EmptyState label="No critical issues this period" />
+        <EmptyState label="Nothing stands out as behind this period" />
       ) : focusMode === "rewards" ? (
-        <EmptyState label="No standout wins this period" />
+        <EmptyState label="Nothing stands out as ahead this period" />
       ) : null}
       <OutlierChips entries={chips} cohortLabel={cohortLabel} />
       <SupportingFold entries={folded} cohortLabel={cohortLabel} />

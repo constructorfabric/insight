@@ -11,7 +11,7 @@
  *   - `TestOkTile`   — play-driven test asserting the tile renders the
  *                      display-ready selector output (value, delta, median).
  *   - `TestNoPeers`  — a tile whose selector produced no median (server-side
- *                      suppression or no peer data) falls back in the footer.
+ *                      suppression or no comparison) falls back in the footer.
  *
  * KpiTile is presentational: selectors in `lib/insight/kpi-row.ts` own all
  * formatting and scoring, so these stories feed the tile intermediate
@@ -65,37 +65,40 @@ type Story = StoryObj<typeof KpiTile>;
 
 /** Demo story for the Storybook UI (not a test — no `test` tag). */
 export const Default: Story = {
-  args: { tile: makeTile() },
+  args: { tile: makeTile(), periodNoun: "month" },
 };
 
 /** Component test: the display-ready tile input drives every element. */
 export const TestOkTile: Story = {
   tags: ["test"],
-  args: { tile: makeTile() },
+  args: { tile: makeTile(), periodNoun: "month" },
   play: async ({ canvas }) => {
     // Singular `getByText` (throws on >1 match) doubles as a guard that the
     // preview decorators wrap the story exactly once — a double-applied
     // decorator would render two <KpiTile>s and fail here.
     await expect(canvas.getByText("Bugs Fixed")).toBeInTheDocument();
     await expect(canvas.getByText("12")).toBeInTheDocument();
-    await expect(canvas.getByText("+9%")).toBeInTheDocument();
-    await expect(canvas.getByText(/median 6/i)).toBeInTheDocument();
+    // The change now names what it is measured against — a bare "+9%" was
+    // readable as either of the tile's two comparisons.
+    await expect(canvas.getByText(/\+9% since last month/)).toBeInTheDocument();
+    await expect(canvas.getByText(/team median 6/i)).toBeInTheDocument();
   },
 };
 
 /**
  * Component test: a tile without a median (selector suppressed it — thin
- * cohort server-side, schema error, or no peer data) falls back in the
+ * cohort server-side, schema error, or no comparison) falls back in the
  * footer and renders the value without peer coloring.
  */
 export const TestNoPeers: Story = {
   tags: ["test"],
   args: {
     tile: makeTile({ gapStatus: "neutral", medianLabel: null, delta: null }),
+    periodNoun: "month",
   },
   play: async ({ canvas }) => {
     await expect(canvas.getByText("Bugs Fixed")).toBeInTheDocument();
-    await expect(canvas.getByText(/no peer data/i)).toBeInTheDocument();
+    await expect(canvas.getByText(/no comparison/i)).toBeInTheDocument();
     await expect(canvas.queryByText(/median/i)).not.toBeInTheDocument();
   },
 };

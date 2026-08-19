@@ -18,3 +18,13 @@ misconfigurations:
       repository writable, so a baked-in UID breaks writes whenever it differs from
       the host's, taking the e2e gate with it. Revisit if the image is ever
       published or run anywhere other than a test job.
+  - id: AVD-DS-0026
+    paths:
+      - "src/ingestion/connectors/ai/claude-team-invoices/Dockerfile"
+    statement: >-
+      Not applicable. Docker polls a HEALTHCHECK against a long-running service;
+      this image runs one Airbyte protocol command and exits, and nothing polls
+      it — neither the job that calls `discover` nor the k8s Job that syncs. The
+      base image declares none either, so the instruction would report on a
+      process that has already finished. Revisit if this connector is ever run as
+      a service rather than as a command.

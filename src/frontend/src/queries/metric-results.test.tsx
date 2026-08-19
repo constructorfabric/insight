@@ -146,7 +146,7 @@ describe("useMetricCollection", () => {
   });
 
   it("surfaces errors and leaves byKey empty", async () => {
-    mock.mockRejectedValue(new Error("boom"));
+    mock.mockRejectedValue(new Error("request failed"));
     const { result } = renderHook(
       () => useMetricCollection(COLLECTION, ENTITY, RANGE),
       { wrapper: wrapper() },

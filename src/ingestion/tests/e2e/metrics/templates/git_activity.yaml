@@ -9,10 +9,10 @@ templates:
     unique_key: null
   commit:
     $ref: "#/templates/base"
-    repo_owner: constructor
-    repo_name: insight
+    # The proxy keys its rows by the repository's clone URL; staging splits the
+    # owner and name back out of it.
+    repository: "https://github.com/constructor/insight.git"
     sha: null
-    branch_name: main
     author_name: null
     author_email: null
     committer_name: null
@@ -22,36 +22,39 @@ templates:
     changed_files: 1
     additions: 0
     deletions: 0
-    # github-v2 bronze stores parent_hashes as a JSON-array string (one parent
-    # here => a normal, non-merge commit).
-    parent_hashes: '["parent"]'
+    is_merge: false
   file_change:
     $ref: "#/templates/base"
-    repo_owner: constructor
-    repo_name: insight
+    repository: "https://github.com/constructor/insight.git"
     sha: null
     filename: src/main.rs
     status: modified
     additions: 0
     deletions: 0
-    source_type: direct_push
   pull_request:
     $ref: "#/templates/base"
-    repo_owner: constructor
-    repo_name: insight
-    database_id: 0
+    repo_full_name: constructor/insight
+    id: 0
     number: 0
     title: change
     body: ""
-    state: MERGED
+    # REST reports a merged pull request as closed; merged_at is what makes it
+    # MERGED downstream.
+    state: closed
     author_login: null
-    author_email: null
     head_ref: feature
     base_ref: main
     created_at: "2026-10-01T08:00:00Z"
     updated_at: "2026-10-01T13:00:00Z"
     closed_at: null
+    merged_at: null
     merge_commit_sha: null
-    changed_files: 1
+  diff_stat:
+    $ref: "#/templates/base"
+    repo_full_name: constructor/insight
+    pull_number: 0
     additions: 0
     deletions: 0
+    changed_files: 1
+    updated_at: "2026-10-01T13:00:00Z"
+    author_email: null

@@ -28,6 +28,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::config::GearConfig;
+use crate::domain::roster::RosterSource;
 use crate::domain::seed_service::{IdentityInputsReader, SeedSummary, seed_from_rows};
 use crate::infra::db::{self, ops_repo, seed_repo};
 use crate::infra::identity_inputs::ClickHouseIdentityInputsReader;
@@ -213,6 +214,15 @@ async fn run_locked(
     }
 }
 
+/// The roster the configuration names, if any.
+///
+/// Split out to be testable: it sits beside `org_chart_source_type`, which is
+/// also a single source type, and reading the wrong one of the two has no
+/// symptom at all — the run succeeds and mints nothing.
+fn roster_source(config: &GearConfig) -> Option<RosterSource> {
+    RosterSource::parse(&config.roster_source_type)
+}
+
 /// Input read → guards → pipeline, bounded by [`SEED_TIMEOUT`].
 async fn guarded_seed(
     db: &sea_orm::DatabaseConnection,
@@ -227,6 +237,15 @@ async fn guarded_seed(
         &config.clickhouse_password,
     );
     let store = seed_repo::MariaDbSeedStore::new(db);
+    let roster = roster_source(config);
+    if let Some(roster) = roster.as_ref() {
+        tracing::info!(
+            roster = roster.name(),
+            "persons-seed: roster source may mint addressless accounts"
+        );
+    } else {
+        tracing::info!("persons-seed: no roster source configured; minting needs an address");
+    }
 
     let run = async {
         let rows = reader.stream(tenant).await?;
@@ -237,9 +256,16 @@ async fn guarded_seed(
             return Err(SeedRunError::Guard(msg));
         }
 
-        seed_from_rows(rows, &store, tenant, SYSTEM_AUTHOR, Uuid::now_v7)
-            .await
-            .map_err(SeedRunError::Failed)
+        seed_from_rows(
+            rows,
+            &store,
+            tenant,
+            SYSTEM_AUTHOR,
+            roster.as_ref(),
+            Uuid::now_v7,
+        )
+        .await
+        .map_err(SeedRunError::Failed)
     };
 
     tokio::time::timeout(SEED_TIMEOUT, run)
@@ -418,5 +444,24 @@ mod tests {
         };
         assert!(msg.contains("ambiguous"), "{msg}");
         Ok(())
+    }
+
+    #[test]
+    fn the_roster_comes_from_its_own_configuration_field() {
+        let config = GearConfig {
+            roster_source_type: "bamboohr".to_owned(),
+            // Deliberately different: this field is the neighbour a mistyped
+            // read would land on, and both hold a bare source type.
+            org_chart_source_type: "ms-entra".to_owned(),
+            ..GearConfig::default()
+        };
+
+        let named = roster_source(&config);
+
+        assert_eq!(named.as_ref().map(RosterSource::name), Some("bamboohr"));
+        assert!(
+            roster_source(&GearConfig::default()).is_none(),
+            "the default configuration names no roster"
+        );
     }
 }

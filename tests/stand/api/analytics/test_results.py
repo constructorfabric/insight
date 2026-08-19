@@ -29,6 +29,7 @@ from ..schemas import (
     PeriodView,
     ProblemDocument,
 )
+from . import query_window
 
 METRIC_RESULTS = analytics_path("/v1/metric-results")
 
@@ -42,7 +43,7 @@ def _a_metric_key(api: ApiClient) -> str:
 
 
 def _ask(api: ApiClient, manifest: Manifest, entity_id: str, metric_key: str) -> ApiResponse:
-    start, _, end = manifest.data_window.partition("..")
+    start, end = query_window(manifest)
     return api.post(
         METRIC_RESULTS,
         json_body={
@@ -81,6 +82,8 @@ def _values(response: ApiResponse, metric_key: str) -> list[tuple[str, float | N
     return pairs
 
 
+@pytest.mark.reliability
+@pytest.mark.stand_smoke
 def test_metric_results_200(api: ApiClient, stand_manifest: Manifest) -> None:
     """One person, the seeded window, one metric — and a REAL number back.
 
@@ -88,13 +91,19 @@ def test_metric_results_200(api: ApiClient, stand_manifest: Manifest) -> None:
     (#2098) that is what every person-keyed route takes, and an email is
     refused rather than answered emptily (below).
 
-    The period comes from the manifest's own `data_window`, so the request asks
-    for the range the stand was actually seeded over rather than a guess.
+    The period is the queryable TAIL of the manifest's own `data_window` (see
+    `query_window`), so the request asks for the most recent slice of the range
+    the stand was actually seeded over, capped at what the API will accept,
+    rather than a guess.
 
     Asserting a non-null value is the whole point. A 200 whose values are all
     null is what this test used to accept, and it proved only that the route
     was reachable — the chain from gold through the tenant in the JWT to a
     number on the wire was never exercised.
+
+    Marked `stand_smoke`: this is the post-deploy gate's "the seeded data
+    reaches the API" check, folded into the suite that already runs it on
+    every other lane rather than duplicated in a package of its own.
     """
     person = stand_manifest.fixture("dev_lead")
     metric_key = _a_metric_key(api)
@@ -112,6 +121,7 @@ def test_metric_results_200(api: ApiClient, stand_manifest: Manifest) -> None:
     )
 
 
+@pytest.mark.security
 def test_metric_results_403_for_a_person_out_of_scope(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:
@@ -143,6 +153,7 @@ def test_metric_results_403_for_a_person_out_of_scope(
         ("nil uuid", "00000000-0000-0000-0000-000000000000"),
     ],
 )
+@pytest.mark.reliability
 def test_metric_results_400_for_a_key_that_is_not_a_person_id(
     api: ApiClient, stand_manifest: Manifest, label: str, entity_id: str
 ) -> None:
@@ -159,6 +170,7 @@ def test_metric_results_400_for_a_key_that_is_not_a_person_id(
     )
 
 
+@pytest.mark.reliability
 def test_metric_results_422_off_schema(api: ApiClient) -> None:
     """A body that is valid JSON but not the request type.
 
@@ -176,7 +188,7 @@ def test_metric_results_422_off_schema(api: ApiClient) -> None:
 
 
 def _body(api: ApiClient, manifest: Manifest) -> dict[str, JsonValue]:
-    start, _, end = manifest.data_window.partition("..")
+    start, end = query_window(manifest)
     return {
         "entity": {"type": "person", "ids": [manifest.fixture("dev_lead").uuid]},
         "period": {"from": start, "to": end},
@@ -184,6 +196,7 @@ def _body(api: ApiClient, manifest: Manifest) -> dict[str, JsonValue]:
     }
 
 
+@pytest.mark.reliability
 def test_an_empty_metrics_list_is_400(api: ApiClient, stand_manifest: Manifest) -> None:
     """Nothing asked for is a malformed request, not an empty answer."""
     body = _body(api, stand_manifest)
@@ -200,6 +213,7 @@ def test_an_empty_metrics_list_is_400(api: ApiClient, stand_manifest: Manifest) 
         ("reversed", {"from": "2026-02-01", "to": "2026-01-01"}),
     ],
 )
+@pytest.mark.reliability
 def test_a_period_that_cannot_be_honoured_is_400(
     api: ApiClient, stand_manifest: Manifest, label: str, period: dict[str, str]
 ) -> None:
@@ -218,6 +232,7 @@ def test_a_period_that_cannot_be_honoured_is_400(
     )
 
 
+@pytest.mark.reliability
 def test_an_unknown_metric_key_is_400_not_404(api: ApiClient, stand_manifest: Manifest) -> None:
     """This endpoint has no not-found path, and the spec declares none.
 
@@ -239,6 +254,7 @@ def test_an_unknown_metric_key_is_400_not_404(api: ApiClient, stand_manifest: Ma
 
 
 @pytest.mark.requires_seed("dev_lead", "sales_ic")
+@pytest.mark.security
 def test_one_hidden_person_refuses_the_whole_request(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:

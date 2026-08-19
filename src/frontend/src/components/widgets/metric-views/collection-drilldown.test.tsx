@@ -62,7 +62,7 @@ function result(
 }
 
 describe("CollectionDrilldown", () => {
-  it("renders the def's blocks and the peer story from wire data", () => {
+  it("renders the def's blocks from wire data", () => {
     render(
       <CollectionDrilldown
         def={DEF}
@@ -73,10 +73,23 @@ describe("CollectionDrilldown", () => {
     // Breakdown block: composition by tool with response-provided labels.
     expect(screen.getByText("Period total by tool")).toBeInTheDocument();
     expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0);
-    // Peer story: both fixture metrics are in-pack (no outlier hero), so the
-    // story falls back to the flat grid with one card per metric.
-    expect(screen.getByText("Tool acceptance rate")).toBeInTheDocument();
-    expect(screen.getByText("77%")).toBeInTheDocument();
+  });
+
+  it("says nothing about the numbers on its own", () => {
+    // Composition only. What is said ABOUT a metric — where it stands, what
+    // the person actually did — differs by surface, so it arrives from the
+    // caller and this renders it after the blocks.
+    render(
+      <CollectionDrilldown
+        def={DEF}
+        data={result()}
+        entityId="alice@example.com"
+      >
+        <p>where this stands</p>
+      </CollectionDrilldown>
+    );
+    expect(screen.getByText("where this stands")).toBeInTheDocument();
+    expect(screen.queryByText(/vs peer median/)).not.toBeInTheDocument();
   });
 
   it("dispatches a histogram block to the histogram renderer", () => {

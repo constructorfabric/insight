@@ -73,6 +73,10 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Print the OpenAPI document to stdout and exit. Offline — no config,
+    /// no backends, no logging subscriber, so stdout stays pure JSON. Backs
+    /// the committed-doc drift gate.
+    Openapi,
     /// Copy the `persons` log into ClickHouse `identity.identity_persons`
     /// (the metrics email→`person_id` resolve source) and exit. Same execution
     /// model as `seed` — Helm `CronJob` / manual Job; pairs naturally as
@@ -93,19 +97,26 @@ const EXIT_SEED_GUARD: i32 = 3;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
-    // Layered config: defaults -> YAML -> env (APP__*). Logging/OTel are
-    // initialized by the bootstrap runtime for the server path; subcommands
-    // run outside it and install their own plain subscriber.
-    let config = AppConfig::load_or_default(cli.config.as_ref())?;
-    match cli.command.unwrap_or(Commands::Run) {
-        Commands::Run => run_server(config).await,
+    let mut cli = Cli::parse();
+    let command = cli.command.take().unwrap_or(Commands::Run);
+
+    // Layered config: defaults -> YAML -> env (APP__*). Loaded per command
+    // rather than up front, so the offline `openapi` emit cannot fail on a
+    // config file it never reads. Logging/OTel are initialized by the bootstrap
+    // runtime for the server path; subcommands run outside it and install their
+    // own plain subscriber.
+    let load_config = || AppConfig::load_or_default(cli.config.as_ref());
+
+    match command {
+        Commands::Openapi => print_openapi(),
+        Commands::Run => run_server(load_config()?).await,
         Commands::Migrate => {
             init_subcommand_logging();
-            gear::run_migrate(&config).await
+            gear::run_migrate(&load_config()?).await
         }
         Commands::Seed { mode, force } => {
             init_subcommand_logging();
+            let config = load_config()?;
             match gear::run_seed(&config, &mode, force).await {
                 Ok(()) => Ok(()),
                 Err(seed_runner::SeedRunError::LockBusy) => {
@@ -124,6 +135,7 @@ async fn main() -> Result<()> {
         }
         Commands::Sync { force } => {
             init_subcommand_logging();
+            let config = load_config()?;
             match gear::run_sync(&config, force).await {
                 Ok(()) => Ok(()),
                 Err(sync_runner::SyncRunError::LockBusy) => {
@@ -141,6 +153,15 @@ async fn main() -> Result<()> {
             }
         }
     }
+}
+
+/// Print the `OpenAPI` document as pretty JSON. Offline — see
+/// [`api::openapi_document`]. No logging subscriber is installed on this path,
+/// so stdout stays pure JSON for the drift gate to consume.
+fn print_openapi() -> Result<()> {
+    let doc = api::openapi_document()?;
+    println!("{}", serde_json::to_string_pretty(&doc)?);
+    Ok(())
 }
 
 /// Plain stdout logging for the `migrate` / `seed` subcommands. The bootstrap

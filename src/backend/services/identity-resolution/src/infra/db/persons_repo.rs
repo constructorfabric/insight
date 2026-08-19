@@ -12,6 +12,8 @@
 //! so an excluded account resolves as no person rather than as the shared
 //! sentinel, and an older binding is never resurrected past an exclusion.
 
+use std::collections::{HashMap, HashSet};
+
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
     QueryResult, QuerySelect, Statement,
@@ -19,6 +21,8 @@ use sea_orm::{
 use uuid::Uuid;
 
 use super::entities::persons;
+use crate::domain::person_card::{self, CARD_VALUE_TYPES, PersonCard};
+use crate::domain::provenance::UNCONFIRMED_MINT_REASONS;
 use crate::domain::resolution::EXCLUDED_PERSON;
 
 /// Resolve the set of `person_id`s whose CURRENT email (latest observation per
@@ -319,6 +323,119 @@ pub async fn person_exists(
         .one(db)
         .await?;
     Ok(found.is_some())
+}
+
+/// Of the given persons, those the journal holds nothing but automatic mints for
+/// — a sign-in that needed somebody to enter as, or a roster that listed an
+/// account carrying no address.
+///
+/// Either way nobody has decided who they are, so they may well duplicate a
+/// person the roster already knows. Naming one as a merge target is the wrong
+/// direction: the history is on the other side.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn provisional_persons(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_ids: &[Uuid],
+) -> anyhow::Result<HashSet<Uuid>> {
+    if person_ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let placeholders = vec!["?"; person_ids.len()].join(", ");
+    // SAFETY: `<=>`, not `=` — migration 009 made `reason` nullable, and `=`
+    // would make the CASE NULL for such a row, the SUM NULL with it, and drop
+    // the person from the answer. A NULL reason is "not an automatic mint".
+    let mint_reasons = vec!["reason <=> ?"; UNCONFIRMED_MINT_REASONS.len()].join(" OR ");
+    let sql = format!(
+        "SELECT person_id          FROM persons          WHERE insight_tenant_id = ? AND person_id IN ({placeholders})          GROUP BY person_id          HAVING SUM(CASE WHEN {mint_reasons} THEN 0 ELSE 1 END) = 0"
+    );
+
+    let mut params: Vec<sea_orm::Value> =
+        Vec::with_capacity(person_ids.len() + 1 + UNCONFIRMED_MINT_REASONS.len());
+    params.push(tenant_id.as_bytes().to_vec().into());
+    for id in person_ids {
+        params.push(id.as_bytes().to_vec().into());
+    }
+    for reason in UNCONFIRMED_MINT_REASONS {
+        params.push(reason.into());
+    }
+
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            &sql,
+            params,
+        ))
+        .await?;
+
+    let mut provisional = HashSet::with_capacity(rows.len());
+    for row in rows {
+        let person_id: Vec<u8> = row.try_get("", "person_id")?;
+        provisional.insert(Uuid::from_slice(&person_id)?);
+    }
+    Ok(provisional)
+}
+
+/// Hydrate person cards for MANY persons in one query — the shared id→display
+/// read behind every operator response that embeds cards (queue candidates,
+/// person search). Only the CURRENT observation per person × source × value
+/// type leaves the database (the same `rn = 1` window the resolvers use): the
+/// journal is append-only, and shipping a person's full re-observation history
+/// to collapse it in Rust would grow every response with tenant age. The Rust
+/// collapse then picks the latest across sources. An id the journal holds no
+/// card attributes for is simply absent from the map, and the caller renders
+/// it via [`PersonCard::empty`].
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
+pub async fn person_cards(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_ids: &[Uuid],
+) -> anyhow::Result<HashMap<Uuid, PersonCard>> {
+    if person_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let id_placeholders = vec!["?"; person_ids.len()].join(", ");
+    let type_list = CARD_VALUE_TYPES
+        .iter()
+        .map(|t| format!("'{t}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        r"
+        SELECT id, value_type, insight_source_type, insight_source_id,
+               insight_tenant_id, value_id, value_full_text, value,
+               value_effective, value_hash, person_id, author_person_id,
+               reason, created_at
+        FROM (
+            SELECT p.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY person_id, insight_source_type, insight_source_id, value_type
+                       ORDER BY created_at DESC, id DESC
+                   ) AS rn
+            FROM persons p
+            WHERE insight_tenant_id = ?
+              AND person_id IN ({id_placeholders})
+              AND value_type IN ({type_list})
+        ) current_rows
+        WHERE rn = 1
+    "
+    );
+
+    let mut values: Vec<sea_orm::Value> = vec![tenant_id.as_bytes().to_vec().into()];
+    values.extend(person_ids.iter().map(|id| id.as_bytes().to_vec().into()));
+
+    let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
+    let rows = persons::Entity::find().from_raw_sql(stmt).all(db).await?;
+
+    Ok(person_card::assemble_cards(rows))
 }
 
 /// Fetch every observation row for a person within the tenant (all value types,

@@ -31,7 +31,6 @@ name: E2E — Bronze to API
 # as a pure-Python check (no Docker, no app boot). See
 # src/ingestion/tests/e2e/lib/{metric_coverage,collect_metric_definitions}.py.
 #
-# Specs: docs/domain/bronze-to-api-e2e/specs/
 # Code:  src/ingestion/tests/e2e/
 
 on:
@@ -425,6 +424,15 @@ jobs:
             *)    filter=(grep -e "^metrics/${SHARD}_") ;;
           esac
           nodes=()
+          # Hand-authored tests assert what the yaml rig cannot express — a second
+          # sync, a silver-only contract. The loop below only ever yields
+          # yaml-derived nodes, so they are listed per shard or they never run.
+          case "$SHARD" in
+            ai)
+              nodes+=("metrics/test_ai_seat_extra_usage_history.py")
+              nodes+=("metrics/test_ai_invoice_silver.py")
+              ;;
+          esac
           while IFS= read -r stem; do
             nodes+=("metrics/test_fixtures.py::test_metric_smoke[${stem}]")
           done < <(printf '%s\n' metrics/*.test.yaml | "${filter[@]}" | sort \

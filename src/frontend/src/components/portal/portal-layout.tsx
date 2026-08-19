@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 
 import { MockBanner } from "@/components/mock-banner";
 import { ViewAsBanner } from "@/components/view-as-banner";
@@ -11,43 +11,60 @@ import {
   usePortalNavActions,
   usePortalZone,
 } from "@/lib/portal/portal-nav";
+import { landingDecision } from "@/lib/portal/landing-zone";
 import { useShellLayout, type ShellLayout } from "@/lib/portal/use-shell-layout";
 import { useViewerIsManager } from "@/lib/portal/use-viewer-is-manager";
+import { useIsAdmin } from "@/queries/identity-me";
 
 /**
- * Portal shell (Phase 1 buildout), behind the `insight.portal` flag so the
- * default app is untouched. Composition (one SidebarProvider, all normal flow):
+ * Portal shell (Phase 1 buildout), rendered unless the reader opts out via
+ * `insight.portal`. Composition (one SidebarProvider, all normal flow):
  *   [ lens rail ] [ zone-contextual pane ] [ content ]
  * Every zone renders through `<ZoneContent/>` (Person / People / Directions /
  * Overview / … all portal-native); the route only carries the active person.
  */
 export function PortalLayout() {
   const { replaceZone } = usePortalNavActions();
-  // Pin the landing zone exactly once, when the viewer's manager status first
-  // resolves: a manager lands on the Overview org rollup; an IC has no subtree,
-  // so we leave the zone route-driven (null) → their own Person page. The rail
-  // stays interactive while the status resolves, so honour a zone the user
-  // already picked: a manager's choice is never overridden, and an IC who
-  // landed on an org zone (now hidden for them) is reset to route-driven.
+  // Pin the landing zone exactly once, when the viewer's shape resolves: a
+  // manager lands on the Overview org rollup; an IC has no subtree, so their
+  // zone stays route-driven (their own Person page) — EXCEPT Manage, which
+  // the admin role opens regardless of reports. The rules live in
+  // `landingDecision` (pure, table-tested); this effect only applies them.
   const { isManager, isPending } = useViewerIsManager();
+  const { isAdmin, isPending: adminPending, isError: adminError } = useIsAdmin();
   const zone = usePortalZone();
   const landed = useRef(false);
   useEffect(() => {
-    if (isPending || landed.current) return;
+    if (landed.current) return;
+    const decision = landingDecision({
+      zone,
+      mgrPending: isPending,
+      isManager,
+      // An errored check is "unknown", not "no": the landing decision is
+      // one-shot, so resetting on it would permanently rewrite a URL an
+      // admin deliberately opened. Waiting costs nothing — the me query
+      // retries itself until an answer lands.
+      adminPending: adminPending || adminError,
+      isAdmin,
+    });
+    if (decision.kind === "wait") return;
     landed.current = true;
-    if (isManager) {
-      if (zone == null) replaceZone("overview");
-    } else if (zone != null && zone !== "person") {
-      replaceZone(null);
-    }
-  }, [isPending, isManager, zone, replaceZone]);
+    if (decision.kind === "pin-overview") replaceZone("overview");
+    if (decision.kind === "reset") replaceZone(null);
+  }, [isPending, isManager, adminPending, adminError, isAdmin, zone, replaceZone]);
 
   return (
-    <SidebarProvider className="h-svh overflow-hidden">
+    <SidebarProvider
+      className="h-svh overflow-hidden"
+      style={{ "--rail-width": "3.5rem" } as CSSProperties}
+    >
       <PaneStateForLayout />
       <LensRail />
       <ContextPane />
-      <SidebarInset className="min-w-0 overflow-x-clip overflow-y-auto">
+      {/* INVARIANT: `isolate` keeps the inset's own stacking — the sticky
+          topbar included — under the rail and the pane, which open across it
+          on the tier where the pane is off-canvas. */}
+      <SidebarInset className="isolate min-w-0 overflow-x-clip overflow-y-auto">
         <MockBanner />
         {/* The impersonation indicator: it names whose data is on screen and
             carries the way out. Missing it left a view-as operator with no sign

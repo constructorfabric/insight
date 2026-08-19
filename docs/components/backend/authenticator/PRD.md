@@ -3,6 +3,12 @@ status: proposed
 date: 2026-07-06
 ---
 
+> [!WARNING]
+> **Under review — audited against the implementation and found inaccurate in places.**
+> Read it against the code, not as authority. The specific claims the code contradicts
+> are listed in the repository [README](../../../../README.md#backend-specs--under-review). Where this
+> document and the committed `openapi.json` disagree, the contract is right.
+
 # PRD -- Authenticator Service
 
 <!-- toc -->
@@ -100,13 +106,13 @@ The previously specified remedy -- a single Rust API Gateway binary combining a 
 
 #### Tenant Administrator
 
-Defined in the [parent backend PRD](../specs/PRD.md) as `cpt-insightspec-actor-tenant-admin`. In this module the Tenant Administrator additionally needs to revoke any user's sessions (forced logout on role change, offboarding, suspected compromise).
+Formerly `cpt-insightspec-actor-tenant-admin` in the backend PRD. In this module the Tenant Administrator additionally needs to revoke any user's sessions (forced logout on role change, offboarding, suspected compromise).
 
 ### 2.2 System Actors
 
 #### OIDC Provider
 
-Defined in the [parent backend PRD](../specs/PRD.md) as `cpt-insightspec-actor-oidc-provider`. In this module the customer identity provider runs the authorization code + PKCE flow, issues refresh tokens to the authenticator, and may call back-channel logout.
+Formerly `cpt-insightspec-actor-oidc-provider` in the backend PRD. In this module the customer identity provider runs the authorization code + PKCE flow, issues refresh tokens to the authenticator, and may call back-channel logout.
 
 #### Nginx Gateway
 

@@ -11,7 +11,7 @@
 {{ config(
     materialized='view',
     schema='staging',
-    tags=['github_directory']
+    tags=['github-directory']
 ) }}
 
 {% do promote_bronze_to_rmt(table='bronze_github_directory.org_members', order_by='unique_key') %}

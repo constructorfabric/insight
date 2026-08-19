@@ -85,7 +85,7 @@ function ImprovementList({
     <>
       {itemKeys.map((key) => (
         <article key={key}>
-          <h4 className="text-base leading-snug font-semibold">
+          <h4 className="text-sm leading-snug font-semibold">
             {t(`${itemsKey}.${key}.title`)}
           </h4>
           <p
@@ -118,7 +118,7 @@ function ReleaseSections({
           key={section.id}
           className="grid gap-x-5 gap-y-3 p-4 sm:grid-cols-[10rem_1fr] sm:p-5"
         >
-          <h4 className="pt-0.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          <h4 className="pt-0.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
             {t(`${baseKey}.sections.${section.id}.title`)}
           </h4>
           <div className="flex flex-col gap-4">
@@ -140,117 +140,123 @@ export function WhatsNewScreen() {
     <>
       <header className="sticky top-0 z-20 flex items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur-sm">
         <SidebarTrigger />
-        <h1 className="text-xl font-semibold tracking-tight">
+        <h1 className="text-lg font-semibold tracking-tight">
           {t("whats_new.nav_label")}
         </h1>
       </header>
 
-      <main className="flex flex-1 flex-col p-4 md:p-6">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 pb-12">
-          <section>
-            <p className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
-              {t("whats_new.eyebrow")}
-            </p>
-            <h2 className="mt-3 text-3xl font-bold tracking-tight text-balance">
-              {t("whats_new.title")}
-            </h2>
-            <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 font-mono text-xs text-muted-foreground">
-              <span>
-                <span className="font-semibold text-foreground">
-                  {t("whats_new.stamp.release_label")}
-                </span>{" "}
-                {t("whats_new.stamp.release")}
-              </span>
-              <span>
-                <span className="font-semibold text-foreground">
-                  {t("whats_new.stamp.highlights_label")}
-                </span>{" "}
-                {t("whats_new.stamp.highlights")}
-              </span>
-              <span>
-                <span className="font-semibold text-foreground">
-                  {t("whats_new.stamp.focus_label")}
-                </span>{" "}
-                {t("whats_new.stamp.focus")}
-              </span>
-            </div>
-          </section>
+      <WhatsNewBody />
+    </>
+  );
+}
 
-          <section>
-            <h3 className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
-              {t("whats_new.improvements_label")}
-            </h3>
-            <div className="mt-3 divide-y overflow-hidden rounded-lg border bg-card">
-              <ReleaseSections
-                baseKey="whats_new"
-                sections={RELEASE_SECTIONS}
-              />
-            </div>
-          </section>
+/** The release notes alone — the portal's Manage zone brings its own chrome. */
+export function WhatsNewBody() {
+  const { t } = useTranslation();
 
-          <section>
-            <h3 className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
-              {t("whats_new.coming.label")}
-            </h3>
-            <div className="mt-3 divide-y overflow-hidden rounded-lg border bg-card">
-              <ReleaseSections
-                baseKey="whats_new.coming"
-                sections={COMING_SECTIONS}
-              />
-            </div>
-          </section>
+  return (
+    <main className="flex flex-1 flex-col p-4 md:p-6">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 pb-12">
+        <section>
+          <p className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+            {t("whats_new.eyebrow")}
+          </p>
+          <h2 className="mt-3 text-lg font-semibold tracking-tight text-balance">
+            {t("whats_new.title")}
+          </h2>
+          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 font-mono text-xs text-muted-foreground">
+            <span>
+              <span className="font-semibold text-foreground">
+                {t("whats_new.stamp.release_label")}
+              </span>{" "}
+              {t("whats_new.stamp.release")}
+            </span>
+            <span>
+              <span className="font-semibold text-foreground">
+                {t("whats_new.stamp.highlights_label")}
+              </span>{" "}
+              {t("whats_new.stamp.highlights")}
+            </span>
+            <span>
+              <span className="font-semibold text-foreground">
+                {t("whats_new.stamp.focus_label")}
+              </span>{" "}
+              {t("whats_new.stamp.focus")}
+            </span>
+          </div>
+        </section>
 
-          <section>
-            <h3 className="text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
-              {t("whats_new.history_label")}
-            </h3>
-            <div className="mt-3 flex flex-col gap-2.5">
-              {PAST_RELEASES.map((release) => (
-                <Collapsible
-                  key={release.id}
-                  className="overflow-hidden rounded-lg border bg-card"
+        <section>
+          <h3 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+            {t("whats_new.improvements_label")}
+          </h3>
+          <div className="mt-3 divide-y overflow-hidden rounded-lg border bg-card">
+            <ReleaseSections baseKey="whats_new" sections={RELEASE_SECTIONS} />
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+            {t("whats_new.coming.label")}
+          </h3>
+          <div className="mt-3 divide-y overflow-hidden rounded-lg border bg-card">
+            <ReleaseSections
+              baseKey="whats_new.coming"
+              sections={COMING_SECTIONS}
+            />
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+            {t("whats_new.history_label")}
+          </h3>
+          <div className="mt-3 flex flex-col gap-2.5">
+            {PAST_RELEASES.map((release) => (
+              <Collapsible
+                key={release.id}
+                className="overflow-hidden rounded-lg border bg-card"
+              >
+                <CollapsibleTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="group flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/40"
+                    />
+                  }
                 >
-                  <CollapsibleTrigger
-                    render={
-                      <button
-                        type="button"
-                        className="group flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/40"
-                      />
-                    }
-                  >
-                    <span className="flex flex-col">
-                      <span className="flex flex-wrap items-baseline gap-x-2">
-                        <span className="text-sm font-semibold">
-                          {t(`whats_new.history.${release.id}.title`)}
-                        </span>
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {t(`whats_new.history.${release.id}.release`)}
-                        </span>
+                  <span className="flex flex-col">
+                    <span className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="text-sm font-semibold">
+                        {t(`whats_new.history.${release.id}.title`)}
                       </span>
-                      <span className="mt-0.5 text-xs text-muted-foreground">
-                        {t(`whats_new.history.${release.id}.summary`)}
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {t(`whats_new.history.${release.id}.release`)}
                       </span>
                     </span>
-                    <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[panel-open]:rotate-180" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="border-t">
-                    <div className="divide-y">
-                      <ReleaseSections
-                        baseKey={`whats_new.history.${release.id}`}
-                        sections={release.sections}
-                      />
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              ))}
-            </div>
-          </section>
+                    <span className="mt-0.5 text-xs text-muted-foreground">
+                      {t(`whats_new.history.${release.id}.summary`)}
+                    </span>
+                  </span>
+                  <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[panel-open]:rotate-180" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="border-t">
+                  <div className="divide-y">
+                    <ReleaseSections
+                      baseKey={`whats_new.history.${release.id}`}
+                      sections={release.sections}
+                    />
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            ))}
+          </div>
+        </section>
 
-          <footer className="border-t pt-4 font-mono text-xs text-muted-foreground">
-            {t("whats_new.footer")}
-          </footer>
-        </div>
-      </main>
-    </>
+        <footer className="border-t pt-4 font-mono text-xs text-muted-foreground">
+          {t("whats_new.footer")}
+        </footer>
+      </div>
+    </main>
   );
 }

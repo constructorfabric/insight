@@ -7,7 +7,14 @@ Subcommands:
                sample rows (ClickHouse). Phase 2 — placeholder for now.
     analytics  The catalogue rows no endpoint can create — a
                tenant metric-definition override (MariaDB, analytics database).
-    all        Run every step.
+    gold       Rebuild the dbt gold models only (after persons-seed + sync).
+    all        Run every step (gold is part of silver's build, not repeated).
+
+A bare `silver` / `all` run leaves gold UNRESOLVED and still writes the
+manifest: observations gain rows only once the identity projection is
+refreshed (persons-seed + persons-sync) and gold is rebuilt over it.
+dev-compose.sh's cmd_seed runs all three after the seed; on Kubernetes the
+identity CronJobs and the next gold build do.
 
 Run as a module from the tool directory:
 
@@ -41,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("identity", help="MariaDB identity seed")
     sub.add_parser("silver", help="ClickHouse silver seed")
     sub.add_parser("analytics", help="MariaDB analytics catalogue seed")
+    sub.add_parser("gold", help="rebuild the dbt gold models over the current identity map")
     sub.add_parser("all", help="run every step")
     args = parser.parse_args(argv)
 
@@ -57,6 +65,13 @@ def main(argv: list[str] | None = None) -> int:
     from .preflight import check as preflight_check
 
     preflight_check(steps=steps)
+
+    # A gold rebuild changes no seeded data, so no manifest is written.
+    if args.cmd == "gold":
+        from .silver import run_gold
+
+        run_gold()
+        return 0
 
     seeded: list[str] = []
     catalogue: dict[str, object] | None = None

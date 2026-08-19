@@ -4,8 +4,7 @@ Extracts ChatGPT Team/Enterprise workspace data (seats, per-user chat &
 Codex activity, subscription spend) into the Bronze layer.
 
 **Source**: chatgpt.com web API (`/backend-api/*`) — reached through a
-customer-deployed **browser proxy**, NOT the OpenAI Admin API. See
-[ADR-001](../../../../docs/components/connectors/ai/chatgpt-team/specs/ADR/ADR-001-browser-proxy-architecture.md).
+customer-deployed **browser proxy**, NOT the OpenAI Admin API.
 
 **Auth model**: Insight authenticates to the proxy with a shared bearer
 token (`proxy_auth_token`). The chatgpt.com session and the derived
@@ -13,9 +12,6 @@ access_token live only on the proxy — Insight never sees them.
 
 ## Specification
 
-- **PRD**: [`docs/components/connectors/ai/chatgpt-team/specs/PRD.md`](../../../../docs/components/connectors/ai/chatgpt-team/specs/PRD.md)
-- **DESIGN**: [`docs/components/connectors/ai/chatgpt-team/specs/DESIGN.md`](../../../../docs/components/connectors/ai/chatgpt-team/specs/DESIGN.md)
-- **ADR-001** (browser-proxy architecture): [`specs/ADR/ADR-001-browser-proxy-architecture.md`](../../../../docs/components/connectors/ai/chatgpt-team/specs/ADR/ADR-001-browser-proxy-architecture.md)
 - **Proxy**: `https://gitlab.constr.dev/insight/secure-enclave` → `proxies/chatgpt_team/`
 
 ## Prerequisites

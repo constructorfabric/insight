@@ -160,8 +160,8 @@ export function PeriodSelectorBar({
                     <TooltipTrigger
                       render={
                         <span
-                          className="rounded bg-muted px-1 py-px text-[10px] font-semibold tracking-wider text-muted-foreground uppercase"
-                          aria-label="Dates bucketed by UTC midnight"
+                          className="rounded bg-muted px-1 py-px text-xs font-semibold tracking-wider text-muted-foreground uppercase"
+                          aria-label="Days are counted in UTC"
                           onClick={(e) => e.stopPropagation()}
                         >
                           UTC

@@ -3,7 +3,7 @@
 Person-lookup API over MariaDB `persons`, served by the Rust
 `identity-resolution` service (`src/backend/services/identity-resolution/`).
 Read-only consumer of the observation log written by
-[seed-persons-from-identity-input.py](../../../../src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py)
+[seed-persons-from-identity-input.py](../../../../../src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py)
 and the (forthcoming) reconciliation service.
 
 The specs below were authored for the original .NET implementation and

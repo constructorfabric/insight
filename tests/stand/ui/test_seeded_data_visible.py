@@ -16,8 +16,7 @@ asserted here is an IDENTITY fact read from the manifest at runtime — who the
 person is, and who the roster places under them.
 
 The dashboard coverage checks every KPI and domain card by its visible product
-label. It verifies that seeded domains are populated and that the unseeded Wiki
-domain renders its explicit empty state.
+label, verifying that every seeded domain renders as populated.
 """
 
 from __future__ import annotations
@@ -35,6 +34,7 @@ from .pages.team_view import TeamView
 
 
 @pytest.mark.requires_seed("dev_lead", "development_ic")
+@pytest.mark.reliability
 def test_the_landing_view_shows_the_persona_and_their_reports(
     page: Page,
     base_url: str,
@@ -67,6 +67,7 @@ def test_the_landing_view_shows_the_persona_and_their_reports(
 
 
 @pytest.mark.requires_seed("dev_lead")
+@pytest.mark.versatility
 def test_the_personal_dashboard_renders_every_metric_domain(
     page: Page,
     base_url: str,
@@ -81,26 +82,23 @@ def test_the_personal_dashboard_renders_every_metric_domain(
     view.go(persona.person.uuid)
     expect(view.person_heading(persona.person.display_name)).to_be_visible()
 
+    # The dev lead's first KPI_ROW_MAX (4) observed candidates, in KPI_ROW
+    # order — the row fills its four-column line, later candidates stay off.
     for label in (
         "Issues closed",
         "Focus Time",
         "Pull requests merged",
         "AI active days",
-        "AI-added lines",
     ):
         expect(view.kpi_tile(label)).to_be_visible()
         expect(view.kpi_value(label)).not_to_have_text("—")
 
-    for label in ("Task delivery", "Git output", "Collaboration", "AI adoption"):
+    for label in ("Task delivery", "Git output", "Collaboration", "AI adoption", "Wiki"):
         expect(view.populated_domain_card(label)).to_be_visible()
-
-    wiki = view.empty_domain_card("Wiki")
-    expect(wiki).to_be_visible()
-    expect(wiki.get_by_text("No data", exact=True)).to_be_visible()
-    expect(wiki.get_by_text("No metrics with data for this period.", exact=True)).to_be_visible()
 
 
 @pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
 def test_the_team_view_lists_every_report_the_roster_declares(
     page: Page,
     base_url: str,
@@ -167,16 +165,12 @@ def test_the_team_view_lists_every_report_the_roster_declares(
             "Focus Time",
             "Meeting Hours",
             "AI active days",
+            "Page edits",
         ):
             expect(team.metric_cell(name, metric_label)).to_be_visible()
         expect(team.any_recorded_metric_cell(name)).to_be_visible()
-        expect(team.unrecorded_metric_cell(name, "Page edits")).to_be_visible()
 
-    for label in ("Task delivery", "Git output", "Collaboration", "AI adoption"):
+    for label in ("Task delivery", "Git output", "Collaboration", "AI adoption", "Wiki"):
         card = team.domain_card(label)
         expect(card).to_be_visible()
         expect(card).not_to_contain_text("No metrics with peer data for this period.")
-
-    wiki = team.domain_card("Wiki")
-    expect(wiki).to_be_visible()
-    expect(wiki).to_contain_text("No metrics with peer data for this period.")

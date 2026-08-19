@@ -38,9 +38,8 @@ This directory contains the canonical REST API guidelines for all Insight compon
 ## Enforcement
 
 These guidelines apply to:
-- `docs/components/backend/` — REST API server
-- `docs/components/frontend/` — API client contract
-- `docs/components/connectors/` — connector HTTP interfaces
-- `docs/components/connectors_orchestrator/` — orchestration API
+- `src/backend/` — REST API services
+- `src/frontend/` — API client contract
+- `src/ingestion/connectors/` — connector HTTP interfaces
 
-When proposing changes to these guidelines, follow the [ADR process](../../components/backend/specs/ADR/).
+When proposing changes to these guidelines, open an ADR under `docs/shared/glossary/ADR/`.

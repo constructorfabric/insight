@@ -1,4 +1,5 @@
 import { formatMetricValue } from "@/lib/format";
+import { dropRedundantMetrics } from "@/lib/insight/metric-containment";
 import { MIN_COHORT, quantile } from "@/lib/insight/within-team-peer";
 import {
   forEntity,
@@ -15,6 +16,8 @@ export interface AttentionFlag {
   metricKey: string;
   metricLabel: string;
   kind: FlagKind;
+  /** Which way the number went — adverse either way, so it is not a verdict. */
+  moved: "up" | "down";
   valueText: string;
   reason: string;
   severity: number;
@@ -90,6 +93,8 @@ export function computeAttentionFlags({
     const stats = new Map<
       string,
       {
+        p25: number;
+        p75: number;
         p50: number;
         loFence: number;
         hiFence: number;
@@ -115,6 +120,8 @@ export function computeAttentionFlags({
       const p75 = quantile(sorted, 0.75);
       const iqr = p75 - p25;
       stats.set(c, {
+        p25,
+        p75,
         p50,
         iqr,
         loFence: p25 - 1.5 * iqr,
@@ -146,7 +153,7 @@ export function computeAttentionFlags({
         if (sev != null) {
           out.push({
             personId, name, metricKey: key, metricLabel: label, kind: "collapse",
-            valueText, reason: `no ${label.toLowerCase()} (${cohortLabel} median ${st.medianText})`,
+            moved: "down", valueText, reason: `no ${label.toLowerCase()} — the ${cohortLabel} median is ${st.medianText}`,
             severity: sev,
           });
         }
@@ -162,8 +169,8 @@ export function computeAttentionFlags({
         if (sev != null) {
           out.push({
             personId, name, metricKey: key, metricLabel: label, kind: "outlier",
-            valueText,
-            reason: `${higherIsBetter ? "unusually low" : "unusually high"} · ${cohortLabel} median ${st.medianText}`,
+            moved: higherIsBetter ? "down" : "up", valueText,
+            reason: `${higherIsBetter ? "well below" : "well above"} the ${cohortLabel} median of ${st.medianText}`,
             severity: sev,
           });
         }
@@ -174,7 +181,16 @@ export function computeAttentionFlags({
         if (pv != null && Number.isFinite(pv) && Math.abs(pv) > 1e-9) {
           const change = (v - pv) / Math.abs(pv);
           const adverse = higherIsBetter ? -change : change;
-          if (adverse >= DELTA_MIN) {
+          // A move alone is not attention: over a quarter, a quarter of a
+          // person's own past is ordinary. It counts when it also left them
+          // worse than three quarters of their cohort. Without cohort stats
+          // there is no pack to be outside of, so the move stands on its own.
+          const outOfPack = st
+            ? higherIsBetter
+              ? v < st.p25
+              : v > st.p75
+            : true;
+          if (adverse >= DELTA_MIN && outOfPack) {
             // The trigger stays a percentage of the person's own past — that is
             // the question a decline answers. Severity converts the MOVE into
             // cohort IQRs so it can share a ranking with the other two kinds;
@@ -184,8 +200,8 @@ export function computeAttentionFlags({
             const sev = st ? severityIn(st.scale, moved) : null;
             out.push({
               personId, name, metricKey: key, metricLabel: label, kind: "decline",
-              valueText,
-              reason: `${higherIsBetter ? "down" : "up"} ${Math.round(adverse * 100)}% vs last period`,
+              moved: higherIsBetter ? "down" : "up", valueText,
+              reason: `${higherIsBetter ? "down" : "up"} ${Math.round(adverse * 100)}% from last period`,
               severity: sev ?? adverse,
             });
           }
@@ -200,7 +216,46 @@ export function computeAttentionFlags({
     const cur = best.get(k);
     if (!cur || f.severity > cur.severity) best.set(k, f);
   }
-  return [...best.values()].sort((a, b) => b.severity - a.severity);
+  return thinPerPerson([...best.values()]).sort(
+    (a, b) => b.severity - a.severity,
+  );
+}
+
+/**
+ * Drop flags that restate another flag on the same person.
+ *
+ * Some metrics contain others — lines added contains code lines, files shared
+ * contains its internal and external splits — and one real change trips every
+ * metric of a containing set at once. Left alone, one fact arrives as several
+ * flags: the person appears several times over, and any count of "how many
+ * things are wrong" is really a count of how many ways we measured one thing.
+ *
+ * Thinned per person rather than globally: two people tripping the same pair of
+ * related metrics are two findings, not one.
+ *
+ * Of a contained pair the NARROWER metric survives — the containment helper's
+ * rule, and the right one: "lines added to code files" excludes documentation,
+ * tests and configuration, so it says something "all lines added" cannot.
+ *
+ * Strongest first before thinning, because of several RESTATING metrics the
+ * helper keeps the first it meets — so the flag that survives that case is the
+ * one worth surviving.
+ */
+function thinPerPerson(flags: AttentionFlag[]): AttentionFlag[] {
+  const byPerson = new Map<string, AttentionFlag[]>();
+  for (const f of flags) {
+    const list = byPerson.get(f.personId);
+    if (list) list.push(f);
+    else byPerson.set(f.personId, [f]);
+  }
+  return [...byPerson.values()].flatMap((list) =>
+    dropRedundantMetrics(
+      [...list]
+        .sort((a, b) => b.severity - a.severity)
+        // The containment map is keyed on `key`; flags carry `metricKey`.
+        .map((flag) => ({ key: flag.metricKey, flag })),
+    ).map((item) => item.flag),
+  );
 }
 
 /** "1 person" / "3 people" — a scope of one is a real case (a lead with one report). */
@@ -215,10 +270,61 @@ export function attentionSummary(
   teamSize: number,
 ): string {
   if (flags.length === 0)
-    return `All ${people(teamSize)} are within their usual range this period.`;
-  const byMetric = new Map<string, number>();
-  for (const f of flags) byMetric.set(f.metricLabel, (byMetric.get(f.metricLabel) ?? 0) + 1);
-  const top = [...byMetric.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2);
-  const themes = top.map(([label, n]) => `${label} (${n})`).join(", ");
-  return `${flaggedPeople} of ${people(teamSize)} need a look — most flags on ${themes}.`;
+    return teamSize === 1
+      ? "The one person in scope is in their usual range this period."
+      : `All ${people(teamSize)} are in their usual range this period.`;
+  // Counted in PEOPLE, like the rest of the line. Counting flags here made one
+  // sentence hold two units — "3 of 16 people … most flags on Commits (5)" —
+  // and left a reader to work out that five flags can belong to two people.
+  const byMetric = new Map<string, Set<string>>();
+  for (const f of flags) {
+    const seen = byMetric.get(f.metricLabel) ?? new Set<string>();
+    seen.add(f.personId);
+    byMetric.set(f.metricLabel, seen);
+  }
+  const top = [...byMetric.entries()]
+    .sort((a, b) => b[1].size - a[1].size)
+    .slice(0, 2);
+  const themes = top.map(([label, who]) => `${label} (${people(who.size)})`).join(", ");
+  return `${flaggedPeople} of ${people(teamSize)} ${
+    flaggedPeople === 1 ? "stands" : "stand"
+  } out this period — most often ${themes}.`;
+}
+
+export interface AttentionTheme {
+  metricKey: string;
+  metricLabel: string;
+  /** Flags in this theme, strongest first. */
+  flags: AttentionFlag[];
+  severity: number;
+}
+
+/**
+ * Flags gathered by the metric they are about.
+ *
+ * Sixty people whose meeting hours rose is one fact about the org, not sixty
+ * findings; listed person by person it reads as sixty and hides that it is
+ * one. Themes carrying more people come first, ties broken by the strongest
+ * flag in them.
+ */
+export function groupFlagsByTheme(
+  flags: readonly AttentionFlag[]
+): AttentionTheme[] {
+  const byMetric = new Map<string, AttentionFlag[]>();
+  for (const flag of flags) {
+    byMetric.set(flag.metricKey, [...(byMetric.get(flag.metricKey) ?? []), flag]);
+  }
+  return [...byMetric.entries()]
+    .map(([metricKey, group]) => {
+      const sorted = [...group].sort((a, b) => b.severity - a.severity);
+      return {
+        metricKey,
+        metricLabel: sorted[0]!.metricLabel,
+        flags: sorted,
+        severity: sorted[0]!.severity,
+      };
+    })
+    .sort(
+      (a, b) => b.flags.length - a.flags.length || b.severity - a.severity
+    );
 }

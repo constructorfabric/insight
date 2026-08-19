@@ -186,6 +186,7 @@ mod tests {
 
     use super::restamp as resolution_restamp;
     use super::*;
+    use crate::domain::provenance::Provenance;
 
     fn account(source_type: &str, account_id: &str) -> SourceAccountKey {
         SourceAccountKey {
@@ -199,6 +200,7 @@ mod tests {
         KnownBinding {
             person_id: Uuid::from_u128(person),
             author_person_id: Uuid::nil(),
+            provenance: Provenance::Resolved,
         }
     }
 
@@ -206,6 +208,7 @@ mod tests {
         KnownBinding {
             person_id: Uuid::from_u128(person),
             author_person_id: Uuid::from_u128(0xAD_1119),
+            provenance: Provenance::Resolved,
         }
     }
 

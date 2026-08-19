@@ -30,6 +30,16 @@ const mocks = vi.hoisted(() => ({
   cohort: [] as string[],
 }));
 
+// usePersonSectionStandings now reads source availability from the tenant's
+// definition listing rather than inferring it from an empty comparison pool.
+vi.mock("@/queries/metric-definitions", async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  useMetricDefinitionsResponse: () => ({
+    data: { metrics: [] },
+    isPending: false,
+    isError: false,
+  }),
+}));
 vi.mock("@/queries/metric-results", () => ({
   useMetricCollection: () => mocks.collection,
   useMetricCollectionSet: () => mocks.set,
@@ -128,7 +138,7 @@ beforeEach(() => {
 describe("MetricGroupsView", () => {
   it("renders an honest note when no group is in the semantic layer", () => {
     render(<MetricGroupsView personId="p@x" groupIds={[]} />);
-    expect(screen.getByText(/Not in the semantic layer yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Not available yet for this direction/)).toBeInTheDocument();
   });
 
   it("spins while any group collection is pending", () => {

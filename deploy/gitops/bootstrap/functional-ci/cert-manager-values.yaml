@@ -1,0 +1,29 @@
+##
+## cert-manager — functional K3s smoke overlay.
+##
+## CRDs come from the chart's --set crds.enabled=true at install time, and the
+## gateway-shim is left off because this env programs no Gateway (the
+## inventory's bootstrap.certManagerGatewayShim). This file carries only the
+## runtime overrides; the companion selfsigned-issuer.yaml defines the
+## `local-ca` ClusterIssuer the authenticator's authn-tls cert is signed by.
+##
+## Requests are sized for a single ephemeral GitHub-hosted runner sharing one
+## node with MariaDB, ClickHouse, Redis and the app chart.
+##
+replicaCount: 1
+resources:
+  requests: {cpu: 10m, memory: 32Mi}
+  limits: {cpu: 100m, memory: 128Mi}
+
+webhook:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 128Mi}
+
+cainjector:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 128Mi}
+
+prometheus:
+  enabled: false

@@ -25,6 +25,7 @@ import pytest
 from insight_stand import ApiClient, Manifest, PersonaSession, identity_path
 
 from ..schemas import PersonRole, PersonRoleList, ProblemDocument, Role, RoleList
+from .views import in_force
 
 #: identity's own role, in `person_roles` — NOT `insight_stand.ADMIN_ROLE`,
 #: which is the KEYCLOAK REALM role (`insight-admin`). They are different
@@ -64,11 +65,12 @@ def _active_admin_assignments(client: ApiClient) -> list[PersonRole]:
     return [
         item
         for item in response.parse(PersonRoleList).items
-        if str(item.role_id) == role_id and item.in_force
+        if str(item.role_id) == role_id and in_force(item)
     ]
 
 
 @pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
 def test_a_role_name_already_in_the_catalogue_is_409(
     admin_operator_session: PersonaSession,
 ) -> None:
@@ -98,6 +100,7 @@ def test_a_role_name_already_in_the_catalogue_is_409(
 
 
 @pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
 def test_deleting_a_role_somebody_still_holds_is_refused(
     admin_operator_session: PersonaSession,
 ) -> None:
@@ -119,6 +122,7 @@ def test_deleting_a_role_somebody_still_holds_is_refused(
 
 
 @pytest.mark.requires_seed("admin_operator")
+@pytest.mark.security
 def test_revoking_the_last_active_admin_is_refused(
     admin_operator_session: PersonaSession, stand_manifest: Manifest
 ) -> None:

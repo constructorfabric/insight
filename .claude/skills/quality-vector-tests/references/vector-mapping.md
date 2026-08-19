@@ -1,15 +1,16 @@
-# Vector mapping — which test goes under which quality vector
+# Vector mapping — which scenario goes under which quality vector
 
-Every test belongs to **exactly one** vector. When a test seems to fit two, file it under the vector
-whose *risk* it addresses, or split it into two tests.
+Every scenario belongs to **exactly one** vector. When a scenario seems to fit two, file it
+under the vector whose *risk* it addresses, or split it into two scenarios. The suite a
+scenario lands in is a separate dimension — that's the layer table in SKILL.md.
 
 ## The five vectors and what belongs to each
 
-| Vector | Guiding question | Tests that live here | Common miss |
+| Vector | Guiding question | Scenarios that live here | Common miss |
 |---|---|---|---|
 | **Efficiency** | What does it cost to *run* Insight, and how does it scale? | Reference-org compute footprint (CPU/mem); resource utilization per service/connector; soak tests for resource growth/leaks. Storage is negligible — lead with compute. | Test *coverage* is **not** Efficiency — it's Reliability. Delivery-pipeline speed is an engineering-process signal, not product Efficiency. |
-| **Reliability** | Can the user trust the dashboard — right, current, up? | The **differential/parity gate** (port/migration/consolidation); reconciliation of a number against its evidence; correctness of the headline behavior; data validation; **pagination integrity** (true totals, no duplicates, no omissions); metric-definition loading/precedence/reconcile; fail-clear on invalid/oversized input; source freshness; sync success; **test coverage (unit / API / e2e)** as the leading indicator; service availability. | Don't bury the differential inside a generic "correctness" bullet — it's usually the headline, tag it `main gate`. Pagination gets filed under Efficiency because it involves volume, but "no duplicates, no omissions" is a correctness claim. |
-| **Performance** | How fast at the reference org's scale? | Per-endpoint latency budgets (gate P95, track P99/P999); dashboard page-load via Lighthouse; interactive timing via Playwright. Measure on the **same reference-org fixture** as Efficiency. | No global averages — the data endpoints *are* the product, so budget per metric/endpoint. |
+| **Reliability** | Can the user trust the dashboard — right, current, up? | The **differential/parity gate** (port/migration/consolidation); reconciliation of a number against its evidence; correctness of the headline behavior; data validation; **pagination integrity** (true totals, no duplicates, no omissions); metric-definition loading/precedence/reconcile; fail-clear on invalid/oversized input; source freshness; sync success; **test coverage (unit / API / e2e)** as the leading indicator; service availability. | Don't bury the differential inside a generic "correctness" bullet — it's usually the headline, tag it `*(main gate)*`. Pagination gets filed under Efficiency because it involves volume, but "no duplicates, no omissions" is a correctness claim. |
+| **Performance** | How fast at the reference org's scale? | Per-endpoint latency budgets (gate P95, track P99/P999); dashboard page-load via Lighthouse; interactive timing via Playwright — neither is wired in the repo today, so verify before naming them (SKILL.md step 3). Measure on the **same reference-org fixture** as Efficiency. | No global averages — the data endpoints *are* the product, so budget per metric/endpoint. |
 | **Security** | Is the surface safe? | Static + dependency scanning (Semgrep, Trivy — no critical); authn/authz; no secret/token leak; the security face of tenant isolation; input-validation guards (e.g. SQLi on a filter param). | The *data* face of tenant isolation (does one tenant's data appear for another) can also read as Reliability — pick one and don't double-list. |
 | **Versatility** | How broad is the coverage — across sources, and across the catalog and its surfaces? | Per-source / per-connector coverage (does each source participate correctly?); vendor coverage; API-version currency; connector readiness (bronze→silver→gold, tested); org-chart sync across directory providers; and catalog breadth — every metric resolving across every UI view or surface that should render it. | A connector counts only when production-complete *and tested* — coverage means the metric actually resolves, not just that the connector exists. |
 

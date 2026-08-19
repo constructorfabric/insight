@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -15,7 +16,12 @@ import type {
   MetricDefinitionSchemaStatus,
   MetricDefinition,
 } from "@/api/metric-definitions-client";
+import { IdentitiesView } from "@/components/portal/identities-view";
+import { PlatformUsage } from "@/components/portal/platform-usage";
+import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
+import { WhatsNewBody } from "@/screens/whats-new";
+import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
@@ -25,9 +31,10 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
 };
 
 /**
- * Manage-zone surfaces backed by live data (Metric catalog, Data health).
+ * Manage-zone surfaces (Metric catalog, Data health, Identities, What's new).
  *
- * Both read the **unified** registry (`GET /v1/metric-definitions`) — the set
+ * The two catalog surfaces read the **unified** registry
+ * (`GET /v1/metric-definitions`) — the set
  * of metrics `/v1/metric-results` actually serves. The legacy
  * `/catalog/get_metrics` surface describes a disjoint, pre-catalog key
  * namespace (`*_bullet_rows.*`), so listing it here showed an admin a catalog
@@ -36,15 +43,65 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
 export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
   if (item === "data-health") return <DataHealth />;
+  if (item === "identities")
+    return (
+      <AdminGate>
+        <IdentitiesView />
+      </AdminGate>
+    );
+  if (item === "platform-usage")
+    return (
+      <AdminGate>
+        <PlatformUsage />
+      </AdminGate>
+    );
+  if (item === "whats-new") return <WhatsNewBody />;
   return (
     <div className="mx-auto w-full max-w-md p-8">
-      <ComingSoon
-        variant="card"
-        state="empty"
-        label="Admin surface — not wired yet"
-      />
+      <ComingSoon variant="card" state="empty" label="Not built yet" />
     </div>
   );
+}
+
+/**
+ * The role gate in front of the identity-resolution console. Bookmarks and
+ * pasted URLs land here directly (the nav hides the item, the URL does not),
+ * so a non-admin gets an explicit refusal rather than a broken or empty
+ * screen — and never a flash of the console while the check is in flight.
+ * A FAILED check is a third state: still no console (fail closed), but the
+ * copy says "could not verify" with a retry — telling a real admin to go ask
+ * for a role they already hold would send them chasing a grant that fixes
+ * nothing.
+ */
+function AdminGate({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
+  const { isAdmin, isPending, isError, retry } = useIsAdmin();
+  if (isPending) return <CenteredSpinner />;
+  if (isError) {
+    return (
+      <div className="mx-auto w-full max-w-md p-8">
+        <ComingSoon
+          variant="card"
+          state="error"
+          label={t("identities.gate.unverified")}
+          onRetry={retry}
+        />
+      </div>
+    );
+  }
+  if (!isAdmin) {
+    return (
+      <div className="mx-auto w-full max-w-md p-8" role="alert">
+        <div className="rounded-lg border p-6 text-center">
+          <p className="text-sm font-semibold">{t("identities.gate.title")}</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {t("identities.gate.description")}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return children;
 }
 
 /** Flatten the prefix-grouped query result into one key-sorted list. */
@@ -55,9 +112,14 @@ function useFlatDefinitions() {
       (q.data ?? [])
         .flatMap((g) => g.metrics)
         .sort((a, b) => a.metric_key.localeCompare(b.metric_key)),
-    [q.data],
+    [q.data]
   );
-  return { metrics, isLoading: q.isLoading, isError: q.isError, refetch: q.refetch };
+  return {
+    metrics,
+    isLoading: q.isLoading,
+    isError: q.isError,
+    refetch: q.refetch,
+  };
 }
 
 const DIRECTION_LABEL: Record<MetricDefinition["direction"], string> = {
@@ -79,7 +141,7 @@ function MetricCatalogTable() {
   return (
     <div className="flex flex-col gap-3 p-4 md:p-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Metric catalog</h1>
+        <h1 className="text-lg font-semibold tracking-tight">Metric catalog</h1>
         <p className="text-sm text-muted-foreground">
           {metrics.length} metrics · live from{" "}
           <code className="text-xs">/v1/metric-definitions</code>
@@ -101,7 +163,9 @@ function MetricCatalogTable() {
           <TableBody>
             {metrics.map((m) => (
               <TableRow key={m.metric_key}>
-                <TableCell className="font-mono text-xs">{m.metric_key}</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {m.metric_key}
+                </TableCell>
                 <TableCell>{m.short_label ?? m.label}</TableCell>
                 <TableCell className="text-muted-foreground">
                   {m.unit || "—"}
@@ -158,7 +222,7 @@ function DataHealth() {
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Data health</h1>
+        <h1 className="text-lg font-semibold tracking-tight">Data health</h1>
         <p className="text-sm text-muted-foreground">
           Schema-check status across {metrics.length} metrics
         </p>
@@ -166,11 +230,11 @@ function DataHealth() {
       <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
         {(["ok", "error", "unchecked"] as const).map((s) => (
           <div key={s} className="rounded-lg border bg-card p-4">
-            <div className="text-3xl font-semibold tabular-nums">{counts[s]}</div>
+            <div className={TEXT_FIGURE}>{counts[s]}</div>
             <div
               className={cn(
                 "mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                STATUS_STYLE[s],
+                STATUS_STYLE[s]
               )}
             >
               {s}
@@ -178,7 +242,7 @@ function DataHealth() {
           </div>
         ))}
         <div className="rounded-lg border bg-card p-4">
-          <div className="text-3xl font-semibold tabular-nums">{noData}</div>
+          <div className={TEXT_FIGURE}>{noData}</div>
           <div className="mt-1 inline-flex rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
             no data yet
           </div>

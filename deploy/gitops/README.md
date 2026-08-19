@@ -13,7 +13,6 @@ env directory, fill in `kubeContext` + the rest, swap the
 `scripts/secret-fetch.sh` stub for your password-manager integration
 when you go past sandbox, and you have a working gitops setup.
 
-> The reference design lives in [`../../docs/components/deployment/`](../../docs/components/deployment/).
 > Below is the operator-facing summary; the linked docs go deeper into
 > rationale (DESIGN, PRD, ADR).
 
@@ -31,7 +30,8 @@ deploy/gitops/
 ├── bootstrap/
 │   ├── argo-rbac.yaml.template  # supplemental Argo RBAC; rendered + applied by Makefile
 │   └── local/                   # per-cluster L0 prereqs (one dir per env)
-│       ├── ingress-nginx-values.yaml
+│       ├── envoy-gateway-values.yaml
+│       ├── gateway.yaml         # shared GatewayClass + Gateway (applied at bootstrap)
 │       ├── cert-manager-values.yaml
 │       ├── sealed-secrets-values.yaml
 │       └── selfsigned-issuer.yaml
@@ -70,13 +70,17 @@ and runs each target individually.
 
 | Layer | What | Namespace | Driven by |
 |-------|------|-----------|-----------|
-| L0 | Cluster prereqs (ingress-nginx, cert-manager, sealed-secrets-controller) + the L2/L3 namespaces. | `ingress-nginx`, `cert-manager`, `kube-system` | `make bootstrap ENV=<env>` |
+| L0 | Cluster prereqs (envoy-gateway, cert-manager, sealed-secrets-controller) + the L2/L3 namespaces + the shared `insight` Gateway. | `envoy-gateway-system`, `cert-manager`, `kube-system` | `make bootstrap ENV=<env>` |
 | L2 | Shared stateful infra, one Helm release per service. No top-level chain — each cluster picks which services it self-hosts vs. swaps for managed endpoints. | `insight-infra` | `make system-<svc> ENV=<env>` |
 | L3 | The Insight umbrella chart, app services only. | `insight` | `make deploy ENV=<env>` |
 
 `NS_APP = insight` and `NS_INFRA = insight-infra` on every cluster.
 `ENV` selects the kube-context and the values overlay, **not** the
 namespace.
+
+The cluster entry point is the Envoy data-plane Service that Envoy
+Gateway creates per Gateway in `envoy-gateway-system`, labeled
+`gateway.envoyproxy.io/owning-gateway-name=insight`.
 
 ## Prerequisites
 
@@ -206,11 +210,11 @@ cp environments/local/values.yaml.template    environments/<new>/values.yaml
 #    controllers / L2 services / secrets this env wants, whether it's
 #    protected.
 
-# 3. Edit environments/<new>/values.yaml — hostname, ingress, OIDC,
+# 3. Edit environments/<new>/values.yaml — hostname, routes, OIDC,
 #    image tags, resource requests, etc. for the new cluster.
 
 # 4. Optionally copy bootstrap/local → bootstrap/<new> and adjust if
-#    your cluster needs different ingress/cert-manager/sealed-secrets
+#    your cluster needs different envoy-gateway/cert-manager/sealed-secrets
 #    values. (The bootstrap/<env>/ dir is read by the bootstrap-*
 #    sub-targets; missing = chart defaults.)
 
@@ -326,9 +330,7 @@ real `*.yaml` siblings beside them, safe to commit.
 
 1. The public Insight repo's CI publishes umbrella chart versions to
    `oci://ghcr.io/constructorfabric/charts/insight:<semver>` per merge to
-   `main`. See
-   [`../../docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md`](../../docs/components/deployment/specs/ADR/0001-chart-publishing-on-merge.md)
-   for the contract.
+   `main`.
 2. The `.insight-version` file in this repo pins one semver. Bump it
    to promote a new chart version. The Makefile reads it as
    `INSIGHT_VERSION` and passes `--version $INSIGHT_VERSION` to every
@@ -377,24 +379,38 @@ which solver, which email, prod vs staging). HTTP-01 needs port 80
 reachable from the public internet; DNS-01 works through Cloudflare,
 Route 53, etc.
 
-In `environments/<env>/values.yaml`, annotate the umbrella's Ingress
-blocks to consume it:
+TLS terminates at the shared Gateway. In `bootstrap/<env>/gateway.yaml`,
+annotate the `insight` Gateway and add an https listener that references
+the cert Secret:
 
 ```yaml
-ingress:
-  enabled: true
-  className: nginx
-  host: <fqdn>
+metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod   # or letsencrypt-staging
-  tls:
-    enabled: true
-    secretName: insight-<env>-tls
+spec:
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: <fqdn>
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: insight-<env>-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [insight, insight-infra]
 ```
 
-cert-manager watches `Ingress` objects, sees the annotation, and
-creates a `Certificate` resource which solves the ACME challenge and
-writes the cert into `tls.secretName`.
+cert-manager (installed with `config.enableGatewayAPI=true`) watches
+`Gateway` objects, sees the annotation, and creates a `Certificate`
+resource which solves the ACME challenge and writes the cert into the
+referenced Secret.
 
 ## Pre-commit hook (recommended)
 

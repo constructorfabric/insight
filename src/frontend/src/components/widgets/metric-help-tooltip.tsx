@@ -37,7 +37,7 @@ export function MetricHelpTooltip({ help, children }: MetricHelpTooltipProps) {
         <TooltipContent
           data-testid="metric-help"
           side="top"
-          className="flex-col items-start gap-1.5 text-left leading-relaxed"
+          className="flex-col items-start gap-1.5 text-left text-sm leading-relaxed"
         >
           {help.description ? <p>{help.description}</p> : null}
           {help.explanation ? (

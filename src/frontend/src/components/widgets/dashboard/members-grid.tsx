@@ -54,9 +54,15 @@ import {
   type PeerStatusWithNeutral,
 } from "@/lib/peers";
 import { applyFocusStatus, STATUS_TEXT_CLASS } from "@/lib/status";
+import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import { evidenceSelection } from "@/api/metric-drilldown-client";
-import { useMetricEvidenceOptional } from "@/components/metric-evidence-context";
+import {
+  EvidenceScopeContext,
+  useEvidenceScope,
+  useMetricEvidenceOptional,
+  withOwnTarget,
+} from "@/components/metric-evidence-context";
 
 export interface MembersGridMember {
   /** Canonical person id — keys every metric lookup AND the IC link. */
@@ -74,8 +80,8 @@ export interface MembersGridProps {
   previousByKey?: Map<string, NormalizedMetricResult>;
   /**
    * Optional triage facet: per-member standing counts across ALL groups.
-   * When present each row carries a standing chip (behind / ahead / on par,
-   * the section-card vocabulary) and the grid offers the "Most behind" sort
+   * When present each row carries a standing chip (behind / ahead / near the median,
+   * the section-card vocabulary) and the grid offers the "Furthest behind" sort
    * (the default).
    */
   countsByMember?: Map<string, RankCounts>;
@@ -154,7 +160,7 @@ interface RowShape {
   member: MembersGridMember;
   cells: CellShape[];
   /** Cross-group standing counts when provided, else derived from the row's
-   *  own cells. Drives the chip phrase and the "Most behind" sort. */
+   *  own cells. Drives the chip phrase and the "Furthest behind" sort. */
   counts: RankCounts;
   worstLabel: string | null;
 }
@@ -388,14 +394,14 @@ export function MembersGrid({
                             memberSortActive && "text-foreground"
                           )}
                         >
-                          Member
+                          Person
                           <SortArrow direction={memberDirection} />
                         </button>
                       }
                     />
                     <DropdownMenuContent align="start">
                       <DropdownMenuItem onClick={() => toggleSort("issues")}>
-                        Most behind
+                        Furthest behind
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => toggleSort("name")}>
                         Name
@@ -412,7 +418,7 @@ export function MembersGrid({
                       sort.key === "name" && "text-foreground"
                     )}
                   >
-                    Member
+                    Person
                     <SortArrow direction={directionFor("name")} />
                   </button>
                 )}
@@ -467,7 +473,7 @@ function MemberRow({
 }) {
   const { member, cells, counts, worstLabel } = row;
   // The section-card vocabulary: behind wins over ahead on mixed profiles,
-  // "on par" only when nothing sticks out either way. The chip states the
+  // "near the median" only when nothing sticks out either way. The chip states the
   // count; the tint carries the judgment.
   const chipText = showIssues ? sectionStandingPhrase(counts) : null;
   const chipRank: PeerStatusWithNeutral =
@@ -478,6 +484,14 @@ function MemberRow({
         : counts.top > 0
           ? "top"
           : "in_pack";
+  const rowEvidenceTargets = cells.flatMap((cell) => {
+    if (!cell.col.metric.drilldown) return [];
+    const selection = evidenceSelection(
+      cell.col.metric.selection,
+      member.entityId
+    );
+    return selection ? [{ selection, label: cell.col.label }] : [];
+  });
   return (
     <tr>
       <th
@@ -505,23 +519,25 @@ function MemberRow({
             ) : null}
           </div>
           {showIssues && counts.bottom > 0 && worstLabel ? (
-            <p className="truncate text-[11px] leading-tight text-muted-foreground">
+            <p className="truncate text-xs leading-tight text-muted-foreground">
               worst: {worstLabel}
             </p>
           ) : null}
         </div>
       </th>
-      {cells.map((cell) => (
-        <td key={cell.col.key} className="p-0 align-middle">
-          <GridCell
-            cell={cell}
-            entityId={member.entityId}
-            memberName={member.displayName}
-            cohortLabel={cohortLabel}
-            focusMode={focusMode}
-          />
-        </td>
-      ))}
+      <EvidenceScopeContext.Provider value={rowEvidenceTargets}>
+        {cells.map((cell) => (
+          <td key={cell.col.key} className="p-0 align-middle">
+            <GridCell
+              cell={cell}
+              entityId={member.entityId}
+              memberName={member.displayName}
+              cohortLabel={cohortLabel}
+              focusMode={focusMode}
+            />
+          </td>
+        ))}
+      </EvidenceScopeContext.Provider>
     </tr>
   );
 }
@@ -541,6 +557,7 @@ function GridCell({
 }) {
   const focused = applyFocus(cell.status, focusMode);
   const evidenceContext = useMetricEvidenceOptional();
+  const scope = useEvidenceScope();
   const { col, value, previous, delta, median, observed } = cell;
   const evidence = col.metric.drilldown
     ? evidenceSelection(
@@ -598,7 +615,14 @@ function GridCell({
           <button
             type="button"
             onClick={() => {
-              if (evidence) evidenceContext?.openEvidence(evidence, col.label);
+              if (!evidence) return;
+              evidenceContext?.openEvidenceTargets(
+                withOwnTarget(scope, {
+                  selection: evidence,
+                  label: col.label,
+                }),
+                { activeMetricKey: evidence.metric_key }
+              );
             }}
             aria-label={
               observed
@@ -629,12 +653,7 @@ function GridCell({
         <div className="flex flex-col gap-1">
           <p className="text-sm font-semibold">{col.label}</p>
           <p className="text-xs text-muted-foreground">{memberName}</p>
-          <p
-            className={cn(
-              "mt-2 text-2xl font-semibold tabular-nums",
-              PEER_TEXT[focused]
-            )}
-          >
+          <p className={cn("mt-2", TEXT_FIGURE, "", PEER_TEXT[focused])}>
             {displayWithUnit}
           </p>
           <p className="text-xs text-muted-foreground">
@@ -647,7 +666,7 @@ function GridCell({
                 "Not recorded"
               )
             ) : median == null ? (
-              "No peer data"
+              "No comparison"
             ) : gapText != null ? (
               <>
                 <span className={cn("font-medium", PEER_TEXT[focused])}>
@@ -760,11 +779,11 @@ function ColumnHeader({
 
 function Legend() {
   return (
-    <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-4 px-3 text-xs text-muted-foreground">
       <LegendSwatch className={PEER_FILL.top}>Top 25%</LegendSwatch>
-      <LegendSwatch className={PEER_FILL.in_pack}>On par</LegendSwatch>
+      <LegendSwatch className={PEER_FILL.in_pack}>Near the median</LegendSwatch>
       <LegendSwatch className={PEER_FILL.bottom}>Bottom 25%</LegendSwatch>
-      <LegendSwatch className={PEER_FILL.neutral}>No peer data</LegendSwatch>
+      <LegendSwatch className={PEER_FILL.neutral}>No comparison</LegendSwatch>
     </div>
   );
 }

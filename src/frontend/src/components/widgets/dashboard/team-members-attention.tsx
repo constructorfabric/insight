@@ -57,7 +57,7 @@ export function TeamMembersAttention({
       </h2>
       <Card data-size="sm">
         <CardContent className="flex flex-col gap-2 text-sm">
-          <span className="text-[11px] text-muted-foreground">{subtitle}</span>
+          <span className="text-xs text-muted-foreground">{subtitle}</span>
           <ul className="grid grid-cols-1 gap-x-8 gap-y-1 md:grid-cols-2">
             {attention.map(({ member, belowCount, worstLabel }) => (
               <li key={member.person_id}>
@@ -76,7 +76,7 @@ export function TeamMembersAttention({
                   ) : null}
                   <span
                     className={cn(
-                      "ml-auto shrink-0 font-mono font-bold tabular-nums",
+                      "ml-auto shrink-0 font-mono font-semibold tabular-nums",
                       PEER_TEXT[badStatus],
                     )}
                   >

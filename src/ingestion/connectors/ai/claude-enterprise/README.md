@@ -6,8 +6,6 @@ Authentication: API key with `read:analytics` scope, sent via `x-api-key` header
 
 ## Specification
 
-- **PRD**: [../../../../../docs/components/connectors/ai/claude-enterprise/specs/PRD.md](../../../../../docs/components/connectors/ai/claude-enterprise/specs/PRD.md)
-- **DESIGN**: [../../../../../docs/components/connectors/ai/claude-enterprise/specs/DESIGN.md](../../../../../docs/components/connectors/ai/claude-enterprise/specs/DESIGN.md)
 
 ## Prerequisites
 
@@ -78,7 +76,7 @@ If you don't have a real Enterprise key, set `base_url` to a local stub service 
 | `claude_enterprise_skills` | `GET /v1/organizations/analytics/skills?date=…` | Incremental | `date` | P1D | Cursor |
 | `claude_enterprise_connectors` | `GET /v1/organizations/analytics/connectors?date=…` | Incremental | `date` | P1D | Cursor |
 
-A sixth Bronze table — `claude_enterprise_collection_runs` — is documented in [DESIGN §3.7](../../../../../docs/components/connectors/ai/claude-enterprise/specs/DESIGN.md#37-database-schemas--tables) but is produced by the orchestrator (one row per pipeline run), not by Airbyte. The manifest does not define it as a stream.
+A sixth Bronze table — `claude_enterprise_collection_runs` — was specified but is produced by the orchestrator (one row per pipeline run), not by Airbyte. The manifest does not define it as a stream.
 
 ### Identity Keys
 
@@ -108,8 +106,6 @@ Routing is tag-driven via `dbt_select: "tag:claude-enterprise+"` in `descriptor.
 ## Validation
 
 ```bash
-cfs validate --artifact docs/components/connectors/ai/claude-enterprise/specs/PRD.md
-cfs validate --artifact docs/components/connectors/ai/claude-enterprise/specs/DESIGN.md
 ```
 
 ## Related

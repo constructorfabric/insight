@@ -4,15 +4,16 @@ import { MetricBreakdown } from "@/components/widgets/metric-views/metric-breakd
 import { MetricHistogram } from "@/components/widgets/metric-views/metric-histogram";
 import { MetricSummaryCard } from "@/components/widgets/metric-views/metric-summary-card";
 import { MetricTimeseriesView } from "@/components/widgets/metric-views/metric-timeseries-view";
-import { PeerStory } from "@/components/widgets/metric-views/peer-story";
+import type { ReactNode } from "react";
+
 import type { DateRange } from "@/api/period-to-date-range";
+import { EvidenceScopeContext } from "@/components/metric-evidence-context";
 import type { DrilldownBlock, MetricGroup } from "@/lib/insight/groups";
 import {
   forEntity,
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
-import { buildPeerStoryEntries } from "@/lib/metrics/peer-story";
-import type { PeerCohortLabel } from "@/lib/peers";
+import { collectionEvidenceTargets } from "@/lib/metrics/evidence-targets";
 import type { MetricCollectionResult } from "@/queries/metric-results";
 import { cn } from "@/lib/utils";
 
@@ -21,7 +22,8 @@ export interface CollectionDrilldownProps {
   data: MetricCollectionResult;
   entityId: string;
   range?: DateRange;
-  cohortLabel?: PeerCohortLabel;
+  /** Rendered after the composition blocks — the caller's own answer. */
+  children?: ReactNode;
   className?: string;
 }
 
@@ -63,16 +65,21 @@ function Block({
 }
 
 /**
- * Drilldown body for a metrics-backed group: the def's chart blocks, then
- * the peer story over every collection metric (hero outlier, side cards,
- * chips, supporting fold).
+ * What a group is made of: the def's declared chart, summary, and
+ * distribution blocks for one entity.
+ *
+ * Composition only. What is said ABOUT the numbers — where they stand against
+ * a cohort, what a person actually did — belongs to whoever is rendering the
+ * group, because the answer differs by surface: a drilldown opened from a
+ * card is answering "how do I compare", a section reached from the navigation
+ * is answering "what is this made of".
  */
 export function CollectionDrilldown({
   def,
   data,
   entityId,
   range,
-  cohortLabel = "department",
+  children,
   className,
 }: CollectionDrilldownProps) {
   if (data.isPending) {
@@ -105,7 +112,6 @@ export function CollectionDrilldown({
     );
   }
 
-  const entries = buildPeerStoryEntries(def.collection, data.byKey, entityId);
   // Summary cards get their own wider grid row above the charts;
   // distribution (histogram) charts get their own labeled card below the
   // peer story; everything else pairs into the top chart grid. Filter to
@@ -144,87 +150,95 @@ export function CollectionDrilldown({
     (block): block is Extract<DrilldownBlock, { view: "timeseries" }> =>
       block.view === "timeseries"
   );
+  const scopeTargets = collectionEvidenceTargets(
+    def.drilldown.flatMap((block) => block.metrics),
+    data.byKey,
+    entityId,
+    range
+  );
 
   return (
-    <div
-      className={cn(
-        "flex min-h-full flex-col gap-4 p-4 transition-opacity sm:p-6",
-        data.isFetching && "opacity-60",
-        className
-      )}
-    >
-      {range && timeseries.length > 0 ? (
-        <div className="grid grid-cols-1 gap-4">
-          {timeseries.map((block) => (
-            <MetricTimeseriesView
-              key={block.id}
-              id={block.id}
-              entityId={entityId}
-              range={range}
-              metricKeys={block.metrics}
-              defaultPresentation={block.defaultPresentation}
-              chart={block.chart}
-              groupBy={block.groupBy}
-              table={block.table}
-            />
-          ))}
-        </div>
-      ) : null}
-      {summaryMetrics.length > 0 ? (
-        <div
-          className={cn(
-            "grid grid-cols-1 gap-4 sm:grid-cols-2",
-            summaryMetrics.length > 2 && "xl:grid-cols-4"
-          )}
-        >
-          {summaryMetrics.map((metric) => (
-            <MetricSummaryCard
-              key={metric.metric_key}
-              metric={metric}
-              entityId={entityId}
-            />
-          ))}
-        </div>
-      ) : null}
-      {chartBlocks.length > 0 ? (
-        // Pair charts into two columns; a lone chart spans the full width
-        // rather than leaving an empty column. Blocks return fragments, so
-        // each card is a direct grid item.
-        <div
-          className={cn(
-            "grid grid-cols-1 gap-4",
-            chartBlocks.length > 1 && "lg:grid-cols-2"
-          )}
-        >
-          {chartBlocks.map((block, index) => (
-            <Block
-              key={`${block.view}-${block.chart}-${index}`}
-              block={block}
-              byKey={data.byKey}
-              entityId={entityId}
-            />
-          ))}
-        </div>
-      ) : null}
-      <PeerStory entries={entries} cohortLabel={cohortLabel} />
-      {distributionMetrics.length > 0 ? (
-        // Each histogram is its own card, dropped straight into the grid like
-        // the chart blocks above — no wrapping "Distributions" card.
-        <div
-          className={cn(
-            "grid grid-cols-1 gap-4",
-            distributionMetrics.length > 1 && "lg:grid-cols-2"
-          )}
-        >
-          {distributionMetrics.map((metric) => (
-            <MetricHistogram
-              key={metric.metric_key}
-              metric={metric}
-              entityId={entityId}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
+    <EvidenceScopeContext.Provider value={scopeTargets}>
+      <div
+        className={cn(
+          "flex min-h-full flex-col gap-4 p-4 transition-opacity sm:p-6",
+          data.isFetching && "opacity-60",
+          className
+        )}
+      >
+        {range && timeseries.length > 0 ? (
+          <div className="grid grid-cols-1 gap-4">
+            {timeseries.map((block) => (
+              <MetricTimeseriesView
+                key={block.id}
+                id={block.id}
+                entityId={entityId}
+                range={range}
+                metricKeys={block.metrics}
+                defaultPresentation={block.defaultPresentation}
+                chart={block.chart}
+                groupBy={block.groupBy}
+                table={block.table}
+              />
+            ))}
+          </div>
+        ) : null}
+        {summaryMetrics.length > 0 ? (
+          <div
+            className={cn(
+              "grid grid-cols-1 gap-4 sm:grid-cols-2",
+              summaryMetrics.length > 2 && "xl:grid-cols-4"
+            )}
+          >
+            {summaryMetrics.map((metric) => (
+              <MetricSummaryCard
+                key={metric.metric_key}
+                metric={metric}
+                entityId={entityId}
+              />
+            ))}
+          </div>
+        ) : null}
+        {chartBlocks.length > 0 ? (
+          // Pair charts into two columns; a lone chart spans the full width
+          // rather than leaving an empty column. Blocks return fragments, so
+          // each card is a direct grid item.
+          <div
+            className={cn(
+              "grid grid-cols-1 gap-4",
+              chartBlocks.length > 1 && "lg:grid-cols-2"
+            )}
+          >
+            {chartBlocks.map((block, index) => (
+              <Block
+                key={`${block.view}-${block.chart}-${index}`}
+                block={block}
+                byKey={data.byKey}
+                entityId={entityId}
+              />
+            ))}
+          </div>
+        ) : null}
+        {children}
+        {distributionMetrics.length > 0 ? (
+          // Each histogram is its own card, dropped straight into the grid like
+          // the chart blocks above — no wrapping "Distributions" card.
+          <div
+            className={cn(
+              "grid grid-cols-1 gap-4",
+              distributionMetrics.length > 1 && "lg:grid-cols-2"
+            )}
+          >
+            {distributionMetrics.map((metric) => (
+              <MetricHistogram
+                key={metric.metric_key}
+                metric={metric}
+                entityId={entityId}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </EvidenceScopeContext.Provider>
   );
 }

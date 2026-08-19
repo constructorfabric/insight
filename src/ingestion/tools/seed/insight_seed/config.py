@@ -26,10 +26,14 @@ from pathlib import Path
 #: `identity.py` composes every reason from it rather than spelling it out.
 SEED_REASON_PREFIX = "seed.py "
 
+#: The persons-seed's email-link reason (AUTO_SEED_LINK_REASON): a rebuildable projection, not foreign data.
+PERSONS_SEED_LINK_REASON = "auto-seed-link"
+
 TENANT_ENV = "TENANT_DEFAULT_ID"
 ANALYTICS_DB_ENV = "MARIADB_ANALYTICS_DB"
 IDENTITY_DB_ENV = "MARIADB_DB"
 CROSS_TENANT_FIXTURE_ENV = "SEED_CROSS_TENANT_FIXTURE"
+SERVICE_PRINCIPALS_ENV = "SEED_SERVICE_PRINCIPALS"
 FORCE_ENV = "SEED_FORCE"
 ANCHOR_ENV = "SEED_ANCHOR_DATE"
 MANIFEST_PATH_ENV = "SEED_MANIFEST_PATH"
@@ -167,6 +171,17 @@ def cross_tenant_fixture_enabled(env: Mapping[str, str]) -> bool:
     tenant-mismatch guard, which then aborts every scheduled projection run.
     """
     return parse_flag(env, CROSS_TENANT_FIXTURE_ENV, default=True)
+
+
+def service_principals_reachable(env: Mapping[str, str]) -> bool:
+    """Whether a test runner can exchange an assertion for a service principal.
+
+    True by default, because compose publishes the authenticator's token
+    listener on the host. A stand that keeps that listener in-cluster turns it
+    off, and the S2S tests skip on the capability instead of failing against an
+    address that answers nothing.
+    """
+    return parse_flag(env, SERVICE_PRINCIPALS_ENV, default=True)
 
 
 def force_enabled(env: Mapping[str, str]) -> bool:

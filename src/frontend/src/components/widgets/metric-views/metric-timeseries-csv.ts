@@ -4,29 +4,13 @@ import {
   metricTimeseriesFilename,
 } from "@/components/widgets/metric-views/metric-timeseries-export";
 import type { MetricTimeseriesModel } from "@/components/widgets/metric-views/metric-timeseries-model";
-
-type CsvValue = string | number | null | undefined;
+import { csvCell } from "@/lib/export/matrix";
 
 const BUCKET_HEADER = {
   day: "Day",
   week: "Week",
   month: "Month",
 } as const;
-
-function stringValue(value: string): string {
-  return /^[\t\r ]*[=+\-@]/.test(value) ? `'${value}` : value;
-}
-
-function csvCell(value: CsvValue): string {
-  if (value == null) return "";
-  const raw =
-    typeof value === "number"
-      ? Number.isFinite(value)
-        ? String(value)
-        : ""
-      : stringValue(value);
-  return /[",\r\n]/.test(raw) ? `"${raw.replaceAll('"', '""')}"` : raw;
-}
 
 function columnHeader(
   model: MetricTimeseriesModel,

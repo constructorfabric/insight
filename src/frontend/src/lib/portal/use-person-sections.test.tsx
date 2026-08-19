@@ -14,11 +14,19 @@ import { GROUPS } from "@/lib/insight/groups";
 import { normalizeMetricResults } from "@/lib/metrics/collection";
 
 const mocks = vi.hoisted(() => ({
+  definitions: [] as unknown[],
+  definitionsPending: false,
   byKey: new Map<string, unknown>(),
   isPending: false,
   cohort: [] as string[],
 }));
 
+vi.mock("@/queries/metric-definitions", () => ({
+  useMetricDefinitionsResponse: () => ({
+    data: { metrics: mocks.definitions },
+    isPending: mocks.definitionsPending,
+  }),
+}));
 vi.mock("@/queries/metric-results", () => ({
   useMetricCollectionSet: () =>
     new Map(
@@ -59,7 +67,8 @@ const ME = "019e27bc-dec0-7626-81a9-c5524662a6a9";
 function metric(
   key: string,
   value: number | null,
-  median: number
+  median: number,
+  n = 9
 ): MetricResult {
   return {
     metric_key: key,
@@ -81,7 +90,7 @@ function metric(
             p75: median + 2,
             min: 0,
             max: median + 5,
-            n: 9,
+            n,
           },
         ],
       },
@@ -117,7 +126,61 @@ describe("usePersonSectionStandings", () => {
     mocks.byKey = normalizeMetricResults([metric("git.commits", null, 20)]);
     const git = standings().find((s) => s.id === "git_output")!;
     expect(git.hasData).toBe(false);
-    expect(git.phrase).toBe("no peer data");
+    expect(git.phrase).toBe("no comparison");
+  });
+
+  it("separates a section this person is absent from one nobody is measured in", () => {
+    // Both arrive as a null own value, and the page says different things
+    // about them. Which one is true is read from the tenant's definition
+    // listing, never from whether this viewer's comparison pool happens to
+    // hold readings: a viewer who can see few people would otherwise report a
+    // live connector as missing, and the smaller their reach the more often.
+    mocks.byKey = normalizeMetricResults([metric("git.commits", null, 20)]);
+
+    mocks.definitions = [
+      {
+        metric_key: "git.commits",
+        is_enabled: true,
+        schema_status: "ok",
+        schema_error_code: null,
+        last_observed_date: "2026-07-26",
+      },
+    ];
+    expect(standings().find((s) => s.id === "git_output")!.peersHaveData).toBe(
+      true
+    );
+
+    // Same person, same empty own value — only the listing changed.
+    mocks.definitions = [
+      {
+        metric_key: "git.commits",
+        is_enabled: true,
+        schema_status: "ok",
+        schema_error_code: null,
+        last_observed_date: null,
+      },
+    ];
+    expect(standings().find((s) => s.id === "git_output")!.peersHaveData).toBe(
+      false
+    );
+  });
+
+  it("does not call a section unmeasured because this viewer's pool is empty", () => {
+    // The regression this replaced: an empty pool used to mean "no data
+    // reaches us". It now means nothing at all — the listing decides.
+    mocks.byKey = normalizeMetricResults([metric("git.commits", null, 20, 0)]);
+    mocks.definitions = [
+      {
+        metric_key: "git.commits",
+        is_enabled: true,
+        schema_status: "ok",
+        schema_error_code: null,
+        last_observed_date: "2026-07-26",
+      },
+    ];
+    expect(standings().find((s) => s.id === "git_output")!.peersHaveData).toBe(
+      true
+    );
   });
 
   it("stays pending while the queries are, so the nav shows no mark yet", () => {
@@ -132,5 +195,18 @@ describe("usePersonSectionStandings", () => {
     // would silently lose its mark — asserting the whole set, in order, is
     // what catches that.
     expect(standings().map((s) => s.id)).toEqual(GROUPS.map((g) => g.id));
+  });
+});
+
+describe("while the definition listing is still loading", () => {
+  it("claims nothing about any section", () => {
+    // Without the listing the reachable set is empty, so every section would
+    // read as one nothing reaches — the page would tell a reader we see
+    // nothing about this person, then flip a moment later. Pending has to
+    // cover the listing too, not just the metric collection.
+    mocks.definitionsPending = true;
+    mocks.byKey = normalizeMetricResults([metric("git.commits", null, 20)]);
+    expect(standings().every((s) => s.isPending)).toBe(true);
+    mocks.definitionsPending = false;
   });
 });

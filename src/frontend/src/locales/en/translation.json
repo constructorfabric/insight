@@ -58,7 +58,8 @@
       "expand": "Expand",
       "try_again": "Try again",
       "reload": "Reload",
-      "retry": "Retry"
+      "retry": "Retry",
+      "cancel": "Cancel"
     },
     "ui_components": {
       "sidebar": {
@@ -83,7 +84,10 @@
       "team_summary": "Team summary",
       "attention": "Attention needed",
       "members": "Members"
-    }
+    },
+    "copy": "Copy",
+    "copied": "Copied",
+    "copy_failed": "Unable to copy"
   },
   "theme": {
     "light": "Light",
@@ -395,6 +399,164 @@
       "empty": "The metric returned no values.",
       "entity_column": "entity_id",
       "value_column": "value"
+    }
+  },
+  "identities": {
+    "title": "Identities",
+    "subtitle": "Who each account belongs to — review what the resolver could not decide, and correct what it did.",
+    "rates": {
+      "decisions": "Needs a decision",
+      "decisions_hint": "Accounts waiting for you. This is the queue below — the only number here you can act on.",
+      "observed": "Observed",
+      "observed_hint": "Every account a connector currently reports, closed ones excluded.",
+      "bound": "Bound to a person",
+      "bound_hint": "The account belongs to a person. Its activity counts towards them.",
+      "pending": "Unbound · has an address",
+      "pending_hint": "Waiting for the resolver, not for you: an address is present, so the next run binds it. Only the contested ones reach the queue.",
+      "no_evidence": "Unbound · nothing to match on",
+      "no_evidence_hint": "No address, so automation has no key to match on. Only an operator can bind these — they are in the queue.",
+      "excluded": "Excluded",
+      "excluded_hint": "Declared not a person — a bot, CI or service account. Dropped from every person metric."
+    },
+    "kind": {
+      "contested": "Contested — more than one person claims the account",
+      "binding_conflict": "Binding conflicts — evidence disagrees with the current binding",
+      "provisioned_at_login": "Given a person at first sign-in — not yet confirmed",
+      "minted_from_roster": "Added from the roster without an address — not yet confirmed",
+      "no_evidence": "No address to match on — only an operator can bind these",
+      "other": "Needs review"
+    },
+    "queue": {
+      "load_failed": "Unable to load the review queue",
+      "items_truncated": "Only the first accounts needing review are listed — resolve these and reload to see the rest.",
+      "truncated": "The evidence read hit its cap — these counts and this queue cover only part of the observed accounts, not the whole tenant.",
+      "empty_title": "Everything is resolved",
+      "empty_description": "Every observed account is bound to a person. New conflicts will appear here.",
+      "show_more_one": "Show {{count}} more case",
+      "show_more_other": "Show {{count}} more cases",
+      "case_count_one": "{{count}} case · {{accounts}} accounts",
+      "case_count_other": "{{count}} cases · {{accounts}} accounts",
+      "filter_placeholder": "Filter by address, source, person or person id…",
+      "no_matches": "Nothing matches those terms",
+      "no_matches_description": "Clear the filter to see the whole queue.",
+      "previous_case": "‹ Previous account",
+      "next_case": "Next account ›",
+      "reports_to": "reports to {{manager}}",
+      "bound_to": "held by {{name}}",
+      "case_people_one": "{{count}} person",
+      "case_people_other": "{{count}} people",
+      "case_accounts_one": "{{count}} account",
+      "case_accounts_other": "{{count}} accounts"
+    },
+    "detail": {
+      "not_found": "This account is unknown — the link may be stale.",
+      "load_failed": "Unable to load the account",
+      "current_binding": "Currently bound to",
+      "unbound": "Nobody — the account is unresolved.",
+      "candidates": "Candidates",
+      "history": "Decision history",
+      "no_history": "No decisions recorded yet.",
+      "copy_account_id": "Copy the account id"
+    },
+    "person": {
+      "terminated": "terminated",
+      "unnamed": "Unnamed person",
+      "copy_id": "Copy the person id",
+      "provisional": "provisional — created by automation, not confirmed"
+    },
+    "history": {
+      "bind": "Bound",
+      "merge": "Merged",
+      "detach": "Detached",
+      "exclude": "Excluded",
+      "automatic": "Automatic",
+      "to": "to",
+      "by_operator": "by an operator",
+      "login_bootstrap": "First sign-in",
+      "roster_mint": "Added from the roster",
+      "by": "by",
+      "by_name": "by {{name}}",
+      "accounts_touched_one": "{{count}} account in this call",
+      "accounts_touched_other": "{{count}} accounts in this call",
+      "call": "the call"
+    },
+    "actions": {
+      "bind": "Bind",
+      "confirm": "Confirm",
+      "merge": "Merge…",
+      "merge_confirm": "Merge persons",
+      "detach": "Detach into a new person",
+      "detach_confirm": "Detach",
+      "exclude": "Exclude (bot / CI)",
+      "exclude_confirm": "Exclude",
+      "assign_other": "Assign to someone else",
+      "assign_person": "Assign to a person"
+    },
+    "dialogs": {
+      "bind_title": "Bind this account?",
+      "confirm_title": "Confirm the current binding?",
+      "bind_description": "This account moves to {{name}}. Its activity counts towards them from here on — another bind moves it back.",
+      "merge_title": "Merge two persons?",
+      "merge_description": "Every account of {{source}} moves to {{target}}. Merging back is another merge — nothing is lost, but metrics re-attribute.",
+      "merge_preview_loading": "Counting the accounts that would move…",
+      "merge_preview_failed": "Could not count the accounts that would move.",
+      "merge_preview_one": "{{count}} account moves:",
+      "merge_preview_other": "{{count}} accounts move:",
+      "merge_preview_more": "…and {{count}} more.",
+      "detach_title": "Detach into a new person?",
+      "detach_description": "A new person is created holding this account alone.",
+      "exclude_title": "Exclude this account?",
+      "exclude_description": "Bots, CI and service accounts are excluded from every person metric. Reversible: binding the account to a person later brings it back.",
+      "failed": "The correction was not applied. Try again.",
+      "confirm_description": "The binding does not change. This records that you decided it, not the resolver, and takes the account off the queue.",
+      "detach_away_from": "Its activity stops counting towards {{name}}."
+    },
+    "outcomes": {
+      "applied_one": "{{count}} applied",
+      "applied_other": "{{count}} applied",
+      "already_decided_one": "{{count}} already decided",
+      "already_decided_other": "{{count}} already decided",
+      "refused_one": "{{count}} refused",
+      "refused_other": "{{count}} refused",
+      "new_person": "New person:"
+    },
+    "picker": {
+      "placeholder": "Search people by name, email, handle or person id…",
+      "no_matches": "Nobody matches those terms.",
+      "failed": "Search failed. Try again.",
+      "load_more": "Show more people",
+      "loading_more": "Loading…"
+    },
+    "gate": {
+      "title": "Identities is an admin surface",
+      "description": "Managing identity resolution needs the administrator role. Ask an existing administrator to grant it if this is part of your job.",
+      "unverified": "Could not verify the administrator role"
+    },
+    "modes": {
+      "queue": "Review queue",
+      "person": "A person and their accounts",
+      "accounts": "An account and whose it is"
+    },
+    "person_accounts": {
+      "accounts": "Accounts bound to this person",
+      "no_accounts": "No account is bound to this person.",
+      "by_operator": "decided by an operator",
+      "by_automation": "bound automatically",
+      "open": "Open",
+      "load_failed": "Unable to load this person’s accounts",
+      "back": "‹ Back to the roster"
+    },
+    "accounts": {
+      "placeholder": "Find an account by address, handle, id or observed name…",
+      "no_matches": "No observed account carries that",
+      "unbound": "bound to nobody",
+      "failed": "Account search failed. Try again.",
+      "none_observed": "Nothing to list here yet",
+      "none_observed_description": "Accounts appear once a connector reports them. If you expected some, the identity build may not have run yet.",
+      "no_matches_description": "Only accounts a connector has seen can be found here.",
+      "load_more": "Show more accounts",
+      "loading_more": "Loading…",
+      "excluded": "excluded — bot / CI"
     }
   }
 }

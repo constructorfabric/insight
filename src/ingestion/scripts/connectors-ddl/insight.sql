@@ -18,6 +18,56 @@ ORDER BY (insight_tenant_id, insight_source_type, insight_source_id, source_acco
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.ai_cost_metric_evidence
+(
+    `tenant_id` String,
+    `source_key` String,
+    `entity_type` String,
+    `entity_id` String,
+    `source_entity_id` String,
+    `metric_date` Date,
+    `observed_at` Nullable(DateTime64(3)),
+    `measure_key` String,
+    `record_id` String,
+    `record_kind` String,
+    `granularity` String,
+    `record_label` String,
+    `contribution` Nullable(Float64),
+    `subject_key` Nullable(String),
+    `dimensions` Array(Tuple(
+        key String,
+        value String,
+        label Nullable(String))),
+    `details` Map(String, String)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(metric_date)
+ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_date, record_id)
+SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.ai_cost_metric_observations
+(
+    `tenant_id` String,
+    `source_key` String,
+    `entity_type` String,
+    `entity_id` String,
+    `metric_date` Date,
+    `observed_at` Nullable(DateTime64(3)),
+    `measure_key` String,
+    `value` Nullable(Float64),
+    `subject_key` Nullable(String),
+    `dimensions` Array(Tuple(
+        key String,
+        value String,
+        label Nullable(String)))
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(metric_date)
+ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_date)
+SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.ai_metric_evidence
 (
     `tenant_id` String,

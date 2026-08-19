@@ -10,8 +10,11 @@ models:
       CONTRACT — activity invariant: a row exists ONLY when the person had real
       activity with the tool that day. Every staging model in the
       silver:class_ai_dev_usage tag must gate emission on a source-appropriate
-      activity signal (cursor: isActive=true; claude-team: status='active';
-      claude-enterprise/copilot/chatgpt-team: activity-counter filters).
+      activity signal (cursor: isActive=true;
+      claude-team/claude-enterprise/copilot/chatgpt-team: activity-counter
+      filters). Seat lifecycle state is NOT an activity signal: it describes
+      the seat as of the last read, so gating on it deletes the history of
+      whoever left — carry it in seat_status instead.
       Downstream consumers (insight.ai_metric_observations active_day) rely on
       row existence and must NOT re-derive activity from counters.
     columns:
@@ -62,14 +65,26 @@ models:
                 values: ['cursor', 'claude_code', 'copilot', 'windsurf', 'codex']
       - name: conversation_count
         description: >
-          Dev-tool conversations/threads on this day, populated ONLY by
-          connectors whose source actually reports them (Claude Code sessions,
-          Codex threads). Structural NULL where the source has no conversation
-          concept (Cursor, Copilot) — never a synthetic marker. Gold
-          dev_conversations sums this column with no tool filter; a connector
-          opts in by mapping the column.
+          Dev-tool conversations/threads on this day — the metric-feed column
+          Gold dev_conversations sums with no tool filter. A connector opts in
+          by mapping it; structural NULL where the source has no conversation
+          concept (Cursor) — never a synthetic marker.
+
+          For the dev-agent tools the vendors do not report conversations
+          separately: one session or thread IS the unit of conversation, so
+          claude_code and codex connectors map their session/thread counter
+          here and the value equals session_count on those rows. That is the
+          intended mapping, not a duplication to collapse — the two columns
+          hold different concepts that coincide for these sources, and they do
+          NOT coincide on class_ai_assistant_usage, where chat reports
+          conversations and the office surfaces report sessions.
       - name: session_count
-        description: "Sessions recorded on this day. For Cursor: 1 per active day (Cursor only exposes an is-active flag, not session counts)."
+        description: >
+          Sessions recorded on this day. For Cursor: 1 per active day (Cursor
+          only exposes an is-active flag, not session counts). Contract and
+          data-quality column only — it feeds the activity guard, and no Gold
+          measure or metric reads it. The conversations metric reads
+          conversation_count.
         tests:
           - not_null
       - name: lines_added
@@ -171,99 +186,15 @@ models:
         description: "When the record was collected"
         tests:
           - not_null
-
-  - name: class_ai_api_usage
-    description: >
-      Unified programmatic AI API / token usage across Anthropic Admin and
-      future OpenAI. Grain: per (workspace, model, api_key, day) for Admin;
-      per (project, model, day) for OpenAI. email=NULL by design — API key
-      authentication cannot be attributed to individual users at request time;
-      per-user attribution is restored in Silver Step 2 (Identity Resolution)
-      via api_key_id → person_id mapping.
-
-      Human ↔ assistant interaction (chat, cowork, office) lives in the sibling
-      class_ai_assistant_usage class — those domains do not expose token-level
-      metering and have a different grain (per email × day × surface).
-    columns:
-      - name: insight_tenant_id
-        description: "Tenant isolation field"
-        tests:
-          - not_null
-      - name: source_id
-        description: "Connector instance identifier"
-        tests:
-          - not_null
-      - name: unique_key
+      - name: seat_status
         description: >
-          Composite dedup key. Format varies per staging model:
-          claude_admin → tenant-source-ws:{workspace}-day-anthropic-api-{model}-{api_key}-{tier}-{ctx}
-          (finer grain than the documented tenant+workspace+day+provider+channel
-          because messages_usage Bronze is grouped by model/api_key/tier/ctx).
-        tests:
-          - not_null
-          - unique
-      - name: email
-        description: >
-          Always NULL — programmatic API usage cannot be attributed to a user
-          at request time because API keys are the only identifier the provider
-          sees. Per-user attribution is restored in Silver Step 2 (Identity
-          Resolution) by mapping `api_key_id` to `person_id` via identity.aliases —
-          viable when the organisation provisions one API key per developer
-          (common practice).
-      - name: api_key_id
-        description: >
-          API key identifier. Identity proxy resolved to person_id in Silver Step 2.
-      - name: workspace_id
-        description: "Anthropic workspace identifier. Admin-specific."
-      - name: day
-        description: "Calendar date of usage (UTC)"
-        tests:
-          - not_null
-      - name: provider
-        description: "AI provider"
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['anthropic', 'openai']
-      - name: channel
-        description: >
-          Channel discriminator — only 'api' for now. Programmatic API calls
-          via API keys (Admin messages_usage; future OpenAI multi-modal
-          surfaces). Human ↔ assistant interaction surfaces (chat / cowork /
-          office) live in class_ai_assistant_usage, not here.
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['api']
-      - name: input_tokens
-        description: "Uncached input + cache read + cache creation."
-      - name: output_tokens
-      - name: cache_read_tokens
-      - name: cache_creation_tokens
-        description: "cache_creation_5m_tokens + cache_creation_1h_tokens."
-      - name: cost_amount
-        description: >
-          Monetary cost. NULL in MVP for both sources — future enrichment via
-          claude_admin_cost_report JOIN for API rows.
-      - name: cost_currency
-        description: "Currency for cost_amount. NULL in MVP."
-      - name: source
-        description: "Staging-model discriminator: 'claude_admin' | future sources"
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ['claude_admin', 'claude_playwright', 'openai', 'openai_platform']
-      - name: data_source
-        description: "Framework source discriminator."
-        tests:
-          - not_null
-      - name: collected_at
-        description: "When the record was collected"
-        tests:
-          - not_null
+          Vendor seat / licence state as reported at the LAST read, lower-cased
+          ('active', 'deactivated', …). Not a property of `day`: sources restate
+          it on every read of their rolling window, so a person whose seat is
+          deactivated today carries the new value on every historical row.
+          Populated by Claude Team only (`status`); NULL where the source has no
+          seat lifecycle concept. Reaches gold as the seat_status dimension.
+          Never use it as an emission filter — see the activity invariant above.
 
   - name: class_ai_assistant_usage
     description: >
@@ -401,6 +332,41 @@ models:
         tests:
           - not_null
 
+  - name: class_ai_invoice
+    description: >
+      Unified vendor invoice lines — the invoiced layer, as opposed to
+      consumption priced at vendor rates (class_ai_dev_usage) or spend against a
+      seat's ceiling (class_ai_overage). Grain: one row per (tenant, source,
+      invoice, line). Amounts in minor units + ISO currency. seat_unit_cents is
+      the per-seat price the vendor stated, NULL wherever a line prices no seat.
+    columns:
+      - name: unique_key
+        tests:
+          - not_null
+          - unique
+      - name: insight_tenant_id
+        tests:
+          - not_null
+      - name: tool
+        tests:
+          - not_null
+      - name: chain_status
+        description: "'ok' | 'failed' | 'unparsable_url' — how far the enrichment got for the invoice this line belongs to"
+        tests:
+          - not_null
+      - name: currency
+        tests:
+          - not_null
+      - name: period_month
+        tests:
+          - not_null
+      - name: source
+        tests:
+          - not_null
+      - name: _version
+        tests:
+          - not_null
+
   - name: class_ai_overage
     description: >
       Unified per-person per-month AI spend-vs-limit (overage) across vendors.
@@ -478,7 +444,8 @@ models:
       - name: overage_metrics_json
         description: >
           Raw vendor-specific extras kept out of the positional contract.
-          Claude Team: limit_type / used_credits_basis / out_of_credits / seat_tier.
+          Claude Team: limit_type / used_credits_basis / out_of_credits /
+          seat_tier / disabled_reason / disabled_until / account_name.
       - name: source
         description: "Staging-model discriminator."
         tests:

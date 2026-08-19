@@ -29,6 +29,8 @@ import type { TeamMember } from "@/types/insight";
 import { useCohortLabel } from "@/lib/portal/use-cohort-label";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { useMemberGridData } from "@/queries/member-grid";
+import { TEXT_FIGURE } from "@/lib/type-scale";
+import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
 
@@ -195,7 +197,7 @@ export function TeamStateView() {
     memberCount: members.length,
     gridPending: grid.isPending,
     gridError: grid.isError,
-    emptyLabel: "No people in the current scope — pick a different scope in the topbar.",
+    emptyLabel: "No people in the current scope. Pick a different scope at the top of the page.",
     onRetry: () => {
       orgScope.refetch();
       grid.refetch();
@@ -208,7 +210,7 @@ export function TeamStateView() {
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">
+        <h1 className="text-lg font-semibold tracking-tight">
           {teamName ? `${teamName}'s team` : "Team"}
         </h1>
         <p className="text-sm text-muted-foreground">
@@ -223,7 +225,7 @@ export function TeamStateView() {
             <Card key={s.key}>
               <CardContent className="p-4">
                 <div className="text-xs font-medium text-muted-foreground">{s.label}</div>
-                <div className="mt-1 text-2xl font-semibold tabular-nums">{s.text}</div>
+                <div className={cn("mt-1", TEXT_FIGURE)}>{s.text}</div>
                 <div className="text-xs text-muted-foreground">{s.kind}</div>
               </CardContent>
             </Card>
@@ -235,9 +237,6 @@ export function TeamStateView() {
       <AttentionList
         flags={flags}
         summary={attentionSummary(flags, flaggedPeople, members.length)}
-        peopleLabel={
-          flags.length > 0 ? `${flaggedPeople} of ${members.length} people` : undefined
-        }
       />
 
       {/* Detailed scan */}
@@ -256,7 +255,7 @@ export function TeamStateView() {
               metricKeys={shownKeys}
               byKey={heatByKey}
               previousByKey={grid.previousByKey}
-              caption={`${teamName || "Team"} — members × metrics`}
+              caption={`${teamName || "Team"} — people × metrics`}
               cohortLabel={cohortLabel}
             />
           </CardContent>

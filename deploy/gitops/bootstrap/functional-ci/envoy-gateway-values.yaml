@@ -1,0 +1,15 @@
+##
+## envoy-gateway — functional K3s smoke overlay.
+##
+## Envoy Gateway creates a LoadBalancer Service per Gateway; on k3s the
+## built-in servicelb (klipper) implements it, which is what the workflow's
+## `--port 8080:80@loadbalancer` mapping reaches.
+##
+## Requests are sized for a single ephemeral GitHub-hosted runner sharing one
+## node with MariaDB, ClickHouse, Redis and the app chart.
+##
+deployment:
+  envoyGateway:
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 512Mi}

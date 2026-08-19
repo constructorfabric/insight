@@ -66,7 +66,7 @@ beforeEach(() => vi.resetAllMocks());
 describe("MetricDetail", () => {
   it("shows a load error when the metric fails to fetch", async () => {
     vi.mocked(metricsClient.getCustomMetric).mockRejectedValue(
-      new Error("boom")
+      new Error("request failed")
     );
     renderDetail();
     expect(

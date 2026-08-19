@@ -1,6 +1,6 @@
 //! Create `metric_catalog` — product-owned semantic metadata for one `metric_key`.
 //!
-//! Refs #519. Schema source: `docs/domain/metric-catalog/specs/DESIGN.md` §3.7
+//! Refs #519.
 //! (`cpt-metric-cat-dbtable-metric-catalog`).
 //!
 //! CHECK constraint names below are load-bearing: the startup probe in

@@ -2,7 +2,7 @@
 {{ config(
     materialized='table',
     schema='staging',
-    tags=['github_directory', 'silver']
+    tags=['github-directory', 'silver']
 ) }}
 
 -- Field-level change log of the GitHub member profile, derived from the

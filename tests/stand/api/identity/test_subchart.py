@@ -40,6 +40,7 @@ from insight_stand import (
 
 from ..schemas import ProblemDocument, Subchart, SubchartForest
 from ..scratch import UNKNOWN_ID
+from .views import forest_emails, walk
 
 #: Caller-derived org subchart — takes no person argument, so what comes back
 #: identifies whoever the session belongs to. 401 anonymous (swept in
@@ -59,6 +60,7 @@ def _forest(session: PersonaSession) -> SubchartForest:
     return response.parse(SubchartForest)
 
 
+@pytest.mark.reliability
 def test_subchart_is_200_with_a_session(lead_session: PersonaSession) -> None:
     """Same url the gateway sweep refuses anonymously; a session is the only
     difference — and the roots rule out "there was nothing there".
@@ -66,6 +68,8 @@ def test_subchart_is_200_with_a_session(lead_session: PersonaSession) -> None:
     assert _forest(lead_session).roots, "the authenticated subchart carried no roots"
 
 
+@pytest.mark.security
+@pytest.mark.stand_smoke
 def test_the_session_belongs_to_the_persona_who_logged_in(lead_session: PersonaSession) -> None:
     """A session that authenticates as somebody else is worse than none.
 
@@ -75,8 +79,14 @@ def test_the_session_belongs_to_the_persona_who_logged_in(lead_session: PersonaS
     on that node — is the whole chain confirming it landed on the intended
     human: Keycloak authenticated them, the authenticator mapped the token to a
     person, and identity found that person in the seeded roster.
+
+    Marked `stand_smoke`: this is the post-deploy gate's "a seeded persona can
+    actually log in" check. `lead_session` drives the real OIDC chain against
+    Keycloak to obtain the session in the first place, so a login that cannot
+    complete fails here at fixture setup, before this test's own assertion
+    ever runs.
     """
-    nodes = [node for root in _forest(lead_session).roots for node in root.walk()]
+    nodes = [node for root in _forest(lead_session).roots for node in walk(root)]
     mine = [node for node in nodes if node.email == lead_session.email]
     assert len(mine) == 1, (
         f"the caller-derived org chart for {lead_session.name} contains "
@@ -89,6 +99,7 @@ def test_the_session_belongs_to_the_persona_who_logged_in(lead_session: PersonaS
     )
 
 
+@pytest.mark.security
 def test_org_visibility_scope_differs_by_persona(
     realm_admin_session: PersonaSession,
     lead_session: PersonaSession,
@@ -116,9 +127,9 @@ def test_org_visibility_scope_differs_by_persona(
         "the realm admin and the lead resolved to the same persona"
     )
 
-    admin_view = _forest(realm_admin_session).emails()
-    lead_view = _forest(lead_session).emails()
-    member_view = _forest(member_session).emails()
+    admin_view = forest_emails(_forest(realm_admin_session))
+    lead_view = forest_emails(_forest(lead_session))
+    member_view = forest_emails(_forest(member_session))
 
     assert member_view == set(), (
         f"a plain member sees {sorted(member_view)} in the org chart; expected nothing"
@@ -134,6 +145,7 @@ def test_org_visibility_scope_differs_by_persona(
 
 
 @pytest.mark.requires_seed("dev_lead", "sales_lead")
+@pytest.mark.security
 def test_two_leads_of_different_teams_see_different_people(
     session_for: Callable[[str], PersonaSession],
 ) -> None:
@@ -146,7 +158,7 @@ def test_two_leads_of_different_teams_see_different_people(
     dev, sales = session_for("dev_lead"), session_for("sales_lead")
     assert dev.person.team != sales.person.team
 
-    dev_view, sales_view = _forest(dev).emails(), _forest(sales).emails()
+    dev_view, sales_view = forest_emails(_forest(dev)), forest_emails(_forest(sales))
 
     assert dev_view and sales_view, "expected both leads to see somebody"
     assert dev_view != sales_view, (
@@ -173,6 +185,7 @@ def _subtree(session: PersonaSession, person_uuid: str) -> Subchart:
     return response.parse(Subchart)
 
 
+@pytest.mark.reliability
 def test_subchart_of_self_is_200(lead_session: PersonaSession) -> None:
     """Distinct from the forest: this route takes an explicit person.
 
@@ -184,6 +197,7 @@ def test_subchart_of_self_is_200(lead_session: PersonaSession) -> None:
     assert subtree.root.email == lead_session.email
 
 
+@pytest.mark.reliability
 def test_subchart_of_a_visible_report_is_200(
     lead_session: PersonaSession, stand_manifest: Manifest
 ) -> None:
@@ -192,6 +206,7 @@ def test_subchart_of_a_visible_report_is_200(
     assert str(_subtree(lead_session, report.uuid).root.person_id) == report.uuid
 
 
+@pytest.mark.security
 def test_subchart_of_someone_out_of_scope_is_404_not_403(
     lead_session: PersonaSession, stand_manifest: Manifest
 ) -> None:
@@ -221,6 +236,7 @@ def test_subchart_of_someone_out_of_scope_is_404_not_403(
     )
 
 
+@pytest.mark.reliability
 def test_subchart_of_an_unknown_person_is_404(lead_session: PersonaSession) -> None:
     response = lead_session.client.get(f"{SUBCHART_OF}/{UNKNOWN_ID}")
     assert response.status_code == 404, f"status={response.status_code} {response.text[:300]}"

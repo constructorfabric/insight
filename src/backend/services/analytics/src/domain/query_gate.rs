@@ -9,6 +9,7 @@
 
 use sqlparser::ast::Statement;
 use sqlparser::dialect::ClickHouseDialect;
+use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Token, Tokenizer};
 
@@ -55,8 +56,7 @@ const DENIED_TABLE_FUNCTIONS: &[&str] = &[
 /// Reject anything that is not a single read statement (`SELECT`/`WITH`).
 /// Returns a short, user-facing reason on rejection.
 pub fn validate_single_select(sql: &str) -> Result<(), String> {
-    let statements = Parser::parse_sql(&ClickHouseDialect {}, sql)
-        .map_err(|e| format!("query must be a single SELECT statement: {e}"))?;
+    let statements = parse_read_statements(sql)?;
 
     match statements.as_slice() {
         [] => Err("query is empty".to_owned()),
@@ -86,6 +86,66 @@ pub fn validate_custom_observation_sql(sql: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+// WORKAROUND: sqlparser (through 0.62) rejects ClickHouse's `FINAL` table
+// modifier when it follows a table alias, so a parse failure is retried with
+// the standalone `FINAL` keyword tokens blanked out. Only the retry input is
+// altered — the SQL that reaches ClickHouse keeps its `FINAL`.
+fn parse_read_statements(sql: &str) -> Result<Vec<Statement>, String> {
+    let rejection = match Parser::parse_sql(&ClickHouseDialect {}, sql) {
+        Ok(statements) => return Ok(statements),
+        Err(e) => format!("query must be a single SELECT statement: {e}"),
+    };
+
+    let Some(stripped) = strip_final_modifiers(sql) else {
+        return Err(rejection);
+    };
+    Parser::parse_sql(&ClickHouseDialect {}, &stripped).map_err(|_| rejection)
+}
+
+/// Rewrite `sql` with `FINAL` tokens in table-modifier position removed.
+/// The tokenizer classifies keywords context-free, so an unquoted column or
+/// alias named `final` also carries `Keyword::FINAL`; a table modifier is told
+/// apart by what precedes it — a table name, alias, or closing paren — while
+/// an identifier follows `SELECT`, a comma, a dot, an operator, or a clause
+/// keyword. Returns `None` when the SQL has no such token (or cannot be
+/// tokenized), so the caller retries the parse only when `FINAL` could have
+/// been the reason it failed.
+fn strip_final_modifiers(sql: &str) -> Option<String> {
+    let tokens = Tokenizer::new(&ClickHouseDialect {}, sql).tokenize().ok()?;
+
+    let mut stripped = String::with_capacity(sql.len());
+    let mut found = false;
+    let mut previous: Option<&Token> = None;
+    for token in &tokens {
+        if matches!(token, Token::Whitespace(_)) {
+            stripped.push_str(&token.to_string());
+            continue;
+        }
+        if is_final_keyword(token) && previous.is_some_and(ends_table_factor) {
+            found = true;
+            previous = Some(token);
+            continue;
+        }
+        stripped.push_str(&token.to_string());
+        previous = Some(token);
+    }
+
+    found.then_some(stripped)
+}
+
+fn is_final_keyword(token: &Token) -> bool {
+    matches!(token, Token::Word(word)
+        if word.keyword == Keyword::FINAL && word.quote_style.is_none())
+}
+
+fn ends_table_factor(token: &Token) -> bool {
+    match token {
+        Token::Word(word) => word.quote_style.is_some() || word.keyword == Keyword::NoKeyword,
+        Token::RParen => true,
+        _ => false,
+    }
 }
 
 /// Return the first denied table-function name called in `sql`, if any. A call
@@ -159,6 +219,36 @@ mod tests {
         // merely shares the name is not a table function.
         assert!(custom("SELECT file FROM gold.events").is_ok());
         assert!(custom("SELECT value AS url FROM gold.events").is_ok());
+    }
+
+    #[test]
+    fn accepts_final_on_a_replacing_merge_tree_read() {
+        for sql in [
+            "SELECT a FROM silver.t FINAL",
+            "SELECT a FROM silver.t AS r FINAL",
+            "SELECT a FROM silver.t r FINAL WHERE a > 1",
+            "SELECT a FROM silver.a AS x FINAL JOIN gold.b AS y FINAL USING (id)",
+            "WITH d AS (SELECT a FROM silver.t AS r FINAL) SELECT * FROM d",
+            "SELECT final FROM silver.t AS r FINAL",
+            "SELECT a, final FROM silver.t AS r FINAL WHERE final > 1",
+            "SELECT r.final FROM silver.t AS r FINAL GROUP BY final",
+        ] {
+            assert!(check(sql).is_ok(), "should accept FINAL read: {sql:?}");
+            assert!(custom(sql).is_ok(), "custom gate should accept: {sql:?}");
+        }
+    }
+
+    #[test]
+    fn final_as_a_plain_identifier_still_parses() {
+        assert!(check("SELECT final FROM gold.events").is_ok());
+        assert!(check("SELECT `final` AS f FROM gold.events").is_ok());
+    }
+
+    #[test]
+    fn final_does_not_relax_the_gate() {
+        assert!(check("SELECT a FROM t AS r FINAL; DROP TABLE t").is_err());
+        assert!(check("SELECT a FROM t AS r FINAL b").is_err());
+        assert!(custom("SELECT * FROM remote('h:9000', db.t) AS r FINAL").is_err());
     }
 
     #[test]

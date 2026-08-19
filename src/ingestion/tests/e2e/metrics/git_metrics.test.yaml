@@ -21,11 +21,17 @@ bronze:
     - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-dave, sha: hash-dave, additions: 40, deletions: 8}
     - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-erin, sha: hash-erin, additions: 50, deletions: 10}
   bronze_github.pull_requests:
-    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-alice, database_id: 1, number: 1, author_login: alice, author_email: alice@example.com, closed_at: "2026-10-01T09:00:00Z", merge_commit_sha: merge-alice, additions: 10}
-    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bob, database_id: 2, number: 2, author_login: bob, author_email: bob@example.com, closed_at: "2026-10-01T10:00:00Z", merge_commit_sha: merge-bob, additions: 20}
-    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-carol, database_id: 3, number: 3, author_login: carol, author_email: carol@example.com, closed_at: "2026-10-01T11:00:00Z", merge_commit_sha: merge-carol, additions: 30}
-    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-dave, database_id: 4, number: 4, author_login: dave, author_email: dave@example.com, closed_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-dave, additions: 40}
-    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-erin, database_id: 5, number: 5, author_login: erin, author_email: erin@example.com, closed_at: "2026-10-01T13:00:00Z", merge_commit_sha: merge-erin, additions: 50,}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-alice, id: 1, number: 1, author_login: alice, closed_at: "2026-10-01T09:00:00Z", merged_at: "2026-10-01T09:00:00Z", merge_commit_sha: merge-alice}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bob, id: 2, number: 2, author_login: bob, closed_at: "2026-10-01T10:00:00Z", merged_at: "2026-10-01T10:00:00Z", merge_commit_sha: merge-bob}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-carol, id: 3, number: 3, author_login: carol, closed_at: "2026-10-01T11:00:00Z", merged_at: "2026-10-01T11:00:00Z", merge_commit_sha: merge-carol}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-dave, id: 4, number: 4, author_login: dave, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-dave}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-erin, id: 5, number: 5, author_login: erin, closed_at: "2026-10-01T13:00:00Z", merged_at: "2026-10-01T13:00:00Z", merge_commit_sha: merge-erin}
+  bronze_github.pull_request_diff_stats:
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-alice, pull_number: 1, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-bob, pull_number: 2, additions: 20, author_email: bob@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-carol, pull_number: 3, additions: 30, author_email: carol@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-dave, pull_number: 4, additions: 40, author_email: dave@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-erin, pull_number: 5, additions: 50, author_email: erin@example.com}
 
 cases:
   - name: Unified Git metrics

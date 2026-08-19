@@ -104,7 +104,7 @@ describe("MetricGroupCard", () => {
       screen.getByText("No metrics with data for this period."),
     ).toBeInTheDocument();
     // The badge would only restate the absence — one message, not two.
-    expect(screen.queryByText("no peer data")).not.toBeInTheDocument();
+    expect(screen.queryByText("no comparison")).not.toBeInTheDocument();
     // Nothing to drill into — the card is not an interactive button.
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
@@ -161,7 +161,7 @@ describe("MetricGroupCard", () => {
       />,
     );
     // No metric is scorable → no rankable peers.
-    expect(screen.getByText("no peer data")).toBeInTheDocument();
+    expect(screen.getByText("no comparison")).toBeInTheDocument();
   });
 
   it("scores measured people against quartiles", () => {

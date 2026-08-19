@@ -25,8 +25,8 @@ type: application
 # version    — packaging version of the chart. Bump on EVERY chart change.
 # appVersion — product version. Matches the image tag of all insight-* images.
 # Release pipeline: git tag v0.1.0 → version=0.1.0, appVersion="0.1.0".
-version: 0.5.103
-appVersion: "2026.08.08.04.55-3b24bf9"
+version: 0.5.185
+appVersion: "2026.08.19.03.50-d739d34"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/constructorfabric/insight
 sources:
@@ -92,6 +92,14 @@ dependencies:
     version: "0.1.0"
     repository: "file://../../src/backend/services/identity-resolution/helm"
     condition: identityResolution.deploy
+  # Clone-based git extraction for the nocode git connectors. Consumed ONLY by
+  # Airbyte connector pods — no gateway route, absent from platform-config, and
+  # its own NetworkPolicy closes ingress to everything else.
+  - name: insight-git-cli-proxy
+    alias: gitCliProxy
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/git-cli-proxy/helm"
+    condition: gitCliProxy.deploy
   # Frontend SPA. Conditional: the gateway serves it at "/", but the backend
   # (/api/*) is fully usable without it (the gateway's front upstream resolves
   # lazily), so a backend-only bring-up can run frontend.deploy=false.

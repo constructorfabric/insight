@@ -243,7 +243,7 @@ preflight_k8s() {
   # Block helm v4.2.1 — known --wait regression that hangs the full
   # --timeout on every fast hook-resource deletion. Trips bootstrap-*
   # and system-* steps that use `before-hook-creation` lifecycle hooks
-  # (ingress-nginx admission, cert-manager startupapicheck, etc.).
+  # (envoy-gateway certgen, cert-manager startupapicheck, etc.).
   # See helm/helm#32214; #32230 is the proposed revert. Pin to v4.2.0
   # or v3.x until v4.2.2+ ships.
   if command -v helm >/dev/null 2>&1; then
@@ -550,15 +550,15 @@ write_k8s_local() {
   # ── L0 cluster prereqs pre-flight ────────────────────────────────
   #
   # bootstrap-* targets call `helm upgrade --install`, which fails if a
-  # matching resource already exists but isn't Helm-managed (OrbStack
-  # ships its own ingress-nginx, k3s sometimes ships traefik+klipper, a
+  # matching resource already exists but isn't Helm-managed (a prior
+  # manual Envoy Gateway install, k3s sometimes ships traefik+klipper, a
   # shared sandbox cluster might have cert-manager from another stack,
   # etc). For each controller, probe the cluster, show what's there,
   # and let the operator decide whether to skip our install. No silent
   # reconfig — if the operator wants to install anyway and it fails,
   # the Makefile aborts with helm's own error and they can clean up.
   echo "--- L0 cluster prereqs (preflight) ---" >&2
-  local l0_ingress_nginx=true l0_cert_manager=true l0_sealed_secrets=true
+  local l0_envoy_gateway=true l0_cert_manager=true l0_sealed_secrets=true
   _check_l0_controller() {
     local label="$1" ns="$2" release="$3" probe_kind="$4" probe_name="$5"
     local found_present=false found_helm=false
@@ -586,7 +586,7 @@ write_k8s_local() {
     echo "    OK — bootstrap will proceed; clean up the existing install manually if helm refuses." >&2
     return 0
   }
-  _check_l0_controller "ingress-nginx"      ingress-nginx ingress-nginx            sa     ingress-nginx           || l0_ingress_nginx=false
+  _check_l0_controller "envoy-gateway"      envoy-gateway-system envoy-gateway     sa     envoy-gateway           || l0_envoy_gateway=false
   _check_l0_controller "cert-manager"       cert-manager  cert-manager             deploy cert-manager            || l0_cert_manager=false
   _check_l0_controller "sealed-secrets"     kube-system   sealed-secrets-controller deploy sealed-secrets-controller || l0_sealed_secrets=false
   echo "" >&2
@@ -623,7 +623,7 @@ write_k8s_local() {
   # ── Write inventory.yaml ─────────────────────────────────────────
   cp "$inventory_tmpl" "$inventory_out"
   yq -i ".kubeContext = \"$kube_ctx\"" "$inventory_out"
-  yq -i ".bootstrap.ingressNginx  = $l0_ingress_nginx"  "$inventory_out"
+  yq -i ".bootstrap.envoyGateway  = $l0_envoy_gateway"  "$inventory_out"
   yq -i ".bootstrap.certManager   = $l0_cert_manager"   "$inventory_out"
   yq -i ".bootstrap.sealedSecrets = $l0_sealed_secrets" "$inventory_out"
   yq -i ".system.airbyte         = $sys_airbyte"          "$inventory_out"

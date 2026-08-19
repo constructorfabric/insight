@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from "react";
+import { recordUsageEvent } from "@/telemetry";
 
 import {
   resolveDateRange,
@@ -44,6 +45,7 @@ export function usePortalPeriod(): {
 
   const setPeriod = useCallback(
     (next: PeriodValue) => {
+      recordUsageEvent("period", next);
       // Remember the choice as the default for a link that names no period,
       // then put it in the URL where it belongs.
       writePeriodPreference(next);
@@ -58,6 +60,7 @@ export function usePortalPeriod(): {
       // URL validator follows (degrade to the preset) has to hold here too.
       // The picker does its own validation and keeps its own message.
       if (range && !validateDateRange(range).valid) return;
+      recordUsageEvent("period", range ? "custom" : "preset");
       setSearch({ from: range?.from, to: range?.to });
     },
     [setSearch],

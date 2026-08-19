@@ -166,7 +166,14 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
   metrics: [
     {
       key: "git.commits",
-      views: [{ view: "period" }, { view: "peer" }],
+      // The forge split is asked for so the section can name what it was
+      // watching. One breakdown per class is enough for that line, and this
+      // is the metric every git source reports.
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["source"] },
+      ],
     },
     {
       key: "git.prs_merged",
@@ -225,7 +232,8 @@ const COLLABORATION_COLLECTION: MetricCollectionConfig = {
       key: "collab.channel_posts",
       views: [{ view: "period" }, { view: "peer" }],
     },
-    { key: "collab.dm_ratio", views: [{ view: "period" }, { view: "peer" }] },
+    // DM Ratio is off until #2577 — the value it reports is wrong.
+    // { key: "collab.dm_ratio", views: [{ view: "period" }, { view: "peer" }] },
     {
       key: "collab.msgs_per_active_day",
       views: [{ view: "period" }, { view: "peer" }],

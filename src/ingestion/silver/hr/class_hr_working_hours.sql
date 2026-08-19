@@ -1,4 +1,3 @@
--- depends_on: {{ ref('workday__working_hours') }}
 -- depends_on: {{ ref('bamboohr__working_hours') }}
 
 {{ config(

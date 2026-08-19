@@ -20,6 +20,9 @@ from .pages.keycloak_login_page import KeycloakLoginPage
 from .pages.landing_page import LandingPage
 from .pages.login_page import LoginPage
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 
 def _cookie_failure(page: Page, origin: str, found: list[Cookie]) -> str:
     """Explain a missing session cookie, including the usual cause.
@@ -36,9 +39,10 @@ def _cookie_failure(page: Page, origin: str, found: list[Cookie]) -> str:
     if not page.evaluate("window.isSecureContext"):
         lines.append(
             f"{origin} is not a trustworthy origin in this browser, so a "
-            f"{SESSION_COOKIE_NAME} cookie can never be stored. Run the container in "
-            "the gateway's network namespace (--network container:insight-gateway) "
-            "with INSIGHT_STAND_BASE_URL pointing at localhost:<gateway port>."
+            f"{SESSION_COOKIE_NAME} cookie can never be stored. Point "
+            "INSIGHT_STAND_BASE_URL at an https stand, or at localhost:<gateway port> "
+            "for compose — a containerised runner joins the gateway's network "
+            "namespace (--network container:insight-gateway) to reach it."
         )
     return "\n".join(lines)
 

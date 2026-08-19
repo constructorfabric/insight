@@ -35,7 +35,7 @@ class TeamView:
         return self.page.get_by_role("heading").filter(has_text=display_name).first
 
     def metrics_overview(self) -> Locator:
-        return self.page.get_by_text(re.compile(r"^Members . metrics$"))
+        return self.page.get_by_text(re.compile(r"^People . metrics$"))
 
     def member_row(self, display_name: str) -> Locator:
         """That member's row in the team table.

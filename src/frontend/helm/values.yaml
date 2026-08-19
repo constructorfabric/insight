@@ -11,11 +11,25 @@ service:
   type: ClusterIP
   port: 80
 
-ingress:
-  enabled: true
-  className: nginx
-  annotations: {}
+# Standalone installs only. Do not enable together with the gateway's route
+# on the same Gateway and host: both match PathPrefix "/", and the older
+# route wins the Gateway API tie-break.
+route:
+  enabled: false
+  parentRef:
+    name: insight
+    namespace: insight-infra
+    # Target listener on the Gateway (e.g. https). Empty = all listeners.
+    sectionName: ""
   host: ""
+  annotations: {}
+
+sentry:
+  # Sentry origin the SPA posts to, e.g. "https://sentry.example.com".
+  # Empty leaves it out of the CSP, which blocks every event.
+  connectSrc: ""
+  # DSN the SPA reads from /config.js at load. Empty disables reporting.
+  dsn: ""
 
 resources:
   requests:

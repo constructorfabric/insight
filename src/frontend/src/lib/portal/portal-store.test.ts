@@ -32,6 +32,17 @@ describe("portal preferences", () => {
     expect(window.localStorage.getItem("insight.portal")).toBe("true");
   });
 
+  it("enabled defaults ON when the key is absent", async () => {
+    const { readPortalEnabled } = await import("./portal-store");
+    expect(readPortalEnabled()).toBe(true);
+  });
+
+  it("an explicit opt-out is what the router reads back", async () => {
+    window.localStorage.setItem("insight.portal", "false");
+    const { readPortalEnabled } = await import("./portal-store");
+    expect(readPortalEnabled()).toBe(false);
+  });
+
   it("show-planned defaults ON when the key is absent", () => {
     window.localStorage.removeItem("insight.portal.showPlanned");
     const { result } = renderHook(() => usePortalShowPlanned());
@@ -72,7 +83,7 @@ describe("blocked storage", () => {
       });
     try {
       const { readPortalEnabled } = await import("./portal-store");
-      expect(readPortalEnabled()).toBe(false);
+      expect(readPortalEnabled()).toBe(true);
     } finally {
       getItem.mockRestore();
     }

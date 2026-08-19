@@ -118,5 +118,3 @@ secret:
     - <key1>
     - <key2>
 ```
-
-References: `docs/components/airbyte-toolkit/specs/ADR/0011-cdk-prebuilt-images.md`, `docs/components/airbyte-toolkit/specs/feature-reconcile/FEATURE.md` (DoD `cpt-insightspec-dod-reconcile-cdk-image-required`).

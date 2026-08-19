@@ -6,25 +6,27 @@ name: E2E — Compose stand
 # exercises the in-process ingestion rig and now carries one blocking gate
 # (metric coverage) — that workflow is untouched by this one.
 #
-# Nothing here compiles the backend. `test-stand up` pulls analytics,
-# authenticator, identity-resolution and gateway at their charts' appVersions;
-# building them cost ~26 min per job, twice over (host binaries, then again
-# inside each image). A PR that DOES touch the backend is refused by `up`
-# rather than silently tested against main's images.
+# Nothing here builds by default: `test-stand up` pulls the frontend and the
+# four backend services at their charts' appVersions, which name main's build.
+# A ref that changes one of those trees has to build it or the lane reports on
+# code it never ran. `up` guards that, but the guard needs origin/main and these
+# lanes clone at depth 1 — so `changes` decides instead, per tree, and the lanes
+# pass --build-backend and --build-frontend independently.
 #
-# Two independently-reporting checks, split by what they need rather than by
-# what they cover:
+# INVARIANT: Both lane checks report independently from one stand lifecycle.
 #
-#   api-smoke    tests/stand/api — 257 HTTP contract tests, plus the harness's
-#                own 16 (tests/stand/meta) and the coverage gate. No browser.
-#   ui-journeys  tests/stand/ui  — 10 browser journeys, run inside the
-#                published ui-tests image.
+#   api-smoke    tests/stand/api — 267 HTTP contract tests, plus the harness's
+#                own 17 (tests/stand/meta) and the coverage gate. No browser.
+#   ui-journeys  tests/stand/ui  — the browser journeys, run host-side from
+#                the checkout on every event, so the ref's own test code is
+#                what executes.
 #
-# Neither is required on its own. The `Stand E2E` umbrella below is the check
-# meant to be required in branch protection, and the whole workflow is a
-# merge-queue gate rather than a per-push one: on pull_request every job here
-# skips (branch protection counts a skipped job as a pass), and the lanes run
-# once per queue batch on merge_group. Wall-clock and flake history are in
+# Neither is required on its own; `Stand E2E` below is the one stable context
+# for branch protection. The workflow starts on every pull request so that
+# required context always reports; the cheap `changes` job decides whether the
+# two stand lanes need to run. Relevant changes run on the pull request, once
+# per queue batch on merge_group, nightly, and on dispatch. Superseded PR runs
+# are cancelled by the concurrency group. Wall-clock and flake history are in
 # .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
 #
 # Every stand operation goes through ./dev-compose.sh test-stand — never the
@@ -36,11 +38,9 @@ name: E2E — Compose stand
 on:
   pull_request:
     branches: [main]
-    # Deliberately NO `paths:` filter, even though every job below skips on
-    # pull_request: a required check whose workflow never triggers at all
-    # reports as pending forever and would block queue entry, while a
-    # triggered run whose jobs all skip counts as a pass. The trigger must
-    # therefore keep firing on every PR — it just costs no runner time.
+    # Deliberately NO `paths:` filter. This workflow emits the required
+    # `Stand E2E` check, and GitHub leaves a required check whose workflow never
+    # ran pending forever. Relevance is decided by the cheap `changes` job.
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit
   # merge_group, and a required check must report there or every queued PR
   # times out and is evicted.
@@ -68,20 +68,15 @@ concurrency:
 
 permissions:
   contents: read
-  packages: read # pulls insight-frontend (via compose) and insight-ui-tests
-
-env:
-  # Built and published by build-images.yml's ui-tests job. Pulled here, never
-  # built: a workflow that builds its own runner tests the runner it just built
-  # rather than the one a developer would pull.
-  UI_TESTS_IMAGE: ghcr.io/constructorfabric/insight-ui-tests:latest
+  packages: read # pulls the pinned service images (via compose)
 
 jobs:
   # Stages 2 (CI stand) and 3 (E2E stand) are meant to add a target to
   # `resolve-target` below rather than copy this file.
   # ─── changes ──────────────────────────────────────────────────────────────
-  # What the `on: paths:` filter used to do, moved into a job so the workflow
-  # ALWAYS runs and the umbrella below can always report.
+  # What an `on: paths:` filter would have done, moved into a job so the
+  # workflow always runs and the required umbrella below always reports. The
+  # same filter also covers events such as merge_group that support no paths.
   #
   # `src/backend/**` is in the list, and its absence was the reason making this
   # required would have gated nothing that matters: the endpoint contracts this
@@ -89,14 +84,13 @@ jobs:
   # has to run the stand or the gate is decorative.
   changes:
     name: changes
-    # Not on pull_request: the stand gates the merge queue, not every push.
-    # Skipping here cascades — every downstream job skips with it, and a
-    # skipped job satisfies the required check on the PR.
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
+      # One per buildable tree; the lanes turn each into its own --build-* flag.
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,21 +102,47 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          # No base to diff against (merge_group without one, or a manual run):
-          # assume relevant rather than skipping a gate on a guess.
-          if [ -z "${BASE:-}" ]; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-            echo "no base sha — running"
+          emit() { # emit <relevant> <backend> <frontend>
+            printf 'relevant=%s\nbackend=%s\nfrontend=%s\n' "$1" "$2" "$3" >> "$GITHUB_OUTPUT"
+            echo "relevant=$1 backend=$2 frontend=$3"
+          }
+          # Match pull_request path-filter semantics: compare the branch from
+          # its merge base, not from the current base-branch tip. A two-dot diff
+          # would attribute unrelated commits that landed on main after this
+          # branch forked to the pull request and run the stand unnecessarily.
+          #
+          # No base means a schedule or a dispatch: nothing to filter, so it
+          # runs either way and the comparison only decides what to build.
+          forced=false
+          if [ -n "${BASE:-}" ]; then
+            base_point="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || true)"
+          else
+            forced=true
+            base_point="$(git rev-parse --verify --quiet origin/main || true)"
+            echo "no base sha — running, and comparing against origin/main to decide what to build"
+          fi
+          # No comparison point: build both rather than pin on a comparison that
+          # was never made.
+          if [ -z "$base_point" ]; then
+            echo "no comparison point — running the stand and building the product"
+            emit true true true
             exit 0
           fi
-          changed="$(git diff --name-only "$BASE" "$HEAD")"
-          echo "$changed" | sed 's/^/  /'
-          if echo "$changed" | grep -qE '^(tests/(stand|lib)/|tests/pyproject\.toml|tests/uv\.lock|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/helm/|docs/components/backend/.*/openapi\.json|\.github/workflows/e2e-stand\.yml|\.github/workflows/scripts/redact-playwright-trace\.py)'; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          changed="$(git diff --name-only "$base_point" "$HEAD")"
+          printf '  %s\n' "${changed//$'\n'/$'\n  '}"
+          relevant="$forced"
+          backend=false
+          frontend=false
+          if echo "$changed" | grep -qE '^(tests/|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/|docs/components/backend/.*/openapi\.json|\.github/workflows/e2e-stand\.yml|\.github/workflows/scripts/redact-playwright-trace\.py)'; then
+            relevant=true
+          elif [ "$forced" = true ]; then
+            echo "nothing the stand covers changed — running anyway, this event has no pull request to filter"
           else
-            echo "relevant=false" >> "$GITHUB_OUTPUT"
             echo "nothing the stand covers changed"
           fi
+          if echo "$changed" | grep -q '^src/backend/'; then backend=true; fi
+          if echo "$changed" | grep -q '^src/frontend/'; then frontend=true; fi
+          emit "$relevant" "$backend" "$frontend"
 
   resolve-target:
     name: resolve-target
@@ -141,7 +161,7 @@ jobs:
           REQUESTED: ${{ inputs.target }}
         run: |
           set -euo pipefail
-          TARGET="${REQUESTED:-compose}"
+          TARGET="${REQUESTED:-compose}" # RULE-DEFAULTS-OK: compose is the workflow's only declared target.
           if [ "$TARGET" != "compose" ]; then
             echo "::error::unsupported target '$TARGET' — only 'compose' is implemented"
             exit 1
@@ -154,25 +174,28 @@ jobs:
   # image. `--ignore` rather than a path argument: `test-stand test` always
   # passes `tests/stand` to pytest and forwards this on top, so naming a
   # subdirectory would ADD to the full collection instead of narrowing it.
-  # Measured: 273 collected here, 10 in ui-journeys, 283 for the whole suite.
-  api-smoke:
-    name: api-smoke
-    needs: resolve-target
+  stand-runner:
+    name: shared stand runner
+    needs: [changes, resolve-target]
     if: needs.resolve-target.outputs.target == 'compose'
     runs-on: ubuntu-latest
-    # Was 90 while `up` compiled the backend; measured at 28m for that run, of
-    # which 26m was the build. Pulling instead should land near 8m, so 45
-    # leaves ~5x headroom for a cold runner and a slow registry while no longer
-    # letting a hung stand burn an hour and a half.
-    timeout-minutes: 45
+    outputs:
+      api: ${{ steps.results.outputs.api }}
+      ui: ${{ steps.results.outputs.ui }}
+    timeout-minutes: ${{ needs.changes.outputs.backend == 'true' && 75 || 45 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
 
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12" # runs the redaction script only — stdlib alone
+
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           cache-suffix: stand-api
+          save-cache: ${{ github.event_name == 'schedule' }}
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -191,9 +214,24 @@ jobs:
       # The gate covers ClickHouse only. A service that failed to start is not
       # its business and will surface as a test failure instead.
       - name: Bring the stand up
-        run: ./dev-compose.sh test-stand up
+        id: stand-up
+        continue-on-error: true
+        env:
+          BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
+          BUILD_FRONTEND: ${{ needs.changes.outputs.frontend }}
+        run: |
+          set -euo pipefail
+          # `if` blocks, not `[ … ] && flags+=(…)`: under set -e a false test as
+          # the last command of an && list ends the step.
+          flags=()
+          if [ "$BUILD_BACKEND" = "true" ]; then flags+=(--build-backend); fi
+          if [ "$BUILD_FRONTEND" = "true" ]; then flags+=(--build-frontend); fi
+          ./dev-compose.sh test-stand up "${flags[@]}"
 
       - name: Run the API suite
+        id: api-tests
+        if: steps.stand-up.outcome == 'success'
+        continue-on-error: true
         run: ./dev-compose.sh test-stand test --ignore=tests/stand/ui
 
       # `always()`: the ledger a FAILING run wrote is the more useful of the
@@ -205,7 +243,9 @@ jobs:
       # design, so it does not need the suite's environment and cannot be
       # broken by it.
       - name: API coverage gate
+        id: api-coverage
         if: always()
+        continue-on-error: true
         run: |
           set -uo pipefail
           [ -f .artifacts/stand_observed_endpoints.json ] || {
@@ -229,7 +269,9 @@ jobs:
       # ledger, which is how you tell a coverage regression from a reshuffle,
       # needs the inputs and not the summary.
       - name: Upload the coverage ledger
+        id: api-coverage-upload
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: api-smoke-coverage
@@ -241,8 +283,64 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Install the suite's browser
+        id: browser-install
+        if: always() && steps.stand-up.outcome == 'success'
+        continue-on-error: true
+        run: |
+          uv sync --project tests
+          uv run --project tests --frozen playwright install --with-deps chromium
+
+      - name: Run the browser journeys
+        id: ui-tests
+        if: always() && steps.browser-install.outcome == 'success'
+        continue-on-error: true
+        run: |
+          ./dev-compose.sh test-stand test \
+            --ignore=tests/stand/api --ignore=tests/stand/meta \
+            --browser chromium \
+            --tracing=retain-on-failure \
+            --screenshot=only-on-failure \
+            --video=retain-on-failure
+
+      - name: Strip credentials from traces
+        id: redact
+        if: always()
+        continue-on-error: true
+        run: python3 .github/workflows/scripts/redact-playwright-trace.py test-results
+
+      - name: Upload traces and screenshots
+        id: ui-traces-upload
+        if: always() && steps.redact.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-journeys-traces
+          path: |
+            test-results/**/*.zip
+            test-results/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload video
+        if: always() && steps.ui-tests.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-journeys-video
+          path: test-results/**/*.webm
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Dump diagnostics on failure
-        if: failure()
+        if: >-
+          always() && (
+            steps.stand-up.outcome != 'success' ||
+            steps.api-tests.outcome != 'success' ||
+            steps.api-coverage.outcome != 'success' ||
+            steps.browser-install.outcome != 'success' ||
+            steps.ui-tests.outcome != 'success' ||
+            steps.redact.outcome != 'success'
+          )
         run: |
           set -uo pipefail
           mkdir -p compose-logs
@@ -264,10 +362,30 @@ jobs:
           echo "::endgroup::"
 
       - name: Upload compose logs
-        if: failure()
+        if: >-
+          always() && (
+            steps.stand-up.outcome != 'success' ||
+            steps.api-tests.outcome != 'success' ||
+            steps.api-coverage.outcome != 'success'
+          )
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: api-smoke-compose-logs
+          path: compose-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload UI compose logs
+        if: >-
+          always() && (
+            steps.stand-up.outcome != 'success' ||
+            steps.browser-install.outcome != 'success' ||
+            steps.ui-tests.outcome != 'success' ||
+            steps.redact.outcome != 'success'
+          )
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ui-journeys-compose-logs
           path: compose-logs/
           if-no-files-found: ignore
           retention-days: 7
@@ -276,207 +394,130 @@ jobs:
       # down, and `down` passes --volumes so the next run starts from empty
       # databases rather than inheriting this one's rows.
       - name: Tear the stand down
+        id: teardown
         if: always()
         run: |
           [ -f .env.compose.test-stand ] || { echo "no stand env file — nothing to tear down"; exit 0; }
           ./dev-compose.sh test-stand down
 
-  # ─── ui-journeys ──────────────────────────────────────────────────────────
-  # No `needs` on api-smoke and none from it: each is an independently
-  # reportable check, so a red API contract does not hide a broken login.
+      - name: Record lane results
+        id: results
+        if: always()
+        env:
+          STAND: ${{ steps.stand-up.outcome }}
+          API_TESTS: ${{ steps.api-tests.outcome }}
+          API_COVERAGE: ${{ steps.api-coverage.outcome }}
+          API_COVERAGE_UPLOAD: ${{ steps.api-coverage-upload.outcome }}
+          BROWSER_INSTALL: ${{ steps.browser-install.outcome }}
+          UI_TESTS: ${{ steps.ui-tests.outcome }}
+          REDACTION: ${{ steps.redact.outcome }}
+          UI_TRACES_UPLOAD: ${{ steps.ui-traces-upload.outcome }}
+          TEARDOWN: ${{ steps.teardown.outcome }}
+        run: |
+          set -euo pipefail
+          api=failure
+          ui=failure
+          if [ "$STAND" = success ] && [ "$API_TESTS" = success ] && [ "$API_COVERAGE" = success ] && [ "$API_COVERAGE_UPLOAD" = success ] && [ "$TEARDOWN" = success ]; then
+            api=success
+          fi
+          if [ "$STAND" = success ] && [ "$BROWSER_INSTALL" = success ] && [ "$UI_TESTS" = success ] && [ "$REDACTION" = success ] && [ "$UI_TRACES_UPLOAD" = success ] && [ "$TEARDOWN" = success ]; then
+            ui=success
+          fi
+          printf 'api=%s\nui=%s\n' "$api" "$ui" >> "$GITHUB_OUTPUT"
+
+  # ─── stable lane checks ──────────────────────────────────────────────────
+  # INVARIANT: These job names are stable branch-protection check identities.
+  api-smoke:
+    name: api-smoke
+    needs: [changes, stand-runner]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report the API lane
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          LANE: ${{ needs.stand-runner.outputs.api }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES" != success ]; then
+            echo "::error::stand relevance is unknown because the changes job did not pass"
+            exit 1
+          fi
+          if [ "$RELEVANT" = false ]; then
+            echo "API smoke is not relevant to this change"
+            exit 0
+          fi
+          if [ "$LANE" != success ]; then
+            echo "::error::API smoke did not pass"
+            exit 1
+          fi
+          echo "API smoke passed"
+
   ui-journeys:
     name: ui-journeys
-    needs: resolve-target
-    if: needs.resolve-target.outputs.target == 'compose'
+    needs: [changes, stand-runner]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    # Same reasoning as api-smoke's, plus the ui-tests image pull. The journeys
-    # themselves took 28s.
-    timeout-minutes: 45
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12" # runs the redaction script only — stdlib alone
-
-      # `test-stand up` forces Keycloak, and the realm is generated by the seed
-      # package's own entry point (`insight-seed-realm`), which dev-compose.sh
-      # runs through uv. The API job above installs uv for the suite; this job
-      # needs it for the bring-up itself.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          cache-suffix: stand-ui
-
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Pulled, never built — building it here would mean testing an image no
-      # developer will ever pull. The one exception is the bootstrap: `:latest`
-      # is tagged only on a main push, so before this workflow's first merge the
-      # tag does not exist and the pull is guaranteed to fail. The fallback
-      # builds from the same Dockerfile build-images.yml uses, so the debut run
-      # exercises the real journeys instead of dying on a missing tag. Once main
-      # has published the image the fallback is dead code — if it ever fires
-      # again, the publish pipeline is broken and that is worth the notice.
-      - name: Pull the ui-tests image
+      - name: Report the UI lane
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          LANE: ${{ needs.stand-runner.outputs.ui }}
         run: |
-          set -uo pipefail
-          docker pull "$UI_TESTS_IMAGE" && exit 0
-
-          # A failed pull is not evidence of the bootstrap case. An auth failure,
-          # a rate limit, a deleted package and an unpublished tag all land here,
-          # and only the last one may be answered by building locally — the rest
-          # would silently swap the published runner for one built from this PR,
-          # which is the single thing this job must not do. So the tag's absence
-          # is established separately, and anything else fails loudly.
-          if error=$(docker manifest inspect "$UI_TESTS_IMAGE" 2>&1 >/dev/null); then
-            echo "::error::$UI_TESTS_IMAGE exists in ghcr but could not be pulled — not the bootstrap case. Refusing to build a local substitute."
+          set -euo pipefail
+          if [ "$CHANGES" != success ]; then
+            echo "::error::stand relevance is unknown because the changes job did not pass"
             exit 1
           fi
-          if ! grep -qiE 'manifest unknown|not found|no such manifest' <<<"$error"; then
-            echo "::error::could not determine whether $UI_TESTS_IMAGE is published: $error"
+          if [ "$RELEVANT" = false ]; then
+            echo "UI journeys are not relevant to this change"
+            exit 0
+          fi
+          if [ "$LANE" != success ]; then
+            echo "::error::UI journeys did not pass"
             exit 1
           fi
-
-          echo "::notice::$UI_TESTS_IMAGE is not published — building it locally from deploy/compose/ui-tests.Dockerfile (expected only before this workflow's first merge to main)"
-          docker build -f deploy/compose/ui-tests.Dockerfile -t "$UI_TESTS_IMAGE" .
-
-      - name: Bring the stand up
-        run: ./dev-compose.sh test-stand up
-
-      # `--image` runs the suite inside the pulled image, joined to the
-      # gateway's network namespace so the browser reaches the app at
-      # http://localhost:8080 — the only origin over plain http from which a
-      # `__Host-`-prefixed session cookie is stored at all. Paths are
-      # image-side (/tests/stand/...) because the suite is baked into it.
-      #
-      # retain-on-failure for trace and video: a green run then carries no
-      # session credentials off the runner at all, which is a smaller problem
-      # than redacting one.
-      - name: Run the browser journeys
-        run: |
-          ./dev-compose.sh test-stand test --image "$UI_TESTS_IMAGE" \
-            /tests/stand/ui \
-            --browser chromium \
-            --tracing=retain-on-failure \
-            --screenshot=only-on-failure \
-            --video=retain-on-failure
-
-      # BETWEEN capture and upload, and always — a failed run is exactly when a
-      # trace exists. A Playwright trace replays a real signed-in session: it
-      # carries the `__Host-sid` cookie and every Authorization header, twice
-      # over (raw headers and a parsed HAR `cookies` array). The script fails
-      # closed — a trace it cannot rewrite and verify is deleted, not uploaded.
-      # The suite runs in a container that has no USER directive, so it writes as
-      # root: both the trace files and the per-test directories holding them land
-      # on the runner owned by root. Unlinking or replacing a file needs write
-      # permission on its DIRECTORY, so the redaction step — running as `runner` —
-      # could neither rewrite nor delete a trace. It would fail, and every step
-      # below is `always()`, so the untouched traces would be published anyway.
-      - name: Take ownership of the captured artifacts
-        if: always()
-        run: |
-          [ -d test-results ] || exit 0
-          sudo chown -R "$(id -u):$(id -g)" test-results
-
-      - name: Strip credentials from traces
-        id: redact
-        if: always()
-        run: python3 .github/workflows/scripts/redact-playwright-trace.py test-results
-
-      - name: Upload traces and screenshots
-        # Gated on redaction having SUCCEEDED, not merely run: a non-zero exit
-        # means at least one artifact was not proven clean.
-        if: always() && steps.redact.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ui-journeys-traces
-          path: |
-            test-results/**/*.zip
-            test-results/**/*.png
-          # A green run keeps neither, by the capture policy above.
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Upload video
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ui-journeys-video
-          path: test-results/**/*.webm
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Dump diagnostics on failure
-        if: failure()
-        run: |
-          set -uo pipefail
-          mkdir -p compose-logs
-          echo "::group::containers"
-          docker ps -a || true
-          echo "::endgroup::"
-          echo "::group::container logs"
-          for name in $(docker ps -a --filter "name=insight-" --format '{{.Names}}' || true); do
-            docker logs --tail=400 "$name" > "compose-logs/${name}.log" 2>&1 || true
-            echo "----- ${name} -----"
-            tail -n 120 "compose-logs/${name}.log" || true
-          done
-          echo "::endgroup::"
-          echo "::group::stand configuration"
-          grep -E '^(FRONTEND_MODE|FRONTEND_IMAGE|AUTH_MODE|GATEWAY_PORT|AUTHENTICATOR_OIDC_ISSUER)=' \
-            .env.compose.test-stand || true
-          echo "::endgroup::"
-
-      - name: Upload compose logs
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ui-journeys-compose-logs
-          path: compose-logs/
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Tear the stand down
-        if: always()
-        run: |
-          [ -f .env.compose.test-stand ] || { echo "no stand env file — nothing to tear down"; exit 0; }
-          ./dev-compose.sh test-stand down
+          echo "UI journeys passed"
 
   # ─── the required check ───────────────────────────────────────────────────
-  # One stable context name for branch protection. On pull_request it skips
-  # with everything else — the skip IS the passing report. On merge-queue
-  # builds it runs whenever the run wasn't cancelled, so it still reports when
-  # `changes` deemed the batch irrelevant and the lanes were skipped.
+  # One stable context name for branch protection on both pull_request and
+  # merge_group. It runs whenever the workflow was not cancelled, including
+  # when `changes` deemed the diff irrelevant and the lanes were skipped.
   #
-  # `skipped` is therefore a PASS here, unlike in e2e-bronze-to-api.yml's
-  # umbrella where it is a failure. The difference is what the skip means: there
-  # a skipped lane implies a red upstream build, here it means `changes` decided
-  # the diff cannot affect the stand. Treating those the same would either block
-  # every unrelated PR or let a broken build through.
+  # A skipped lane is a pass only when `changes` explicitly reported the diff
+  # irrelevant. If relevance is unknown or relevant, every lane must succeed.
   stand-suite:
     name: Stand E2E
     needs: [changes, api-smoke, ui-journeys]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require both lanes to have passed, or to have been skipped as irrelevant
         env:
+          CHANGES: ${{ needs.changes.result }}
           RELEVANT: ${{ needs.changes.outputs.relevant }}
           API: ${{ needs.api-smoke.result }}
           UI: ${{ needs.ui-journeys.result }}
         run: |
           set -euo pipefail
-          echo "relevant=$RELEVANT api-smoke=$API ui-journeys=$UI"
+          echo "changes=$CHANGES relevant=$RELEVANT api-smoke=$API ui-journeys=$UI"
 
-          if [ "$RELEVANT" != "true" ]; then
+          if [ "$CHANGES" != "success" ]; then
+            echo "::error::the changes job did not succeed ($CHANGES) — stand relevance is unknown."
+            exit 1
+          fi
+          if [ "$RELEVANT" = "false" ]; then
             echo "nothing the stand covers changed — nothing to prove."
             exit 0
+          fi
+          if [ "$RELEVANT" != "true" ]; then
+            echo "::error::the changes job produced an invalid relevance value ('$RELEVANT')."
+            exit 1
           fi
           for lane in "api-smoke=$API" "ui-journeys=$UI"; do
             if [ "${lane#*=}" != "success" ]; then

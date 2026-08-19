@@ -1,7 +1,7 @@
 //! Create `threshold_lock_audit` — append-only audit log for lock lifecycle
 //! events and rejected bypass attempts.
 //!
-//! Refs #519. Schema source: `docs/domain/metric-catalog/specs/DESIGN.md` §3.7
+//! Refs #519.
 //! (`cpt-metric-cat-dbtable-threshold-lock-audit`).
 //!
 //! Append-only-ness is enforced at the application layer (audit-emitter is

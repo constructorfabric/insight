@@ -1,110 +1,193 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, ArrowDownRight, ChevronRight, Sparkles, TrendingDown } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
+  ChevronDown,
+  ChevronRight,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
-import type { AttentionFlag, FlagKind } from "@/lib/insight/attention-flags";
 import {
-  usePortalNavActions,
-} from "@/lib/portal/portal-nav";
+  groupFlagsByTheme,
+  type AttentionFlag,
+} from "@/lib/insight/attention-flags";
+import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { cn } from "@/lib/utils";
 
-const FLAG_ICON: Record<FlagKind, typeof AlertTriangle> = {
-  outlier: ArrowDownRight,
-  decline: TrendingDown,
+const FLAG_ICON = {
   collapse: AlertTriangle,
-};
+  "decline-down": TrendingDown,
+  "decline-up": TrendingUp,
+  "outlier-down": ArrowDownRight,
+  "outlier-up": ArrowUpRight,
+} as const;
+
+function iconKey(flag: AttentionFlag): keyof typeof FLAG_ICON {
+  return flag.kind === "collapse" ? "collapse" : `${flag.kind}-${flag.moved}`;
+}
+
+function people(n: number): string {
+  return `${n} ${n === 1 ? "person" : "people"}`;
+}
+
+function PersonRow({ flag }: { flag: AttentionFlag }) {
+  const { setZone } = usePortalNavActions();
+  const Icon = FLAG_ICON[iconKey(flag)];
+  return (
+    <Link
+      to="/ic/$person/personal"
+      params={{ person: flag.personId }}
+      // A pinned theme zone (Overview, Manage) wins over the route in
+      // `useActiveZone` — clear it so the navigation lands on the Person zone.
+      onClick={() => setZone(null)}
+      className="flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-accent"
+    >
+      <Icon
+        className={cn(
+          "size-4 shrink-0",
+          flag.kind === "collapse" ? "text-destructive" : "text-warning"
+        )}
+      />
+      <span className="w-44 shrink-0 truncate font-medium">{flag.name}</span>
+      <span className="shrink-0 font-medium tabular-nums">
+        {flag.valueText}
+      </span>
+      <span className="truncate text-xs text-muted-foreground">
+        {flag.reason}
+      </span>
+      <ChevronRight
+        className="ml-auto size-3.5 shrink-0 text-muted-foreground"
+        aria-hidden
+      />
+    </Link>
+  );
+}
+
+/** People listed inside an opened metric before the rest wait behind "+N more". */
+const PEOPLE_PER_THEME = 12;
+
+function MoreButton({
+  expanded,
+  hidden,
+  onClick,
+}: {
+  expanded: boolean;
+  hidden: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="self-start px-3 py-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+    >
+      {expanded ? "Show fewer" : `+${hidden} more`}
+    </button>
+  );
+}
+
+function Theme({
+  metricKey,
+  metricLabel,
+  flags,
+}: {
+  metricKey: string;
+  metricLabel: string;
+  flags: AttentionFlag[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [all, setAll] = useState(false);
+  const shown = all ? flags : flags.slice(0, PEOPLE_PER_THEME);
+  return (
+    <div className="rounded-lg border bg-card">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={`attention-${metricKey}`}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+      >
+        {open ? (
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+        )}
+        <span className="font-medium">{metricLabel}</span>
+        <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">
+          {people(flags.length)}
+        </span>
+      </button>
+      {open ? (
+        <div id={`attention-${metricKey}`} className="flex flex-col gap-0.5 border-t p-1.5">
+          {shown.map((flag) => (
+            <PersonRow key={flag.personId} flag={flag} />
+          ))}
+          {flags.length > PEOPLE_PER_THEME ? (
+            <MoreButton
+              expanded={all}
+              hidden={flags.length - PEOPLE_PER_THEME}
+              onClick={() => setAll((v) => !v)}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /**
- * Shared "needs attention" panel: a rule-based summary line (placeholder for a
- * future AI insight) plus the ranked flag rows, each linking into that person.
+ * What stands out this period, gathered by the metric it is about.
+ *
  * Used by the team-state roster and the org overview.
  */
 export function AttentionList({
   flags,
   summary,
-  peopleLabel,
   max = 12,
 }: {
   flags: AttentionFlag[];
   summary: string;
-  /** e.g. "3 of 16 people" — shown top-right; omit to hide. */
-  peopleLabel?: string;
+  /** Metrics listed before the rest wait behind "+N more". */
   max?: number;
 }) {
-  const { setZone } = usePortalNavActions();
-  const [expanded, setExpanded] = useState(false);
-  const shown = expanded ? flags : flags.slice(0, max);
+  const [allThemes, setAllThemes] = useState(false);
+  const themes = groupFlagsByTheme(flags);
+  const shownThemes = allThemes ? themes : themes.slice(0, max);
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-          Needs attention
-        </p>
-        {peopleLabel ? (
-          <span className="text-xs text-muted-foreground">{peopleLabel}</span>
-        ) : null}
-      </div>
+      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        Needs attention
+      </p>
 
       <Card>
-        <CardContent className="flex items-start gap-2 p-3 text-sm">
-          <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <div>
-            <span className="text-foreground">{summary}</span>
-            <span className="ml-1 text-xs text-muted-foreground">· rule-based</span>
-          </div>
-        </CardContent>
+        <CardContent className="p-3 text-sm">{summary}</CardContent>
       </Card>
 
-      {shown.length > 0 ? (
+      {themes.length > 0 ? (
         <div className="flex flex-col gap-1.5">
-          {shown.map((f) => {
-            const Icon = FLAG_ICON[f.kind];
-            return (
-              <Link
-                key={`${f.personId}-${f.metricKey}`}
-                to="/ic/$person/personal"
-                params={{ person: f.personId }}
-                // A pinned theme zone (Overview, Manage) wins over the route in
-                // `useActiveZone` — clear it so the navigation actually lands
-                // on the Person zone (same pattern as the rail).
-                onClick={() => setZone(null)}
-                className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-sm transition-colors hover:bg-accent"
-              >
-                <Icon
-                  className={cn(
-                    "size-4 shrink-0",
-                    f.kind === "collapse" ? "text-destructive" : "text-warning",
-                  )}
-                />
-                <span className="w-40 shrink-0 truncate font-medium">{f.name}</span>
-                <span className="w-32 shrink-0 truncate text-muted-foreground">
-                  {f.metricLabel}
-                </span>
-                <span className="shrink-0 font-medium tabular-nums">{f.valueText}</span>
-                <span className="truncate text-xs text-muted-foreground">{f.reason}</span>
-                {/* Standing affordance — the row opens that person's page, and
-                    a border alone does not say so. */}
-                <ChevronRight
-                  className="ml-auto size-3.5 shrink-0 text-muted-foreground/50"
-                  aria-hidden
-                />
-              </Link>
-            );
-          })}
-          {flags.length > max ? (
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="self-start px-3 pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            >
-              {expanded ? "Show less" : `+${flags.length - max} more`}
-            </button>
+          {shownThemes.map((theme) => (
+            <Theme
+              key={theme.metricKey}
+              metricKey={theme.metricKey}
+              metricLabel={theme.metricLabel}
+              flags={theme.flags}
+            />
+          ))}
+          {themes.length > max ? (
+            <MoreButton
+              expanded={allThemes}
+              hidden={themes.length - max}
+              onClick={() => setAllThemes((v) => !v)}
+            />
           ) : null}
         </div>
       ) : (
         <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
-          No outliers, declines, or collapses in this period — steady.
+          Nothing stands out this period.
         </div>
       )}
     </section>

@@ -13,10 +13,12 @@ spec:
     metadata:
       labels:
         {{- include "insight-frontend.selectorLabels" . | nindent 8 }}
-      {{- with .Values.podAnnotations }}
+      # `subPath` mounts never refresh in place, so the pod must roll when the
+      # rendered config changes. Merged rather than listed alongside
+      # podAnnotations, which would emit the key twice if an operator set it.
+      {{- $checksum := dict "checksum/runtime-config" (include (print $.Template.BasePath "/configmap.yaml") . | sha256sum) }}
       annotations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- toYaml (merge $checksum (default dict .Values.podAnnotations)) | nindent 8 }}
     spec:
       {{- with .Values.global }}
       {{- with .imagePullSecrets }}
@@ -41,6 +43,9 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          env:
+            - name: SENTRY_CONNECT_SRC
+              value: {{ .Values.sentry.connectSrc | quote }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -53,6 +58,10 @@ spec:
               mountPath: /tmp
             - name: nginx-conf
               mountPath: /etc/nginx/conf.d
+            - name: runtime-config
+              mountPath: /usr/share/nginx/html/config.js
+              subPath: config.js
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /healthz
@@ -72,3 +81,6 @@ spec:
           emptyDir: {}
         - name: nginx-conf
           emptyDir: {}
+        - name: runtime-config
+          configMap:
+            name: {{ include "insight-frontend.fullname" . }}-runtime

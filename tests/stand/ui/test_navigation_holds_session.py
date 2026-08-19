@@ -39,6 +39,9 @@ from .pages.person_view import PersonView
 from .pages.sidebar_nav import SidebarNav
 from .pages.team_view import TeamView
 
+# Quality vector of this module's tests.
+pytestmark = pytest.mark.reliability
+
 
 def _assert_still_signed_in(page: Page, base_url: str, where: str) -> None:
     """Two checks, because either alone is weak.

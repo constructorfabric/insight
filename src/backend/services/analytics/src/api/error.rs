@@ -6,7 +6,7 @@
 //! to an RFC 9457 `application/problem+json` envelope via the crate's
 //! `IntoResponse` impl.
 //!
-//! See `docs/domain/metric-catalog/specs/DESIGN.md` §3.3 (Error Envelope)
+//! See the committed contract at `docs/components/backend/analytics/openapi.json`
 //! and DNA `REST/API.md §7` for the platform-wide contract.
 
 use toolkit_canonical_errors::resource_error;
@@ -17,6 +17,10 @@ pub struct MetricError;
 /// Resource namespace for `/v1/queries*` (saved-query CRUD + run, #1965).
 #[resource_error("gts.cf.insight.analytics_api.saved_query.v1~")]
 pub struct SavedQueryError;
+
+/// Resource namespace for `/v1/usage*` (adoption events + the admin read model).
+#[resource_error("gts.cf.insight.analytics_api.usage.v1~")]
+pub struct UsageError;
 
 /// Resource namespace for `/v1/metrics*` (custom-metric CRUD + export/import).
 #[resource_error("gts.cf.insight.analytics_api.custom_metric.v1~")]

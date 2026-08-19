@@ -1,5 +1,4 @@
-import { headlineMetricKeys } from "@/lib/insight/groups";
-import type { Readiness } from "@/lib/portal/nav-model";
+import { DIRECTIONS, type Direction, type Readiness } from "@/lib/portal/nav-model";
 
 /**
  * The Directions registry: every direction × lens maps to either a LensConfig
@@ -27,11 +26,14 @@ export type SectionSpec =
   // Overview-motivated, zone-agnostic sections (design DESIGN-2026-07-27-overview §4).
   | { kind: "attention"; metrics: readonly string[]; max: number }
   | { kind: "direction-cards"; variant: "compact" | "full" }
-  | { kind: "coverage-radar" };
+  // How much of each person's work we can see at all, and for how many
+  // people (#2408). Fetches its own period-only collection across every
+  // group, so it contributes no keys to the zone grid.
+  | { kind: "coverage-levels" };
 
 export interface LensConfig {
   title: string;
-  /** Subtitle tail after "N members · " (defaults to "trend & balance"). */
+  /** Subtitle tail after "N people · " (defaults to "trend & balance"). */
   tagline?: string;
   sections: readonly SectionSpec[];
   /** Whole-tab message when no metric of the lens is observed (rule 6). */
@@ -55,6 +57,25 @@ export type LensEntry = LensConfig | LensRoadmap;
 /** The registry entry for a direction's lens — a config, a roadmap note, or nothing. */
 export function lensEntry(dir: string, lens: string): LensEntry | undefined {
   return DIRECTION_LENSES[dir]?.[lens];
+}
+
+/** A direction's lenses in pane order, minus the roadmap ones a reader opted out of. */
+export function visibleLenses(
+  direction: Direction,
+  showPlanned: boolean,
+): string[] {
+  return direction.lenses.filter((lens) => {
+    const entry = lensEntry(direction.id, lens);
+    return !entry || !("comingSoon" in entry) || showPlanned;
+  });
+}
+
+/**
+ * Directions worth listing: a branch whose every lens is filtered out expands
+ * into nothing, so it is a dead end rather than a place to look.
+ */
+export function visibleDirections(showPlanned: boolean): Direction[] {
+  return DIRECTIONS.filter((d) => visibleLenses(d, showPlanned).length > 0);
 }
 
 /** Unique metric keys a config needs in its period+peer grid. */
@@ -85,8 +106,11 @@ export function sectionMetricKeys(config: LensConfig): string[] {
           }
         }
         break;
-      case "coverage-radar":
-        for (const k of headlineMetricKeys()) keys.add(k);
+      case "coverage-levels":
+        // Deliberately none. Coverage asks whether ANY metric of a group
+        // reads, so it needs every group's keys rather than the zone's
+        // chosen few — widening the shared grid to that would make one tab
+        // pay for all of them. It fetches its own period-only collection.
         break;
       default: {
         const _exhaustive: never = s;
@@ -101,7 +125,7 @@ export function sectionMetricKeys(config: LensConfig): string[] {
 
 /** Product-side gap: the metric family is not in the semantic layer yet. */
 const DEV_PLANNED = (what: string): LensRoadmap => ({
-  comingSoon: `${what} — not in the semantic layer yet. This tab lights up when its metric family ships.`,
+  comingSoon: `${what} — not available yet.`,
   readiness: "planned",
 });
 
@@ -123,7 +147,7 @@ const DEV: Record<string, LensEntry> = {
       { kind: "headline", metrics: ["git.commits", "git.prs_merged", "git.lines_added"] },
       {
         kind: "stat-tiles",
-        title: "Flow health · median",
+        title: "Typical values (median)",
         metrics: ["git.pr_cycle_time_h", "git.pr_size", "git.merge_rate"],
       },
       { kind: "trend", metrics: ["git.commits", "git.prs_merged"] },
@@ -147,9 +171,9 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "git.commits",
-        title: "Commit-volume distribution",
+        title: "How many commits people made",
         caption:
-          "How many people fall in each commit-count band — a long right tail means a few people produce most of the commits.",
+          "How many people fall in each commit-count band — when the bars stretch far to the right, a few people account for most of it.",
         unitLabel: "commits per person",
       },
       { kind: "concentration", metrics: ["git.commits"], framing: "bus-factor" },
@@ -167,7 +191,7 @@ const DEV: Record<string, LensEntry> = {
     sections: [
       {
         kind: "stat-tiles",
-        title: "Flow health · median",
+        title: "Typical values (median)",
         metrics: [
           "git.pr_cycle_time_h",
           "git.pr_size",
@@ -179,26 +203,26 @@ const DEV: Record<string, LensEntry> = {
       {
         kind: "event-histogram",
         metric: "git.pr_cycle_time_h",
-        title: "PR cycle-time distribution (events)",
+        title: "How long pull requests stayed open",
       },
     ],
   },
   Delivery: {
     title: "Development · Delivery",
-    notIngested: "Task source (Jira) isn't ingested for this org yet.",
+    notIngested: "Jira is not connected yet.",
     sections: [
       { kind: "headline", metrics: ["tasks.closed", "tasks.bugs_fixed"] },
       {
         kind: "stat-tiles",
-        title: "Delivery health · median",
+        title: "Typical task times (median)",
         metrics: ["tasks.resolution_time", "tasks.pickup_time", "tasks.dev_time"],
       },
       { kind: "trend", metrics: ["tasks.closed", "tasks.bugs_fixed"] },
       {
         kind: "distribution",
         metric: "tasks.closed",
-        title: "Task-throughput distribution",
-        caption: "How many people fall in each tasks-closed band.",
+        title: "How many tasks people closed",
+        caption: "Each bar is a range of tasks closed, and how many people fall in it.",
         unitLabel: "tasks closed per person",
       },
     ],
@@ -224,7 +248,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.meeting_hours",
-        title: "Meeting-load distribution",
+        title: "How many hours people spent in meetings",
         caption:
           "How many people fall in each meeting-hours band — a long right tail means a few people carry an outsized meeting load.",
         unitLabel: "meeting hours per person",
@@ -247,7 +271,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.messages_sent",
-        title: "Messaging-load distribution",
+        title: "How many messages people sent",
         caption:
           "How many people fall in each message-volume band — a long right tail means a few people account for most of the chatter.",
         unitLabel: "messages per person",
@@ -266,7 +290,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.meeting_hours",
-        title: "Meeting-load distribution",
+        title: "How many hours people spent in meetings",
         caption:
           "How many people fall in each meeting-hours band — a long right tail means a few people carry an outsized meeting load.",
         unitLabel: "meeting hours per person",
@@ -283,7 +307,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.emails_sent",
-        title: "Email-volume distribution",
+        title: "How many emails people sent",
         caption:
           "How many people fall in each sent-email band — a long right tail means a few people send most of the email.",
         unitLabel: "emails sent per person",
@@ -298,7 +322,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.focus_time_pct",
-        title: "Focus-time distribution",
+        title: "How much focus time people had",
         caption:
           "How many people fall in each focus-time band — a cluster on the left means many people have little uninterrupted focus time.",
         unitLabel: "focus time (share of working time) per person",
@@ -316,7 +340,7 @@ const COLLAB: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "collab.files_shared",
-        title: "File-sharing distribution",
+        title: "How many files people shared",
         caption:
           "How many people fall in each files-shared band — a long right tail means a few people do most of the sharing.",
         unitLabel: "files shared per person",
@@ -337,7 +361,7 @@ const WIKI: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "wiki.edits",
-        title: "Edit-volume distribution",
+        title: "How many wiki edits people made",
         caption:
           "How many people fall in each wiki-edits band — a long right tail means knowledge writing is concentrated in a few hands.",
         unitLabel: "wiki edits per person",
@@ -352,8 +376,8 @@ const WIKI: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "wiki.pages_created",
-        title: "Authoring distribution",
-        caption: "How many people fall in each pages-created band.",
+        title: "How many pages people created",
+        caption: "Each bar is a range of pages created, and how many people fall in it.",
         unitLabel: "pages created per person",
       },
       { kind: "concentration", metrics: ["wiki.pages_created"], framing: "bus-factor" },
@@ -367,8 +391,8 @@ const WIKI: Record<string, LensEntry> = {
       {
         kind: "distribution",
         metric: "wiki.edits",
-        title: "Edit-volume distribution",
-        caption: "How many people fall in each wiki-edits band.",
+        title: "How many wiki edits people made",
+        caption: "Each bar is a range of wiki edits, and how many people fall in it.",
         unitLabel: "wiki edits per person",
       },
     ],
@@ -395,11 +419,11 @@ const WIKI: Record<string, LensEntry> = {
 /* ── Sales / Support (bullet-only directions) ────────────────────────── */
 
 const SALES_NOTE: LensRoadmap = {
-  comingSoon: "HubSpot isn't in the semantic layer yet — bullet-only direction.",
+  comingSoon: "HubSpot data is not available yet.",
   readiness: "planned",
 };
 const SUPPORT_NOTE: LensRoadmap = {
-  comingSoon: "Zendesk isn't in the semantic layer yet — bullet-only direction.",
+  comingSoon: "Zendesk data is not available yet.",
   readiness: "planned",
 };
 

@@ -6,8 +6,7 @@
 //!
 //! Spec references in this file (`PRD §x`, `DESIGN §x`) point to the
 //! authenticator specs in this repo:
-//! `docs/components/backend/authenticator/PRD.md` and
-//! `docs/components/backend/authenticator/DESIGN.md`.
+//! the committed contract at `docs/components/backend/authenticator/openapi.json`.
 
 use std::sync::Arc;
 
@@ -225,7 +224,7 @@ pub async fn callback(
     };
 
     // Layer-2 bucket keyed by the presented `state`
-    // (docs/components/backend/authenticator/DESIGN.md §4.4): caps how
+    // caps how
     // often one state value can drive the code-exchange path. Fail open on a
     // Redis error — the coarse gateway layer still guards, and the state
     // lookup below fails closed anyway.
@@ -305,9 +304,17 @@ pub async fn callback(
         tracing::info!(session_id = %old_sid, "session-fixation guard: revoked presented session");
     }
 
-    // Resolve the internal person. Unknown -> 403 (first-admin bootstrap / RBAC
-    // are out of step-04 scope; local dev seeds the persons table).
-    let resolution = match state.resolver.resolve(&idp.identity).await {
+    // Identity requires a connector to have observed the principal before it
+    // mints, so this decides who waits for the batch, not who exists.
+    let resolved = match state.resolver.resolve(&idp.identity).await {
+        Ok(Some(p)) => Ok(Some(p)),
+        Ok(None) if state.cfg.idp.provision_on_login => {
+            state.resolver.provision(&idp.identity).await
+        }
+        other => other,
+    };
+
+    let resolution = match resolved {
         Ok(Some(p)) => p,
         Ok(None) => {
             tracing::warn!(

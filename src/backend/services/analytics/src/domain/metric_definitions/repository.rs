@@ -58,6 +58,12 @@ struct DimensionRow {
     dimension_key: String,
 }
 
+#[derive(Debug, FromQueryResult)]
+struct TagRow {
+    metric_definition_id: Uuid,
+    tag: String,
+}
+
 #[derive(Debug)]
 enum ClassifiedInputs {
     Available(Vec<MetricInput>),
@@ -442,6 +448,46 @@ pub(super) async fn fetch_dimensions(
             out.entry(row.metric_definition_id)
                 .or_default()
                 .push(row.dimension_key);
+        }
+        out
+    })
+}
+
+pub(super) async fn fetch_tags(
+    db: &DatabaseConnection,
+    definition_ids: &[Uuid],
+) -> Result<HashMap<Uuid, Vec<String>>, sea_orm::DbErr> {
+    if definition_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let placeholders = vec!["?"; definition_ids.len()].join(", ");
+    let sql = format!(
+        "SELECT \
+            t.metric_definition_id AS metric_definition_id, \
+            t.tag AS tag \
+         FROM metric_definition_tags t \
+         WHERE t.metric_definition_id IN ({placeholders}) \
+         ORDER BY t.metric_definition_id, t.display_order, t.tag"
+    );
+    let values = definition_ids
+        .iter()
+        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .collect::<Vec<_>>();
+
+    TagRow::find_by_statement(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        sql,
+        values,
+    ))
+    .all(db)
+    .await
+    .map(|rows| {
+        let mut out: HashMap<Uuid, Vec<String>> = HashMap::new();
+        for row in rows {
+            out.entry(row.metric_definition_id)
+                .or_default()
+                .push(row.tag);
         }
         out
     })

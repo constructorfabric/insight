@@ -8,7 +8,10 @@ set -e
 # `/api/*` and `/auth/me` same-origin with `credentials: 'include'`.
 
 # Place the nginx config. The build ships it under /etc/nginx/templates, so
-# copy it into conf.d here.
-cp /etc/nginx/templates/default.conf.template /etc/nginx/conf.d/default.conf
+# render it into conf.d here. The explicit variable list keeps envsubst off
+# nginx's own `$sent_http_content_type` / `$csp_header`.
+envsubst '${SENTRY_CONNECT_SRC}' \
+  < /etc/nginx/templates/default.conf.template \
+  > /etc/nginx/conf.d/default.conf
 
 exec "$@"
