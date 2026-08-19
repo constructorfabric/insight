@@ -220,7 +220,7 @@ jobs:
     name: Gateway checks
     needs: [changes, build-pr-images]
     if: |
-      always()
+      !cancelled()
       && github.event_name == 'pull_request'
       && needs.changes.outputs.gateway_checks == 'true'
       && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
@@ -263,7 +263,7 @@ jobs:
     name: shared stand runner
     needs: [changes, resolve-target, build-pr-images]
     if: |
-      always()
+      !cancelled()
       && needs.resolve-target.result == 'success'
       && needs.resolve-target.outputs.target == 'compose'
       && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
