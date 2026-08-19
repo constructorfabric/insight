@@ -111,8 +111,15 @@ identities) reach no account and stay unattributed.
   repository runs many Retry-After cycles). 404/413 skip the repository;
   409 (superseded snapshot) fails the attempt — the rerun resumes from the
   stored cursor.
-- GraphQL errors arrive as HTTP 200: rate-limit-typed errors back off,
-  anything else fails with GitHub's own message.
+- GraphQL errors arrive as HTTP 200. GitHub types an exhausted budget both
+  `RATE_LIMIT` and `RATE_LIMITED`, so the throttle predicates match either and
+  fall back to the message; anything else fails with GitHub's own message.
+- REST and GraphQL are metered as two separate hourly budgets. `api_budget`
+  paces each one against its own `X-RateLimit-*` headers and waits out a
+  window it exhausts. This is not something the error handlers could do:
+  `DefaultErrorHandler` caps total backoff at 600 seconds and the manifest
+  exposes no field to raise it, so a reset further out than that would
+  exhaust the retries and fail the stream.
 
 ## Known NULL columns
 
