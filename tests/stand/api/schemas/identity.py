@@ -351,8 +351,12 @@ class QueueItemResponse(BaseModel):
 
 class ResolutionRatesResponse(BaseModel):
     """
-    The tenant's identity picture: how many persons it knows, and how its
-    observed accounts are split across the resolution states.
+    How the tenant's observed accounts are split across the resolution states.
+
+    Deliberately no person total. A journal-wide count answers "how many ids have
+    we ever written", which after a merge never falls and after a detach only
+    rises — so it read as a roster size while measuring something else. A figure
+    that would have to be explained every time it is read is worse than none.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -362,7 +366,6 @@ class ResolutionRatesResponse(BaseModel):
     no_evidence: int = Field(..., ge=0)
     observed: int = Field(..., ge=0)
     pending: int = Field(..., ge=0)
-    persons: int = Field(..., description='Persons in the tenant, counted from the person journal rather than the\nevidence fold — `truncated` never applies to this figure.', ge=0)
 
 
 class ResolveProfileRequest(BaseModel):

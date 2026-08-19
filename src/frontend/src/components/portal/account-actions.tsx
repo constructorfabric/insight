@@ -6,8 +6,16 @@
  * - Bind — attach THIS account to a person. On the current person it is the
  *   "confirm" act: re-asserting an automatic binding records the operator's
  *   decision and clears the queue item.
- * - Detach — mint a fresh person for this account.
+ * - Detach — mint a fresh person for this account. Offered only where it means
+ *   something: taking a person's only account replaces them with an identical
+ *   one and leaves a husk behind. An unheld account is the exception — there it
+ *   is how an orphan gets a person.
  * - Exclude — not a person at all (bot / CI).
+ *
+ * The holder is rendered HERE rather than by the window around it, because the
+ * verb that re-asserts their binding belongs beside them. Listing the holder a
+ * second time under "candidates" just to hang Confirm off it read as two people
+ * with the same name and id.
  *
  * Merge is deliberately NOT here. It is a claim about people, and this window
  * argues about one account: the button sat in the row of the person who would
@@ -33,6 +41,7 @@ import type {
 } from "@/api/identity-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
+import { PersonId } from "@/components/portal/person-id";
 import { PersonPicker } from "@/components/portal/person-picker";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +53,16 @@ import {
   useBindAccount,
   useDetachAccount,
   useExcludeAccount,
+  usePersonAccounts,
 } from "@/queries/identity-resolution";
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+      {children}
+    </div>
+  );
+}
 
 /** Long enough to read a UUID off and paste it somewhere. */
 const MINTED_ID_TOAST_MS = 15_000;
@@ -122,6 +140,30 @@ export function AccountActions({
       ? holder
       : candidates.find((c) => c.person_id === boundId);
 
+  // Everyone the evidence offers EXCEPT whoever already holds it: the holder is
+  // named once, above, with the confirm verb on their own card.
+  const rivals = candidates.filter((c) => c.person_id !== boundId);
+  // What else the holder has, which is what decides whether a detach means
+  // anything. Cached per person, so on a person's own page this read is already
+  // in hand and costs nothing.
+  const owned = usePersonAccounts(boundId);
+  // A detach mints a person and moves the account to them. Taking somebody's
+  // ONLY account does that and nothing else: the account still has one holder,
+  // and the person it left keeps their name with nothing to attach it to. Held
+  // back until the count says otherwise — offering a verb before knowing it
+  // means something is how the husks got made.
+  //
+  // An account nobody holds is the exception: there a detach is the way to give
+  // an orphan a person of its own.
+  const detachable =
+    boundId == null || (owned.data != null && owned.data.accounts.length > 1);
+
+  // Confirming re-asserts the resolver's guess as the operator's decision. It
+  // has something to say only while the account is still queued for exactly
+  // that — and only when the surface knows the holder's card to press.
+  const confirmable =
+    boundCard != null && candidates.some((c) => c.person_id === boundId);
+
   const close = () => {
     setAction({ kind: "closed" });
     // A dialog's error belongs to the attempt made in THAT dialog; without a
@@ -171,31 +213,59 @@ export function AccountActions({
     <div className="flex flex-col gap-4">
       {outcome ? <OutcomeAlert outcome={outcome} /> : null}
 
-      {candidates.length > 0 ? (
-        <section>
-          <div className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {t("identities.detail.candidates")}
+      <section>
+        <SectionLabel>{t("identities.detail.current_binding")}</SectionLabel>
+        {boundId ? (
+          <div className="flex items-center gap-2">
+            {boundCard ? (
+              <PersonCell person={boundCard} className="min-w-0 flex-1" />
+            ) : (
+              <div className="min-w-0 flex-1">
+                <PersonId id={boundId} />
+              </div>
+            )}
+            {/* The confirm act, on the card it acts on. Offered only where the
+                resolver's own guess is what stands: an operator-authored
+                binding is already decided, and re-asserting it changes
+                nothing. */}
+            {confirmable ? (
+              <Button
+                type="button"
+                size="xs"
+                disabled={busy}
+                onClick={() =>
+                  boundCard && setAction({ kind: "bind", person: boundCard })
+                }
+              >
+                {t("identities.actions.confirm")}
+              </Button>
+            ) : null}
           </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {t("identities.detail.unbound")}
+          </p>
+        )}
+      </section>
+
+      {rivals.length > 0 ? (
+        <section>
+          <SectionLabel>{t("identities.detail.candidates")}</SectionLabel>
           <div className="flex flex-col gap-2">
-            {candidates.map((candidate) => {
-              const isBound = candidate.person_id === boundId;
-              return (
-                <div key={candidate.person_id} className="flex items-center gap-2">
-                  <PersonCell person={candidate} className="min-w-0 flex-1" />
-                  <Button
-                    type="button"
-                    size="xs"
-                    variant={isBound ? "default" : "outline"}
-                    disabled={busy}
-                    onClick={() => setAction({ kind: "bind", person: candidate })}
-                  >
-                    {isBound
-                      ? t("identities.actions.confirm")
-                      : t("identities.actions.bind")}
-                  </Button>
-                </div>
-              );
-            })}
+            {rivals.map((candidate) => (
+              <div key={candidate.person_id} className="flex items-center gap-2">
+                <PersonCell person={candidate} className="min-w-0 flex-1" />
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => setAction({ kind: "bind", person: candidate })}
+                >
+                  {t("identities.actions.bind")}
+                </Button>
+              </div>
+            ))}
           </div>
         </section>
       ) : null}
@@ -236,15 +306,17 @@ export function AccountActions({
       ) : null}
 
       <section className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={busy}
-          onClick={() => setAction({ kind: "detach" })}
-        >
-          {t("identities.actions.detach")}
-        </Button>
+        {detachable ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => setAction({ kind: "detach" })}
+          >
+            {t("identities.actions.detach")}
+          </Button>
+        ) : null}
         <Button
           type="button"
           size="sm"

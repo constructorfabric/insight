@@ -20,6 +20,7 @@ import {
 
 import {
   bindAccount,
+  bindAccounts,
   detachAccount,
   excludeAccount,
   getAccountBinding,
@@ -116,6 +117,7 @@ function useCorrection<TArgs>(
 }
 
 export const useBindAccount = () => useCorrection(bindAccount);
+export const useBindAccounts = () => useCorrection(bindAccounts);
 export const useMergePersons = () => useCorrection(mergePersons);
 export const useDetachAccount = () => useCorrection(detachAccount);
 export const useExcludeAccount = () => useCorrection(excludeAccount);

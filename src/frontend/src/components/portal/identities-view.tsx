@@ -30,6 +30,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { AccountSearchView } from "@/components/portal/account-search-view";
 import { CaseDialog } from "@/components/portal/case-dialog";
+import { ConfirmGroupButton } from "@/components/portal/confirm-group-button";
 import { MergeCaseDialog } from "@/components/portal/merge-case-dialog";
 import { PersonAccountsView } from "@/components/portal/person-accounts-view";
 import { PersonCell } from "@/components/portal/person-cell";
@@ -58,7 +59,11 @@ import {
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { itemKey } from "@/lib/identities/account-key";
 import { personDisplayName } from "@/lib/identities/person-display";
-import { groupIntoCases, type QueueCase } from "@/lib/identities/cases";
+import {
+  groupIntoCases,
+  groupIsConfirmable,
+  type QueueCase,
+} from "@/lib/identities/cases";
 import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
@@ -206,13 +211,6 @@ function RatesStrip({
   const { t } = useTranslation();
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
-      {/* A backend a release behind this bundle does not carry the total; an
-          unknown figure reads as one rather than as the word "undefined". */}
-      <Tile
-        figure={String(rates.persons ?? "—")}
-        label={t("identities.rates.persons")}
-        status="neutral"
-      />
       <Tile
         figure={String(rates.observed)}
         label={t("identities.rates.observed")}
@@ -431,6 +429,12 @@ function QueueGroup({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <CardContent className="flex flex-col gap-2 p-2 pt-0">
+            {/* One decision for the whole group, above the cases it covers: a
+                roster sync adds people in batches, and confirming them one
+                window at a time is the same answer given a hundred times. */}
+            {groupIsConfirmable(kind, items) ? (
+              <ConfirmGroupButton items={items} className="self-start" />
+            ) : null}
             {visible.map((queueCase) => (
               <CaseBlock
                 key={queueCase.key}

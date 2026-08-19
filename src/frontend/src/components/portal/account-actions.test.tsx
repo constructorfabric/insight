@@ -28,6 +28,10 @@ const hooks = vi.hoisted(() => {
     toast: { success: vi.fn(), error: vi.fn() },
     bind: verb(),
     detach: verb(),
+    /** What else the holder has — decides whether a detach is offered. */
+    owned: {
+      data: undefined as { person_id: string; accounts: unknown[] } | undefined,
+    },
     exclude: verb(),
     search: {
       data: undefined as { pages: { items: unknown[] }[] } | undefined,
@@ -50,6 +54,7 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useBindAccount: () => hooks.bind,
   useDetachAccount: () => hooks.detach,
+  usePersonAccounts: () => hooks.owned,
   useExcludeAccount: () => hooks.exclude,
   usePersonList: () => hooks.search,
 }));
@@ -86,6 +91,9 @@ beforeEach(() => {
   }
   hooks.toast.success.mockClear();
   hooks.toast.error.mockClear();
+  // Two accounts by default, so the detach verb is on offer in the cases that
+  // are not about the detach gate.
+  hooks.owned.data = { person_id: BOB.person_id, accounts: [{}, {}] };
   hooks.search.data = undefined;
 });
 
@@ -198,6 +206,157 @@ describe("AccountActions", () => {
     expect(
       screen.queryByRole("button", { name: /bind to/i }),
     ).not.toBeInTheDocument();
+  });
+
+  // A detach mints a person and moves the account there. Taking somebody's ONLY
+  // account replaces them with an identical person and leaves their name behind
+  // with nothing attached — which is how the accountless persons got made.
+  it("offers no detach where it would leave the holder with nothing", () => {
+    hooks.owned.data = { person_id: BOB.person_id, accounts: [{}] };
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        holder={BOB}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /detach into a new person/i }),
+    ).not.toBeInTheDocument();
+    // The other verbs are unaffected.
+    expect(screen.getByRole("button", { name: /exclude \(bot/i })).toBeInTheDocument();
+  });
+
+  it("offers a detach once the holder has more than one account", () => {
+    hooks.owned.data = { person_id: BOB.person_id, accounts: [{}, {}] };
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        holder={BOB}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /detach into a new person/i }),
+    ).toBeInTheDocument();
+  });
+
+  // An account nobody holds is the exception: a detach is how an orphan gets a
+  // person of its own, and there is no holder to strip.
+  it("offers a detach for an account nobody holds, whatever the read says", () => {
+    hooks.owned.data = undefined;
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: null })}
+        candidates={[]}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /detach into a new person/i }),
+    ).toBeInTheDocument();
+  });
+
+  // Held back rather than shown and then withdrawn: offering a verb before
+  // knowing it means anything is the mistake being fixed.
+  it("holds the detach back while the holder's accounts are still unread", () => {
+    hooks.owned.data = undefined;
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        holder={BOB}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /detach into a new person/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // The holder is named once, with the verb that acts on them. Listing them a
+  // second time under "candidates" just to hang Confirm off it read as two
+  // people with the same name and the same id.
+  it("names the holder once, with Confirm on their own card", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[BOB]}
+        holder={BOB}
+      />,
+    );
+
+    expect(screen.getByText(/currently bound to/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Bob Park")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeInTheDocument();
+    // Nothing left to list: the only candidate was the holder.
+    expect(screen.queryByText(/candidates/i)).not.toBeInTheDocument();
+  });
+
+  it("lists only the rivals under candidates, each offering a plain bind", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[BOB, CAROL]}
+        holder={BOB}
+      />,
+    );
+
+    expect(screen.getByText(/candidates/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Carol Chen")).toHaveLength(1);
+    expect(screen.getAllByText("Bob Park")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Bind" })).toBeInTheDocument();
+  });
+
+  // A settled account is not queued for confirmation, so the surface sends no
+  // candidates — and re-asserting a decision already taken changes nothing.
+  it("offers no Confirm where the account is not up for confirmation", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        holder={BOB}
+      />,
+    );
+
+    expect(screen.getByText(/currently bound to/i)).toBeInTheDocument();
+    expect(screen.getByText("Bob Park")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an unknown holder an honest bare id", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: "01900000-0000-7000-8000-00000000ffff" })}
+        candidates={[]}
+      />,
+    );
+
+    expect(
+      screen.getByText("01900000-0000-7000-8000-00000000ffff"),
+    ).toBeInTheDocument();
+  });
+
+  it("states an unbound account as a fact", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: null })}
+        candidates={[]}
+      />,
+    );
+
+    expect(screen.getByText(/account is unresolved/i)).toBeInTheDocument();
   });
 
   // A merge is a claim about PEOPLE, and this window argues about one account:

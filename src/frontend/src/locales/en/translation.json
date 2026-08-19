@@ -407,7 +407,6 @@
     "title": "Identities",
     "subtitle": "Who each account belongs to — review what the resolver could not decide, and correct what it did.",
     "rates": {
-      "persons": "Persons",
       "observed": "Accounts",
       "decisions": "Needs attention",
       "excluded": "Excluded"
@@ -484,7 +483,9 @@
       "assign_other": "Assign to someone else",
       "bind_to": "Bind to selected person",
       "assign_person": "Assign to a person",
-      "keep_person": "Keep this person"
+      "keep_person": "Keep this person",
+      "confirm_group_one": "Confirm 1 account",
+      "confirm_group_other": "Confirm all {{count}} accounts"
     },
     "dialogs": {
       "bind_title": "Bind this account?",
@@ -508,7 +509,11 @@
       "merge_case_absorbed_other": "Merged into them — {{count}} people",
       "rebind_description": "The account is re-bound to this person.",
       "leaves_queue": "This account then leaves the queue.",
-      "merge_case_none_chosen": "Tick at least one person to merge."
+      "merge_case_none_chosen": "Tick at least one person to merge.",
+      "confirm_group_title_one": "Confirm 1 account?",
+      "confirm_group_title_other": "Confirm all {{count}} accounts?",
+      "confirm_group_description": "Each account stays with the person it already has, recorded as your decision rather than the resolver's. They all leave the queue.",
+      "confirm_group_comment": "Why — one line, kept in the trail for all of them."
     },
     "outcomes": {
       "applied_one": "{{count}} applied",
