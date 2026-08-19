@@ -66,9 +66,15 @@ the label names the organisation.
 from the roster under `flat`, the supervisor column is absent, an unnamed person
 still gets a clickable row.
 
-### F6 — hierarchy copy stops claiming a hierarchy
-`components/portal/person-header.tsx`. Accept: under `flat` the peer switcher
-reads as the organisation rather than "Team" / "Peers".
+### F6 — hierarchy copy stops claiming a hierarchy — NOT NEEDED
+`person-header` already degrades honestly: with no parent there is no manager to
+query, so the peer switcher has no peers, and with no manager nodes the
+Team/Peers button has nothing to scope to. Both hide themselves. Pinned by a
+regression test rather than changed.
+
+What is genuinely absent is a flat analogue — a switcher over the roster, so a
+reader can step to the next person without returning to the People zone. New
+UI, not a copy fix; left for a decision.
 
 ## Out of scope
 
