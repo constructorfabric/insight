@@ -113,6 +113,9 @@ from .identity import (
     VisibilityResponse as Visibility,
 )
 from .identity import (
+    VisiblePersonsPageResponse as VisiblePersonsPage,
+)
+from .identity import (
     VisiblePersonsResponse as VisiblePersons,
 )
 from .identity_internal import IdentityValue
@@ -160,4 +163,5 @@ __all__: Sequence[str] = (
     "VisibilityList",
     "VisibilityPolicy",
     "VisiblePersons",
+    "VisiblePersonsPage",
 )

@@ -4,7 +4,7 @@ the GitHub Actions `changes` job. Sources the component↔path map and the
 per-component collection params from components.py (the shared registry) — so no
 globs are duplicated in YAML and there is one source of truth. Runs no tests.
 
-Usage: python3 scripts/ci/changed.py [--all]
+Usage: python3 scripts/ci/changed.py [--all] [--compare-ref REF]
 Output: {"rust": [<entry>...], "python": [...], "js": [...]}
         rust entries carry name/root/package/all_features plus lint+cover flags
         (a crate may be lint-only); python carries cov_package; js carries cover
@@ -133,8 +133,13 @@ def all_components(components: list[dict]) -> dict[str, list]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Emit the CI component matrix as JSON.")
     ap.add_argument("--all", action="store_true", help="emit ALL components, ignoring the diff (manual full run)")
+    ap.add_argument(
+        "--compare-ref",
+        default=COMPARE_BRANCH,
+        help="compare HEAD with the merge-base of REF (default: origin/main)",
+    )
     args = ap.parse_args()
-    matrix = all_components(COMPONENTS) if args.all else changed_components(COMPARE_BRANCH, COMPONENTS)
+    matrix = all_components(COMPONENTS) if args.all else changed_components(args.compare_ref, COMPONENTS)
     print(json.dumps(matrix))  # noqa: T201  — this IS the script's CI output
     return 0
 

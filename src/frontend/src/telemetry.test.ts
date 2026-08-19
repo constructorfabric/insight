@@ -18,6 +18,7 @@ vi.mock("@/api/usage-client", () => ({
 
 import {
   recordPageView,
+  recordUsageEvent,
   screenPath,
   scopeLabel,
   startUsageTelemetry,
@@ -57,6 +58,33 @@ describe("startUsageTelemetry", () => {
     await startUsageTelemetry(SESSION);
 
     expect(mocks.logEvent).toHaveBeenCalledWith("page_view", { path: "/portal/people" });
+  });
+});
+
+describe("recordUsageEvent", () => {
+  beforeEach(async () => {
+    await startUsageTelemetry(SESSION);
+    mocks.logEvent.mockClear();
+  });
+
+  it("reports the screen the action happened on", () => {
+    recordPageView("/portal/overview/trend");
+    recordUsageEvent("drill", "git.commits");
+
+    expect(mocks.logEvent).toHaveBeenCalledWith("drill", {
+      target: "git.commits",
+      path: "/portal/overview/trend",
+    });
+  });
+
+  it("reports the screen without the person it is about", () => {
+    recordPageView("/ic/cccccccc-0000-0000-0000-000000000001/personal/git_output");
+    recordUsageEvent("period", "month");
+
+    expect(mocks.logEvent).toHaveBeenCalledWith("period", {
+      target: "month",
+      path: "/ic/:id/personal/git_output",
+    });
   });
 });
 

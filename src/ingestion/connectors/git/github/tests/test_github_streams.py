@@ -3,12 +3,13 @@
 GitHub-specific hazards under test: secondary rate limits arriving as 403
 (must retry, not skip), per-repository 403/404 skipping on repo-scoped
 streams, the issues endpoint returning PRs (filtered out), GraphQL errors
-arriving as HTTP 200 (must FAIL loudly), the proxy 429 retry loop, and the
-literal-"None" guard.
+arriving as HTTP 200 (a rate limit must retry, a query error must FAIL
+loudly), the proxy 429 retry loop, and the literal-"None" guard.
 
 Coverage matrix rows: full_refresh_single_page, incremental_state,
 tenant_source_stamping, schema_conformance, substream_partition,
-record_filter, error_retry (403-as-throttle, proxy 429), error_ignore (404),
+record_filter, error_retry (403-as-throttle, GraphQL rate limit in a 200,
+proxy 429), error_ignore (404),
 transformations (None-guard).
 """
 
@@ -17,6 +18,7 @@ from __future__ import annotations
 import json
 
 import freezegun
+import pytest
 from config import GH_URL, PROXY_URL, GithubConfigBuilder
 
 from connector_tests import (
@@ -776,6 +778,76 @@ def test_workflow_runs_key_carries_run_attempt(http_mocker: HttpMocker) -> None:
     rec = output.records[0].record.data
     assert rec["unique_key"].endswith(":run:500:2"), rec["unique_key"]
     _no_literal_none(output.records)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(
+            {"type": "RATE_LIMIT", "code": "graphql_rate_limit", "message": "API quota exhausted."},
+            id="typed_rate_limit",
+        ),
+        pytest.param(
+            {"type": "SERVICE_UNAVAILABLE", "message": "API rate limit already exceeded."},
+            id="untyped_message",
+        ),
+    ],
+)
+@freezegun.freeze_time(_FROZEN)
+def test_graphql_rate_limit_in_a_200_retries(http_mocker: HttpMocker, error: dict) -> None:
+    """An exhausted GraphQL budget arrives as HTTP 200. GitHub types it
+    RATE_LIMIT as well as RATE_LIMITED, so the throttle predicates match both
+    spellings and fall back to the message — otherwise a throttle is mistaken
+    for a query error and fails the stream."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_diff_stats_body()),
+        [
+            HttpResponse(
+                body=json.dumps({"errors": [error]}),
+                status_code=200,
+                headers={"Retry-After": "0"},
+            ),
+            HttpResponse(
+                body=json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequests": {
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                    "nodes": [
+                                        {
+                                            "number": 31,
+                                            "updatedAt": "2026-06-20T00:00:00Z",
+                                            "additions": 120,
+                                            "deletions": 7,
+                                            "changedFiles": 3,
+                                            "author": {
+                                                "login": "alice",
+                                                "databaseId": 4242,
+                                                "email": "alice@example.com",
+                                            },
+                                            "mergedBy": {"login": "bob", "databaseId": 77},
+                                            "reviewDecision": "APPROVED",
+                                            "totalCommentsCount": 5,
+                                            "isCrossRepository": False,
+                                        }
+                                    ],
+                                }
+                            }
+                        }
+                    }
+                ),
+                status_code=200,
+            ),
+        ],
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_diff_stats", config)
+
+    assert not output.errors, "a rate-limit error must retry, not fail the stream"
+    assert len(output.records) == 1
 
 
 @freezegun.freeze_time(_FROZEN)

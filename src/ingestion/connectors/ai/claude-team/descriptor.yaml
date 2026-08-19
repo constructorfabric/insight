@@ -31,10 +31,17 @@ name: claude-team
 #   Rows written before this version keep an empty seat_status and reach gold as
 #   'unknown', which is what they honestly are.
 version: "2.2.0"
-# Daily at 04:00 UTC — off-peak vs other connectors. The customer's
-# proxy runs a single browser instance, so we avoid scheduling
-# claude-team next to anything else that may also hit it.
-schedule: '0 4 * * *'
+# Daily at 23:50 UTC, as late in the day as the boundary allows. The seat
+# endpoint reports the billing month in progress and carries no history, so a
+# month's spend is frozen at the last read INSIDE it and whatever follows is
+# lost for good: reading at 04:00 dropped the last twenty hours of every month.
+# A run after midnight cannot make up for it — by then the endpoint answers for
+# the new month.
+#
+# Still off-peak vs other connectors, which occupy 02:00 to 06:00 and 11:00:
+# the customer's proxy runs a single browser instance, so claude-team is not
+# scheduled next to anything else that may hit it.
+schedule: '50 23 * * *'
 workflow: sync
 
 dbt_select: 'tag:claude-team+'

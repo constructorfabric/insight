@@ -161,7 +161,9 @@ IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     _i("POST", "/v1/visibility"),
     _i("DELETE", f"/v1/visibility/{SOME_ID}"),
     # `.authenticated()`, not admin-gated — deliberately absent from
-    # `_ADMIN_GATED_SUFFIXES` below.
+    # `_ADMIN_GATED_SUFFIXES` below. The GET enumerates the same visible set the
+    # POST filters against, under the same rule.
+    _i("GET", "/v1/visible-persons"),
     _i("POST", "/v1/visible-persons"),
 )
 

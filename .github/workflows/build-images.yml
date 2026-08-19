@@ -72,6 +72,7 @@ jobs:
       toolbox: ${{ steps.filter.outputs.toolbox }}
       seed: ${{ steps.filter.outputs.seed }}
       umbrella: ${{ steps.filter.outputs.umbrella }}
+      arches: ${{ steps.arches.outputs.arches }}
       build_tag: ${{ steps.tag.outputs.build_tag }}
       # Single push-policy switch consumed by every build/merge job below:
       # 'true' for a main push and for ANY workflow_dispatch (including a
@@ -84,6 +85,16 @@ jobs:
       should_push: ${{ steps.tag.outputs.should_push }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select build architectures
+        id: arches
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo 'arches=["amd64"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'arches=["amd64","arm64"]' >> "$GITHUB_OUTPUT"
+          fi
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
@@ -95,6 +106,7 @@ jobs:
           base: ${{ github.ref_name }}
           filters: |
             analytics:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/analytics/**'
               - 'src/backend/libs/insight-clickhouse/**'
               # The shared entrypoint is baked into the image.
@@ -102,22 +114,26 @@ jobs:
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             authenticator:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/authenticator/**'
               - 'src/backend/libs/authenticator-sdk/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             gateway:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/gateway/**'
               - 'src/backend/tools/routegen/**'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             git_cli_proxy:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/git-cli-proxy/**'
               # The shared entrypoint is baked into the image.
               - 'src/backend/docker-entrypoint.sh'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
             identity_resolution:
+              - '.github/workflows/build-images.yml'
               - 'src/backend/services/identity-resolution/**'
               # The image compiles the path-dependency lib in — a lib change
               # must republish this image (same for analytics above).
@@ -129,8 +145,10 @@ jobs:
             # Includes src/frontend/helm/, so a subchart edit rebuilds and
             # republishes as it does for the services above.
             frontend:
+              - '.github/workflows/build-images.yml'
               - 'src/frontend/**'
             toolbox:
+              - '.github/workflows/build-images.yml'
               - 'src/ingestion/**'
             # The sample-data seeder's own image. It COPYs a subset of the
             # ingestion tree (scripts, dbt, silver, gold, connectors, the tool
@@ -139,8 +157,10 @@ jobs:
             # Dockerfile's COPY lines, and the failure mode of forgetting is a
             # silently stale published image.
             seed:
+              - '.github/workflows/build-images.yml'
               - 'src/ingestion/**'
             umbrella:
+              - '.github/workflows/build-images.yml'
               - 'charts/insight/**'
 
       # Compute the canonical build tag once per workflow run so every
@@ -249,6 +269,8 @@ jobs:
           ALL_FLAG=""
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             ALL_FLAG="--all"
+          elif grep -Fxq '.github/workflows/build-images.yml' /tmp/changed.txt; then
+            ALL_FLAG="--all"
           fi
 
           if ! git rev-parse "$BASE" >/dev/null 2>&1; then
@@ -282,11 +304,7 @@ jobs:
   # work in the gitops promotion flow (see publish-chart for the appVersion
   # logic).
 
-  # Per-arch backend builds run in parallel on native runners (amd64 on
-  # ubuntu-latest, arm64 on ubuntu-24.04-arm). Each leg pushes by digest
-  # only — the tagged multi-arch manifest is assembled by the merge-* job
-  # below once both legs finish. This avoids QEMU emulation entirely:
-  # `cargo build` runs natively on each arch's runner.
+  # INVARIANT: PR validation builds amd64 only; publishing builds both supported architectures on native runners.
   backend-analytics:
     needs: changes
     if: |
@@ -295,14 +313,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -317,7 +329,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/analytics/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           # PR amd64 legs write a loadable tarball instead of discarding the
           # result — the e2e rig consumes it (see "Upload image for the e2e
           # rig" below). Other legs keep the push-by-digest output.
@@ -427,14 +439,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -449,7 +455,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/authenticator/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-authenticator,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=authenticator-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=authenticator-{0},ignore-error=true', matrix.arch) || '' }}
@@ -541,14 +547,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -563,7 +563,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/gateway/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-gateway,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=gateway-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=gateway-{0},ignore-error=true', matrix.arch) || '' }}
@@ -656,14 +656,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -680,7 +674,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/git-cli-proxy/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           # PR amd64 legs feed the e2e rig — see backend-analytics.
           tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-git-cli-proxy:e2e-prebuilt' || '' }}
           outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-git-cli-proxy,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
@@ -784,14 +778,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -808,7 +796,7 @@ jobs:
         with:
           context: src/backend
           file: src/backend/services/identity-resolution/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           # PR amd64 legs feed the e2e rig — see backend-analytics.
           tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'insight-identity-resolution:e2e-prebuilt' || '' }}
           outputs: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}
@@ -920,14 +908,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 30
     # Narrower than the workflow-level set: this job builds PR-authored source.
     permissions:
@@ -949,7 +931,7 @@ jobs:
         id: build
         with:
           context: src/frontend
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           build-args: |
             VITE_APP_RELEASE=${{ needs.changes.outputs.build_tag }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-frontend,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
@@ -1049,8 +1031,6 @@ jobs:
   # bump-descriptors) MUST re-trigger it. paths-filter for `toolbox` matches
   # `src/ingestion/**` (which includes descriptor.yaml).
   #
-  # Per-arch matrix runs amd64 and arm64 builds in parallel on native
-  # runners; merge-toolbox below assembles the multi-arch manifest.
   toolbox:
     needs: changes
     if: |
@@ -1059,14 +1039,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1137,7 +1111,7 @@ jobs:
         with:
           context: src/ingestion
           file: src/ingestion/tools/toolbox/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-toolbox,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=toolbox-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=toolbox-{0},ignore-error=true', matrix.arch) || '' }}
@@ -1239,14 +1213,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1305,7 +1273,7 @@ jobs:
         with:
           context: src/ingestion
           file: src/ingestion/tools/seed/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-seed,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
           cache-from: type=gha,scope=seed-${{ matrix.arch }}
           cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=seed-{0},ignore-error=true', matrix.arch) || '' }}
@@ -1387,9 +1355,6 @@ jobs:
   # identity (`name`, `dockerfile`, `context`) is read from the matrix
   # entry — there is no per-connector hardcode in this workflow.
   #
-  # The matrix is a cross-product: every connector entry × {amd64, arm64}.
-  # Each leg pushes by digest; merge-image below assembles the multi-arch
-  # manifest per entry.
   build-image:
     needs: [changes, discover-images]
     if: needs.discover-images.outputs.any == 'true'
@@ -1397,15 +1362,8 @@ jobs:
       fail-fast: false
       matrix:
         entry: ${{ fromJson(needs.discover-images.outputs.matrix) }}
-        arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
@@ -1420,7 +1378,7 @@ jobs:
         with:
           context: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.context }}
           file: ${{ matrix.entry.connector_dir }}/${{ matrix.entry.dockerfile }}
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           # insight-jira-enrich is the one connector image the e2e rig bakes
           # into its runner — its PR amd64 leg feeds it (see backend-analytics).
           tags: ${{ github.event_name == 'pull_request' && matrix.arch == 'amd64' && matrix.entry.name == 'insight-jira-enrich' && format('{0}:e2e-prebuilt', matrix.entry.name) || '' }}

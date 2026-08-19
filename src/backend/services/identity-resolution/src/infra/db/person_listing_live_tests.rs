@@ -21,7 +21,7 @@ const PAGE: u64 = 100;
 
 async fn find(f: &Fixture, query: &str) -> anyhow::Result<Vec<Uuid>> {
     let terms: Vec<String> = query.split_whitespace().map(str::to_owned).collect();
-    let rows = list_persons(&f.db, f.tenant, &terms, &[], None, PAGE).await?;
+    let rows = list_persons(&f.db, f.tenant, &terms, &[], None, None, PAGE).await?;
     Ok(rows.into_iter().map(|row| row.person_id).collect())
 }
 
@@ -154,13 +154,13 @@ async fn an_id_named_search_answers_exactly_that_person() -> TestResult {
     f.person("other@listing.test").await?;
     let emailless = f.emailless_person().await?;
 
-    let named = list_persons(&f.db, f.tenant, &[], &[wanted], None, PAGE).await?;
+    let named = list_persons(&f.db, f.tenant, &[], &[wanted], None, None, PAGE).await?;
     assert_eq!(
         named.into_iter().map(|r| r.person_id).collect::<Vec<_>>(),
         vec![wanted]
     );
     // The id is the only way to a person the journal holds no values for.
-    let by_id = list_persons(&f.db, f.tenant, &[], &[emailless], None, PAGE).await?;
+    let by_id = list_persons(&f.db, f.tenant, &[], &[emailless], None, None, PAGE).await?;
     assert_eq!(
         by_id.into_iter().map(|r| r.person_id).collect::<Vec<_>>(),
         vec![emailless]
@@ -200,7 +200,7 @@ async fn the_page_is_ordered_by_the_label_the_row_shows() -> TestResult {
     f.observed(byname, "last_name", "Composed").await?;
     let nameless = f.emailless_person().await?;
 
-    let rows = list_persons(&f.db, f.tenant, &[], &[], None, PAGE).await?;
+    let rows = list_persons(&f.db, f.tenant, &[], &[], None, None, PAGE).await?;
     let order: Vec<Uuid> = rows.into_iter().map(|r| r.person_id).collect();
 
     assert_eq!(
@@ -226,7 +226,7 @@ async fn paging_one_row_at_a_time_retraces_the_same_order() -> TestResult {
         f.observed(person, "display_name", name).await?;
     }
 
-    let whole: Vec<(Uuid, String)> = list_persons(&f.db, f.tenant, &[], &[], None, PAGE)
+    let whole: Vec<(Uuid, String)> = list_persons(&f.db, f.tenant, &[], &[], None, None, PAGE)
         .await?
         .into_iter()
         .map(|r| (r.person_id, r.order_key))
@@ -239,7 +239,7 @@ async fn paging_one_row_at_a_time_retraces_the_same_order() -> TestResult {
             order_key: key,
             person_id: *id,
         });
-        let page = list_persons(&f.db, f.tenant, &[], &[], after, 1).await?;
+        let page = list_persons(&f.db, f.tenant, &[], &[], None, after, 1).await?;
         let Some(row) = page.into_iter().next() else {
             break;
         };
@@ -281,7 +281,7 @@ async fn the_unnarrowed_fallback_answers_exactly_what_the_probe_narrowed_to() ->
         "comparable fallback-hit@listing.test",
     ] {
         let terms: Vec<String> = query.split_whitespace().map(str::to_owned).collect();
-        let narrowed = list_persons(&f.db, f.tenant, &terms, &[], None, PAGE).await?;
+        let narrowed = list_persons(&f.db, f.tenant, &terms, &[], None, None, PAGE).await?;
         let whole_tenant = list_persons_unnarrowed(&f.db, f.tenant, &terms, None, PAGE).await?;
 
         assert_eq!(

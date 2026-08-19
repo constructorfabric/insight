@@ -15,7 +15,7 @@ use super::test_fixture::fixture_or_skip;
 type TestResult = anyhow::Result<()>;
 
 async fn browsed(f: &super::test_fixture::Fixture) -> anyhow::Result<usize> {
-    Ok(list_persons(&f.db, f.tenant, &[], &[], None, 1_000)
+    Ok(list_persons(&f.db, f.tenant, &[], &[], None, None, 1_000)
         .await?
         .len())
 }

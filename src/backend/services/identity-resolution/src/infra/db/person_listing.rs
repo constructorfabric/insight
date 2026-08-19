@@ -44,6 +44,10 @@
 //! An id-named search skips the probe entirely: the ids ARE the set, and the
 //! tightest one there is.
 //!
+//! A listing restricted to one caller's visible set narrows the ranking too, but
+//! never the probe: the probe only has to stay a superset, and a visibility
+//! filter it does not carry can only leave it wider than it needs to be.
+//!
 //! Browsing with no terms has nothing to narrow by and ranks the whole tenant —
 //! the page bounds what is returned, not the work. That is the one case a
 //! derived current-values table would fix, and it is a cache to keep in sync
@@ -52,6 +56,7 @@
 use sea_orm::{ConnectionTrait as _, DatabaseConnection, DbBackend, QueryResult, Statement};
 use uuid::Uuid;
 
+use crate::config::VisibilityPolicy;
 use crate::domain::resolution::EXCLUDED_PERSON;
 
 /// How much of the label the order key carries.
@@ -86,6 +91,50 @@ const FILTERABLE_VALUE_TYPES: [&str; 5] = [
     "last_name",
 ];
 
+/// Restrict a listing to what one caller may see. Absent, it is the tenant's.
+#[derive(Debug, Clone, Copy)]
+pub struct VisibleTo<'a> {
+    pub viewer_person_id: Uuid,
+    pub org_source_type: &'a str,
+    pub policy: VisibilityPolicy,
+}
+
+/// INVARIANT: the same union `subchart_repo` evaluates. A second rule here
+/// would let a listing show a person the batch filter refuses to confirm.
+const VISIBLE_SET_CTE: &str = r"
+        visible_set (person_id) AS (
+            SELECT ?
+            UNION
+            SELECT viewed_person_id
+            FROM visibility
+            WHERE insight_tenant_id = ?
+              AND viewer_person_id  = ?
+              AND viewed_person_id  IS NOT NULL
+              AND valid_from <= UTC_TIMESTAMP(6)
+              AND (valid_to IS NULL OR valid_to > UTC_TIMESTAMP(6))
+            UNION
+            SELECT DISTINCT person_id
+            FROM persons
+            WHERE insight_tenant_id = ?
+              AND (? OR EXISTS (
+                  SELECT 1 FROM visibility
+                  WHERE insight_tenant_id = ?
+                    AND viewer_person_id  = ?
+                    AND viewed_person_id  IS NULL
+                    AND valid_from <= UTC_TIMESTAMP(6)
+                    AND (valid_to IS NULL OR valid_to > UTC_TIMESTAMP(6))
+              ))
+            UNION
+            SELECT oc.child_person_id
+            FROM visible_set vs
+            JOIN org_chart oc
+              ON  oc.parent_person_id    = vs.person_id
+              AND oc.insight_tenant_id   = ?
+              AND oc.insight_source_type = ?
+              AND oc.valid_from <= UTC_TIMESTAMP(6)
+              AND (oc.valid_to IS NULL OR oc.valid_to > UTC_TIMESTAMP(6))
+        )";
+
 /// One listed person and the position that orders them.
 #[derive(Debug, Clone)]
 pub struct PersonListRow {
@@ -106,7 +155,8 @@ pub struct After<'a> {
 ///
 /// `terms` empty lists every person; otherwise every term must match some
 /// current value. `within` (when non-empty) restricts the set to those ids —
-/// the id-named search path. `after` resumes a previous page.
+/// the id-named search path. `visible_to` restricts it to one caller's visible
+/// set. `after` resumes a previous page.
 ///
 /// Two statements when there are terms and no ids: the probe, then the page over
 /// what it named. One when there is nothing to narrow by.
@@ -119,13 +169,16 @@ pub async fn list_persons(
     tenant_id: Uuid,
     terms: &[String],
     within: &[Uuid],
+    visible_to: Option<VisibleTo<'_>>,
     after: Option<After<'_>>,
     limit: u64,
 ) -> anyhow::Result<Vec<PersonListRow>> {
     match narrowing(db, tenant_id, terms, within).await? {
         Narrowing::Nobody => Ok(Vec::new()),
-        Narrowing::Tenant => page(db, tenant_id, terms, None, after, limit).await,
-        Narrowing::Persons(ids) => page(db, tenant_id, terms, Some(&ids), after, limit).await,
+        Narrowing::Tenant => page(db, tenant_id, terms, None, visible_to, after, limit).await,
+        Narrowing::Persons(ids) => {
+            page(db, tenant_id, terms, Some(&ids), visible_to, after, limit).await
+        }
     }
 }
 
@@ -146,10 +199,11 @@ async fn page(
     tenant_id: Uuid,
     terms: &[String],
     narrowed_to: Option<&[Uuid]>,
+    visible_to: Option<VisibleTo<'_>>,
     after: Option<After<'_>>,
     limit: u64,
 ) -> anyhow::Result<Vec<PersonListRow>> {
-    let (sql, values) = build_query(tenant_id, terms, narrowed_to, after, limit);
+    let (sql, values) = build_query(tenant_id, terms, narrowed_to, visible_to, after, limit);
     let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
     rows_from(db.query_all(stmt).await?)
 }
@@ -260,7 +314,7 @@ pub(super) async fn list_persons_unnarrowed(
     after: Option<After<'_>>,
     limit: u64,
 ) -> anyhow::Result<Vec<PersonListRow>> {
-    page(db, tenant_id, terms, None, after, limit).await
+    page(db, tenant_id, terms, None, None, after, limit).await
 }
 
 fn searched_types() -> String {
@@ -343,17 +397,60 @@ const LABEL_CTES: &str = r"
             ) pivoted
         )";
 
+struct VisibleScopeSql {
+    /// `RECURSIVE `, so the `WITH` admits the recursive CTE.
+    recursive: &'static str,
+    cte: String,
+    filter: &'static str,
+    /// In placeholder order.
+    values: Vec<sea_orm::Value>,
+}
+
+/// INVARIANT: these values bind after the ranking's and before the filters' —
+/// the position the CTE occupies in the statement.
+fn visible_scope(visible_to: Option<VisibleTo<'_>>, tenant_id: Uuid) -> VisibleScopeSql {
+    let Some(scope) = visible_to else {
+        return VisibleScopeSql {
+            recursive: "",
+            cte: String::new(),
+            filter: "",
+            values: Vec::new(),
+        };
+    };
+
+    let tenant = || sea_orm::Value::from(tenant_id.as_bytes().to_vec());
+    let viewer = || sea_orm::Value::from(scope.viewer_person_id.as_bytes().to_vec());
+
+    VisibleScopeSql {
+        recursive: "RECURSIVE ",
+        cte: format!(",\n{VISIBLE_SET_CTE}"),
+        filter: " AND EXISTS (SELECT 1 FROM visible_set vs WHERE vs.person_id = p.person_id)",
+        values: vec![
+            viewer(),
+            tenant(),
+            viewer(),
+            tenant(),
+            scope.policy.is_flat().into(),
+            tenant(),
+            viewer(),
+            tenant(),
+            scope.org_source_type.into(),
+        ],
+    }
+}
+
 fn build_query(
     tenant_id: Uuid,
     terms: &[String],
     narrowed_to: Option<&[Uuid]>,
+    visible_to: Option<VisibleTo<'_>>,
     after: Option<After<'_>>,
     limit: u64,
 ) -> (String, Vec<sea_orm::Value>) {
     // INVARIANT: values are pushed in the order their placeholders appear in the
-    // assembled statement — the roster, the ranking, the filters, the resume
-    // position, the limit. A fragment moved in the text moves here too; a
-    // mismatch does not fail, it shifts every later binding by one.
+    // assembled statement — the roster, the ranking, the visible set, the
+    // filters, the resume position, the limit. A fragment moved in the text moves
+    // here too; a mismatch does not fail, it shifts every later binding by one.
     let mut values: Vec<sea_orm::Value> = Vec::new();
     let type_list = searched_types();
 
@@ -378,7 +475,12 @@ fn build_query(
         "\n              AND person_id IN (SELECT person_id FROM people)"
     };
 
-    let mut filters = String::new();
+    let scope = visible_scope(visible_to, tenant_id);
+    let visible_cte = scope.cte;
+    let recursive = scope.recursive;
+    values.extend(scope.values);
+
+    let mut filters = String::from(scope.filter);
     for term in terms {
         filters.push_str(
             " AND EXISTS (SELECT 1 FROM current_vals t \
@@ -399,7 +501,7 @@ fn build_query(
 
     let sql = format!(
         r"
-        WITH people AS (
+        WITH {recursive}people AS (
             SELECT DISTINCT person_id
             FROM persons
             WHERE insight_tenant_id = ? AND person_id != ?{roster}
@@ -414,7 +516,7 @@ fn build_query(
             WHERE insight_tenant_id = ?
               AND value_type IN ({type_list}){ranked_within}
         ),
-{LABEL_CTES}
+{LABEL_CTES}{visible_cte}
         SELECT person_id, order_key FROM (
             SELECT p.person_id AS person_id,
                    CONCAT(
@@ -461,7 +563,23 @@ mod tests {
     use super::*;
 
     fn query(terms: &[String], narrowed_to: Option<&[Uuid]>, after: Option<After<'_>>) -> String {
-        build_query(Uuid::nil(), terms, narrowed_to, after, 50).0
+        build_query(Uuid::nil(), terms, narrowed_to, None, after, 50).0
+    }
+
+    fn visible_query(policy: VisibilityPolicy) -> String {
+        build_query(
+            Uuid::nil(),
+            &[],
+            None,
+            Some(VisibleTo {
+                viewer_person_id: Uuid::from_u128(7),
+                org_source_type: "bamboohr",
+                policy,
+            }),
+            None,
+            50,
+        )
+        .0
     }
 
     #[test]
@@ -583,6 +701,7 @@ mod tests {
             tenant,
             &terms,
             Some(&within),
+            None,
             Some(After {
                 order_key: "0ivanov",
                 person_id: resuming,
@@ -641,6 +760,110 @@ mod tests {
         // what stops a long-label boundary from skipping a person for good; the
         // budget itself is checked at compile time beside the constant.
         assert!(query(&[], None, None).contains(&format!("), {ORDER_KEY_CHARS})")));
+    }
+
+    #[test]
+    fn an_unrestricted_listing_asks_nothing_about_visibility() {
+        let sql = query(&[], None, None);
+
+        assert!(
+            !sql.contains("visible_set"),
+            "the operator surface is unfiltered"
+        );
+        assert!(
+            !sql.contains("RECURSIVE"),
+            "no recursion without a visible set"
+        );
+    }
+
+    #[test]
+    fn a_restricted_listing_narrows_the_set_to_the_visible_one() {
+        let sql = visible_query(VisibilityPolicy::OrgChart);
+
+        assert!(
+            sql.contains("WITH RECURSIVE"),
+            "the visible set recurses: {sql}"
+        );
+        assert!(sql.contains("visible_set"));
+        assert!(
+            sql.contains("EXISTS (SELECT 1 FROM visible_set"),
+            "the restriction is a filter over the listed people: {sql}"
+        );
+    }
+
+    #[test]
+    fn the_visible_set_values_land_between_the_ranking_and_the_filters() {
+        // The CTE sits between them in the SQL, so its values must too.
+        let tenant = Uuid::from_u128(0xA1);
+        let viewer = Uuid::from_u128(0x7);
+        let within = [Uuid::from_u128(0xB2)];
+
+        let (sql, values) = build_query(
+            tenant,
+            &["iva".to_owned()],
+            Some(&within),
+            Some(VisibleTo {
+                viewer_person_id: viewer,
+                org_source_type: "bamboohr",
+                policy: VisibilityPolicy::Flat,
+            }),
+            None,
+            50,
+        );
+
+        let bytes = |id: Uuid| sea_orm::Value::from(id.as_bytes().to_vec());
+        assert_eq!(sql.matches('?').count(), values.len());
+        assert_eq!(
+            values,
+            vec![
+                // the roster, cut to the persons the caller narrowed to
+                bytes(tenant),
+                bytes(EXCLUDED_PERSON),
+                bytes(within[0]),
+                // the ranking over that roster
+                bytes(tenant),
+                // the visible-set union
+                bytes(viewer),
+                bytes(tenant),
+                bytes(viewer),
+                bytes(tenant),
+                sea_orm::Value::from(true),
+                bytes(tenant),
+                bytes(viewer),
+                bytes(tenant),
+                sea_orm::Value::from("bamboohr"),
+                // then the filters it narrows
+                sea_orm::Value::from("%iva%".to_owned()),
+                sea_orm::Value::from(50u64),
+            ],
+            "the bind order drifted from the order the placeholders appear in"
+        );
+    }
+
+    #[test]
+    fn the_policy_reaches_the_visible_set_as_a_bound_flag() {
+        for (policy, expected) in [
+            (VisibilityPolicy::OrgChart, false),
+            (VisibilityPolicy::Flat, true),
+        ] {
+            let (_, values) = build_query(
+                Uuid::nil(),
+                &[],
+                None,
+                Some(VisibleTo {
+                    viewer_person_id: Uuid::from_u128(7),
+                    org_source_type: "bamboohr",
+                    policy,
+                }),
+                None,
+                50,
+            );
+
+            assert!(
+                values.contains(&sea_orm::Value::from(expected)),
+                "{policy:?} must bind {expected}"
+            );
+        }
     }
 
     #[test]

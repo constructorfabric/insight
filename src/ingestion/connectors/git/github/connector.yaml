@@ -21,6 +21,33 @@ type: DeclarativeSource
 # computed nullable string field coalesces with `or ''` — a rendered Jinja
 # `none` under value_type: string stores the literal text "None" as a value.
 
+# GitHub meters REST and GraphQL as two separate 5000/hour budgets, both
+# reported through the same X-RateLimit-* headers. An error handler cannot wait
+# one out: DefaultErrorHandler caps total backoff at 600 seconds and the
+# manifest has no field to raise it. The budget paces requests before they are
+# sent and sleeps until the window resets, which a reset an hour away needs.
+# Matchers split the two budgets by method: GET is REST, POST is GraphQL — a
+# policy added without a method would claim both.
+api_budget:
+  type: HTTPAPIBudget
+  ratelimit_reset_header: X-RateLimit-Reset
+  ratelimit_remaining_header: X-RateLimit-Remaining
+  status_codes_for_ratelimit_hit: [403, 429]
+  policies:
+    - type: FixedWindowCallRatePolicy
+      period: PT1H
+      call_limit: 5000
+      matchers:
+        - method: POST
+          url_base: https://api.github.com
+          url_path_pattern: ^/graphql
+    - type: FixedWindowCallRatePolicy
+      period: PT1H
+      call_limit: 5000
+      matchers:
+        - method: GET
+          url_base: https://api.github.com
+
 definitions:
   # The CDK resolves backoff per requester, not per response filter: the first
   # strategy returning a value wins for every retryable response. X-RateLimit-Reset
@@ -78,7 +105,10 @@ definitions:
         http_codes: [429]
       - type: HttpResponseFilter
         action: RATE_LIMITED
-        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
+        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'in', ['RATE_LIMITED', 'RATE_LIMIT']) | list | length > 0 }}"
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        predicate: "{{ 'rate limit' in ((response.get('errors') or []) | map(attribute='message') | join(' ') | lower) }}"
       - type: HttpResponseFilter
         action: FAIL
         http_codes: [401]
@@ -106,7 +136,10 @@ definitions:
         http_codes: [429]
       - type: HttpResponseFilter
         action: RATE_LIMITED
-        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
+        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'in', ['RATE_LIMITED', 'RATE_LIMIT']) | list | length > 0 }}"
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        predicate: "{{ 'rate limit' in ((response.get('errors') or []) | map(attribute='message') | join(' ') | lower) }}"
       - type: HttpResponseFilter
         action: FAIL
         http_codes: [401]
