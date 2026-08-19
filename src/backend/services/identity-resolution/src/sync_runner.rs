@@ -3,11 +3,11 @@
 //! Copies the MariaDB `persons` observation log into ClickHouse
 //! `identity.identity_persons` (full snapshot, atomic swap — see
 //! `infra::identity_persons`) so the metrics dbt builds can resolve
-//! `email -> person_id`. CLI-only from the start, mirroring the persons-seed
-//! shape (#1690): a Helm `CronJob` / manual Job runs
-//! `identity-resolution sync` — no HTTP trigger, no auth; only the GET
-//! journal routes remain on the API. The natural pairing is "sync right
-//! after seed" — the seed rewrites the log, the sync publishes it.
+//! `email -> person_id`. Nothing schedules it on its own: every seed run and
+//! every applied operator correction invokes this runner as its publish step,
+//! and the `sync` subcommand remains as the manual repair tool for a snapshot
+//! that has fallen behind them — no HTTP trigger, no auth; only the GET
+//! journal routes remain on the API.
 //!
 //! One run: advisory lock → zombie sweep → `operations` journal row → log
 //! read → guard → snapshot replace → journal completed/failed.

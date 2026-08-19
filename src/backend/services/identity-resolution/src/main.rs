@@ -91,10 +91,11 @@ enum Commands {
     /// the committed-doc drift gate.
     Openapi,
     /// Copy the `persons` log into ClickHouse `identity.identity_persons`
-    /// (the metrics email→`person_id` resolve source) and exit. Same execution
-    /// model as `seed` — Helm `CronJob` / manual Job; pairs naturally as
-    /// "sync after seed". Exit codes: 0 ok / 1 failed / 2 another run holds
-    /// the lock / 3 refused by the empty-log guard.
+    /// (the metrics email→`person_id` resolve source) and exit. Normally
+    /// nothing schedules this: every `seed` run and every applied operator
+    /// correction publishes on its own. This is the manual repair tool for a
+    /// snapshot that has fallen behind them. Exit codes: 0 ok / 1 failed /
+    /// 2 another run holds the lock / 3 refused by the empty-log guard.
     Sync {
         /// Override the empty-log guard (publish an empty snapshot).
         #[arg(long)]
