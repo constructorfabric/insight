@@ -2022,3 +2022,47 @@ jobs:
             echo "recompute the bump against the new tip." >&2
             exit 1
           fi
+
+  # ─── The image gate ────────────────────────────────────────────────────────
+  # INVARIANT: `Images built` is a branch-protection check identity — it is the
+  # only ruleset-visible reporter for this workflow, whose per-service jobs
+  # come and go with the diff and so can never be named there directly.
+  images-built:
+    name: Images built
+    needs:
+      - changes
+      - discover-images
+      - backend-analytics
+      - merge-analytics
+      - backend-authenticator
+      - merge-authenticator
+      - backend-gateway
+      - merge-gateway
+      - backend-git-cli-proxy
+      - merge-git-cli-proxy
+      - backend-identity-resolution
+      - merge-identity-resolution
+      - frontend
+      - merge-frontend
+      - toolbox
+      - merge-toolbox
+      - seed
+      - merge-seed
+      - build-image
+      - merge-image
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every image job to have passed or been skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          jq -r 'to_entries[] | "\(.key)=\(.value.result)"' <<<"$RESULTS"
+          bad="$(jq -r '[to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key] | join(", ")' <<<"$RESULTS")"
+          if [ -n "$bad" ]; then
+            echo "::error::image jobs did not pass: $bad"
+            exit 1
+          fi
+          echo "every image job passed or was skipped as irrelevant"
