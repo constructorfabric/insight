@@ -76,6 +76,26 @@ beforeEach(() => {
 });
 
 describe("PersonPicker", () => {
+  // Choosing a person unmounts this field, so what was typed has to live
+  // somewhere that outlives it — otherwise coming back means finding the same
+  // person twice.
+  it("starts from the terms it was handed", () => {
+    render(<PersonPicker onPick={vi.fn()} initialQuery="park" />);
+
+    expect(screen.getByRole("searchbox")).toHaveValue("park");
+  });
+
+  // Debounced, not per keystroke: a caller that stores these in the URL would
+  // otherwise navigate on every letter.
+  it("reports the terms once the reader has stopped typing", async () => {
+    const onSettled = vi.fn();
+    render(<PersonPicker onPick={vi.fn()} onSettled={onSettled} />);
+
+    await userEvent.type(screen.getByRole("searchbox"), "park");
+
+    expect(onSettled).toHaveBeenLastCalledWith("park");
+  });
+
   // One letter names most of the roster: the answer is no use and the service
   // pays a pass over the journal for it. Going silent instead would read as a
   // broken field, so the picker says what it is waiting for.

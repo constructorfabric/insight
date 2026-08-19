@@ -21,11 +21,17 @@
 import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { AttentionItem, ResolutionRates } from "@/api/identity-client";
+import type {
+  AttentionItem,
+  PersonSummary,
+  ResolutionRates,
+} from "@/api/identity-client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { AccountSearchView } from "@/components/portal/account-search-view";
 import { CaseDialog } from "@/components/portal/case-dialog";
+import { ConfirmGroupButton } from "@/components/portal/confirm-group-button";
+import { MergeCaseDialog } from "@/components/portal/merge-case-dialog";
 import { PersonAccountsView } from "@/components/portal/person-accounts-view";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
@@ -54,7 +60,11 @@ import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { itemKey } from "@/lib/identities/account-key";
 import { MODES, resolveMode } from "@/lib/portal/identity-modes";
 import { personDisplayName } from "@/lib/identities/person-display";
-import { groupIntoCases, type QueueCase } from "@/lib/identities/cases";
+import {
+  groupIntoCases,
+  groupIsConfirmable,
+  type QueueCase,
+} from "@/lib/identities/cases";
 import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
@@ -183,13 +193,6 @@ function RatesStrip({
   const { t } = useTranslation();
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
-      {/* A backend a release behind this bundle does not carry the total; an
-          unknown figure reads as one rather than as the word "undefined". */}
-      <Tile
-        figure={String(rates.persons ?? "—")}
-        label={t("identities.rates.persons")}
-        status="neutral"
-      />
       <Tile
         figure={String(rates.observed)}
         label={t("identities.rates.observed")}
@@ -283,15 +286,23 @@ function Queue({ items }: { items: AttentionItem[] }) {
 
   // Closing the window puts the operator back on the row they opened, not at
   // the top of the page — the queue is worked in one pass.
+  //
+  // INVARIANT: after a frame, never in the closing handler itself. A decision
+  // closes this window from inside the same batch that prunes its row, so the
+  // doomed row is still in the document — looking for it there finds it, focuses
+  // it, and React then unmounts it, dropping focus to `body` and killing arrow
+  // navigation. One frame later the list has settled and the fallback can fire.
   const returnFocus = (key: string) => {
-    const row =
-      listRef.current?.querySelector<HTMLElement>(
-        `[data-queue-row="${CSS.escape(key)}"]`,
-      ) ??
-      // The row an operator just decided is pruned by the time the window
-      // closes — fall to the top of the list rather than to nowhere.
-      listRef.current?.querySelector<HTMLElement>("[data-queue-row]");
-    row?.focus();
+    requestAnimationFrame(() => {
+      const row =
+        listRef.current?.querySelector<HTMLElement>(
+          `[data-queue-row="${CSS.escape(key)}"]`,
+        ) ??
+        // The row an operator just decided is pruned by the time the window
+        // closes — fall to the top of the list rather than to nowhere.
+        listRef.current?.querySelector<HTMLElement>("[data-queue-row]");
+      row?.focus();
+    });
   };
 
   // The queue is a list, so it moves like one. Enter and Space open a row;
@@ -400,6 +411,12 @@ function QueueGroup({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <CardContent className="flex flex-col gap-2 p-2 pt-0">
+            {/* One decision for the whole group, above the cases it covers: a
+                roster sync adds people in batches, and confirming them one
+                window at a time is the same answer given a hundred times. */}
+            {groupIsConfirmable(kind, items) ? (
+              <ConfirmGroupButton items={items} className="self-start" />
+            ) : null}
             {visible.map((queueCase) => (
               <CaseBlock
                 key={queueCase.key}
@@ -480,6 +497,11 @@ function CaseBlock({
 }) {
   const { t } = useTranslation();
   const disputed = queueCase.candidates.length > 0;
+  // Who the operator chose to keep. A merge needs somebody to absorb, so a case
+  // naming one person offers none — the evidence disagrees with a binding there,
+  // which is a question about the account, not about two people being one.
+  const [survivor, setSurvivor] = useState<PersonSummary | null>(null);
+  const mergeable = queueCase.candidates.length >= 2;
   return (
     <div className={cn(disputed && "rounded-lg border bg-muted/20 p-2")}>
       {disputed ? (
@@ -493,10 +515,52 @@ function CaseBlock({
               count: queueCase.items.length,
             })}
           </div>
-          {queueCase.candidates.map((candidate) => (
-            <PersonCell key={candidate.person_id} person={candidate} />
-          ))}
+          {queueCase.candidates.map((candidate) => {
+            const others = queueCase.candidates.filter(
+              (c) => c.person_id !== candidate.person_id,
+            );
+            return (
+              <div key={candidate.person_id} className="flex items-center gap-2">
+                <PersonCell person={candidate} className="min-w-0 flex-1" />
+                {/* The row's own button, so the choice IS the direction: this
+                    person stays and the rest of the case merges into them.
+                    Keeping rather than removing is deliberate — a mis-click
+                    preserves a person instead of erasing one. */}
+                {mergeable ? (
+                  <div className="flex shrink-0 flex-col items-end gap-0.5">
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => setSurvivor(candidate)}
+                    >
+                      {t("identities.actions.keep_person")}
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      {others.length === 1
+                        ? t("identities.queue.absorb_named", {
+                            name: personDisplayName(others[0]),
+                          })
+                        : t("identities.queue.absorb_count", {
+                            count: others.length,
+                          })}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
+      ) : null}
+
+      {survivor ? (
+        <MergeCaseDialog
+          survivor={survivor}
+          absorbed={queueCase.candidates.filter(
+            (c) => c.person_id !== survivor.person_id,
+          )}
+          onClose={() => setSurvivor(null)}
+        />
       ) : null}
       <div className="flex flex-col gap-1">
         {queueCase.items.map((item) => {

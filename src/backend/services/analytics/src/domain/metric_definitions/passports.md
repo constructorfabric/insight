@@ -28,7 +28,7 @@ this file and the registry disagree.
 - Shape: integer, higher_is_better, unit days
 - Notes: Distinct days with person-attributed AI activity across dev and assistant tools.
 
-## ai.cost — AI usage cost
+## ai.cost — AI potential usage cost
 
 - Source: ai_usage (ai_metric_observations)
 - Reads: cost_usd
@@ -36,7 +36,7 @@ this file and the registry disagree.
 - Shape: currency, lower_is_better
 - Notes: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person. Overlaps ai.extra_usage_cost, which is the part of that same consumption the vendor actually billed on top of the seat fee — the two are served side by side and are never added, since adding them counts the billed part twice.
 
-## ai.extra_usage_cost — AI extra usage
+## ai.extra_usage_cost — AI actual usage cost
 
 - Source: ai_cost (ai_cost_metric_observations)
 - Reads: extra_usage_usd

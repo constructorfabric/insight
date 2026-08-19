@@ -12,6 +12,8 @@
 
 use uuid::Uuid;
 
+use crate::domain::resolution::EXCLUDED_PERSON;
+
 use super::person_listing::{After, list_persons, list_persons_unnarrowed};
 use super::test_fixture::{Fixture, fixture_or_skip};
 
@@ -164,6 +166,25 @@ async fn an_id_named_search_answers_exactly_that_person() -> TestResult {
     assert_eq!(
         by_id.into_iter().map(|r| r.person_id).collect::<Vec<_>>(),
         vec![emailless]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_excluded_sentinel_is_never_listed_as_a_person() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    f.person("real@person-listing.test").await?;
+    f.person_as(EXCLUDED_PERSON, "excluded@person-listing.test")
+        .await?;
+
+    let browsed = list_persons(&f.db, f.tenant, &[], &[], None, None, 1_000).await?;
+
+    assert_eq!(browsed.len(), 1, "the sentinel is a bucket, not a person");
+    assert!(
+        browsed.iter().all(|row| row.person_id != EXCLUDED_PERSON),
+        "the excluded bucket must never be offered as somebody to pick"
     );
     Ok(())
 }

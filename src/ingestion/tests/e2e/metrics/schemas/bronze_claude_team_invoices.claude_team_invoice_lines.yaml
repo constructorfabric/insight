@@ -19,6 +19,7 @@ schemas:
       collected_at: { type: [string, "null"] }
       data_source: { type: [string, "null"] }
       chain_status: { type: [string, "null"] }
+      invoice_ref: { type: [string, "null"] }
       invoice_id: { type: [string, "null"] }
       invoice_status: { type: [string, "null"] }
       invoice_created_ts: { type: [number, "null"] }

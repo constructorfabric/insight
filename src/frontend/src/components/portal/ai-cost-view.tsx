@@ -44,10 +44,17 @@ import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
 const COST_KEY = "ai.cost";
+const ACTUAL_COST_KEY = "ai.extra_usage_cost";
 const LINES_KEY = "ai.accepted_lines";
 const DAYS_KEY = "ai.active_days";
 /** Grid columns for the cost-leaders scan. */
-const GRID_KEYS = [COST_KEY, DAYS_KEY, LINES_KEY, "ai.dev_conversations"];
+const GRID_KEYS = [
+  COST_KEY,
+  ACTUAL_COST_KEY,
+  DAYS_KEY,
+  LINES_KEY,
+  "ai.dev_conversations",
+];
 
 const TOOL_LABEL: Record<string, string> = {
   claude_code: "Claude Code",
@@ -61,6 +68,8 @@ interface ToolRow {
   lines: number;
   cost: number;
   costTracked: boolean;
+  actual: number;
+  actualTracked: boolean;
 }
 
 /** Sum a breakdown metric across members, grouped by the `tool` dimension. */
@@ -133,7 +142,7 @@ export function AiCostView({ item }: { item: string | null }) {
   );
   const toolCollection = useMemo<MetricCollectionConfig>(
     () => ({
-      metrics: [COST_KEY, LINES_KEY].map((key) => ({
+      metrics: [COST_KEY, ACTUAL_COST_KEY, LINES_KEY].map((key) => ({
         key,
         views: [{ view: "breakdown" as const, dimensions: ["tool"] }],
       })),
@@ -171,11 +180,16 @@ export function AiCostView({ item }: { item: string | null }) {
 
   const toolRows = useMemo<ToolRow[]>(() => {
     const cost = aggregateByTool(toolData.byKey.get(COST_KEY), memberIds);
+    const actual = aggregateByTool(
+      toolData.byKey.get(ACTUAL_COST_KEY),
+      memberIds,
+    );
     const lines = aggregateByTool(toolData.byKey.get(LINES_KEY), memberIds);
-    const tools = new Set([...cost.keys(), ...lines.keys()]);
+    const tools = new Set([...cost.keys(), ...actual.keys(), ...lines.keys()]);
     return [...tools]
       .map((tool) => {
         const c = cost.get(tool);
+        const a = actual.get(tool);
         const l = lines.get(tool);
         return {
           tool,
@@ -183,6 +197,11 @@ export function AiCostView({ item }: { item: string | null }) {
           lines: l?.sum ?? 0,
           cost: c?.sum ?? 0,
           costTracked: (c?.sum ?? 0) > 0,
+          actual: a?.sum ?? 0,
+          // Only vendors that bill above a seat fee report this, so a tool
+          // without it says nothing rather than $0 — the rule the potential
+          // figure already follows.
+          actualTracked: (a?.sum ?? 0) > 0,
         };
       })
       .sort((a, b) => b.lines - a.lines);
@@ -219,20 +238,31 @@ export function AiCostView({ item }: { item: string | null }) {
   const unitRows = useMemo(() => {
     if (!slice || PLANNED_KEYS.has(slice)) return [];
     const costR = grid.byKey.get(COST_KEY);
+    const actualR = grid.byKey.get(ACTUAL_COST_KEY);
     const linesR = grid.byKey.get(LINES_KEY);
     const daysR = grid.byKey.get(DAYS_KEY);
     const val = (r: NormalizedMetricResult | undefined, id: string) =>
       r ? (forEntity(r, id).value ?? 0) : 0;
     const map = new Map<
       string,
-      { unit: string; people: number; active: number; cost: number; lines: number }
+      {
+        unit: string;
+        people: number;
+        active: number;
+        cost: number;
+        actual: number;
+        lines: number;
+      }
     >();
     for (const id of memberIds) {
       const unit = attrByEntity.get(id)?.[slice]?.value ?? "—";
-      const b = map.get(unit) ?? { unit, people: 0, active: 0, cost: 0, lines: 0 };
+      const b =
+        map.get(unit) ??
+        { unit, people: 0, active: 0, cost: 0, actual: 0, lines: 0 };
       b.people += 1;
       if (val(daysR, id) > 0) b.active += 1;
       b.cost += val(costR, id);
+      b.actual += val(actualR, id);
       b.lines += val(linesR, id);
       map.set(unit, b);
     }
@@ -282,13 +312,25 @@ export function AiCostView({ item }: { item: string | null }) {
   if (gate) return gate;
 
   const costR = grid.byKey.get(COST_KEY);
+  const actualR = grid.byKey.get(ACTUAL_COST_KEY);
   const linesR = grid.byKey.get(LINES_KEY);
   const totalCost = sum(COST_KEY);
+  const totalActual = sum(ACTUAL_COST_KEY);
   const totalLines = sum(LINES_KEY);
   const adoptionPct = members.length
     ? Math.round((activeUsers / members.length) * 100)
     : 0;
   const avgCost = activeUsers ? totalCost / activeUsers : 0;
+  const avgActual = activeUsers ? totalActual / activeUsers : 0;
+  const actualMoney = (value: number) =>
+    formatMetricValue(
+      value,
+      actualR?.format ?? "currency",
+      actualR?.unit ?? "USD",
+    );
+  // Absent, not zero: `sum` folds nulls to 0, so a $0 total cannot be told from
+  // no seat data — and printing $0 would claim nothing was billed.
+  const hasActual = !!actualR && totalActual > 0;
 
   const shownGridKeys = GRID_KEYS.filter((k) => {
     const r = grid.byKey.get(k);
@@ -313,8 +355,9 @@ export function AiCostView({ item }: { item: string | null }) {
       {/* Headline */}
       <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
         <Tile
-          label="AI cost"
+          label="AI potential usage cost"
           value={formatMetricValue(totalCost, costR?.format ?? "currency", costR?.unit ?? "USD")}
+          note={hasActual ? `actual cost ${actualMoney(totalActual)}` : null}
           sub="Claude Code only"
         />
         <Tile label="Active AI users" value={String(activeUsers)} sub={`${adoptionPct}% of ${members.length}`} />
@@ -330,6 +373,9 @@ export function AiCostView({ item }: { item: string | null }) {
             costR?.format ?? "currency",
             costR?.unit ?? null,
           )}
+          note={
+            hasActual ? `actual ${actualMoney(avgActual)} / active user` : null
+          }
           sub="Claude Code"
         />
       </div>
@@ -340,6 +386,7 @@ export function AiCostView({ item }: { item: string | null }) {
         <UnitSection
           rows={unitRows}
           costR={costR}
+          actualR={actualR}
           linesR={linesR}
           dim={[...sliceDims, ...PLANNED_SLICES].find((d) => d.key === slice) ?? null}
         />
@@ -372,9 +419,12 @@ export function AiCostView({ item }: { item: string | null }) {
                       : "—"}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {t.costTracked ? "cost" : "cost not tracked"}
+                    {t.costTracked ? "potential cost" : "potential cost not tracked"}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
+                    {t.actualTracked
+                      ? `actual cost ${formatMetricValue(t.actual, "currency", "USD")} · `
+                      : ""}
                     {t.users} users · {formatMetricValue(t.lines, "integer", null)} lines
                   </div>
                 </CardContent>
@@ -460,11 +510,20 @@ function FunnelSection({ funnel }: { funnel: { label: string; n: number }[] }) {
 function UnitSection({
   rows,
   costR,
+  actualR,
   linesR,
   dim,
 }: {
-  rows: { unit: string; people: number; active: number; cost: number; lines: number }[];
+  rows: {
+    unit: string;
+    people: number;
+    active: number;
+    cost: number;
+    actual: number;
+    lines: number;
+  }[];
   costR: NormalizedMetricResult | undefined;
+  actualR: NormalizedMetricResult | undefined;
   linesR: NormalizedMetricResult | undefined;
   dim: SliceDim | null;
 }) {
@@ -494,7 +553,8 @@ function UnitSection({
               <TableHead>{dimLabel}</TableHead>
               <TableHead className="text-right">People</TableHead>
               <TableHead className="text-right">AI users</TableHead>
-              <TableHead className="text-right">AI cost</TableHead>
+              <TableHead className="text-right">Potential cost</TableHead>
+              <TableHead className="text-right">Actual cost</TableHead>
               <TableHead className="text-right">Accepted lines</TableHead>
             </TableRow>
           </TableHeader>
@@ -511,6 +571,15 @@ function UnitSection({
                 <TableCell className="text-right tabular-nums">
                   {formatMetricValue(r.cost, costR?.format ?? "currency", costR?.unit ?? "USD")}
                 </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {actualR
+                    ? formatMetricValue(
+                        r.actual,
+                        actualR.format,
+                        actualR.unit ?? "USD",
+                      )
+                    : "—"}
+                </TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {formatMetricValue(r.lines, linesR?.format ?? "integer", linesR?.unit ?? null)}
                 </TableCell>
@@ -522,19 +591,35 @@ function UnitSection({
       )}
       {dim && !dim.planned ? (
         <p className="text-xs text-muted-foreground">
-          Cost is Claude Code only (the usage-metered tool).
+          Costs are Claude Code only (the usage-metered tool).
         </p>
       ) : null}
     </section>
   );
 }
 
-function Tile({ label, value, sub }: { label: string; value: string; sub: string }) {
+function Tile({
+  label,
+  value,
+  note,
+  sub,
+}: {
+  label: string;
+  value: string;
+  /** A second figure held beside `value`, never added to it. */
+  note?: string | null;
+  sub: string;
+}) {
   return (
     <Card>
       <CardContent className="p-4">
         <div className="text-xs font-medium text-muted-foreground">{label}</div>
         <div className={cn("mt-1", TEXT_FIGURE)}>{value}</div>
+        {note ? (
+          <div className="text-xs font-medium tabular-nums text-muted-foreground">
+            {note}
+          </div>
+        ) : null}
         <div className="text-xs text-muted-foreground">{sub}</div>
       </CardContent>
     </Card>

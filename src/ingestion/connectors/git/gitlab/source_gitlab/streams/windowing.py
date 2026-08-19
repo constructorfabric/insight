@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from source_gitlab.streams.errors import UnwindowableWindow
@@ -85,9 +85,9 @@ class CommittedDateWindowing(WindowStrategy):
     def _window_split(
         self, window: Mapping[str, Any], last_value: str | None
     ) -> list[dict[str, Any]]:
-        epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        epoch = datetime(1970, 1, 1, tzinfo=UTC)
         since = _parse(window["since"]) if window.get("since") else epoch
-        until = _parse(window["until"]) if window.get("until") else datetime.now(timezone.utc)
+        until = _parse(window["until"]) if window.get("until") else datetime.now(UTC)
         since_str = _to_utc_z(since)
         mid_str = _to_utc_z(since + (until - since) / 2)
         if mid_str in (since_str, _to_utc_z(until)):

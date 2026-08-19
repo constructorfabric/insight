@@ -138,10 +138,6 @@ export interface AttentionItem {
 
 /** Counts over EVERY observed account, regardless of the item cap. */
 export interface ResolutionRates {
-  /** Persons in the tenant — from the person journal, not the evidence fold.
-   *  Optional so a client deployed ahead of the backend keeps working; absent
-   *  reads as unknown, never as zero. */
-  persons?: number;
   observed: number;
   bound: number;
   pending: number;
@@ -366,6 +362,30 @@ export async function bindAccount(args: {
 }): Promise<CorrectionResponse> {
   return postCorrection("bind", {
     bindings: [{ account: args.account, person_id: args.person_id }],
+    comment: args.comment ?? "",
+  });
+}
+
+/** One binding per account, in one call — the wire shape `bind` always took. */
+export interface WireBinding {
+  account: WireAccountRef;
+  person_id: string;
+}
+
+/**
+ * Bind MANY accounts in one call.
+ *
+ * The endpoint caps a call at 1000 bindings; a caller with more sends more than
+ * one call and folds the answers, since one operator decision is owed one answer.
+ */
+export const MAX_BINDINGS_PER_CALL = 1000;
+
+export async function bindAccounts(args: {
+  bindings: WireBinding[];
+  comment?: string;
+}): Promise<CorrectionResponse> {
+  return postCorrection("bind", {
+    bindings: args.bindings,
     comment: args.comment ?? "",
   });
 }

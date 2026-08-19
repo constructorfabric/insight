@@ -10,6 +10,7 @@ rules are exercised without a network call.
 
 from __future__ import annotations
 
+import base64
 import logging
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -23,7 +24,7 @@ logger = logging.getLogger("airbyte")
 # part of the pattern on purpose: these two segments are interpolated into a
 # request URL, so a link pointing anywhere else must not contribute them.
 _HOSTED_URL = re.compile(
-    r"^https://invoice\.stripe\.com/i/(acct_[A-Za-z0-9_-]+)/((?:test|live)_[A-Za-z0-9_-]+)(?:[?#]|$)"
+    r"^https://invoice\.stripe\.com/i/(acct_[A-Za-z0-9_-]+)/((?:test|live)_([A-Za-z0-9_-]+))(?:[?#]|$)"
 )
 
 CATEGORY_SUBSCRIPTIONS = "subscriptions"
@@ -55,6 +56,53 @@ def parse_hosted_invoice_url(url: str | None) -> HostedRef | None:
     return HostedRef(match.group(1), match.group(2)) if match else None
 
 
+INVOICE_STATUS_DRAFT = "draft"
+
+
+def is_draft(invoice: Mapping[str, Any]) -> bool:
+    """Whether the vendor has yet to finalise this invoice.
+
+    A draft is not invoiced, and it carries no hosted URL to take an identity
+    from, so its row could only key on what the wrapper reports — including the
+    payment intent it does not have yet and a total that can still change.
+    Emitting one would put provisional money on a row whose key changes the
+    moment the invoice is finalised, leaving the draft's copy standing beside the
+    real one and counting that invoice's money twice.
+    """
+    return str(invoice.get("status") or "").lower() == INVOICE_STATUS_DRAFT
+
+
+def stable_invoice_ref(url: str | None) -> str | None:
+    """The invoice's own identity, decoded out of its hosted URL.
+
+    The URL's `live_…`/`test_…` segment is base64 of
+    `acct_<account>,_<invoiceEntityToken>,<rotating timestamp+nonce>`, and the
+    vendor regenerates that trailing part on every list call — so only the first
+    two fields identify the invoice. Everything the wrapper reports beside the URL
+    either changes over an invoice's life (its total, its payment intent) or is
+    shared across a batch issued in the same second, which is why this is the
+    identity to key on and those are only a fallback.
+
+    Returns None when no URL was offered or it does not decode; the caller then
+    falls back to what the wrapper reports.
+    """
+    if not url:
+        return None
+    match = _HOSTED_URL.match(url)
+    if not match:
+        return None
+    try:
+        segment = match.group(3)
+        decoded = base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4)).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+    fields = decoded.split(",")
+    if len(fields) < 2 or not fields[0].startswith("acct_") or not fields[1]:
+        return None
+    return f"{fields[0]},{fields[1]}"
+
+
 def classify_line(line: Mapping[str, Any]) -> str:
     """Categorise one invoice line by its Stripe parent, never by its text.
 
@@ -83,6 +131,11 @@ def is_proration(line: Mapping[str, Any]) -> bool:
     return bool(details.get("proration"))
 
 
+def prices_a_seat(line: Mapping[str, Any]) -> bool:
+    """Whether this line is the kind that states a per-seat price at all."""
+    return classify_line(line) == CATEGORY_SUBSCRIPTIONS and not is_proration(line)
+
+
 def seat_unit_amount(line: Mapping[str, Any]) -> int | None:
     """The per-seat price on a line, in minor units, or None when it has none.
 
@@ -90,13 +143,33 @@ def seat_unit_amount(line: Mapping[str, Any]) -> int | None:
     extra usage, prorations, a subscription line the vendor left unpriced —
     yields None, which downstream renders as absence rather than as zero.
     """
-    if classify_line(line) != CATEGORY_SUBSCRIPTIONS or is_proration(line):
+    if not prices_a_seat(line):
         return None
     amount = line.get("hosted_invoice_unit_amount")
     # `bool` is an `int` in Python, and a boolean here would price a seat at 1.
     if isinstance(amount, bool) or not isinstance(amount, int):
         return None
     return int(amount)
+
+
+def unreadable_seat_prices(lines: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Type names found where a seat-pricing line should state an integer amount.
+
+    `None` is not one of them: a subscription line the vendor left unpriced is a
+    state this connector reports rather than a shape it failed to read. Anything
+    else — a float, a digit string — is the vendor having changed the field's type,
+    and returning absence for it would put every seat price at NULL while the
+    chain still read as complete.
+    """
+    offenders = []
+    for line in lines:
+        if not prices_a_seat(line):
+            continue
+        amount = line.get("hosted_invoice_unit_amount")
+        if amount is None or (isinstance(amount, int) and not isinstance(amount, bool)):
+            continue
+        offenders.append(type(amount).__name__)
+    return sorted(set(offenders))
 
 
 def shape_line(line: Mapping[str, Any], invoice_key: str) -> dict[str, Any]:
@@ -178,6 +251,7 @@ def invoice_identity(invoice: Mapping[str, Any]) -> dict[str, Any]:
         "invoice_status": invoice.get("status"),
         "invoice_created_ts": invoice.get("created_ts"),
         "invoice_currency": invoice.get("currency"),
+        "invoice_ref": stable_invoice_ref(invoice.get("hosted_invoice_url")),
     }
 
 
@@ -266,6 +340,8 @@ def build_records(
     money sits on exactly one row whatever happens, and a run that enriches an
     invoice replaces the row an earlier unenriched run wrote for it.
 
+    A draft is not one of them: it is not invoiced yet, and it is skipped entirely.
+
     Four outcomes per invoice, and one for the run:
       * the wrapper offered no URL -> `no_hosted_url`
       * the URL did not parse      -> `unparsable_url`
@@ -274,7 +350,14 @@ def build_records(
     and if more than `drift_ratio` of the URLs the vendor did offer failed to
     parse, the run raises rather than writing rows that carry money but no prices.
     """
-    parsed = [(inv, parse_hosted_invoice_url(inv.get("hosted_invoice_url"))) for inv in invoices]
+    invoiced = [inv for inv in invoices if not is_draft(inv)]
+    skipped = len(invoices) - len(invoiced)
+    if skipped:
+        # Said out loud: an operator comparing the vendor's list against ours
+        # should not have to guess why a count differs.
+        logger.info("skipped %s draft invoice(s): not invoiced yet, so not on the ledger", skipped)
+
+    parsed = [(inv, parse_hosted_invoice_url(inv.get("hosted_invoice_url"))) for inv in invoiced]
 
     offered = [inv for inv, _ in parsed if inv.get("hosted_invoice_url")]
     malformed = sum(1 for inv, ref in parsed if ref is None and inv.get("hosted_invoice_url"))
@@ -284,6 +367,17 @@ def build_records(
             "has almost certainly changed; refusing to write a run of unpriced rows"
         )
 
+    # A URL can match the shape and still carry no decodable identity. Refuse before
+    # the first chain call: falling back to the wrapper's mutable fields for a whole
+    # run would key second copies of invoices that already have rows, and nothing
+    # downstream can delete the originals.
+    undecodable = sum(1 for inv in offered if stable_invoice_ref(inv.get("hosted_invoice_url")) is None)
+    if offered and undecodable > len(offered) * drift_ratio:
+        raise UrlFormatDrift(
+            f"{undecodable} of {len(offered)} hosted invoice URLs carry no decodable invoice "
+            "identity; refusing to re-key a whole run onto the wrapper's mutable fields"
+        )
+
     for invoice, ref in parsed:
         if ref is None:
             absent = not invoice.get("hosted_invoice_url")
@@ -291,14 +385,20 @@ def build_records(
             continue
         try:
             invoice_id, lines = fetch_lines(ref.acct, ref.token)
+            unreadable = unreadable_seat_prices(lines)
+            if unreadable:
+                raise StripeChainError(f"hosted_invoice_unit_amount arrived as {', '.join(unreadable)}, not an integer")
         except Exception as error:  # noqa: BLE001 - one invoice must not end the run
             # A gap in pricing, not a reason to lose the invoice or fail the sync.
-            # The type and status only: a request error stringifies its URL, and
-            # the hosted-invoice hop carries the token in that URL.
+            # Only a StripeChainError carries its message: those are authored here
+            # and name what the response got wrong, which is the whole diagnostic
+            # for a shape change. Anything else contributes its type and status
+            # alone — a request error stringifies its URL, and the hosted-invoice
+            # hop carries the token in that URL.
             logger.warning(
                 "stripe chain failed for the invoice created at %s: %s (HTTP %s)",
                 invoice.get("created_ts"),
-                type(error).__name__,
+                str(error) if isinstance(error, StripeChainError) else type(error).__name__,
                 getattr(getattr(error, "response", None), "status_code", "n/a"),
             )
             yield invoice_row(invoice, CHAIN_FAILED, None)
@@ -313,17 +413,22 @@ def unique_key_parts(record: Mapping[str, Any]) -> tuple[Any, ...]:
     """The natural key of a record, which differs by what the row carries.
 
     A line is identified by Stripe's own ids. An invoice's own row has no line
-    id, and no invoice id at all until its chain completes, so it keys on what
-    the wrapper reports on every run — which is what lets an enriched run replace
-    the row an unenriched one wrote instead of adding a second one beside it.
-    The chain outcome is deliberately NOT part of that key: an invoice that fails
-    one way and then another must stay one row. The amount and due date join it
-    because a payment intent is absent on some invoices, and creation timestamps
-    collide across a batch issued at once — two invoices sharing one key would
-    leave only one row.
+    id, and no invoice id at all until its chain completes, so it keys on the
+    identity decoded out of its hosted URL — which reads the same on every run
+    and is what lets an enriched run replace the row an unenriched one wrote
+    instead of adding a second one beside it. The chain outcome is deliberately
+    NOT part of that key: an invoice that fails one way and then another must
+    stay one row.
+
+    With no URL there is no identity, and the fallback is what the wrapper
+    reports. The amount and due date join it there because a payment intent is
+    absent on some invoices, and creation timestamps collide across a batch
+    issued at once — two invoices sharing one key would leave only one row.
     """
     if record.get("line_id"):
         return (record.get("invoice_id"), record.get("line_id"))
+    if record.get("invoice_ref"):
+        return ("invoice", record["invoice_ref"])
     return (
         "invoice",
         record.get("invoice_created_ts"),

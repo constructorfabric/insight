@@ -9,6 +9,7 @@ import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { MockBanner } from "@/components/mock-banner";
 import { ViewAsBanner } from "@/components/view-as-banner";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 import { PortalLayout } from "@/components/portal/portal-layout";
 import { isPortalShellPath } from "@/lib/portal/portal-routes";
 import { usePortalEnabled } from "@/lib/portal/portal-store";
@@ -80,6 +81,11 @@ function RootLayout() {
             </SidebarProvider>
           )}
         </AuthGate>
+        {/* Outside AuthGate: a toast must survive the surface that raised it
+            closing, and the identity verbs report their result by closing the
+            case window and toasting. Without this mount every `toast()` call
+            in the app is silently dropped. */}
+        <Toaster position="bottom-right" />
       </MetricEvidenceDialogProvider>
     </TooltipProvider>
   );

@@ -407,7 +407,6 @@
     "title": "Identities",
     "subtitle": "Who each account belongs to — review what the resolver could not decide, and correct what it did.",
     "rates": {
-      "persons": "Persons",
       "observed": "Accounts",
       "decisions": "Needs attention",
       "excluded": "Excluded"
@@ -437,7 +436,10 @@
       "case_people_one": "{{count}} person",
       "case_people_other": "{{count}} people",
       "case_accounts_one": "{{count}} account",
-      "case_accounts_other": "{{count}} accounts"
+      "case_accounts_other": "{{count}} accounts",
+      "absorb_named": "{{name}}'s accounts move here",
+      "absorb_count_one": "1 other person's accounts move here",
+      "absorb_count_other": "{{count}} other people's accounts move here"
     },
     "detail": {
       "not_found": "This account is unknown — the link may be stale.",
@@ -446,8 +448,7 @@
       "unbound": "Nobody — the account is unresolved.",
       "candidates": "Candidates",
       "history": "Decision history",
-      "no_history": "No decisions recorded yet.",
-      "copy_account_id": "Copy the account id"
+      "no_history": "No decisions recorded yet."
     },
     "person": {
       "terminated": "terminated",
@@ -474,7 +475,6 @@
     "actions": {
       "bind": "Bind",
       "confirm": "Confirm",
-      "merge": "Merge…",
       "merge_confirm": "Merge persons",
       "detach": "Detach into a new person",
       "detach_confirm": "Detach",
@@ -482,26 +482,38 @@
       "exclude_confirm": "Exclude",
       "assign_other": "Assign to someone else",
       "bind_to": "Bind to selected person",
-      "assign_person": "Assign to a person"
+      "assign_person": "Assign to a person",
+      "keep_person": "Keep this person",
+      "confirm_group_one": "Confirm 1 account",
+      "confirm_group_other": "Confirm all {{count}} accounts"
     },
     "dialogs": {
       "bind_title": "Bind this account?",
       "confirm_title": "Confirm the current binding?",
-      "bind_description": "This account moves to {{name}}. Its activity counts towards them from here on — another bind moves it back.",
-      "merge_title": "Merge two persons?",
-      "merge_description": "Every account of {{source}} moves to {{target}}. Merging back is another merge — nothing is lost, but metrics re-attribute.",
+      "bind_description": "The account is bound to this person.",
       "merge_preview_loading": "Counting the accounts that would move…",
       "merge_preview_failed": "Could not count the accounts that would move.",
       "merge_preview_one": "{{count}} account moves:",
       "merge_preview_other": "{{count}} accounts move:",
       "merge_preview_more": "…and {{count}} more.",
       "detach_title": "Detach into a new person?",
-      "detach_description": "A new person is created holding this account alone.",
+      "detach_description": "A new person is created and the account is bound to them.",
       "exclude_title": "Exclude this account?",
-      "exclude_description": "Bots, CI and service accounts are excluded from every person metric. Reversible: binding the account to a person later brings it back.",
+      "exclude_description": "Bots, CI and service accounts are excluded from every person metric.",
       "failed": "The correction was not applied. Try again.",
-      "confirm_description": "The binding does not change. This records that you decided it, not the resolver, and takes the account off the queue.",
-      "detach_away_from": "Its activity stops counting towards {{name}}."
+      "confirm_description": "The account stays bound to the current person.",
+      "merge_case_title": "Keep {{name}} and merge the rest?",
+      "merge_case_description": "Every account ticked below moves to {{name}}.",
+      "merge_case_stays": "Stays",
+      "merge_case_absorbed_one": "Merged into them",
+      "merge_case_absorbed_other": "Merged into them — {{count}} people",
+      "rebind_description": "The account is re-bound to this person.",
+      "leaves_queue": "This account then leaves the queue.",
+      "merge_case_none_chosen": "Tick at least one person to merge.",
+      "confirm_group_title_one": "Confirm 1 account?",
+      "confirm_group_title_other": "Confirm all {{count}} accounts?",
+      "confirm_group_description": "Each account stays with the person it already has, recorded as your decision rather than the resolver's. They all leave the queue.",
+      "confirm_group_comment": "Why — one line, kept in the trail for all of them."
     },
     "outcomes": {
       "applied_one": "{{count}} applied",
@@ -510,7 +522,14 @@
       "already_decided_other": "{{count}} already decided",
       "refused_one": "{{count}} refused",
       "refused_other": "{{count}} refused",
-      "new_person": "New person:"
+      "new_person": "New person:",
+      "toast_applied_one": "Done — 1 account updated.",
+      "toast_applied_other": "Done — {{count}} accounts updated.",
+      "toast_already": "Already decided — nothing changed.",
+      "toast_refused_one": "1 account was refused — it kept its binding.",
+      "toast_refused_other": "{{count}} accounts were refused — they kept their bindings.",
+      "toast_partial_one": "1 account had already moved.",
+      "toast_partial_other": "{{count}} accounts had already moved."
     },
     "picker": {
       "placeholder": "Search people by name, email, handle or person id…",

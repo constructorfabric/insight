@@ -1,8 +1,12 @@
 /**
- * One account under review — the body of the case window: what the resolver
- * currently thinks (the binding), who it could belong to (the queue's
- * hydrated candidates), and every decision ever recorded (the history — the
- * journal is append-only, so this trail is complete by construction).
+ * One account under review — the body of the case window: the decision surface
+ * (who holds it, who else could, and every verb), then every decision ever
+ * recorded. The journal is append-only, so that trail is complete by
+ * construction.
+ *
+ * The holder and the candidates are rendered by `AccountActions`, which owns the
+ * verbs that act on them — naming the holder here as well made the window list
+ * one person twice.
  *
  * It answers for an account no longer in the queue, which is what a shared
  * link lands on. The binding read never 404s: an account nobody ever observed
@@ -22,13 +26,13 @@ import type {
   BindingHistoryEntry,
   PersonSummary,
 } from "@/api/identity-client";
-import { CopyValueButton } from "@/components/copy-value-button";
 import { AccountActions } from "@/components/portal/account-actions";
-import { PersonCell } from "@/components/portal/person-cell";
+import { PersonId } from "@/components/portal/person-id";
 import { Badge } from "@/components/ui/badge";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import type { AccountRef } from "@/lib/identities/account-key";
+import { isQueueItem } from "@/lib/identities/cases";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { formatUtcAge, formatUtcInstant } from "@/lib/format";
 import { useAccountBinding } from "@/queries/identity-resolution";
@@ -49,6 +53,7 @@ export function AccountDetail({
   observed = false,
   holder,
   bindTo,
+  onDecided,
 }: {
   accountRef: AccountRef;
   /** The queue row for this account, when it is still in the queue — the
@@ -68,6 +73,8 @@ export function AccountDetail({
   holder?: PersonSummary | null;
   /** Bind straight to the person the surface has open. See `AccountActions`. */
   bindTo?: PersonSummary | null;
+  /** A verb decided every account it named. See `AccountActions`. */
+  onDecided?: () => void;
 }) {
   const { t } = useTranslation();
   const binding = useAccountBinding(accountRef);
@@ -116,27 +123,17 @@ export function AccountDetail({
     // tell two namesakes apart. The decision sits above the trail behind it,
     // and only the trail scrolls — the verbs stay where they were.
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-      <section className="shrink-0">
-        <SectionLabel>{t("identities.detail.current_binding")}</SectionLabel>
-        {binding.data.person_id ? (
-          boundCard ? (
-            <PersonCell person={boundCard} />
-          ) : (
-            <PersonId id={binding.data.person_id} />
-          )
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            {t("identities.detail.unbound")}
-          </p>
-        )}
-      </section>
       <div className="shrink-0">
         <AccountActions
           accountRef={accountRef}
           binding={binding.data}
           candidates={candidates}
           holder={boundCard ?? null}
+          // The accounts and persons modes reuse this window for settled
+          // accounts, and their rows carry a kind of the console's own making.
+          queued={queueItem != null && isQueueItem(queueItem.kind)}
           bindTo={bindTo}
+          onDecided={onDecided}
         />
       </div>
       <section className="flex min-h-0 flex-1 flex-col">
@@ -302,27 +299,6 @@ function HistoryRow({
         ) : null}
       </div>
     </li>
-  );
-}
-
-/**
- * A person id, always shown and always copyable: a trail of decisions names
- * the same handful of people over and over, and the id is what tells two of
- * them apart when the names do not.
- */
-function PersonId({ id }: { id: string }) {
-  const { t } = useTranslation();
-  return (
-    <span className="inline-flex items-center gap-1">
-      <span className="font-mono text-xs select-text">{id}</span>
-      <CopyValueButton
-        value={id}
-        title={t("identities.person.copy_id")}
-        copyLabel={t("common.copy")}
-        copiedLabel={t("common.copied")}
-        errorMessage={t("common.copy_failed")}
-      />
-    </span>
   );
 }
 

@@ -2,11 +2,12 @@
 /**
  * The decision surface. What matters: the button on the currently bound
  * candidate reads "Confirm" (re-asserting IS the decision) while others read
- * "Bind"; Merge exists only when there is someone to absorb; every verb goes
- * through a confirmation and sends the account in the WIRE shape (`id`, not
- * `account_id`); the merge dialog previews what moves BEFORE anything
- * happens; and the server's outcome renders verbatim — a refusal is never
- * dressed up as success.
+ * "Bind"; merge is NOT offered here at all (it is a claim about people — see
+ * `merge-case-dialog.test.tsx`); every verb goes through a confirmation and
+ * sends the account in the WIRE shape (`id`, not
+ * `account_id`); a verb that decided everything it named hands the window back
+ * instead of leaving a list the server has moved past on screen; and a refusal
+ * keeps the window, with the server's counters verbatim.
  */
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -24,18 +25,14 @@ const hooks = vi.hoisted(() => {
     error: null as unknown,
   });
   return {
+    toast: { success: vi.fn(), error: vi.fn() },
     bind: verb(),
-    merge: verb(),
     detach: verb(),
-    exclude: verb(),
-    personAccounts: {
-      data: undefined as
-        | { person_id: string; accounts: unknown[] }
-        | undefined,
-      isLoading: false,
-      isError: false,
-      refetch: vi.fn(),
+    /** What else the holder has — decides whether a detach is offered. */
+    owned: {
+      data: undefined as { person_id: string; accounts: unknown[] } | undefined,
     },
+    exclude: verb(),
     search: {
       data: undefined as { pages: { items: unknown[] }[] } | undefined,
       isFetching: false,
@@ -52,13 +49,13 @@ const hooks = vi.hoisted(() => {
 vi.mock("@/hooks/use-debounced-value", () => ({
   useDebouncedValue: <T,>(value: T) => value,
 }));
+vi.mock("sonner", () => ({ toast: hooks.toast }));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useBindAccount: () => hooks.bind,
-  useMergePersons: () => hooks.merge,
   useDetachAccount: () => hooks.detach,
+  usePersonAccounts: () => hooks.owned,
   useExcludeAccount: () => hooks.exclude,
-  usePersonAccounts: () => hooks.personAccounts,
   usePersonList: () => hooks.search,
 }));
 
@@ -85,28 +82,29 @@ function binding(over: Partial<AccountBinding> = {}): AccountBinding {
 }
 
 beforeEach(() => {
-  for (const verb of [hooks.bind, hooks.merge, hooks.detach, hooks.exclude]) {
+  for (const verb of [hooks.bind, hooks.detach, hooks.exclude]) {
     verb.mutate.mockClear();
     verb.reset.mockClear();
     verb.isError = false;
     verb.error = null;
+    verb.isPending = false;
   }
+  hooks.toast.success.mockClear();
+  hooks.toast.error.mockClear();
+  // Two accounts by default, so the detach verb is on offer in the cases that
+  // are not about the detach gate.
+  hooks.owned.data = { person_id: BOB.person_id, accounts: [{}, {}] };
   hooks.search.data = undefined;
-  hooks.personAccounts.data = undefined;
-  hooks.personAccounts.isLoading = false;
-  hooks.personAccounts.isError = false;
-  hooks.personAccounts.refetch.mockClear();
 });
 
 describe("AccountActions", () => {
-  it("labels the bound candidate Confirm and the rival Bind; Merge only on the rival", () => {
+  it("labels the bound candidate Confirm and the rival Bind", () => {
     render(
       <AccountActions accountRef={REF} binding={binding()} candidates={[BOB, CAROL]} />,
     );
 
     expect(screen.getByRole("button", { name: "Confirm" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Bind" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Merge…" })).toHaveLength(1);
   });
 
   // Candidates answer "whose COULD it be" — a question only an undecided account
@@ -125,25 +123,6 @@ describe("AccountActions", () => {
 
     expect(screen.queryByRole("button", { name: /^confirm$/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/candidates/i)).not.toBeInTheDocument();
-  });
-
-  // The holder's card used to reach this component only as a candidate, so the
-  // copy that names them broke the moment the candidate went away.
-  it("still names the holder in the detach copy with no candidates", async () => {
-    render(
-      <AccountActions
-        accountRef={REF}
-        binding={binding({ person_id: BOB.person_id })}
-        candidates={[]}
-        holder={BOB}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: /detach/i }));
-
-    expect(
-      screen.getByText(/stops counting towards Bob Park/i),
-    ).toBeInTheDocument();
   });
 
   // This picker moves an account to somebody ELSE, so the one person it must not
@@ -229,16 +208,170 @@ describe("AccountActions", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("offers no Merge when the account is bound to nobody", () => {
+  // A detach mints a person and moves the account there. Taking somebody's ONLY
+  // account replaces them with an identical person and leaves their name behind
+  // with nothing attached — which is how the accountless persons got made.
+  it("offers no detach where it would leave the holder with nothing", () => {
+    hooks.owned.data = { person_id: BOB.person_id, accounts: [{}] };
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        holder={BOB}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /detach into a new person/i }),
+    ).not.toBeInTheDocument();
+    // The other verbs are unaffected.
+    expect(screen.getByRole("button", { name: /exclude \(bot/i })).toBeInTheDocument();
+  });
+
+  it("offers a detach once the holder has more than one account", () => {
+    hooks.owned.data = { person_id: BOB.person_id, accounts: [{}, {}] };
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        holder={BOB}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /detach into a new person/i }),
+    ).toBeInTheDocument();
+  });
+
+  // An account nobody holds is the exception: a detach is how an orphan gets a
+  // person of its own, and there is no holder to strip.
+  it("offers a detach for an account nobody holds, whatever the read says", () => {
+    hooks.owned.data = undefined;
     render(
       <AccountActions
         accountRef={REF}
         binding={binding({ person_id: null })}
-        candidates={[BOB]}
+        candidates={[]}
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Merge…" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /detach into a new person/i }),
+    ).toBeInTheDocument();
+  });
+
+  // Held back rather than shown and then withdrawn: offering a verb before
+  // knowing it means anything is the mistake being fixed.
+  it("holds the detach back while the holder's accounts are still unread", () => {
+    hooks.owned.data = undefined;
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        holder={BOB}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /detach into a new person/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // The holder is named once, with the verb that acts on them. Listing them a
+  // second time under "candidates" just to hang Confirm off it read as two
+  // people with the same name and the same id.
+  it("names the holder once, with Confirm on their own card", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[BOB]}
+        holder={BOB}
+      />,
+    );
+
+    expect(screen.getByText(/currently bound to/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Bob Park")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeInTheDocument();
+    // Nothing left to list: the only candidate was the holder.
+    expect(screen.queryByText(/candidates/i)).not.toBeInTheDocument();
+  });
+
+  it("lists only the rivals under candidates, each offering a plain bind", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[BOB, CAROL]}
+        holder={BOB}
+      />,
+    );
+
+    expect(screen.getByText(/candidates/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Carol Chen")).toHaveLength(1);
+    expect(screen.getAllByText("Bob Park")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Bind" })).toBeInTheDocument();
+  });
+
+  // A settled account is not queued for confirmation, so the surface sends no
+  // candidates — and re-asserting a decision already taken changes nothing.
+  it("offers no Confirm where the account is not up for confirmation", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        holder={BOB}
+      />,
+    );
+
+    expect(screen.getByText(/currently bound to/i)).toBeInTheDocument();
+    expect(screen.getByText("Bob Park")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an unknown holder an honest bare id", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: "01900000-0000-7000-8000-00000000ffff" })}
+        candidates={[]}
+      />,
+    );
+
+    expect(
+      screen.getByText("01900000-0000-7000-8000-00000000ffff"),
+    ).toBeInTheDocument();
+  });
+
+  it("states an unbound account as a fact", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: null })}
+        candidates={[]}
+      />,
+    );
+
+    expect(screen.getByText(/account is unresolved/i)).toBeInTheDocument();
+  });
+
+  // A merge is a claim about PEOPLE, and this window argues about one account:
+  // the button used to sit in the row of the person who would survive while the
+  // absorbed one was named in a section above it. It belongs to the queue's case.
+  it("never offers a merge, however many candidates there are", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[BOB, CAROL]}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /merge/i })).not.toBeInTheDocument();
   });
 
   it("bind goes through a confirmation and sends the WIRE account shape", async () => {
@@ -261,9 +394,8 @@ describe("AccountActions", () => {
   });
 
   // A confirmation an operator can consent to has to say what changes.
-  // Re-asserting the binding in force changes no binding at all — the
-  // description that suits a bind ("the account moves to X") states the
-  // opposite of what happens here.
+  // Re-asserting the binding in force moves nothing — the description that
+  // suits a bind ("re-bound to this person") states the opposite.
   it("tells a confirm apart from a bind in what it promises", async () => {
     render(
       <AccountActions accountRef={REF} binding={binding()} candidates={[BOB, CAROL]} />,
@@ -271,83 +403,16 @@ describe("AccountActions", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(
-      within(screen.getByRole("dialog")).getByText(/binding does not change/i),
+      within(screen.getByRole("dialog")).getByText(/stays bound to the current person/i),
     ).toBeInTheDocument();
-  });
-
-  it("names who a detach takes the account away from", async () => {
-    render(
-      <AccountActions accountRef={REF} binding={binding()} candidates={[BOB]} />,
-    );
 
     await userEvent.click(
-      screen.getByRole("button", { name: /detach into a new person/i }),
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }),
     );
+    await userEvent.click(screen.getByRole("button", { name: "Bind" }));
     expect(
-      within(screen.getByRole("dialog")).getByText(/stops counting towards Bob Park/i),
+      within(screen.getByRole("dialog")).getByText(/re-bound to this person/i),
     ).toBeInTheDocument();
-  });
-
-  it("the merge dialog previews what moves before anything happens", async () => {
-    hooks.personAccounts.data = {
-      person_id: BOB.person_id,
-      accounts: [
-        { source: "github", source_id: "s", account_id: "gh-1", email: "a@example.com" },
-        { source: "gitlab", source_id: "s", account_id: "gl-2", username: "gl-2" },
-      ],
-    };
-    render(
-      <AccountActions accountRef={REF} binding={binding()} candidates={[BOB, CAROL]} />,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Merge…" }));
-    const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText(/2 accounts move/i)).toBeInTheDocument();
-    expect(hooks.merge.mutate).not.toHaveBeenCalled();
-
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: "Merge persons" }),
-    );
-    expect(hooks.merge.mutate).toHaveBeenCalledWith(
-      { source_person_id: BOB.person_id, target_person_id: CAROL.person_id },
-      expect.anything(),
-    );
-  });
-
-  it("locks merge confirm until the preview names what moves", async () => {
-    hooks.personAccounts.isLoading = true;
-    render(
-      <AccountActions accountRef={REF} binding={binding()} candidates={[BOB, CAROL]} />,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Merge…" }));
-    const dialog = screen.getByRole("dialog");
-
-    // The preview IS the consent — confirming a list the operator never saw
-    // would move accounts sight-unseen.
-    expect(
-      within(dialog).getByRole("button", { name: "Merge persons" }),
-    ).toBeDisabled();
-    expect(hooks.merge.mutate).not.toHaveBeenCalled();
-  });
-
-  it("a failed preview blocks merge and offers a retry, not a zero-account lie", async () => {
-    hooks.personAccounts.isError = true;
-    render(
-      <AccountActions accountRef={REF} binding={binding()} candidates={[BOB, CAROL]} />,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Merge…" }));
-    const dialog = screen.getByRole("dialog");
-
-    expect(within(dialog).queryByText(/0 accounts move/i)).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/could not count/i)).toBeInTheDocument();
-    expect(
-      within(dialog).getByRole("button", { name: "Merge persons" }),
-    ).toBeDisabled();
-
-    await userEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
-    expect(hooks.personAccounts.refetch).toHaveBeenCalledOnce();
   });
 
   it("renders the server's outcome verbatim, refusals included", async () => {
@@ -360,7 +425,15 @@ describe("AccountActions", () => {
       (_args: unknown, opts?: { onSuccess?: (r: CorrectionResponse) => void }) =>
         opts?.onSuccess?.(refusal),
     );
-    render(<AccountActions accountRef={REF} binding={binding()} candidates={[]} />);
+    const onDecided = vi.fn();
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding()}
+        candidates={[]}
+        onDecided={onDecided}
+      />,
+    );
 
     await userEvent.click(
       screen.getByRole("button", { name: /detach into a new person/i }),
@@ -371,6 +444,220 @@ describe("AccountActions", () => {
 
     expect(screen.getByText(/1 refused/i)).toBeInTheDocument();
     expect(screen.getByText(/0 applied/i)).toBeInTheDocument();
+    // The account kept its binding: there is still something here to decide.
+    expect(onDecided).not.toHaveBeenCalled();
+    expect(hooks.toast.error).toHaveBeenCalledOnce();
+  });
+
+  // The whole point of handing the window back: what it shows — the candidate
+  // list, the binding, the verbs — is a read the server has just moved past.
+  // Left open, the same Merge is one click away and fires a second time.
+  it("hands the window back when every account it named was decided", async () => {
+    const applied: CorrectionResponse = {
+      applied: 1,
+      already_decided: 0,
+      items: [{ ...REF, account_id: REF.account_id, outcome: "applied" }],
+    };
+    hooks.bind.mutate.mockImplementation(
+      (_args: unknown, opts?: { onSuccess?: (r: CorrectionResponse) => void }) =>
+        opts?.onSuccess?.(applied),
+    );
+    const onDecided = vi.fn();
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[BOB, CAROL]}
+        onDecided={onDecided}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Bind" }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Bind" }),
+    );
+
+    expect(onDecided).toHaveBeenCalledOnce();
+    expect(hooks.toast.success).toHaveBeenCalledOnce();
+    // Counters belong to the window that stays; a clean result reports by toast.
+    expect(screen.queryByText(/1 applied/i)).not.toBeInTheDocument();
+  });
+
+  // `already_decided` is not a failure — somebody got there first — so the
+  // window still goes back, and the message says nothing changed.
+  it("hands the window back on already-decided too, saying nothing changed", async () => {
+    const already: CorrectionResponse = {
+      applied: 0,
+      already_decided: 1,
+      items: [
+        { ...REF, account_id: REF.account_id, outcome: "already_decided" },
+      ],
+    };
+    hooks.exclude.mutate.mockImplementation(
+      (_args: unknown, opts?: { onSuccess?: (r: CorrectionResponse) => void }) =>
+        opts?.onSuccess?.(already),
+    );
+    const onDecided = vi.fn();
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding()}
+        candidates={[]}
+        onDecided={onDecided}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /exclude \(bot/i }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Exclude" }),
+    );
+
+    expect(onDecided).toHaveBeenCalledOnce();
+    expect(hooks.toast.success).toHaveBeenCalledWith(
+      "Already decided — nothing changed.",
+      expect.anything(),
+    );
+  });
+
+  // The confirmation over these buttons is modal, so it already blocks them.
+  // This covers the frame between the write landing and the window unmounting.
+  it("locks every verb while one is in flight", () => {
+    hooks.bind.isPending = true;
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[BOB, CAROL]}
+      />,
+    );
+
+    for (const name of [
+      "Confirm",
+      "Bind",
+      /detach into a new person/i,
+      /exclude \(bot/i,
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+  });
+
+  // The same window opens over settled accounts from the search and from a
+  // person's own list. Promising those the queue describes a queue they were
+  // never in.
+  it("promises the queue only for an account that is on it", async () => {
+    const { rerender } = render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: null })}
+        candidates={[]}
+        bindTo={CAROL}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /bind to selected person/i }),
+    );
+    expect(
+      within(screen.getByRole("dialog")).queryByText(/leaves the queue/i),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }),
+    );
+
+    rerender(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: null })}
+        candidates={[]}
+        bindTo={CAROL}
+        queued
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /bind to selected person/i }),
+    );
+    expect(
+      within(screen.getByRole("dialog")).getByText(/leaves the queue/i),
+    ).toBeInTheDocument();
+  });
+
+  // An unbound account is not being RE-bound: the commonest queue case is an
+  // account nobody holds, and telling the operator otherwise describes a
+  // binding that does not exist.
+  it("says bound for an account nobody holds and re-bound for one that is held", async () => {
+    const { rerender } = render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: null })}
+        candidates={[]}
+        bindTo={CAROL}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /bind to selected person/i }),
+    );
+    expect(
+      within(screen.getByRole("dialog")).getByText(
+        /^The account is bound to this person\.$/,
+      ),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }),
+    );
+
+    rerender(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: BOB.person_id })}
+        candidates={[]}
+        bindTo={CAROL}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /bind to selected person/i }),
+    );
+    expect(
+      within(screen.getByRole("dialog")).getByText(/is re-bound to this person/i),
+    ).toBeInTheDocument();
+  });
+
+  // The counters belong to the attempt that produced them. Today `onDecided`
+  // unmounts this window, but the prop is optional and a caller may keep it.
+  it("clears a previous attempt's counters when the next one succeeds", async () => {
+    const refusal: CorrectionResponse = {
+      applied: 0,
+      already_decided: 0,
+      items: [{ ...REF, account_id: REF.account_id, outcome: "refused" }],
+    };
+    hooks.exclude.mutate.mockImplementation(
+      (_args: unknown, opts?: { onSuccess?: (r: CorrectionResponse) => void }) =>
+        opts?.onSuccess?.(refusal),
+    );
+    hooks.detach.mutate.mockImplementation(
+      (_args: unknown, opts?: { onSuccess?: (r: CorrectionResponse) => void }) =>
+        opts?.onSuccess?.({
+          applied: 1,
+          already_decided: 0,
+          items: [{ ...REF, account_id: REF.account_id, outcome: "applied" }],
+        }),
+    );
+    render(<AccountActions accountRef={REF} binding={binding()} candidates={[]} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /exclude \(bot/i }));
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Exclude" }),
+    );
+    expect(screen.getByText(/1 refused/i)).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /detach into a new person/i }),
+    );
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Detach" }),
+    );
+
+    expect(screen.queryByText(/1 refused/i)).not.toBeInTheDocument();
   });
 
   it("cancelling a dialog resets the verbs, so the next one opens clean", async () => {

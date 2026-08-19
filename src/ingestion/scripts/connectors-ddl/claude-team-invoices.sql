@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS bronze_claude_team_invoices.claude_team_invoice_lines
     `data_source` Nullable(String),
     `collected_at` Nullable(String),
     `chain_status` Nullable(String),
+    `invoice_ref` Nullable(String),
     `invoice_id` Nullable(String),
     `invoice_status` Nullable(String),
     `invoice_created_ts` Nullable(Decimal(38, 9)),

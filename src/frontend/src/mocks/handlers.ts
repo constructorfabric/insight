@@ -769,7 +769,7 @@ export const handlers = [
           candidates: [],
         },
       ],
-      rates: { persons: 41, observed: 60, bound: 55, pending: 3, no_evidence: 2, excluded: 1 },
+      rates: { observed: 60, bound: 55, pending: 3, no_evidence: 2, excluded: 1 },
       truncated: false,
       items_truncated: false,
     });
