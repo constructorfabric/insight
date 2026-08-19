@@ -66,8 +66,10 @@ spec:
               template: run
             arguments:
               parameters:
+                # The connector's staging models PLUS the shared
+                # identity_inputs union — the seed step reads it.
                 - name: dbt_select
-                  value: {{ `"{{inputs.parameters.dbt_select_staging}}"` }}
+                  value: {{ `"{{inputs.parameters.dbt_select_staging}} identity_inputs"` }}
                 - name: dbt_full_refresh
                   value: {{ `"{{inputs.parameters.dbt_full_refresh}}"` }}
                 - name: toolbox_image
@@ -100,8 +102,42 @@ spec:
                 - name: batch_size
                   value: "10000"
 
+          # ------ Non-Jira: connector staging + identity_inputs before the seed ------
+          - name: transform-staging
+            depends: sync
+            when: {{ `"'{{inputs.parameters.data_source}}' != 'jira'"` }}
+            templateRef:
+              name: dbt-run
+              template: run
+            arguments:
+              parameters:
+                - name: dbt_select
+                  value: {{ `"tag:{{inputs.parameters.data_source}} identity_inputs"` }}
+                - name: dbt_full_refresh
+                  value: {{ `"{{inputs.parameters.dbt_full_refresh}}"` }}
+                - name: toolbox_image
+                  value: {{ `"{{inputs.parameters.toolbox_image}}"` }}
+                - name: clickhouse_host
+                  value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
+                - name: clickhouse_port
+                  value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
+                - name: clickhouse_user
+                  value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+
+          # ------ Both paths: resolve + publish identity before the gold build ------
+          # Unconditional by design: the seed no-ops when the sync landed no
+          # identity claims, and a gold build must never resolve against a
+          # snapshot older than the data it is building over. Exactly one of
+          # the two staging tasks runs (complementary `when` guards), so the
+          # OR is "whichever staging this pipeline had".
+          - name: identity-seed
+            depends: transform-jira-staging || transform-staging
+            templateRef:
+              name: identity-seed-run
+              template: run
+
           - name: transform-jira-silver
-            depends: enrich
+            depends: enrich && identity-seed
             when: {{ `"'{{inputs.parameters.data_source}}' == 'jira'"` }}
             templateRef:
               name: dbt-run
@@ -130,7 +166,7 @@ spec:
           # the run. The incoming `dbt_select` param is intentionally ignored
           # here — name-derived scoping does not depend on it being populated.
           - name: transform-legacy
-            depends: sync
+            depends: identity-seed && transform-staging
             when: {{ `"'{{inputs.parameters.data_source}}' != 'jira'"` }}
             templateRef:
               name: dbt-run

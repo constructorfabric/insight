@@ -1,0 +1,70 @@
+{{- if .Values.ingestion.templates.enabled }}
+# One persons-seed as a pipeline step: resolve the identity claims a connector
+# sync just landed and publish the refreshed log to ClickHouse (the `seed`
+# subcommand publishes as its own final step). Runs UNCONDITIONALLY in every
+# connector pipeline — the seed no-ops in well under a second when nothing
+# changed, serializes on a per-tenant MariaDB advisory lock, and tolerates a
+# busy lock and a guard refusal (`--busy-ok` / `--guard-ok`): two connectors
+# finishing together race their seed steps, and a stand whose connectors emit
+# no identity claims has an empty `identity_inputs` — neither may fail the
+# pipeline. The scheduled seed CronJob stays strict on both.
+#
+# Same image/config/secret wiring as the identity subchart's seed CronJob.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: identity-seed-run
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          - name: identity_image
+            default: "{{ .Values.identityResolution.image.repository }}:{{ .Values.identityResolution.image.tag | default .Chart.AppVersion }}"
+      activeDeadlineSeconds: 900
+      retryStrategy:
+        # Transient connect blips only; the advisory lock + the operations
+        # journal make a repeated run safe (same stance as the CronJob's
+        # backoffLimit).
+        limit: "2"
+        retryPolicy: OnFailure
+      container:
+        image: {{ `"{{inputs.parameters.identity_image}}"` }}
+        imagePullPolicy: IfNotPresent
+        command: ["/app/identity-resolution"]
+        args: ["-c", "/app/config/insight.yaml", "seed", "--busy-ok", "--guard-ok"]
+        volumeMounts:
+          - name: identity-resolution-config
+            mountPath: /app/config/insight.yaml
+            subPath: insight.yaml
+            readOnly: true
+          # The gears host creates `server.home_dir` at boot; the `seed`
+          # subcommand never starts grpc-hub, so /app/data is the only
+          # writable path it needs under a read-only root.
+          - name: data
+            mountPath: /app/data
+        envFrom:
+          # Same Secret as the identity deployment: database_url,
+          # clickhouse_*, tenant_default_id — everything seed + publish need.
+          - secretRef:
+              name: {{ .Values.identityResolution.existingSecret | quote }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {cpu: 500m, memory: 512Mi}
+      volumes:
+        - name: identity-resolution-config
+          configMap:
+            name: {{ printf "%s-gears-config" (include "insight.identityResolution.host" .) | quote }}
+        - name: data
+          emptyDir: {}
+{{- end }}

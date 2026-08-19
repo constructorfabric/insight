@@ -74,6 +74,17 @@ enum Commands {
         /// Override the input guards (empty `identity_inputs` / wrong-tenant).
         #[arg(long)]
         force: bool,
+        /// Exit 0 when another run holds the lock. For the pipeline step:
+        /// two connectors finishing together race their seed steps, and the
+        /// run that holds the lock seeds the same inputs.
+        #[arg(long)]
+        busy_ok: bool,
+        /// Exit 0 when an input guard refuses the run. For the pipeline
+        /// step: an empty `identity_inputs` is a legitimate state on a stand
+        /// whose connectors emit no identity claims. The scheduled `CronJob`
+        /// stays strict, so a guard refusal is still surfaced nightly.
+        #[arg(long)]
+        guard_ok: bool,
     },
     /// Print the OpenAPI document to stdout and exit. Offline — no config,
     /// no backends, no logging subscriber, so stdout stays pure JSON. Backs
@@ -116,11 +127,24 @@ async fn main() -> Result<()> {
             init_subcommand_logging();
             gear::run_migrate(&load_config()?).await
         }
-        Commands::Seed { mode, force } => {
+        Commands::Seed {
+            mode,
+            force,
+            busy_ok,
+            guard_ok,
+        } => {
             init_subcommand_logging();
             let config = load_config()?;
             match gear::run_seed(&config, &mode, force).await {
                 Ok(()) => Ok(()),
+                Err(seed_runner::SeedRunError::LockBusy) if busy_ok => {
+                    tracing::warn!("another persons-seed run holds the lock; tolerated (--busy-ok)");
+                    Ok(())
+                }
+                Err(seed_runner::SeedRunError::Guard(msg)) if guard_ok => {
+                    tracing::warn!(%msg, "persons-seed refused by input guard; tolerated (--guard-ok)");
+                    Ok(())
+                }
                 Err(seed_runner::SeedRunError::LockBusy) => {
                     tracing::warn!("another persons-seed run holds the lock; exiting");
                     std::process::exit(EXIT_SEED_LOCK_BUSY);
