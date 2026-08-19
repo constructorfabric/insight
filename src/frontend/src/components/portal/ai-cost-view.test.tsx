@@ -193,6 +193,10 @@ describe("AiCostView", () => {
     ).toBeInTheDocument();
     // the caveat is spelled out for the reader
     expect(screen.getByText(/Only Claude Code is usage-metered/)).toBeInTheDocument();
+    // ...including that the two figures beside each other span different windows
+    expect(
+      screen.getByText(/Actual cost is a monthly figure/),
+    ).toBeInTheDocument();
   });
 
   it("computes the adoption funnel with data-relative stage cuts", () => {

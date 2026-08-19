@@ -102,7 +102,9 @@ const PLANNED_KEYS = new Set(PLANNED_SLICES.map((d) => d.key));
  * Honest data caveats surfaced in the UI:
  *  - only Claude Code is usage-metered → the cost total is Claude-only;
  *  - ChatGPT/Codex report usage but no per-user cost (subscription / token
- *    billing isn't ingested), so their cost reads "not tracked", never $0.
+ *    billing isn't ingested), so their cost reads "not tracked", never $0;
+ *  - actual cost is a seat-month fact, so it does not narrow to a period
+ *    shorter than a month while the potential figure beside it does.
  */
 export function AiCostView({ item }: { item: string | null }) {
   const cohortLabel = useCohortLabel();
@@ -437,7 +439,8 @@ export function AiCostView({ item }: { item: string | null }) {
         <p className="text-xs text-muted-foreground">
           Only Claude Code is usage-metered. ChatGPT (per-seat subscription) and
           Codex (token-based) report usage but no per-user cost yet — shown as
-          “not tracked”, not $0.
+          “not tracked”, not $0. Actual cost is a monthly figure, so a period
+          shorter than a month shows the whole month’s billed amount.
         </p>
       </section>
 
@@ -591,7 +594,8 @@ function UnitSection({
       )}
       {dim && !dim.planned ? (
         <p className="text-xs text-muted-foreground">
-          Costs are Claude Code only (the usage-metered tool).
+          Costs are Claude Code only (the usage-metered tool); actual cost is a
+          monthly figure.
         </p>
       ) : null}
     </section>
