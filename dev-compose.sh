@@ -1520,7 +1520,7 @@ test_stand_pull_backends() {
   done
 }
 
-test_stand_validate_prebuilt_backends() {
+test_stand_use_prebuilt_backends() {
   local entry var name image
   for entry in "${TEST_STAND_PINNED_BACKENDS[@]}"; do
     IFS='|' read -r var _ name <<<"$entry"
@@ -1533,6 +1533,7 @@ test_stand_validate_prebuilt_backends() {
       echo "ERROR: pre-built image '$image' for $name is not loaded." >&2
       return 1
     }
+    update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
   done
   echo "=== the backend uses pre-built images from this ref ==="
 }
@@ -1859,7 +1860,7 @@ cmd_test_stand() {
           echo "=== the backend is compiled from this tree, not pulled ==="
           ;;
         prebuilt)
-          test_stand_validate_prebuilt_backends || return 1
+          test_stand_use_prebuilt_backends || return 1
           ;;
         pinned)
           test_stand_backend_matches_charts || return 1
