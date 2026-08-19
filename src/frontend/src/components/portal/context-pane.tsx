@@ -436,7 +436,7 @@ function DirectionsNav() {
 }
 
 function DirectionItem({ direction }: { direction: Direction }) {
-  const { setDir, setItem, setLens } = usePortalNavActions();
+  const { setDir, openDirection } = usePortalNavActions();
   const dismiss = useDismissDrawer();
   const activeDir = usePortalDir();
   const activeLens = usePortalLens();
@@ -449,8 +449,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
     if (expanded) {
       setDir("");
     } else {
-      setDir(direction.id);
-      setLens(lenses[0] ?? direction.lenses[0]!);
+      openDirection(direction.id, lenses[0] ?? direction.lenses[0]!);
     }
   }
 
@@ -491,8 +490,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
                     isActive={activeLens === lens}
                     className={roadmap ? "text-muted-foreground" : undefined}
                     onClick={() => {
-                      setLens(lens);
-                      setItem(null);
+                      openDirection(direction.id, lens);
                       dismiss();
                     }}
                   >

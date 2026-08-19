@@ -1438,6 +1438,9 @@ for dbt-built gold data rather than for containers to report healthy.
 
           --build-backend    Compile the Rust services from this tree. Adds
                              ~28 min (measured across CI's build-path runs).
+          --prebuilt-backend Use backend images already loaded under the four
+                             *_IMAGE environment variables. Never builds or
+                             pulls a fallback image.
           --build-frontend   Build the SPA from this tree with pnpm, served by
                              the front-built nginx. Backend stays pinned.
           --build            Both.
@@ -1515,6 +1518,24 @@ test_stand_pull_backends() {
       return 1; }
     update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
   done
+}
+
+test_stand_use_prebuilt_backends() {
+  local entry var name image
+  for entry in "${TEST_STAND_PINNED_BACKENDS[@]}"; do
+    IFS='|' read -r var _ name <<<"$entry"
+    image="${!var:-}"
+    [[ -n "$image" ]] || {
+      echo "ERROR: --prebuilt-backend requires $var." >&2
+      return 1
+    }
+    docker image inspect "$image" >/dev/null 2>&1 || {
+      echo "ERROR: pre-built image '$image' for $name is not loaded." >&2
+      return 1
+    }
+    update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
+  done
+  echo "=== the backend uses pre-built images from this ref ==="
 }
 
 # Refuse to pin when the working tree differs from what a chart describes.
@@ -1810,11 +1831,12 @@ cmd_test_stand() {
     up)
       # Each tree is pinned to its chart's appVersion or built from this one,
       # asked separately: --build is the both-axes alias.
-      local image build_backend=false build_frontend=false
+      local image backend_mode=pinned build_frontend=false
       while [[ $# -gt 0 ]]; do
         case "$1" in
-          --build)          build_backend=true; build_frontend=true; shift ;;
-          --build-backend)  build_backend=true; shift ;;
+          --build)          backend_mode=source; build_frontend=true; shift ;;
+          --build-backend)  backend_mode=source; shift ;;
+          --prebuilt-backend) backend_mode=prebuilt; shift ;;
           --build-frontend) build_frontend=true; shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
@@ -1833,12 +1855,18 @@ cmd_test_stand() {
       # INVARIANT: pinning writes the *_IMAGE vars, and that is the only thing
       # keeping cmd_up off the compiler — so it has to run before cmd_up reads
       # the env file.
-      if [[ "$build_backend" == true ]]; then
-        echo "=== the backend is compiled from this tree, not pulled ==="
-      else
-        test_stand_backend_matches_charts || return 1
-        test_stand_pull_backends || return 1
-      fi
+      case "$backend_mode" in
+        source)
+          echo "=== the backend is compiled from this tree, not pulled ==="
+          ;;
+        prebuilt)
+          test_stand_use_prebuilt_backends || return 1
+          ;;
+        pinned)
+          test_stand_backend_matches_charts || return 1
+          test_stand_pull_backends || return 1
+          ;;
+      esac
 
       local up_args=(--env-file "$TEST_STAND_ENV_FILE"
                      --authenticator-redirect "$(test_stand_origin)/auth/callback")

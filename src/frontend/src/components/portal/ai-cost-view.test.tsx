@@ -117,15 +117,21 @@ beforeEach(() => {
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
   mocks.tools.isError = false;
-  // 3 of 4 use AI; costs are Claude-only.
+  // 3 of 4 use AI; costs are Claude-only. Actual (billed) cost is a fraction of
+  // the potential one, which is the relationship the two figures always have.
   mocks.grid.byKey = new Map([
     ["ai.cost", metric("ai.cost", [[pid("a"), 100], [pid("b"), 50], [pid("c"), 0], [pid("d"), 0]], { format: "currency", unit: "USD" } as never)],
+    ["ai.extra_usage_cost", metric("ai.extra_usage_cost", [[pid("a"), 8], [pid("b"), 4], [pid("c"), 0], [pid("d"), 0]], { format: "currency", unit: "USD" } as never)],
     ["ai.active_days", metric("ai.active_days", [[pid("a"), 5], [pid("b"), 3], [pid("c"), 1], [pid("d"), 0]])],
     ["ai.accepted_lines", metric("ai.accepted_lines", [[pid("a"), 700], [pid("b"), 200], [pid("c"), 100], [pid("d"), 0]])],
   ]);
   mocks.grid.previousByKey = new Map();
   mocks.tools.byKey = new Map([
     ["ai.cost", toolBreakdown("ai.cost", [[pid("a"), "claude_code", 100], [pid("b"), "claude_code", 50]])],
+    ["ai.extra_usage_cost", toolBreakdown("ai.extra_usage_cost", [
+      [pid("a"), "claude_code", 8],
+      [pid("b"), "claude_code", 4],
+    ])],
     ["ai.accepted_lines", toolBreakdown("ai.accepted_lines", [
       [pid("a"), "claude_code", 600],
       [pid("b"), "chatgpt", 300],
@@ -141,7 +147,7 @@ beforeEach(() => {
 describe("AiCostView", () => {
   it("renders headline KPIs: Claude-only cost, active users, org lines", () => {
     render(<AiCostView item={null} />);
-    expect(screen.getByText("AI cost")).toBeInTheDocument();
+    expect(screen.getByText("AI potential usage cost")).toBeInTheDocument();
     expect(screen.getByText("Claude Code only")).toBeInTheDocument();
     // 3 of 4 members have active days > 0
     expect(screen.getByText("Active AI users")).toBeInTheDocument();
@@ -149,13 +155,42 @@ describe("AiCostView", () => {
     expect(screen.getByText(/1[,  ]?000/)).toBeInTheDocument(); // 700+200+100 lines
   });
 
+  it("holds the actual cost beside the potential one rather than summing them", () => {
+    render(<AiCostView item={null} />);
+    // Potential 100+50, actual 8+4 — two figures, no 162 anywhere.
+    expect(screen.getAllByText("$150").length).toBeGreaterThan(0);
+    expect(screen.getByText("actual cost $12")).toBeInTheDocument();
+    expect(screen.queryByText("$162")).not.toBeInTheDocument();
+    // The average carries the same pair: 150/3 against 12/3, never 162/3.
+    expect(screen.getAllByText("$50").length).toBeGreaterThan(0);
+    expect(screen.getByText("actual $4 / active user")).toBeInTheDocument();
+    expect(screen.queryByText("$54")).not.toBeInTheDocument();
+  });
+
+  it("omits the actual figure entirely when no seat data reaches us", () => {
+    const drop = <T,>(m: Map<string, T>) =>
+      new Map([...m].filter(([key]) => key !== "ai.extra_usage_cost"));
+    mocks.grid.byKey = drop(mocks.grid.byKey);
+    mocks.tools.byKey = drop(mocks.tools.byKey);
+    render(<AiCostView item={null} />);
+    expect(screen.getByText("AI potential usage cost")).toBeInTheDocument();
+    // A $0 actual cost would assert that nothing was billed.
+    expect(screen.queryByText(/actual cost/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/actual .* \/ active user/)).not.toBeInTheDocument();
+  });
+
   it("shows per-tool cards where untracked cost reads 'not tracked', never $0", () => {
     render(<AiCostView item={null} />);
     expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0);
     expect(screen.getByText("ChatGPT")).toBeInTheDocument();
     // ChatGPT reports lines but no cost
-    expect(screen.getByText("cost not tracked")).toBeInTheDocument();
-    expect(screen.getByText(/2 users · 400 lines/)).toBeInTheDocument();
+    expect(screen.getByText("potential cost not tracked")).toBeInTheDocument();
+    // ...and no billed amount either, so its card names neither.
+    expect(screen.getByText("2 users · 400 lines")).toBeInTheDocument();
+    // Claude Code carries both, the billed one beside the priced one.
+    expect(
+      screen.getByText("actual cost $12 · 1 users · 600 lines"),
+    ).toBeInTheDocument();
     // the caveat is spelled out for the reader
     expect(screen.getByText(/Only Claude Code is usage-metered/)).toBeInTheDocument();
   });
@@ -185,7 +220,7 @@ describe("AiCostView", () => {
     render(<AiCostView item="autofix" />);
     expect(screen.getByText(/no autofix data is collected/i)).toBeInTheDocument();
     // no fabricated KPI cards behind it
-    expect(screen.queryByText("AI cost")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI potential usage cost")).not.toBeInTheDocument();
   });
 
   it("groups cost and adoption by unit when a slice is active", () => {
@@ -199,6 +234,10 @@ describe("AiCostView", () => {
     render(<AiCostView item="by-unit-role" />);
     expect(screen.getByText("R&D")).toBeInTheDocument();
     expect(screen.getByText("Sales")).toBeInTheDocument();
+    // Both cost columns, with R&D's billed figure in the second one.
+    expect(screen.getByText("Potential cost")).toBeInTheDocument();
+    expect(screen.getByText("Actual cost")).toBeInTheDocument();
+    expect(screen.getByText("$12")).toBeInTheDocument();
   });
 
   it("gates on an empty scope instead of rendering zero KPIs", () => {
@@ -206,6 +245,6 @@ describe("AiCostView", () => {
     mocks.tree = person("boss");
     render(<AiCostView item={null} />);
     expect(screen.getByText(/No people in the current scope/)).toBeInTheDocument();
-    expect(screen.queryByText("AI cost")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI potential usage cost")).not.toBeInTheDocument();
   });
 });

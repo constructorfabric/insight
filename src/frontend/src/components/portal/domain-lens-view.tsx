@@ -1387,7 +1387,7 @@ function DirectionCardsSection({
   grid: GridData;
   memberIds: readonly string[];
 }) {
-  const { setDir, setLens, setZone } = usePortalNavActions();
+  const { openDirection } = usePortalNavActions();
   const cards = DIRECTIONS.map((d) => {
     const entry = lensEntry(d.id, "Overview");
     if (!entry || "comingSoon" in entry) return null;
@@ -1407,11 +1407,7 @@ function DirectionCardsSection({
   }).filter((c): c is NonNullable<typeof c> => c != null);
   if (!cards.length) return null;
 
-  const go = (dir: string) => {
-    setDir(dir);
-    setLens("Overview");
-    setZone("directions");
-  };
+  const go = (dir: string) => openDirection(dir, "Overview");
 
   return (
     <section className="flex flex-col gap-3">

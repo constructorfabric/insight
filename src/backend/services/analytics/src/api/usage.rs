@@ -89,13 +89,7 @@ pub async fn ingest_usage_events(
     let person_id = ctx.subject_id();
     let arrival = Utc::now();
 
-    let rows: Vec<UsageEventRow> = req
-        .records
-        .iter()
-        .take(MAX_RECORDS)
-        .map(|record| to_row(record, &req.meta, tenant_id, person_id, arrival))
-        .filter(is_recordable)
-        .collect();
+    let rows = recordable_rows(&req, tenant_id, person_id, arrival);
 
     if let Err(error) = insert_records(&state, &rows).await {
         // SAFETY: a write that fails forever reads as "nobody used the
@@ -105,6 +99,20 @@ pub async fn ingest_usage_events(
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn recordable_rows(
+    req: &UsageIngestRequest,
+    tenant_id: Uuid,
+    person_id: Uuid,
+    arrival: DateTime<Utc>,
+) -> Vec<UsageEventRow> {
+    req.records
+        .iter()
+        .take(MAX_RECORDS)
+        .map(|record| to_row(record, &req.meta, tenant_id, person_id, arrival))
+        .filter(is_recordable)
+        .collect()
 }
 
 /// INVARIANT: `event_id` is omitted so the table's DEFAULT applies.
