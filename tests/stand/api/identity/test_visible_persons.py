@@ -137,7 +137,7 @@ def test_the_roster_enumerates_exactly_what_the_filter_would_confirm(
     outsider = stand_manifest.fixture("sales_ic").uuid
     other_tenant = stand_manifest.fixture("other_tenant_lead").uuid
 
-    response = lead_session.client.get(f"{VISIBLE_PERSONS}?limit=500")
+    response = lead_session.client.get(VISIBLE_PERSONS, params={"limit": 500})
     assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
     listed = {str(item.person_id) for item in response.parse(VisiblePersonsPage).items}
 
@@ -164,8 +164,10 @@ def test_a_cursor_walks_the_roster_without_repeating_or_skipping(
     cursor: str | None = None
 
     for _ in range(20):
-        url = f"{VISIBLE_PERSONS}?limit=1" + (f"&cursor={cursor}" if cursor else "")
-        response = lead_session.client.get(url)
+        params: dict[str, object] = {"limit": 1}
+        if cursor:
+            params["cursor"] = cursor
+        response = lead_session.client.get(VISIBLE_PERSONS, params=params)
         assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
         page = response.parse(VisiblePersonsPage)
 
@@ -192,7 +194,7 @@ def test_a_search_term_narrows_the_roster_to_the_person_it_names(
     report = stand_manifest.fixture("development_ic")
     term = report.email.split("@")[0]
 
-    response = lead_session.client.get(f"{VISIBLE_PERSONS}?q={term}")
+    response = lead_session.client.get(VISIBLE_PERSONS, params={"q": term})
     assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
     listed = {str(item.person_id) for item in response.parse(VisiblePersonsPage).items}
 
@@ -208,12 +210,14 @@ def test_a_cursor_is_refused_where_it_was_not_issued(lead_session: PersonaSessio
     rows silently, so the request is refused and the caller restarts the new
     list from its first page.
     """
-    first = lead_session.client.get(f"{VISIBLE_PERSONS}?limit=1")
+    first = lead_session.client.get(VISIBLE_PERSONS, params={"limit": 1})
     assert first.status_code == 200, f"status={first.status_code} {first.text[:300]}"
     cursor = first.parse(VisiblePersonsPage).next_cursor
     assert cursor, "a cut page must carry a cursor for this case to mean anything"
 
-    refused = lead_session.client.get(f"{VISIBLE_PERSONS}?q=nobody&limit=1&cursor={cursor}")
+    refused = lead_session.client.get(
+        VISIBLE_PERSONS, params={"q": "nobody", "limit": 1, "cursor": cursor}
+    )
 
     assert refused.status_code == 400, f"status={refused.status_code} {refused.text[:300]}"
 
@@ -221,7 +225,7 @@ def test_a_cursor_is_refused_where_it_was_not_issued(lead_session: PersonaSessio
 @pytest.mark.reliability
 def test_an_over_long_query_is_refused_rather_than_scanned(api_client: ApiClient) -> None:
     """The query bounds the scan: one LIKE probe per term over the journal."""
-    response = api_client.get(f"{VISIBLE_PERSONS}?q={'x' * 201}")
+    response = api_client.get(VISIBLE_PERSONS, params={"q": "x" * 201})
 
     assert response.status_code in (400, 401), (
         f"status={response.status_code} {response.text[:300]}"
