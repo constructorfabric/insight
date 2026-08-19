@@ -244,10 +244,21 @@ impl MetricDefinitionValidator {
         }
 
         match self.has_columns(cohort.table_ref(), COHORT_COLUMNS).await {
+            Ok(ColumnCheck::Present) => {}
+            Ok(missing) => {
+                return ProbeOutcome::Definitive(ValidationState::Error(missing.error_code()));
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "metric cohort source validation failed");
+                return ProbeOutcome::Inconclusive;
+            }
+        }
+
+        match self.has_columns(PERSON_MAP_TABLE, PERSON_MAP_COLUMNS).await {
             Ok(ColumnCheck::Present) => ProbeOutcome::Definitive(ValidationState::Ok),
             Ok(missing) => ProbeOutcome::Definitive(ValidationState::Error(missing.error_code())),
             Err(error) => {
-                tracing::warn!(error = %error, "metric cohort source validation failed");
+                tracing::warn!(error = %error, "identity map validation failed");
                 ProbeOutcome::Inconclusive
             }
         }
@@ -587,10 +598,9 @@ impl MetricDefinitionValidator {
     }
 }
 
-// The columns the RUNTIME actually reads. `entity_id` carries the canonical
-// person id since the identity cutover — same column, canonical content — so
-// the list is unchanged by it: a second identity column would have made the
-// duplication part of this published contract.
+// The columns the RUNTIME actually reads. `entity_id` carries the source
+// identity; the runtime resolves it through `identity.person_map` while serving,
+// so the relation never publishes a second, pre-resolved identity column.
 const OBSERVATION_COLUMNS: &[&str] = &[
     "tenant_id",
     "source_key",
@@ -624,6 +634,12 @@ const EVIDENCE_COLUMN_TYPES: &[(&str, &str)] = &[
     ),
     ("details", "Map(String, String)"),
 ];
+
+/// The live email → person map every person read joins. Probed like any other
+/// serving contract: a missing map makes the relation unqueryable, not empty.
+const PERSON_MAP_TABLE: (&str, &str) = ("identity", "person_map");
+
+const PERSON_MAP_COLUMNS: &[&str] = &["email", "person_id"];
 
 const COHORT_COLUMNS: &[&str] = &[
     "tenant_id",

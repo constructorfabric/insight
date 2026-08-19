@@ -40,7 +40,7 @@ def test_the_map_models_carry_the_deploy_selected_tag() -> None:
 
     assert tagged == MAP_MODELS, (
         f"models tagged {MAP_TAG!r} are {sorted(tagged)}; an untagged map model "
-        f"ships as an empty placeholder"
+        f"never gets rebuilt from the snapshot's copy"
     )
 
 

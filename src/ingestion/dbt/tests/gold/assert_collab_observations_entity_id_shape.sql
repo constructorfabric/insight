@@ -1,14 +1,12 @@
 -- Build-integrity check (untagged → error severity under `dbt build`).
--- Unified entity ids for persons are canonical person UUIDs since the
--- identity cutover; the runtime and the cohort relation join on exact string
--- equality, so an empty, mixed-case, non-UUID id — a source email leaking
--- past the resolve gate — or the nil UUID silently drops the person from
--- every surface.
+-- The runtime joins `identity.person_map` on exact string equality, so an
+-- unnormalized or empty key matches no map row and the person silently misses
+-- that activity. The map's side is asserted by assert_person_map_email_normalized.
 SELECT
     entity_id,
     measure_key,
     count() AS row_count
 FROM {{ ref('collab_metric_observations') }}
-WHERE NOT match(entity_id, '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
-   OR entity_id = '00000000-0000-0000-0000-000000000000'
+WHERE entity_id != lower(trimBoth(entity_id))
+   OR entity_id = ''
 GROUP BY entity_id, measure_key

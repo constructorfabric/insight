@@ -318,6 +318,7 @@ fn humanize_field_name(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::metric_definitions::definition::AliasCollapse;
 
     use crate::domain::metric_drilldown::cursor::decode_cursor;
     use crate::domain::metric_drilldown::dto::EvidenceInput;
@@ -332,6 +333,7 @@ mod tests {
             },
             vec![EvidenceInput {
                 role: MetricInputRole::Value,
+                alias_collapse: AliasCollapse::Sum,
                 measure_key: value.measure_key,
                 presentation: evidence_presentation(
                     "git",
@@ -415,6 +417,7 @@ mod tests {
             vec![
                 EvidenceInput {
                     role: MetricInputRole::Numerator,
+                    alias_collapse: AliasCollapse::Sum,
                     measure_key: numerator.measure_key,
                     presentation: EvidencePresentation {
                         detail_keys: &[],
@@ -423,6 +426,7 @@ mod tests {
                 },
                 EvidenceInput {
                     role: MetricInputRole::Denominator,
+                    alias_collapse: AliasCollapse::Sum,
                     measure_key: denominator.measure_key,
                     presentation: EvidencePresentation {
                         detail_keys: &[],
@@ -452,6 +456,7 @@ mod tests {
             },
             vec![EvidenceInput {
                 role: MetricInputRole::Value,
+                alias_collapse: AliasCollapse::Sum,
                 measure_key: value.measure_key,
                 presentation: evidence_presentation(
                     "git",
@@ -483,6 +488,7 @@ mod tests {
             },
             vec![EvidenceInput {
                 role: MetricInputRole::Value,
+                alias_collapse: AliasCollapse::Sum,
                 measure_key: value.measure_key,
                 presentation: evidence_presentation(
                     "git",

@@ -10,9 +10,14 @@ use crate::domain::metric_definitions::EvidenceRelation;
 use super::dto::{EvidenceQueryRow, MetricDrilldownSelection};
 use super::error::{config_error, evidence_unavailable, invalid, invalid_error};
 
+/// Bumped when the ordering key changes: an older cursor addresses a page this
+/// shape would not produce, so it is refused.
+const CURSOR_VERSION: u8 = 2;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CursorKey {
     pub(super) role: String,
+    pub(super) entity_id: String,
     pub(super) metric_date: String,
     pub(super) observed_at: String,
     pub(super) source_key: String,
@@ -61,29 +66,62 @@ pub async fn verify_evidence_snapshot(
     Ok(())
 }
 
+/// What answers a drilldown: the evidence relation AND the identity map, since
+/// the rows a person owns are decided while the query runs. Both are pinned, so
+/// a rebuild or correction mid-pagination expires the cursor.
 pub(super) async fn evidence_snapshot_id(
     ch: &insight_clickhouse::Client,
     relation: &EvidenceRelation,
 ) -> Result<String, CanonicalError> {
     let (database, table) = relation.table_ref();
-    ch.query(
-        "SELECT toString(uuid) AS snapshot_id \
-         FROM system.tables WHERE database = ? AND name = ?",
-    )
-    .bind(database)
-    .bind(table)
-    .fetch_one::<EvidenceSnapshotRow>()
-    .await
-    .map(|row| row.snapshot_id)
-    .map_err(|error| {
-        tracing::error!(
-            error = %error,
-            database,
-            table,
-            "metric evidence snapshot lookup failed"
-        );
-        evidence_unavailable()
-    })
+    let evidence = ch
+        .query(
+            "SELECT toString(uuid) AS snapshot_id \
+             FROM system.tables WHERE database = ? AND name = ?",
+        )
+        .bind(database)
+        .bind(table)
+        .fetch_one::<EvidenceSnapshotRow>()
+        .await
+        .map(|row| row.snapshot_id)
+        .map_err(|error| {
+            tracing::error!(
+                error = %error,
+                database,
+                table,
+                "metric evidence snapshot lookup failed"
+            );
+            evidence_unavailable()
+        })?;
+
+    // SAFETY: content-derived marks, not the sync stamp — the sync stamp moves on
+    // every republish and would expire every cursor on a clock. Both map inputs
+    // are pinned: the persons journal is append-only, so (count, max id) moves
+    // when a decision is recorded; a claim insert always carries a new high
+    // `_version`, so `max(_version)` moves when a connector teaches identity a
+    // new alias (which shifts pages without any gold rebuild). No count() on the
+    // claims side — merges collapse replaced row versions, and a shrinking count
+    // would expire live cursors for nothing.
+    let identity = ch
+        .query(
+            // SAFETY: CAST to String, and coalesce every scalar subquery. A scalar
+            // subquery is Nullable-typed, which makes `concat` return
+            // Nullable(String) and the row decode fail against this String field.
+            "SELECT CAST(concat(\
+                 toString(coalesce((SELECT count() FROM identity.identity_persons), 0)), ':', \
+                 toString(coalesce((SELECT max(id) FROM identity.identity_persons), 0)), ':', \
+                 toString(coalesce((SELECT max(_version) FROM identity.identity_inputs), 0)) \
+             ) AS String) AS snapshot_id",
+        )
+        .fetch_one::<EvidenceSnapshotRow>()
+        .await
+        .map(|row| row.snapshot_id)
+        .map_err(|error| {
+            tracing::error!(error = %error, "identity watermark lookup failed");
+            evidence_unavailable()
+        })?;
+
+    Ok(format!("{evidence}:{identity}"))
 }
 
 pub(super) fn encode_cursor(
@@ -92,11 +130,12 @@ pub(super) fn encode_cursor(
     row: &EvidenceQueryRow,
 ) -> Result<String, CanonicalError> {
     let envelope = CursorEnvelope {
-        version: 1,
+        version: CURSOR_VERSION,
         fingerprint: fingerprint.to_owned(),
         snapshot_id: snapshot_id.to_owned(),
         key: CursorKey {
             role: row.role.clone(),
+            entity_id: row.entity_id.clone(),
             metric_date: row.metric_date.clone(),
             observed_at: row.observed_at.clone(),
             source_key: row.source_key.clone(),
@@ -116,7 +155,7 @@ pub(super) fn decode_cursor(value: &str) -> Result<CursorEnvelope, CanonicalErro
         .map_err(|_| invalid_error("cursor", "cursor is malformed"))?;
     let envelope: CursorEnvelope = serde_json::from_slice(&bytes)
         .map_err(|_| invalid_error("cursor", "cursor is malformed"))?;
-    if envelope.version != 1 {
+    if envelope.version != CURSOR_VERSION {
         return invalid("cursor", "cursor version is unsupported");
     }
     Ok(envelope)

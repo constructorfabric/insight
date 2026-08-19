@@ -27,16 +27,12 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id, resolved ONCE per gold build ('' when identity
-          does not know the source email — those rows stay for coverage and
-          reach no serving relation). The same snapshot every downstream
-          relation answers for.
-        tests:
-          - not_null
-      - name: source_entity_id
-        description: >
-          Source-native email the row was resolved from — provenance and the
-          coverage denominator; never a serving key.
+          Source identity of the measured entity, normalized by
+          `normalized_email()`. For a person that is the email the source
+          recorded — NOT the canonical person id: the analytics runtime joins
+          `identity.person_map` when it serves, so a correction lands without
+          rebuilding this relation. Rows whose email cannot resolve stay here
+          and start counting the moment it does.
         tests:
           - not_null
       - name: metric_date
@@ -208,12 +204,11 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
       - name: metric_date
@@ -292,12 +287,11 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
       - name: metric_date
@@ -379,12 +373,11 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
       - name: metric_date
@@ -476,12 +469,11 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
       - name: metric_date
@@ -605,12 +597,11 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
       - name: metric_date
@@ -699,11 +690,14 @@ models:
       Current cohort membership per person for peer comparison. One row per
       (tenant, entity_type, entity_id, cohort_key) — uniqueness is asserted by
       tests/gold/assert_metric_entity_cohorts_unique.sql, and since entity_id is
-      the canonical person id that uniqueness is per PERSON: the model collapses
-      a person's several HR emails itself and EXCLUDES anyone whose emails claim
-      different org units, so the peer query reads it straight instead of
-      repairing the grain per request. The column set is a published contract
-      probed by the analytics service schema validator (`COHORT_COLUMNS`).
+      the canonical person id that uniqueness is per PERSON: the model resolves
+      a person's several HR emails through `identity.person_map` itself and
+      EXCLUDES anyone whose emails claim different org units, so the peer query
+      reads it straight instead of repairing the grain per request. A view, so
+      it resolves against the same live map the runtime uses for observations —
+      the two sides of a peer comparison can never disagree. The column set is a
+      published contract probed by the analytics service schema validator
+      (`COHORT_COLUMNS`).
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -718,12 +712,9 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Canonical person id: a cohort is a set of people, not of accounts, so
+          membership is resolved here through `identity.person_map` and a person
+          appears once however many HR emails they have.
         tests:
           - not_null
       - name: cohort_key
@@ -742,10 +733,10 @@ models:
     description: >
       Identity-resolution match rate measured over ACTIVITY (evidence source
       rows), one row per source (git/ai_usage/ai_cost/collab/task/wiki) plus
-      hr_cohorts for the peer-membership relation. A TABLE materialized in
-      the same gold build as the serving relations, reading the resolution
-      snapshot stamped into evidence — so coverage answers for exactly what
-      is served, never a fresher map. Row-weighted on purpose —
+      hr_cohorts for the peer-membership relation. A VIEW joining the same
+      live `identity.person_map` the runtime joins, so the rate describes what
+      a dashboard would show right now rather than what a past build stamped.
+      Row-weighted on purpose —
       unresolved_rows counts what the dashboards actually lose;
       unresolved_people counts the distinct unknown emails behind the gap
       (roughly the operator decisions that would close it). The "match rate
