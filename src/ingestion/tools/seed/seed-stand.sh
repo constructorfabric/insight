@@ -579,17 +579,15 @@ run_seed_step() {
   wait_for_job "$SEED_JOB_NAME"
 }
 
-# project_identity — force the persons-seed CronJob to run now and wait for it.
-# This is the SAME run the chart's CronJob makes on schedule; a fresh CI stand
-# cannot wait for the 06:30 cron, so it forces one. persons-seed LINKS each
-# connector account to the seeded roster person by e-mail (resolve_assignments'
+# project_identity — force the persons-seed CronJob to run now and wait for it:
+# a fresh CI stand cannot wait for the 06:30 cron. The run LINKS each connector
+# account to the seeded roster person by e-mail (resolve_assignments'
 # LinkedByEmail), APPENDS to `persons` (INSERT IGNORE — it never rewrites the
-# seeder's login rows), and publishes the refreshed log into ClickHouse
-# identity_persons — where gold's resolve_person_id() reads it — as its own
-# final step. Without this, gold resolves nothing and the API answers 200 with
-# a null for every person metric. Discovered by component label, never named,
-# so a chart rename fails loudly here rather than silently skipping the
-# projection.
+# seeder's login rows), and publishes to ClickHouse identity_persons, where
+# gold's resolve_person_id() reads it. Without this, gold resolves nothing and
+# the API answers 200 with a null for every person metric. Discovered by
+# component label, never named, so a chart rename fails loudly here rather than
+# silently skipping the projection.
 project_identity() {
   local component=persons-seed cronjob job_name
   cronjob="$(kube -n "$NAMESPACE" get cronjob \

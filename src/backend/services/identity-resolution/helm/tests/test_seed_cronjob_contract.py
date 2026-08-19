@@ -6,31 +6,22 @@ plumbing: these tests render the chart(s) with `helm template` and assert the
 manifests the cluster would actually get. No cluster involved; runs anywhere
 helm + PyYAML exist (CI: .github/workflows/identity-resolution-helm.yml).
 
-The chart ships ONE CronJob: the seed, which rebuilds the persons log from
-identity_inputs and publishes it into ClickHouse
-`identity.identity_persons` as its own final step. Publishing is part of
-every write — a seed run, and every applied operator correction — so no
-separate schedule exists to fall behind or to be run in the wrong order.
-CronJobs are selected BY NAME, never as "the sole CronJob in the render", so
-the suite does not break when another job appears.
+The chart ships ONE CronJob: the seed, which publishes its refreshed log to
+ClickHouse as its own final step. CronJobs are selected BY NAME, never as
+"the sole CronJob in the render", so the suite does not break when another
+job appears.
 
-Covered:
-  * exists by default with its documented schedule and the exact
-    subcommand/args against the mounted gears config (never `--force`);
-  * config comes from the SAME Secret/ConfigMap pair the deployment uses;
-  * `seed.tenantDefaultId` env-overrides the Secret (k8s `env` beats
-    `envFrom`);
-  * `seed.enabled=false` removes the CronJob and nothing else;
-  * the job pod labels do NOT match the Service selector (a pod that
-    listens on nothing must never enter the Service's endpoints);
-  * NO persons-sync CronJob is rendered — publishing rides the seed, and a
-    schedule that reintroduced the ordering hazard would pass every other
-    assertion here.
+Covered: the schedule and exact subcommand/args against the mounted gears
+config (never `--force`); the SAME Secret/ConfigMap pair the deployment
+uses; `seed.tenantDefaultId` env-overriding the Secret; `enabled=false`
+removing that CronJob and nothing else; pod labels never matching the
+Service selector (a pod that listens on nothing must not enter the
+endpoints); and that no persons-sync CronJob is rendered.
 
 Umbrella: the seed tenant render guard, the CronJob rendering when a tenant
 is configured, and the gear-config knobs an operator sets at the
-conventional `identityResolution.<key>` path actually reaching the gear that
-reads them.
+conventional `identityResolution.<key>` path reaching the gear that reads
+them.
 """
 
 from __future__ import annotations
@@ -49,8 +40,8 @@ UMBRELLA = REPO_ROOT / "charts" / "insight"
 TENANT = "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab"
 
 # name suffix -> (schedule, subcommand) — the per-job contract facts. One
-# entry today; the table (and every parametrize over it) stays so a second
-# scheduled job arrives with its contract already asserted.
+# entry today; the table stays so a second scheduled job arrives with its
+# contract already asserted.
 JOBS = {
     "seed": ("30 6 * * *", "seed"),
 }
@@ -200,12 +191,9 @@ def test_default_render_ships_exactly_the_documented_cronjobs(default_docs) -> N
 
 
 def test_no_persons_sync_cronjob_is_scheduled(default_docs) -> None:
-    """Publishing rides the seed run and every applied operator correction.
-
-    A scheduled sync would put the log and its ClickHouse snapshot back on
+    """A scheduled sync would put the log and its ClickHouse snapshot back on
     two independent clocks — the ordering hazard the seed's own publish step
-    exists to remove. Nothing else in this suite would notice it.
-    """
+    removes. Nothing else in this suite would notice it returning."""
     assert not [n for n in _cronjobs(default_docs) if n.endswith("-sync")], sorted(
         _cronjobs(default_docs)
     )

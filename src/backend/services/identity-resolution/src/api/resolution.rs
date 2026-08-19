@@ -396,11 +396,8 @@ async fn apply_correction(
 
     let applied = count_items(&items, OUTCOME_APPLIED);
     if applied > 0 {
-        // Publish the corrected log so the correction reaches the metrics
-        // resolver on the next gold build, not the next scheduled seed.
         // Spawned: the correction is already durable in `persons`, so the
-        // response must not wait on ClickHouse — a failed publish only means
-        // the snapshot stays stale until the next one, which the task logs.
+        // response must not wait on ClickHouse.
         let config = state.config.clone();
         tokio::spawn(async move { publish_correction(&config).await });
     }
@@ -413,16 +410,14 @@ async fn apply_correction(
     })
 }
 
-/// How many times a busy publish lock is retried, and the pause between tries.
-/// A busy lock usually means a publisher that started BEFORE this correction
-/// landed — its snapshot may not carry the new rows, so giving up on first
-/// contact would leave the correction unpublished until the next seed.
+/// A busy lock is usually a publisher that started BEFORE this correction
+/// landed, so its snapshot need not carry the new rows — retry rather than
+/// leave the correction unpublished until the next seed.
 const PUBLISH_RETRIES: u32 = 3;
 const PUBLISH_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// One post-correction publish: copy the `persons` log into the ClickHouse
-/// snapshot the metrics resolver reads. Never fails the verb — every outcome
-/// is logged and the scheduled seed's own publish is the catch-up path.
+/// Publish the corrected log into the snapshot the metrics resolver reads.
+/// Never fails the verb: the next seed's own publish is the catch-up path.
 async fn publish_correction(config: &crate::config::GearConfig) {
     use crate::sync_runner::{self, SyncRunError};
     for attempt in 0..=PUBLISH_RETRIES {

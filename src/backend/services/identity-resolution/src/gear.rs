@@ -105,19 +105,16 @@ pub async fn run_seed(
     }
     let summary = crate::seed_runner::run(&cfg, mode, force).await?;
     tracing::info!(?summary, "persons-seed run finished");
-    // The seed rewrites the log; publishing it is part of the same run, so a
-    // pipeline step (or the CronJob) needs no second job and no ordering.
     publish_after_seed(crate::sync_runner::run(&cfg, false).await)
         .map_err(crate::seed_runner::SeedRunError::Failed)
 }
 
 /// Fold the publish that follows a seed into the seed's own outcome.
 ///
-/// A busy lock means another publisher is copying the same log — its snapshot
-/// is ours. A guard refusal means an empty log — nothing to publish is a
-/// legitimate state on a fresh install. A failed publish fails the run: a
-/// completed seed whose decisions never reach the resolver leaves every gold
-/// build on a stale snapshot, and a green step must not mean that.
+/// A busy lock publishes the same log from another run, and a guard refusal
+/// means an empty one — neither is this run's failure. A failure is: a green
+/// seed whose decisions never reached the resolver leaves every later build
+/// on a stale snapshot.
 fn publish_after_seed(
     result: Result<crate::domain::sync_service::SyncSummary, crate::sync_runner::SyncRunError>,
 ) -> anyhow::Result<()> {
@@ -128,10 +125,7 @@ fn publish_after_seed(
             Ok(())
         }
         Err(SyncRunError::LockBusy) => {
-            tracing::warn!(
-                "another persons-sync holds the publish lock; skipping — that run \
-                 publishes the same log"
-            );
+            tracing::warn!("another persons-sync holds the publish lock; skipping");
             Ok(())
         }
         Err(SyncRunError::Guard(msg)) => {
@@ -225,8 +219,6 @@ mod tests {
 
     #[test]
     fn a_failure_mentioning_the_guard_stays_a_failure() {
-        // Only the Guard VARIANT is tolerated; a Failed whose text happens to
-        // mention the empty log must stay a failure. Pins the arm order.
         let failed = SyncRunError::Failed(anyhow::anyhow!("persons log is empty"));
         assert!(publish_after_seed(Err(failed)).is_err());
     }

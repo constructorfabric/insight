@@ -83,20 +83,10 @@ spec:
                 - name: clickhouse_user
                   value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
 
-    # Everything AFTER the Airbyte sync: staging dbt → identity seed (which
-    # publishes) → gold dbt. A named entrypoint of its own so a sync started
-    # outside the pipeline (Airbyte UI, ad-hoc) still gets the exact same
-    # transform chain — submit this template with `entrypoint: transform` and
-    # one parameter (kubectl or the Argo UI's Submit form):
-    #
-    #   spec:
-    #     workflowTemplateRef: {name: ingestion-pipeline}
-    #     entrypoint: transform
-    #     arguments: {parameters: [{name: data_source, value: <connector-slug>}]}
-    #
-    # Every other parameter defaults; jira submissions must also pass
-    # dbt_select_staging, dbt_select, insight_source_id and jira_enrich_image
-    # (the reconcile-rendered CronWorkflow always does).
+    # Everything after the Airbyte sync, as its own entrypoint: a sync started
+    # outside the pipeline (Airbyte UI, ad-hoc) gets the same chain by
+    # submitting `entrypoint: transform` with `data_source`. Every other
+    # parameter defaults, except jira's, which the CronWorkflow always passes.
     - name: transform
       inputs:
         parameters:
@@ -129,8 +119,8 @@ spec:
               template: run
             arguments:
               parameters:
-                # The connector's staging models PLUS the shared
-                # identity_inputs union — the seed step reads it.
+                # identity_inputs alongside the connector's own staging
+                # models: the seed step reads it.
                 - name: dbt_select
                   value: {{ `"{{inputs.parameters.dbt_select_staging}} identity_inputs"` }}
                 - name: dbt_full_refresh
@@ -186,12 +176,10 @@ spec:
                 - name: clickhouse_user
                   value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
 
-          # ------ Both paths: resolve + publish identity before the gold build ------
-          # Unconditional by design: the seed no-ops when the sync landed no
-          # identity claims, and a gold build must never resolve against a
-          # snapshot older than the data it is building over. Exactly one of
-          # the two staging tasks runs (complementary `when` guards), so the
-          # OR is "whichever staging this pipeline had".
+          # ------ Both paths: resolve + publish identity before gold ------
+          # INVARIANT: gold must not resolve against a snapshot older than the
+          # data it is building over. Exactly one staging task runs
+          # (complementary `when`), so the OR is "whichever this pipeline had".
           - name: identity-seed
             depends: transform-jira-staging || transform-staging
             templateRef:

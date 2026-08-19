@@ -61,10 +61,9 @@ enum Commands {
     /// The Helm chart runs this as an initContainer before the server pod
     /// (same pattern as the analytics service).
     Migrate,
-    /// Run one persons-seed and exit (issue #1690), publishing the refreshed
-    /// log to ClickHouse as its final step — one run resolves AND publishes.
-    /// The Helm chart runs this as a `CronJob` and the ingestion pipeline as a
-    /// step; operators run it manually via `kubectl create job
+    /// Run one persons-seed and exit, publishing the refreshed log to
+    /// ClickHouse as its final step. Run by the Helm `CronJob`, by the
+    /// ingestion pipeline, and manually via `kubectl create job
     /// --from=cronjob/...`. Exit codes: 0 ok / 1 failed (seed or publish) /
     /// 2 another run holds the lock / 3 refused by an input guard.
     Seed {
@@ -74,15 +73,13 @@ enum Commands {
         /// Override the input guards (empty `identity_inputs` / wrong-tenant).
         #[arg(long)]
         force: bool,
-        /// Exit 0 when another run holds the lock. For the pipeline step:
-        /// two connectors finishing together race their seed steps, and the
-        /// run that holds the lock seeds the same inputs.
+        /// Exit 0 when another run holds the lock: connectors finishing
+        /// together race their seed steps over the same inputs.
         #[arg(long)]
         busy_ok: bool,
-        /// Exit 0 when an input guard refuses the run. For the pipeline
-        /// step: an empty `identity_inputs` is a legitimate state on a stand
-        /// whose connectors emit no identity claims. The scheduled `CronJob`
-        /// stays strict, so a guard refusal is still surfaced nightly.
+        /// Exit 0 when an input guard refuses the run: an empty
+        /// `identity_inputs` is legitimate where no connector emits identity
+        /// claims. The `CronJob` stays strict, so refusals still surface.
         #[arg(long)]
         guard_ok: bool,
     },
@@ -91,11 +88,11 @@ enum Commands {
     /// the committed-doc drift gate.
     Openapi,
     /// Copy the `persons` log into ClickHouse `identity.identity_persons`
-    /// (the metrics email→`person_id` resolve source) and exit. Normally
-    /// nothing schedules this: every `seed` run and every applied operator
-    /// correction publishes on its own. This is the manual repair tool for a
-    /// snapshot that has fallen behind them. Exit codes: 0 ok / 1 failed /
-    /// 2 another run holds the lock / 3 refused by the empty-log guard.
+    /// (the metrics email→`person_id` resolve source) and exit. Nothing
+    /// schedules this — seed runs and operator corrections publish on their
+    /// own; it is the repair tool for a snapshot that fell behind them.
+    /// Exit codes: 0 ok / 1 failed / 2 another run holds the lock / 3 refused
+    /// by the empty-log guard.
     Sync {
         /// Override the empty-log guard (publish an empty snapshot).
         #[arg(long)]
@@ -139,11 +136,11 @@ async fn main() -> Result<()> {
             match gear::run_seed(&config, &mode, force).await {
                 Ok(()) => Ok(()),
                 Err(seed_runner::SeedRunError::LockBusy) if busy_ok => {
-                    tracing::warn!("another persons-seed run holds the lock; tolerated (--busy-ok)");
+                    tracing::warn!("another persons-seed run holds the lock; tolerated");
                     Ok(())
                 }
                 Err(seed_runner::SeedRunError::Guard(msg)) if guard_ok => {
-                    tracing::warn!(%msg, "persons-seed refused by input guard; tolerated (--guard-ok)");
+                    tracing::warn!(%msg, "persons-seed refused by input guard; tolerated");
                     Ok(())
                 }
                 Err(seed_runner::SeedRunError::LockBusy) => {
