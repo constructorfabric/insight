@@ -124,6 +124,7 @@ MATRIX: Sequence[Expectation] = (
     Expectation("ai.prs_total", "ai", Tier.EXACT_SUM),
     Expectation("ai.prs_with_assistant", "ai", Tier.EXACT_SUM),
     Expectation("ai.removed_lines", "ai", Tier.EXACT_SUM),
+    Expectation("ai.seat_cost", "ai_cost", Tier.EXACT_SUM),
     Expectation("ai.tool_acceptance_rate", "ai", Tier.EXACT_RATIO, scale=100.0),
     Expectation("collab.active_days", "collab", Tier.EXACT_DISTINCT_DATES),
     Expectation("collab.adhoc_meetings", "collab", Tier.EXACT_SUM),

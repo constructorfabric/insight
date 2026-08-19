@@ -36,6 +36,14 @@ this file and the registry disagree.
 - Shape: currency, lower_is_better
 - Notes: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person. Overlaps ai.extra_usage_cost, which is the part of that same consumption the vendor actually billed on top of the seat fee — the two are served side by side and are never added, since adding them counts the billed part twice.
 
+## ai.seat_cost — AI seat cost
+
+- Source: ai_cost (ai_cost_metric_observations)
+- Reads: seat_cost_usd
+- Formula: sum(seat_cost_usd)
+- Shape: currency, lower_is_better
+- Notes: The invoiced price of a person's seat for a billing month, read from the per-seat amount on the invoice's subscription lines — the only place the vendor states a price for one seat. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction, and a window spanning two months returns both fees. Distinct from ai.extra_usage_cost, which is what the vendor billed on top of this fee; the two add up to what a seat cost in total. A seat carrying no tier returns no value, as does a month whose invoice priced several tiers and none of them is the seat's — a share of the invoice total would be an invention. Attribution mode is derived — the invoice prices a tier, not a person.
+
 ## ai.extra_usage_cost — AI extra usage
 
 - Source: ai_cost (ai_cost_metric_observations)
