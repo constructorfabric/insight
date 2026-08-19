@@ -409,6 +409,9 @@ export const handlers = [
           name: "admin",
         },
       ],
+      // Mock mode demos the reporting-line product; the flat roster below is
+      // served anyway, so switching this to "flat" exercises that shell.
+      visibility_policy: "org_chart",
     }),
   ),
   // Minimal, honest empty catalog: without this handler the request falls
@@ -572,6 +575,30 @@ export const handlers = [
           ? p.person_id.toLowerCase() === term
           : [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(term)),
       ),
+    )
+      .map((p) => ({
+        person_id: p.person_id,
+        email: p.email,
+        username: null,
+        display_name: p.name,
+        job_title: p.role,
+        status: "active",
+      }))
+      .sort((left, right) =>
+        (left.display_name ?? "").localeCompare(right.display_name ?? ""),
+      );
+    return HttpResponse.json(pageOf(items, params, q));
+  }),
+  // Who the caller may see. Mock mode has one tenant and one roster, so this
+  // answers the same people the operator listing does — the difference on a real
+  // stand is the visible-set filter, which a mock cannot have an opinion about.
+  http.get("/api/identity/v1/visible-persons", ({ request }) => {
+    const params = new URL(request.url).searchParams;
+    const q = params.get("q")?.trim().toLowerCase() ?? "";
+    const items = PEOPLE.filter(
+      (p) =>
+        !q ||
+        [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(q)),
     )
       .map((p) => ({
         person_id: p.person_id,
