@@ -85,3 +85,14 @@ templates:
     lastName: Epsilon
     displayName: Erin Epsilon
     workEmail: erin@example.com
+
+  # A sixth department member, for a test that needs one person inside the cohort
+  # to carry no value while the other five keep the peer pool at its minimum.
+  heidi:
+    $ref: "#/templates/bamboohr_employee"
+    id: e006
+    unique_key: bamboohr-test-e006
+    firstName: Heidi
+    lastName: Eta
+    displayName: Heidi Eta
+    workEmail: heidi@example.com

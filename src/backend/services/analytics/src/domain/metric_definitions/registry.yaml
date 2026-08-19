@@ -191,6 +191,8 @@ sources:
         evidence_granularity: source_summary
       - key: extra_usage_limit_usd
         evidence_granularity: source_summary
+      - key: seat_cost_usd
+        evidence_granularity: source_summary
     dimensions:
       - tool
       - seat_tier
@@ -264,6 +266,24 @@ metrics:
         measure_key: cost_usd
     dimensions:
       - tool
+  - metric_key: ai.seat_cost
+    source_key: ai_cost
+    subject: cost
+    label: AI seat cost
+    short_label: Seat cost
+    description: What a seat costs before any usage
+    explanation: The invoiced price of a person's seat for a billing month, read from the per-seat amount on the invoice's subscription lines — the only place the vendor states a price for one seat. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction, and a window spanning two months returns both fees. Distinct from ai.extra_usage_cost, which is what the vendor billed on top of this fee; the two add up to what a seat cost in total. A seat carrying no tier returns no value, as does a month whose invoice priced several tiers and none of them is the seat's — a share of the invoice total would be an invention. Attribution mode is derived — the invoice prices a tier, not a person.
+    format: currency
+    direction: lower_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: seat_cost_usd
+    dimensions:
+      - tool
+      - seat_tier
   - metric_key: ai.extra_usage_cost
     source_key: ai_cost
     subject: cost

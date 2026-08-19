@@ -116,9 +116,11 @@ models:
     description: >
       Source measure observations for the unified metrics runtime, AI cost
       family. One row per (tenant, entity, read day, measure, dimension tuple).
-      extra_usage_usd is the money the vendor billed once a seat exhausted the
-      usage included in its fee; extra_usage_limit_usd is the admin-set ceiling
-      on that spend, and serves only as the utilisation denominator.
+      seat_cost_usd is the invoiced price of the seat itself, from the per-seat
+      amount on the invoice's subscription lines; extra_usage_usd is the money
+      the vendor billed once that seat exhausted the usage included in its fee;
+      extra_usage_limit_usd is the admin-set ceiling on that spend, and serves
+      only as the utilisation denominator.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
