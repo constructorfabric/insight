@@ -5,10 +5,10 @@
  * unknown kind still shows up (the vocabulary is open by contract); accounts
  * arguing over the same people are ONE case rather than as many rows as the
  * server sends; selection lives in the URL so an operator can share a link;
- * and the strip leads with the queue's own size — the one figure the operator
- * can act on — over tenant-wide binding states.
+ * and the strip sizes the tenant in four figures, colouring only the one that
+ * is the operator's own work.
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -442,44 +442,13 @@ describe("IdentitiesView", () => {
     expect(portalRouter.search.acct).toBeUndefined();
   });
 
-  it("narrows the queue by anything on a row, and carries the filter in the URL", async () => {
-    attention.q.data = {
-      items: [
-        item({ account_id: "a1", email: "ann@example.com" }),
-        item({ account_id: "a2", email: "bob@example.com" }),
-      ],
-      rates: RATES,
-    };
-    render(<IdentitiesView />);
-
-    await userEvent.type(screen.getByRole("searchbox"), "ann@");
-    await waitFor(() => expect(portalRouter.search.filter).toBe("ann@"));
-    expect(screen.getByRole("button", { name: /ann@example\.com/i })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /bob@example\.com/i }),
-    ).not.toBeInTheDocument();
-  });
-
-  // Celebrating here would tell an operator the backlog is done because they
-  // mistyped a filter.
-  it("does not celebrate an empty result — a filter that matches nothing says so", () => {
-    attention.q.data = { items: [item({})], rates: RATES };
-    portalRouter.set({ zone: "manage", item: "identities", filter: "nobody" });
-    render(<IdentitiesView />);
-
-    expect(screen.getByText(/nothing matches those terms/i)).toBeInTheDocument();
-    expect(screen.queryByText(/everything is resolved/i)).not.toBeInTheDocument();
-  });
-
-  // A colleague's link points at a row the reader's own filter hides; the
-  // case must still open, or the link is only as good as the recipient's
-  // current view.
-  it("answers a shared ?acct= link even while a filter hides its row", () => {
+  // A colleague's link points at a case; it must open on arrival, or the link
+  // is only as good as the recipient's own scroll position.
+  it("answers a shared ?acct= link by opening its case", () => {
     attention.q.data = { items: [item({})], rates: RATES };
     portalRouter.set({
       zone: "manage",
       item: "identities",
-      filter: "nobody",
       acct: "github:01900000-0000-7000-8000-00000000aa01:dev-42",
     });
     render(<IdentitiesView />);
