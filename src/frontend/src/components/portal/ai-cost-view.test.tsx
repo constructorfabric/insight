@@ -128,9 +128,10 @@ beforeEach(() => {
   mocks.grid.previousByKey = new Map();
   mocks.tools.byKey = new Map([
     ["ai.cost", toolBreakdown("ai.cost", [[pid("a"), "claude_code", 100], [pid("b"), "claude_code", 50]])],
+    // `claude`, the code seat billing actually reports — not `claude_code`.
     ["ai.extra_usage_cost", toolBreakdown("ai.extra_usage_cost", [
-      [pid("a"), "claude_code", 8],
-      [pid("b"), "claude_code", 4],
+      [pid("a"), "claude", 8],
+      [pid("b"), "claude", 4],
     ])],
     ["ai.accepted_lines", toolBreakdown("ai.accepted_lines", [
       [pid("a"), "claude_code", 600],

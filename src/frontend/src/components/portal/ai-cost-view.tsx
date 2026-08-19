@@ -182,9 +182,12 @@ export function AiCostView({ item }: { item: string | null }) {
 
   const toolRows = useMemo<ToolRow[]>(() => {
     const cost = aggregateByTool(toolData.byKey.get(COST_KEY), memberIds);
-    const actual = aggregateByTool(
-      toolData.byKey.get(ACTUAL_COST_KEY),
-      memberIds,
+    // Claude Team bills the seat under `claude`; the coding usage that seat
+    // paid for arrives as `claude_code`. One card, not two.
+    const actual = new Map(
+      [...aggregateByTool(toolData.byKey.get(ACTUAL_COST_KEY), memberIds)].map(
+        ([tool, sums]) => [tool === "claude" ? "claude_code" : tool, sums] as const,
+      ),
     );
     const lines = aggregateByTool(toolData.byKey.get(LINES_KEY), memberIds);
     const tools = new Set([...cost.keys(), ...actual.keys(), ...lines.keys()]);
