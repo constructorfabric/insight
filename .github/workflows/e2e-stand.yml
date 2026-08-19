@@ -68,7 +68,7 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read # downloads same-commit images from build-images.yml
+  actions: read # downloads images produced earlier in this workflow run
   packages: read # pulls the pinned service images (via compose)
 
 jobs:
@@ -96,6 +96,7 @@ jobs:
       authenticator: ${{ steps.filter.outputs.authenticator }}
       identity_resolution: ${{ steps.filter.outputs.identity_resolution }}
       gateway: ${{ steps.filter.outputs.gateway }}
+      gateway_checks: ${{ steps.filter.outputs.gateway_checks }}
       frontend: ${{ steps.filter.outputs.frontend }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,9 +110,9 @@ jobs:
         run: |
           set -euo pipefail
           emit() {
-            printf 'relevant=%s\nbackend=%s\nfrontend=%s\nbackend_artifacts=%s\nanalytics=%s\nauthenticator=%s\nidentity_resolution=%s\ngateway=%s\n' \
+            printf 'relevant=%s\nbackend=%s\nfrontend=%s\nbackend_artifacts=%s\nanalytics=%s\nauthenticator=%s\nidentity_resolution=%s\ngateway=%s\ngateway_checks=%s\n' \
               "$relevant" "$backend" "$frontend" "$backend_artifacts" \
-              "$analytics" "$authenticator" "$identity_resolution" "$gateway" >> "$GITHUB_OUTPUT"
+              "$analytics" "$authenticator" "$identity_resolution" "$gateway" "$gateway_checks" >> "$GITHUB_OUTPUT"
             echo "relevant=$relevant backend=$backend frontend=$frontend backend_artifacts=$backend_artifacts"
             echo "analytics=$analytics authenticator=$authenticator identity_resolution=$identity_resolution gateway=$gateway"
           }
@@ -142,6 +143,7 @@ jobs:
             authenticator=false
             identity_resolution=false
             gateway=false
+            gateway_checks=false
             emit
             exit 0
           fi
@@ -155,6 +157,7 @@ jobs:
           authenticator=false
           identity_resolution=false
           gateway=false
+          gateway_checks=false
           if echo "$changed" | grep -qE '^(tests/|deploy/compose/|src/ingestion/tools/seed/|docker-compose\.yml|dev-compose\.sh|src/backend/|src/frontend/|docs/components/backend/.*/openapi\.json|\.github/workflows/(build-images|e2e-stand)\.yml|\.github/workflows/scripts/redact-playwright-trace\.py|scripts/ci/prebuilt_images\.py)'; then
             relevant=true
           elif [ "$forced" = true ]; then
@@ -168,11 +171,60 @@ jobs:
           if echo "$changed" | grep -qE '^(src/backend/services/authenticator/|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/prebuilt_images\.py$)'; then authenticator=true; fi
           if echo "$changed" | grep -qE '^(src/backend/services/identity-resolution/|src/backend/libs/insight-clickhouse/|src/backend/docker-entrypoint\.sh$|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(build-images|e2e-stand)\.yml$)'; then identity_resolution=true; fi
           if echo "$changed" | grep -qE '^(src/backend/services/gateway/|src/backend/tools/routegen/|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/prebuilt_images\.py$)'; then gateway=true; fi
+          if echo "$changed" | grep -qE '^(src/backend/tools/routegen/|src/backend/services/gateway/|src/backend/services/authenticator/|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|src/ingestion/tools/seed/insight_seed/|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/(prebuilt_images|test_prebuilt_images)\.py$)'; then gateway_checks=true; fi
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]] && \
              [[ "$analytics" == true || "$authenticator" == true || "$identity_resolution" == true || "$gateway" == true ]]; then
             backend_artifacts=true
           fi
           emit
+
+  build-pr-images:
+    name: Build PR images
+    needs: changes
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/build-images.yml
+
+  bronze-to-api:
+    name: Bronze to API
+    needs: build-pr-images
+    if: github.event_name == 'pull_request' && needs.build-pr-images.result == 'success'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/e2e-bronze-to-api.yml
+
+  bronze-to-api-report:
+    name: Run E2E suite
+    needs: bronze-to-api
+    if: github.event_name == 'pull_request' && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the Bronze-to-API workflow to pass
+        env:
+          RESULT: ${{ needs.bronze-to-api.result }}
+        run: |
+          if [ "$RESULT" != success ]; then
+            echo "::error::Bronze-to-API checks did not pass ($RESULT)."
+            exit 1
+          fi
+
+  gateway:
+    name: Gateway checks
+    needs: [changes, build-pr-images]
+    if: |
+      always()
+      && github.event_name == 'pull_request'
+      && needs.changes.outputs.gateway_checks == 'true'
+      && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/gateway.yml
 
   resolve-target:
     name: resolve-target
@@ -206,8 +258,12 @@ jobs:
   # subdirectory would ADD to the full collection instead of narrowing it.
   stand-runner:
     name: shared stand runner
-    needs: [changes, resolve-target]
-    if: needs.resolve-target.outputs.target == 'compose'
+    needs: [changes, resolve-target, build-pr-images]
+    if: |
+      always()
+      && needs.resolve-target.result == 'success'
+      && needs.resolve-target.outputs.target == 'compose'
+      && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
     runs-on: ubuntu-latest
     outputs:
       api: ${{ steps.results.outputs.api }}
@@ -237,15 +293,15 @@ jobs:
         if: needs.changes.outputs.backend_artifacts == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_ID: ${{ github.run_id }}
           ANALYTICS_POLICY: ${{ needs.changes.outputs.analytics == 'true' && 'required' || 'unchanged' }}
           AUTHENTICATOR_POLICY: ${{ needs.changes.outputs.authenticator == 'true' && 'required' || 'unchanged' }}
           IDENTITY_POLICY: ${{ needs.changes.outputs.identity_resolution == 'true' && 'required' || 'unchanged' }}
           GATEWAY_POLICY: ${{ needs.changes.outputs.gateway == 'true' && 'required' || 'unchanged' }}
         run: |
           python3 scripts/ci/prebuilt_images.py \
-            --head-sha "$HEAD_SHA" --registry ghcr.io/constructorfabric \
-            --destination /tmp/e2e-prebuilt --attempts 70 --interval-seconds 30 \
+            --run-id "$RUN_ID" --registry ghcr.io/constructorfabric \
+            --destination /tmp/e2e-prebuilt \
             --image "insight-analytics:${ANALYTICS_POLICY}" \
             --image "insight-authenticator:${AUTHENTICATOR_POLICY}" \
             --image "insight-identity-resolution:${IDENTITY_POLICY}" \

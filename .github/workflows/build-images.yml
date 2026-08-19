@@ -17,7 +17,7 @@ on:
       - ".github/workflows/scripts/bump-service-appversions.sh"
       - "scripts/ci/prebuilt_images.py"
   pull_request:
-    branches: [main, "release-**"]
+    branches: ["release-**"]
     paths:
       - "src/backend/**"
       - "src/frontend/**"
@@ -28,6 +28,7 @@ on:
       - ".github/workflows/scripts/discover-image-matrix.py"
       - ".github/workflows/scripts/bump-service-appversions.sh"
       - "scripts/ci/prebuilt_images.py"
+  workflow_call:
   # A manual dispatch is a full rebuild by default: every service and
   # connector image is rebuilt regardless of changed paths, and publish-chart
   # pins them all. With `frontend_only` checked it instead builds and pushes
