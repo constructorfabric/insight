@@ -481,6 +481,7 @@
       "exclude": "Exclude (bot / CI)",
       "exclude_confirm": "Exclude",
       "assign_other": "Assign to someone else",
+      "bind_to": "Bind to selected person",
       "assign_person": "Assign to a person"
     },
     "dialogs": {
@@ -535,7 +536,8 @@
       "by_automation": "bound automatically",
       "open": "Open",
       "load_failed": "Unable to load this person’s accounts",
-      "back": "‹ Back to the roster"
+      "back": "‹ Back to the roster",
+      "find_account": "Find an account to bind to this person…"
     },
     "accounts": {
       "placeholder": "Find an account by source, address, handle, id or observed name…",

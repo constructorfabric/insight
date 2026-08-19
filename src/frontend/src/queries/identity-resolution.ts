@@ -135,6 +135,14 @@ const PAGE_SIZE = 50;
 export type PersonListIntent = "browse" | "match";
 
 /**
+ * The same for {@link useAccountList}. The accounts mode browses — reviewing
+ * what the connectors reported is the point there. Inside one person a blank
+ * field asks nothing: the tenant's whole fold would bury the handful of accounts
+ * that person actually holds, which is what the reader opened them for.
+ */
+export type AccountListIntent = "browse" | "match";
+
+/**
  * How much has to be typed before a term searches at all.
  *
  * A single character names most of the roster, so the answer is no use to the
@@ -195,12 +203,11 @@ export function listsAnyone(q: string, intent: PersonListIntent): boolean {
 }
 
 /**
- * The same question for the account listing, which has one intent: a blank
- * field lists every open account, since that is what an operator reviewing a
- * connector's output came to see.
+ * The same question for the account listing. Its needle is one predicate, so the
+ * floor measures the field; what a blank field means is the caller's to say.
  */
-export function listsAnyAccount(q: string): boolean {
-  return searches(needleLength(q), true);
+export function listsAnyAccount(q: string, intent: AccountListIntent): boolean {
+  return searches(needleLength(q), intent === "browse");
 }
 
 /**
@@ -261,19 +268,25 @@ export function usePersonList(
 /** The observed accounts, a page at a time; a blank query lists them all. */
 export function useAccountList(
   q: string,
+  /** `browse` lists every open account on a blank query; `match` lists none. */
+  intent: AccountListIntent = "browse",
 ): UseInfiniteQueryResult<InfiniteData<AccountSearchResponse>> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
   const trimmed = q.trim();
   return useInfiniteQuery({
-    queryKey: [...RESOLUTION_KEY, "account-search", sessionScope, trimmed],
+    // The intent is part of the key for the same reason it is on the person
+    // listing: `enabled: false` stops a request and NOT a cache read, so a
+    // shared key would let the in-person field render the whole fold the
+    // accounts mode had just browsed.
+    queryKey: [...RESOLUTION_KEY, "account-search", sessionScope, intent, trimmed],
     queryFn: ({ pageParam, signal }) =>
       searchAccounts(trimmed, { cursor: pageParam, limit: PAGE_SIZE }, signal),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     staleTime: ATTENTION_STALE_TIME,
     placeholderData: keepPreviousData,
-    enabled: sessionScope != null && listsAnyAccount(trimmed),
+    enabled: sessionScope != null && listsAnyAccount(trimmed, intent),
   });
 }
 

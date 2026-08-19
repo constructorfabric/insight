@@ -47,6 +47,7 @@ export function AccountDetail({
   accountRef,
   queueItem,
   observed = false,
+  bindTo,
 }: {
   accountRef: AccountRef;
   /** The queue row for this account, when it is still in the queue — the
@@ -57,6 +58,8 @@ export function AccountDetail({
    *  and no history reads as a stale link — offering verbs there would let a
    *  mistyped `?acct=` pre-register a typo as a real account. */
   observed?: boolean;
+  /** Bind straight to the person the surface has open. See `AccountActions`. */
+  bindTo?: PersonSummary | null;
 }) {
   const { t } = useTranslation();
   const binding = useAccountBinding(accountRef);
@@ -119,6 +122,7 @@ export function AccountDetail({
           accountRef={accountRef}
           binding={binding.data}
           candidates={candidates}
+          bindTo={bindTo}
         />
       </div>
       <section className="flex min-h-0 flex-1 flex-col">

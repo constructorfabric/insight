@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { AttentionItem } from "@/api/identity-client";
+import type { AttentionItem, PersonSummary } from "@/api/identity-client";
 import { CopyValueButton } from "@/components/copy-value-button";
 import { AccountDetail } from "@/components/portal/account-detail";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ export function CaseDialog({
   acct,
   items,
   ordered,
+  bindTo,
   onSelect,
   onClose,
 }: {
@@ -46,6 +47,9 @@ export function CaseDialog({
   items: AttentionItem[];
   /** Account keys in the order the queue renders them. */
   ordered: string[];
+  /** The person the surface behind this window has open, when it has one:
+   *  binding to them is then one press rather than a search. */
+  bindTo?: PersonSummary | null;
   onSelect: (key: string) => void;
   onClose: () => void;
 }) {
@@ -134,6 +138,7 @@ export function CaseDialog({
             accountRef={ref}
             queueItem={queueItem}
             observed={observed}
+            bindTo={bindTo}
           />
         ) : null}
         {/* Working a backlog is a conveyor: the next case is one press away,

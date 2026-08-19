@@ -27,6 +27,7 @@ vi.mock("@/auth/session-scope", () => ({
 import {
   listsAnyAccount,
   listsAnyone,
+  useAccountList,
   useBindAccount,
   usePersonList,
 } from "./identity-resolution";
@@ -234,19 +235,79 @@ describe("usePersonList", () => {
     },
   );
 
-  // The account listing has one intent — a blank field lists every open account
-  // — and its needle is ONE predicate, spaces included, so the field itself is
-  // what the floor measures. `ad ex` matches a display name across the gap.
+  // The account needle is ONE predicate, spaces included, so the field itself is
+  // what the floor measures — `ad ex` matches a display name across the gap.
+  // What a blank field means is the caller's: the accounts mode reviews the
+  // whole fold, and inside one person that fold would bury the accounts they
+  // actually hold.
   it.each([
-    ["", true],
-    ["   ", true],
-    ["o", false],
-    ["oc", true],
-    [" oc ", true],
-    ["a b", true],
-  ] as const)("listsAnyAccount(%o) is %s", (q, expected) => {
-    expect(listsAnyAccount(q)).toBe(expected);
+    ["browse", "", true],
+    ["browse", "   ", true],
+    ["match", "", false],
+    ["match", "   ", false],
+    ["browse", "o", false],
+    ["match", "o", false],
+    ["browse", "oc", true],
+    ["match", "oc", true],
+    ["match", " oc ", true],
+    ["match", "a b", true],
+  ] as const)("listsAnyAccount(%s intent, %o) is %s", (intent, q, expected) => {
+    expect(listsAnyAccount(q, intent)).toBe(expected);
   });
+});
+
+describe("useAccountList", () => {
+  const searchAccounts = vi.mocked(identityClient.searchAccounts);
+
+  function fold(): identityClient.AccountSearchResponse {
+    return {
+      items: [
+        {
+          source: "github",
+          source_id: "01900000-0000-7000-8000-00000000aa01",
+          account_id: "gh-1",
+          email: "one@example.com",
+          username: null,
+          display_name: null,
+          person: null,
+          bound_by_operator: false,
+        },
+      ],
+      next_cursor: null,
+    };
+  }
+
+  // The same bug the person listing's intent key exists to prevent: `enabled:
+  // false` stops a request and NOT a cache read, so a shared key would let the
+  // in-person field render the whole fold the accounts mode had just browsed.
+  it("does not serve the browsed fold to a match-intent caller", async () => {
+    const { wrapper } = harness();
+    searchAccounts.mockResolvedValue(fold());
+    const browsed = renderHook(() => useAccountList("", "browse"), { wrapper });
+    await waitFor(() => expect(browsed.result.current.isSuccess).toBe(true));
+
+    const matching = renderHook(() => useAccountList("", "match"), { wrapper });
+
+    expect(matching.result.current.data).toBeUndefined();
+  });
+
+  it.each([
+    ["browse", true],
+    ["match", false],
+  ] as const)(
+    "a blank field asks the service under %s intent: %s",
+    async (intent, asks) => {
+      const { wrapper } = harness();
+      searchAccounts.mockResolvedValue(fold());
+
+      const { result } = renderHook(() => useAccountList("", intent), { wrapper });
+
+      if (asks) {
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      }
+      expect(searchAccounts.mock.calls.length > 0).toBe(asks);
+    },
+  );
 });
 
 describe("usePersonList while a term is being typed", () => {

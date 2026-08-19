@@ -1,20 +1,23 @@
 /**
- * The console's third mode: an account in hand, and whose it is.
+ * Finding an account, and the window it is decided in.
  *
- * The queue arrives from a problem and the person mode from a name. This one
- * answers the question an operator gets handed instead — a git login from a
- * review, an address from a ticket — which neither of the others can, because
- * both are entered through a person.
- *
- * With nothing typed it lists what the connectors reported, a page at a time:
- * the accounts nobody has asked about are exactly the ones an operator never
- * finds by searching for them.
+ * Two surfaces use one field. The accounts mode arrives with a value in hand —
+ * a git login from a review, an address from a ticket — the question neither
+ * other mode can answer, because both are entered through a person; there a
+ * blank field lists what the connectors reported, since the accounts nobody
+ * asks about are exactly the ones nobody finds by searching. Inside one person
+ * the same field is how an account gets re-bound to them, and a blank field
+ * lists nothing: the whole fold would bury the accounts they actually hold.
  */
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ScanSearch, Search } from "lucide-react";
 
-import type { AccountMatch, AttentionItem } from "@/api/identity-client";
+import type {
+  AccountMatch,
+  AttentionItem,
+  PersonSummary,
+} from "@/api/identity-client";
 import { CaseDialog } from "@/components/portal/case-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
@@ -42,28 +45,62 @@ import {
   MIN_SEARCH_CHARS,
   SEARCH_DEBOUNCE_MS,
   useAccountList,
+  type AccountListIntent,
 } from "@/queries/identity-resolution";
 import { cn } from "@/lib/utils";
 
+/** The accounts mode: the field over the whole fold, nothing else on screen. */
 export function AccountSearchView() {
+  const { t } = useTranslation();
+  return (
+    <AccountFinder
+      intent="browse"
+      placeholder={t("identities.accounts.placeholder")}
+    />
+  );
+}
+
+/**
+ * The field, its results, and the one case window they open into.
+ *
+ * INVARIANT: the window lives here and nowhere else on the surface. It is
+ * opened by `?acct=` alone, so a second one on the same screen would open
+ * beside this one on the same link. A surface that lists accounts of its own
+ * hands them over as `alsoOpenable` instead of rendering a window for them.
+ */
+export function AccountFinder({
+  intent,
+  placeholder,
+  /** Rows the surface already lists, so its own accounts open in this window. */
+  alsoOpenable = [],
+  /** Offer binding straight to this person — the one the surface has open. */
+  bindTo,
+  className,
+}: {
+  intent: AccountListIntent;
+  placeholder: string;
+  alsoOpenable?: AttentionItem[];
+  bindTo?: PersonSummary | null;
+  className?: string;
+}) {
   const { t } = useTranslation();
   const { acct } = usePortalSearch();
   const { setAcct } = usePortalNavActions();
   const [query, setQuery] = useState("");
   const debounced = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
-  const search = useAccountList(debounced);
+  const search = useAccountList(debounced, intent);
 
   // Never rows the query did not ask for: under the floor the listing is not
   // this field's answer, and kept pages would be the previous term's.
-  const items = listsAnyAccount(debounced)
+  const lists = listsAnyAccount(debounced, intent);
+  const items = lists
     ? (search.data?.pages ?? []).flatMap((page) => page.items)
     : [];
-  const ordered = items.map((item) => accountKey(item));
   const loading = search.isFetching && !search.isFetchingNextPage;
   // A needle actually reached the service, so an empty answer means "nothing
   // matched" rather than "nothing is observed". The floor comes from the shared
   // rule, or the two disagree about what counts as one character.
-  const asked = debounced.trim() !== "" && listsAnyAccount(debounced);
+  const asked = debounced.trim() !== "" && lists;
   // Reads the live field rather than the debounced one: the answer to "why is
   // nothing happening" should not wait for the debounce to expire. Only while
   // nothing is listed, though — for one debounce the rows are still the ones
@@ -80,6 +117,7 @@ export function AccountSearchView() {
     fetchNextPage: () => void search.fetchNextPage(),
     root: scroller,
   });
+
   // The window takes queue-shaped rows; a listed account adapts. This is also
   // the voucher that the account exists — without it an unbound, never-decided
   // account the list just showed would open as a stale link with no verbs.
@@ -93,17 +131,21 @@ export function AccountSearchView() {
     display_name: m.display_name,
     candidates: m.person ? [m.person] : [],
   }));
+  // Matches first: they are what the reader just went looking for, and the
+  // prev/next footer walks this order.
+  const openable = [...asCases, ...alsoOpenable];
+  const ordered = openable.map((item) => accountKey(item));
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+    <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col gap-4", className)}>
       <div className="relative shrink-0">
         <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("identities.accounts.placeholder")}
-          aria-label={t("identities.accounts.placeholder")}
+          placeholder={placeholder}
+          aria-label={placeholder}
           className="ps-9"
         />
         {loading ? (
@@ -128,8 +170,15 @@ export function AccountSearchView() {
       {/* Two different emptinesses: terms that matched nothing, and nothing to
           list. The second one does not claim the tenant is empty — the service
           answers an empty list for a fold it cannot read yet, and an operator
-          cannot tell that from a tenant nobody has connected. */}
-      {!loading && !tooShort && !stale && items.length === 0 && !search.isError ? (
+          cannot tell that from a tenant nobody has connected. A field that
+          lists nothing until asked is a third thing: it is simply waiting, and
+          says so by showing nothing at all. */}
+      {!loading &&
+      !tooShort &&
+      !stale &&
+      items.length === 0 &&
+      !search.isError &&
+      (asked || intent === "browse") ? (
         <Empty className="rounded-lg border">
           <EmptyHeader>
             {asked ? null : (
@@ -158,7 +207,7 @@ export function AccountSearchView() {
       {/* Rendered for an unread next page even with nothing listed: the marker
           asks for that page, and an observer only reports a target inside its
           own root. */}
-      {items.length > 0 || (listsAnyAccount(debounced) && search.hasNextPage) ? (
+      {items.length > 0 || (lists && search.hasNextPage) ? (
         <Card className="relative min-h-0 flex-1 overflow-hidden py-0">
           <CardContent
             ref={scroller}
@@ -186,8 +235,9 @@ export function AccountSearchView() {
 
       <CaseDialog
         acct={acct}
-        items={asCases}
+        items={openable}
         ordered={ordered}
+        bindTo={bindTo}
         onSelect={setAcct}
         onClose={() => setAcct(null)}
       />

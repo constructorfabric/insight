@@ -102,6 +102,65 @@ describe("AccountActions", () => {
     expect(screen.getAllByRole("button", { name: "Merge…" })).toHaveLength(1);
   });
 
+  // Opened from inside a person: they are the whole reason the reader is here,
+  // so binding to them is one press and the search for a person is gone —
+  // finding somebody you already have open is being asked twice.
+  it("binds straight to the person the surface has open, with no search", async () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: null })}
+        candidates={[]}
+        bindTo={CAROL}
+      />,
+    );
+
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: /bind to selected person/i }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^bind$/i }));
+
+    expect(hooks.bind.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ person_id: CAROL.person_id }),
+      expect.anything(),
+    );
+  });
+
+  // A button that reads like a decision and changes nothing is worse than no
+  // button: the account is already theirs, and the trail would gain a row
+  // saying so twice.
+  it("offers nothing to bind when the account is already that person's", () => {
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: CAROL.person_id })}
+        candidates={[]}
+        bindTo={CAROL}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /bind to/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    // The other verbs are untouched — it is still an account under review.
+    expect(screen.getByRole("button", { name: /detach/i })).toBeInTheDocument();
+  });
+
+  // Without a person behind the window the picker is the only way in, and the
+  // accounts mode is entered with no person at all.
+  it("keeps the person search where no person is open", () => {
+    render(
+      <AccountActions accountRef={REF} binding={binding()} candidates={[]} />,
+    );
+
+    expect(screen.getByRole("searchbox")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /bind to/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("offers no Merge when the account is bound to nobody", () => {
     render(
       <AccountActions

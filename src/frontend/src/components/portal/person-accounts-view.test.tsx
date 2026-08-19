@@ -35,11 +35,21 @@ const hooks = vi.hoisted(() => ({
     hasNextPage: false,
     fetchNextPage: vi.fn(),
   },
+  accountSearch: {
+    data: undefined as { pages: { items: unknown[] }[] } | undefined,
+    isFetching: false,
+    isFetchingNextPage: false,
+    isPlaceholderData: false,
+    isError: false,
+    hasNextPage: false,
+    fetchNextPage: vi.fn(),
+  },
 }));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   usePersonAccounts: () => hooks.accounts,
   usePersonList: () => hooks.search,
+  useAccountList: () => hooks.accountSearch,
   // The window's own behaviour belongs to account-detail.test.
   useAccountBinding: () => ({
     data: undefined,
@@ -74,6 +84,10 @@ beforeEach(() => {
   hooks.accounts.isError = false;
   hooks.accounts.refetch.mockClear();
   hooks.search.data = undefined;
+  hooks.accountSearch.data = undefined;
+  hooks.accountSearch.hasNextPage = false;
+  hooks.accountSearch.isPlaceholderData = false;
+  hooks.accountSearch.fetchNextPage.mockClear();
   portalRouter.reset();
   portalRouter.set({ zone: "manage", item: "identities", mode: "person" });
 });
@@ -166,6 +180,61 @@ describe("PersonAccountsView", () => {
 
     expect(portalRouter.search.acct).toContain("gh-main");
     expect(within(screen.getByRole("dialog")).getByText(/github · gh-main/)).toBeInTheDocument();
+  });
+
+  // Inside a person the people search is the wrong question — they are already
+  // open, and the back link is the way out. What is useful here is finding an
+  // ACCOUNT, to bind it to them.
+  it("searches accounts, not people, once a person is open", () => {
+    portalRouter.set({ person: ANN });
+    hooks.accounts.data = { person_id: ANN, accounts: [entry()] };
+    render(<PersonAccountsView />);
+
+    const fields = screen.getAllByRole("searchbox");
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toHaveAccessibleName(/find an account/i);
+  });
+
+  // The whole fold would bury the handful of accounts the person actually
+  // holds, which is what the reader opened them for.
+  it("lists no account until the field is asked something", () => {
+    portalRouter.set({ person: ANN });
+    hooks.accounts.data = { person_id: ANN, accounts: [entry()] };
+    hooks.accountSearch.data = {
+      pages: [
+        {
+          items: [
+            {
+              source: "zoom",
+              source_id: "01900000-0000-7000-8000-00000000aa03",
+              account_id: "zm-9",
+              email: "someone.else@example.com",
+              username: null,
+              display_name: null,
+              person: null,
+              bound_by_operator: false,
+            },
+          ],
+        },
+      ],
+    };
+    render(<PersonAccountsView />);
+
+    // Whatever the hook holds, a blank field asked nothing and shows nothing.
+    expect(screen.queryByText("someone.else@example.com")).not.toBeInTheDocument();
+    expect(screen.getByText("ann@example.com")).toBeInTheDocument();
+  });
+
+  // One window per surface: `?acct=` opens by itself, so a second one would
+  // open beside the first on the same link.
+  it("opens a found account in the same window the person's own rows use", async () => {
+    portalRouter.set({ person: ANN });
+    hooks.accounts.data = { person_id: ANN, accounts: [entry()] };
+    render(<PersonAccountsView />);
+
+    await userEvent.click(screen.getByRole("button", { name: /^open$/i }));
+
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
   });
 
   it("states an empty result rather than an empty card", () => {
