@@ -1,3 +1,4 @@
+pub mod connector_health;
 pub mod contract_version;
 pub mod metric_crud;
 pub mod metric_definitions;
