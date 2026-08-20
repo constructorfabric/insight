@@ -67,10 +67,16 @@ KEY_PATH_ENV: Final[str] = "INSIGHT_STAND_SERVICE_KEY"
 TOKEN_URL_ENV: Final[str] = "INSIGHT_STAND_TOKEN_URL"
 AUDIENCE_ENV: Final[str] = "INSIGHT_STAND_TOKEN_AUDIENCE"
 IDENTITY_URL_ENV: Final[str] = "INSIGHT_STAND_IDENTITY_URL"
+ANALYTICS_URL_ENV: Final[str] = "INSIGHT_STAND_ANALYTICS_URL"
 
 #: identity-resolution's own listener, where a SERVICE reaches `/internal/*`.
 IDENTITY_PORT_KEY: Final[str] = "IDENTITY_RESOLUTION_PORT"
 DEFAULT_IDENTITY_PORT: Final[str] = "8086"
+
+#: Analytics' own listener, for the same reason identity has one: a bearer-only
+#: caller has no address at the browser edge.
+ANALYTICS_PORT_KEY: Final[str] = "ANALYTICS_PORT"
+DEFAULT_ANALYTICS_PORT: Final[str] = "8081"
 
 #: Where the authenticator's second listener is published, and what it compares
 #: `aud` against. Both mirror docker-compose.yml's defaults.
@@ -174,6 +180,33 @@ def default_identity_url(environ: Mapping[str, str] | None = None) -> str:
     found = _env_file()
     if found is not None:
         port = parse_env_file(found).get(IDENTITY_PORT_KEY, "").strip() or DEFAULT_IDENTITY_PORT
+    return f"http://{PUBLISHED_HOST}:{port}"
+
+
+def default_analytics_url(environ: Mapping[str, str] | None = None) -> str:
+    """Analytics' own base url — NOT the gateway's, and NOT `/api/analytics`.
+
+    Reached for the same reason `default_identity_url` exists: the edge is a
+    browser BFF that refuses a bearer token, so a service principal addressing
+    analytics has to address the service. Unlike identity's `/internal/*`, the
+    routes here are the ordinary public ones — which is the point of the one
+    test that uses this, since it asks what a non-browser caller can do to a
+    surface nobody meant it to reach.
+
+    Resolved like the other two: an explicit override first, else the published
+    host port from the stand's own env file.
+    """
+    import os
+
+    env = os.environ if environ is None else environ
+    explicit = (env.get(ANALYTICS_URL_ENV) or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+
+    port = DEFAULT_ANALYTICS_PORT
+    found = _env_file()
+    if found is not None:
+        port = parse_env_file(found).get(ANALYTICS_PORT_KEY, "").strip() or DEFAULT_ANALYTICS_PORT
     return f"http://{PUBLISHED_HOST}:{port}"
 
 
@@ -323,6 +356,7 @@ def open_service_session(
 
 
 __all__: Sequence[str] = (
+    "ANALYTICS_URL_ENV",
     "ASSERTION_TYPE",
     "AUDIENCE_ENV",
     "IDENTITY_URL_ENV",
@@ -331,6 +365,7 @@ __all__: Sequence[str] = (
     "SERVICE_NAME",
     "TOKEN_URL_ENV",
     "ServiceTokenSession",
+    "default_analytics_url",
     "default_audience",
     "default_identity_url",
     "default_token_url",

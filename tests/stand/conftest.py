@@ -52,6 +52,7 @@ from insight_stand import (  # noqa: E402  (import follows the sys.path bootstra
     StandEndpoint,
     artifact_dir,
     coverage,
+    default_analytics_url,
     default_identity_url,
     default_manifest_path,
     distinct_vectors,
@@ -566,6 +567,18 @@ def service_client(service_session: ServiceTokenSession) -> ApiClient:
     stays at `/api/identity/...`, where it belongs.
     """
     return ApiClient(base_url=default_identity_url(), session=service_session, edge_fronted=False)
+
+
+@pytest.fixture
+def analytics_service_client(service_session: ServiceTokenSession) -> ApiClient:
+    """A service principal addressing ANALYTICS directly, past the browser edge.
+
+    The mirror of `service_client`, and it exists for one question: analytics
+    publishes `/v1/usage/*` under `bearerAuth`, so a token-carrying caller has a
+    documented way in that the gateway's session check never sees. Whether the
+    product means that is what the test using this asks.
+    """
+    return ApiClient(base_url=default_analytics_url(), session=service_session, edge_fronted=False)
 
 
 @pytest.fixture(scope="session")
