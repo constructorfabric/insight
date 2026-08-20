@@ -24,7 +24,9 @@ SELECT
     'commit' AS source_type,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    _airbyte_extracted_at
+    _airbyte_extracted_at,
+    pre_image_oid,
+    post_image_oid
 FROM {{ source('bronze_github', 'file_changes') }}
 {% if is_incremental() %}
 WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})

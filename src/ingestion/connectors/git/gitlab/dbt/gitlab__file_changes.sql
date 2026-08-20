@@ -40,7 +40,12 @@ SELECT
     '' AS source_type,
     'insight_gitlab' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    fc._airbyte_extracted_at
+    fc._airbyte_extracted_at,
+    -- GitLab's diff API reports no object id for either side of a change; the
+    -- columns keep the union positional until the connector reads through the
+    -- git proxy.
+    CAST(NULL AS Nullable(String)) AS pre_image_oid,
+    CAST(NULL AS Nullable(String)) AS post_image_oid
 FROM {{ source('bronze_gitlab', 'commit_file_changes') }} AS fc
 LEFT JOIN proj AS p
     ON p.project_id = fc.project_id
