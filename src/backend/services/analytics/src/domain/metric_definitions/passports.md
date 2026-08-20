@@ -50,7 +50,15 @@ this file and the registry disagree.
 - Reads: extra_usage_usd
 - Formula: sum(extra_usage_usd)
 - Shape: currency, lower_is_better
-- Notes: What the vendor billed a person on top of their seat fee, once the usage included in that fee was exhausted, priced at API rates. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction. Distinct from ai.cost, which prices all consumption including what the seat fee already covered — the two are never summed. Attribution mode is direct — the vendor reports this amount per seat.
+- Notes: What the vendor billed a person on top of their seat fee, once the usage included in that fee was exhausted, priced at API rates. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction. This is the exact figure — ai.daily_approximate_extra_usage_cost spreads the same money over the days it was spent and sums back to it over a whole month, so the two are alternatives and are never added. Distinct from ai.cost, which prices all consumption including what the seat fee already covered — those two are never summed either. Attribution mode is direct — the vendor reports this amount per seat.
+
+## ai.daily_approximate_extra_usage_cost — AI actual usage cost — approximate distribution
+
+- Source: ai_cost (ai_cost_metric_observations)
+- Reads: daily_extra_usage_usd
+- Formula: sum(daily_extra_usage_usd)
+- Shape: currency, lower_is_better
+- Notes: The money ai.extra_usage_cost reports for a month, placed on the days it was spent. The vendor states only a running month-to-date total and keeps no history, so a day's figure is the step between two readings of that total — exact in sum, approximate in placement. A month's first point carries everything spent before the first reading of it, and a run that did not happen makes the next point carry the gap; the evidence names how many days each point covers. A reading that lowers the running total is a correction, and it rewrites the days already reported rather than showing as a negative day, so no point is ever below zero. Over a whole month these points add up to ai.extra_usage_cost exactly; the two are alternatives and are never added. Days before claude-team 3.1.0 have no points at all — readings taken then were overwritten and cannot be recovered.
 
 ## ai.extra_usage_utilisation — Extra-usage ceiling used
 
