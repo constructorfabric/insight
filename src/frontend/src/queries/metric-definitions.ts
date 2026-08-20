@@ -59,6 +59,43 @@ export function useMetricDefinitionsResponse(): UseQueryResult<MetricDefinitionL
   });
 }
 
+export interface DeclaredMetricDimensions {
+  /**
+   * Dimensions each metric declares, or null when the catalog could not be
+   * read. Asking for one a metric does not declare is rejected outright, so a
+   * caller with no catalog asks for none.
+   */
+  byMetricKey: ReadonlyMap<string, ReadonlySet<string>> | null;
+  isPending: boolean;
+}
+
+/**
+ * The dimensions each metric will accept as a display dimension.
+ *
+ * Same gate as `useAvailableMetricKeys`, one level down: a drilldown that asks
+ * for an undeclared dimension is a 400, not a request served without it.
+ */
+export function useDeclaredMetricDimensions(): DeclaredMetricDimensions {
+  const { data, isPending } = useQuery({
+    queryKey: ["metric-definitions"],
+    queryFn: listMetricDefinitions,
+    staleTime: 5 * 60 * 1000,
+  });
+  const byMetricKey = useMemo(
+    () =>
+      data
+        ? new Map(
+            data.metrics.map((m) => [
+              m.metric_key,
+              new Set(m.dimensions) as ReadonlySet<string>,
+            ])
+          )
+        : null,
+    [data]
+  );
+  return { byMetricKey, isPending };
+}
+
 export interface AvailableMetricKeys {
   /**
    * What this installation can serve, or null when the catalog could not be

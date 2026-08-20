@@ -28,7 +28,7 @@ this file and the registry disagree.
 - Shape: integer, higher_is_better, unit days
 - Notes: Distinct days with person-attributed AI activity across dev and assistant tools.
 
-## ai.cost — AI usage cost
+## ai.cost — AI potential usage cost
 
 - Source: ai_usage (ai_metric_observations)
 - Reads: cost_usd
@@ -36,7 +36,15 @@ this file and the registry disagree.
 - Shape: currency, lower_is_better
 - Notes: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person. Overlaps ai.extra_usage_cost, which is the part of that same consumption the vendor actually billed on top of the seat fee — the two are served side by side and are never added, since adding them counts the billed part twice.
 
-## ai.extra_usage_cost — AI extra usage
+## ai.seat_cost — AI seat cost
+
+- Source: ai_cost (ai_cost_metric_observations)
+- Reads: seat_cost_usd
+- Formula: sum(seat_cost_usd)
+- Shape: currency, lower_is_better
+- Notes: The invoiced price of a person's seat for a billing month, read from the per-seat amount on the invoice's subscription lines — the only place the vendor states a price for one seat. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction, and a window spanning two months returns both fees. Distinct from ai.extra_usage_cost, which is what the vendor billed on top of this fee; the two add up to what a seat cost in total. A seat carrying no tier returns no value, as does a month whose invoice priced several tiers and none of them is the seat's — a share of the invoice total would be an invention. Attribution mode is derived — the invoice prices a tier, not a person.
+
+## ai.extra_usage_cost — AI actual usage cost
 
 - Source: ai_cost (ai_cost_metric_observations)
 - Reads: extra_usage_usd
@@ -130,7 +138,7 @@ this file and the registry disagree.
 - Reads: code_lines_added
 - Formula: sum(code_lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Lines added to files classified as code — tests, configuration, and documentation excluded.
+- Notes: Lines added to files classified as code — tests, configuration, and documentation excluded. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
 
 ## git.lines_added — Lines added
 
@@ -138,7 +146,7 @@ this file and the registry disagree.
 - Reads: lines_added
 - Formula: sum(lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Lines added across all files, split by file category: code, tests, configuration, documentation.
+- Notes: Lines added across all files, split by file category: code, tests, configuration, documentation. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
 
 ## git.lines_removed — Lines removed
 
@@ -146,7 +154,7 @@ this file and the registry disagree.
 - Reads: lines_removed
 - Formula: sum(lines_removed)
 - Shape: integer, neutral, unit lines
-- Notes: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available.
+- Notes: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available. Each change counts once: when the same removal reaches a repository in more than one commit, the lines belong to the commit that made it first.
 
 ## git.prs_created — Pull requests created
 
@@ -186,7 +194,7 @@ this file and the registry disagree.
 - Reads: commit_change_size
 - Formula: median(commit_change_size)
 - Shape: integer, lower_is_better, unit lines
-- Notes: Median diff size of authored commits (lines added plus removed). Smaller commits are easier to review.
+- Notes: Median diff size of authored commits (lines added plus removed), counting only content a commit is the first to introduce — a commit that repeats content already in the repository has a size of zero. Smaller commits are easier to review.
 
 ## git.pr_size — PR size
 

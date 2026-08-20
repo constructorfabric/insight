@@ -24,7 +24,7 @@ use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
-use crate::infra::db::{ops_repo, person_listing, persons_repo, resolution_repo};
+use crate::infra::db::{ops_repo, persons_repo, resolution_repo};
 use crate::infra::identity_evidence::{
     AccountEvidence, AfterAccount, ClickHouseEvidenceReader, EvidenceSnapshot, ListedAccount,
 };
@@ -394,12 +394,42 @@ async fn apply_correction(
     )
     .await;
 
+    let applied = count_items(&items, OUTCOME_APPLIED);
+    if applied > 0 {
+        // Spawned: the correction is already durable in `persons`, so the
+        // response must not wait on ClickHouse.
+        let config = state.config.clone();
+        tokio::spawn(async move { publish_correction(&config).await });
+    }
+
     Ok(CorrectionResponse {
-        applied: count_items(&items, OUTCOME_APPLIED),
+        applied,
         already_decided: count_items(&items, OUTCOME_ALREADY_DECIDED),
         items,
         new_person_id: None,
     })
+}
+
+/// Publish the corrected log into the snapshot the metrics resolver reads.
+/// Never fails the verb: the runner waits for a busy lock, the lock holder's
+/// quiescence re-check covers rows it raced with, and the next publish is
+/// the catch-up path for everything else.
+async fn publish_correction(config: &crate::config::GearConfig) {
+    use crate::sync_runner::{self, SyncRunError};
+    match sync_runner::run(config, false).await {
+        Ok(outcome) => tracing::info!(?outcome, "persons-sync published the corrected log"),
+        Err(SyncRunError::LockBusy) => tracing::warn!(
+            "publish lock stayed busy past the wait; the correction reaches the resolver with \
+             the next publish"
+        ),
+        Err(SyncRunError::Guard(msg)) => {
+            tracing::warn!(%msg, "persons-sync refused the post-correction publish");
+        }
+        Err(SyncRunError::Failed(e)) => tracing::warn!(
+            error = %format!("{e:#}"),
+            "publishing the correction failed; the resolver snapshot is stale until the next publish"
+        ),
+    }
 }
 
 fn count_items(items: &[ItemResult], wanted: &str) -> usize {
@@ -732,13 +762,14 @@ pub async fn mark_provisional(
     Ok(())
 }
 
-/// The tenant's identity picture: how many persons it knows, and how its
-/// observed accounts are split across the resolution states.
+/// How the tenant's observed accounts are split across the resolution states.
+///
+/// Deliberately no person total. A journal-wide count answers "how many ids have
+/// we ever written", which after a merge never falls and after a detach only
+/// rises — so it read as a roster size while measuring something else. A figure
+/// that would have to be explained every time it is read is worse than none.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ResolutionRatesResponse {
-    /// Persons in the tenant, counted from the person journal rather than the
-    /// evidence fold — `truncated` never applies to this figure.
-    pub persons: usize,
     pub observed: usize,
     pub bound: usize,
     pub pending: usize,
@@ -773,9 +804,6 @@ pub async fn attention(
     let tenant = ctx.subject_tenant_id();
 
     let (review, truncated) = build_review(&state, tenant).await?;
-    let persons = person_listing::count_persons(&state.db, tenant)
-        .await
-        .map_err(|e| internal(&e, "failed to count the tenant's persons"))?;
 
     let limit = params.limit.map_or(DEFAULT_QUEUE_LIMIT, |l| {
         usize::try_from(l).unwrap_or(1).clamp(1, MAX_QUEUE_LIMIT)
@@ -829,7 +857,6 @@ pub async fn attention(
     Ok(Json(AttentionResponse {
         items,
         rates: ResolutionRatesResponse {
-            persons,
             observed: review.rates.observed,
             bound: review.rates.bound,
             pending: review.rates.pending,

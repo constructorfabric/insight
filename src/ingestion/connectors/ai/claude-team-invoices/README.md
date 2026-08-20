@@ -68,9 +68,30 @@ the money on the ledger without a fabricated price, and the invoice keeps one ro
 across attempts — a later run that enriches it replaces that row instead of
 adding its money a second time.
 
+A draft is not invoiced and is skipped entirely. Its total can still change and
+it carries no payment intent, and both are part of the key an invoice's row is
+identified by — so emitting one would leave the draft's copy standing beside the
+finalised invoice, counting that money twice.
+
 `chain_status` distinguishes four outcomes: `ok`, `failed` (a hop answered
 badly), `unparsable_url` (a hosted URL was offered but no longer matches), and
-`no_hosted_url` (none was offered, as on a draft invoice). Only URLs that were
-offered count towards drift: if more than half of them fail to parse the run
-fails instead, because that is a format change, and a run of unpriced rows would
-read as the vendor having stopped charging for seats.
+`no_hosted_url` (none was offered for an invoice the vendor has finalised). Only
+URLs that were offered count towards drift: if more than half of them fail to
+parse the run fails instead, because that is a format change, and a run of
+unpriced rows would read as the vendor having stopped charging for seats.
+
+## What a later sync repeats
+
+The listing is read in full every sync, and every invoice emits its own row from
+it — so the money the wrapper reports is always current, and source freshness,
+which watches how recently anything arrived, keeps its anchor.
+
+The chain is what a later sync skips. An invoice it has already followed to the
+end is recognised by the identity decoded from its hosted URL, and the two Stripe
+hops are not repeated: its lines are in bronze, and a settled invoice's lines do
+not move. The connector remembers only what the listing cannot supply — the
+invoice id its bronze rows are keyed under, and the period those lines gave.
+
+A chain that failed is not remembered, so it is tried again on the next sync.
+Losing the memory entirely — a connection recreated, say — costs one expensive
+sync and nothing else: every invoice is simply chained again.

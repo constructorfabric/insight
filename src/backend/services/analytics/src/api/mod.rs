@@ -21,6 +21,7 @@ use std::sync::Arc;
 use toolkit::api::{
     OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationBuilder, ResponseSpec,
 };
+use toolkit_canonical_errors::CanonicalError;
 use utoipa::openapi::RefOr;
 use utoipa::openapi::content::ContentBuilder;
 use utoipa::openapi::header::HeaderBuilder;
@@ -48,6 +49,27 @@ pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
+}
+
+// SAFETY: an identity that is absent or unreachable is a server error, never a
+// permit.
+pub(crate) async fn is_admin_caller(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> Result<bool, CanonicalError> {
+    if !state.identity.is_configured() {
+        tracing::error!("identity service is not configured; admin access cannot be verified");
+        return Err(CanonicalError::internal("failed to verify caller permissions").create());
+    }
+
+    state
+        .identity
+        .is_admin(forwarded_authorization(headers))
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "admin role check failed");
+            CanonicalError::internal("failed to verify caller permissions").create()
+        })
 }
 
 /// Register all analytics routes onto the host's stateless router.

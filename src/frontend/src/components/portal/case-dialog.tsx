@@ -2,7 +2,6 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { AttentionItem, PersonSummary } from "@/api/identity-client";
-import { CopyValueButton } from "@/components/copy-value-button";
 import { AccountDetail } from "@/components/portal/account-detail";
 import { Button } from "@/components/ui/button";
 import {
@@ -121,10 +120,10 @@ export function CaseDialog({
       <DialogContent
         ref={popupRef}
         className="flex h-[85vh] flex-col gap-4 sm:max-w-3xl"
-        // Focus the window itself. The default first-tabbable is the header's
-        // copy control ("Copy <account id>" — the wrong first thing to hear),
-        // and `initialFocus={false}` does not move focus AT ALL, stranding it
-        // in the aria-hidden page behind the dialog.
+        // Focus the window itself, not its first tabbable — that is a verb, and
+        // a decision should not be one keypress from arriving. `initialFocus={false}`
+        // is not the alternative: it does not move focus AT ALL, stranding it in
+        // the aria-hidden page behind the dialog.
         tabIndex={-1}
         initialFocus={popupRef}
       >
@@ -136,15 +135,6 @@ export function CaseDialog({
             <span className="truncate font-mono text-xs select-text">
               {ref?.source} · {ref?.account_id}
             </span>
-            {ref ? (
-              <CopyValueButton
-                value={ref.account_id}
-                title={t("identities.detail.copy_account_id")}
-                copyLabel={t("common.copy")}
-                copiedLabel={t("common.copied")}
-                errorMessage={t("common.copy_failed")}
-              />
-            ) : null}
           </DialogDescription>
         </DialogHeader>
         {/* Keyed by the account: the body holds per-account state (a verb's
@@ -158,6 +148,11 @@ export function CaseDialog({
             observed={observed}
             holder={queueItem?.holder ?? null}
             bindTo={bindTo}
+            // A decided account has nothing left to answer here: its candidate
+            // list and its binding are both reads the server has moved past.
+            // The surface behind re-reads (see `useCorrection`), so handing the
+            // window back shows the new state instead of the one just replaced.
+            onDecided={onClose}
           />
         ) : null}
         {/* Working a backlog is a conveyor: the next case is one press away,

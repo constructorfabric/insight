@@ -93,38 +93,10 @@ seed:
   # (the umbrella wires it from global.tenantDefaultId and validates at
   # render). Without a tenant from either source every run exits 1.
   tenantDefaultId: ""
-  # Daily, after the overnight connector syncs and the 06:00 data-quality run.
-  schedule: "30 6 * * *"
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
-
-# Persons-sync CronJob: publishes the `persons` log into ClickHouse
-# `identity.identity_persons` (the metrics email→person_id resolve source).
-# Scheduled after the seed by default — the seed rewrites the log, the sync
-# publishes it.
-sync:
-  enabled: true
-  # Journal-row tenant (UUID); same override semantics as seed.tenantDefaultId
-  # (the copy itself is tenant-agnostic — this only scopes the operations
-  # journal the admin GET routes read).
-  tenantDefaultId: ""
-  # Daily, 15 minutes after the seed's 06:30 run.
-  schedule: "45 6 * * *"
-  # Belt-and-braces for cron-vs-cron only — manual Jobs and other instances
-  # serialize on the MariaDB advisory lock regardless.
-  concurrencyPolicy: Forbid
-  # Retries for transient connect blips; the lock + snapshot-swap idempotency
-  # make a repeated run safe.
-  backoffLimit: 2
-  # Caps a wedged pod well past the in-binary 5-minute sync timeout.
-  activeDeadlineSeconds: 600
+  # A freshness backstop, not the publish path (every seed run and operator
+  # correction publishes on its own): it bounds how long a publish lost to a
+  # dead pod can stay unpublished.
+  schedule: "*/15 * * * *"
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   resources:

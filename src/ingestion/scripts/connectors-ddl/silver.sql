@@ -426,7 +426,9 @@ CREATE TABLE IF NOT EXISTS silver.class_git_file_changes
     `source_type` String,
     `data_source` String,
     `_version` Int64,
-    `_airbyte_extracted_at` DateTime64(3)
+    `_airbyte_extracted_at` DateTime64(3),
+    `pre_image_oid` Nullable(String),
+    `post_image_oid` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY unique_key

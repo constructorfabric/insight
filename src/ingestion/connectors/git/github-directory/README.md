@@ -10,9 +10,9 @@ prerequisite for logging in at all, and it should not wait on a connector with
 a much larger surface and its own dependencies.
 
 Split in deployment, however, the two are one identity space: an account is
-keyed on (source type, source id, login), and this roster binds a login to a
-person while the `github` connector claims the e-mails that login commits
-under. Both Secrets therefore carry the SAME
+keyed on (source type, source id, member id), and this roster binds a member's
+immutable numeric GitHub id to a person while the `github` connector claims
+the e-mails committed under that account. Both Secrets therefore carry the SAME
 `insight.cyberfabric.com/source-id` — `github-main`, not this connector's own
 name. Given different ids the two halves never meet, and a member whose profile
 hides their e-mail resolves to nobody or to a second, nameless person.
@@ -51,46 +51,52 @@ supplied the roster.
 
 ## The join key
 
-`identity_inputs` emits a `value_type='id'` row whose value is the **lowercased
-GitHub login**, and that is what the login lookup matches.
+`identity_inputs` emits a `value_type='id'` row whose value is the member's
+**numeric GitHub id** (GraphQL `databaseId`), stringified — and that is what
+the login lookup matches.
 
-Lowercasing is not cosmetic. The lookup compares against
-`persons.value_id`, declared `VARCHAR(320) COLLATE utf8mb4_bin` — a byte-exact,
-case-sensitive comparison — while Keycloak lowercases the username it brokers
-from GitHub. Storing GitHub's original casing (`Some-User`) against a
-lowercased claim (`some-user`) yields no match and a 403 that looks exactly
-like missing data. GitHub logins are unique case-insensitively, so normalizing
-loses nothing.
+The id, not the login, on purpose. A login can be renamed by its owner, and a
+freed login can be re-registered by someone else; either silently re-keys the
+account — at best breaking that member's sign-in, at worst handing one
+person's identity to another. The numeric id never changes and is never
+reused. It also sidesteps letter-case entirely: logins are case-preserving on
+GitHub while the person lookup compares byte-exact, a mismatch that surfaces
+as a 403 indistinguishable from missing data.
 
-The raw login is kept alongside as `login`, and emitted as a `username`
-observation.
+The login is kept alongside as `login` and emitted as a `username`
+observation, so the identity console still shows and searches the handle.
+
+There is no migration between the two keyings: an instance that ever ran the
+login-keyed versions of this connector must wipe its identity data
+(`identity_inputs` and the persons journal) and re-sync from scratch.
 
 ## Deployment
 
 The connector is necessary but not sufficient. The instance must also point the
-authenticator at a claim that carries the GitHub login:
+authenticator at a claim that carries the GitHub numeric user id:
 
 ```yaml
 authenticator:
   oidc:
     sourceType: github          # must equal insight_source_type above
-    externalIdClaim: <claim>    # must carry the GitHub login
+    externalIdClaim: <claim>    # must carry the GitHub numeric user id
 ```
 
 GitHub is OAuth2, not OIDC — it issues no id_token for user login — so the
-claim is minted by the broker. In Keycloak, either:
+claim is minted by the broker. In Keycloak: an **Attribute Importer**
+identity-provider mapper copying GitHub's `id` profile field into a user
+attribute, plus a **User Attribute** protocol mapper exposing it on the ID
+token. (`preferred_username` will not do — it carries the login.)
 
-- `preferred_username`, which for a GitHub-brokered user is the login,
-  lowercased by the realm's username policy; or
-- a dedicated claim: an **Attribute Importer** identity-provider mapper copying
-  GitHub's `login` into a user attribute, plus a **User Attribute** protocol
-  mapper exposing it on the ID token.
+Set **Claim JSON Type = String** on the protocol mapper. The authenticator
+extracts the claim as a JSON string and drops a numeric one, failing the
+login closed. Keycloak stores user attributes as strings, so the id survives
+the trip as `"12345678"` — exactly the form the binding stores.
 
-If you add a mapper, set **Claim JSON Type = String**. A numeric claim is
-dropped by the authenticator's string extraction and login fails closed — which
-is also why the numeric GitHub user id is a poor choice of external id here.
-
-Whichever claim is used, its value must arrive lowercased to match.
+Set the Attribute Importer's **Sync Mode = force**. Importer mappers otherwise
+run only at the FIRST broker login, so users federated before the mapper
+existed never receive the attribute, the claim stays absent, and their sign-in
+fails closed.
 
 ## Configuration
 
@@ -108,12 +114,12 @@ own message in that case.
 
 With the scope granted, `email` carries a member's org email wherever one is
 verified and visible to the token. Where it is absent, identity resolution
-leans on the id binding and display name instead — the login is the join key
-either way, so a missing email degrades merging with other sources rather than
-breaking login.
+leans on the id binding and display name instead — the member id is the join
+key either way, so a missing email degrades merging with other sources rather
+than breaking login.
 
 A member of two configured orgs produces one bronze row per org and a single
-identity entity — both rows carry the same normalized login. The duplicate
+identity entity — both rows carry the same member id. The duplicate
 observations are harmless; the latest wins.
 
 ## Limitation: removal is not observed

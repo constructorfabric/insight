@@ -3,6 +3,15 @@
 # (`persons` / `account_person_map` / `org_chart`) from ClickHouse
 # `identity.identity_inputs` so ingested manager/org changes reach the Team
 # view — the projection is materialized and only a seed run refreshes it.
+# The run publishes the refreshed log into ClickHouse
+# `identity.identity_persons` as its own final step, so no separate sync job
+# exists. The ingestion pipeline also runs a seed after every connector sync;
+# this schedule is the backstop for what event-driven publishing cannot carry
+# (a pod that died before its spawned publish ran). It runs with the same
+# tolerance flags as the pipeline step — a busy lock or an input-guard
+# refusal is a WARN and a journal row, not a red CronJob: refusals are read
+# over GET /v1/persons-seed?status=failed, and a backstop that is red on
+# healthy stands trains everyone to ignore it.
 #
 # Same image/config/secret wiring as the deployment; the `seed` subcommand
 # runs one seed and exits (exit codes: 0 ok / 1 failed / 2 lock busy /
@@ -58,7 +67,7 @@ spec:
               image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               command: ["/app/identity-resolution"]
-              args: ["-c", "/app/config/insight.yaml", "seed"]
+              args: ["-c", "/app/config/insight.yaml", "seed", "--busy-ok", "--guard-ok"]
               volumeMounts:
                 - name: identity-resolution-config
                   mountPath: /app/config/insight.yaml

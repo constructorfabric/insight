@@ -1253,7 +1253,7 @@
         "type": "object"
       },
       "ResolutionRatesResponse": {
-        "description": "The tenant's identity picture: how many persons it knows, and how its\nobserved accounts are split across the resolution states.",
+        "description": "How the tenant's observed accounts are split across the resolution states.\n\nDeliberately no person total. A journal-wide count answers \"how many ids have\nwe ever written\", which after a merge never falls and after a detach only\nrises — so it read as a roster size while measuring something else. A figure\nthat would have to be explained every time it is read is worse than none.",
         "properties": {
           "bound": {
             "minimum": 0,
@@ -1274,15 +1274,9 @@
           "pending": {
             "minimum": 0,
             "type": "integer"
-          },
-          "persons": {
-            "description": "Persons in the tenant, counted from the person journal rather than the\nevidence fold — `truncated` never applies to this figure.",
-            "minimum": 0,
-            "type": "integer"
           }
         },
         "required": [
-          "persons",
           "observed",
           "bound",
           "pending",

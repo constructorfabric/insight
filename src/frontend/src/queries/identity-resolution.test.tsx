@@ -26,6 +26,7 @@ vi.mock("@/auth/session-scope", () => ({
 
 import {
   listsAnyAccount,
+  useAttention,
   listsAnyone,
   useAccountList,
   useBindAccount,
@@ -36,7 +37,16 @@ const searchPersons = vi.mocked(identityClient.searchPersons);
 
 const bindAccount = vi.mocked(identityClient.bindAccount);
 
-const ATTENTION_KEY = ["identity", "resolution", "attention", "tenant-a"];
+// The key `useAttention` really writes, limit segment included — a cache entry
+// under a shorter key would prove nothing about the surgery reaching the queue
+// an operator is looking at.
+const ATTENTION_KEY = [
+  "identity",
+  "resolution",
+  "attention",
+  "tenant-a",
+  identityClient.QUEUE_FIRST_PAGE,
+];
 
 const REF = {
   source: "github",
@@ -360,5 +370,92 @@ describe("usePersonList while a term is being typed", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(searchPersons.mock.calls[0][2]).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe("the prune across cached limits", () => {
+  // `keepPreviousData` leaves one cache entry per limit the operator reached.
+  // A filter narrowed to the first page would leave the row they just decided
+  // sitting in the longer list they are actually looking at.
+  it("drops the decided row from every cached limit", async () => {
+    const { queryClient, wrapper } = harness();
+    const longer = ["identity", "resolution", "attention", "tenant-a", 400];
+    for (const key of [ATTENTION_KEY, longer]) {
+      queryClient.setQueryData(key, {
+        items: [item("a1"), item("a2")],
+        rates: { persons: 2, observed: 2, bound: 0, pending: 2, no_evidence: 0, excluded: 0 },
+      });
+    }
+    bindAccount.mockResolvedValue(outcome("applied"));
+
+    const { result } = renderHook(() => useBindAccount(), { wrapper });
+    result.current.mutate({
+      account: { source: REF.source, source_id: REF.source_id, id: REF.account_id },
+      person_id: "01900000-0000-7000-8000-0000000000b0",
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    for (const key of [ATTENTION_KEY, longer]) {
+      const cached = queryClient.getQueryData(key) as { items: unknown[] };
+      expect(cached.items, `under ${JSON.stringify(key)}`).toHaveLength(1);
+    }
+  });
+});
+
+describe("useAttention", () => {
+  // The limit is the whole load-more feature. Keyed on it but not PASSED, every
+  // press would fire a fresh request, blank nothing (`keepPreviousData`) and
+  // answer the same 200 rows for ever — with every other test still green,
+  // because they all mock this hook away.
+  it("asks the service for the limit it is keyed on", async () => {
+    vi.mocked(identityClient.getAttention).mockResolvedValue({
+      items: [],
+      rates: { observed: 0, bound: 0, pending: 0, no_evidence: 0, excluded: 0 },
+    });
+    const { queryClient, wrapper } = harness();
+
+    const { result } = renderHook(() => useAttention(400), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(identityClient.getAttention).toHaveBeenCalledWith(400);
+    expect(
+      queryClient
+        .getQueryCache()
+        .find({ queryKey: ["identity", "resolution", "attention", "tenant-a", 400] }),
+    ).toBeDefined();
+  });
+
+  // A longer read is a NEW key, and a new key is pending. Without the previous
+  // answer standing in, the queue an operator is working blanks to a spinner
+  // on every press.
+  it("keeps the shorter answer on screen while the longer one is read", async () => {
+    vi.mocked(identityClient.getAttention).mockResolvedValue({
+      items: [],
+      rates: { observed: 0, bound: 0, pending: 0, no_evidence: 0, excluded: 0 },
+    });
+    const { queryClient, wrapper } = harness();
+    const { result, rerender } = renderHook(({ limit }) => useAttention(limit), {
+      wrapper,
+      initialProps: { limit: 200 },
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    let resolve: (value: identityClient.AttentionResponse) => void = () => {};
+    vi.mocked(identityClient.getAttention).mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    rerender({ limit: 400 });
+
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.data).toBeDefined();
+    expect(result.current.isPlaceholderData).toBe(true);
+    resolve({
+      items: [],
+      rates: { observed: 0, bound: 0, pending: 0, no_evidence: 0, excluded: 0 },
+    });
+    await waitFor(() => expect(result.current.isPlaceholderData).toBe(false));
+    queryClient.clear();
   });
 });

@@ -1,4 +1,4 @@
-"""Helm render-contract for the persons-seed AND persons-sync CronJobs.
+"""Helm render-contract for the persons-seed CronJob.
 
 The original bug was the ABSENCE of scheduling (#1690) — the seed existed but
 nothing ever ran it — so the schedule wiring itself is contract, not
@@ -6,28 +6,22 @@ plumbing: these tests render the chart(s) with `helm template` and assert the
 manifests the cluster would actually get. No cluster involved; runs anywhere
 helm + PyYAML exist (CI: .github/workflows/identity-resolution-helm.yml).
 
-The chart now ships TWO CronJobs — seed (rebuilds the persons log from
-identity_inputs) and sync (publishes the log into ClickHouse
-`identity.identity_persons` for the metrics resolve path, scheduled 15
-minutes after the seed). CronJobs are selected BY NAME, never as "the sole
-CronJob in the render" — the suite must not break again when a third job
-appears.
+The chart ships ONE CronJob: the seed, which publishes its refreshed log to
+ClickHouse as its own final step. CronJobs are selected BY NAME, never as
+"the sole CronJob in the render", so the suite does not break when another
+job appears.
 
-Covered, per job:
-  * exists by default with its documented schedule and the exact
-    subcommand/args against the mounted gears config (never `--force`);
-  * config comes from the SAME Secret/ConfigMap pair the deployment uses;
-  * `<job>.tenantDefaultId` env-overrides the Secret (k8s `env` beats
-    `envFrom`);
-  * `<job>.enabled=false` removes THAT CronJob and nothing else;
-  * the job pod labels do NOT match the Service selector (a pod that
-    listens on nothing must never enter the Service's endpoints).
+Covered: the schedule and exact args against the mounted gears config
+(tolerance flags present, never `--force`); the SAME Secret/ConfigMap pair
+the deployment uses; `seed.tenantDefaultId` env-overriding the Secret; `enabled=false`
+removing that CronJob and nothing else; pod labels never matching the
+Service selector (a pod that listens on nothing must not enter the
+endpoints); and that no persons-sync CronJob is rendered.
 
-Umbrella: the seed tenant render guard (unchanged — the sync only journals
-under the tenant, so it carries no equivalent guard), both CronJobs
-rendering when a tenant is configured, and the gear-config knobs an
-operator sets at the conventional `identityResolution.<key>` path
-actually reaching the gear that reads them.
+Umbrella: the seed tenant render guard, the CronJob rendering when a tenant
+is configured, and the gear-config knobs an operator sets at the
+conventional `identityResolution.<key>` path reaching the gear that reads
+them.
 """
 
 from __future__ import annotations
@@ -45,10 +39,14 @@ UMBRELLA = REPO_ROOT / "charts" / "insight"
 
 TENANT = "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab"
 
-# name suffix -> (schedule, subcommand) — the per-job contract facts.
+# name suffix -> (schedule, args) — the per-job contract facts. One entry
+# today; the table stays so a second scheduled job arrives with its contract
+# already asserted. The tolerance flags are deliberate: the schedule is a
+# freshness backstop, and a backstop that is red on healthy stands (empty
+# identity_inputs, a raced lock) trains everyone to ignore it — refusals
+# surface as failed operations-journal rows instead.
 JOBS = {
-    "seed": ("30 6 * * *", "seed"),
-    "sync": ("45 6 * * *", "sync"),
+    "seed": ("*/15 * * * *", ["seed", "--busy-ok", "--guard-ok"]),
 }
 
 # Minimum viable subchart install (mirrors the umbrella's wiring).
@@ -188,11 +186,20 @@ def _job_container(cronjob: dict) -> dict:
     return container
 
 
-def test_default_render_ships_exactly_the_two_documented_cronjobs(default_docs) -> None:
+def test_default_render_ships_exactly_the_documented_cronjobs(default_docs) -> None:
     names = sorted(_cronjobs(default_docs))
     assert len(names) == len(JOBS), names
     for job in JOBS:
         _cronjob(default_docs, job)
+
+
+def test_no_persons_sync_cronjob_is_scheduled(default_docs) -> None:
+    """A scheduled sync would put the log and its ClickHouse snapshot back on
+    two independent clocks — the ordering hazard the seed's own publish step
+    removes. Nothing else in this suite would notice it returning."""
+    assert not [n for n in _cronjobs(default_docs) if n.endswith("-sync")], sorted(
+        _cronjobs(default_docs)
+    )
 
 
 @pytest.mark.parametrize("job", JOBS)
@@ -206,9 +213,10 @@ def test_cronjob_exists_by_default_with_documented_schedule(default_docs, job: s
 def test_cronjob_runs_its_subcommand_against_the_mounted_config(default_docs, job: str) -> None:
     container = _job_container(_cronjob(default_docs, job))
     assert container["command"] == ["/app/identity-resolution"]
-    assert container["args"] == ["-c", "/app/config/insight.yaml", JOBS[job][1]]
-    # A CronJob must never run forced — --force is a deliberate manual act
-    # (seed: input guards; sync: the empty-log guard).
+    assert container["args"] == ["-c", "/app/config/insight.yaml", *JOBS[job][1]]
+    # A CronJob must never run forced — --force overrides the input guards and
+    # is a deliberate manual act. Tolerating a refusal (--guard-ok) is not
+    # forcing: the run publishes nothing and journals why.
     assert "--force" not in container["args"]
 
 
@@ -248,9 +256,9 @@ def test_disabling_one_job_removes_only_that_cronjob(job: str) -> None:
     docs = _subchart_docs("--set", f"{job}.enabled=false")
     jobs = _cronjobs(docs)
     assert f"contract-test-identity-resolution-{job}" not in jobs, sorted(jobs)
-    # The sibling CronJob and the rest of the chart are untouched.
-    (other,) = [j for j in JOBS if j != job]
-    _cronjob(docs, other)
+    # Every other CronJob and the rest of the chart are untouched.
+    for other in (j for j in JOBS if j != job):
+        _cronjob(docs, other)
     _the(docs, "Deployment")
     _the(docs, "Service")
 
@@ -290,7 +298,7 @@ def test_umbrella_refuses_enabled_seed_without_a_tenant(umbrella_deps) -> None:
     assert "requires a tenant" in err, err
 
 
-def test_umbrella_renders_both_cronjobs_with_a_tenant(umbrella_deps) -> None:
+def test_umbrella_renders_the_cronjobs_with_a_tenant(umbrella_deps) -> None:
     rc, out, err = _render(
         umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}"
     )
@@ -316,8 +324,6 @@ def test_umbrella_disabled_seed_needs_no_tenant(umbrella_deps) -> None:
     )
     assert rc == 0, err
     jobs = _cronjobs(_docs(out))
-    # The seed CronJob is gone; the sync one legitimately remains (it has no
-    # tenant render guard — the tenant only scopes its journal row).
     assert not any(
         "identity-resolution" in n and n.endswith("-seed") for n in jobs
     ), sorted(jobs)

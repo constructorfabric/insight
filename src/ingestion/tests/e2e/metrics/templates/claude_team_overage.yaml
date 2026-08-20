@@ -62,3 +62,10 @@ templates:
     $ref: "#/templates/claude_team_seat"
     account_email: frank@example.com
     account_uuid: seat-frank
+
+  # A seat holder who IS in the HR feed, for a test that needs a cohort member
+  # holding a seat whose tier a measure cannot price.
+  heidi:
+    $ref: "#/templates/claude_team_seat"
+    account_email: heidi@example.com
+    account_uuid: seat-heidi

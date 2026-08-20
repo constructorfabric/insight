@@ -354,17 +354,20 @@ Describes `cpt-insightspec-aicost-component-metric-source`.
 
 ### 3.3 API Contracts
 
-No new endpoint. Three metric keys are added to the existing contract:
+No new endpoint. Four metric keys are added to the existing contract:
 
 | `metric_key` | inputs | computation | format | direction | dimensions |
 |---|---|---|---|---|---|
 | `ai.token_cost` | `token_cost_usd` (value) | `sum` | `currency` | `lower_is_better` | `tool` |
 | `ai.extra_usage_cost` | `extra_usage_usd` (value) | `sum` | `currency` | `lower_is_better` | `tool`, `seat_tier` |
 | `ai.extra_usage_utilisation` | `extra_usage_usd` (numerator), `extra_usage_limit_usd` (denominator) | `ratio`, scale 100 | `percent` | — | `tool`, `seat_tier` |
+| `ai.seat_cost` | `seat_cost_usd` (value) | `sum` | `currency` | `lower_is_better` | `tool`, `seat_tier` |
 
-All carry `entity_type: person` and `peer_cohort_key: org_unit`. `ai.seat_cost` and
-`ai.seat_underuse` are defined once invoices land, which is the only source of a seat's
-price; they are absent from `registry.yaml` until then.
+All carry `entity_type: person` and `peer_cohort_key: org_unit`. `ai.seat_cost` reads the
+per-seat amount on an invoice's non-proration `subscriptions` lines, which is the only place
+the vendor prices one seat; a billing month with a single priced tier prices every tiered seat
+in it, and where several are priced the seat's own tier has to name one of them.
+`ai.seat_underuse` carries that price against observed activity and is not defined yet.
 
 `ai.extra_usage_cost` reads `extra_usage_usd`, which is `used_credits` as the vendor reports it —
 the spend that begins once a seat exhausts the usage included in its fee. It is **not** the

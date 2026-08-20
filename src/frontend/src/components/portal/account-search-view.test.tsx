@@ -216,7 +216,7 @@ describe("AccountSearchView", () => {
     // The verbs are on screen — so an absent candidate list means absent, not
     // "still loading".
     expect(
-      within(dialog).getByRole("button", { name: /detach into a new person/i }),
+      within(dialog).getByRole("button", { name: /exclude \(bot/i }),
     ).toBeInTheDocument();
     expect(within(dialog).queryByText(/candidates/i)).not.toBeInTheDocument();
     expect(
@@ -285,7 +285,7 @@ describe("AccountSearchView", () => {
       within(dialog).queryByText(/link may be stale/i),
     ).not.toBeInTheDocument();
     expect(
-      within(dialog).getByRole("button", { name: /detach into a new person/i }),
+      within(dialog).getByRole("button", { name: /exclude \(bot/i }),
     ).toBeInTheDocument();
   });
 

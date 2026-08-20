@@ -24,6 +24,49 @@ export interface QueueCase {
   items: AttentionItem[];
 }
 
+/**
+ * Kinds the console invents for a row that is NOT a queue item.
+ *
+ * The accounts and persons modes reuse the case window to show a settled
+ * account, so their rows travel in the same shape as a queue row. Naming OUR
+ * kinds rather than the server's is what keeps the test safe: the server's
+ * vocabulary is open, and a kind this build has never seen is a queue item.
+ */
+export const KIND_SEARCH_MATCH = "match";
+export const KIND_PERSON_MEMBER = "member";
+
+/** Whether this row is a real queue item, and so really leaves the queue. */
+export function isQueueItem(kind: string): boolean {
+  return kind !== KIND_SEARCH_MATCH && kind !== KIND_PERSON_MEMBER;
+}
+
+/**
+ * Kinds where an operator's only question is "yes, that is right" — so the whole
+ * group can be ratified in one press.
+ *
+ * A contested account has no single answer to apply, a binding conflict is a
+ * disagreement to settle rather than to ratify, and an account with no evidence
+ * has no binding to re-assert.
+ */
+const CONFIRMABLE_KINDS: ReadonlySet<string> = new Set([
+  "provisioned_at_login",
+  "minted_from_roster",
+]);
+
+/** Whether a whole queue group can be confirmed in one press. */
+export function groupIsConfirmable(
+  kind: string,
+  items: AttentionItem[],
+): boolean {
+  return (
+    CONFIRMABLE_KINDS.has(kind) &&
+    items.length > 0 &&
+    // Every row must name the person it would confirm. A row with no holder has
+    // nothing to re-assert, and skipping it silently would make the count lie.
+    items.every((item) => Boolean(item.bound_to))
+  );
+}
+
 function caseKey(item: AttentionItem): string {
   if (item.candidates.length === 0) return `account:${itemKey(item)}`;
   const ids = item.candidates.map((c) => c.person_id).sort();

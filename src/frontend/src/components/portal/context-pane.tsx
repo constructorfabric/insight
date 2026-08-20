@@ -9,6 +9,7 @@ import { useState } from "react";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import { OrgTree } from "@/components/org-tree";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import {
   Popover,
@@ -43,7 +44,7 @@ import {
 } from "@/components/ui/sidebar";
 import {
   manageItemsFor,
-  PEOPLE_ITEMS,
+  peopleItemsFor,
   PLANNED_GROUP_LABEL,
   partitionByReadiness,
   resolveZoneItem,
@@ -61,7 +62,7 @@ import {
 } from "@/lib/portal/portal-nav";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { cn } from "@/lib/utils";
-import { useIsAdmin } from "@/queries/identity-me";
+import { useIsAdmin, useVisibilityPolicy } from "@/queries/identity-me";
 
 const ZONE_SUB: Record<string, string> = {
   overview: "Cross-functional org rollup",
@@ -509,9 +510,14 @@ function DirectionItem({ direction }: { direction: Direction }) {
 /* ── People / Person zones ───────────────────────────────────────────── */
 
 function PeopleNav({ active }: { active: string | null }) {
+  const { isFlat } = useVisibilityPolicy();
   return (
     <>
-      <ItemsNav items={PEOPLE_ITEMS} groupLabel="Views" active={active} />
+      <ItemsNav
+        items={peopleItemsFor(isFlat)}
+        groupLabel="Views"
+        active={active}
+      />
       <WorkChart />
     </>
   );
@@ -519,22 +525,50 @@ function PeopleNav({ active }: { active: string | null }) {
 
 function WorkChart() {
   const [query, setQuery] = useState("");
+  // A chart is what a reporting line draws. With no lines there is a roster,
+  // and calling it a chart would name a structure the reader cannot see.
+  const { isFlat } = useVisibilityPolicy();
+
+  const find = (
+    <div className="relative px-2">
+      <Search className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        type="search"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Find someone"
+        aria-label="Find someone in the org"
+        className="h-8 ps-7 text-sm"
+      />
+    </div>
+  );
+
+  // A roster is the whole organisation, so it takes the rest of the pane and
+  // scrolls there. The search sits ABOVE the scroll region, not inside it: a
+  // sticky-inside search put the scrollbar (and, mid-inertia, the rows) on top
+  // of it. The standard sidebar shape — fixed search, list scrolling below,
+  // scrollbar contained to the list.
+  if (isFlat) {
+    return (
+      // No group label: "WorkChart" names a structure a flat organisation does
+      // not have, and every other name for the roster restates the zone it
+      // already sits in. The search's own label says what the list is.
+      <SidebarGroup className="min-h-0 flex-1">
+        <SidebarGroupContent className="flex min-h-0 flex-1 flex-col gap-2">
+          {find}
+          <ScrollArea className="min-h-0 flex-1">
+            <OrgTree leadsToTeam query={query} />
+          </ScrollArea>
+        </SidebarGroupContent>
+      </SidebarGroup>
+    );
+  }
 
   return (
     <SidebarGroup>
       <SidebarGroupLabel>WorkChart</SidebarGroupLabel>
       <SidebarGroupContent className="flex flex-col gap-2">
-        <div className="relative px-2">
-          <Search className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Find someone"
-            aria-label="Find someone in the org"
-            className="h-8 ps-7 text-sm"
-          />
-        </div>
+        {find}
         <OrgTree leadsToTeam query={query} />
       </SidebarGroupContent>
     </SidebarGroup>

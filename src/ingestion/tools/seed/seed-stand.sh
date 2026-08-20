@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Seed a Kubernetes stand with the demo organisation and its activity. An
-# `all`/`silver` run finishes by resolving identity (persons-seed + persons-sync)
-# and rebuilding gold, so the stand serves real metrics rather than a null for
+# `all`/`silver` run finishes by resolving identity (persons-seed, which
+# publishes its own log) and rebuilding gold, so the stand serves real metrics rather than a null for
 # every person. Every coordinate is discovered from the cluster, never copied in
 # by an operator; credentials are never read. Nothing is defaulted.
 set -euo pipefail
@@ -67,7 +67,7 @@ Discovered from the stand (pass a flag only to override):
 Seed options:
       --step <step>        identity | silver | analytics | gold | all [default: all]
                            `all`/`silver` finish by running the identity
-                           projection (persons-seed + persons-sync) and rebuilding
+                           projection (persons-seed, which publishes) and rebuilding
                            gold, so the stand serves resolved metrics. `gold`
                            alone just rebuilds over the map as it stands now.
       --days <n>           activity-window length in days
@@ -579,37 +579,34 @@ run_seed_step() {
   wait_for_job "$SEED_JOB_NAME"
 }
 
-# project_identity — force the persons-seed then persons-sync CronJobs to run now
-# and wait for each. These are the SAME runs the chart's CronJobs make on
-# schedule; a fresh CI stand cannot wait for the 06:30 cron, so it forces them.
-# persons-seed LINKS each connector account to the seeded roster person by e-mail
-# (resolve_assignments' LinkedByEmail) and APPENDS to `persons` (INSERT IGNORE —
-# it never rewrites the seeder's login rows); persons-sync publishes the persons
-# log into ClickHouse identity_persons, where gold's resolve_person_id() reads it.
-# Without this, gold resolves nothing and the API answers 200 with a null for
-# every person metric. Discovered by component label, never named, so a chart
-# rename fails loudly here rather than silently skipping the projection.
+# project_identity — force the persons-seed CronJob to run now and wait for it:
+# a fresh CI stand cannot wait for the next scheduled tick. The run LINKS each connector
+# account to the seeded roster person by e-mail (resolve_assignments'
+# LinkedByEmail), APPENDS to `persons` (INSERT IGNORE — it never rewrites the
+# seeder's login rows), and publishes to ClickHouse identity_persons, where
+# gold's resolve_person_id() reads it. Without this, gold resolves nothing and
+# the API answers 200 with a null for every person metric. Discovered by
+# component label, never named, so a chart rename fails loudly here rather than
+# silently skipping the projection.
 project_identity() {
-  local component cronjob job_name
-  for component in persons-seed persons-sync; do
-    cronjob="$(kube -n "$NAMESPACE" get cronjob \
-      -l "app.kubernetes.io/component=$component" \
-      -o 'jsonpath={.items[0].metadata.name}' 2>/dev/null || true)"
-    if [[ -z "$cronjob" ]]; then
-      echo "ERROR: no $component CronJob in namespace $NAMESPACE — the identity" >&2
-      echo "       projection cannot run, so gold would resolve to a null for every" >&2
-      echo "       person. Enable identityResolution.${component#persons-}.enabled on" >&2
-      echo "       this stand, or seed --step silver and run the projection yourself." >&2
-      return 1
-    fi
-    job_name="${cronjob}-ci-$(date -u +%Y%m%d%H%M%S)"
-    echo "==> identity projection: $component (job/$job_name from cronjob/$cronjob)"
-    kube -n "$NAMESPACE" create job --from="cronjob/$cronjob" "$job_name"
-    wait_for_job "$job_name" || {
-      echo "ERROR: $component did not complete; gold would stay unresolved." >&2
-      return 1
-    }
-  done
+  local component=persons-seed cronjob job_name
+  cronjob="$(kube -n "$NAMESPACE" get cronjob \
+    -l "app.kubernetes.io/component=$component" \
+    -o 'jsonpath={.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -z "$cronjob" ]]; then
+    echo "ERROR: no $component CronJob in namespace $NAMESPACE — the identity" >&2
+    echo "       projection cannot run, so gold would resolve to a null for every" >&2
+    echo "       person. Enable identityResolution.seed.enabled on this stand," >&2
+    echo "       or seed --step silver and run the projection yourself." >&2
+    return 1
+  fi
+  job_name="${cronjob}-ci-$(date -u +%Y%m%d%H%M%S)"
+  echo "==> identity projection: $component (job/$job_name from cronjob/$cronjob)"
+  kube -n "$NAMESPACE" create job --from="cronjob/$cronjob" "$job_name"
+  wait_for_job "$job_name" || {
+    echo "ERROR: $component did not complete; gold would stay unresolved." >&2
+    return 1
+  }
 }
 
 # --dry-run: print the requested step's manifest and exit, writing nothing.
@@ -633,8 +630,8 @@ if [[ "$FOLLOW" -eq 0 ]]; then
   echo "    follow it with: $(kubectl_hint) -n $NAMESPACE logs -f job/$SEED_JOB_NAME"
   case "$STEP" in
     all|silver)
-      echo "    NOTE: gold is UNRESOLVED until the persons-seed/persons-sync CronJobs"
-      echo "          run and '--step gold' rebuilds over them. Without --no-follow"
+      echo "    NOTE: gold is UNRESOLVED until the persons-seed CronJob"
+      echo "          runs and '--step gold' rebuilds over it. Without --no-follow"
       echo "          this script does all three for you." ;;
   esac
   exit 0

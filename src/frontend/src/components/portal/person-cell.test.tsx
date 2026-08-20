@@ -5,6 +5,7 @@
  * never repeats the name, and a leaver marked so nobody merges into them.
  */
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import "@/i18n";
@@ -74,13 +75,21 @@ describe("PersonCell", () => {
   // minted is the wrong side of a merge — its counterpart holds the history.
   // The badge must not name one origin: a sign-in and a roster listing both
   // produce such a person, and the wording is the same warning either way.
-  it("marks a person the journal knows only from an automatic mint", () => {
+  it("marks a person the journal knows only from an automatic mint", async () => {
     render(
       <PersonCell person={person({ display_name: "New Joiner", provisional: true })} />,
     );
 
+    // One word, so the badge cannot widen the row it sits in — and the warning
+    // it stands for is reachable, not hover-only: this mark is what says a
+    // person is the wrong side of a merge.
+    const badge = screen.getByText(/^provisional$/i);
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute("tabindex", "0");
+
+    await userEvent.hover(badge);
     expect(
-      screen.getByText(/created by automation, not confirmed/i),
+      await screen.findByText(/created by automation, not confirmed/i),
     ).toBeInTheDocument();
     // A roster mint is not a sign-in. Naming one origin tells an operator the
     // wrong story about half of these people.

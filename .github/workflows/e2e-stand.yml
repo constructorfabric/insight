@@ -71,6 +71,9 @@ permissions:
   actions: read # downloads images produced earlier in this workflow run
   packages: read # pulls the pinned service images (via compose)
 
+env:
+  UI_TESTS_IMAGE: mcr.microsoft.com/playwright/python@sha256:aa81288e738725378becba5b3e06cb0f3a7f012a610e87e8d767a090ea3f740d
+
 jobs:
   # Stages 2 (CI stand) and 3 (E2E stand) are meant to add a target to
   # `resolve-target` below rather than copy this file.
@@ -172,7 +175,7 @@ jobs:
           if echo "$changed" | grep -qE '^(src/backend/services/identity-resolution/|src/backend/libs/insight-clickhouse/|src/backend/docker-entrypoint\.sh$|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(build-images|e2e-stand)\.yml$)'; then identity_resolution=true; fi
           if echo "$changed" | grep -qE '^(src/backend/services/gateway/|src/backend/tools/routegen/|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/prebuilt_images\.py$)'; then gateway=true; fi
           if echo "$changed" | grep -qE '^(src/backend/tools/routegen/|src/backend/services/gateway/|src/backend/services/authenticator/|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|src/ingestion/tools/seed/insight_seed/|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/(prebuilt_images|test_prebuilt_images)\.py$)'; then gateway_checks=true; fi
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]] && \
+          if [[ "$GITHUB_EVENT_NAME" == pull_request || "$GITHUB_EVENT_NAME" == merge_group ]] && \
              [[ "$analytics" == true || "$authenticator" == true || "$identity_resolution" == true || "$gateway" == true ]]; then
             backend_artifacts=true
           fi
@@ -181,7 +184,7 @@ jobs:
   build-pr-images:
     name: Build PR images
     needs: changes
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     permissions:
       contents: write
       packages: write
@@ -217,7 +220,7 @@ jobs:
     name: Gateway checks
     needs: [changes, build-pr-images]
     if: |
-      always()
+      !cancelled()
       && github.event_name == 'pull_request'
       && needs.changes.outputs.gateway_checks == 'true'
       && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
@@ -260,7 +263,7 @@ jobs:
     name: shared stand runner
     needs: [changes, resolve-target, build-pr-images]
     if: |
-      always()
+      !cancelled()
       && needs.resolve-target.result == 'success'
       && needs.resolve-target.outputs.target == 'compose'
       && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
@@ -400,9 +403,7 @@ jobs:
         id: browser-install
         if: always() && steps.stand-up.outcome == 'success'
         continue-on-error: true
-        run: |
-          uv sync --project tests
-          uv run --project tests --frozen playwright install --with-deps chromium
+        run: docker pull "$UI_TESTS_IMAGE"
 
       - name: Run the browser journeys
         id: ui-tests
@@ -410,6 +411,7 @@ jobs:
         continue-on-error: true
         run: |
           ./dev-compose.sh test-stand test \
+            --image "$UI_TESTS_IMAGE" \
             --ignore=tests/stand/api --ignore=tests/stand/meta \
             --browser chromium \
             --tracing=retain-on-failure \

@@ -325,35 +325,6 @@ fn searched_types() -> String {
         .join(", ")
 }
 
-/// How many persons the tenant has — the total behind the listing above.
-///
-/// INVARIANT: the set must stay identical to `build_query`'s `people` CTE. The
-/// console prints this figure beside the list an operator pages through, so a
-/// filter added to one side only makes the total disagree with what that list
-/// can reach.
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
-pub async fn count_persons(db: &DatabaseConnection, tenant_id: Uuid) -> anyhow::Result<usize> {
-    const SQL: &str = "SELECT COUNT(DISTINCT person_id) AS persons FROM persons \
-                       WHERE insight_tenant_id = ? AND person_id != ?";
-
-    let stmt = Statement::from_sql_and_values(
-        DbBackend::MySql,
-        SQL,
-        [
-            tenant_id.as_bytes().to_vec().into(),
-            EXCLUDED_PERSON.as_bytes().to_vec().into(),
-        ],
-    );
-
-    let Some(row) = db.query_one(stmt).await? else {
-        return Ok(0);
-    };
-    Ok(usize::try_from(row.try_get::<i64>("", "persons")?).unwrap_or(0))
-}
-
 /// The label half of the listing, the same for every query it serves: the value
 /// current for each person × source × attribute, then the latest of those per
 /// attribute, pivoted into the one label the row shows.

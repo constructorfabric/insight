@@ -9,6 +9,7 @@ import {
   keepPreviousData,
   useInfiniteQuery,
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
   type InfiniteData,
@@ -19,12 +20,14 @@ import {
 
 import {
   bindAccount,
+  bindAccounts,
   detachAccount,
   excludeAccount,
   getAccountBinding,
   getAttention,
   getPersonAccounts,
   mergePersons,
+  QUEUE_FIRST_PAGE,
   searchAccounts,
   searchPersons,
   type AccountBinding,
@@ -42,13 +45,25 @@ import { sessionAuthorizationScope } from "@/auth/session-scope";
 /** An operator works a queue; a minute of staleness is fine, losing edits is not. */
 const ATTENTION_STALE_TIME = 60 * 1000;
 
-export function useAttention(): UseQueryResult<AttentionResponse> {
+/**
+ * The review queue, capped at `limit` items.
+ *
+ * Raising the limit is what "load more" means here — the service derives the
+ * queue from the whole tenant on every read, so there is no cursor to resume
+ * from, and a bigger ask returns a longer prefix of the same order.
+ */
+export function useAttention(
+  limit: number = QUEUE_FIRST_PAGE,
+): UseQueryResult<AttentionResponse> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
   return useQuery({
-    queryKey: ["identity", "resolution", "attention", sessionScope],
-    queryFn: () => getAttention(),
+    queryKey: ["identity", "resolution", "attention", sessionScope, limit],
+    queryFn: () => getAttention(limit),
     staleTime: ATTENTION_STALE_TIME,
+    // A longer ask re-reads the rows already on screen: without this the queue
+    // an operator is working blanks to a spinner every time they ask for more.
+    placeholderData: keepPreviousData,
     enabled: sessionScope != null,
   });
 }
@@ -115,6 +130,7 @@ function useCorrection<TArgs>(
 }
 
 export const useBindAccount = () => useCorrection(bindAccount);
+export const useBindAccounts = () => useCorrection(bindAccounts);
 export const useMergePersons = () => useCorrection(mergePersons);
 export const useDetachAccount = () => useCorrection(detachAccount);
 export const useExcludeAccount = () => useCorrection(excludeAccount);
@@ -304,5 +320,46 @@ export function usePersonAccounts(
     },
     staleTime: ATTENTION_STALE_TIME,
     enabled: sessionScope != null && personId != null,
+  });
+}
+
+/** What a merge of MANY persons into one would move, per absorbed person. */
+export interface AccountsToMove {
+  /** Every read landed. The preview is the consent, so a partial count must
+   *  never be presented as the list of what moves. */
+  ready: boolean;
+  failed: boolean;
+  accounts: PersonAccountEntry[];
+  refetch: () => void;
+}
+
+/**
+ * The accounts a case-level merge would move: one read per absorbed person,
+ * flattened.
+ *
+ * A case can hold more than two people, and the merge endpoint takes exactly
+ * two — so the survivor absorbs the rest one call at a time, and the preview
+ * has to cover all of them before the operator consents to any.
+ */
+export function usePersonAccountsMany(personIds: string[]): AccountsToMove {
+  const { session } = useAuth();
+  const sessionScope = sessionAuthorizationScope(session);
+  return useQueries({
+    queries: personIds.map((personId) => ({
+      queryKey: [...RESOLUTION_KEY, "person-accounts", sessionScope, personId],
+      queryFn: () => getPersonAccounts(personId),
+      staleTime: ATTENTION_STALE_TIME,
+      enabled: sessionScope != null,
+    })),
+    combine: (results) => ({
+      // No reads to make is not "not landed yet": conflating them would leave a
+      // caller with an empty list waiting on a spinner that never resolves.
+      ready: results.every((r) => r.data != null),
+      failed: results.some((r) => r.isError),
+      accounts: results.flatMap((r) => r.data?.accounts ?? []),
+      refetch: () => {
+        for (const result of results) void result.refetch();
+      },
+    }),
   });
 }

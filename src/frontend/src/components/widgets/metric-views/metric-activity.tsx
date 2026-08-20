@@ -22,7 +22,13 @@ import {
   forEntity,
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
+import {
+  evidenceRecordLinks,
+  withGitSourceDimension,
+} from "@/lib/metrics/git-links";
+import { RecordLink } from "@/components/record-link";
 import { useMetricDetail } from "@/queries/metric-detail";
+import { useDeclaredMetricDimensions } from "@/queries/metric-definitions";
 import { cn } from "@/lib/utils";
 
 /** Events listed inline before the rest goes to the evidence dialog. */
@@ -51,10 +57,20 @@ export function MetricActivity({
   periodNoun: string;
 }) {
   const grain = finestGrain(metric);
-  const selection = metric.selection
+  const declared = useDeclaredMetricDimensions();
+  const base = metric.selection
     ? evidenceSelection(metric.selection, entityId)
     : null;
-  const detail = useMetricDetail(selection, grain != null);
+  // INVARIANT: the same gate the evidence dialog applies — `source` is what
+  // makes a link safe, and asking for it where a metric does not declare it is
+  // rejected outright, so the read waits for the catalogue.
+  const selection = base
+    ? withGitSourceDimension(base, declared.byMetricKey?.get(base.metric_key))
+    : null;
+  const detail = useMetricDetail(
+    selection,
+    grain != null && !declared.isPending
+  );
   const help = metricHelp(metric);
   const data = forEntity(metric, entityId);
   const total = formatMetricValue(data.value, metric.format, metric.unit);
@@ -170,6 +186,7 @@ function EventList({
   const evidence = useMetricEvidenceOptional();
   const scope = useEvidenceScope();
   const selection = evidenceSelection(metric.selection, entityId);
+  const metricKey = metric.selection?.metric_key ?? "";
   const events = useMemo(() => activityEvents(rows), [rows]);
   const shown = events.slice(0, EVENTS_SHOWN);
   const rest = events.length - shown.length;
@@ -177,24 +194,33 @@ function EventList({
   return (
     <div className="flex flex-col gap-1">
       <ul className="flex flex-col">
-        {shown.map((event, index) => (
-          <li
-            key={event.ref ?? `${event.date}-${index}`}
-            className="flex items-baseline gap-3 py-1 text-xs"
-          >
-            <span className="w-14 shrink-0 text-muted-foreground tabular-nums">
-              {formatDate(event.date)}
-            </span>
-            <span className="min-w-0 flex-1 truncate">
-              {event.title ?? <span className="text-muted-foreground">—</span>}
-            </span>
-            {event.context ? (
-              <span className="hidden max-w-[14rem] shrink-0 truncate text-muted-foreground sm:inline">
-                {event.context}
+        {shown.map((event, index) => {
+          const links = evidenceRecordLinks(metricKey, event.values);
+          return (
+            <li
+              key={event.ref ?? `${event.date}-${index}`}
+              className="flex items-baseline gap-3 py-1 text-xs"
+            >
+              <span className="w-14 shrink-0 text-muted-foreground tabular-nums">
+                {formatDate(event.date)}
               </span>
-            ) : null}
-          </li>
-        ))}
+              <span className="min-w-0 flex-1 truncate">
+                {event.title ? (
+                  <RecordLink href={links.title}>{event.title}</RecordLink>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </span>
+              {event.context ? (
+                <span className="hidden max-w-[14rem] shrink-0 truncate text-muted-foreground sm:inline">
+                  <RecordLink href={links.repository}>
+                    {event.context}
+                  </RecordLink>
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
       </ul>
       {rest > 0 && evidence && selection ? (
         <Button
@@ -265,7 +291,8 @@ function stripSummary(
     null
   );
   const parts = [`${metric.label} by day, ${span}`];
-  if (busiest?.value != null) parts.push(`busiest ${dayTitle(metric, busiest)}`);
+  if (busiest?.value != null)
+    parts.push(`busiest ${dayTitle(metric, busiest)}`);
   parts.push(
     silent === 0
       ? "every day has a reading"
@@ -335,7 +362,7 @@ function DayStrip({
         {hoveredDay && hovered != null ? (
           <div
             aria-hidden
-            className="pointer-events-none absolute bottom-full z-10 mb-1 rounded border bg-popover px-1.5 py-0.5 text-xs whitespace-nowrap text-popover-foreground shadow-sm tabular-nums"
+            className="pointer-events-none absolute bottom-full z-10 mb-1 rounded border bg-popover px-1.5 py-0.5 text-xs whitespace-nowrap text-popover-foreground tabular-nums shadow-sm"
             style={{
               // Anchored to the bar's own edge and grown inwards, rather than
               // centred and clamped. Centring needs to know the readout's

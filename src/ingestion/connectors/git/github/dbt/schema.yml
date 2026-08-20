@@ -63,8 +63,8 @@ models:
   - name: github__account_emails
     description: "Every (GitHub account, e-mail) pair the connector observed, one row per pair"
     columns:
-      - name: login
-        description: "Lowercased GitHub login the e-mail was observed under (ADR-0002 account id)"
+      - name: account_id
+        description: "GitHub's immutable numeric account id the e-mail was observed under, stringified (ADR-0002 binding key)"
         data_tests:
           - not_null
       - name: email
@@ -98,11 +98,11 @@ models:
           - not_null
           - unique
       - name: insight_source_type
-        description: "`github` for a login-keyed account, `github-commit-email` for an unowned e-mail"
+        description: "`github` for an id-keyed account, `github-commit-email` for an unowned e-mail"
         data_tests:
           - accepted_values:
               values: ["github", "github-commit-email"]
       - name: source_account_id
-        description: "The lowercased GitHub login, or the e-mail itself when no account claims it"
+        description: "The account's numeric GitHub id as a string, or the e-mail itself when no account claims it"
       - name: value
         description: "The claimed e-mail address, or the git author name for a display_name row"

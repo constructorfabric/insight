@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   queryMetricDrilldown: vi.fn(),
   downloadMetricDrilldown: vi.fn(),
   tableProps: null as Record<string, unknown> | null,
+  declaredDimensions: new Map<string, ReadonlySet<string>>(),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -20,6 +21,16 @@ vi.mock("@tanstack/react-query", () => ({
     mocks.queryOptions = options;
     return mocks.query;
   },
+}));
+
+// Which dimensions a metric will accept. Most of these tests declare none, so
+// the selection they assert on is the caller's own; the export test below
+// declares `source` because that is when the two diverge.
+vi.mock("@/queries/metric-definitions", () => ({
+  useDeclaredMetricDimensions: () => ({
+    byMetricKey: mocks.declaredDimensions,
+    isPending: false,
+  }),
 }));
 
 vi.mock("@/auth/use-auth", () => ({
@@ -171,6 +182,7 @@ describe("MetricEvidenceDialog", () => {
     mocks.queryMetricDrilldown.mockReset();
     mocks.downloadMetricDrilldown.mockReset().mockResolvedValue(undefined);
     mocks.tableProps = null;
+    mocks.declaredDimensions = new Map();
   });
 
   it("loads, orders, paginates, exports, and closes evidence", async () => {
@@ -296,6 +308,42 @@ describe("MetricEvidenceDialog", () => {
       hasNextPage: false,
       pageLimitReached: true,
     });
+  });
+
+  // The dimension that makes a row linkable is asked for, hidden from the
+  // table, and must not reach the file: an export that carries a column the
+  // screen does not show is not an export OF that screen.
+  it("asks for the source dimension but keeps it out of the export", async () => {
+    const user = userEvent.setup();
+    mocks.declaredDimensions = new Map([
+      ["git.commits", new Set(["repository", "source"])],
+    ]);
+
+    render(
+      <MetricEvidenceDialog
+        state={state}
+        onMetricChange={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    const requested = (mocks.queryOptions?.queryKey as unknown[])[2] as {
+      display_dimensions: string[];
+    };
+    expect(requested.display_dimensions).toContain("source");
+
+    await user.click(screen.getByRole("button", { name: /CSV/ }));
+    await waitFor(() =>
+      expect(mocks.downloadMetricDrilldown).toHaveBeenCalledWith(
+        selection,
+        "csv",
+        expect.any(AbortSignal)
+      )
+    );
+    const [exported] = mocks.downloadMetricDrilldown.mock.calls[0]!;
+    expect(
+      (exported as { display_dimensions: string[] }).display_dimensions
+    ).not.toContain("source");
   });
 
   describe("what the dialog is named", () => {
@@ -426,7 +474,10 @@ describe("MetricEvidenceDialog", () => {
       const user = userEvent.setup();
       renderDialog();
 
-      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "add"
+      );
       expect(tableRefs()).toEqual(["add-parser", "add-cache"]);
       expect(screen.getByText("2 of 3 records")).toBeInTheDocument();
     });
@@ -532,7 +583,10 @@ describe("MetricEvidenceDialog", () => {
       renderDialog({ fetchNextPage, hasNextPage: true });
       fetchNextPage.mockClear();
 
-      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "add"
+      );
       await waitFor(() => expect(fetchNextPage).toHaveBeenCalled());
     });
 
@@ -546,7 +600,10 @@ describe("MetricEvidenceDialog", () => {
       });
       fetchNextPage.mockClear();
 
-      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "add"
+      );
       expect(fetchNextPage).not.toHaveBeenCalled();
     });
 
@@ -571,7 +628,10 @@ describe("MetricEvidenceDialog", () => {
         />
       );
 
-      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "add"
+      );
       sortBy("value");
       expect(mocks.tableProps?.sort).not.toBeNull();
 

@@ -1,0 +1,63 @@
+{{- if .Values.ingestion.templates.enabled }}
+# One persons-seed as a pipeline step: resolve the identity claims a connector
+# sync just landed, and publish them (the `seed` subcommand publishes as its
+# own final step). Runs in every connector pipeline. `--guard-ok` keeps an
+# empty `identity_inputs` from failing a build; deliberately NO `--busy-ok`:
+# a busy seed lock is a holder that read `identity_inputs` before this
+# connector's rows landed, so giving up would let gold build over identities
+# this sync just ingested. The seed waits for the lock in-binary; a wait that
+# still expires retries below, then fails the pipeline loudly.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: identity-seed-run
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          - name: identity_image
+            default: "{{ .Values.identityResolution.image.repository }}:{{ .Values.identityResolution.image.tag | default .Chart.AppVersion }}"
+      activeDeadlineSeconds: 900
+      retryStrategy:
+        # Safe to repeat: the advisory lock and the operations journal make a
+        # second run idempotent.
+        limit: "2"
+        retryPolicy: OnFailure
+      container:
+        image: {{ `"{{inputs.parameters.identity_image}}"` }}
+        imagePullPolicy: IfNotPresent
+        command: ["/app/identity-resolution"]
+        args: ["-c", "/app/config/insight.yaml", "seed", "--guard-ok"]
+        volumeMounts:
+          - name: identity-resolution-config
+            mountPath: /app/config/insight.yaml
+            subPath: insight.yaml
+            readOnly: true
+          # The gears host creates `server.home_dir` at boot: the only path
+          # this needs writable under a read-only root.
+          - name: data
+            mountPath: /app/data
+        envFrom:
+          - secretRef:
+              name: {{ .Values.identityResolution.existingSecret | quote }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {cpu: 500m, memory: 512Mi}
+      volumes:
+        - name: identity-resolution-config
+          configMap:
+            name: {{ printf "%s-gears-config" (include "insight.identityResolution.host" .) | quote }}
+        - name: data
+          emptyDir: {}
+{{- end }}
