@@ -16,7 +16,7 @@ description: >
   if it does not, the value resolves to no field and every due-date measure
   goes silent rather than wrong.
 
-  Carol closes two issues on 2026-12-25, both carrying a Target date: one due
+  Carol closes two issues on 2026-03-25, both carrying a Target date: one due
   the 26th (on time) and one due the 20th (five days late). Compliance is
   therefore 1 of 2, and the average slip is five days over the single late
   issue. A third issue closes with no due date at all and must count toward
@@ -54,7 +54,7 @@ bronze:
       tenant_id: "11111111-1111-1111-1111-111111111111"
       source_id: github-test
       data_source: github
-      collected_at: "2026-12-01T00:00:00Z"
+      collected_at: "2026-03-01T00:00:00Z"
       org: acme
       field_id: IFD_target
       field_database_id: "42359250"
@@ -63,17 +63,17 @@ bronze:
       is_multi: false
       options_json: "[]"
       _airbyte_raw_id: gh-field-target
-      _airbyte_extracted_at: "2026-12-01T00:00:00Z"
+      _airbyte_extracted_at: "2026-03-01T00:00:00Z"
       _airbyte_meta: '{"changes":[]}'
       _airbyte_generation_id: 1
 
   bronze_github.issues:
     # due the 26th, closed the 25th -> on time
     - { $ref: templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, assignee_logins: carol, assignee_ids: "1003", author_id: 1003,
-        issue_field_values_json: '[{"issue_field_id": 42359250, "node_id": "IFDV_1", "data_type": "date", "issue_field_name": "Target date", "value": "2026-12-26"}]' }
+        issue_field_values_json: '[{"issue_field_id": 42359250, "node_id": "IFDV_1", "data_type": "date", "issue_field_name": "Target date", "value": "2026-03-26"}]' }
     # due the 20th, closed the 25th -> five days late
     - { $ref: templates/github_task.yaml#/templates/issue, id: 2, number: 2, unique_key: gh-issue-2, assignee_logins: carol, assignee_ids: "1003", author_id: 1003,
-        issue_field_values_json: '[{"issue_field_id": 42359250, "node_id": "IFDV_2", "data_type": "date", "issue_field_name": "Target date", "value": "2026-12-20"}]' }
+        issue_field_values_json: '[{"issue_field_id": 42359250, "node_id": "IFDV_2", "data_type": "date", "issue_field_name": "Target date", "value": "2026-03-20"}]' }
     # no due date at all: counts as closed, stays out of both due-date measures
     - { $ref: templates/github_task.yaml#/templates/issue, id: 3, number: 3, unique_key: gh-issue-3, assignee_logins: carol, assignee_ids: "1003", author_id: 1003 }
 
@@ -89,7 +89,7 @@ cases:
       method: POST
       body:
         entity: { type: person, ids: [carol@example.com] }
-        period: { from: "2026-12-20", to: "2026-12-31" }
+        period: { from: "2026-03-20", to: "2026-03-31" }
         metrics:
           - { metric_key: tasks.closed, views: [{ view: period }] }
           - { metric_key: tasks.due_date_compliance, views: [{ view: period }] }

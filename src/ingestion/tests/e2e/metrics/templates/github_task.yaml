@@ -103,7 +103,7 @@ templates:
     tenant_id: "11111111-1111-1111-1111-111111111111"
     source_id: github-test
     data_source: github
-    collected_at: "2026-12-01T00:00:00Z"
+    collected_at: "2026-03-01T00:00:00Z"
     repo_full_name: acme/app
     author_email: someone@example.com
     author_login: someone
@@ -111,7 +111,7 @@ templates:
     author_type: User
     sample_sha: "0000000000000000000000000000000000000000"
     _airbyte_raw_id: gh-author
-    _airbyte_extracted_at: "2026-12-01T00:00:00Z"
+    _airbyte_extracted_at: "2026-03-01T00:00:00Z"
     _airbyte_meta: '{"changes":[]}'
     _airbyte_generation_id: 1
 
@@ -121,7 +121,7 @@ templates:
     tenant_id: "11111111-1111-1111-1111-111111111111"
     source_id: github-test
     data_source: github
-    collected_at: "2026-12-31T00:00:00Z"
+    collected_at: "2026-03-31T00:00:00Z"
     id: 1
     number: 1
     repo_full_name: acme/app
@@ -137,12 +137,12 @@ templates:
     issue_type_id: IT_task
     closed_by_login: alice
     closed_by_id: 1001
-    created_at: "2026-12-01T09:00:00Z"
-    updated_at: "2026-12-25T09:00:00Z"
-    closed_at: "2026-12-25T09:00:00Z"
+    created_at: "2026-03-01T09:00:00Z"
+    updated_at: "2026-03-25T09:00:00Z"
+    closed_at: "2026-03-25T09:00:00Z"
     issue_field_values_json: "[]"
     _airbyte_raw_id: gh-issue
-    _airbyte_extracted_at: "2026-12-31T00:00:00Z"
+    _airbyte_extracted_at: "2026-03-31T00:00:00Z"
     _airbyte_meta: '{"changes":[]}'
     _airbyte_generation_id: 1
 
@@ -151,10 +151,10 @@ templates:
     tenant_id: "11111111-1111-1111-1111-111111111111"
     source_id: github-test
     data_source: github
-    collected_at: "2026-12-31T00:00:00Z"
+    collected_at: "2026-03-31T00:00:00Z"
     event_id: CE_1
     event_type: ClosedEvent
-    event_at: "2026-12-25T09:00:00Z"
+    event_at: "2026-03-25T09:00:00Z"
     item_number: 1
     repo_full_name: acme/app
     actor_login: alice
@@ -172,6 +172,6 @@ templates:
     prev_options_json: "[]"
     new_options_json: "[]"
     _airbyte_raw_id: gh-event
-    _airbyte_extracted_at: "2026-12-31T00:00:00Z"
+    _airbyte_extracted_at: "2026-03-31T00:00:00Z"
     _airbyte_meta: '{"changes":[]}'
     _airbyte_generation_id: 1

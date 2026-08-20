@@ -171,8 +171,12 @@ close_reopen AS (
         s.entity_id                                                          AS entity_id,
         toDate(c.close_at)                                                   AS metric_date,
         toFloat64(1)                                                         AS close_event,
-        if(minIf(r.reopen_at, r.reopen_at > c.close_at) IS NOT NULL
-           AND minIf(r.reopen_at, r.reopen_at > c.close_at) <= c.close_at + INTERVAL 14 DAY,
+        -- OrNull, not minIf: over a non-Nullable column with nothing matching,
+        -- `minIf` returns the type's default — 1970-01-01, which IS NOT NULL —
+        -- so every close of every issue read as reopened. Only a fixture with a
+        -- reopened close AND a clean one alongside it shows the difference.
+        if(minIfOrNull(r.reopen_at, r.reopen_at > c.close_at) IS NOT NULL
+           AND minIfOrNull(r.reopen_at, r.reopen_at > c.close_at) <= c.close_at + INTERVAL 14 DAY,
            toFloat64(1), CAST(NULL AS Nullable(Float64)))                    AS reopened_14d,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
     FROM closes AS c

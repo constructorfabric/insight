@@ -63,7 +63,7 @@ cases:
       method: POST
       body:
         entity: { type: person, ids: [carol@example.com] }
-        period: { from: "2026-12-20", to: "2026-12-31" }
+        period: { from: "2026-03-20", to: "2026-03-31" }
         metrics:
           - metric_key: tasks.closed
             views:
