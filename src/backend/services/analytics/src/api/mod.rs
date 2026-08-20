@@ -1,5 +1,6 @@
 //! HTTP API layer — routes and handlers.
 
+mod connector_health;
 pub(crate) mod error;
 mod metric_definitions;
 mod metric_drilldown;
@@ -351,6 +352,23 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .error_401(openapi)
         .error_500(openapi)
         .handler(metric_definitions::list_metric_definitions)
+        .register(router, openapi);
+
+    // Per-connector ingestion state for the Data health surface. Instance-wide
+    // rather than tenant-scoped: bronze schemas are not partitioned by tenant.
+    router = OperationBuilder::get("/v1/connector-health")
+        .operation_id("analytics_api.connector_health.get")
+        .summary("Report per-connector ingestion state")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<connector_health::ConnectorHealthResponse>(
+            openapi,
+            StatusCode::OK,
+            "Connector health",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .handler(connector_health::get_connector_health)
         .register(router, openapi);
 
     // Custom-metric CRUD + export/import — the `origin='custom'` authoring

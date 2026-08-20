@@ -86,6 +86,17 @@ pub fn freshness(state: &ConnectorState, thresholds: Thresholds, now: DateTime<U
     }
 }
 
+/// Every bronze schema a connector writes to carries this prefix; the rest of
+/// the name is the connector as a reader knows it.
+pub const BRONZE_PREFIX: &str = "bronze_";
+
+/// The extract column every bronze stream carries.
+const EXTRACT_COLUMN: &str = "_airbyte_extracted_at";
+
+pub fn connector_name(namespace: &str) -> &str {
+    namespace.strip_prefix(BRONZE_PREFIX).unwrap_or(namespace)
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[error("unsafe identifier: {0}")]
 pub struct UnsafeIdentifier(pub String);
@@ -111,7 +122,7 @@ pub fn newest_extract_sql(
 
         selects.push(format!(
             "SELECT '{namespace}' AS namespace, '{stream}' AS stream, \
-             max(_airbyte_extracted_at) AS newest_extract \
+             max({EXTRACT_COLUMN}) AS newest_extract \
              FROM `{namespace}`.`{stream}`"
         ));
     }
@@ -123,6 +134,81 @@ fn is_plain_identifier(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Bronze streams and their physical size. Row counts come from part metadata
+/// rather than `count()`, so this stays a catalogue read and never scans data.
+/// Inactive parts are excluded or a merged-away part would be counted twice.
+const STREAM_CATALOGUE_SQL: &str = "\
+    SELECT c.database AS namespace, \
+           c.table AS stream, \
+           (SELECT sum(rows) FROM system.parts \
+            WHERE active AND database = c.database AND table = c.table) AS rows \
+    FROM system.columns AS c \
+    WHERE c.name = ? AND startsWith(c.database, ?) \
+    ORDER BY namespace, stream";
+
+#[derive(Debug, clickhouse::Row, serde::Deserialize)]
+struct CatalogueRow {
+    namespace: String,
+    stream: String,
+    rows: Option<u64>,
+}
+
+#[derive(Debug, clickhouse::Row, serde::Deserialize)]
+struct ExtractRow {
+    namespace: String,
+    stream: String,
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
+    newest_extract: DateTime<Utc>,
+}
+
+/// Reads one [`StreamState`] per bronze stream: the catalogue for what exists
+/// and how big it is, then a single statement for every stream's newest extract.
+pub async fn read_stream_states(
+    ch: &insight_clickhouse::Client,
+) -> Result<Vec<StreamState>, ReadError> {
+    let catalogue: Vec<CatalogueRow> = ch
+        .query(STREAM_CATALOGUE_SQL)
+        .bind(EXTRACT_COLUMN)
+        .bind(BRONZE_PREFIX)
+        .fetch_all()
+        .await?;
+
+    let refs: Vec<(String, String)> = catalogue
+        .iter()
+        .map(|r| (r.namespace.clone(), r.stream.clone()))
+        .collect();
+
+    let Some(sql) = newest_extract_sql(&refs)? else {
+        return Ok(Vec::new());
+    };
+
+    let extracts: Vec<ExtractRow> = ch.query(&sql).fetch_all().await?;
+    let newest: BTreeMap<(&str, &str), DateTime<Utc>> = extracts
+        .iter()
+        .map(|r| ((r.namespace.as_str(), r.stream.as_str()), r.newest_extract))
+        .collect();
+
+    Ok(catalogue
+        .iter()
+        .map(|r| StreamState {
+            namespace: r.namespace.clone(),
+            stream: r.stream.clone(),
+            rows: r.rows.unwrap_or(0),
+            newest_extract: newest
+                .get(&(r.namespace.as_str(), r.stream.as_str()))
+                .copied(),
+        })
+        .collect())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReadError {
+    #[error(transparent)]
+    Clickhouse(#[from] clickhouse::error::Error),
+    #[error(transparent)]
+    Identifier(#[from] UnsafeIdentifier),
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -130,6 +216,16 @@ mod tests {
 
     fn stream_ref(namespace: &str, stream: &str) -> (String, String) {
         (namespace.to_owned(), stream.to_owned())
+    }
+
+    #[test]
+    fn the_bronze_prefix_is_dropped_from_the_reported_connector_name() {
+        assert_eq!(connector_name("bronze_example"), "example");
+    }
+
+    #[test]
+    fn a_schema_without_the_bronze_prefix_is_reported_as_it_stands() {
+        assert_eq!(connector_name("example"), "example");
     }
 
     #[test]
@@ -153,7 +249,8 @@ mod tests {
 
     #[test]
     fn a_stream_name_that_is_not_a_plain_identifier_is_refused() {
-        let refused = newest_extract_sql(&[stream_ref("bronze_example", "alpha`; DROP TABLE x --")]);
+        let refused =
+            newest_extract_sql(&[stream_ref("bronze_example", "alpha`; DROP TABLE x --")]);
 
         assert_eq!(
             refused,
@@ -184,9 +281,24 @@ mod tests {
     #[test]
     fn streams_of_one_connector_fold_into_a_single_row() {
         let summary = summarize(&[
-            stream("bronze_example", "alpha", 4, Some(at("2020-01-01T00:00:00Z"))),
-            stream("bronze_example", "beta", 0, Some(DateTime::<Utc>::UNIX_EPOCH)),
-            stream("bronze_example", "gamma", 6, Some(at("2020-01-02T00:00:00Z"))),
+            stream(
+                "bronze_example",
+                "alpha",
+                4,
+                Some(at("2020-01-01T00:00:00Z")),
+            ),
+            stream(
+                "bronze_example",
+                "beta",
+                0,
+                Some(DateTime::<Utc>::UNIX_EPOCH),
+            ),
+            stream(
+                "bronze_example",
+                "gamma",
+                6,
+                Some(at("2020-01-02T00:00:00Z")),
+            ),
         ]);
 
         assert_eq!(
@@ -259,8 +371,18 @@ mod tests {
     #[test]
     fn a_connector_whose_every_stream_is_empty_has_never_received_data() {
         let summary = summarize(&[
-            stream("bronze_example", "alpha", 0, Some(DateTime::<Utc>::UNIX_EPOCH)),
-            stream("bronze_example", "beta", 0, Some(DateTime::<Utc>::UNIX_EPOCH)),
+            stream(
+                "bronze_example",
+                "alpha",
+                0,
+                Some(DateTime::<Utc>::UNIX_EPOCH),
+            ),
+            stream(
+                "bronze_example",
+                "beta",
+                0,
+                Some(DateTime::<Utc>::UNIX_EPOCH),
+            ),
         ]);
 
         assert_eq!(summary[0].populated_streams, 0);
