@@ -161,7 +161,9 @@ CREATE TABLE IF NOT EXISTS bronze_github.file_changes
     `changes` Nullable(Int64),
     `is_binary` Nullable(Bool),
     `patch` Nullable(String),
-    `patch_truncated` Nullable(Bool)
+    `patch_truncated` Nullable(Bool),
+    `pre_image_oid` Nullable(String),
+    `post_image_oid` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

@@ -662,6 +662,11 @@ streams:
           is_binary: {type: [boolean, "null"]}
           patch: {type: [string, "null"]}
           patch_truncated: {type: [boolean, "null"]}
+          # Appended, not slotted next to the counts: a pre-existing bronze
+          # table gains a column at the tail, and the snapshot has to describe
+          # one order for both a fresh create and an altered instance.
+          pre_image_oid: {type: [string, "null"]}
+          post_image_oid: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
