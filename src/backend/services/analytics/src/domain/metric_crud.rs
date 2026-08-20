@@ -21,7 +21,7 @@ use crate::domain::metric_definitions::definition::{
     MetricComputation, MetricDirection, MetricFormat, MetricInputRole, ValueTransform,
 };
 use crate::domain::metric_key::parse_metric_key;
-use crate::domain::query_gate::validate_authored_read;
+use crate::domain::query_gate::validate_custom_observation_sql;
 
 #[cfg(test)]
 #[path = "metric_crud_live_tests.rs"]
@@ -281,7 +281,7 @@ fn validate_observation_sql(graph: &CustomMetric) -> Result<(), GraphViolation> 
             format!("must be at most {MAX_OBSERVATION_SQL_BYTES} bytes"),
         ));
     }
-    validate_authored_read(&graph.observation_sql)
+    validate_custom_observation_sql(&graph.observation_sql)
         .map_err(|reason| violation("observation_sql", reason))
 }
 

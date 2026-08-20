@@ -1,15 +1,12 @@
-//! The gate every caller-authored read passes before it reaches ClickHouse.
+//! Gate for the SQL a caller authors on the public query path (#1962).
 //!
 //! Requires the SQL to parse (sqlparser, ClickHouse dialect) to exactly one read
 //! statement — a `SELECT`/`WITH` query. Multiple statements, DDL/DML, and
 //! unparseable input are rejected. Using a parser (not hand-rolled scanning)
 //! keeps a `;` inside a string/comment/identifier from hiding a second
-//! statement.
-//!
-//! Shape is not the whole boundary. The service reads ClickHouse under one
-//! account, so every grant it needs for a route of its own — the admin-gated
-//! usage summary among them — is also in reach of SQL a caller wrote. What the
-//! grants cannot separate, this gate refuses by name.
+//! statement. Defense in depth: the `presentation_ro` grants (#1963) are the
+//! real boundary — except where one account serves both an admin-gated route
+//! and this one, which no grant can separate and this gate refuses by name.
 
 use sqlparser::ast::Statement;
 use sqlparser::dialect::ClickHouseDialect;
@@ -17,7 +14,7 @@ use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Token, Tokenizer};
 
-/// Table functions caller-authored SQL may not call. These reach data
+/// Table functions a custom observation source may not call. These reach data
 /// outside the read-only warehouse contract — remote/clustered nodes, external
 /// systems, and the local filesystem — so a custom SQL that used one could
 /// exfiltrate to, or read tenant-crossing data from, a source the
@@ -57,9 +54,9 @@ const DENIED_TABLE_FUNCTIONS: &[&str] = &[
     "dictionary",
 ];
 
-/// Databases caller-authored SQL may not read. `product_usage` holds the
-/// records the admin-gated usage summary serves, which the service account
-/// can read for that route.
+/// Databases the query path may not read. `product_usage` holds the records
+/// the admin-gated usage summary serves, which the service account can read
+/// for that route.
 const DENIED_DATABASES: &[&str] = &["product_usage"];
 
 /// Reject anything that is not a single read statement (`SELECT`/`WITH`).
@@ -77,14 +74,10 @@ fn validate_single_select(sql: &str) -> Result<(), String> {
     }
 }
 
-/// Gate SQL a caller authored — a saved query or a custom observation source:
-/// a single read (as above) that names no denied database and calls no
-/// external/remote table function. A custom source's SQL is wrapped as
-/// `FROM (<sql>)` and executed as `presentation_ro`; the outer tenant predicate
-/// filters the rows it *emits*, not the tables it *reads*, so denying what
-/// escapes the warehouse contract is what keeps authored SQL inside the same
-/// boundary a managed read has. Tenant-row isolation of the warehouse relations
-/// themselves is the authorship-trust + experimental gate.
+/// Gate SQL a caller authored: a single read (as above) that names no database
+/// the query path may not read. A saved query and a custom observation source
+/// both run under the service's own ClickHouse account, so a database that
+/// account reads for an admin-gated route of its own is refused here.
 pub fn validate_authored_read(sql: &str) -> Result<(), String> {
     validate_single_select(sql)?;
 
@@ -94,9 +87,23 @@ pub fn validate_authored_read(sql: &str) -> Result<(), String> {
         ));
     }
 
+    Ok(())
+}
+
+/// Gate a custom observation source's SQL: an authored read (as above) that
+/// calls no external/remote table function. The compiler wraps this SQL as
+/// `FROM (<sql>)` and executes it as `presentation_ro`; the outer tenant
+/// predicate filters the rows it *emits*, not the tables it *reads*, so denying
+/// the functions that escape the warehouse contract is what keeps a custom
+/// source inside the same boundary a managed one has. Tenant-row isolation of
+/// the warehouse relations themselves is the authorship-trust + experimental
+/// gate, the same posture as the saved-query console.
+pub fn validate_custom_observation_sql(sql: &str) -> Result<(), String> {
+    validate_authored_read(sql)?;
+
     if let Some(name) = first_denied_table_function(sql) {
         return Err(format!(
-            "table function `{name}` is not allowed on the query path"
+            "table function `{name}` is not allowed in a custom observation source"
         ));
     }
 
@@ -204,6 +211,7 @@ fn first_denied_table_function(sql: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::validate_authored_read as authored;
+    use super::validate_custom_observation_sql as custom;
     use super::validate_single_select as check;
 
     #[test]
@@ -223,6 +231,7 @@ mod tests {
                 authored(sql).is_err(),
                 "must refuse the usage store: {sql:?}"
             );
+            assert!(custom(sql).is_err(), "must refuse the usage store: {sql:?}");
         }
     }
 
@@ -243,9 +252,9 @@ mod tests {
     }
 
     #[test]
-    fn authored_gate_accepts_a_contract_shaped_read() {
+    fn custom_gate_accepts_a_contract_shaped_read() {
         assert!(
-            authored(
+            custom(
                 "SELECT tenant_id, source_key, entity_type, entity_id, metric_date, measure_key, \
                  observed_at, value, subject_key, dimensions FROM silver.a JOIN gold.b USING (id)"
             )
@@ -254,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn authored_gate_rejects_external_table_functions() {
+    fn custom_gate_rejects_external_table_functions() {
         for sql in [
             "SELECT * FROM remote('host:9000', db.t)",
             "SELECT * FROM url('http://x/y', CSV)",
@@ -271,19 +280,16 @@ mod tests {
             "SELECT * FROM deltaLakeCluster('c', 's3://b/k')",
             "SELECT * FROM hudiCluster('c', 's3://b/k')",
         ] {
-            assert!(
-                authored(sql).is_err(),
-                "must reject external source: {sql:?}"
-            );
+            assert!(custom(sql).is_err(), "must reject external source: {sql:?}");
         }
     }
 
     #[test]
-    fn authored_gate_allows_a_column_named_like_a_function() {
+    fn custom_gate_allows_a_column_named_like_a_function() {
         // A denied name only matters as a `name(` call; a column or alias that
         // merely shares the name is not a table function.
-        assert!(authored("SELECT file FROM gold.events").is_ok());
-        assert!(authored("SELECT value AS url FROM gold.events").is_ok());
+        assert!(custom("SELECT file FROM gold.events").is_ok());
+        assert!(custom("SELECT value AS url FROM gold.events").is_ok());
     }
 
     #[test]
@@ -299,10 +305,7 @@ mod tests {
             "SELECT r.final FROM silver.t AS r FINAL GROUP BY final",
         ] {
             assert!(check(sql).is_ok(), "should accept FINAL read: {sql:?}");
-            assert!(
-                authored(sql).is_ok(),
-                "authored gate should accept: {sql:?}"
-            );
+            assert!(custom(sql).is_ok(), "custom gate should accept: {sql:?}");
         }
     }
 
@@ -316,13 +319,13 @@ mod tests {
     fn final_does_not_relax_the_gate() {
         assert!(check("SELECT a FROM t AS r FINAL; DROP TABLE t").is_err());
         assert!(check("SELECT a FROM t AS r FINAL b").is_err());
-        assert!(authored("SELECT * FROM remote('h:9000', db.t) AS r FINAL").is_err());
+        assert!(custom("SELECT * FROM remote('h:9000', db.t) AS r FINAL").is_err());
     }
 
     #[test]
-    fn authored_gate_still_enforces_single_select() {
-        assert!(authored("SELECT 1; DROP TABLE t").is_err());
-        assert!(authored("INSERT INTO t VALUES (1)").is_err());
+    fn custom_gate_still_enforces_single_select() {
+        assert!(custom("SELECT 1; DROP TABLE t").is_err());
+        assert!(custom("INSERT INTO t VALUES (1)").is_err());
     }
 
     #[test]
