@@ -198,6 +198,9 @@ spec:
               parameters:
                 - name: dbt_select
                   value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+                # The staging step built the identity_inputs union already.
+                - name: dbt_exclude
+                  value: "identity_inputs"
                 - name: dbt_full_refresh
                   value: {{ `"{{inputs.parameters.dbt_full_refresh}}"` }}
                 - name: toolbox_image
@@ -227,6 +230,10 @@ spec:
               parameters:
                 - name: dbt_select
                   value: {{ `"tag:{{inputs.parameters.data_source}}+"` }}
+                # transform-staging already built these; a `+` walk would
+                # rebuild them a second time in the same pipeline.
+                - name: dbt_exclude
+                  value: {{ `"tag:{{inputs.parameters.data_source}} identity_inputs"` }}
                 - name: dbt_full_refresh
                   value: {{ `"{{inputs.parameters.dbt_full_refresh}}"` }}
                 - name: toolbox_image

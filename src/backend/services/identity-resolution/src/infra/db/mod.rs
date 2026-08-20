@@ -110,27 +110,34 @@ pub struct SeedLockGuard {
 }
 
 impl SeedLockGuard {
-    /// Try to take the per-tenant lock without waiting (`GET_LOCK` timeout 0
-    /// — a concurrent run fails fast instead of queueing a stale re-run
-    /// behind the active one). Opens its own single-connection session (see
-    /// [`connect_single`]; a pooled connection could be swapped mid-run,
-    /// silently dropping the session-scoped lock). Returns `None` when
-    /// another run holds the lock.
+    /// Take the per-tenant lock, waiting up to `wait_secs` for the holder to
+    /// finish (`GET_LOCK` waits server-side). A seed that lost this lock has
+    /// NO covered-by-the-holder guarantee — the holder read `identity_inputs`
+    /// at its own start, possibly before this caller's rows landed — so a
+    /// waiter must run its own seed rather than treat busy as done. Opens its
+    /// own single-connection session (see [`connect_single`]; a pooled
+    /// connection could be swapped mid-run, silently dropping the
+    /// session-scoped lock). Returns `None` when the lock is still held
+    /// after the wait.
     ///
     /// # Errors
     ///
     /// Returns an error if the connection or the query fails.
-    pub async fn try_acquire(
+    pub async fn acquire(
         database_url: &str,
         tenant_id: uuid::Uuid,
+        wait_secs: u32,
     ) -> anyhow::Result<Option<Self>> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let conn = connect_single(database_url).await?;
         let acquired: Option<i8> = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::MySql,
-                "SELECT GET_LOCK(?, 0)",
-                [format!("{SEED_LOCK_PREFIX}{tenant_id}").into()],
+                "SELECT GET_LOCK(?, ?)",
+                [
+                    format!("{SEED_LOCK_PREFIX}{tenant_id}").into(),
+                    wait_secs.into(),
+                ],
             ))
             .await?
             .map(|r| r.try_get_by_index::<Option<i8>>(0))

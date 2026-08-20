@@ -55,6 +55,22 @@ pub trait IdentityPersonsWriter: Send + Sync {
     /// Load `rows` (stamped with `synced_at`) into a staging table and swap it
     /// in atomically. Must leave the previous snapshot untouched on any failure.
     async fn replace(&self, rows: &[PersonsLogRow], synced_at: DateTime) -> anyhow::Result<()>;
+
+    /// The highest log `id` the LIVE snapshot carries (`None` for an empty or
+    /// absent table) — the other half of the change probe: equal to the log's
+    /// [`PersonsLogReader::latest_id`] means there is nothing to publish.
+    async fn published_max_id(&self) -> anyhow::Result<Option<u64>>;
+}
+
+/// What one publish attempt did. `AlreadyCurrent` is the change probe firing:
+/// the snapshot already carries the log's highest id, so no copy ran — what
+/// makes a 15-minute backstop and a queue of post-correction publishes cost
+/// two point queries instead of a full republish each.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum SyncOutcome {
+    Published(SyncSummary),
+    AlreadyCurrent { max_id: Option<u64> },
 }
 
 /// What a completed sync reports (stored as the operation's `summary_json`).
@@ -141,15 +157,16 @@ pub async fn run_sync(
 /// definition, so chasing it here only holds the lock longer.
 pub const MAX_QUIESCENCE_PASSES: u32 = 2;
 
-/// Copy the log and repeat while rows landed during the copy, so a publish
-/// only returns with a snapshot at least as fresh as its own trigger.
-///
-/// INVARIANT: this loop is what lets a concurrent publisher treat a busy lock
-/// as "covered" — the holder re-probes after every swap, so rows committed
-/// before any probe are in the snapshot it leaves behind.
+/// Copy the log and repeat while rows landed during the copy. Best-effort
+/// with a documented bound, not an absolute guarantee: the pass cap can leave
+/// rows for the next publish, and a waiter that timed out on the lock may be
+/// ahead of the holder's last probe — in both cases staleness is bounded by
+/// the next publish (a correction, a pipeline seed, or the backstop tick),
+/// never unbounded.
 ///
 /// `now` is called once per pass: each snapshot carries its own `_synced_at`,
-/// and the writer's watermark guard only accepts a forward-moving stamp.
+/// and the writer's watermark guard rejects a regressing stamp (equal stamps
+/// are accepted — see `identity_persons.rs`).
 ///
 /// # Errors
 ///
@@ -159,12 +176,23 @@ pub async fn run_sync_until_quiescent(
     writer: &dyn IdentityPersonsWriter,
     mut now: impl FnMut() -> DateTime + Send,
     force: bool,
-) -> Result<SyncSummary, SyncError> {
+) -> Result<SyncOutcome, SyncError> {
+    // Change probe: nothing landed since the live snapshot → nothing to copy.
+    // `force` skips the probe — it exists to republish deliberately. An empty
+    // log (`latest = None`) falls through to the guard, which owns that case.
+    if !force {
+        let latest = reader.latest_id().await.map_err(SyncError::Failed)?;
+        if latest.is_some()
+            && latest == writer.published_max_id().await.map_err(SyncError::Failed)?
+        {
+            return Ok(SyncOutcome::AlreadyCurrent { max_id: latest });
+        }
+    }
     let mut summary = run_sync(reader, writer, now(), force).await?;
     for _ in 0..MAX_QUIESCENCE_PASSES {
         let latest = reader.latest_id().await.map_err(SyncError::Failed)?;
         if latest <= summary.max_id {
-            return Ok(summary);
+            return Ok(SyncOutcome::Published(summary));
         }
         summary = run_sync(reader, writer, now(), force).await?;
     }
@@ -175,7 +203,7 @@ pub async fn run_sync_until_quiescent(
              publish carries the remainder"
         );
     }
-    Ok(summary)
+    Ok(SyncOutcome::Published(summary))
 }
 
 /// ISO-8601 with a `T` separator (same rationale as the seed API's `fmt_ts`).
@@ -226,8 +254,13 @@ mod tests {
     #[derive(Default)]
     struct FakeWriter {
         replaces: Mutex<Vec<(usize, DateTime)>>,
+        published: Mutex<Option<u64>>,
     }
     impl FakeWriter {
+        async fn with_published(self, max_id: u64) -> Self {
+            *self.published.lock().await = Some(max_id);
+            self
+        }
         async fn replace_count(&self) -> usize {
             self.replaces.lock().await.len()
         }
@@ -248,6 +281,9 @@ mod tests {
         async fn replace(&self, rows: &[PersonsLogRow], synced_at: DateTime) -> anyhow::Result<()> {
             self.replaces.lock().await.push((rows.len(), synced_at));
             Ok(())
+        }
+        async fn published_max_id(&self) -> anyhow::Result<Option<u64>> {
+            Ok(*self.published.lock().await)
         }
     }
 
@@ -275,7 +311,10 @@ mod tests {
         }
         async fn latest_id(&self) -> anyhow::Result<Option<u64>> {
             // What the NEXT read would see — the signal that rows landed
-            // after the pass that just published.
+            // after the pass that just published. Diverges from the real
+            // reader, which observes committed-now: this fake can never show
+            // probe and read at the same instant, so the same-instant case is
+            // untestable here and covered by the `<=` comparison alone.
             let versions = self.versions.lock().await;
             Ok(versions[0].iter().map(|r| r.id).max())
         }
@@ -308,8 +347,82 @@ mod tests {
             SyncError::Failed(e) => e,
         })?;
 
+        let SyncOutcome::Published(summary) = summary else {
+            anyhow::bail!("a stale snapshot must be republished");
+        };
         assert_eq!(summary.max_id, Some(7));
         assert_eq!(writer.replace_count().await, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_current_snapshot_skips_the_copy_entirely() -> anyhow::Result<()> {
+        let reader = GrowingReader::new(vec![vec![row(7, "2026-07-01 10:00:00")?]]);
+        let writer = FakeWriter::default().with_published(7).await;
+
+        let outcome = run_sync_until_quiescent(
+            &reader,
+            &writer,
+            ticking_clock("2026-07-29 12:00:00")?,
+            false,
+        )
+        .await
+        .map_err(|e| match e {
+            SyncError::EmptyLog(msg) => anyhow::anyhow!(msg),
+            SyncError::Failed(e) => e,
+        })?;
+
+        assert_eq!(outcome, SyncOutcome::AlreadyCurrent { max_id: Some(7) });
+        assert_eq!(writer.replace_count().await, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_behind_the_log_is_republished() -> anyhow::Result<()> {
+        let reader = GrowingReader::new(vec![vec![
+            row(7, "2026-07-01 10:00:00")?,
+            row(9, "2026-07-02 08:00:00")?,
+        ]]);
+        let writer = FakeWriter::default().with_published(7).await;
+
+        run_sync_until_quiescent(
+            &reader,
+            &writer,
+            ticking_clock("2026-07-29 12:00:00")?,
+            false,
+        )
+        .await
+        .map_err(|e| match e {
+            SyncError::EmptyLog(msg) => anyhow::anyhow!(msg),
+            SyncError::Failed(e) => e,
+        })?;
+
+        assert_eq!(writer.replace_count().await, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn force_republishes_a_current_snapshot() -> anyhow::Result<()> {
+        let reader = GrowingReader::new(vec![vec![row(7, "2026-07-01 10:00:00")?]]);
+        let writer = FakeWriter::default().with_published(7).await;
+
+        run_sync_until_quiescent(
+            &reader,
+            &writer,
+            ticking_clock("2026-07-29 12:00:00")?,
+            true,
+        )
+        .await
+        .map_err(|e| match e {
+            SyncError::EmptyLog(msg) => anyhow::anyhow!(msg),
+            SyncError::Failed(e) => e,
+        })?;
+
+        assert_eq!(
+            writer.replace_count().await,
+            1,
+            "--force republishes deliberately"
+        );
         Ok(())
     }
 
@@ -335,6 +448,9 @@ mod tests {
             SyncError::Failed(e) => e,
         })?;
 
+        let SyncOutcome::Published(summary) = summary else {
+            anyhow::bail!("late rows must be republished");
+        };
         assert_eq!(
             summary.max_id,
             Some(9),
@@ -502,6 +618,9 @@ mod tests {
         impl IdentityPersonsWriter for FailingWriter {
             async fn replace(&self, _: &[PersonsLogRow], _: DateTime) -> anyhow::Result<()> {
                 anyhow::bail!("clickhouse is down")
+            }
+            async fn published_max_id(&self) -> anyhow::Result<Option<u64>> {
+                Ok(None)
             }
         }
         let reader = FakeReader(vec![row(1, "2026-07-01 10:00:00")?]);

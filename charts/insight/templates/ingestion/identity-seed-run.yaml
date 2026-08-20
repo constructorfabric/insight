@@ -1,10 +1,12 @@
 {{- if .Values.ingestion.templates.enabled }}
 # One persons-seed as a pipeline step: resolve the identity claims a connector
 # sync just landed, and publish them (the `seed` subcommand publishes as its
-# own final step). Runs in every connector pipeline — it no-ops when nothing
-# changed — so `--busy-ok`/`--guard-ok` keep a raced lock or an empty
-# `identity_inputs` from failing a connector's build (the backstop CronJob
-# runs with the same flags).
+# own final step). Runs in every connector pipeline. `--guard-ok` keeps an
+# empty `identity_inputs` from failing a build; deliberately NO `--busy-ok`:
+# a busy seed lock is a holder that read `identity_inputs` before this
+# connector's rows landed, so giving up would let gold build over identities
+# this sync just ingested. The seed waits for the lock in-binary; a wait that
+# still expires retries below, then fails the pipeline loudly.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
@@ -29,7 +31,7 @@ spec:
         image: {{ `"{{inputs.parameters.identity_image}}"` }}
         imagePullPolicy: IfNotPresent
         command: ["/app/identity-resolution"]
-        args: ["-c", "/app/config/insight.yaml", "seed", "--busy-ok", "--guard-ok"]
+        args: ["-c", "/app/config/insight.yaml", "seed", "--guard-ok"]
         volumeMounts:
           - name: identity-resolution-config
             mountPath: /app/config/insight.yaml

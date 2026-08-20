@@ -34,7 +34,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::config::GearConfig;
-use crate::domain::sync_service::{SyncError, SyncSummary, run_sync_until_quiescent};
+use crate::domain::sync_service::{SyncError, SyncOutcome, run_sync_until_quiescent};
 use crate::infra::db::{self, ops_repo, persons_log_repo::MariaDbPersonsLogReader, seed_repo};
 use crate::infra::identity_persons::ClickHouseIdentityPersonsWriter;
 use crate::seed_runner::{SYSTEM_AUTHOR, resolve_tenant};
@@ -85,7 +85,7 @@ impl From<anyhow::Error> for SyncRunError {
 /// # Errors
 ///
 /// [`SyncRunError`] — lock busy, guard refusal, or a failed run.
-pub async fn run(config: &GearConfig, force: bool) -> Result<SyncSummary, SyncRunError> {
+pub async fn run(config: &GearConfig, force: bool) -> Result<SyncOutcome, SyncRunError> {
     let db = db::connect(&config.database_url).await?;
 
     // The sync itself is tenant-agnostic (whole-log copy), but its journal
@@ -122,7 +122,7 @@ async fn run_locked(
     config: &GearConfig,
     tenant: Uuid,
     force: bool,
-) -> Result<SyncSummary, SyncRunError> {
+) -> Result<SyncOutcome, SyncRunError> {
     // Reclaim rows a killed run left behind. Log-only failure: a broken
     // sweep must not block the sync itself.
     let cutoff = chrono::Utc::now().naive_utc() - chrono::Duration::hours(ZOMBIE_CUTOFF_HOURS);
@@ -182,7 +182,7 @@ async fn guarded_sync(
     db: &sea_orm::DatabaseConnection,
     config: &GearConfig,
     force: bool,
-) -> Result<SyncSummary, SyncRunError> {
+) -> Result<SyncOutcome, SyncRunError> {
     let reader = MariaDbPersonsLogReader::new(db);
     let writer = ClickHouseIdentityPersonsWriter::connect(
         &config.clickhouse_url,

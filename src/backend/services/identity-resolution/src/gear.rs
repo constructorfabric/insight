@@ -116,12 +116,12 @@ pub async fn run_seed(
 /// seed whose decisions never reached the resolver leaves every later build
 /// on a stale snapshot.
 fn publish_after_seed(
-    result: Result<crate::domain::sync_service::SyncSummary, crate::sync_runner::SyncRunError>,
+    result: Result<crate::domain::sync_service::SyncOutcome, crate::sync_runner::SyncRunError>,
 ) -> anyhow::Result<()> {
     use crate::sync_runner::SyncRunError;
     match result {
-        Ok(summary) => {
-            tracing::info!(?summary, "persons-sync published the seeded log");
+        Ok(outcome) => {
+            tracing::info!(?outcome, "persons-sync published the seeded log");
             Ok(())
         }
         Err(SyncRunError::LockBusy) => {
@@ -180,21 +180,27 @@ impl RestApiCapability for IdentityResolutionGear {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::sync_service::SyncSummary;
+    use crate::domain::sync_service::{SyncOutcome, SyncSummary};
     use crate::sync_runner::SyncRunError;
 
-    fn summary() -> SyncSummary {
-        SyncSummary {
+    fn published() -> SyncOutcome {
+        SyncOutcome::Published(SyncSummary {
             rows: 1,
             max_id: Some(1),
             max_created_at: Some("2026-01-01T00:00:00".to_owned()),
             synced_at: "2026-01-01T00:00:01".to_owned(),
-        }
+        })
     }
 
     #[test]
     fn a_published_seed_is_a_success() {
-        assert!(publish_after_seed(Ok(summary())).is_ok());
+        assert!(publish_after_seed(Ok(published())).is_ok());
+    }
+
+    #[test]
+    fn an_already_current_snapshot_is_a_success() {
+        let outcome = SyncOutcome::AlreadyCurrent { max_id: Some(1) };
+        assert!(publish_after_seed(Ok(outcome)).is_ok());
     }
 
     #[test]

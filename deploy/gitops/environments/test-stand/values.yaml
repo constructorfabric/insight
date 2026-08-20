@@ -700,9 +700,8 @@ identityResolution:
   seed:
     enabled: true
     schedule: "*/15 * * * *" # chart default; the CI seed forces a run, not the cron
-    # Trimmed from the chart's 100m/128Mi request: these are transient Jobs
-    # and two of them fire within fifteen minutes of each other. Limits stay
-    # at the chart's ceiling so a real run can burst.
+    # Trimmed from the chart's 100m/128Mi request: these are transient Jobs.
+    # Limits stay at the chart's ceiling so a real run can burst.
     resources:
       requests: {cpu: 50m, memory: 128Mi}
       limits: {cpu: 500m, memory: 512Mi}

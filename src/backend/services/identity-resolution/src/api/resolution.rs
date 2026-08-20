@@ -417,7 +417,7 @@ async fn apply_correction(
 async fn publish_correction(config: &crate::config::GearConfig) {
     use crate::sync_runner::{self, SyncRunError};
     match sync_runner::run(config, false).await {
-        Ok(summary) => tracing::info!(?summary, "persons-sync published the corrected log"),
+        Ok(outcome) => tracing::info!(?outcome, "persons-sync published the corrected log"),
         Err(SyncRunError::LockBusy) => tracing::warn!(
             "publish lock stayed busy past the wait; the correction reaches the resolver with \
              the next publish"
