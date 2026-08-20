@@ -8,13 +8,6 @@ import {
 
 import { metaFor } from "./metric-results-factory";
 
-/**
- * Synthesizes the metric catalog from the screens' own collection config, so a
- * key the UI asks for is never one the catalog withholds — the backend rejects
- * a whole `/metric-results` call over a single unavailable key, which blanks
- * the screen rather than the tile.
- */
-
 const FAMILY: Record<string, { source: string; dimensions: string[] }> = {
   tasks: { source: "the task tracker", dimensions: ["type", "project"] },
   git: { source: "the git provider", dimensions: ["repository", "language"] },
@@ -27,7 +20,6 @@ function familyOf(metricKey: string): string {
   return metricKey.split(".")[0] ?? "";
 }
 
-/** Dimensions the screens actually request for this key, in first-seen order. */
 function dimensionsFor(metricKey: string): string[] {
   const seen = new Set<string>();
   for (const group of GROUPS) {
@@ -59,6 +51,8 @@ function keysFrom(group: MetricGroup): string[] {
   ];
 }
 
+// A single unavailable key fails the whole /metric-results call, so these come
+// from the screens' own config and cannot fall behind it.
 function catalogKeys(): string[] {
   return [
     ...new Set([

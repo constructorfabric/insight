@@ -374,8 +374,7 @@ describe("MergeCaseDialog", () => {
   // The panel is a grid, and a grid item will not shrink below its own
   // content. An address and a person id are exactly the values that do not
   // wrap, so without this the body pushes itself out through the side —
-  // invisible in jsdom, in a review, and to every other test here. The track
-  // itself is minmax(0,1fr) in the ui-kit's own stylesheet.
+  // invisible in jsdom, in a review, and to every other test here.
   it("lays the panel out so a value too wide for it truncates instead of escaping", () => {
     render(
       <MergeCaseDialog survivor={BOB} absorbed={[CAROL]} onClose={vi.fn()} />,

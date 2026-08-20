@@ -103,8 +103,8 @@ function Theme({
   const [all, setAll] = useState(false);
   const shown = all ? flags : flags.slice(0, PEOPLE_PER_THEME);
   return (
-    // Clips rather than rounding the header: the inner radius is the outer one
-    // minus the border, and only the browser tracks that as either changes.
+    // Clipping keeps the header fill inside the border's inner radius, which is
+    // the outer radius minus the border width.
     <div className="overflow-hidden rounded-lg border bg-card">
       <button
         type="button"

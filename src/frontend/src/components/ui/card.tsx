@@ -25,15 +25,12 @@ type CardProps = KitCardProps & {
   render?: useRender.ComponentProps<"div">["render"];
 };
 
-// The kit's Card is a plain div, so cards that render as a button need this
-// path. --card-spacing is redeclared because the kit scopes its own to the
-// class this element does not carry.
+// The kit scopes card spacing and part padding to its own class, which this
+// element does not carry.
 const RENDERED = cn(
   "group/card flex flex-col overflow-hidden rounded-xl bg-card text-sm text-card-foreground",
   "ring-1 ring-foreground/10 gap-(--card-spacing) py-(--card-spacing)",
   "[--card-spacing:var(--space-6)] data-[size=sm]:[--card-spacing:var(--space-4)]",
-  // The kit scopes part padding to a `.card .part` descendant pair, which this
-  // element cannot match.
   "[&_[data-slot=card-header]]:px-(--card-spacing)",
   "[&_[data-slot=card-content]]:px-(--card-spacing)",
   "[&_[data-slot=card-footer]]:px-(--card-spacing)",

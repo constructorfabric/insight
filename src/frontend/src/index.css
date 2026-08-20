@@ -111,9 +111,8 @@
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-ring: var(--ring);
-  /* The kit's sidebar foreground is its muted label colour. This sidebar uses
-     the token as its base text colour and derives muted steps from it by
-     opacity, so taking the kit's value put every label at 3.9:1. */
+  /* The kit's sidebar-foreground is its muted label colour; this sidebar uses
+     the token as its base text colour and derives muted steps by opacity. */
   --sidebar-foreground: var(--foreground);
 }
 
@@ -181,9 +180,8 @@
 /* The kit's CSS sits in this layer too, so these outrank it on specificity
    rather than order. Utilities are a later layer and still win. */
 @layer components {
-  /* The kit wraps children in a block-level span, and Tailwind's preflight
-     makes every svg display:block — so an icon passed as a child claims its
-     own line and the label drops underneath it. */
+  /* The kit wraps children in a block-level span and preflight makes every svg
+     display:block, so an icon child would claim a line of its own. */
   html [data-slot="button"] > span {
     display: inline-flex;
     align-items: center;

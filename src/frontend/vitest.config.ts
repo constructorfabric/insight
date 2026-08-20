@@ -30,9 +30,8 @@ export default defineConfig({
     },
   },
   test: {
-    // The kit's JS chunks import their own .css. Left external, node's ESM
-    // loader receives those imports directly and rejects the extension before
-    // `css: false` can neutralise them.
+    // The kit's JS chunks import their own .css, which node's ESM loader
+    // rejects by extension before `css: false` can neutralise it.
     server: { deps: { inline: ["@gears-frontx/ui-kit"] } },
     // A timezone with no UTC-coinciding offset, ever. CI runners live in UTC,
     // where "parse a zone-less timestamp as UTC" and "parse it as local" are

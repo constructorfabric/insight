@@ -40,8 +40,8 @@ function Button({ variant = "default", size = "default", ...props }: ButtonProps
   );
 }
 
-// react-day-picker takes class strings, not components, for its nav slots, so
-// Calendar cannot use <Button> there and the kit exports no class factory.
+// Calendar styles react-day-picker's nav slots with class strings; the kit
+// exports no class factory.
 const buttonVariants = cva("", {
   variants: {
     variant: {
