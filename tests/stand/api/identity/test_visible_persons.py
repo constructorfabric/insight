@@ -124,7 +124,7 @@ def test_more_ids_than_the_cap_is_a_400(api: ApiClient) -> None:
 
 @pytest.mark.requires_seed("dev_lead", "development_ic", "sales_ic", "other_tenant_lead")
 @pytest.mark.security
-def test_the_roster_enumerates_exactly_what_the_filter_would_confirm(
+def test_the_roster_obeys_the_boundary_the_filter_obeys(
     lead_session: PersonaSession, stand_manifest: Manifest
 ) -> None:
     """The enumeration obeys the boundary the filter obeys.
@@ -132,6 +132,11 @@ def test_the_roster_enumerates_exactly_what_the_filter_would_confirm(
     Held to the same seeded pair as the POST case above: an enumeration that
     widened the set, or skipped the tenant intersection, would disclose who
     exists rather than merely who reports to whom.
+
+    A boundary, not an equality: the roster lists only persons a connector
+    claims as an account holder, so it is a SUBSET of what the filter confirms.
+    Every seeded persona carries the login binding that makes them one, which is
+    why naming them here still holds.
     """
     report = stand_manifest.fixture("development_ic").uuid
     outsider = stand_manifest.fixture("sales_ic").uuid
