@@ -410,9 +410,6 @@ async fn apply_correction(
     })
 }
 
-/// A busy lock is usually a publisher that started BEFORE this correction
-/// landed, so its snapshot need not carry the new rows — retry rather than
-/// leave the correction unpublished until the next seed.
 const PUBLISH_RETRIES: u32 = 3;
 const PUBLISH_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_secs(2);
 
@@ -420,35 +417,22 @@ const PUBLISH_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_secs(
 /// Never fails the verb: the next seed's own publish is the catch-up path.
 async fn publish_correction(config: &crate::config::GearConfig) {
     use crate::sync_runner::{self, SyncRunError};
-    for attempt in 0..=PUBLISH_RETRIES {
-        match sync_runner::run(config, false).await {
-            Ok(summary) => {
-                tracing::info!(?summary, "persons-sync published the corrected log");
-                return;
-            }
-            Err(SyncRunError::LockBusy) if attempt < PUBLISH_RETRIES => {
-                tokio::time::sleep(PUBLISH_RETRY_PAUSE).await;
-            }
-            Err(SyncRunError::LockBusy) => {
-                tracing::warn!(
-                    "publish lock stayed busy; the correction reaches the resolver \
-                     with the next publish"
-                );
-                return;
-            }
-            Err(SyncRunError::Guard(msg)) => {
-                tracing::warn!(%msg, "persons-sync refused the post-correction publish");
-                return;
-            }
-            Err(SyncRunError::Failed(e)) => {
-                tracing::warn!(
-                    error = %format!("{e:#}"),
-                    "publishing the correction failed; the resolver snapshot is \
-                     stale until the next publish"
-                );
-                return;
-            }
+    let outcome = sync_runner::retry_while_lock_busy(PUBLISH_RETRIES, PUBLISH_RETRY_PAUSE, || {
+        sync_runner::run(config, false)
+    })
+    .await;
+    match outcome {
+        Ok(summary) => tracing::info!(?summary, "persons-sync published the corrected log"),
+        Err(SyncRunError::LockBusy) => tracing::warn!(
+            "publish lock stayed busy; the correction reaches the resolver with the next publish"
+        ),
+        Err(SyncRunError::Guard(msg)) => {
+            tracing::warn!(%msg, "persons-sync refused the post-correction publish");
         }
+        Err(SyncRunError::Failed(e)) => tracing::warn!(
+            error = %format!("{e:#}"),
+            "publishing the correction failed; the resolver snapshot is stale until the next publish"
+        ),
     }
 }
 

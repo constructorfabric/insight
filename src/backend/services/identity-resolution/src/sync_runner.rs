@@ -214,3 +214,113 @@ mod tests {
         assert!(matches!(err, Err(SyncRunError::Failed(_))));
     }
 }
+
+/// Run `attempt` again while it loses the publish lock, up to `retries` extra
+/// tries with `pause` between them. A busy lock is usually a publisher that
+/// started BEFORE the caller's rows landed, so its snapshot need not carry
+/// them; every other outcome is final and returned as-is.
+pub async fn retry_while_lock_busy<F, Fut>(
+    retries: u32,
+    pause: std::time::Duration,
+    mut attempt: F,
+) -> Result<SyncSummary, SyncRunError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<SyncSummary, SyncRunError>>,
+{
+    for _ in 0..retries {
+        match attempt().await {
+            Err(SyncRunError::LockBusy) => tokio::time::sleep(pause).await,
+            outcome => return outcome,
+        }
+    }
+    attempt().await
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use super::*;
+
+    const NO_PAUSE: std::time::Duration = std::time::Duration::ZERO;
+
+    fn summary() -> SyncSummary {
+        SyncSummary {
+            rows: 1,
+            max_id: Some(1),
+            max_created_at: Some("2026-01-01T00:00:00".to_owned()),
+            synced_at: "2026-01-01T00:00:01".to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_first_try_success_never_retries() {
+        let calls = AtomicU32::new(0);
+        let out = retry_while_lock_busy(3, NO_PAUSE, || {
+            calls.fetch_add(1, Ordering::Relaxed);
+            async { Ok(summary()) }
+        })
+        .await;
+        assert!(out.is_ok());
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn a_busy_lock_is_retried_until_it_frees() {
+        let calls = AtomicU32::new(0);
+        let out = retry_while_lock_busy(3, NO_PAUSE, || {
+            let n = calls.fetch_add(1, Ordering::Relaxed);
+            async move {
+                if n < 2 {
+                    Err(SyncRunError::LockBusy)
+                } else {
+                    Ok(summary())
+                }
+            }
+        })
+        .await;
+        assert!(out.is_ok());
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+    }
+
+    #[tokio::test]
+    async fn a_lock_that_never_frees_exhausts_the_budget() {
+        let calls = AtomicU32::new(0);
+        let out = retry_while_lock_busy(3, NO_PAUSE, || {
+            calls.fetch_add(1, Ordering::Relaxed);
+            async { Err(SyncRunError::LockBusy) }
+        })
+        .await;
+        assert!(matches!(out, Err(SyncRunError::LockBusy)));
+        assert_eq!(calls.load(Ordering::Relaxed), 4, "retries are EXTRA tries");
+    }
+
+    #[tokio::test]
+    async fn a_guard_refusal_is_final_on_first_contact() {
+        let calls = AtomicU32::new(0);
+        let out = retry_while_lock_busy(3, NO_PAUSE, || {
+            calls.fetch_add(1, Ordering::Relaxed);
+            async { Err(SyncRunError::Guard("persons log is empty".to_owned())) }
+        })
+        .await;
+        assert!(matches!(out, Err(SyncRunError::Guard(_))));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failure_is_final_on_first_contact() {
+        let calls = AtomicU32::new(0);
+        let out = retry_while_lock_busy(3, NO_PAUSE, || {
+            calls.fetch_add(1, Ordering::Relaxed);
+            async {
+                Err(SyncRunError::Failed(anyhow::anyhow!(
+                    "clickhouse unreachable"
+                )))
+            }
+        })
+        .await;
+        assert!(matches!(out, Err(SyncRunError::Failed(_))));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+}

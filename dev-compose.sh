@@ -1105,10 +1105,11 @@ Populate the demo dataset. Stack must be up first.
   all        Both (default if no arg).
 
 After `silver` or `all` runs, three follow-up steps run automatically:
-the identity projection is refreshed (persons-seed + persons-sync in the
-identity-resolution container — the same pair the k8s CronJobs run), gold
-is rebuilt so observation rows resolve through the refreshed map, and
-analytics is restarted so its metric-catalog schema validator re-checks
+the identity projection is refreshed (persons-seed in the
+identity-resolution container, which publishes to ClickHouse as its own
+final step — the same run the k8s CronJob makes), gold is rebuilt so
+observation rows resolve through the refreshed map, and analytics is
+restarted so its metric-catalog schema validator re-checks
 the freshly-populated tables. Without the bounce, every metric stays
 cached at the boot-time `schema_status='error'`, the FE flags every
 bullet row schema_error=true, and section badges read "no peer data"
@@ -1131,9 +1132,9 @@ env_file_value() {
   printf '%s' "$value"
 }
 
-# The persons-seed/sync pair the k8s CronJobs run: gold resolves identities
-# only through the bindings and snapshot these two publish, and compose has
-# no cron to run them.
+# The persons-seed run the k8s CronJob makes (it publishes the snapshot as
+# its own final step): gold resolves identities only through what it
+# publishes, and compose has no cron to run it.
 seed_identity_projection() {
   local env_file="$1"; shift
   local compose_cmd=("$@")
@@ -1144,18 +1145,15 @@ seed_identity_projection() {
   tenant="$(env_file_value "$env_file" TENANT_DEFAULT_ID)"
   tenant="${tenant:-00000000-df51-5b42-9538-d2b56b7ee953}"
 
-  local subcommand
-  for subcommand in seed sync; do
-    echo "=== identity projection: persons-${subcommand} (as the k8s CronJob runs it) ==="
-    "${compose_cmd[@]}" exec -T \
-        -e "APP__gears__identity_resolution__config__tenant_default_id=${tenant}" \
-        identity-resolution /app/identity-resolution -c /app/config/insight.yaml "$subcommand" || {
-      local status=$?
-      echo "ERROR: persons-${subcommand} failed (exit ${status}; 2 = another run holds the lock," >&2
-      echo "       3 = input guard refused — see the container log above)." >&2
-      return "$status"
-    }
-  done
+  echo "=== identity projection: persons-seed (as the k8s CronJob runs it) ==="
+  "${compose_cmd[@]}" exec -T \
+      -e "APP__gears__identity_resolution__config__tenant_default_id=${tenant}" \
+      identity-resolution /app/identity-resolution -c /app/config/insight.yaml seed || {
+    local status=$?
+    echo "ERROR: persons-seed failed (exit ${status}; 2 = another run holds the lock," >&2
+    echo "       3 = input guard refused — see the container log above)." >&2
+    return "$status"
+  }
 }
 
 cmd_seed() {

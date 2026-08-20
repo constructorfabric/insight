@@ -178,10 +178,12 @@ spec:
 
           # ------ Both paths: resolve + publish identity before gold ------
           # INVARIANT: gold must not resolve against a snapshot older than the
-          # data it is building over. Exactly one staging task runs
-          # (complementary `when`), so the OR is "whichever this pipeline had".
+          # data it is building over. `.Succeeded` is load-bearing: a bare task
+          # name also satisfies on Skipped, and the staging task the `when`
+          # dispatch rejects skips at DAG start — the seed would launch beside
+          # the staging build instead of after it.
           - name: identity-seed
-            depends: transform-jira-staging || transform-staging
+            depends: transform-jira-staging.Succeeded || transform-staging.Succeeded
             templateRef:
               name: identity-seed-run
               template: run
