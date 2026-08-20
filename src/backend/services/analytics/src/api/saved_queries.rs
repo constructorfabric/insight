@@ -2,9 +2,11 @@
 //!
 //! CRUD is plain metadata over the `saved_queries` service-DB table, mirroring
 //! the metric CRUD in [`super::handlers`]. Every request is tenant-scoped from
-//! the session `SecurityContext`. The `sql` is validated by the authored-read
-//! gate on create, update, and run. Only `/run` reaches ClickHouse — it
-//! executes the stored SQL as `presentation_ro` and returns untyped JSON rows.
+//! the session `SecurityContext`. The `sql` is validated by the single-SELECT
+//! gate on create, update, and run, and SQL naming an admin-only database is
+//! served on those three only to a caller identity confirms is an admin. Only
+//! `/run` reaches ClickHouse — it executes the stored SQL as `presentation_ro`
+//! and returns untyped JSON rows.
 //!
 //! Phase-A scope: `/run` binds named parameters server-side — `{tenant}` always
 //! (from context), `{period}` when supplied (#1966). The injected tenant-row
@@ -14,16 +16,16 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Extension, Path};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, NotSet, QueryFilter, Set};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::AppState;
 use super::error::SavedQueryError;
-use crate::domain::query_gate::validate_authored_read;
+use super::{AppState, is_admin_caller};
+use crate::domain::query_gate::{admin_only_database, validate_single_select};
 use crate::domain::saved_query::{
     CreateSavedQueryRequest, RunResponse, RunSavedQueryRequest, SavedQuery, SavedQuerySummary,
     UpdateSavedQueryRequest,
@@ -61,9 +63,11 @@ pub async fn get_saved_query(
 pub async fn create_saved_query(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
+    headers: HeaderMap,
     Json(req): Json<CreateSavedQueryRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    validate_authored_read(&req.sql).map_err(invalid_sql)?;
+    validate_single_select(&req.sql).map_err(invalid_sql)?;
+    authorize_read(&state, &headers, &req.sql).await?;
 
     let id = Uuid::now_v7();
     let model = saved_queries::ActiveModel {
@@ -92,6 +96,7 @@ pub async fn update_saved_query(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(req): Json<UpdateSavedQueryRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let existing = find_saved_query(&state, ctx.subject_tenant_id(), id).await?;
@@ -105,7 +110,8 @@ pub async fn update_saved_query(
         model.description = Set(desc);
     }
     if let Some(sql) = req.sql {
-        validate_authored_read(&sql).map_err(|e| invalid_sql_for(id, e))?;
+        validate_single_select(&sql).map_err(|e| invalid_sql_for(id, e))?;
+        authorize_read(&state, &headers, &sql).await?;
         model.sql = Set(sql);
     }
     model.updated_at = Set(chrono::Utc::now());
@@ -142,13 +148,17 @@ pub async fn run_saved_query(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     body: Option<Json<RunSavedQueryRequest>>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let saved = find_saved_query(&state, ctx.subject_tenant_id(), id).await?;
 
     // Re-validate on run: a query stored before a rule existed must not run
     // under it.
-    validate_authored_read(&saved.sql).map_err(|e| invalid_sql_for(id, e))?;
+    validate_single_select(&saved.sql).map_err(|e| invalid_sql_for(id, e))?;
+    // INVARIANT: a saved query has no owner, so the role is checked on every run,
+    // not once when the query was stored.
+    authorize_read(&state, &headers, &saved.sql).await?;
 
     // Named parameters (#1966): `{tenant}` is always bound from context; the
     // optional `period` binds `{period}`. Both go through ClickHouse's
@@ -268,6 +278,26 @@ async fn find_saved_query(
                 .with_resource(id.to_string())
                 .create()
         })
+}
+
+/// SQL that reads an admin-only database is served only to a caller identity
+/// confirms is an admin.
+async fn authorize_read(
+    state: &AppState,
+    headers: &HeaderMap,
+    sql: &str,
+) -> Result<(), CanonicalError> {
+    let Some(database) = admin_only_database(sql) else {
+        return Ok(());
+    };
+
+    if is_admin_caller(state, headers).await? {
+        return Ok(());
+    }
+
+    Err(SavedQueryError::permission_denied()
+        .with_reason(format!("admin role required to read `{database}`"))
+        .create())
 }
 
 fn invalid_sql(reason: String) -> CanonicalError {

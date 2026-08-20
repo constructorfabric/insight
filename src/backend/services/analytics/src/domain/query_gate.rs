@@ -6,7 +6,10 @@
 //! keeps a `;` inside a string/comment/identifier from hiding a second
 //! statement. Defense in depth: the `presentation_ro` grants (#1963) are the
 //! real boundary — except where one account serves both an admin-gated route
-//! and this one, which no grant can separate and this gate refuses by name.
+//! and this one, which no grant can separate. Those databases are named here:
+//! [`admin_only_database`] tells a caller-scoped route to check the role, and
+//! [`validate_custom_observation_sql`] refuses them outright, having no reader
+//! to check.
 
 use sqlparser::ast::Statement;
 use sqlparser::dialect::ClickHouseDialect;
@@ -54,14 +57,14 @@ const DENIED_TABLE_FUNCTIONS: &[&str] = &[
     "dictionary",
 ];
 
-/// Databases the query path may not read. `product_usage` holds the records
-/// the admin-gated usage summary serves, which the service account can read
-/// for that route.
-const DENIED_DATABASES: &[&str] = &["product_usage"];
+/// Databases only an admin may read. `product_usage` holds the records the
+/// admin-gated usage summary serves, which the service account can read for
+/// that route.
+const ADMIN_ONLY_DATABASES: &[&str] = &["product_usage"];
 
 /// Reject anything that is not a single read statement (`SELECT`/`WITH`).
 /// Returns a short, user-facing reason on rejection.
-fn validate_single_select(sql: &str) -> Result<(), String> {
+pub fn validate_single_select(sql: &str) -> Result<(), String> {
     let statements = parse_read_statements(sql)?;
 
     match statements.as_slice() {
@@ -74,24 +77,9 @@ fn validate_single_select(sql: &str) -> Result<(), String> {
     }
 }
 
-/// Gate SQL a caller authored: a single read (as above) that names no database
-/// the query path may not read. A saved query and a custom observation source
-/// both run under the service's own ClickHouse account, so a database that
-/// account reads for an admin-gated route of its own is refused here.
-pub fn validate_authored_read(sql: &str) -> Result<(), String> {
-    validate_single_select(sql)?;
-
-    if let Some(name) = first_denied_database(sql) {
-        return Err(format!(
-            "database `{name}` is not readable on the query path"
-        ));
-    }
-
-    Ok(())
-}
-
-/// Gate a custom observation source's SQL: an authored read (as above) that
-/// calls no external/remote table function. The compiler wraps this SQL as
+/// Gate a custom observation source's SQL: a single read (as above) that names
+/// no admin-only database and calls no external/remote table function. The
+/// compiler wraps this SQL as
 /// `FROM (<sql>)` and executes it as `presentation_ro`; the outer tenant
 /// predicate filters the rows it *emits*, not the tables it *reads*, so denying
 /// the functions that escape the warehouse contract is what keeps a custom
@@ -99,7 +87,13 @@ pub fn validate_authored_read(sql: &str) -> Result<(), String> {
 /// the warehouse relations themselves is the authorship-trust + experimental
 /// gate, the same posture as the saved-query console.
 pub fn validate_custom_observation_sql(sql: &str) -> Result<(), String> {
-    validate_authored_read(sql)?;
+    validate_single_select(sql)?;
+
+    if let Some(name) = admin_only_database(sql) {
+        return Err(format!(
+            "database `{name}` is not readable by a custom observation source"
+        ));
+    }
 
     if let Some(name) = first_denied_table_function(sql) {
         return Err(format!(
@@ -170,15 +164,15 @@ fn ends_table_factor(token: &Token) -> bool {
     }
 }
 
-/// Return the first denied database `sql` names, if any. Refused wherever the
-/// name appears — a table function takes its database as a string argument.
-fn first_denied_database(sql: &str) -> Option<&'static str> {
+/// Return the first admin-only database `sql` names, if any. Matched wherever
+/// the name appears — a table function takes its database as a string argument.
+pub fn admin_only_database(sql: &str) -> Option<&'static str> {
     let lowered = sql.to_ascii_lowercase();
 
-    DENIED_DATABASES
+    ADMIN_ONLY_DATABASES
         .iter()
         .copied()
-        .find(|denied| lowered.contains(denied))
+        .find(|database| lowered.contains(database))
 }
 
 /// Return the first denied table-function name called in `sql`, if any. A call
@@ -210,12 +204,12 @@ fn first_denied_table_function(sql: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_authored_read as authored;
+    use super::admin_only_database as admin_only;
     use super::validate_custom_observation_sql as custom;
     use super::validate_single_select as check;
 
     #[test]
-    fn the_query_path_refuses_the_usage_event_store() {
+    fn a_read_of_the_usage_event_store_is_admin_only() {
         for sql in [
             "SELECT person_id, session_id, path, ts FROM product_usage.usage_events LIMIT 5",
             "SELECT * FROM Product_Usage.Usage_Events",
@@ -227,16 +221,16 @@ mod tests {
             "SELECT * FROM merge('product_usage', 'usage_events')",
             "SELECT * FROM remote('host:9000', 'product_usage.usage_events')",
         ] {
-            assert!(
-                authored(sql).is_err(),
-                "must refuse the usage store: {sql:?}"
+            assert_eq!(
+                admin_only(sql),
+                Some("product_usage"),
+                "should be admin-only: {sql:?}"
             );
-            assert!(custom(sql).is_err(), "must refuse the usage store: {sql:?}");
         }
     }
 
     #[test]
-    fn the_query_path_still_reads_the_warehouse_contract() {
+    fn a_read_of_the_warehouse_contract_needs_no_role() {
         for sql in [
             "SELECT 1",
             "SELECT * FROM silver.events",
@@ -247,8 +241,14 @@ mod tests {
             "SELECT * FROM events",
             "SELECT usage_events FROM silver.events",
         ] {
-            assert!(authored(sql).is_ok(), "should accept: {sql:?}");
+            assert_eq!(admin_only(sql), None, "should need no role: {sql:?}");
         }
+    }
+
+    #[test]
+    fn a_custom_observation_source_may_not_read_an_admin_only_database() {
+        // A metric definition has no reader whose role could be checked.
+        assert!(custom("SELECT ts FROM product_usage.usage_events").is_err());
     }
 
     #[test]

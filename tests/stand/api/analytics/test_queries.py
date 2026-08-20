@@ -24,12 +24,15 @@ The 401 half is in `test_gateway.py`, swept over every operation at once.
 from __future__ import annotations
 
 import pytest
-from insight_stand import ApiClient, Manifest, analytics_path
+from insight_stand import ApiClient, Manifest, PersonaSession, analytics_path
 
 from ..schemas import RunResponse, SavedQuery, SavedQueryListResponse
 from ..scratch import SCRATCH_QUERY_REF, UNKNOWN_ID, create_saved_query, scratch_name
 
 QUERIES = analytics_path("/v1/queries")
+
+#: A read of the admin-only usage records.
+USAGE_RECORDS_SQL = "SELECT person_id, path, ts FROM product_usage.usage_events LIMIT 1"
 
 
 def _query_path(query_id: object, suffix: str = "") -> str:
@@ -186,22 +189,52 @@ def test_an_update_revalidates_the_sql(api: ApiClient, scratch_saved_query: Save
     ids=["qualified-read", "table-function"],
 )
 @pytest.mark.security
-def test_the_usage_records_are_not_readable_through_a_saved_query(
+def test_a_read_of_the_usage_records_is_refused_without_the_admin_grant(
     api: ApiClient, statement: str
 ) -> None:
     """`GET /v1/usage/summary` is admin-only, and so are the records behind it.
 
     A saved query runs with the service's own ClickHouse account, and that
     account can read the usage records because the summary route serves them.
-    Nothing about the route the caller took makes that read admin-checked, so
-    the refusal has to come from the gate — otherwise a caller the summary
-    answers 403 reads the same rows, other people's among them, from here.
+    A caller the summary answers 403 would otherwise read the same rows, other
+    people's among them, by storing the read here instead.
+
+    The second case takes the database from a string argument rather than a
+    qualified name.
     """
     response = api.post(QUERIES, json_body={"name": scratch_name("usage-store"), "sql": statement})
-    assert response.status_code == 400, (
-        f"{statement!r} was accepted as a saved query ({response.status_code}): "
-        f"{response.text[:300]}"
+    assert response.status_code == 403, (
+        f"{statement!r} was accepted from a caller holding no admin grant "
+        f"({response.status_code}): {response.text[:300]}"
     )
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.security
+def test_a_usage_query_an_admin_stored_still_refuses_to_run_for_anybody_else(
+    api: ApiClient, admin_operator_session: PersonaSession
+) -> None:
+    """The admin may author the read; the role is checked again on every run.
+
+    A saved query has no owner — the rows are tenant-scoped, so a query one
+    person stores is listable and runnable by everybody else in the tenant.
+    Checking the role only where the SQL is written would hand the records to
+    exactly the callers the summary refuses.
+    """
+    admin = admin_operator_session.client
+    created = create_saved_query(admin, "usage-store-admin", USAGE_RECORDS_SQL)
+
+    try:
+        ran = admin.post(_query_path(created.id, "/run"), json_body={})
+        assert ran.status_code == 200, f"the admin's own run: {ran.status_code} {ran.text[:300]}"
+
+        refused = api.post(_query_path(created.id, "/run"), json_body={})
+        assert refused.status_code == 403, (
+            f"a caller holding no admin grant ran the admin's usage query "
+            f"({refused.status_code}): {refused.text[:300]}"
+        )
+    finally:
+        admin.delete(_query_path(created.id))
 
 
 @pytest.mark.reliability

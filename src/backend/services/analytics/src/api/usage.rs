@@ -11,7 +11,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::error::UsageError;
-use super::{AppState, forwarded_authorization};
+use super::{AppState, is_admin_caller};
 
 /// DDL owned by `scripts/migrations/20260816000000_usage-events.sql`; the
 /// service holds INSERT and SELECT here, never CREATE.
@@ -481,23 +481,10 @@ fn read_error(error: clickhouse::error::Error) -> CanonicalError {
 }
 
 async fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<(), CanonicalError> {
-    if !state.identity.is_configured() {
-        tracing::error!("identity service is not configured; admin access cannot be verified");
-        return Err(CanonicalError::internal("failed to verify caller permissions").create());
-    }
-
-    let is_admin = state
-        .identity
-        .is_admin(forwarded_authorization(headers))
-        .await
-        .map_err(|error| {
-            tracing::error!(error = %error, "admin role check failed");
-            CanonicalError::internal("failed to verify caller permissions").create()
-        })?;
-
-    if is_admin {
+    if is_admin_caller(state, headers).await? {
         return Ok(());
     }
+
     Err(UsageError::permission_denied()
         .with_reason("admin role required for this operation")
         .create())
