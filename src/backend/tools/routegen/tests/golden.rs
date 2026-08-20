@@ -215,3 +215,14 @@ fn reports_all_violations_at_once() {
     assert!(e.contains("must start with '/api/'"), "{e}");
     assert!(e.contains("invalid upstream"), "{e}");
 }
+
+#[test]
+fn the_frontends_version_file_is_never_served_at_the_edge() {
+    let conf = generate(&fixture("full.routes.yaml"), &Settings::default())
+        .expect("generate should succeed");
+
+    assert!(
+        conf.contains("        location = /version.json {\n            return 404;\n        }"),
+        "the edge must refuse the frontend's build stamp; got:\n{conf}"
+    );
+}
