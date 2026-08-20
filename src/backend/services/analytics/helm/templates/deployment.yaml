@@ -65,6 +65,9 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
+          env:
+            - name: INSIGHT_BUILD_VERSION
+              value: "{{ .Values.image.tag | default .Chart.AppVersion }}"
           # Gateway-JWT verification (NGINX_BFF R1): the plugin's verification
           # config is nested/list-shaped and rendered into the ConfigMap from
           # `.Values.gateway.*` (issuer / discoveryUrl / audience / caCertPaths),

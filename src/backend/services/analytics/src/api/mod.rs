@@ -7,6 +7,7 @@ mod metric_results;
 mod metrics;
 mod saved_queries;
 pub(crate) mod usage;
+mod version;
 
 #[cfg(test)]
 mod http_live_tests;
@@ -94,7 +95,9 @@ pub fn register_routes(
 ) -> Router {
     let api = build_operations(Router::new(), openapi).layer(Extension(state));
 
-    host_router.merge(api)
+    host_router
+        .merge(version::router(std::env::var("INSIGHT_BUILD_VERSION").ok()))
+        .merge(api)
 }
 
 /// `OpenAPI` document metadata — the stable API-contract identity baked into
