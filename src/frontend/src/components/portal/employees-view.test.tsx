@@ -119,6 +119,14 @@ describe("EmployeesView on an organisation with no reporting lines", () => {
     ];
   });
 
+  it("is headed as a roster, not as employees", () => {
+    render(<EmployeesView />);
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Roster" }),
+    ).toBeInTheDocument();
+  });
+
   it("lists the roster rather than the tree", () => {
     render(<EmployeesView />);
 

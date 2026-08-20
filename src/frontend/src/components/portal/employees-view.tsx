@@ -143,7 +143,9 @@ export function EmployeesView() {
     <div className="flex flex-col gap-3 p-4 md:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight">Employees</h1>
+          <h1 className="text-lg font-semibold tracking-tight">
+            {isFlat ? "Roster" : "Employees"}
+          </h1>
           <p className="text-sm text-muted-foreground">
             {filtered.length}
             {filtered.length !== employees.length ? ` of ${employees.length}` : ""}{" "}

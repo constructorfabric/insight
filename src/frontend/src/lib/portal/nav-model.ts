@@ -286,6 +286,24 @@ export const PEOPLE_ITEMS: readonly PaneItem[] = [
   { id: "employees", label: "Employees", icon: Fingerprint },
 ];
 
+/**
+ * The same two views under names a flat organisation can use: there is no
+ * employees-versus-roster distinction to draw, and no job titles to cut a
+ * median by, so that entry is absent rather than empty.
+ *
+ * INVARIANT: the ids match {@link PEOPLE_ITEMS} — the pane routes on them, so a
+ * new People view has to be named for both shapes rather than one.
+ */
+const FLAT_PEOPLE_ITEMS: readonly PaneItem[] = [
+  { id: "roster", label: "Overview", icon: LayoutGrid },
+  { id: "employees", label: "Roster", icon: Users },
+];
+
+/** The People pane for this deployment's shape. */
+export function peopleItemsFor(isFlat: boolean): readonly PaneItem[] {
+  return isFlat ? FLAT_PEOPLE_ITEMS : PEOPLE_ITEMS;
+}
+
 /* ── Manage zone ─────────────────────────────────────────────────────── */
 
 /** The Manage pane for one viewer: admin-only surfaces drop for everyone else. */

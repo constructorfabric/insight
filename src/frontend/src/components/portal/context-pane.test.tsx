@@ -292,14 +292,30 @@ describe("ContextPane", () => {
 });
 
 describe("ContextPane on an organisation with no reporting lines", () => {
-  it("names the roster section for what it is, not for a chart", () => {
-    // "WorkChart" describes a structure a flat organisation does not have.
+  it("names the People views for an organisation with no reporting lines", () => {
     mocks.isFlat = true;
     mocks.zone = { activeZone: "people", activePerson: "boss@x" };
 
     pane();
 
-    expect(screen.getByText("Everyone")).toBeInTheDocument();
+    expect(screen.getByText("Overview")).toBeInTheDocument();
+    expect(screen.getByText("Roster")).toBeInTheDocument();
+    expect(screen.queryByText("Employees")).toBeNull();
+    expect(screen.queryByText("People (roster)")).toBeNull();
+    expect(screen.queryByText("Median by Role")).toBeNull();
+  });
+
+  it("does not call the roster a chart", () => {
+    // "WorkChart" describes a structure a flat organisation does not have, and
+    // the list needs no heading of its own inside the People zone.
+    mocks.isFlat = true;
+    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+
+    pane();
+
     expect(screen.queryByText("WorkChart")).toBeNull();
+    expect(
+      screen.getByLabelText("Find someone in the org"),
+    ).toBeInTheDocument();
   });
 });
