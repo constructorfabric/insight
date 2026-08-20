@@ -81,9 +81,7 @@ cases:
               - { view: period }
               - { view: peer }
               - { view: breakdown, dimensions: [type] }
-          # The source dimension rides on a different measure: one metric may
-          # carry only one Breakdown view, and the plumbing is the same.
-          - { metric_key: tasks.bugs_fixed, views: [{ view: period }, { view: breakdown, dimensions: [source] }] }
+          - { metric_key: tasks.bugs_fixed, views: [{ view: period }] }
           - { metric_key: tasks.closed_non_bug, views: [{ view: period }] }
           - { metric_key: tasks.dev_time, views: [{ view: period }] }
     expect:
@@ -104,10 +102,6 @@ cases:
       - metric: tasks.closed
         view: breakdown
         assert: "items.exists(v, v.entity_id == 'carol@example.com' && v.dimensions.exists(d, d.key == 'type' && d.value == 'Bug') && double(v.value) == 1.0)"
-      # The source dimension is what keeps two trackers apart in one figure.
-      - metric: tasks.bugs_fixed
-        view: breakdown
-        assert: "items.exists(v, v.entity_id == 'carol@example.com' && v.dimensions.exists(d, d.key == 'source' && d.value == 'github') && double(v.value) == 1.0)"
       - metric: tasks.bugs_fixed
         view: period
         find: { entity_id: carol@example.com }
@@ -121,3 +115,25 @@ cases:
       - metric: tasks.dev_time
         view: period
         assert: "size(items.filter(v, v.entity_id == 'carol@example.com' && v.value != null)) == 0"
+
+  # The source dimension is what keeps two trackers apart in one figure. It
+  # needs its own request: a metric may carry only one Breakdown view at a time.
+  - name: tasks.closed split by source
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [carol@example.com] }
+        period: { from: "2026-12-20", to: "2026-12-31" }
+        metrics:
+          - metric_key: tasks.closed
+            views:
+              - { view: breakdown, dimensions: [source] }
+    expect:
+      - assert: "status == 200"
+      - metric: tasks.closed
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'carol@example.com' && v.dimensions.exists(d, d.key == 'source' && d.value == 'github') && double(v.value) == 3.0)"
+      - metric: tasks.closed
+        view: breakdown
+        assert: "size(items.filter(v, v.entity_id == 'carol@example.com')) == 1"

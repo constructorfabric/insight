@@ -73,8 +73,7 @@ issue_facts AS (
            toFloat64(greatest(toInt64(0),
                dateDiff('second', any(s.created_at),
                         minIf(i.interval_start, i.interval_start < s.final_close_at))))) AS pickup_seconds,
-        CAST([tuple('source', any(s.data_source), any(s.data_source))]
-             AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
+        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
     FROM issue_state AS s
     LEFT JOIN status_intervals AS i
         ON i.insight_source_id = s.insight_source_id

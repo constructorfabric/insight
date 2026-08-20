@@ -1108,6 +1108,7 @@ metrics:
         measure_key: tasks_closed
     dimensions:
       - type
+      - source
   - metric_key: tasks.bugs_fixed
     source_key: task
     subject: quality
