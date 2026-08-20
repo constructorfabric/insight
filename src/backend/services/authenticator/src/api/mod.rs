@@ -3,6 +3,7 @@
 
 pub mod error;
 pub mod handlers;
+mod version;
 
 use std::sync::Arc;
 
@@ -54,7 +55,9 @@ pub fn register_routes(
             crate::csrf::middleware,
         ))
         .layer(Extension(state));
-    host_router.merge(api)
+    host_router
+        .merge(version::router(std::env::var("INSIGHT_BUILD_VERSION").ok()))
+        .merge(api)
 }
 
 /// Declare every operation through the toolkit's `OperationBuilder` so each
