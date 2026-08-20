@@ -580,7 +580,7 @@ run_seed_step() {
 }
 
 # project_identity — force the persons-seed CronJob to run now and wait for it:
-# a fresh CI stand cannot wait for the 06:30 cron. The run LINKS each connector
+# a fresh CI stand cannot wait for the next scheduled tick. The run LINKS each connector
 # account to the seeded roster person by e-mail (resolve_assignments'
 # LinkedByEmail), APPENDS to `persons` (INSERT IGNORE — it never rewrites the
 # seeder's login rows), and publishes to ClickHouse identity_persons, where

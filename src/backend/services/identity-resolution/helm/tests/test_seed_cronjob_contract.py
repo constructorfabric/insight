@@ -11,9 +11,9 @@ ClickHouse as its own final step. CronJobs are selected BY NAME, never as
 "the sole CronJob in the render", so the suite does not break when another
 job appears.
 
-Covered: the schedule and exact subcommand/args against the mounted gears
-config (never `--force`); the SAME Secret/ConfigMap pair the deployment
-uses; `seed.tenantDefaultId` env-overriding the Secret; `enabled=false`
+Covered: the schedule and exact args against the mounted gears config
+(tolerance flags present, never `--force`); the SAME Secret/ConfigMap pair
+the deployment uses; `seed.tenantDefaultId` env-overriding the Secret; `enabled=false`
 removing that CronJob and nothing else; pod labels never matching the
 Service selector (a pod that listens on nothing must not enter the
 endpoints); and that no persons-sync CronJob is rendered.
@@ -39,11 +39,14 @@ UMBRELLA = REPO_ROOT / "charts" / "insight"
 
 TENANT = "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab"
 
-# name suffix -> (schedule, subcommand) — the per-job contract facts. One
-# entry today; the table stays so a second scheduled job arrives with its
-# contract already asserted.
+# name suffix -> (schedule, args) — the per-job contract facts. One entry
+# today; the table stays so a second scheduled job arrives with its contract
+# already asserted. The tolerance flags are deliberate: the schedule is a
+# freshness backstop, and a backstop that is red on healthy stands (empty
+# identity_inputs, a raced lock) trains everyone to ignore it — refusals
+# surface as failed operations-journal rows instead.
 JOBS = {
-    "seed": ("30 6 * * *", "seed"),
+    "seed": ("*/15 * * * *", ["seed", "--busy-ok", "--guard-ok"]),
 }
 
 # Minimum viable subchart install (mirrors the umbrella's wiring).
@@ -210,9 +213,10 @@ def test_cronjob_exists_by_default_with_documented_schedule(default_docs, job: s
 def test_cronjob_runs_its_subcommand_against_the_mounted_config(default_docs, job: str) -> None:
     container = _job_container(_cronjob(default_docs, job))
     assert container["command"] == ["/app/identity-resolution"]
-    assert container["args"] == ["-c", "/app/config/insight.yaml", JOBS[job][1]]
-    # A CronJob must never run forced — --force is a deliberate manual act
-    # (seed: input guards; sync: the empty-log guard).
+    assert container["args"] == ["-c", "/app/config/insight.yaml", *JOBS[job][1]]
+    # A CronJob must never run forced — --force overrides the input guards and
+    # is a deliberate manual act. Tolerating a refusal (--guard-ok) is not
+    # forcing: the run publishes nothing and journals why.
     assert "--force" not in container["args"]
 
 

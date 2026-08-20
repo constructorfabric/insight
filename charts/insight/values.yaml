@@ -618,7 +618,7 @@ identityResolution:
   # Manual run: kubectl create job --from=cronjob/<release>-identity-resolution-seed ...
   seed:
     enabled: true
-    schedule: "30 6 * * *" # daily, after overnight syncs + the 06:00 data-quality run
+    schedule: "*/15 * * * *" # freshness backstop; the pipeline + corrections publish on their own
   # Gateway-JWT verification (NGINX_BFF R1) — same wiring as analytics: the
   # oidc-authn-plugin resolves the authenticator's JWKS via OIDC discovery
   # over https on `issuer` and trusts its CA from the authn-tls cert Secret.

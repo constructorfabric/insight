@@ -699,7 +699,7 @@ identityResolution:
   # matters is the one seed-stand.sh forces right after each seed.
   seed:
     enabled: true
-    schedule: "30 6 * * *" # chart default; the CI seed forces a run, not the cron
+    schedule: "*/15 * * * *" # chart default; the CI seed forces a run, not the cron
     # Trimmed from the chart's 100m/128Mi request: these are transient Jobs
     # and two of them fire within fifteen minutes of each other. Limits stay
     # at the chart's ceiling so a real run can burst.
@@ -716,8 +716,9 @@ identityResolution:
   # final step (full snapshot plus an atomic swap), so no separate sync
   # schedule exists.
   #
-  # The Job guards its input and exits non-zero rather than publishing an
-  # empty projection: it aborts on an empty observation read or a tenant
-  # mismatch. A failing Job is the guard working, not a broken install.
+  # The Job guards its input rather than publishing an empty projection: it
+  # refuses an empty observation read or a tenant mismatch. The scheduled runs
+  # tolerate a refusal (exit 0 + journal row) so the backstop stays green on
+  # healthy stands; read refusals over GET /v1/persons-seed?status=failed.
   # seed-stand.sh forces one after each seed; run one by hand with:
   #   kubectl -n insight create job --from=cronjob/insight-identity-resolution-seed seed-manual

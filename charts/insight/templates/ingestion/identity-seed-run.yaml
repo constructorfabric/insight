@@ -3,8 +3,8 @@
 # sync just landed, and publish them (the `seed` subcommand publishes as its
 # own final step). Runs in every connector pipeline — it no-ops when nothing
 # changed — so `--busy-ok`/`--guard-ok` keep a raced lock or an empty
-# `identity_inputs` from failing a connector's build. The seed CronJob stays
-# strict on both.
+# `identity_inputs` from failing a connector's build (the backstop CronJob
+# runs with the same flags).
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:

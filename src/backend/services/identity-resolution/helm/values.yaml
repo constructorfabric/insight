@@ -93,8 +93,10 @@ seed:
   # (the umbrella wires it from global.tenantDefaultId and validates at
   # render). Without a tenant from either source every run exits 1.
   tenantDefaultId: ""
-  # Daily, after the overnight connector syncs and the 06:00 data-quality run.
-  schedule: "30 6 * * *"
+  # A freshness backstop, not the publish path (every seed run and operator
+  # correction publishes on its own): it bounds how long a publish lost to a
+  # dead pod can stay unpublished.
+  schedule: "*/15 * * * *"
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   resources:

@@ -79,7 +79,8 @@ enum Commands {
         busy_ok: bool,
         /// Exit 0 when an input guard refuses the run: an empty
         /// `identity_inputs` is legitimate where no connector emits identity
-        /// claims. The `CronJob` stays strict, so refusals still surface.
+        /// claims. Refusals still surface as failed rows in the operations
+        /// journal (GET /v1/persons-seed?status=failed).
         #[arg(long)]
         guard_ok: bool,
     },
