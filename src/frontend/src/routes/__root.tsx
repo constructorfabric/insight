@@ -85,7 +85,7 @@ function RootLayout() {
             closing, and the identity verbs report their result by closing the
             case window and toasting. Without this mount every `toast()` call
             in the app is silently dropped. */}
-        <Toaster position="bottom-right" />
+        <Toaster />
       </MetricEvidenceDialogProvider>
     </TooltipProvider>
   );

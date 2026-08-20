@@ -21,7 +21,7 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
-vi.mock("sonner", () => ({
+vi.mock("@/components/ui/sonner", () => ({
   toast: { error: mocks.toastError },
 }));
 

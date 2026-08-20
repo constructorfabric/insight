@@ -89,7 +89,10 @@
     },
     "copy": "Copy",
     "copied": "Copied",
-    "copy_failed": "Unable to copy"
+    "copy_failed": "Unable to copy",
+    "a11y": {
+      "notifications": "Notifications"
+    }
   },
   "theme": {
     "light": "Light",

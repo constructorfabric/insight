@@ -145,7 +145,6 @@ export default defineConfig({
             "exceljs",
             "react-day-picker",
             "react-error-boundary",
-            "sonner",
           ],
         },
         test: {

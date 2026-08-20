@@ -28,7 +28,7 @@ const hooks = vi.hoisted(() => ({
   /** Person ids the dialog asked the preview for, per render. */
   asked: [] as string[][],
 }));
-vi.mock("sonner", () => ({ toast: hooks.toast }));
+vi.mock("@/components/ui/sonner", () => ({ toast: hooks.toast }));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useMergePersons: () => hooks.merge,
