@@ -82,7 +82,26 @@ _GITHUB_ACTIVITY_SCHEMAS = {
             "collected_at": {"type": ["string", "null"]},
             "repo_full_name": {"type": ["string", "null"]},
         }
-    }
+    },
+    "bronze_github.commits": {
+        "properties": {
+            "_airbyte_raw_id": {"type": "string"},
+            "_airbyte_extracted_at": {"type": "string", "format": "date-time"},
+            "_airbyte_meta": {"type": "string"},
+            "_airbyte_generation_id": {"type": "integer"},
+            "sha": {"type": ["string", "null"]},
+            "message": {"type": ["string", "null"]},
+            "author_name": {"type": ["string", "null"]},
+            "author_email": {"type": ["string", "null"]},
+            "authored_date": {"type": ["string", "null"]},
+            "tenant_id": {"type": ["string", "null"]},
+            "source_id": {"type": ["string", "null"]},
+            "unique_key": {"type": ["string", "null"]},
+            "repository": {"type": ["string", "null"]},
+            "data_source": {"type": ["string", "null"]},
+            "collected_at": {"type": ["string", "null"]},
+        }
+    },
 }
 
 
@@ -287,11 +306,16 @@ def test_directory_and_activity_claims_meet_in_one_account(
     member whose profile hides their e-mail still gets commit attribution.
     The member here publishes no e-mail, so the address below can reach a
     person ONLY through this join.
+
+    The pre-2017 noreply address rides along: it names only the login, and
+    must resolve to the same numeric account through the login_to_id map
+    (here fed by the roster's login+member_id pair).
     """
     run_tag = uuid.uuid4().hex[:10]
     member_id = _run_specific_member_id(run_tag)
     login = f"Pipeline-Meet-{run_tag}"
     commit_email = f"pipeline.meet.{run_tag}@e2e.test"
+    legacy_noreply = f"{login.lower()}@users.noreply.github.com"
 
     _run_connector_dbt_path(
         ch_seeder,
@@ -326,6 +350,25 @@ def test_directory_and_activity_claims_meet_in_one_account(
                     "repo_full_name": "acme/repo",
                 }
             ],
+            "bronze_github.commits": [
+                {
+                    "_airbyte_raw_id": str(uuid.uuid4()),
+                    "_airbyte_extracted_at": "2026-01-05T00:00:00",
+                    "_airbyte_meta": "{}",
+                    "_airbyte_generation_id": 0,
+                    "sha": "1" * 40,
+                    "message": "legacy noreply commit",
+                    "author_name": "Pipeline Meet",
+                    "author_email": legacy_noreply,
+                    "authored_date": "2026-01-05T00:00:00Z",
+                    "tenant_id": f"pipeline-tenant-{run_tag}",
+                    "source_id": f"pipeline-source-{run_tag}",
+                    "unique_key": f"pipeline-tenant-{run_tag}:pipeline-source-{run_tag}:{'1' * 40}",
+                    "repository": "acme/repo",
+                    "data_source": "insight_github",
+                    "collected_at": "2026-01-05T00:00:00Z",
+                }
+            ],
         },
     )
 
@@ -341,6 +384,7 @@ def test_directory_and_activity_claims_meet_in_one_account(
         ("id", str(member_id)),
         ("username", login),
         ("email", commit_email),
+        ("email", legacy_noreply),
     }
     assert expected <= pairs, (
         f"account {member_id} carries {sorted(pairs)!r}, expected it to carry at least "

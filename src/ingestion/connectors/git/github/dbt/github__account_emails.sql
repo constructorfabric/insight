@@ -16,9 +16,9 @@
 --      to an account whether or not the person ever opened a pull request
 --   2. the commit's own account on a pull-request commit, as GitHub matched it
 --   3. the profile e-mail on the pull-request author
---   4. the noreply address, whose modern form encodes the numeric account id
---      it was issued to and so names its own account without any lookup (the
---      pre-2017 form carries only the login and names no account here)
+--   4. the noreply address: the modern form encodes the numeric account id
+--      directly; the pre-2017 form carries only the login, resolved through
+--      the login_to_id map below where that map is unambiguous
 --
 -- Several e-mails per account is normal and every one of them is kept: a person
 -- who changes address still owns what they committed under the old one.
@@ -82,11 +82,7 @@ profile_emails AS (
 ),
 
 -- `12345678+octocat@users.noreply.github.com` states the numeric account id
--- it was issued to. The pre-2017 form (`octocat@users.noreply.github.com`)
--- carries only the login, which is not an account key: those addresses yield
--- '' here and fall through to github__unowned_commit_emails, becoming
--- commit-email accounts of their own — auto-minted as separate persons where
--- nothing else claims the address — for an operator to merge.
+-- it was issued to, no lookup needed.
 noreply_commits AS (
     SELECT
         extract(COALESCE(author_email, ''), '^([0-9]+)\\+[^@]+@users\\.noreply\\.github\\.com$') AS account_id,
@@ -100,6 +96,102 @@ noreply_commits AS (
     GROUP BY account_id, email, tenant_id, source_id, observed_in
 ),
 
+-- Every login↔id pair GitHub itself asserted, for resolving the pre-2017
+-- noreply form. Lowercased on both sides (logins are case-preserving, the
+-- address's local part is not reliably cased) and scoped per connection like
+-- everything else here. The roster arm crosses into the github-directory
+-- connector's bronze — safe because bootstrap creates every connector's
+-- bronze placeholder, and an empty table just contributes no pairs.
+-- HAVING keeps the rename/recycle protection: a login our data has seen with
+-- two ids maps to nobody.
+login_to_id AS (
+    SELECT
+        tenant_id,
+        source_id,
+        login,
+        -- id_str, not account_id: aliasing any(x) back to x makes the HAVING's
+        -- uniqExact resolve to the aggregate (ILLEGAL_AGGREGATION).
+        any(id_str) AS account_id
+    FROM (
+        SELECT
+            lower(trimBoth(COALESCE(author_login, ''))) AS login,
+            toString(author_id) AS id_str,
+            tenant_id,
+            source_id
+        FROM {{ source('bronze_github', 'commit_authors') }} FINAL
+        WHERE COALESCE(author_id, 0) > 0
+          AND COALESCE(author_login, '') != ''
+
+        UNION ALL
+
+        SELECT
+            lower(trimBoth(COALESCE(author_login, ''))) AS login,
+            toString(author_id) AS id_str,
+            tenant_id,
+            source_id
+        FROM {{ source('bronze_github', 'pull_request_commits') }} FINAL
+        WHERE COALESCE(author_id, 0) > 0
+          AND COALESCE(author_login, '') != ''
+
+        UNION ALL
+
+        SELECT
+            lower(trimBoth(COALESCE(committer_login, ''))) AS login,
+            toString(committer_id) AS id_str,
+            tenant_id,
+            source_id
+        FROM {{ source('bronze_github', 'pull_request_commits') }} FINAL
+        WHERE COALESCE(committer_id, 0) > 0
+          AND COALESCE(committer_login, '') != ''
+
+        UNION ALL
+
+        SELECT
+            lower(trimBoth(COALESCE(login, ''))) AS login,
+            toString(member_id) AS id_str,
+            tenant_id,
+            source_id
+        FROM {{ source('bronze_github_directory', 'org_members') }} FINAL
+        WHERE COALESCE(member_id, 0) > 0
+          AND COALESCE(login, '') != ''
+    )
+    GROUP BY tenant_id, source_id, login
+    HAVING uniqExact(id_str) = 1
+),
+
+-- The pre-2017 noreply form (`octocat@users.noreply.github.com`) names only
+-- the login; the INNER JOIN resolves it through login_to_id. The map reflects
+-- CURRENT login ownership, so a recycled login whose old owner never appears
+-- in our data maps to the new one — the login keying's misattribution, now
+-- bounded to these addresses and to logins with an unambiguous map. An
+-- unmapped or ambiguous login drops here and the address falls through to
+-- github__unowned_commit_emails for an operator to place.
+legacy_noreply_commits AS (
+    SELECT
+        m.account_id AS account_id,
+        c.email AS email,
+        c.tenant_id AS tenant_id,
+        c.source_id AS source_id,
+        'bronze_github.commits.author_email' AS observed_in,
+        c.seen_at AS seen_at
+    FROM (
+        SELECT
+            lower(trimBoth(extract(COALESCE(author_email, ''), '^([^@+]+)@users\\.noreply\\.github\\.com$'))) AS login,
+            lower(trimBoth(COALESCE(author_email, ''))) AS email,
+            tenant_id,
+            source_id,
+            max(parseDateTimeBestEffortOrNull(authored_date)) AS seen_at
+        FROM {{ source('bronze_github', 'commits') }} FINAL
+        WHERE author_email LIKE '%@users.noreply.github.com'
+        GROUP BY login, email, tenant_id, source_id
+    ) AS c
+    INNER JOIN login_to_id AS m
+        ON  m.login     = c.login
+        AND m.tenant_id = c.tenant_id
+        AND m.source_id = c.source_id
+    WHERE c.login != ''
+),
+
 observations AS (
     SELECT * FROM resolved_authors
     UNION ALL
@@ -110,10 +202,12 @@ observations AS (
     SELECT * FROM profile_emails
     UNION ALL
     SELECT * FROM noreply_commits
+    UNION ALL
+    SELECT * FROM legacy_noreply_commits
 ),
 
--- The noreply pattern yields '' for an address that states no account id, and
--- a row whose date will not parse carries no usable observation.
+-- The modern-noreply pattern yields '' for an address that states no account
+-- id, and a row whose date will not parse carries no usable observation.
 every_pair AS (
     SELECT *
     FROM observations
