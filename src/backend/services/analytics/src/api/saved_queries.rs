@@ -2,7 +2,7 @@
 //!
 //! CRUD is plain metadata over the `saved_queries` service-DB table, mirroring
 //! the metric CRUD in [`super::handlers`]. Every request is tenant-scoped from
-//! the session `SecurityContext`. The `sql` is validated by the single-SELECT
+//! the session `SecurityContext`. The `sql` is validated by the authored-read
 //! gate on create, update, and run. Only `/run` reaches ClickHouse — it
 //! executes the stored SQL as `presentation_ro` and returns untyped JSON rows.
 //!
@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use super::AppState;
 use super::error::SavedQueryError;
-use crate::domain::query_gate::validate_single_select;
+use crate::domain::query_gate::validate_authored_read;
 use crate::domain::saved_query::{
     CreateSavedQueryRequest, RunResponse, RunSavedQueryRequest, SavedQuery, SavedQuerySummary,
     UpdateSavedQueryRequest,
@@ -63,7 +63,7 @@ pub async fn create_saved_query(
     Extension(ctx): Extension<SecurityContext>,
     Json(req): Json<CreateSavedQueryRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    validate_single_select(&req.sql).map_err(invalid_sql)?;
+    validate_authored_read(&req.sql).map_err(invalid_sql)?;
 
     let id = Uuid::now_v7();
     let model = saved_queries::ActiveModel {
@@ -105,7 +105,7 @@ pub async fn update_saved_query(
         model.description = Set(desc);
     }
     if let Some(sql) = req.sql {
-        validate_single_select(&sql).map_err(|e| invalid_sql_for(id, e))?;
+        validate_authored_read(&sql).map_err(|e| invalid_sql_for(id, e))?;
         model.sql = Set(sql);
     }
     model.updated_at = Set(chrono::Utc::now());
@@ -146,10 +146,9 @@ pub async fn run_saved_query(
 ) -> Result<impl IntoResponse, CanonicalError> {
     let saved = find_saved_query(&state, ctx.subject_tenant_id(), id).await?;
 
-    // Re-validate on run: the gate is the write-side barrier, but stored SQL is
-    // gated again here so a run can never reach ClickHouse with anything but a
-    // single read (defense in depth alongside the `presentation_ro` grants).
-    validate_single_select(&saved.sql).map_err(|e| invalid_sql_for(id, e))?;
+    // Re-validate on run: a query stored before a rule existed must not run
+    // under it.
+    validate_authored_read(&saved.sql).map_err(|e| invalid_sql_for(id, e))?;
 
     // Named parameters (#1966): `{tenant}` is always bound from context; the
     // optional `period` binds `{period}`. Both go through ClickHouse's

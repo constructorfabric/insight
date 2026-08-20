@@ -177,6 +177,33 @@ def test_an_update_revalidates_the_sql(api: ApiClient, scratch_saved_query: Save
     )
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT person_id, session_id, path, ts FROM product_usage.usage_events LIMIT 5",
+        "SELECT * FROM merge('product_usage', 'usage_events')",
+    ],
+    ids=["qualified-read", "table-function"],
+)
+@pytest.mark.security
+def test_the_usage_records_are_not_readable_through_a_saved_query(
+    api: ApiClient, statement: str
+) -> None:
+    """`GET /v1/usage/summary` is admin-only, and so are the records behind it.
+
+    A saved query runs with the service's own ClickHouse account, and that
+    account can read the usage records because the summary route serves them.
+    Nothing about the route the caller took makes that read admin-checked, so
+    the refusal has to come from the gate — otherwise a caller the summary
+    answers 403 reads the same rows, other people's among them, from here.
+    """
+    response = api.post(QUERIES, json_body={"name": scratch_name("usage-store"), "sql": statement})
+    assert response.status_code == 400, (
+        f"{statement!r} was accepted as a saved query ({response.status_code}): "
+        f"{response.text[:300]}"
+    )
+
+
 @pytest.mark.reliability
 def test_a_deleted_query_leaves_the_listing_and_the_id_stops_resolving(
     api: ApiClient,
