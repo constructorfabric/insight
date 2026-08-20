@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 #[derive(Debug, Clone)]
 pub struct StreamState {
@@ -53,6 +53,39 @@ fn extract_written(stream: &StreamState) -> Option<DateTime<Utc>> {
         .filter(|t| *t != DateTime::<Utc>::UNIX_EPOCH)
 }
 
+/// How stale a connector's newest data is allowed to be before it is worth
+/// reporting. Every connector declares its own pair, so there is no single
+/// instance-wide window.
+#[derive(Debug, Clone, Copy)]
+pub struct Thresholds {
+    pub warn_after: Duration,
+    pub error_after: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Freshness {
+    NeverReceived,
+    Fresh,
+    Warn,
+    Stale,
+}
+
+pub fn freshness(state: &ConnectorState, thresholds: Thresholds, now: DateTime<Utc>) -> Freshness {
+    let Some(last_write) = state.last_write else {
+        return Freshness::NeverReceived;
+    };
+
+    let age = now - last_write;
+
+    if age >= thresholds.error_after {
+        Freshness::Stale
+    } else if age >= thresholds.warn_after {
+        Freshness::Warn
+    } else {
+        Freshness::Fresh
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -96,6 +129,50 @@ mod tests {
                 last_write: Some(at("2020-01-02T00:00:00Z")),
             }]
         );
+    }
+
+    fn thresholds(warn_hours: i64, error_hours: i64) -> Thresholds {
+        Thresholds {
+            warn_after: Duration::hours(warn_hours),
+            error_after: Duration::hours(error_hours),
+        }
+    }
+
+    fn written_at(last_write: Option<DateTime<Utc>>) -> ConnectorState {
+        ConnectorState {
+            namespace: "bronze_example".to_owned(),
+            streams: 1,
+            populated_streams: 1,
+            rows: 1,
+            last_write,
+        }
+    }
+
+    #[test]
+    fn data_older_than_the_error_threshold_is_stale() {
+        let state = written_at(Some(at("2020-01-01T00:00:00Z")));
+
+        let verdict = freshness(&state, thresholds(36, 72), at("2020-01-05T00:00:00Z"));
+
+        assert_eq!(verdict, Freshness::Stale);
+    }
+
+    #[test]
+    fn a_connector_that_never_received_data_is_not_reported_as_stale() {
+        let state = written_at(None);
+
+        let verdict = freshness(&state, thresholds(36, 72), at("2020-01-05T00:00:00Z"));
+
+        assert_eq!(verdict, Freshness::NeverReceived);
+    }
+
+    #[test]
+    fn data_between_the_two_thresholds_only_warns() {
+        let state = written_at(Some(at("2020-01-01T00:00:00Z")));
+
+        let verdict = freshness(&state, thresholds(36, 72), at("2020-01-03T00:00:00Z"));
+
+        assert_eq!(verdict, Freshness::Warn);
     }
 
     #[test]
