@@ -32,8 +32,8 @@ async function enableMocking(): Promise<void> {
   await worker.start({ onUnhandledRequest: "bypass" });
 }
 
-publishBuildInfo();
 initSentry(router);
+publishBuildInfo();
 
 // `?__override=<email>` (view-as, insight#1941) bounces straight into the
 // login flow — before mocks, session probe, or the router touch anything.
