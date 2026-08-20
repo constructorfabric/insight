@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useTranslation } from "react-i18next";
 
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -20,6 +21,8 @@ import { IdentitiesView } from "@/components/portal/identities-view";
 import { PlatformUsage } from "@/components/portal/platform-usage";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
+import { useConnectorHealth } from "@/queries/connector-health";
+import { elapsedSince, orderByAttention } from "@/lib/portal/connector-health";
 import { WhatsNewBody } from "@/screens/whats-new";
 import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -227,6 +230,7 @@ function DataHealth() {
           Schema-check status across {metrics.length} metrics
         </p>
       </div>
+      <ConnectorDelivery />
       <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
         {(["ok", "error", "unchecked"] as const).map((s) => (
           <div key={s} className="rounded-lg border bg-card p-4">
@@ -247,6 +251,80 @@ function DataHealth() {
             no data yet
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ConnectorDelivery() {
+  const { t } = useTranslation();
+  const { data, isLoading, isError, refetch } = useConnectorHealth();
+
+  if (isLoading) return <CenteredSpinner className="min-h-[12rem]" />;
+  if (isError || data == null)
+    return (
+      <div className="mx-auto w-full max-w-md p-8">
+        <ComingSoon variant="card" state="error" onRetry={() => refetch()} />
+      </div>
+    );
+
+  const asOf = new Date(data.as_of);
+  const connectors = orderByAttention(data.connectors);
+  const delivering = connectors.filter((c) => c.last_write != null).length;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <h2 className="text-sm font-medium text-muted-foreground">
+        {t("connector_health.heading", {
+          delivering,
+          total: connectors.length,
+        })}
+      </h2>
+      <div className="overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t("connector_health.columns.connector")}</TableHead>
+              <TableHead>{t("connector_health.columns.last_data")}</TableHead>
+              <TableHead>
+                {t("connector_health.columns.streams_with_data")}
+              </TableHead>
+              <TableHead className="text-end">
+                {t("connector_health.columns.rows")}
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {connectors.map((c) => {
+              const elapsed = elapsedSince(c.last_write, asOf);
+              return (
+                <TableRow key={c.namespace}>
+                  <TableCell className="font-medium">{c.connector}</TableCell>
+                  <TableCell
+                    className={cn(
+                      elapsed.kind === "never" && "text-muted-foreground",
+                    )}
+                  >
+                    {elapsed.kind === "never"
+                      ? t("connector_health.elapsed.never")
+                      : t(`connector_health.elapsed.${elapsed.kind}`, {
+                          count: elapsed.value,
+                        })}
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {t("connector_health.streams_fraction", {
+                      withData: c.streams_with_data,
+                      total: c.streams,
+                    })}
+                  </TableCell>
+                  <TableCell className="text-end tabular-nums">
+                    {c.rows.toLocaleString()}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
       </div>
     </div>
   );

@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
+import type { ConnectorRow } from "@/api/connector-health-client";
 import type { MetricDefinition } from "@/api/metric-definitions-client";
 import type { MetricDefinitionGroup } from "@/queries/metric-definitions";
 
@@ -24,6 +25,20 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/queries/metric-definitions", () => ({
   useMetricDefinitions: () => mocks.q,
+}));
+
+const connectorHealth = vi.hoisted(() => ({
+  value: {
+    data: { as_of: "2020-01-10T12:00:00Z", connectors: [] } as
+      | { as_of: string; connectors: ConnectorRow[] }
+      | undefined,
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+  },
+}));
+vi.mock("@/queries/connector-health", () => ({
+  useConnectorHealth: () => connectorHealth.value,
 }));
 
 const adminGate = vi.hoisted(() => ({
@@ -42,6 +57,8 @@ vi.mock("@/queries/identity-me", () => ({
 vi.mock("@/components/portal/identities-view", () => ({
   IdentitiesView: () => <div data-testid="identities-view" />,
 }));
+
+import "@/i18n";
 
 import { ManageView } from "./manage-view";
 
@@ -220,5 +237,49 @@ describe("identities gate", () => {
     expect(screen.getByText(/could not verify/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /retry/i }));
     expect(retry).toHaveBeenCalledOnce();
+  });
+});
+
+function connectorRow(
+  connector: string,
+  last_write: string | null,
+): ConnectorRow {
+  return {
+    connector,
+    namespace: `bronze_${connector}`,
+    streams: 2,
+    streams_with_data: last_write == null ? 0 : 2,
+    rows: last_write == null ? 0 : 5,
+    last_write,
+  };
+}
+
+describe("Manage · connector delivery", () => {
+  beforeEach(() => {
+    mocks.q.data = [{ prefix: "git", metrics: [def({})] }];
+  });
+
+  it("renders translated copy rather than raw keys, and sinks a connector that never delivered", () => {
+    connectorHealth.value.data = {
+      as_of: "2020-01-10T12:00:00Z",
+      connectors: [
+        connectorRow("never_delivered", null),
+        connectorRow("delivering", "2020-01-10T02:00:00Z"),
+      ],
+    };
+
+    render(<ManageView item="data-health" />);
+
+    expect(
+      screen.getByText("Connectors · 1 of 2 have delivered"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("10h ago")).toBeInTheDocument();
+    expect(screen.getByText("never")).toBeInTheDocument();
+
+    const names = screen
+      .getAllByRole("row")
+      .map((r) => r.firstElementChild?.textContent)
+      .filter((n) => n === "delivering" || n === "never_delivered");
+    expect(names).toEqual(["delivering", "never_delivered"]);
   });
 });

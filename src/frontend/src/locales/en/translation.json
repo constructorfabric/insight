@@ -573,5 +573,21 @@
       "loading_more": "Loading…",
       "excluded": "excluded — bot / CI"
     }
+  },
+  "connector_health": {
+    "heading": "Connectors · {{delivering}} of {{total}} have delivered",
+    "columns": {
+      "connector": "Connector",
+      "last_data": "Last data",
+      "streams_with_data": "Streams with data",
+      "rows": "Rows"
+    },
+    "streams_fraction": "{{withData}} / {{total}}",
+    "elapsed": {
+      "never": "never",
+      "hours": "{{count}}h ago",
+      "days_one": "{{count}} day ago",
+      "days_other": "{{count}} days ago"
+    }
   }
 }
