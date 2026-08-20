@@ -59,6 +59,22 @@ export function useMetricDefinitionsResponse(): UseQueryResult<MetricDefinitionL
   });
 }
 
+/**
+ * The newest date this metric has an observation for, or null when the
+ * catalogue cannot say — an unread catalogue, or a custom metric, whose
+ * `last_observed_date` the validator leaves absent however much it serves.
+ * Callers read null as "no boundary known", never as "nothing collected".
+ *
+ * Rides the one cached catalogue query, so it costs no extra request.
+ */
+export function useCollectedThrough(metricKey: string): string | null {
+  const { data } = useMetricDefinitionsResponse();
+  return (
+    data?.metrics.find((metric) => metric.metric_key === metricKey)
+      ?.last_observed_date ?? null
+  );
+}
+
 export interface AvailableMetricKeys {
   /**
    * What this installation can serve, or null when the catalog could not be

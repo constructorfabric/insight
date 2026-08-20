@@ -22,6 +22,7 @@ const detail = vi.hoisted(() => ({
     refetch: () => {},
   },
   calls: [] as unknown[],
+  collectedThrough: null as string | null,
 }));
 vi.mock("@/queries/metric-detail", () => ({
   DETAIL_LIMIT: 200,
@@ -29,6 +30,11 @@ vi.mock("@/queries/metric-detail", () => ({
     detail.calls.push({ selection, enabled });
     return detail.state;
   },
+}));
+// The catalogue is a query like the detail one above; the collection boundary
+// it carries is set per test through `detail.collectedThrough`.
+vi.mock("@/queries/metric-definitions", () => ({
+  useCollectedThrough: () => detail.collectedThrough,
 }));
 
 import { MetricActivity } from "./metric-activity";
@@ -75,6 +81,7 @@ function draw(m: ReturnType<typeof metric>) {
 
 beforeEach(() => {
   detail.calls = [];
+  detail.collectedThrough = null;
   detail.state = {
     isPending: false,
     isError: false,
@@ -146,6 +153,30 @@ describe("MetricActivity", () => {
     expect(screen.getByText(/2 days with no reading/)).toBeInTheDocument();
     // Nothing is listed — a counter is not a list of things.
     expect(container.querySelector("li")).toBeNull();
+  });
+
+  it("separates the days nobody collected from the days that were quiet", () => {
+    // The source stops on the 3rd; the 4th and 5th were never delivered. Read
+    // as silence they would say this person did none of it, which is the one
+    // thing the data cannot support.
+    detail.collectedThrough = "2026-03-03";
+    detail.state.data = {
+      columns: [
+        { key: "date", label: "Date", type: "date" },
+        { key: "value", label: "Value", type: "number" },
+      ],
+      rows: [
+        { values: { date: "2026-03-01", value: 4 } },
+        { values: { date: "2026-03-03", value: 2 } },
+      ],
+    };
+    draw(metric("collab.messages_sent", ["source_summary"], 6));
+    // The 2nd is the only quiet day; the tail is uncollected, not quiet.
+    expect(screen.getByText(/2 days not collected yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/days with no reading/)).not.toBeInTheDocument();
+    const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
+    expect(label).toMatch(/1 day has no reading/);
+    expect(label).toMatch(/2 days are not collected yet/);
   });
 
   it("names a constant denominator, because that is what a share is argued with", () => {

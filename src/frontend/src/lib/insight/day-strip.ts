@@ -4,6 +4,8 @@ export interface StripDay {
   date: string;
   /** Null where the day has no reading at all — never a stand-in zero. */
   value: number | null;
+  /** False where the source has not delivered this day yet. */
+  collected: boolean;
   /** Share of the tallest reading, 0..1; null follows `value`. */
   height: number | null;
   numerator: number | null;
@@ -37,11 +39,17 @@ function calendar(from: string, to: string): string[] {
  * A day with no reading stays null and a measured zero stays zero. They look
  * the same on a bar chart and mean opposite things: one is silence from the
  * source, the other is a day this person did none of it.
+ *
+ * `collectedThrough` splits that silence again: past it the source has not
+ * delivered the day yet, so nothing can be said about it — before it, silence
+ * is the answer. Null leaves every day collected, which is what the catalogue
+ * reports for a metric it cannot date rather than one nobody has collected.
  */
 export function stripDays(
   readings: DayReading[],
   from: string,
-  to: string
+  to: string,
+  collectedThrough?: string | null
 ): StripDay[] {
   const byDate = new Map(readings.map((r) => [r.date, r]));
   const days = calendar(from, to);
@@ -53,10 +61,12 @@ export function stripDays(
     0
   );
   return days.map((date) => {
+    const collected = collectedThrough == null || date <= collectedThrough;
     const reading = byDate.get(date);
     if (!reading) {
       return {
         date,
+        collected,
         value: null,
         height: null,
         numerator: null,
@@ -65,6 +75,7 @@ export function stripDays(
     }
     return {
       date,
+      collected,
       value: reading.value,
       height: peak > 0 ? reading.value / peak : 0,
       numerator: reading.numerator,
@@ -73,7 +84,12 @@ export function stripDays(
   });
 }
 
-/** How many days of the period carry no reading. */
+/** How many collected days of the period carry no reading. */
 export function silentDays(days: StripDay[]): number {
-  return days.filter((d) => d.value == null).length;
+  return days.filter((d) => d.collected && d.value == null).length;
+}
+
+/** How many days the source has not delivered yet. */
+export function uncollectedDays(days: StripDay[]): number {
+  return days.filter((d) => !d.collected).length;
 }

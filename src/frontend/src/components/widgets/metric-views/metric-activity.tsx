@@ -9,7 +9,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
-import { silentDays, stripDays, type StripDay } from "@/lib/insight/day-strip";
+import {
+  silentDays,
+  stripDays,
+  uncollectedDays,
+  type StripDay,
+} from "@/lib/insight/day-strip";
 import { metricComparisons } from "@/lib/insight/metric-comparison";
 import { metricHelp } from "@/lib/insight/metric-help";
 import {
@@ -23,6 +28,7 @@ import {
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
 import { useMetricDetail } from "@/queries/metric-detail";
+import { useCollectedThrough } from "@/queries/metric-definitions";
 import { cn } from "@/lib/utils";
 
 /** Events listed inline before the rest goes to the evidence dialog. */
@@ -229,6 +235,7 @@ function scaled(metric: NormalizedMetricResult, value: number): number {
  */
 function dayTitle(metric: NormalizedMetricResult, day: StripDay): string {
   const when = formatDate(day.date, "d MMM");
+  if (!day.collected) return `${when} — not collected yet`;
   if (day.value == null) return `${when} — no reading`;
   const value = formatMetricValue(
     scaled(metric, day.value),
@@ -264,13 +271,19 @@ function stripSummary(
         : best,
     null
   );
+  const pending = uncollectedDays(days);
   const parts = [`${metric.label} by day, ${span}`];
   if (busiest?.value != null) parts.push(`busiest ${dayTitle(metric, busiest)}`);
   parts.push(
     silent === 0
-      ? "every day has a reading"
+      ? "every collected day has a reading"
       : `${silent} ${silent === 1 ? "day has" : "days have"} no reading`
   );
+  if (pending > 0) {
+    parts.push(
+      `${pending} ${pending === 1 ? "day is" : "days are"} not collected yet`
+    );
+  }
   return `${parts.join("; ")}.`;
 }
 
@@ -285,12 +298,18 @@ function DayStrip({
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
   const period = metric.selection?.period;
+  const collectedThrough = useCollectedThrough(metric.metric_key);
   const days = useMemo(
     () =>
       period
-        ? stripDays(dailyReadings(rows, columns), period.from, period.to)
+        ? stripDays(
+            dailyReadings(rows, columns),
+            period.from,
+            period.to,
+            collectedThrough
+          )
         : [],
-    [rows, columns, period]
+    [rows, columns, period, collectedThrough]
   );
   if (days.length === 0) return null;
 
@@ -299,6 +318,7 @@ function DayStrip({
   // half of the strip, leftwards over the second, so it never runs off an end.
   const leftAnchored = hovered != null && hovered < days.length / 2;
   const silent = silentDays(days);
+  const pending = uncollectedDays(days);
   // One denominator for the whole period is worth naming: it is the thing a
   // reader argues with when a share looks wrong, and it is invisible in the
   // percentage itself.
@@ -363,7 +383,12 @@ function DayStrip({
             onPointerEnter={() => setHovered(index)}
             className="relative flex h-full flex-1 items-end"
           >
-            {day.height == null ? null : (
+            {!day.collected ? (
+              // A wash over the whole column, not a bar: it says the day was
+              // never delivered, and at this weight it cannot be misread as a
+              // value the way any bottom-anchored height would be.
+              <div className="h-full w-full bg-foreground/8" />
+            ) : day.height == null ? null : (
               <div
                 className={cn(
                   "w-full rounded-t-[1px] bg-foreground/35",
@@ -381,11 +406,13 @@ function DayStrip({
       <div className="flex justify-between text-xs text-muted-foreground">
         <span>{period ? formatDate(period.from) : null}</span>
         <span className="text-center">
-          {constantDenominator != null
-            ? `measured against ${constantDenominator} per day`
-            : silent > 0
-              ? `${silent} ${silent === 1 ? "day" : "days"} with no reading`
-              : null}
+          {pending > 0
+            ? `${pending} ${pending === 1 ? "day" : "days"} not collected yet`
+            : constantDenominator != null
+              ? `measured against ${constantDenominator} per day`
+              : silent > 0
+                ? `${silent} ${silent === 1 ? "day" : "days"} with no reading`
+                : null}
         </span>
         <span>{period ? formatDate(period.to) : null}</span>
       </div>
