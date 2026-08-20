@@ -127,6 +127,30 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS silver.class_ai_overage_daily
+(
+    `insight_tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` String,
+    `email` Nullable(String),
+    `account_id` Nullable(String),
+    `snapshot_date` Date,
+    `period_month` Date,
+    `tool` String,
+    `seat_tier` Nullable(String),
+    `currency` String,
+    `credit_limit_cents` Nullable(UInt32),
+    `used_amount_cents` UInt32,
+    `source` String,
+    `data_source` Nullable(String),
+    `collected_at` Nullable(DateTime64(3)),
+    `_version` Int64
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS silver.class_collab_chat_activity
 (
     `tenant_id` Nullable(String),
