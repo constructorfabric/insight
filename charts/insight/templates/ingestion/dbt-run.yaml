@@ -130,18 +130,31 @@ spec:
           # output is the unambiguous signal and a non-zero exit is a genuine
           # failure to resolve. An empty DBT_SELECT is deliberately left alone —
           # it means "run everything" for manual triggers.
+          # Resolved WITHOUT --exclude on purpose: a selection a previous step
+          # already covered (a roster-only connector's models ARE the excluded
+          # ones) would otherwise be indistinguishable from a typo.
+          SKIP_RUN=0
           if [[ -n "${DBT_SELECT:-}" ]]; then
             LS_RC=0
-            SELECTED="$(dbt --quiet ls --profiles-dir . --resource-type model --select "$DBT_SELECT" ${DBT_EXCLUDE:+--exclude "$DBT_EXCLUDE"})" || LS_RC=$?
+            SELECTED="$(dbt --quiet ls --profiles-dir . --resource-type model --select "$DBT_SELECT")" || LS_RC=$?
             if [[ "$LS_RC" -ne 0 ]]; then
               echo "ERROR: could not resolve dbt selector '${DBT_SELECT}' (dbt ls exited ${LS_RC})" >&2
               RC="$LS_RC"
             elif [[ -z "$SELECTED" ]]; then
               echo "ERROR: dbt selector '${DBT_SELECT}' matches no models — refusing to report success for a transform that runs nothing. The pipeline derives this selector as tag:<connector>+, so the connector's models must carry a tag equal to its slug (#2362)." >&2
               RC=1
+            elif [[ -n "${DBT_EXCLUDE:-}" ]]; then
+              REMAINING="$(dbt --quiet ls --profiles-dir . --resource-type model --select "$DBT_SELECT" --exclude "$DBT_EXCLUDE")" || LS_RC=$?
+              if [[ "$LS_RC" -ne 0 ]]; then
+                echo "ERROR: could not resolve dbt exclusion '${DBT_EXCLUDE}' (dbt ls exited ${LS_RC})" >&2
+                RC="$LS_RC"
+              elif [[ -z "$REMAINING" ]]; then
+                echo "Nothing to run: every model in '${DBT_SELECT}' is covered by '${DBT_EXCLUDE}', which an earlier step already built."
+                SKIP_RUN=1
+              fi
             fi
           fi
-          if [[ "$RC" -eq 0 ]]; then
+          if [[ "$RC" -eq 0 && "${SKIP_RUN:-0}" -eq 0 ]]; then
             if [[ "${DBT_FULL_REFRESH:-false}" == "true" ]]; then
               dbt run --profiles-dir . --log-format json --full-refresh ${DBT_SELECT:+--select "$DBT_SELECT"} ${DBT_EXCLUDE:+--exclude "$DBT_EXCLUDE"} || RC=$?
             else
@@ -151,7 +164,7 @@ spec:
           # Lifecycle event for the high-level "dbt run finished after N
           # minutes, success/failed" view; python3 keeps the JSON safe
           # against whatever characters ride in DBT_SELECT.
-          DBT_RC="$RC" DBT_DURATION_MS=$(( ($(date +%s) - T0) * 1000 )) python3 - <<'PY'
+          DBT_RC="$RC" DBT_SKIPPED="$SKIP_RUN" DBT_DURATION_MS=$(( ($(date +%s) - T0) * 1000 )) python3 - <<'PY'
           import json, os, time
           rc = int(os.environ["DBT_RC"])
           print(json.dumps({
@@ -164,6 +177,7 @@ spec:
               "duration_ms": int(os.environ["DBT_DURATION_MS"]),
               "select": os.environ.get("DBT_SELECT", ""),
               "exclude": os.environ.get("DBT_EXCLUDE", ""),
+              "skipped": os.environ.get("DBT_SKIPPED", "0") == "1",
               "full_refresh": os.environ.get("DBT_FULL_REFRESH", "false") == "true",
           }), flush=True)
           PY
