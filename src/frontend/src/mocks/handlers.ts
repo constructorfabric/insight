@@ -7,6 +7,7 @@ import type {
 } from "@/api/metrics-client";
 import { isPersonId } from "@/lib/metrics/entity";
 
+import { buildMetricDefinitions } from "./metric-definitions-factory";
 import { buildMetricResultsResponse } from "./metric-results-factory";
 import { buildIdentityTree, PEOPLE, PEOPLE_BY_EMAIL } from "./registry";
 
@@ -415,7 +416,7 @@ export const handlers = [
   // through to the network, and in a proxy-configured dev run the resulting
   // 401 bounces the whole mock session to the real IdP.
   http.get("/api/analytics/v1/metric-definitions", () =>
-    HttpResponse.json({ metrics: [] }),
+    HttpResponse.json({ metrics: buildMetricDefinitions() }),
   ),
   // One account's binding + decision trail. dev-42 carries a small history so
   // the panel has something to show; any other account answers 200 with no
