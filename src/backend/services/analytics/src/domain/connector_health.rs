@@ -86,10 +86,80 @@ pub fn freshness(state: &ConnectorState, thresholds: Thresholds, now: DateTime<U
     }
 }
 
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[error("unsafe identifier: {0}")]
+pub struct UnsafeIdentifier(pub String);
+
+/// `max()` cannot be taken over a dynamic table list in one bound statement, so
+/// the names are spliced. They come from the server's own catalogue, and
+/// splicing stays safe only while every one is a plain identifier.
+pub fn newest_extract_sql(
+    streams: &[(String, String)],
+) -> Result<Option<String>, UnsafeIdentifier> {
+    if streams.is_empty() {
+        return Ok(None);
+    }
+
+    let mut selects = Vec::with_capacity(streams.len());
+
+    for (namespace, stream) in streams {
+        for name in [namespace, stream] {
+            if !is_plain_identifier(name) {
+                return Err(UnsafeIdentifier(name.clone()));
+            }
+        }
+
+        selects.push(format!(
+            "SELECT '{namespace}' AS namespace, '{stream}' AS stream, \
+             max(_airbyte_extracted_at) AS newest_extract \
+             FROM `{namespace}`.`{stream}`"
+        ));
+    }
+
+    Ok(Some(selects.join(" UNION ALL ")))
+}
+
+fn is_plain_identifier(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    fn stream_ref(namespace: &str, stream: &str) -> (String, String) {
+        (namespace.to_owned(), stream.to_owned())
+    }
+
+    #[test]
+    fn an_instance_with_no_bronze_streams_yields_no_statement_to_run() {
+        assert_eq!(newest_extract_sql(&[]), Ok(None));
+    }
+
+    #[test]
+    fn one_select_per_stream_is_joined_by_union_all() {
+        let sql = newest_extract_sql(&[
+            stream_ref("bronze_example", "alpha"),
+            stream_ref("bronze_example", "beta"),
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(sql.matches("UNION ALL").count(), 1);
+        assert!(sql.contains("FROM `bronze_example`.`alpha`"));
+        assert!(sql.contains("FROM `bronze_example`.`beta`"));
+    }
+
+    #[test]
+    fn a_stream_name_that_is_not_a_plain_identifier_is_refused() {
+        let refused = newest_extract_sql(&[stream_ref("bronze_example", "alpha`; DROP TABLE x --")]);
+
+        assert_eq!(
+            refused,
+            Err(UnsafeIdentifier("alpha`; DROP TABLE x --".to_owned()))
+        );
+    }
 
     fn stream(
         namespace: &str,
