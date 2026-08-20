@@ -127,6 +127,7 @@ figment = { version = "0.10", features = ["yaml", "env"] }
 
 # Internal crates
 insight-build-version = { path = "libs/insight-build-version" }
+tower = { version = "0.5", features = ["util"] }
 insight-clickhouse = { path = "libs/insight-clickhouse" }
 authenticator-sdk = { path = "libs/authenticator-sdk" }
 

@@ -17,4 +17,4 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
-tower = { version = "0.5", features = ["util"] }
+tower = { workspace = true }

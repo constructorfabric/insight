@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { publishBuildInfo } from "./build-info";
 
@@ -20,10 +20,6 @@ function stubFetch(analytics: Answer): void {
     ),
   );
 }
-
-beforeEach(() => {
-  delete window.__INSIGHT_BUILD__;
-});
 
 afterEach(() => {
   vi.unstubAllEnvs();
