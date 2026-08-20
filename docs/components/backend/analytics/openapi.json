@@ -102,7 +102,6 @@
       "ConnectorHealthResponse": {
         "properties": {
           "as_of": {
-            "description": "Server time the state was read at, so a client does not date the\nreading by its own clock.",
             "format": "date-time",
             "type": "string"
           },
@@ -125,7 +124,6 @@
             "type": "string"
           },
           "last_write": {
-            "description": "When data last arrived. Absent when the connector has never delivered.",
             "format": "date-time",
             "type": [
               "string",
@@ -136,7 +134,7 @@
             "type": "string"
           },
           "rows": {
-            "description": "Physical rows across active parts. On a deduplicating engine this\ncounts rows not yet merged away, so it sizes a stream and does not\ncount entities.",
+            "description": "Physical rows across active parts: on a deduplicating engine this\nsizes a stream and does not count entities.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
