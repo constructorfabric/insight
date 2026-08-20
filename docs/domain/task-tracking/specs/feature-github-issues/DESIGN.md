@@ -578,13 +578,15 @@ Files to add, each asserting one thing the design claims:
 
 | File | Proves |
 |---|---|
-| `github_tasks_closed.test.yaml` | closure from `state` alone, split by issue type through the type catalogue |
-| `github_tasks_bugs.test.yaml` | `issue_kind` resolved from the authored value map, and an unmapped type staying its own group |
-| `github_tasks_resolution_time.test.yaml` | `created_at` coming from the synthetic creation marker, not from the first event |
-| `github_tasks_reopen_rate.test.yaml` | reopen detection across a close/reopen/close sequence |
-| `github_tasks_due_dates.test.yaml` | the due date arriving from a native issue field bound to the `duedate` role |
-| `github_tasks_no_dev_time.test.yaml` | the withheld measures staying absent rather than degenerating into lead time |
-| `github_tasks_unmapped_value.test.yaml` | an unmapped status value failing the build rather than silently reading as open |
+| `github_tasks_closed.test.yaml` | closure from `state` alone, the type breakdown, the source dimension, re-sync deduplication, and the withheld measures staying absent rather than degenerating into lead time |
+| `github_tasks_bugs.test.yaml` | `issue_kind` from the authored value map, and a type the map does not mention staying its own group instead of defaulting into the non-bug side |
+| `github_tasks_lifecycle.test.yaml` | resolution counted from the synthesised creation marker rather than the first recorded event, and reopen rate folded out of the state history |
+| `github_tasks_due_dates.test.yaml` | a due date read through a native issue field bound to the `duedate` role, across the numeric-to-node-id bridge, with an undated issue guarding the denominator |
+
+An unmapped value failing the build belongs to the dbt coverage test rather than
+here: this rig asserts API responses, and a fixture carrying an unmapped value
+would fail the build instead of producing an assertion. See
+[section 11.5](#115-configuration-gaps).
 
 Duplicated bronze rows belong in the fixtures: they are what proves the
 read-time deduplication holds. The last two files are the ones worth writing
@@ -842,6 +844,25 @@ and an unlisted type falls to `unknown`, which is excluded from both `bugs_fixed
 and `closed_non_bug` while still counting toward `tasks_closed` — the bug share
 moves with no signal. Migrating these lists into the value-mapping table keyed on
 the source resolves it; the current lists become the per-vendor default seed.
+
+**Three configuration guarantees are implemented but unproven.**
+
+The coverage test that refuses an unmapped value runs in the rig, but every
+fixture maps everything it seeds, so the test passes without ever firing.
+Proving it fires needs a negative harness the rig does not have: a fixture
+carrying an unmapped value fails the build rather than producing an assertion,
+which is the desired behaviour and the reason it cannot be asserted in the same
+run. Until that exists, the guard is reasoned about rather than demonstrated.
+
+The authored override beating a vendor-derived category — the channel for a
+status an administrator filed under a category that does not match how the team
+treats it — is implemented in the `coalesce(authored, derived)` rule and
+exercised by nothing.
+
+Unit conversion is unreachable: `unit_multiplier` only ever feeds the estimation
+measures, and those need a spent-time value GitHub does not have. The first
+source that supplies one, or the first measure that wants an estimate on its
+own, makes it testable.
 
 **Nothing resolves as of the event yet.** Phase 1 reads both the role bindings
 and the value mappings as of the build, so a mapping written today applies to all
