@@ -61,7 +61,7 @@ import {
 } from "@/lib/portal/portal-nav";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { cn } from "@/lib/utils";
-import { useIsAdmin } from "@/queries/identity-me";
+import { useIsAdmin, useVisibilityPolicy } from "@/queries/identity-me";
 
 const ZONE_SUB: Record<string, string> = {
   overview: "Cross-functional org rollup",
@@ -519,10 +519,13 @@ function PeopleNav({ active }: { active: string | null }) {
 
 function WorkChart() {
   const [query, setQuery] = useState("");
+  // A chart is what a reporting line draws. With no lines there is a roster,
+  // and calling it a chart would name a structure the reader cannot see.
+  const { isFlat } = useVisibilityPolicy();
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>WorkChart</SidebarGroupLabel>
+      <SidebarGroupLabel>{isFlat ? "Everyone" : "WorkChart"}</SidebarGroupLabel>
       <SidebarGroupContent className="flex flex-col gap-2">
         <div className="relative px-2">
           <Search className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-muted-foreground" />

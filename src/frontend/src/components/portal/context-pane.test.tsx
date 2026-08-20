@@ -17,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  isFlat: false,
   zone: { activeZone: "overview", activePerson: "boss@x" },
   standings: [] as Array<{
     id: string;
@@ -36,6 +37,11 @@ vi.mock("@/components/org-tree", () => ({
 }));
 vi.mock("@/queries/identity-me", () => ({
   useIsAdmin: () => ({ isAdmin: mocks.isAdmin, isPending: false }),
+  useVisibilityPolicy: () => ({
+    policy: mocks.isFlat ? "flat" : "org_chart",
+    isFlat: mocks.isFlat,
+    isPending: false,
+  }),
 }));
 
 import {
@@ -282,5 +288,18 @@ describe("ContextPane", () => {
     // flight, so a tooltip that trusted them would announce the strongest
     // claim of the three on an answer the hook has not given.
     expect(button.getAttribute("title")).toBeNull();
+  });
+});
+
+describe("ContextPane on an organisation with no reporting lines", () => {
+  it("names the roster section for what it is, not for a chart", () => {
+    // "WorkChart" describes a structure a flat organisation does not have.
+    mocks.isFlat = true;
+    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+
+    pane();
+
+    expect(screen.getByText("Everyone")).toBeInTheDocument();
+    expect(screen.queryByText("WorkChart")).toBeNull();
   });
 });
