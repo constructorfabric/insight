@@ -1,10 +1,7 @@
 //! `GET /v1/connector-health` HTTP handler.
 //!
-//! Reports what each connector has actually delivered into bronze: how many
-//! streams it owns, how many carry data, their size, and when data last
-//! arrived. No verdict is served — the warn/error windows every connector
-//! declares are not readable from here yet, and a single instance-wide age
-//! limit would misreport connectors whose own limits differ.
+//! Serves no verdict: the warn/error windows connectors declare are not
+//! readable from this service.
 
 use std::sync::Arc;
 
@@ -20,8 +17,6 @@ use crate::domain::connector_health;
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ConnectorHealthResponse {
-    /// Server time the state was read at, so a client does not date the
-    /// reading by its own clock.
     pub as_of: DateTime<Utc>,
     pub connectors: Vec<ConnectorRow>,
 }
@@ -33,11 +28,9 @@ pub struct ConnectorRow {
     pub namespace: String,
     pub streams: usize,
     pub streams_with_data: usize,
-    /// Physical rows across active parts. On a deduplicating engine this
-    /// counts rows not yet merged away, so it sizes a stream and does not
-    /// count entities.
+    /// Physical rows across active parts: on a deduplicating engine this
+    /// sizes a stream and does not count entities.
     pub rows: u64,
-    /// When data last arrived. Absent when the connector has never delivered.
     pub last_write: Option<DateTime<Utc>>,
 }
 

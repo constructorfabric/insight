@@ -354,8 +354,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(metric_definitions::list_metric_definitions)
         .register(router, openapi);
 
-    // Per-connector ingestion state for the Data health surface. Instance-wide
-    // rather than tenant-scoped: bronze schemas are not partitioned by tenant.
+    // Not tenant-scoped: bronze schemas are not partitioned by tenant.
     router = OperationBuilder::get("/v1/connector-health")
         .operation_id("analytics_api.connector_health.get")
         .summary("Report per-connector ingestion state")

@@ -1,5 +1,3 @@
-//! Per-connector ingestion state, summarised from one row per bronze stream.
-
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, Utc};
@@ -53,9 +51,7 @@ fn extract_written(stream: &StreamState) -> Option<DateTime<Utc>> {
         .filter(|t| *t != DateTime::<Utc>::UNIX_EPOCH)
 }
 
-/// How stale a connector's newest data is allowed to be before it is worth
-/// reporting. Every connector declares its own pair, so there is no single
-/// instance-wide window.
+/// Each connector declares its own pair; there is no instance-wide window.
 #[derive(Debug, Clone, Copy)]
 pub struct Thresholds {
     pub warn_after: Duration,
@@ -86,11 +82,8 @@ pub fn freshness(state: &ConnectorState, thresholds: Thresholds, now: DateTime<U
     }
 }
 
-/// Every bronze schema a connector writes to carries this prefix; the rest of
-/// the name is the connector as a reader knows it.
 pub const BRONZE_PREFIX: &str = "bronze_";
 
-/// The extract column every bronze stream carries.
 const EXTRACT_COLUMN: &str = "_airbyte_extracted_at";
 
 pub fn connector_name(namespace: &str) -> &str {
@@ -101,9 +94,8 @@ pub fn connector_name(namespace: &str) -> &str {
 #[error("unsafe identifier: {0}")]
 pub struct UnsafeIdentifier(pub String);
 
-/// `max()` cannot be taken over a dynamic table list in one bound statement, so
-/// the names are spliced. They come from the server's own catalogue, and
-/// splicing stays safe only while every one is a plain identifier.
+/// Table names are spliced, not bound: splicing stays safe only while every
+/// name is a plain identifier.
 pub fn newest_extract_sql(
     streams: &[(String, String)],
 ) -> Result<Option<String>, UnsafeIdentifier> {
@@ -134,9 +126,7 @@ fn is_plain_identifier(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Bronze streams and their physical size. Row counts come from part metadata
-/// rather than `count()`, so this stays a catalogue read and never scans data.
-/// Inactive parts are excluded or a merged-away part would be counted twice.
+/// Inactive parts are excluded; a merged-away part would otherwise count twice.
 const STREAM_CATALOGUE_SQL: &str = "\
     SELECT c.database AS namespace, \
            c.table AS stream, \
@@ -161,8 +151,6 @@ struct ExtractRow {
     newest_extract: DateTime<Utc>,
 }
 
-/// Reads one [`StreamState`] per bronze stream: the catalogue for what exists
-/// and how big it is, then a single statement for every stream's newest extract.
 pub async fn read_stream_states(
     ch: &insight_clickhouse::Client,
 ) -> Result<Vec<StreamState>, ReadError> {
