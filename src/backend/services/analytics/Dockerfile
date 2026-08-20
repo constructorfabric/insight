@@ -95,6 +95,11 @@ RUN useradd -U -u 1000 -m appuser && \
     chown -R 1000:1000 /app
 USER 1000
 
+# CI passes the image tag; an unset build arg leaves the service reporting
+# `unknown` rather than a tag it cannot vouch for.
+ARG INSIGHT_BUILD_VERSION
+ENV INSIGHT_BUILD_VERSION=${INSIGHT_BUILD_VERSION}
+
 EXPOSE 8081
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

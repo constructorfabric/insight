@@ -356,6 +356,8 @@ jobs:
           context: src/backend
           file: src/backend/services/analytics/Dockerfile
           platforms: linux/${{ matrix.arch }}
+          build-args: |
+            INSIGHT_BUILD_VERSION=${{ needs.changes.outputs.build_tag }}
           # PR and merge-group amd64 legs write a loadable tarball instead of
           # discarding the result. Other legs keep the push-by-digest output.
           tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-analytics:e2e-prebuilt' || '' }}
@@ -850,6 +852,8 @@ jobs:
           context: src/backend
           file: src/backend/services/identity-resolution/Dockerfile
           platforms: linux/${{ matrix.arch }}
+          build-args: |
+            INSIGHT_BUILD_VERSION=${{ needs.changes.outputs.build_tag }}
           # PR amd64 legs feed the e2e rig — see backend-analytics.
           tags: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'insight-identity-resolution:e2e-prebuilt' || '' }}
           outputs: ${{ needs.changes.outputs.export_artifacts == 'true' && matrix.arch == 'amd64' && 'type=docker,dest=/tmp/e2e-prebuilt.tar' || format('type=image,name={0}/insight-identity-resolution,push-by-digest=true,name-canonical=true,push={1}', env.IMAGE_PREFIX, needs.changes.outputs.should_push == 'true') }}

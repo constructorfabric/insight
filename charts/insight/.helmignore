@@ -12,8 +12,3 @@
 # Local notes
 *.local
 NOTES.local.md
-
-# Render-contract tests are not chart content
-tests/
-__pycache__/
-*.pyc
