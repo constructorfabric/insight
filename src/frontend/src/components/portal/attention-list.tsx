@@ -103,18 +103,15 @@ function Theme({
   const [all, setAll] = useState(false);
   const shown = all ? flags : flags.slice(0, PEOPLE_PER_THEME);
   return (
-    <div className="rounded-lg border bg-card">
+    // Clips rather than rounding the header: the inner radius is the outer one
+    // minus the border, and only the browser tracks that as either changes.
+    <div className="overflow-hidden rounded-lg border bg-card">
       <button
         type="button"
         aria-expanded={open}
         aria-controls={`attention-${metricKey}`}
         onClick={() => setOpen((v) => !v)}
-        // The container rounds but does not clip, so a square fill paints over
-        // its corners.
-        className={cn(
-          "flex w-full items-center gap-3 rounded-t-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent",
-          !open && "rounded-b-lg",
-        )}
+        className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
       >
         {open ? (
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
