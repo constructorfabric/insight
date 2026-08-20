@@ -409,8 +409,10 @@ function DayStrip({
                   // and those mean opposite things.
                   day.height === 0 && "bg-foreground/20",
                   // Still open to revision: the reading is real, so it keeps
-                  // its height and loses only weight.
-                  day.provisional && "bg-foreground/20"
+                  // its height and fades. Fading rather than re-toning leaves
+                  // the zero's own tone intact, so a zero that may still move
+                  // stays distinguishable from one that has settled.
+                  day.provisional && "opacity-50"
                 )}
                 style={{ height: `${Math.max(day.height * 100, 2)}%` }}
               />
