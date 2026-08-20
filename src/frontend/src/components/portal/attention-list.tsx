@@ -109,7 +109,12 @@ function Theme({
         aria-expanded={open}
         aria-controls={`attention-${metricKey}`}
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+        // The container rounds but does not clip, so a square fill paints over
+        // its corners.
+        className={cn(
+          "flex w-full items-center gap-3 rounded-t-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent",
+          !open && "rounded-b-lg",
+        )}
       >
         {open ? (
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
