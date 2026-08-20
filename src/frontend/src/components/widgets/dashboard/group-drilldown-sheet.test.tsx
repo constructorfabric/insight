@@ -67,6 +67,6 @@ describe("GroupDrilldownSheet", () => {
 
   it("shows an error when a metrics group has no drilldown target", () => {
     renderSheet(METRIC_DEF, undefined);
-    expect(screen.getByText("Missing drilldown data")).toBeInTheDocument();
+    expect(screen.getByText("No supporting data")).toBeInTheDocument();
   });
 });

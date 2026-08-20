@@ -56,6 +56,13 @@ WITH source_rows AS (
 
     UNION ALL
 
+    -- Seat spend: the one evidence relation whose unresolved rows are money,
+    -- so its match rate answers "how much of the billed amount reaches nobody".
+    SELECT source_key, entity_id, source_entity_id
+    FROM {{ ref('ai_cost_metric_evidence') }}
+
+    UNION ALL
+
     SELECT
         'hr_cohorts' AS source_key,
         -- Null-proof under EITHER join_use_nulls setting (models differ): the

@@ -45,17 +45,3 @@ repos:
       - id: pycln
         language_version: python3.13
         args: ["--all"]
-  # YAML formatting. Helm chart templates are Go-templated (not parseable YAML)
-  # and packaged subcharts are vendored, so they are excluded.
-  - repo: https://github.com/google/yamlfmt
-    rev: v0.21.0
-    hooks:
-      - id: yamlfmt
-        args: ["-formatter", "retain_line_breaks_single=true"]
-        exclude: |
-          (?x)^(
-            .*/helm/templates/.*|
-            charts/.*/templates/.*|
-            charts/.*/charts/.*|
-            deploy/.*/templates/.*
-          )

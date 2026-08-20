@@ -119,6 +119,10 @@ MATRIX: Sequence[Expectation] = (
     Expectation("ai.chat_assistant_conversations", "ai", Tier.EXACT_SUM),
     Expectation("ai.cost", "ai", Tier.EXACT_SUM),
     Expectation("ai.dev_conversations", "ai", Tier.EXACT_SUM),
+    Expectation("ai.extra_usage_cost", "ai_cost", Tier.EXACT_SUM),
+    Expectation("ai.extra_usage_utilisation", "ai_cost", Tier.EXACT_RATIO, scale=100.0),
+    Expectation("ai.prs_total", "ai", Tier.EXACT_SUM),
+    Expectation("ai.prs_with_assistant", "ai", Tier.EXACT_SUM),
     Expectation("ai.removed_lines", "ai", Tier.EXACT_SUM),
     Expectation("ai.tool_acceptance_rate", "ai", Tier.EXACT_RATIO, scale=100.0),
     Expectation("collab.active_days", "collab", Tier.EXACT_DISTINCT_DATES),
@@ -186,6 +190,12 @@ MATRIX: Sequence[Expectation] = (
     Expectation("wiki.pages_edited", "wiki", Tier.EXACT_SUM),
 )
 
+#: A metric the stand serves but has no evidence for: its measure reads
+#: `class_collab_document_activity`, which no generator writes, so the drilldown
+#: answers 200 with no rows. Named once because two tests need the same
+#: property, and it holds only as long as that relation stays unseeded.
+EMPTY_EVIDENCE_METRIC = "collab.files_engaged"
+
 #: One metric per distinct evidence presentation, plus the capable-but-empty
 #: case. A presentation is all an export can differ by — the column set and the
 #: header labels are everything it serializes — and every other metric in the
@@ -199,4 +209,5 @@ EXPORT_SHAPES: Sequence[str] = (
     "git.merge_rate",
     "collab.messages_sent",
     "wiki.pages_created",
+    EMPTY_EVIDENCE_METRIC,
 )

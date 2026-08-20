@@ -6,6 +6,7 @@ import { I18nextProvider } from "react-i18next";
 
 import "./index.css";
 import {
+  authStore,
   clearAuthErrorAttempts,
   consumeAuthErrorParam,
   consumeOverrideParam,
@@ -19,6 +20,8 @@ import { ThemeProvider } from "@/components/theme-provider";
 import i18n from "@/i18n";
 import { queryClient } from "@/query-client";
 import { initSentry } from "@/sentry";
+import { startUsageTelemetry } from "@/telemetry";
+import { recordScreens } from "@/usage-collection";
 import { router } from "./router";
 
 async function enableMocking(): Promise<void> {
@@ -50,6 +53,7 @@ function bootstrap(): void {
         // The session is non-sliding — without the refresh driver it dies
         // session_ttl (~10 min) after login regardless of activity (#1854).
         startSessionRefresh();
+        startUsageCollection();
         renderApp();
         return;
       }
@@ -69,6 +73,13 @@ function bootstrap(): void {
       // into the login flow.
       renderApp();
     });
+}
+
+function startUsageCollection(): void {
+  const { session } = authStore.getSnapshot();
+  if (!session) return;
+  recordScreens(router.history);
+  void startUsageTelemetry(session);
 }
 
 function renderApp(): void {

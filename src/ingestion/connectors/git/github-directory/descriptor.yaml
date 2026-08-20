@@ -17,7 +17,7 @@ name: github-directory
 # republishes a nocode manifest only on descriptor-version drift, so the
 # previous manifest-only change was live in the repo and inert on every
 # cluster.
-version: "1.0.1"
+version: "1.0.2"
 # `nocode` = declarative-manifest connector (connector.yaml published to the
 # Airbyte builder), as opposed to `cdk`. MUST be `nocode`/absent for
 # declarative connectors: reconcile only branches on `nocode` vs `cdk` — any

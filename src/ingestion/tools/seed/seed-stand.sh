@@ -498,6 +498,16 @@ render_seed_manifest() {
   ' < "$JOB_TEMPLATE"
 }
 
+# print_manifest_sentinel NAME — re-read the finished Job's log and print the
+# one manifest line, or nothing for a step that writes no manifest. Read from
+# the completed Job rather than taken from the stream below, because the
+# seeder prints it last and `logs -f` can end without the container's final
+# lines; a consumer that lost it cannot tell a seeded stand from an attempt.
+print_manifest_sentinel() {
+  kube -n "$NAMESPACE" logs "job/$1" --tail=-1 2>/dev/null \
+    | grep -m1 '^SEED_MANIFEST_JSON: ' || true
+}
+
 # wait_for_job NAME — follow the pod's logs, then read the verdict from the Job
 # object (the log stream ending is not the verdict). 0 on success, 1 otherwise;
 # never fatal on a transient apiserver read.
@@ -513,7 +523,9 @@ wait_for_job() {
     sleep 2
   done
 
-  kube -n "$NAMESPACE" logs -f "job/$job_name" || true
+  # The sentinel is filtered out here and re-emitted from the finished Job on
+  # success, so the log carries it exactly once and never a truncated copy.
+  kube -n "$NAMESPACE" logs -f "job/$job_name" | grep -v '^SEED_MANIFEST_JSON: ' || true
 
   # Polled, not `kubectl wait --for=condition=complete`, which only waits for
   # success. `|| true`: a transient apiserver hiccup must not kill the loop.
@@ -524,6 +536,7 @@ wait_for_job() {
     failed="$(kube -n "$NAMESPACE" get "job/$job_name" \
       -o 'jsonpath={.status.failed}' 2>/dev/null || true)"
     if [[ "${succeeded:-0}" -ge 1 ]]; then
+      print_manifest_sentinel "$job_name"
       echo "==> job complete: $job_name"
       return 0
     fi

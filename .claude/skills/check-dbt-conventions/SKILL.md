@@ -77,8 +77,7 @@ For every `<connector>__bronze_promoted.sql` under `src/ingestion/connectors/*/d
 - All other connector models that read bronze must declare `-- depends_on: {{ ref('<connector>__bronze_promoted') }}`
 
 **Every connector MUST have a `<connector>__bronze_promoted.sql`** — a missing one is a FAIL.
-Known exceptions: legacy `git/github` (superseded by `github-v2`) is intentionally
-not promoted; `claude-admin` is a tracked follow-up (its bronze lacks a `unique_key`
+Known exceptions: `claude-admin` is a tracked follow-up (its bronze lacks a `unique_key`
 column, so promotion is blocked until the connector emits one — flag, don't double-report).
 
 ### Check 5 — Airbyte sync mode in connect.sh
@@ -105,7 +104,7 @@ Every silver model and every dbt-owned staging model with append/event semantics
 For each `.sql` file under `src/ingestion/silver/` and `src/ingestion/connectors/*/dbt/`:
 
 - If `materialized='table'` AND model name is in the allow-list above → PASS
-- If `materialized='table'` AND model name is NOT in the allow-list → FAIL with suggestion: "Convert to `materialized='incremental'`. For **silver** use `incremental_strategy='delete+insert'` + `unique_key='unique_key'`; for **staging** use `incremental_strategy='append'`. Add `WHERE _version > (SELECT max(_version) FROM {{ this }})`. If upstream lacks `_version`, amend the SELECT to project `toUnixTimestamp64Milli(_airbyte_extracted_at) AS _version`."
+- If `materialized='table'` AND model name is NOT in the allow-list → FAIL with suggestion: "Convert to `materialized='incremental'`. For **silver** use `incremental_strategy='delete+insert'` + `unique_key='unique_key'`; for **staging** use `incremental_strategy='append'`. Scope the incremental boundary to one source instance with `{{ silver_incremental_watermark([...]) }}` — never a table-wide `max(_version)`, which lets one producer's boundary permanently exclude a slower producer's rows. If upstream lacks `_version`, amend the SELECT to project `toUnixTimestamp64Milli(_airbyte_extracted_at) AS _version`."
 - If `materialized='view'` for a silver `class_*` / `fct_*` / `mtr_*` → FAIL (views forbidden in silver per check 1)
 - If `materialized='ephemeral'` → cross-checked by Check 6
 

@@ -122,7 +122,9 @@ SELECT
     -- coalesce keeps _version non-nullable: an unmatched LEFT JOIN yields NULL
     -- under join_use_nulls=1, and ReplacingMergeTree rejects a Nullable version.
     greatest(toUnixTimestamp64Milli(d._airbyte_extracted_at), coalesce(c.cost_version, toInt64(0)))
-                                                    AS _version
+                                                    AS _version,
+    -- Cursor reports an is-active flag per day, not a seat lifecycle state.
+    CAST(NULL AS Nullable(String))                  AS seat_status
 FROM daily AS d
 LEFT JOIN {{ ref('cursor__event_cost_daily') }} AS c
        ON coalesce(d.tenant_id, '') = c.tenant_key

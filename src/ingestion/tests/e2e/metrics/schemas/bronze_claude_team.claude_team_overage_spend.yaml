@@ -1,0 +1,34 @@
+# JSON schema for bronze_claude_team.claude_team_overage_spend (all real columns).
+# Mirrors the connector InlineSchemaLoader (connectors/ai/claude-team/connector.yaml
+# — stream claude_team_overage_spend, GET /api/organizations/{org}/overage_spend_limits)
+# plus the 4 _airbyte_* CDK columns. NOTE: monthly_credit_limit and used_credits
+# are ALREADY minor units (cents) — Silver maps them through with no ×100. The
+# stream carries no date; period_month is stamped from _airbyte_extracted_at.
+schemas:
+  bronze_claude_team.claude_team_overage_spend:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: { type: string }
+      _airbyte_extracted_at: { type: string, format: date-time }
+      _airbyte_meta: { type: string }
+      _airbyte_generation_id: { type: integer }
+      tenant_id: { type: [string, "null"] }
+      source_id: { type: [string, "null"] }
+      unique_key: { type: string }
+      collected_at: { type: [string, "null"] }
+      data_source: { type: [string, "null"] }
+      account_uuid: { type: [string, "null"] }
+      account_email: { type: [string, "null"] }
+      account_name: { type: [string, "null"] }
+      seat_tier: { type: [string, "null"] }
+      is_enabled: { type: [boolean, "null"] }
+      monthly_credit_limit: { type: [number, "null"] }
+      used_credits: { type: [number, "null"] }
+      currency: { type: [string, "null"] }
+      out_of_credits: { type: [boolean, "null"] }
+      used_credits_basis: { type: [string, "null"] }
+      limit_type: { type: [string, "null"] }
+      disabled_reason: { type: [string, "null"] }
+      disabled_until: { type: [string, "null"] }

@@ -1,3 +1,5 @@
+const usageMocks = vi.hoisted(() => ({ recordUsageEvent: vi.fn() }));
+
 import { useEffect } from "react";
 
 import { render, screen } from "@testing-library/react";
@@ -64,6 +66,11 @@ vi.mock("@/components/widgets/metric-views/metric-timeseries-table", () => ({
     return <div>table presentation</div>;
   },
 }));
+
+vi.mock("@/telemetry", async () => {
+  const actual = await vi.importActual<typeof import("@/telemetry")>("@/telemetry");
+  return { ...actual, recordUsageEvent: usageMocks.recordUsageEvent };
+});
 
 vi.mock("@/components/widgets/metric-views/metric-timeseries-csv", () => ({
   downloadMetricTimeseriesCsv: mocks.csv,
@@ -261,6 +268,33 @@ describe("MetricTimeseriesView", () => {
     await user.click(await screen.findByText("CSV (.csv)"));
     expect(mocks.csv).toHaveBeenCalledTimes(1);
     expect(mocks.csv.mock.calls[0]?.[0]).toBe("exp");
+  });
+
+  it("reports which format a reader took the data out in", async () => {
+    const user = userEvent.setup();
+    usageMocks.recordUsageEvent.mockClear();
+    render(
+      <MetricTimeseriesView
+        id="exp"
+        entityId={ENTITY_ID}
+        range={RANGE}
+        metricKeys={["git.commits"]}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    await user.click(await screen.findByText("Excel (.xlsx)"));
+    expect(usageMocks.recordUsageEvent).toHaveBeenCalledWith(
+      "export",
+      "timeseries:xlsx",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    await user.click(await screen.findByText("CSV (.csv)"));
+    expect(usageMocks.recordUsageEvent).toHaveBeenCalledWith(
+      "export",
+      "timeseries:csv",
+    );
   });
 
   it("switches the charted metric through the metric select", async () => {
@@ -492,7 +526,7 @@ describe("MetricTimeseriesView", () => {
           }),
         }),
       ]),
-      "Commits & Lines added"
+      { title: "Commits & Lines added" }
     );
   });
 
@@ -510,10 +544,10 @@ describe("MetricTimeseriesView", () => {
     };
     mocks.collection.mockReturnValue({ ...ready, byKey });
     mocks.evidenceColumn = groupedTimeseriesModel().columns[0]?.key ?? "";
-    const openEvidence = vi.fn();
+    const openEvidenceTargets = vi.fn();
     render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence, openEvidenceTargets: vi.fn() }}
+        value={{ openEvidence: vi.fn(), openEvidenceTargets }}
       >
         <MetricTimeseriesView
           id="point-evidence"
@@ -526,19 +560,24 @@ describe("MetricTimeseriesView", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "drill point" }));
-    expect(openEvidence).toHaveBeenCalledWith(
-      expect.objectContaining({
-        metric_key: "git.commits",
-        period: { from: "2026-04-20", to: "2026-04-26" },
-        filters: [
-          {
-            dimension: "repository",
-            values: ["org/repo-a"],
-          },
-        ],
-        display_dimensions: ["repository"],
-      }),
-      "Commits"
+    expect(openEvidenceTargets).toHaveBeenCalledWith(
+      [
+        {
+          selection: expect.objectContaining({
+            metric_key: "git.commits",
+            period: { from: "2026-04-20", to: "2026-04-26" },
+            filters: [
+              {
+                dimension: "repository",
+                values: ["org/repo-a"],
+              },
+            ],
+            display_dimensions: ["repository"],
+          }),
+          label: "Commits",
+        },
+      ],
+      { activeMetricKey: "git.commits" }
     );
   });
 });

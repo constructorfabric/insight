@@ -79,7 +79,11 @@ export default defineConfig([
     },
   },
   {
-    files: ["src/components/metric-evidence-table.tsx"],
+    // TanStack Virtual returns functions the React Compiler will not memoize.
+    files: [
+      "src/components/metric-evidence-table.tsx",
+      "src/components/portal/platform-usage.tsx",
+    ],
     rules: {
       "react-hooks/incompatible-library": "off",
     },

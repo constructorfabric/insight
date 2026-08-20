@@ -31,7 +31,7 @@ export function PersonCoverage({ unmeasured, inactive }: PersonCoverageProps) {
     <p className="text-sm text-muted-foreground">
       {unmeasured.length > 0 ? (
         <>
-          No data reaches us for {list(unmeasured)} — this page shows what is
+          No data source is connected for {list(unmeasured)} — this page shows what is
           measured, not everything this person does.{" "}
         </>
       ) : null}

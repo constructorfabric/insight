@@ -62,6 +62,37 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage
     `source` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
+    `_version` Int64,
+    `seat_status` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.class_ai_invoice
+(
+    `insight_tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `invoice_id` Nullable(String),
+    `line_id` Nullable(String),
+    `tool` String,
+    `invoice_status` Nullable(String),
+    `chain_status` Nullable(String),
+    `category` Nullable(String),
+    `tier_label` Nullable(String),
+    `is_proration` UInt8,
+    `currency` String,
+    `period_month` Date,
+    `amount_cents` Nullable(Int64),
+    `seat_unit_cents` Nullable(Int64),
+    `seat_quantity` Nullable(Int64),
+    `invoice_net_cents` Nullable(Int64),
+    `invoice_metrics_json` String,
+    `source` String,
+    `data_source` Nullable(String),
+    `collected_at` Nullable(DateTime64(3)),
     `_version` Int64
 )
 ENGINE = ReplacingMergeTree(_version)
@@ -393,6 +424,33 @@ CREATE TABLE IF NOT EXISTS silver.class_git_file_changes
     `lines_added` Nullable(Int64),
     `lines_removed` Nullable(Int64),
     `source_type` String,
+    `data_source` String,
+    `_version` Int64,
+    `_airbyte_extracted_at` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.class_git_item_events
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `item_type` String,
+    `item_number` Int64,
+    `event_id` String,
+    `event_at` Nullable(DateTime),
+    `actor_name` String,
+    `field_id` String,
+    `delta_action` String,
+    `delta_value_id` String,
+    `delta_value_display` String,
+    `prev_value_id` Nullable(String),
+    `prev_value_display` Nullable(String),
     `data_source` String,
     `_version` Int64,
     `_airbyte_extracted_at` DateTime64(3)

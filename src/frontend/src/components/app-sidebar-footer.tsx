@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { BookOpenText, Megaphone } from "lucide-react";
+import { BookOpenText, Megaphone, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useViewer } from "@/auth";
@@ -12,6 +12,10 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { getInitials } from "@/lib/insight/get-initials";
+import { resolveZoneItem } from "@/lib/portal/nav-model";
+import { usePortalItem } from "@/lib/portal/portal-nav";
+import { usePortalEnabled } from "@/lib/portal/portal-store";
+import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useIcPerson } from "@/queries/ic-dashboard";
 
 /**
@@ -19,13 +23,17 @@ import { useIcPerson } from "@/queries/ic-dashboard";
  * settings (portal / focus / explanations), theme switch, and the viewer
  * identity block. Extracted from AppSidebar so the portal shell can surface
  * the same controls (from the rail's settings popover) without duplicating them.
+ *
+ * `onNavigate` fires for the first two entries only: their destination renders
+ * behind the popover the portal mounts this in, so the opener has to dismiss
+ * it. The toggles stay silent — a menu that shut on every flip would need
+ * reopening each time.
  */
-export function AppSidebarFooter() {
+export function AppSidebarFooter({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
   const { email: viewerEmail, personId: viewerPersonId } = useViewer();
   const viewerQ = useIcPerson(viewerPersonId ?? "");
   const viewer = viewerQ.data ?? null;
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   const primaryEmail = viewer?.email ?? viewerEmail;
   const primary = viewer?.display_name || primaryEmail;
@@ -34,24 +42,20 @@ export function AppSidebarFooter() {
   return (
     <>
       <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            isActive={pathname === "/metrics"}
-            render={<Link to="/metrics" />}
-          >
-            <BookOpenText />
-            <span>{t("metric_definitions.nav_label")}</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            isActive={pathname === "/whats-new"}
-            render={<Link to="/whats-new" />}
-          >
-            <Megaphone />
-            <span>{t("whats_new.nav_label")}</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        <MenuEntry
+          surface="metric-catalog"
+          screen="/metrics"
+          icon={BookOpenText}
+          label={t("metric_definitions.nav_label")}
+          onNavigate={onNavigate}
+        />
+        <MenuEntry
+          surface="whats-new"
+          screen="/whats-new"
+          icon={Megaphone}
+          label={t("whats_new.nav_label")}
+          onNavigate={onNavigate}
+        />
       </SidebarMenu>
       <SidebarSettings />
       <ThemeSwitcher />
@@ -79,5 +83,57 @@ export function AppSidebarFooter() {
         </SidebarMenu>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Active state resolves through `resolveZoneItem`, the resolver the context
+ * pane and the zone content use: a private comparison disagrees with them on a
+ * bare `?zone=manage` and on a `?zone=` stranded by a person route.
+ */
+function MenuEntry({
+  surface,
+  screen,
+  icon: Icon,
+  label,
+  onNavigate,
+}: {
+  surface: string;
+  screen: "/metrics" | "/whats-new";
+  icon: LucideIcon;
+  label: string;
+  onNavigate?: () => void;
+}) {
+  const portal = usePortalEnabled();
+  const { activeZone } = useActiveZone();
+  const item = resolveZoneItem(activeZone, usePortalItem());
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        isActive={
+          portal
+            ? activeZone === "manage" && item === surface
+            : pathname === screen
+        }
+        render={
+          portal ? (
+            // `acct` is cleared, not omitted: `retainSearchParams` restores
+            // any portal key ABSENT from the target search.
+            <Link
+              to="/portal"
+              search={{ zone: "manage", item: surface, acct: undefined }}
+              onClick={onNavigate}
+            />
+          ) : (
+            <Link to={screen} onClick={onNavigate} />
+          )
+        }
+      >
+        <Icon />
+        <span>{label}</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }

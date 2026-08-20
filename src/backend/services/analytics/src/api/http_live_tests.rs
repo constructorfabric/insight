@@ -727,3 +727,202 @@ async fn metric_drilldown_rejects_invalid_selection_without_clickhouse() -> Test
     }
     Ok(())
 }
+
+// ── Usage monitoring (#2573) ─────────────────────────────────────
+
+/// The seeded `admin` role id, mirrored from identity's `roles_repo`.
+const ADMIN_ROLE: Uuid = Uuid::from_u128(0xa4d1_1000_0000_4000_8000_0000_0000_0001);
+const SOME_OTHER_ROLE: Uuid = Uuid::from_u128(0x018f_0000_0000_7000_8000_0000_0000_0009);
+
+/// Loopback identity serving `GET /v1/me` with the roles it is given — the only
+/// endpoint the usage admin gate reads.
+async fn spawn_identity_me(roles: &[Uuid]) -> Result<IdentityClient, Box<dyn std::error::Error>> {
+    let roles: Vec<Value> = roles
+        .iter()
+        .map(|role_id| json!({"role_id": role_id.to_string()}))
+        .collect();
+    let roles = Arc::new(roles);
+
+    let app = Router::new().route(
+        "/v1/me",
+        axum::routing::get(move || {
+            let roles = Arc::clone(&roles);
+            async move { axum::Json(json!({"roles": *roles})) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    Ok(IdentityClient::new(&format!("http://{addr}"))?)
+}
+
+fn app_with_usage_collection_off(db: DatabaseConnection, tenant: Uuid) -> Router {
+    let Ok(identity) = IdentityClient::new("http://127.0.0.1:1") else {
+        unreachable!("the static identity url builds a client")
+    };
+    let mut config = GearConfig::default();
+    config.usage.enabled = false;
+    let openapi = OpenApiRegistryImpl::new();
+    let state = Arc::new(AppState {
+        db,
+        ch: dead_ch(),
+        identity,
+        config,
+    });
+    let api = super::build_operations(Router::new(), &openapi)
+        .layer(from_fn_with_state(tenant, inject_host_context))
+        .layer(axum::Extension(state));
+    Router::new().merge(api)
+}
+
+/// One SDK v2 beacon carrying a single page view.
+fn beacon(path: &str) -> Value {
+    json!({
+        "meta": {},
+        "records": [{
+            "name": "page_view",
+            "context_session_id": "s-1",
+            "context_app_name": "insight-frontend",
+            "context_app_version": "0.0.0",
+            "data": {"path": path},
+        }],
+    })
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn usage_config_is_served_to_any_signed_in_caller() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let app = app(db, Uuid::now_v7());
+
+    let resp = app.oneshot(get("/v1/usage/config")?).await?;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await?["enabled"], json!(true));
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn usage_config_reports_an_instance_that_collects_nothing() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let app = app_with_usage_collection_off(db, Uuid::now_v7());
+
+    let resp = app.oneshot(get("/v1/usage/config")?).await?;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp).await?["enabled"],
+        json!(false),
+        "the SPA decides whether to start the SDK from this alone"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn a_beacon_is_accepted_even_when_the_event_store_is_unreachable() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let app = app(db, Uuid::now_v7());
+
+    let req = json_req("POST", "/v1/usage/events", &beacon("/portal/manage"))?;
+    let resp = app.oneshot(req).await?;
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::NO_CONTENT,
+        "a tracking failure must never reach the reader — ClickHouse is dead here"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn a_beacon_is_accepted_and_dropped_when_collection_is_off() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let app = app_with_usage_collection_off(db, Uuid::now_v7());
+
+    let req = json_req("POST", "/v1/usage/events", &beacon("/portal/manage"))?;
+    let resp = app.oneshot(req).await?;
+
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn the_usage_summary_is_refused_without_the_admin_role() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let identity = spawn_identity_me(&[SOME_OTHER_ROLE]).await?;
+    let app = app_with_identity(db, Uuid::now_v7(), identity);
+
+    let resp = app
+        .oneshot(json_req("GET", "/v1/usage/summary", &json!({}))?)
+        .await?;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "holding some other role is not administrative authority"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn the_usage_summary_fails_closed_when_the_role_check_cannot_be_made() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    // Identity is unreachable here: an admin surface must not open because the
+    // service that knows who is an admin is down.
+    let app = app(db, Uuid::now_v7());
+
+    let resp = app
+        .oneshot(json_req("GET", "/v1/usage/summary", &json!({}))?)
+        .await?;
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn the_usage_summary_admits_an_admin_and_reaches_the_store() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let identity = spawn_identity_me(&[ADMIN_ROLE]).await?;
+    let app = app_with_identity(db, Uuid::now_v7(), identity);
+
+    // ClickHouse is unreachable, so an admitted caller cannot reach a 200; a
+    // 500 rather than a 403 is what shows the gate let them through.
+    let resp = app
+        .oneshot(json_req("GET", "/v1/usage/summary", &json!({}))?)
+        .await?;
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn a_malformed_day_is_refused_before_the_store_is_asked() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let identity = spawn_identity_me(&[ADMIN_ROLE]).await?;
+    let app = app_with_identity(db, Uuid::now_v7(), identity);
+
+    let req = json_req("GET", "/v1/usage/summary?since=not-a-date", &json!({}))?;
+    let resp = app.oneshot(req).await?;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    Ok(())
+}

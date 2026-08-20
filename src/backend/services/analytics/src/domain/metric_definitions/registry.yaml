@@ -25,9 +25,14 @@ sources:
         evidence_granularity: source_summary
       - key: chat_assistant_conversations
         evidence_granularity: source_summary
+      - key: prs_with_assistant
+        evidence_granularity: source_summary
+      - key: prs_total
+        evidence_granularity: source_summary
     dimensions:
       - tool
       - surface
+      - seat_status
   - source:
       key: git
       kind: managed_observation
@@ -176,6 +181,19 @@ sources:
       - key: comments
         evidence_granularity: source_summary
     dimensions: []
+  - source:
+      key: ai_cost
+      kind: managed_observation
+      source_ref: ai_cost_metric_observations
+      evidence_ref: ai_cost_metric_evidence
+    measures:
+      - key: extra_usage_usd
+        evidence_granularity: source_summary
+      - key: extra_usage_limit_usd
+        evidence_granularity: source_summary
+    dimensions:
+      - tool
+      - seat_tier
 metrics:
   - metric_key: ai.accepted_lines
     source_key: ai_usage
@@ -235,7 +253,7 @@ metrics:
     subject: cost
     label: AI usage cost
     description: AI usage priced at vendor token/usage rates
-    explanation: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person.
+    explanation: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person. Overlaps ai.extra_usage_cost, which is the part of that same consumption the vendor actually billed on top of the seat fee — the two are served side by side and are never added, since adding them counts the billed part twice.
     format: currency
     direction: lower_is_better
     entity_type: person
@@ -246,6 +264,45 @@ metrics:
         measure_key: cost_usd
     dimensions:
       - tool
+  - metric_key: ai.extra_usage_cost
+    source_key: ai_cost
+    subject: cost
+    label: AI extra usage
+    short_label: Extra usage
+    description: Spend above the usage included in the seat fee
+    explanation: What the vendor billed a person on top of their seat fee, once the usage included in that fee was exhausted, priced at API rates. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction. Distinct from ai.cost, which prices all consumption including what the seat fee already covered — the two are never summed. Attribution mode is direct — the vendor reports this amount per seat.
+    format: currency
+    direction: lower_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: extra_usage_usd
+    dimensions:
+      - tool
+      - seat_tier
+  - metric_key: ai.extra_usage_utilisation
+    source_key: ai_cost
+    subject: cost
+    label: Extra-usage ceiling used
+    short_label: Ceiling used
+    description: Share of the extra-usage ceiling consumed
+    explanation: Extra usage measured against the ceiling in force on the seat — the plan tier's default, or a different one set for that member. At 100 per cent the vendor stops the seat, so this reads as proximity to being blocked, not as waste — room left under a ceiling was never purchased and costs nothing. A seat with no ceiling returns no value rather than a zero, the ratio having no denominator. Above 100 per cent means the ceiling was lowered below what the seat had already spent — the vendor reports the ceiling in force now against the whole month's spend, so a limit set or reduced mid-month is read against money that predates it.
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: extra_usage_usd
+      - input_role: denominator
+        measure_key: extra_usage_limit_usd
+    dimensions:
+      - tool
+      - seat_tier
   - metric_key: ai.accepted_edit_actions
     source_key: ai_usage
     subject: code
@@ -330,7 +387,7 @@ metrics:
     label: AI dev conversations
     short_label: AI dev chats
     description: Coding tool conversations where the source reports them
-    explanation: Person-attributed coding conversations from dev tools that report them.
+    explanation: Person-attributed conversations with coding AI tools, counted as the vendor counts them. For the agent tools this is the session or thread count — a session is the unit of conversation there, and no vendor publishes a separate conversation counter — so the number reads as "times the person started working with the assistant", not as messages exchanged. Tools that report no such unit, inline-completion tools among them, return no value rather than a zero.
     unit: conversations
     format: integer
     direction: higher_is_better
@@ -361,6 +418,44 @@ metrics:
     dimensions:
       - tool
       - surface
+  - metric_key: ai.prs_with_assistant
+    source_key: ai_usage
+    subject: pull_requests
+    label: PRs with AI assistance
+    short_label: PRs with AI
+    description: Pull requests the coding assistant touched
+    explanation: Pull requests where the coding assistant was active at least once, as the vendor attributes them. Reported only by sources that connect to the code host themselves, so a person working without that connection returns no value rather than a zero. Counts pull requests, not commits or lines, and says nothing about how much of the change the assistant wrote.
+    unit: PRs
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: prs_with_assistant
+    dimensions:
+      - tool
+      - seat_status
+  - metric_key: ai.prs_total
+    source_key: ai_usage
+    subject: pull_requests
+    label: PRs seen by the AI vendor
+    short_label: PRs seen
+    description: Pull requests the AI vendor counted in the same window
+    explanation: Pull requests the AI vendor observed for the person, served as the context for PRs with AI assistance rather than as a goal of its own. It is the vendor's count over the vendor's own window, which need not be the day it is reported against and need not agree with the git sources — read it next to that measure, not next to git pull-request metrics.
+    unit: PRs
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: prs_total
+    dimensions:
+      - tool
+      - seat_status
   - metric_key: git.commits
     source_key: git
     subject: commits

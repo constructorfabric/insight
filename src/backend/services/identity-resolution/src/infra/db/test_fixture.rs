@@ -1,5 +1,6 @@
 //! Live-DB fixture shared by the identity test suites (the repo-level
-//! `visible_set_live_tests` and the API-level `api::http_live_tests`).
+//! `visible_set_live_tests` and `binding_reads_live_tests`, and the API-level
+//! `api::http_live_tests`).
 //!
 //! INVARIANT: tests built on this fixture are never `#[ignore]`d — the identity
 //! CI job runs `cargo test` without `--include-ignored`, so an ignored case
@@ -10,7 +11,13 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 use uuid::Uuid;
 
+use crate::domain::seed::SourceAccountKey;
+
 use super::{connect_single, roles_repo, subchart_repo};
+use crate::config::VisibilityPolicy;
+
+/// The all-zero author every automatic binding carries.
+const AUTOMATION: Uuid = Uuid::nil();
 
 const ENV_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
 pub(crate) const FIXTURE_REASON: &str = "visible-set-live-test";
@@ -47,6 +54,13 @@ impl Fixture {
 
     pub(crate) async fn person(&self, email: &str) -> anyhow::Result<Uuid> {
         let person_id = Uuid::now_v7();
+        self.person_as(person_id, email).await?;
+        Ok(person_id)
+    }
+
+    /// The same row under an id the caller picked — for the cases where WHICH id
+    /// the journal carries is the point, the excluded sentinel above all.
+    pub(crate) async fn person_as(&self, person_id: Uuid, email: &str) -> anyhow::Result<()> {
         self.exec(
             "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
                  insight_tenant_id, value_id, person_id, author_person_id, reason)
@@ -61,8 +75,125 @@ impl Fixture {
                 FIXTURE_REASON.into(),
             ],
         )
+        .await
+    }
+
+    /// Append one observation of `value_type` for an existing person — the
+    /// building block for "this person's value changed later" scenarios.
+    pub(crate) async fn observed(
+        &self,
+        person: Uuid,
+        value_type: &str,
+        value: &str,
+    ) -> anyhow::Result<()> {
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                value_type.into(),
+                SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                value.into(),
+                bytes(person),
+                bytes(person),
+                FIXTURE_REASON.into(),
+            ],
+        )
+        .await
+    }
+
+    /// The same, observed `seconds_ago`. Explicit age is what tells "superseded"
+    /// apart from "inserted first": the currency rule reads the timestamp, and
+    /// two rows written in one test would otherwise differ by microseconds.
+    pub(crate) async fn observed_at(
+        &self,
+        person: Uuid,
+        value_type: &str,
+        value: &str,
+        seconds_ago: u32,
+    ) -> anyhow::Result<()> {
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6) - INTERVAL ? SECOND)",
+            [
+                value_type.into(),
+                SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                value.into(),
+                bytes(person),
+                bytes(person),
+                FIXTURE_REASON.into(),
+                seconds_ago.into(),
+            ],
+        )
+        .await
+    }
+
+    /// Append an automatic binding observation: this account is held by this
+    /// person, as observed `seconds_ago`. The age is explicit so a test can
+    /// write an older observation AFTER a newer one — the shape that tells the
+    /// latest-by-time rule apart from "the row inserted last".
+    pub(crate) async fn bound_at(
+        &self,
+        account_id: &str,
+        person: Uuid,
+        reason: &str,
+        seconds_ago: u32,
+    ) -> anyhow::Result<SourceAccountKey> {
+        self.bind(account_id, person, AUTOMATION, reason, seconds_ago)
+            .await
+    }
+
+    /// The same, authored by an operator — the fact the review surface reads to
+    /// tell a human's decision from automation's.
+    pub(crate) async fn bound_by_operator_at(
+        &self,
+        account_id: &str,
+        person: Uuid,
+        operator: Uuid,
+        seconds_ago: u32,
+    ) -> anyhow::Result<SourceAccountKey> {
+        self.bind(account_id, person, operator, FIXTURE_REASON, seconds_ago)
+            .await
+    }
+
+    async fn bind(
+        &self,
+        account_id: &str,
+        person: Uuid,
+        author: Uuid,
+        reason: &str,
+        seconds_ago: u32,
+    ) -> anyhow::Result<SourceAccountKey> {
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason, created_at)
+             VALUES ('id', ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6) - INTERVAL ? SECOND)",
+            [
+                SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                account_id.into(),
+                bytes(person),
+                bytes(author),
+                reason.into(),
+                seconds_ago.into(),
+            ],
+        )
         .await?;
-        Ok(person_id)
+        Ok(self.account(account_id))
+    }
+
+    pub(crate) fn account(&self, account_id: &str) -> SourceAccountKey {
+        SourceAccountKey {
+            source_type: SOURCE_TYPE.to_owned(),
+            source_id: self.source_id,
+            account_id: account_id.to_owned(),
+        }
     }
 
     /// A person the log knows without an email observation — the shape the
@@ -81,6 +212,27 @@ impl Fixture {
                 bytes(person_id),
                 bytes(person_id),
                 FIXTURE_REASON.into(),
+            ],
+        )
+        .await?;
+        Ok(person_id)
+    }
+
+    /// A person the log holds nothing but a sign-in binding for.
+    pub(crate) async fn login_minted_person(&self, login: &str) -> anyhow::Result<Uuid> {
+        let person_id = Uuid::now_v7();
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason)
+             VALUES ('id', ?, ?, ?, ?, ?, ?, ?)",
+            [
+                SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                login.into(),
+                bytes(person_id),
+                bytes(Uuid::nil()),
+                crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON.into(),
             ],
         )
         .await?;
@@ -145,7 +297,60 @@ impl Fixture {
         viewer: Uuid,
         candidates: &[Uuid],
     ) -> anyhow::Result<Vec<Uuid>> {
-        subchart_repo::visible_targets(&self.db, self.tenant, viewer, candidates, SOURCE_TYPE).await
+        self.visible_under(viewer, candidates, VisibilityPolicy::OrgChart)
+            .await
+    }
+
+    pub(crate) async fn visible_flat(
+        &self,
+        viewer: Uuid,
+        candidates: &[Uuid],
+    ) -> anyhow::Result<Vec<Uuid>> {
+        self.visible_under(viewer, candidates, VisibilityPolicy::Flat)
+            .await
+    }
+
+    async fn visible_under(
+        &self,
+        viewer: Uuid,
+        candidates: &[Uuid],
+        policy: VisibilityPolicy,
+    ) -> anyhow::Result<Vec<Uuid>> {
+        subchart_repo::visible_targets(
+            &self.db,
+            self.tenant,
+            viewer,
+            candidates,
+            SOURCE_TYPE,
+            policy,
+        )
+        .await
+    }
+
+    pub(crate) async fn can_see(&self, viewer: Uuid, target: Uuid) -> anyhow::Result<bool> {
+        self.probe(viewer, target, VisibilityPolicy::OrgChart).await
+    }
+
+    pub(crate) async fn can_see_flat(&self, viewer: Uuid, target: Uuid) -> anyhow::Result<bool> {
+        self.probe(viewer, target, VisibilityPolicy::Flat).await
+    }
+
+    async fn probe(
+        &self,
+        viewer: Uuid,
+        target: Uuid,
+        policy: VisibilityPolicy,
+    ) -> anyhow::Result<bool> {
+        subchart_repo::is_target_in_visible_set(
+            &self.db,
+            self.tenant,
+            viewer,
+            target,
+            SOURCE_TYPE,
+            None,
+            policy,
+        )
+        .await
     }
 
     async fn exec(&self, sql: &str, values: impl IntoIterator<Item = Value>) -> anyhow::Result<()> {

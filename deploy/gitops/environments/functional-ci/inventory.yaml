@@ -14,10 +14,23 @@ namespaces:
 
 release: insight
 
+deploy:
+  # NO `--atomic`. The cluster is created and destroyed by the same job, so
+  # there is no previous revision worth rolling back to — the rollback only
+  # uninstalls the release, taking the pods and hook Jobs that hold the reason
+  # it failed with it, minutes before the diagnostics step runs.
+  atomic: false
+
 bootstrap:
   namespaces: true
-  envoyGateway: false
-  certManager: false
+  # The edge every stand runs: the chart expresses it as an HTTPRoute, so a
+  # cluster without the controller and its Gateway API CRDs cannot serve the
+  # release it just installed. Bootstrap installs this before cert-manager,
+  # whose gateway-shim needs those CRDs to start.
+  envoyGateway: true
+  # The authenticator's tlsDiscovery front (values.yaml) asks cert-manager for
+  # its authn-tls leaf, so the controller and its CRDs have to be here.
+  certManager: true
   sealedSecrets: true
 
 system:
@@ -39,4 +52,7 @@ secrets:
     - {name: redis-creds, enabled: true}
   services:
     - {name: insight-db-creds, enabled: true}
+    # Minted per job by the workflow's sealing step — the chart supplies no
+    # signing key and the authenticator will not start without one.
+    - {name: insight-authenticator-signing-keys, enabled: true}
     - {name: insight-oidc, enabled: false}

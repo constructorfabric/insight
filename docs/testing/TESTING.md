@@ -108,8 +108,8 @@ cd src/ingestion/tests/e2e
 
 - Real ingestion (Airbyte → Argo/Kestra → bronze → API), the umbrella-chart deployment, and UI flows (Playwright,
   role + accessible-name locators — no accessibility or contrast checking).
-- On PR, only the **deployment smoke** runs (chart installs + rollout). Full ingestion + UI run in **Test**; a
-  **shallow acceptance validation** runs in **Beta**.
+- The **deployment smoke** (chart installs + rollout) runs post-merge on `main`. Full ingestion + UI run in
+  **Test**; a **shallow acceptance validation** runs in **Beta**.
 - Every user-facing surface **should** have at least one smoke assertion.
 - A separate **compose-stand suite** (`tests/stand`, documented in `tests/stand/README.md`) drives a real Keycloak
   login and a set of browser journeys against the SPA, plus an API-contract suite — all against a local
@@ -118,8 +118,9 @@ cd src/ingestion/tests/e2e
   `golden_metrics` is empty by design, and a harness for it is being migrated separately. It does reconcile every
   metric's drilldown evidence against that metric's own served value, which needs no declared expectation.
 
-**CI:** `functional-k3s.yml` — ephemeral k3d install. Today it only *installs*; a real smoke must build + import the
-PR's images and assert `/health` + a few golden metrics.
+**CI:** `functional-k3s.yml` — ephemeral k3d install, post-merge on pushes to `main` that touch the deploy surface.
+Today it deploys published images and asserts the edge answers; a real smoke must also assert `/health` + a few
+golden metrics.
 
 **CI:** `e2e-stand.yml` — two **non-required** checks against the compose-stand suite: `api-smoke` (the HTTP
 contract tests, no browser) and `ui-journeys` (the browser journeys, run host-side from the checkout).

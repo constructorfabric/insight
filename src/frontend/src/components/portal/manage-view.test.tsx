@@ -9,6 +9,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import "@/i18n";
 import type { MetricDefinition } from "@/api/metric-definitions-client";
 import type { MetricDefinitionGroup } from "@/queries/metric-definitions";
 
@@ -23,6 +24,23 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/queries/metric-definitions", () => ({
   useMetricDefinitions: () => mocks.q,
+}));
+
+const adminGate = vi.hoisted(() => ({
+  value: {
+    isAdmin: false,
+    isPending: false,
+    isError: false,
+    retry: () => undefined,
+  },
+}));
+vi.mock("@/queries/identity-me", () => ({
+  useIsAdmin: () => adminGate.value,
+}));
+
+// The console itself has its own test file; here only the gate is under test.
+vi.mock("@/components/portal/identities-view", () => ({
+  IdentitiesView: () => <div data-testid="identities-view" />,
 }));
 
 import { ManageView } from "./manage-view";
@@ -118,6 +136,18 @@ describe("Manage · Metric catalog", () => {
   });
 });
 
+describe("Manage · What's new", () => {
+  it("renders the release notes without the legacy screen's own header", () => {
+    render(<ManageView item="whats-new" />);
+
+    expect(screen.getByText("Insight · What's new")).toBeInTheDocument();
+    expect(
+      screen.getByText("We've moved to the new interface for good"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+  });
+});
+
 describe("Manage · Data health", () => {
   it("counts schema statuses and, separately, definitions with no data", () => {
     render(<ManageView item="data-health" />);
@@ -134,7 +164,61 @@ describe("Manage · Data health", () => {
 
 describe("Manage · unwired items", () => {
   it("renders an honest placeholder instead of a fake admin screen", () => {
+    render(<ManageView item="taxonomy" />);
+    expect(screen.getByText(/not built yet/i)).toBeInTheDocument();
+  });
+});
+
+describe("identities gate", () => {
+  const gate = (over: Partial<typeof adminGate.value>) => {
+    adminGate.value = {
+      isAdmin: false,
+      isPending: false,
+      isError: false,
+      retry: () => undefined,
+      ...over,
+    };
+  };
+
+  it("refuses a non-admin explicitly — a pasted URL must not look broken", () => {
+    gate({});
     render(<ManageView item="identities" />);
-    expect(screen.getByText(/not wired yet/i)).toBeInTheDocument();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/admin surface/i);
+    expect(
+      screen.queryByText(/under construction/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("never flashes the console while the role check is in flight", () => {
+    gate({ isPending: true });
+    render(<ManageView item="identities" />);
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/under construction/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens for an admin", () => {
+    gate({ isAdmin: true });
+    render(<ManageView item="identities" />);
+
+    expect(screen.getByTestId("identities-view")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("says 'could not verify' with a retry when the check itself failed", async () => {
+    const retry = vi.fn();
+    gate({ isError: true, retry });
+    render(<ManageView item="identities" />);
+
+    // Still no console (fail closed) — but the copy must not send a real
+    // admin to ask for a role they already hold.
+    expect(screen.queryByTestId("identities-view")).not.toBeInTheDocument();
+    expect(screen.queryByText(/admin surface/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/could not verify/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /retry/i }));
+    expect(retry).toHaveBeenCalledOnce();
   });
 });

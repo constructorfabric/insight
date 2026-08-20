@@ -7,7 +7,10 @@ mod gate;
 mod handlers;
 #[cfg(test)]
 mod http_live_tests;
+mod listing;
+pub mod me;
 pub mod person_roles;
+pub mod persons;
 pub mod resolution;
 pub mod roles;
 pub mod seed;
@@ -111,6 +114,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         "/internal/persons/by-email-override",
         axum::routing::get(handlers::internal_person_by_email_override),
     );
+    let router = router.route(
+        "/internal/persons/provision",
+        axum::routing::post(handlers::internal_provision_person),
+    );
 
     let router = OperationBuilder::post("/v1/profiles")
         .operation_id("identity_resolution.profiles.resolve")
@@ -125,6 +132,58 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(handlers::resolve_profile)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/me")
+        .operation_id("identity_resolution.me.get")
+        .summary("The caller's identity and active roles")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<me::MeResponse>(
+            openapi,
+            StatusCode::OK,
+            "Who the gateway JWT identifies, with their active identity roles",
+        )
+        .standard_errors(openapi)
+        .handler(me::get_me)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/persons")
+        .operation_id("identity_resolution.persons.search")
+        .summary("List the tenant's persons, narrowed by search terms (admin)")
+        .authenticated()
+        .query_param(
+            "q",
+            false,
+            "Search terms, at most 8 (200 characters total); every \
+             whitespace-separated term must match one of the person's current \
+             identity values — email, username or display/first/last name \
+             (case-insensitive substring), the same five the row's own label is \
+             built from. Titles, statuses and the HR employee id are served on \
+             the profile but not searched. A term that parses as a UUID names a \
+             person id instead. Absent or blank lists every person of the \
+             tenant.",
+        )
+        .query_param_typed(
+            "limit",
+            false,
+            "Cap on returned persons (1..=100, default 20)",
+            "integer",
+        )
+        .query_param(
+            "cursor",
+            false,
+            "Opaque `next_cursor` from the previous page. Valid only for the \
+             query that issued it: changing `q` restarts the listing.",
+        )
+        .no_license_required()
+        .json_response_with_schema::<persons::PersonListResponse>(
+            openapi,
+            StatusCode::OK,
+            "One page of persons, ordered by the name each row shows",
+        )
+        .standard_errors(openapi)
+        .handler(persons::search_persons)
         .register(router, openapi);
 
     // Operator identity corrections (ADR-0003): each verb appends binding
@@ -198,8 +257,11 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param_typed(
             "limit",
             false,
-            "Cap on returned items (1..=1000, default 100). The rates always \
-             cover every observed account, whatever the cap.",
+            "Cap on returned items (1..=1000, default 100); `items_truncated` \
+             says whether it cut the list. The rates cover every observed \
+             account whatever the cap — unless `truncated` is set, which means \
+             the evidence read itself hit its safety ceiling and both the \
+             rates and the queue describe only the accounts read before it.",
             "integer",
         )
         .json_response_with_schema::<resolution::AttentionResponse>(
@@ -209,6 +271,43 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(resolution::attention)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/resolution/accounts")
+        .operation_id("identity_resolution.resolution.search_accounts")
+        .summary("List the observed accounts and whose each one is")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed(
+            "q",
+            false,
+            "Needle matched against every value the account's row shows, \
+             case-insensitively: a substring of the current address, handle, id \
+             or observed name (whole, or composed from parts). The source is the \
+             exception — it matches a whole `_`/`-` separated segment from its \
+             start, so `github` and `entra` list those connectors' accounts \
+             while `hub` lists none. Absent or blank lists every open account.",
+            "string",
+        )
+        .query_param_typed(
+            "limit",
+            false,
+            "Cap on returned accounts (1..=100, default 20)",
+            "integer",
+        )
+        .query_param(
+            "cursor",
+            false,
+            "Opaque `next_cursor` from the previous page. Valid only for the \
+             query that issued it: changing `q` restarts the listing.",
+        )
+        .json_response_with_schema::<resolution::AccountSearchResponse>(
+            openapi,
+            StatusCode::OK,
+            "One page of accounts with their holders",
+        )
+        .standard_errors(openapi)
+        .handler(resolution::search_accounts)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/v1/resolution/accounts/{source}/{source_id}/{account_id}")
@@ -518,6 +617,32 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(subchart::get_subchart)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/visible-persons")
+        .operation_id("identity_resolution.visible_persons.list")
+        .summary("List the persons the caller may see")
+        .authenticated()
+        .query_param(
+            "q",
+            false,
+            "Whitespace-separated terms; absent browses the roster",
+        )
+        .query_param_typed("limit", false, "Page size (1..=500, default 50)", "integer")
+        .query_param("cursor", false, "Resume token from a previous page")
+        .no_license_required()
+        .json_response_with_schema::<visible_persons::VisiblePersonsPageResponse>(
+            openapi,
+            StatusCode::OK,
+            "One page of visible persons",
+        )
+        // Only what this operation can answer: a rejected `q`/`cursor` or an
+        // unresolved tenant (400), no identified caller (401), a failed read
+        // (500). It has no body to refuse, no resource to miss and no conflict.
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .handler(visible_persons::list_visible_persons)
         .register(router, openapi);
 
     OperationBuilder::post("/v1/visible-persons")

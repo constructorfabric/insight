@@ -138,7 +138,7 @@ beforeEach(() => {
 describe("MetricGroupsView", () => {
   it("renders an honest note when no group is in the semantic layer", () => {
     render(<MetricGroupsView personId="p@x" groupIds={[]} />);
-    expect(screen.getByText(/Not in the semantic layer yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Not available yet for this direction/)).toBeInTheDocument();
   });
 
   it("spins while any group collection is pending", () => {

@@ -47,6 +47,9 @@ pub struct GearConfig {
 
     /// Metric read configuration.
     pub metric_catalog: MetricCatalogConfig,
+
+    /// Usage-monitoring configuration.
+    pub usage: UsageConfig,
 }
 
 impl Default for GearConfig {
@@ -61,6 +64,7 @@ impl Default for GearConfig {
             identity_url: String::new(),
             redis_url: String::new(),
             metric_catalog: MetricCatalogConfig::default(),
+            usage: UsageConfig::default(),
         }
     }
 }
@@ -77,6 +81,23 @@ pub struct MetricCatalogConfig {
     ///
     /// Env: `APP__gears__analytics__config__metric_catalog__enforce_tenant_scope`.
     pub enforce_tenant_scope: bool,
+}
+
+/// Whether this instance records how the product is used.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct UsageConfig {
+    /// Off means the SPA never starts its telemetry SDK and the ingest
+    /// endpoint drops what reaches it anyway.
+    ///
+    /// Env: `APP__gears__analytics__config__usage__enabled`.
+    pub enabled: bool,
+}
+
+impl Default for UsageConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 fn default_bind_addr() -> String {

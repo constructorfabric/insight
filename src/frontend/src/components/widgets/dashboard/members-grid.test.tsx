@@ -92,6 +92,20 @@ function byKeyFor(...metrics: MetricResult[]) {
 }
 
 describe("MembersGrid", () => {
+  it("indents the legend to the person column, so a full-bleed card doesn't leave it on the border", () => {
+    render(
+      <MembersGrid
+        members={MEMBERS}
+        metricKeys={["ai.active_days"]}
+        byKey={byKeyFor(
+          metric("ai.active_days", [{ id: "ann@x.com", value: 20 }]),
+        )}
+        caption="Members grid"
+      />,
+    );
+    expect(screen.getByText("Top 25%").closest("div")).toHaveClass("px-3");
+  });
+
   it("renders a semantic table: sortable metric columns, member row headers linking to the IC view", () => {
     render(
       <MembersGrid
@@ -124,10 +138,10 @@ describe("MembersGrid", () => {
     // No issues facet → the Member header is a plain name toggle, no menu,
     // and no issues chip.
     expect(
-      within(table).getByRole("button", { name: "Member" }),
+      within(table).getByRole("button", { name: "Person" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Most behind")).not.toBeInTheDocument();
-    expect(screen.queryByText(/on par/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Furthest behind")).not.toBeInTheDocument();
+    expect(screen.queryByText(/near the median/)).not.toBeInTheDocument();
   });
 
   it("skips metric keys absent from the results", () => {
@@ -206,7 +220,7 @@ describe("MembersGrid", () => {
     // Suppressed cohort (n < 5): the member's value shows without a standing.
     expect(
       screen.getByRole("button", {
-        name: /Bo — Active AI days: 4 days — No peer data/,
+        name: /Bo — Active AI days: 4 days — No comparison/,
       }),
     ).toBeInTheDocument();
   });
@@ -241,7 +255,7 @@ describe("MembersGrid", () => {
     expect(rowHeaders[1]).toHaveTextContent("2 of 3 ahead of peers");
     // With the facet, the Member header is a menu (the roster-ordering control).
     expect(
-      screen.getByRole("button", { name: /Member/ }),
+      screen.getByRole("button", { name: /Person/ }),
     ).toBeInTheDocument();
   });
 
@@ -270,7 +284,7 @@ describe("MembersGrid", () => {
     expect(rowHeaders[1]).toHaveTextContent("Bo");
     expect(rowHeaders[1]).toHaveTextContent("1 of 1 ahead of peers");
     expect(rowHeaders[2]).toHaveTextContent("Cy");
-    expect(rowHeaders[2]).toHaveTextContent("on par with peers");
+    expect(rowHeaders[2]).toHaveTextContent("near the median");
   });
 
   it("defaults to most-trailing-first from its own cells when no facet is given", () => {

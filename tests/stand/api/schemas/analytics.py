@@ -548,6 +548,19 @@ class SchemaStatus(StrEnum):
     unchecked = 'unchecked'
 
 
+class TelemetryRecord(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    context_app_name: str | None = None
+    context_app_version: str | None = None
+    context_session_id: str | None = None
+    data: Any | None = None
+    name: str | None = None
+    time_sent: int | None = Field(None, description='Epoch milliseconds on the same clock: when the batch was flushed.')
+    time_triggered: int | None = Field(None, description="Epoch milliseconds on the browser's clock: when the event happened.")
+
+
 class TimeseriesPointDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -569,6 +582,73 @@ class UpdateSavedQueryRequest(BaseModel):
     description: str | None = None
     name: str | None = None
     sql: str | None = None
+
+
+class UsageConfigResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    enabled: bool = Field(..., description='Whether this instance records usage at all.')
+
+
+class UsageDay(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    day: str
+    visitors: int = Field(..., ge=0)
+    visits: int = Field(..., ge=0)
+
+
+class UsageEvent(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    event_name: str
+    opens: int = Field(..., ge=0)
+    people: int = Field(..., ge=0)
+    target: str
+
+
+class UsageIngestRequest(BaseModel):
+    """
+    SDK v2 body. Fields shared by every record are hoisted out of them into
+    `meta`, so a record carries only what differs.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    meta: TelemetryRecord | None = None
+    records: list[TelemetryRecord] | None = None
+
+
+class UsagePage(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    path: str
+    views: int = Field(..., ge=0)
+    visitors: int = Field(..., ge=0)
+
+
+class UsagePerson(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_name: str = Field(..., description='Empty when the visitor has not been mirrored into the identity rows yet.')
+    last_seen: str
+    page_views: int = Field(..., ge=0)
+    person_id: str
+    visits: int = Field(..., ge=0)
+
+
+class UsageTotals(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    page_views: int = Field(..., ge=0)
+    visitors: int = Field(..., ge=0)
+    visits: int = Field(..., ge=0)
 
 
 class ValueTransform(BaseModel):
@@ -751,6 +831,19 @@ class TimeseriesDto(BaseModel):
     rank: int | None = Field(None, ge=0)
     remainder: bool | None = None
     total: float | None
+
+
+class UsageSummaryResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    by_day: list[UsageDay]
+    by_event: list[UsageEvent]
+    by_page: list[UsagePage]
+    by_person: list[UsagePerson]
+    since: str
+    totals: UsageTotals
+    until: str
 
 
 class CustomMetric(BaseModel):

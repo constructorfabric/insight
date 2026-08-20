@@ -1431,17 +1431,23 @@ for dbt-built gold data rather than for containers to report healthy.
 
           The four backend services (analytics, authenticator,
           identity-resolution, gateway) and the frontend are PULLED, each
-          pinned to its own chart's appVersion — never :latest, and never
-          compiled here. Building them took ~26 minutes for code the stand
-          does not change.
+          pinned to its own chart's appVersion — never :latest.
 
-          --build  Build the whole product from this working tree instead:
-                   the backend compiled from source and the frontend built
-                   with pnpm (served by the front-built nginx). Needed to
-                   test a local change: `up` otherwise refuses when the tree
-                   differs from origin/main under src/backend/ or
-                   src/frontend/, since the pinned images would not be what
-                   ran.
+          An appVersion names what main released, so pass the flag for whatever
+          tree this checkout changes, or the stand will not run it:
+
+          --build-backend    Compile the Rust services from this tree. Adds
+                             ~28 min (measured across CI's build-path runs).
+          --prebuilt-backend Use backend images already loaded under the four
+                             *_IMAGE environment variables. Never builds or
+                             pulls a fallback image.
+          --build-frontend   Build the SPA from this tree with pnpm, served by
+                             the front-built nginx. Backend stays pinned.
+          --build            Both.
+
+          `up` refuses to pin a tree that differs from origin/main and names
+          the flag to pass — but only when origin/main is in the checkout. A
+          shallow clone says so on stderr and defers to its caller.
   seed    Re-seed the running stand (default target: all).
   test    Run the stand suite against an already-up stand. Passes extra
           arguments through to pytest — no `--` separator.
@@ -1514,6 +1520,24 @@ test_stand_pull_backends() {
   done
 }
 
+test_stand_use_prebuilt_backends() {
+  local entry var name image
+  for entry in "${TEST_STAND_PINNED_BACKENDS[@]}"; do
+    IFS='|' read -r var _ name <<<"$entry"
+    image="${!var:-}"
+    [[ -n "$image" ]] || {
+      echo "ERROR: --prebuilt-backend requires $var." >&2
+      return 1
+    }
+    docker image inspect "$image" >/dev/null 2>&1 || {
+      echo "ERROR: pre-built image '$image' for $name is not loaded." >&2
+      return 1
+    }
+    update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
+  done
+  echo "=== the backend uses pre-built images from this ref ==="
+}
+
 # Refuse to pin when the working tree differs from what a chart describes.
 #
 # The appVersions track main. A branch that edits the given source tree and
@@ -1524,7 +1548,11 @@ test_stand_tree_matches_charts() {
   local subtree="$1" flag="$2"
   git rev-parse --git-dir >/dev/null 2>&1 || return 0
   git remote get-url origin >/dev/null 2>&1 || return 0
-  git rev-parse --verify --quiet origin/main >/dev/null || return 0
+  # Inert on a depth-1 checkout (every CI runner). Say so, so a log reader does
+  # not read the silence as a passed check.
+  git rev-parse --verify --quiet origin/main >/dev/null || {
+    echo "NOTE: no origin/main here — ${subtree}/ unchecked, ${flag} is the caller's call." >&2
+    return 0; }
 
   local changed
   changed="$(git diff --name-only origin/main -- "$subtree" 2>/dev/null | head -5)"
@@ -1539,11 +1567,11 @@ test_stand_tree_matches_charts() {
 }
 
 test_stand_backend_matches_charts() {
-  test_stand_tree_matches_charts src/backend --build
+  test_stand_tree_matches_charts src/backend --build-backend
 }
 
 test_stand_frontend_matches_chart() {
-  test_stand_tree_matches_charts src/frontend --build
+  test_stand_tree_matches_charts src/frontend --build-frontend
 }
 
 # Derive the test env file from the committed example, overriding only the
@@ -1582,16 +1610,18 @@ test_stand_write_env() {
 #   git     <- class_git_{commits,file_changes,pull_requests,…}          (git.py)
 #   collab  <- class_collab_{chat,email,meeting}_activity, focus_metrics (collab.py)
 #   ai      <- class_ai_{assistant,dev}_usage                            (ai.py)
+#   ai_cost <- class_ai_overage                                          (ai.py)
+#   wiki    <- class_wiki_{pages,activity,engagement}                    (wiki.py)
 #
-# `wiki_metric_observations` is absent ON PURPOSE: its evidence model reads
-# class_wiki_* and there is no wiki generator, so requiring it would hang every
-# run. The crm, support, hr and people generators have no observation table of
-# their own — they feed other surfaces — so they cannot be gated on here.
+# The crm, support, hr and people generators have no observation table of their
+# own — they feed other surfaces — so they cannot be gated on here.
 TEST_STAND_READY_TABLES=(
   task_metric_observations
   git_metric_observations
   collab_metric_observations
   ai_metric_observations
+  ai_cost_metric_observations
+  wiki_metric_observations
 )
 
 test_stand_ch_query() {
@@ -1799,32 +1829,44 @@ cmd_test_stand() {
 
   case "$verb" in
     up)
-      local image build=false
+      # Each tree is pinned to its chart's appVersion or built from this one,
+      # asked separately: --build is the both-axes alias.
+      local image backend_mode=pinned build_frontend=false
       while [[ $# -gt 0 ]]; do
         case "$1" in
-          --build) build=true; shift ;;
+          --build)          backend_mode=source; build_frontend=true; shift ;;
+          --build-backend)  backend_mode=source; shift ;;
+          --prebuilt-backend) backend_mode=prebuilt; shift ;;
+          --build-frontend) build_frontend=true; shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
         esac
       done
 
-      if [[ "$build" == true ]]; then
+      if [[ "$build_frontend" == true ]]; then
         test_stand_write_env built || return 1
+        echo "=== the frontend is built from this tree (pnpm), not pulled ==="
       else
         test_stand_frontend_matches_chart || return 1
         image="$(test_stand_frontend_image)" || return 1
         test_stand_write_env ghcr "$image" || return 1
       fi
 
-      # Pinning writes the four *_IMAGE vars into the env file, which is what
-      # makes cmd_up put those services in its ghcr list — so this has to happen
-      # before cmd_up reads it.
-      if [[ "$build" != true ]]; then
-        test_stand_backend_matches_charts || return 1
-        test_stand_pull_backends || return 1
-      else
-        echo "=== --build: compiling the backend and building the frontend from this tree ==="
-      fi
+      # INVARIANT: pinning writes the *_IMAGE vars, and that is the only thing
+      # keeping cmd_up off the compiler — so it has to run before cmd_up reads
+      # the env file.
+      case "$backend_mode" in
+        source)
+          echo "=== the backend is compiled from this tree, not pulled ==="
+          ;;
+        prebuilt)
+          test_stand_use_prebuilt_backends || return 1
+          ;;
+        pinned)
+          test_stand_backend_matches_charts || return 1
+          test_stand_pull_backends || return 1
+          ;;
+      esac
 
       local up_args=(--env-file "$TEST_STAND_ENV_FILE"
                      --authenticator-redirect "$(test_stand_origin)/auth/callback")

@@ -10,6 +10,12 @@ description: >
   The amount is usage priced at the vendor's rates, not the amount invoiced —
   usage the seat already covers is included and seat fees are excluded.
 
+  The last case pairs it with ai.extra_usage_cost, which prices ONLY the part the
+  vendor billed on top of the seat fee. The two overlap — extra usage is a subset of
+  what ai.cost values — so they are served side by side and never added. erin's seat
+  spends 75¢ extra against $3.00 of priced consumption; a measure wired to the wrong
+  source would return 3.00 for both and the case would fail.
+
   NOTE on the served stat set: the IC Bullet AI query_ref (id …0013) is last
   re-seeded by migration m20260618_000001 (cc_overage), which carries only
   value/median/range_min/range_max — NOT p25/p75/n. So these AI fixtures assert the
@@ -49,6 +55,12 @@ bronze:
     # ── erin, r=100¢ (the requested IC member) ──────────────────────────────────
     - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: erin@example.com, metric_date: "2026-11-15", unique_key: cc-erin-20261115,  total_cost: "2.00" }  # 2r = 200¢
     - { $ref: templates/claude_team_usage.yaml#/templates/claude_team_metrics, email: erin@example.com, metric_date: "2026-12-10", unique_key: cc-erin-20261210,  total_cost: "1.00" }  # 1r = 100¢
+
+  bronze_claude_team.claude_team_overage_spend:
+    # erin only — the pairing case reads one person; 75¢ over the window. One
+    # snapshot, because bronze keys a seat without its month and keeps only the
+    # newest row per seat; silver is where months accumulate.
+    - { $ref: templates/claude_team_overage.yaml#/templates/erin, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-erin, used_credits: 75, monthly_credit_limit: 1000 }
 
 cases:
   # ── CUSTOM scope (Nov 01 .. Dec 12) — Nov 15 + Dec 10 rows ───────────────────
@@ -102,3 +114,32 @@ cases:
         view: period
         find: { entity_id: erin@example.com }
         equal: { value: null }
+
+  # ── Both billing models in one response (AC-3) ───────────────────────────────
+  # Requesting the pair is the intended use; what is forbidden is a figure that
+  # blends them. Each key returns its own value from its own source, and extra
+  # usage stays a strict subset of priced consumption (0.75 <= 3.00).
+  - name: AI cost and extra usage served side by side
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.cost
+            views:
+              - { view: period }
+          - metric_key: ai.extra_usage_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.cost
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 3 }
+      - metric: ai.extra_usage_cost
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 0.75 }

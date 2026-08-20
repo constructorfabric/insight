@@ -34,16 +34,9 @@ name: E2E — Bronze to API
 # Code:  src/ingestion/tests/e2e/
 
 on:
-  # PR-only (+ manual dispatch). workflow_dispatch remains for manual reruns
-  # against main.
-  pull_request:
-    branches: [main]
-    # Deliberately NO `paths:` filter. This workflow emits a REQUIRED check
-    # ("Run E2E suite"), and GitHub reports a required check whose workflow
-    # never ran as pending rather than passed — a path filter here would block
-    # every PR that did not happen to touch one of the listed directories.
-    # Relevance is decided by the `changes` job below instead, which is cheap
-    # and always reports. Same pattern as e2e-stand.yml.
+  # Pull requests call this from e2e-stand.yml after the shared image build.
+  # Merge-queue and manual runs retain their source-build path.
+  workflow_call:
   # Merge-queue builds: the queue's gh-readonly-queue/* branches emit merge_group,
   # and the required "Run E2E suite" check must report there or every queued PR
   # times out and is evicted.
@@ -53,7 +46,7 @@ on:
 # A new push obsoletes any run still in flight for the same ref — cancel it so a
 # rebase/force-push doesn't leave a slow suite burning minutes.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: e2e-bronze-to-api-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -63,15 +56,13 @@ env:
 
 permissions:
   contents: read
-  # e2e-suite reads this SHA's "Build & Push Container Images" run conclusion.
+  # PR runs download component images produced earlier in the caller run.
   actions: read
 
 jobs:
-  # `e2e-suite` emits the "Run E2E suite" status check the `main` ruleset
-  # requires, so branch protection needs no change when lanes come and go —
-  # only this file's `needs:` does. It is the one job here that runs
-  # unconditionally — a required check must report on EVERY pull request,
-  # including the ones `changes` decided are irrelevant.
+  # `e2e-suite` is the reusable workflow's aggregate result. The caller emits
+  # the stable "Run E2E suite" pull-request check; merge_group runs emit it
+  # directly here.
   #
   # Skipping cascades by default `needs` semantics: `changes` says irrelevant →
   # `build` skips → `e2e-metrics` skips → `metric-coverage-gate` skips. A red
@@ -200,57 +191,15 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          run_json=""
-          # 70 x 30s = 35min: a dependency bump invalidates the whole cargo
-          # build cache and a cold image build can exceed the old 20min window.
-          for attempt in $(seq 1 70); do
-            run_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${HEAD_SHA}&per_page=100" \
-              --jq '[.workflow_runs[] | select(.name == "Build & Push Container Images")] | sort_by(.run_started_at) | last // empty')
-            if [ -z "$run_json" ]; then
-              echo "No image-build run for ${HEAD_SHA} — every component comes from the registry."
-              break
-            fi
-            conclusion=$(jq -r '.conclusion // ""' <<<"$run_json")
-            if [ "$conclusion" = "success" ]; then
-              break
-            fi
-            if [ -n "$conclusion" ]; then
-              echo "::error::Image-build run concluded '${conclusion}' — its artifacts can't be trusted; see $(jq -r '.html_url' <<<"$run_json")"
-              exit 1
-            fi
-            echo "Image-build run still in progress (attempt ${attempt}/70); retrying in 30s…"
-            sleep 30
-          done
-          if [ -n "$run_json" ] && [ "$(jq -r '.conclusion // ""' <<<"$run_json")" != "success" ]; then
-            echo "::error::Image-build run did not finish within the polling window."
-            exit 1
-          fi
-
-          expected=""
-          if [ -n "$run_json" ]; then
-            run_id=$(jq -r '.id' <<<"$run_json")
-            expected=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" \
-              --jq '[.artifacts[].name | select(startswith("e2e-prebuilt-"))] | join(" ")')
-            if [ -n "$expected" ]; then
-              gh run download "$run_id" -R "$GITHUB_REPOSITORY" -p 'e2e-prebuilt-*' -D /tmp/e2e-prebuilt
-            fi
-          fi
-
-          for name in insight-analytics insight-identity-resolution insight-jira-enrich; do
-            case " ${expected} " in
-              *" e2e-prebuilt-${name} "*)
-                docker load < "/tmp/e2e-prebuilt/e2e-prebuilt-${name}/e2e-prebuilt.tar"
-                echo "${name}: PR-built artifact"
-                ;;
-              *)
-                docker pull -q "ghcr.io/constructorfabric/${name}:latest"
-                docker tag "ghcr.io/constructorfabric/${name}:latest" "${name}:e2e-prebuilt"
-                echo "${name}: registry :latest (unchanged by this PR)"
-                ;;
-            esac
-          done
+          python3 "$GITHUB_WORKSPACE/scripts/ci/prebuilt_images.py" \
+            --run-id "$RUN_ID" \
+            --registry ghcr.io/constructorfabric \
+            --destination /tmp/e2e-prebuilt \
+            --image insight-analytics:unchanged \
+            --image insight-identity-resolution:unchanged \
+            --image insight-jira-enrich:unchanged
 
       # ─── Build the runner image ─────────────────────────────────────────
       # The runner bakes in analytics + each connector's enrich binary, each
@@ -424,6 +373,15 @@ jobs:
             *)    filter=(grep -e "^metrics/${SHARD}_") ;;
           esac
           nodes=()
+          # Hand-authored tests assert what the yaml rig cannot express — a second
+          # sync, a silver-only contract. The loop below only ever yields
+          # yaml-derived nodes, so they are listed per shard or they never run.
+          case "$SHARD" in
+            ai)
+              nodes+=("metrics/test_ai_seat_extra_usage_history.py")
+              nodes+=("metrics/test_ai_invoice_silver.py")
+              ;;
+          esac
           while IFS= read -r stem; do
             nodes+=("metrics/test_fixtures.py::test_metric_smoke[${stem}]")
           done < <(printf '%s\n' metrics/*.test.yaml | "${filter[@]}" | sort \
@@ -532,19 +490,13 @@ jobs:
     # retirement this workflow has none — those contracts and their gate live in
     # `e2e-stand.yml`, under its own umbrella ("Stand E2E").
     #
-    # It DOES fold in the image-build gate: this required check also goes red
-    # when this SHA's "Build & Push Container Images" run failed, so a PR with
-    # a broken service image can't be merged even though that workflow's own
-    # checks aren't in the ruleset.
     needs:
       - changes
       - build
       - e2e-metrics
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    # 5 min sufficed for the needs-check alone; the image-build gate below may
-    # poll a straggling build-images run for up to 10 more.
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       # A skipped lane now has two possible meanings, and they are opposites:
       # `changes` decided the diff cannot reach the data path (a pass), or the
@@ -583,45 +535,3 @@ jobs:
             done
             echo "E2E suite passed: build + the metrics lane succeeded."
           fi
-
-      # Unconditional, including on a PR `changes` found irrelevant: this gate
-      # guards the service images rather than the data path, and a PR touching
-      # only src/frontend/ can still break a build this required check is the
-      # sole ruleset-visible reporter for.
-      #
-      # build-images.yml is a separate workflow, so `needs:` can't reach it;
-      # ask the API for this SHA's run instead. Absent (path-skipped, or a
-      # merge_group SHA — that workflow has no merge_group trigger) passes;
-      # anything but success fails. The image builds finish long before this
-      # job starts, so the poll loop only covers stragglers.
-      - name: Require image builds on this SHA to be green or absent
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          for attempt in $(seq 1 20); do
-            run_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${HEAD_SHA}&per_page=100" \
-              --jq '[.workflow_runs[] | select(.name == "Build & Push Container Images")] | sort_by(.run_started_at) | last // empty')
-            if [ -z "$run_json" ]; then
-              echo "No image-build run for ${HEAD_SHA} — builds were path-skipped."
-              exit 0
-            fi
-            conclusion=$(jq -r '.conclusion // ""' <<<"$run_json")
-            run_url=$(jq -r '.html_url' <<<"$run_json")
-            case "$conclusion" in
-              success)
-                echo "Image builds succeeded: ${run_url}"
-                exit 0
-                ;;
-              "")
-                echo "Image-build run still in progress (attempt ${attempt}/20); retrying in 30s…"
-                sleep 30
-                ;;
-              *)
-                echo "::error::Image builds concluded '${conclusion}' on this commit — see ${run_url}"
-                exit 1
-                ;;
-            esac
-          done
-          echo "::error::Image-build run did not finish within the polling window."
-          exit 1

@@ -62,10 +62,10 @@ describe("MetricBreakdown", () => {
 
   it("keeps supporting-data actions in the empty state", async () => {
     const user = userEvent.setup();
-    const openEvidence = vi.fn();
+    const openEvidenceTargets = vi.fn();
     render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence, openEvidenceTargets: vi.fn() }}
+        value={{ openEvidence: vi.fn(), openEvidenceTargets }}
       >
         <MetricBreakdown
           metric={breakdownMetric([
@@ -83,12 +83,17 @@ describe("MetricBreakdown", () => {
     await user.click(
       await screen.findByRole("menuitem", { name: "View supporting data" })
     );
-    expect(openEvidence).toHaveBeenCalledWith(
-      expect.objectContaining({
-        metric_key: "ai.accepted_lines",
-        display_dimensions: ["tool"],
-      }),
-      "Accepted lines"
+    expect(openEvidenceTargets).toHaveBeenCalledWith(
+      [
+        {
+          selection: expect.objectContaining({
+            metric_key: "ai.accepted_lines",
+            display_dimensions: ["tool"],
+          }),
+          label: "Accepted lines",
+        },
+      ],
+      { activeMetricKey: "ai.accepted_lines" }
     );
   });
 });

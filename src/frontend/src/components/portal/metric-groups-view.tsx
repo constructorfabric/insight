@@ -150,7 +150,7 @@ export function MetricGroupsView({
 
   // Slice cohort: the people who share this person's active-slice attribute
   // value. Only fetched when a slice is picked — otherwise the person's own
-  // numbers stand alone (no cohort, tiles show "no peer data" as before).
+  // numbers stand alone (no cohort, tiles show "no comparison" as before).
   const cohortIds = usePersonCohort(entityId);
   const cohortEntity = cohortIds.length
     ? { type: "person" as const, ids: cohortIds }
@@ -218,7 +218,7 @@ export function MetricGroupsView({
         <ComingSoon
           variant="card"
           state="empty"
-          label="Not in the semantic layer yet — bullet-only direction"
+          label="Not available yet for this direction"
         />
       </div>
     );

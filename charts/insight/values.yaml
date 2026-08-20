@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.13.07.20-233cf68" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.19.11.31-8e7e330" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.13.07.20-233cf68" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.19.11.31-8e7e330" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -282,6 +282,9 @@ clickhouse:
     # user are provisioned by the clickhouse-migrate Hook (apply-ch-migrations
     # -> provision-presentation-access.sh).
     - presentation
+    # Adoption events (#2573). Here rather than in the migration alone because
+    # the presentation_ro grant references it before that migration runs.
+    - product_usage
   # When true (default), a post-install/post-upgrade Hook Job
   # (clickhouse-migrate-job) applies the gold-view migrations
   # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against
@@ -384,6 +387,19 @@ authenticator:
     # id_token claim carrying the IdP's stable external user id for
     # sourceType (e.g. Entra's "oid"). Defaults to "sub".
     externalIdClaim: "sub"
+    # Provision a person on first successful login instead of refusing one the
+    # journal has no binding for yet.
+    #
+    # The login-bootstrap row is otherwise written only by the nightly
+    # persons-seed, which links a person by e-mail — so a roster member whose
+    # directory publishes no address (a GitHub member with a hidden e-mail, for
+    # one) cannot enter until an operator binds them by hand.
+    #
+    # Off by default because it widens who may ENTER. It does not widen who
+    # EXISTS: identity mints only for an account a connector has already
+    # observed, refuses one the source has closed, refuses one an operator
+    # excluded, and writes only under the tenant its own journal is keyed by.
+    provisionOnLogin: false
   # Honor `/auth/login?__override=<email>` (view-as, #1941): the session is
   # minted for that person instead of the authenticated one. Dev/demo
   # environments ONLY — MUST stay false anywhere real users log in.
@@ -501,6 +517,68 @@ analytics:
 # SCHEMA OWNER: identity-resolution's migrate initContainer applies the
 # migrations + first-admin bootstrap against `databaseName` — see ADR-0006
 # (service-owned migrations).
+# Git CLI Proxy — clone-based commit extraction for the nocode git connectors.
+# Airbyte-only consumer: no gateway route, no platform-config entry (other
+# services must not discover it), ingress restricted by its own NetworkPolicy.
+# Deployed by default: every nocode git connector reads its commits, file
+# changes and commit authors through this service, so an instance without it can
+# sync no git source at all. The cost is one PVC (`persistence.size`) on an
+# instance that syncs none — set deploy=false there.
+# Two prerequisites an environment must meet before this renders for it:
+#   * under `credentials.deploymentMode: gitops`, set `proxyToken` (or
+#     pre-create insight-git-cli-proxy-config) — a template-time token would
+#     differ on every sync, so secrets.yaml refuses to generate one;
+#   * the deploy credential must hold a persistentvolumeclaims rule for the
+#     cache claim (test-stand: ci-deployer-rbac.yaml).
+gitCliProxy:
+  deploy: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/constructorfabric/insight-git-cli-proxy
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 200m, memory: 256Mi}
+    limits: {cpu: "2", memory: 2Gi}
+  persistence:
+    size: 50Gi
+    storageClass: ""
+  cache:
+    # Budget defaults to 85% of persistence.size (subchart-computed); the
+    # headroom absorbs transient packs and git temp files. Override with
+    # diskBudgetBytes (must stay within 50-90% of the volume).
+    maxRepoBytes: 10737418240
+    defaultMaxStalenessSeconds: 300
+    heavyOpsConcurrency: 4
+    caCertPath: ""
+  caCertSecret: ""
+  # Bearer token the proxy requires on every /v1 request. Empty = generated on
+  # first install and reused on every upgrade; reconcile hands it to the
+  # connectors, so an operator never needs to see or copy it. Set it only to
+  # pin a specific value.
+  #
+  # Under `credentials.autoGenerate: false` — which every gitops overlay runs —
+  # the chart emits no Secret at all and this value is unused: pre-create
+  # `existingSecret` below with the key
+  # APP__gears__git_cli_proxy__config__proxy_token, the same contract as
+  # `insight-db-creds`. Never inline the token here in a committed overlay.
+  proxyToken: ""
+  # Composed by templates/secrets.yaml (carries the bearer token).
+  existingSecret: "insight-git-cli-proxy-config"
+  networkPolicy:
+    # Off by default, as on the authenticator: the /v1 bearer token is the
+    # control, and requiring every deployment to declare where Airbyte runs
+    # before the chart will install is friction the token already covers.
+    # Enable it per deployment — the clone cache serves private source, so
+    # hiding it from the rest of the cluster is worth the one value.
+    enabled: false
+    # Namespaces whose pods may call the proxy: the one running Airbyte
+    # connector jobs, which is `airbyte.namespace` above when that is set.
+    # Required whenever enabled=true — the subchart refuses to render an
+    # allow-list that would deny every caller.
+    allowedNamespaceLabels:
+      - key: kubernetes.io/metadata.name
+        values: []
 identityResolution:
   deploy: true
   replicaCount: 1
@@ -518,6 +596,14 @@ identityResolution:
   # `global.tenantDefaultId`, idempotently. The person row must already
   # exist in `persons` for that tenant. Empty string disables the runner.
   bootstrapAdminPersonId: ""
+  # The ONE source trusted to say who exists: the persons-seed mints a person for
+  # its accounts even with no address to match on, and the identities console
+  # asks an operator to confirm each one. Empty (the default) mints from an
+  # address only, and enabling it is not undone by disabling it — `persons` is
+  # append-only. A `source_type` as the connectors emit it, and it must be a
+  # source that can report deactivation, or leavers stay minted and queued. See
+  # the identity DESIGN §4.1.
+  rosterSourceType: ""
   # The umbrella generates `insight-identity-resolution-config` with every
   # APP__gears__identity_resolution__config__* env var filled in from the
   # auto-generated credentials (see templates/secrets.yaml). The subchart

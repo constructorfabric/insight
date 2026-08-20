@@ -13,9 +13,7 @@
 -- depends_on: {{ ref('claude_enterprise__ai_assistant_usage') }}
 -- depends_on: {{ ref('chatgpt_team__ai_assistant_usage') }}
 
-SELECT * FROM (
+SELECT candidate.* FROM (
     {{ union_by_tag('silver:class_ai_assistant_usage') }}
-)
-{% if is_incremental() %}
-WHERE _version > (SELECT max(_version) FROM {{ this }})
-{% endif %}
+) AS candidate
+{{ silver_incremental_watermark(['insight_tenant_id', 'source_id']) }}

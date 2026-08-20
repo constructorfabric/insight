@@ -1,8 +1,15 @@
-import { ChevronRight, Layers, LayoutGrid, Settings2 } from "lucide-react";
+import {
+  ChevronRight,
+  Layers,
+  LayoutGrid,
+  Search,
+  Settings2,
+} from "lucide-react";
 import { useState } from "react";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import { OrgTree } from "@/components/org-tree";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -11,7 +18,11 @@ import {
 import { GROUPS } from "@/lib/insight/groups";
 import { usePersonSectionStandings } from "@/lib/portal/use-person-sections";
 import { STATUS_BG_CLASS } from "@/lib/status";
-import { lensEntry } from "@/lib/portal/lens-configs";
+import {
+  lensEntry,
+  visibleDirections,
+  visibleLenses,
+} from "@/lib/portal/lens-configs";
 import { useShellLayout } from "@/lib/portal/use-shell-layout";
 import { useZoneNav } from "@/lib/portal/use-zone-nav";
 import {
@@ -31,8 +42,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import {
-  DIRECTIONS,
-  MANAGE_ITEMS,
+  manageItemsFor,
   PEOPLE_ITEMS,
   PLANNED_GROUP_LABEL,
   partitionByReadiness,
@@ -42,9 +52,7 @@ import {
   type Direction,
   type PaneItem,
 } from "@/lib/portal/nav-model";
-import {
-  usePortalShowPlanned,
-} from "@/lib/portal/portal-store";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import {
   usePortalDir,
   usePortalItem,
@@ -53,14 +61,15 @@ import {
 } from "@/lib/portal/portal-nav";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { cn } from "@/lib/utils";
+import { useIsAdmin } from "@/queries/identity-me";
 
 const ZONE_SUB: Record<string, string> = {
   overview: "Cross-functional org rollup",
   directions: "Functional domains",
   person: "Personal metrics",
-  people: "Roster & org structure",
+  people: "People & org structure",
   aicost: "Adoption funnel & cost",
-  scorecard: "Unit × quarter × QoQ",
+  scorecard: "By unit and quarter",
   reports: "Generated & custom",
   manage: "Catalog, identity & governance",
 };
@@ -91,9 +100,17 @@ export function ContextPane() {
   const zone = zoneById(activeZone);
   const title = zone?.label ?? "Insight";
   const active = resolveZoneItem(activeZone, usePortalItem());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const dismissDrawer = useDismissDrawer();
 
   return (
-    <Sidebar collapsible={drawer ? "offcanvas" : "none"} className="border-e">
+    <Sidebar
+      collapsible={drawer ? "offcanvas" : "none"}
+      className={cn(
+        "border-e",
+        layout === "narrow" && "data-[side=left]:left-(--rail-width)"
+      )}
+    >
       {/* The drawer's zone row already names the zone, so repeating it in a
           header would cost two of the ~14 rows a phone has. */}
       {isPhone ? null : (
@@ -115,7 +132,7 @@ export function ContextPane() {
         ) : activeZone === "people" ? (
           <PeopleNav active={active} />
         ) : activeZone === "manage" ? (
-          <ItemsNav items={MANAGE_ITEMS} groupLabel="Manage" active={active} />
+          <ManageNav active={active} />
         ) : activeZone === "person" ? (
           <PersonSectionsNav />
         ) : (
@@ -130,7 +147,7 @@ export function ContextPane() {
               menu on demand. */}
           <SidebarMenu>
             <SidebarMenuItem>
-              <Popover>
+              <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
                 <PopoverTrigger
                   render={
                     <SidebarMenuButton>
@@ -139,8 +156,20 @@ export function ContextPane() {
                     </SidebarMenuButton>
                   }
                 />
-                <PopoverContent side="top" align="start" className="w-60 gap-0 p-1">
-                  <AppSidebarFooter />
+                <PopoverContent
+                  side="top"
+                  align="start"
+                  className="w-60 gap-0 p-1"
+                >
+                  {/* A leaf pick, so it dismisses the drawer as every other
+                      one here does — and the popover with it, which on a phone
+                      covers the surface just asked for. */}
+                  <AppSidebarFooter
+                    onNavigate={() => {
+                      setSettingsOpen(false);
+                      dismissDrawer();
+                    }}
+                  />
                 </PopoverContent>
               </Popover>
             </SidebarMenuItem>
@@ -198,7 +227,7 @@ function MobileZoneNav() {
               <ChevronRight
                 className={cn(
                   "ms-auto transition-transform",
-                  expanded && "rotate-90",
+                  expanded && "rotate-90"
                 )}
                 aria-hidden
               />
@@ -229,7 +258,13 @@ function MobileZoneNav() {
 
 /* ── Theme zones (Overview / AI & Cost / Scorecard / Reports) ────────── */
 
-function ThemeNav({ zoneId, active }: { zoneId: string; active: string | null }) {
+function ThemeNav({
+  zoneId,
+  active,
+}: {
+  zoneId: string;
+  active: string | null;
+}) {
   const groups = ZONE_SECTIONS[zoneId] ?? [];
   const showPlanned = usePortalShowPlanned();
   // Everything not yet real is pulled out of its original group and collected
@@ -251,7 +286,7 @@ function ThemeNav({ zoneId, active }: { zoneId: string; active: string | null })
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        ) : null,
+        ) : null
       )}
       {planned.length ? (
         <SidebarGroup>
@@ -259,13 +294,31 @@ function ThemeNav({ zoneId, active }: { zoneId: string; active: string | null })
           <SidebarGroupContent>
             <SidebarMenu>
               {planned.map((it) => (
-                <ItemButton key={it.id} item={it} active={active === it.id} planned />
+                <ItemButton
+                  key={it.id}
+                  item={it}
+                  active={active === it.id}
+                  planned
+                />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       ) : null}
     </>
+  );
+}
+
+function ManageNav({ active }: { active: string | null }) {
+  // Admin-only surfaces (Identities) drop from the pane for everyone else;
+  // the view behind them refuses direct URLs on its own.
+  const { isAdmin } = useIsAdmin();
+  return (
+    <ItemsNav
+      items={manageItemsFor(isAdmin)}
+      groupLabel="Manage"
+      active={active}
+    />
   );
 }
 
@@ -303,7 +356,12 @@ function ItemsNav({
           <SidebarGroupContent>
             <SidebarMenu>
               {planned.map((it) => (
-                <ItemButton key={it.id} item={it} active={active === it.id} planned />
+                <ItemButton
+                  key={it.id}
+                  item={it}
+                  active={active === it.id}
+                  planned
+                />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
@@ -342,7 +400,7 @@ function ItemButton({
           <span
             className={cn(
               "ml-auto rounded-full px-1.5 py-0.5 text-xs font-semibold",
-              BADGE_TONE[item.badge.tone],
+              BADGE_TONE[item.badge.tone]
             )}
           >
             {item.badge.text}
@@ -356,17 +414,19 @@ function ItemButton({
 /* ── Directions zone ─────────────────────────────────────────────────── */
 
 function DirectionsNav() {
+  const showPlanned = usePortalShowPlanned();
+  const directions = visibleDirections(showPlanned);
   return (
     <SidebarGroup>
       <SidebarGroupLabel>
         Directions
         <span className="ml-1 text-xs font-normal text-muted-foreground">
-          · catalog · {DIRECTIONS.length}
+          · catalog · {directions.length}
         </span>
       </SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
-          {DIRECTIONS.map((d) => (
+          {directions.map((d) => (
             <DirectionItem key={d.id} direction={d} />
           ))}
         </SidebarMenu>
@@ -376,35 +436,31 @@ function DirectionsNav() {
 }
 
 function DirectionItem({ direction }: { direction: Direction }) {
-  const { setDir, setItem, setLens } = usePortalNavActions();
+  const { setDir, openDirection } = usePortalNavActions();
   const dismiss = useDismissDrawer();
   const activeDir = usePortalDir();
   const activeLens = usePortalLens();
   const showPlanned = usePortalShowPlanned();
   const expanded = activeDir === direction.id;
   const Icon = direction.icon;
-  // A lens we simply have not built yet is hidden unless the viewer asked for
-  // planned work; a lens waiting on the product stays listed (dimmed) because
-  // it tells the reader the domain exists in our model.
-  const lenses = direction.lenses.filter((lens) => {
-    const entry = lensEntry(direction.id, lens);
-    if (!entry || !("comingSoon" in entry)) return true;
-    return entry.readiness === "planned" || showPlanned;
-  });
+  const lenses = visibleLenses(direction, showPlanned);
 
   function toggle() {
     if (expanded) {
       setDir("");
     } else {
-      setDir(direction.id);
-      setLens(lenses[0] ?? direction.lenses[0]!);
+      openDirection(direction.id, lenses[0] ?? direction.lenses[0]!);
     }
   }
 
   return (
     <>
       <SidebarMenuItem>
-        <SidebarMenuButton isActive={expanded} onClick={toggle} aria-expanded={expanded}>
+        <SidebarMenuButton
+          isActive={expanded}
+          onClick={toggle}
+          aria-expanded={expanded}
+        >
           <Icon />
           <span>{direction.name}</span>
           {direction.source === "bullet" ? (
@@ -416,7 +472,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
             className={cn(
               "size-4 text-muted-foreground transition-transform",
               direction.source === "bullet" ? "ml-1" : "ml-auto",
-              expanded && "rotate-90",
+              expanded && "rotate-90"
             )}
           />
         </SidebarMenuButton>
@@ -434,8 +490,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
                     isActive={activeLens === lens}
                     className={roadmap ? "text-muted-foreground" : undefined}
                     onClick={() => {
-                      setLens(lens);
-                      setItem(null);
+                      openDirection(direction.id, lens);
                       dismiss();
                     }}
                   >
@@ -456,27 +511,31 @@ function DirectionItem({ direction }: { direction: Direction }) {
 function PeopleNav({ active }: { active: string | null }) {
   return (
     <>
-      <SidebarGroup>
-        <SidebarGroupLabel>Views</SidebarGroupLabel>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {PEOPLE_ITEMS.map((it) => (
-              <ItemButton key={it.id} item={it} active={active === it.id} />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
+      <ItemsNav items={PEOPLE_ITEMS} groupLabel="Views" active={active} />
       <WorkChart />
     </>
   );
 }
 
 function WorkChart() {
+  const [query, setQuery] = useState("");
+
   return (
     <SidebarGroup>
       <SidebarGroupLabel>WorkChart</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <OrgTree leadsToTeam />
+      <SidebarGroupContent className="flex flex-col gap-2">
+        <div className="relative px-2">
+          <Search className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Find someone"
+            aria-label="Find someone in the org"
+            className="h-8 ps-7 text-sm"
+          />
+        </div>
+        <OrgTree leadsToTeam query={query} />
       </SidebarGroupContent>
     </SidebarGroup>
   );
@@ -536,7 +595,7 @@ function PersonSectionsNav() {
                         ? standing.phrase
                         : standing.peersHaveData
                           ? "No data this period"
-                          : "No data reaches us for this section"
+                          : "No data source is connected for this section"
                   }
                 >
                   <Layers />
@@ -560,7 +619,7 @@ function PersonSectionsNav() {
                           ? STATUS_BG_CLASS[standing.status]
                           : standing.peersHaveData
                             ? "bg-muted-foreground/30"
-                            : "border border-muted-foreground/40",
+                            : "border border-muted-foreground/40"
                       )}
                       aria-hidden
                     />
