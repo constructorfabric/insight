@@ -22,6 +22,8 @@ sources:
       - name: pull_request_diff_stats
       - name: issues
       - name: projects_v2
+      - name: issue_fields
+      - name: issue_types
       - name: workflow_runs
       - name: deployments
       - name: deployment_statuses

@@ -55,6 +55,7 @@ issue_facts AS (
         toDate(s.final_close_at)                                             AS metric_date,
         any(s.final_close_at)                                                AS observed_at,
         s.issue_id                                                           AS issue_id,
+        any(s.data_source)                                                   AS data_source,
         any(s.issue_type)                                                    AS issue_type,
         any(s.status_category) = 'done'                                      AS is_done,
         toDate(s.final_close_at)                                             AS close_date,
@@ -72,7 +73,8 @@ issue_facts AS (
            toFloat64(greatest(toInt64(0),
                dateDiff('second', any(s.created_at),
                         minIf(i.interval_start, i.interval_start < s.final_close_at))))) AS pickup_seconds,
-        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
+        CAST([tuple('source', any(s.data_source), any(s.data_source))]
+             AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
     FROM issue_state AS s
     LEFT JOIN status_intervals AS i
         ON i.insight_source_id = s.insight_source_id
@@ -93,11 +95,17 @@ issue_item_evidence AS (
         item_measure.1 AS measure_key,
         toFloat64(item_measure.2) AS contribution,
         CAST(
-            [tuple(
-                'type',
-                ifNull(issue_type_key, '__unknown__'),
-                ifNull(issue_type_name, 'Type unknown')
-            )] AS Array(Tuple(key String, value String, label Nullable(String)))
+            [
+                tuple(
+                    'type',
+                    ifNull(issue_type_key, '__unknown__'),
+                    ifNull(issue_type_name, 'Type unknown')
+                ),
+                -- Without this, two trackers blend into one per-person figure
+                -- with no way to tell them apart, and an issue mirrored between
+                -- them is counted twice with nothing to say so.
+                tuple('source', data_source, data_source)
+            ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS type_dimensions
     FROM issue_state
     ARRAY JOIN arrayConcat(

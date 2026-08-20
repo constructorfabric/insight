@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: class_git_item_events
-    description: "Unified issue and pull-request lifecycle events from all sources (GitHub today)"
+    description: "Unified pull-request lifecycle events from all sources (GitHub today). Issue events belong to the task class."
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -14,10 +14,10 @@ models:
           - not_null
           - unique
       - name: item_type
-        description: "Which kind of item the event belongs to"
+        description: "Which kind of item the event belongs to. Pull requests only: an issue's history is a task tracker's, and reaches class_task_field_history instead — this value is the guard that says so."
         tests:
           - accepted_values:
-              values: ['issue', 'pull_request']
+              values: ['pull_request']
       - name: actor_name
         description: "The actor's login; GitHub's Actor exposes no stable id, so no uuid column is claimed"
       - name: delta_action
