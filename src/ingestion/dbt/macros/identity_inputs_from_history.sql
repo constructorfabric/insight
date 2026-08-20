@@ -51,9 +51,14 @@
     the same raw tenant_id maps to the same UUID across all sources, so
     downstream joins on `insight_tenant_id` stay consistent.
 
-  unique_key is `{tenant}-{source_type}-{source_account_id}-{value_type}-{operation}-{updated_at_ms}`
-  — uniquely identifies one observation event. RMT(_version) deduplicates true
-  duplicates (same observation re-emitted) on background merge.
+  unique_key is
+  `{tenant}-{source_id}-{source_type}-{source_account_id}-{value_type}-{operation}-{updated_at_ms}`
+  — uniquely identifies one observation event. source_id is part of the key:
+  two connections under one tenant can legitimately hold the same entity_id
+  (numeric vendor ids collide across hosts), and without it the silver RMT
+  would silently keep one scope's row and drop the other's. RMT(_version)
+  deduplicates true duplicates (same observation re-emitted) on background
+  merge.
 #}
 
 WITH history AS (
@@ -64,12 +69,16 @@ WITH history AS (
     {% endif %}
 ),
 
--- UPSERT: identity field changed
+-- UPSERT: identity field changed.
+-- DISTINCT: one member appearing as several history entities at one instant
+-- (e.g. a GitHub member of two configured orgs) is one observation, not two
+-- rows sharing a unique_key.
 upserts AS (
     {% for f in identity_fields %}
-    SELECT
+    SELECT DISTINCT
         CAST(concat(
             coalesce(tenant_id, ''), '-',
+            coalesce(source_id, ''), '-',
             '{{ source_type }}', '-',
             coalesce(entity_id, ''), '-',
             '{{ f.value_type }}', '-',
@@ -89,19 +98,23 @@ upserts AS (
     FROM history
     WHERE field_name = '{{ f.field }}'
       AND new_value != ''
+      -- A row without an account key can never bind (the persons-seed fails
+      -- the whole run on a NULL source_account_id).
+      AND entity_id IS NOT NULL AND entity_id != ''
     {{ 'UNION ALL' if not loop.last }}
     {% endfor %}
 ),
 
 -- DELETE: deactivation detected — emit DELETE for all identity fields
 deactivation_events AS (
-    SELECT
+    SELECT DISTINCT
         tenant_id,
         source_id,
         entity_id,
         updated_at
     FROM history
-    WHERE {{ deactivation_condition }}
+    WHERE ({{ deactivation_condition }})
+      AND entity_id IS NOT NULL AND entity_id != ''
 ),
 
 deletes AS (
@@ -109,6 +122,7 @@ deletes AS (
     SELECT
         CAST(concat(
             coalesce(d.tenant_id, ''), '-',
+            coalesce(d.source_id, ''), '-',
             '{{ source_type }}', '-',
             coalesce(d.entity_id, ''), '-',
             '{{ f.value_type }}', '-',
@@ -134,10 +148,14 @@ deletes AS (
 -- ADR-0002 — emitted by the macro on every activity so every connector
 -- contributes it uniformly. (REC-IR-05: planned to move to per-connector
 -- explicit declaration in a follow-up PR.)
+-- DISTINCT: several fields changing at one instant are several history rows
+-- but ONE binding observation — without it they share one unique_key and the
+-- staging model's uniqueness test fails.
 id_upserts AS (
-    SELECT
+    SELECT DISTINCT
         CAST(concat(
             coalesce(tenant_id, ''), '-',
+            coalesce(source_id, ''), '-',
             '{{ source_type }}', '-',
             coalesce(entity_id, ''), '-',
             'id-',
@@ -160,9 +178,10 @@ id_upserts AS (
 
 -- DELETE: mirror id-binding row at deactivation.
 id_deletes AS (
-    SELECT
+    SELECT DISTINCT
         CAST(concat(
             coalesce(d.tenant_id, ''), '-',
+            coalesce(d.source_id, ''), '-',
             '{{ source_type }}', '-',
             coalesce(d.entity_id, ''), '-',
             'id-',

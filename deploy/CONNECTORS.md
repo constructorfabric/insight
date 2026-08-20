@@ -174,8 +174,8 @@ stringData:
 # without it a GitHub login resolves to no person and the callback returns 403.
 # source-id is `github-main`, NOT `github-directory-main`: this connector and
 # the `github` connector describe accounts of the same organization, and the
-# roster's login binding only meets the commit e-mails claimed against that
-# login when both carry one source id.
+# roster's member-id binding only meets the commit e-mails claimed against
+# that account when both carry one source id.
 apiVersion: v1
 kind: Secret
 metadata:

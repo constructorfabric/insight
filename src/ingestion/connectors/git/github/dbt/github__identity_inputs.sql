@@ -10,16 +10,16 @@
 --
 -- Two kinds of account, distinguished by source_type:
 --
---   `github`              — a real account, keyed on the lowercased login
---                           (ADR-0002), matching the roster connector so both
---                           describe the same accounts and meet in the join.
+--   `github`              — a real account, keyed on its immutable numeric
+--                           GitHub id, stringified (ADR-0002 binding key),
+--                           matching the roster connector so both describe
+--                           the same accounts and meet in the join.
 --   `github-commit-email` — an e-mail no account claims, keyed on the e-mail
 --                           itself. Not a vendor account and never matched at
 --                           sign-in: it exists so an operator can see the
 --                           address in the console and merge it into the person
 --                           it belongs to, which is the only way those commits
 --                           ever attribute. A separate source_type keeps
---                           ADR-0002's login contract intact and keeps
 --                           e-mail-shaped ids out of the (source_type,
 --                           external_id) space the login lookup treats as
 --                           unique.
@@ -44,7 +44,7 @@ WITH observations AS (
         toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
         toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         'github' AS insight_source_type,
-        login AS source_account_id,
+        account_id AS source_account_id,
         'email' AS value_type,
         email AS value,
         observed_in AS value_field_name,

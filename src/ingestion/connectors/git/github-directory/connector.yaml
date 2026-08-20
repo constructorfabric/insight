@@ -11,15 +11,14 @@
 #     per member, and still never returns the org role.
 #   - `email` is only populated when the member's org email is verified and
 #     visible to the token's scopes, so it is frequently null. The account
-#     binding therefore rests on the login, not the email.
+#     binding therefore rests on `member_id`, not the email.
 #   - GraphQL reports throttling as HTTP 200 with errors[].type=RATE_LIMITED,
 #     which no status-code filter can see.
 #
-# `login_normalized` exists because the person lookup this feeds compares
-# byte-exact against a case-sensitive column, while Keycloak lowercases the
-# username it brokers from GitHub. Lowercasing loses nothing: GitHub logins are
-# unique case-insensitively. The raw `login` is kept alongside it so bronze
-# still shows what the API returned.
+# `member_id` (GraphQL `databaseId`) is the identity key: GitHub never changes
+# or reuses it, while a login can be renamed by its owner and later
+# re-registered by someone else. The raw `login` is kept for display and
+# search, and emitted as a `username` observation only.
 
 version: "7.0.4"
 type: DeclarativeSource
@@ -115,7 +114,6 @@ streams:
           data_source: { type: string }
           org: { type: string }
           login: { type: string }
-          login_normalized: { type: string }
           member_id: { type: ["integer", "null"] }
           name: { type: ["string", "null"] }
           email: { type: ["string", "null"] }
@@ -147,6 +145,12 @@ streams:
         extractor:
           type: DpathExtractor
           field_path: [data, organization, membersWithRole, edges]
+        # databaseId is the entity key and the identity binding; a member the
+        # API returns without one cannot bind, and its empty unique_key would
+        # collapse with every other such member under ReplacingMergeTree.
+        record_filter:
+          type: RecordFilter
+          condition: "{{ ((record.get('node') or {}).get('databaseId') or 0) > 0 }}"
       paginator:
         type: DefaultPaginator
         pagination_strategy:
@@ -175,11 +179,9 @@ streams:
             value: "{{ (record.get('node') or {}).get('login') }}"
             value_type: string
           - type: AddedFieldDefinition
-            # The join key for person resolution — see the header note.
-            path: [login_normalized]
-            value: "{{ ((record.get('node') or {}).get('login') or '') | lower }}"
-            value_type: string
-          - type: AddedFieldDefinition
+            # The join key for person resolution — see the header note. No
+            # value_type on purpose: bronze keeps the API's integer, and dbt
+            # stringifies it where the identity chain needs a string.
             path: [member_id]
             value: "{{ (record.get('node') or {}).get('databaseId') }}"
           # `or ''`, never `or none`: these carry `value_type: string`, so a
@@ -193,7 +195,7 @@ streams:
           # is emitted, in EITHER direction. A field that later gains a value
           # would never be observed. The empty string compares normally, and the
           # downstream filters (`new_value != ''`, `WHERE {{ f }} != ''`) already
-          # treat it as absence. Same shape as `login_normalized` above.
+          # treat it as absence.
           - type: AddedFieldDefinition
             path: [name]
             value: "{{ (record.get('node') or {}).get('name') or '' }}"
@@ -219,10 +221,11 @@ streams:
             value: "{{ (record.get('node') or {}).get('updatedAt') or none }}"
             value_type: string
           - type: AddedFieldDefinition
-            # Keyed on the normalized login so a change of login letter-case
-            # does not fork the entity into a second bronze row.
+            # Keyed on the immutable member_id so a login rename (or a
+            # letter-case change) does not fork the member into a second
+            # bronze row.
             path: [unique_key]
-            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org }}:{{ ((record.get('node') or {}).get('login') or '') | lower }}"
+            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org }}:{{ (record.get('node') or {}).get('databaseId') or '' }}"
             value_type: string
       - type: RemoveFields
         field_pointers:
