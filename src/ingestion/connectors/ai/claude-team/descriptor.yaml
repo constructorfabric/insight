@@ -42,7 +42,13 @@ name: claude-team
 #   Safe now and not before: full_refresh=false on claude_team__ai_overage
 #   landed in 2.2.0, so the one relation holding a past month's closing spend is
 #   skipped by the rebuild while class_ai_overage re-materialises from it.
-version: "3.0.0"
+# 3.1.0: the two daily-metrics streams read up to today instead of stopping a
+#   day short, and re-read the last two days via lookback_window. The vendor
+#   revises a day after it closes; the old end bound waited for that instead of
+#   re-asking, so the newest days never arrived at all. MINOR per ADR-0015 —
+#   no schema or dbt output change, so nothing re-materializes; the re-read
+#   lands as a newer _version and ReplacingMergeTree keeps it.
+version: "3.1.0"
 # Daily at 23:50 UTC, as late in the day as the boundary allows. The seat
 # endpoint reports the billing month in progress and carries no history, so a
 # month's spend is frozen at the last read INSIDE it and whatever follows is

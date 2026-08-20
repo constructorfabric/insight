@@ -91,6 +91,7 @@ Silver transformations are out of scope for this MVP (Phase 6+). `dbt_select` in
 - **Cloudflare challenge**: the proxy solves the CF challenge during `setSessionKey`, not at startup. First call after a key rotation may take up to 60 s. Insight retries on transient 503/502.
 - **Token rotation**: `proxy_auth_token` rotation requires updating both the K8s Secret here and the `PROXY_AUTH_TOKEN` env on the proxy container. Coordinate via the customer.
 - **One proxy = one org**: the proxy container is bound to a single `CLAUDE_ORG_ID`. Multiple claude organisations require multiple proxy deployments and multiple Insight connector instances.
+- **Reporting lag**: a day keeps being revised for a while after it closes. The daily-metrics streams read up to today and re-read that tail on every run (`lookback_window: P2D`) rather than waiting for it to settle: a revised day returns with a later `_airbyte_extracted_at`, and `ReplacingMergeTree(_version)` keeps it. Reading recent days late instead left them absent until they settled, which reads downstream as no activity rather than as no data (#2682).
 
 ## Validation
 
