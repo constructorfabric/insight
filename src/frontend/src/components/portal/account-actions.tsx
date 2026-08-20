@@ -270,40 +270,45 @@ export function AccountActions({
         </section>
       ) : null}
 
-      {/* One section, two ways in. With a person open behind the window the
-          search is gone — the reader is already inside them, and asking them to
-          find them again is asking twice. Nothing at all once the account is
-          ALREADY theirs: a button that reads like a decision and changes nothing
-          is worse than no button. */}
-      {bindTo === undefined || bindTo === null || boundId !== bindTo.person_id ? (
-        <section>
-          <div className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {boundId
-              ? t("identities.actions.assign_other")
-              : t("identities.actions.assign_person")}
-          </div>
-          {bindTo ? (
-            <Button
-              type="button"
-              size="sm"
-              disabled={busy}
-              onClick={() => setAction({ kind: "bind", person: bindTo })}
-            >
-              {t("identities.actions.bind_to")}
-            </Button>
-          ) : (
-            <PersonPicker
-              // The holder too: this picker moves an account to somebody
-              // else, and the one person it cannot move it to is the one who
-              // already has it.
-              excludeIds={[...candidates, ...(boundCard ? [boundCard] : [])].map(
-                (c) => c.person_id,
-              )}
-              onPick={(person) => setAction({ kind: "bind", person })}
-            />
-          )}
-        </section>
-      ) : null}
+      {/* One section, two ways in. With a person open behind the window and the
+          account not yet theirs, one press is the whole decision — the reader
+          is already inside that person, and asking them to search for them
+          again is asking twice. Once the account IS theirs that press would
+          change nothing, so the search comes back: moving it to somebody else
+          is the only decision left, and it is exactly the one an operator
+          opened the account to make. */}
+      <section>
+        <div className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          {boundId
+            ? t("identities.actions.assign_other")
+            : t("identities.actions.assign_person")}
+        </div>
+        {bindTo && boundId !== bindTo.person_id ? (
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy}
+            onClick={() => setAction({ kind: "bind", person: bindTo })}
+          >
+            {t("identities.actions.bind_to")}
+          </Button>
+        ) : (
+          <PersonPicker
+            // The holder too: this picker moves an account to somebody else,
+            // and the one person it cannot move it to is the one who already
+            // has it. Named by ID rather than by card — a surface that could
+            // not hydrate the holder still knows who they are, and without
+            // this the search would offer a bind that moves nothing.
+            excludeIds={[
+              ...candidates.map((c) => c.person_id),
+              ...(boundCard ? [boundCard.person_id] : []),
+              ...(boundId ? [boundId] : []),
+              ...(bindTo ? [bindTo.person_id] : []),
+            ]}
+            onPick={(person) => setAction({ kind: "bind", person })}
+          />
+        )}
+      </section>
 
       <section className="flex flex-wrap gap-2">
         {detachable ? (

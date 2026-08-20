@@ -101,7 +101,7 @@ describe("MergeCaseDialog", () => {
 
     const dialog = screen.getByRole("dialog");
     expect(
-      within(dialog).getByText(/keep bob park and merge the rest/i),
+      within(dialog).getByText(/merge the rest into bob park/i),
     ).toBeInTheDocument();
     // Order carries the meaning: the first person named is the one that remains.
     const labels = within(dialog)
@@ -370,4 +370,19 @@ describe("MergeCaseDialog", () => {
     expect(hooks.toast.success).not.toHaveBeenCalled();
     expect(hooks.toast.error).toHaveBeenCalledOnce();
   });
+
+  // The panel is a grid, and a grid item will not shrink below its own
+  // content. An address and a person id are exactly the values that do not
+  // wrap, so without these two classes the body pushes itself out through the
+  // side — invisible in jsdom, in a review, and to every other test here.
+  it("lays the panel out so a value too wide for it truncates instead of escaping", () => {
+    render(
+      <MergeCaseDialog survivor={BOB} absorbed={[CAROL]} onClose={vi.fn()} />,
+    );
+
+    const panel = screen.getByRole("dialog");
+    expect(panel).toHaveClass("grid-cols-[minmax(0,1fr)]");
+    expect(panel).toHaveClass("[&>*]:min-w-0");
+  });
+
 });

@@ -421,12 +421,13 @@
     },
     "queue": {
       "load_failed": "Unable to load the review queue",
-      "items_truncated": "Only the first accounts needing review are listed — resolve these and reload to see the rest.",
+      "longer_read_failed": "The longer read failed — go back to the first accounts",
+      "items_truncated": "Only the first accounts needing review are listed — resolve these to see the rest.",
       "truncated": "The evidence read hit its cap — these counts and this queue cover only part of the observed accounts, not the whole tenant.",
       "empty_title": "Everything is resolved",
       "empty_description": "Every observed account is bound to a person. New conflicts will appear here.",
-      "show_more_one": "Show {{count}} more case",
-      "show_more_other": "Show {{count}} more cases",
+      "load_more": "Show more cases",
+      "loading_more": "Loading…",
       "case_count_one": "{{count}} case · {{accounts}} accounts",
       "case_count_other": "{{count}} cases · {{accounts}} accounts",
       "previous_case": "‹ Previous account",
@@ -437,9 +438,7 @@
       "case_people_other": "{{count}} people",
       "case_accounts_one": "{{count}} account",
       "case_accounts_other": "{{count}} accounts",
-      "absorb_named": "{{name}}'s accounts move here",
-      "absorb_count_one": "1 other person's accounts move here",
-      "absorb_count_other": "{{count}} other people's accounts move here"
+      "absorb_all": "Everyone else in this case merges into them"
     },
     "detail": {
       "not_found": "This account is unknown — the link may be stale.",
@@ -454,7 +453,8 @@
       "terminated": "terminated",
       "unnamed": "Unnamed person",
       "copy_id": "Copy the person id",
-      "provisional": "provisional — created by automation, not confirmed"
+      "provisional": "provisional",
+      "provisional_hint": "Created by automation, not confirmed"
     },
     "history": {
       "bind": "Bound",
@@ -483,7 +483,7 @@
       "assign_other": "Assign to someone else",
       "bind_to": "Bind to selected person",
       "assign_person": "Assign to a person",
-      "keep_person": "Keep this person",
+      "merge_into_person": "Merge into this person",
       "confirm_group_one": "Confirm 1 account",
       "confirm_group_other": "Confirm all {{count}} accounts"
     },
@@ -502,7 +502,7 @@
       "exclude_description": "Bots, CI and service accounts are excluded from every person metric.",
       "failed": "The correction was not applied. Try again.",
       "confirm_description": "The account stays bound to the current person.",
-      "merge_case_title": "Keep {{name}} and merge the rest?",
+      "merge_case_title": "Merge the rest into {{name}}?",
       "merge_case_description": "Every account ticked below moves to {{name}}.",
       "merge_case_stays": "Stays",
       "merge_case_absorbed_one": "Merged into them",

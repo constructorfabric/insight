@@ -174,10 +174,12 @@ describe("AccountActions", () => {
     );
   });
 
-  // A button that reads like a decision and changes nothing is worse than no
-  // button: the account is already theirs, and the trail would gain a row
-  // saying so twice.
-  it("offers nothing to bind when the account is already that person's", () => {
+  // A press that re-binds an account to the person who already holds it reads
+  // like a decision and changes nothing. Moving it to somebody ELSE is the one
+  // decision left, and it is why an operator opens an account from a person's
+  // own list — so the search takes the button's place rather than the section
+  // disappearing with it.
+  it("offers the search, not a no-op bind, when the account is already that person's", () => {
     render(
       <AccountActions
         accountRef={REF}
@@ -188,11 +190,34 @@ describe("AccountActions", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: /bind to/i }),
+      screen.queryByRole("button", { name: /bind to selected person/i }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("searchbox")).toBeInTheDocument();
+    expect(screen.getByText(/assign to someone else/i)).toBeInTheDocument();
     // The other verbs are untouched — it is still an account under review.
     expect(screen.getByRole("button", { name: /detach/i })).toBeInTheDocument();
+  });
+
+  // The search that replaced the no-op button must not offer the no-op itself.
+  // No `holder` here on purpose: a surface whose row carries no person card
+  // still knows who holds the account, and that is the case this guards.
+  it("keeps the open person out of that search, card or no card", async () => {
+    hooks.search.data = { pages: [{ items: [BOB, CAROL] }] };
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: CAROL.person_id })}
+        candidates={[]}
+        bindTo={CAROL}
+      />,
+    );
+
+    await userEvent.type(screen.getByRole("searchbox"), "park");
+
+    expect(screen.getByRole("button", { name: /bob park/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /carol chen/i }),
+    ).not.toBeInTheDocument();
   });
 
   // Without a person behind the window the picker is the only way in, and the

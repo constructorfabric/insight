@@ -157,12 +157,26 @@ export interface AttentionResponse {
   items_truncated?: boolean;
 }
 
+/** The queue's first read — a healthy backlog arrives whole. */
+export const QUEUE_FIRST_PAGE = 200;
+
+/** The service's own ceiling on `limit`: asking past it answers the same page,
+ *  so a reader who has reached it is told to work the backlog down instead.
+ *
+ *  INVARIANT: mirrors `MAX_QUEUE_LIMIT` in the identity-resolution service. */
+export const QUEUE_MAX_ITEMS = 1000;
+
 /**
  * The operator review queue (`GET /resolution/attention`) — accounts the
  * resolver could not decide, with the tenant-wide match rate. Admin-gated
  * server-side; the caller is expected to sit behind `useIsAdmin`.
+ *
+ * There is no cursor: the queue is derived from the whole tenant on every
+ * read, so asking for more of it is a larger `limit`, not a next page.
  */
-export async function getAttention(limit = 200): Promise<AttentionResponse> {
+export async function getAttention(
+  limit: number = QUEUE_FIRST_PAGE,
+): Promise<AttentionResponse> {
   const res = await fetchWithAuth(`${BASE}/resolution/attention?limit=${limit}`);
   if (!res.ok) {
     const body = await res.json().catch(() => null);

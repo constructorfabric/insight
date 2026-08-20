@@ -9,8 +9,8 @@
  * screen said which way round it went.
  *
  * Choosing only the survivor is what makes the direction unambiguous: there is
- * no "from", because everyone else is the from. Which is also why the row's
- * button keeps a person rather than removing one — a mis-click preserves.
+ * no "from", because everyone else is the from. The row's button says the same
+ * thing in words — it merges INTO the person whose row it sits in.
  *
  * A case can argue over more than two people, and then all-or-nothing is the
  * wrong offer: two of them may be one human while the third is a different one
@@ -212,7 +212,7 @@ export function MergeCaseDialog({
               {moving.accounts.slice(0, PREVIEW_ROWS).map((account) => (
                 <li
                   key={`${account.source}:${account.source_id}:${account.account_id}`}
-                  className="font-mono text-xs text-muted-foreground"
+                  className="truncate font-mono text-xs text-muted-foreground"
                 >
                   {account.source} ·{" "}
                   {account.email ?? account.username ?? account.account_id}
