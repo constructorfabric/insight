@@ -57,10 +57,14 @@ issue_pivot AS (
         toFloat64OrNull(argMaxIf(value_displays[1], (event_at, _version),
                  field_id = 'timespent' AND delta_action = 'set'))           AS time_spent_seconds,
         minIf(event_at, event_kind = 'synthetic_initial')                    AS created_at,
-        maxIf(event_at, field_id = 'status' AND delta_action = 'set')        AS last_status_event_at
+        maxIf(event_at, field_id = 'status' AND delta_action = 'set')        AS last_status_event_at,
+        -- Availability lives in the same history as every other field
+        -- (synthetic 'availability' events; see the jira deletion spec).
+        argMaxIf(value_ids[1], (event_at, _version),
+                 field_id = 'availability')                                  AS availability
     FROM {{ ref('class_task_field_history') }} FINAL
     WHERE field_id IN ('status', 'assignee', 'issuetype', 'duedate',
-                       'timeoriginalestimate', 'timespent')
+                       'timeoriginalestimate', 'timespent', 'availability')
        OR event_kind = 'synthetic_initial'
     GROUP BY insight_source_id, issue_id
 ),
@@ -107,3 +111,9 @@ LEFT JOIN {{ ref('class_task_statuses') }} AS cur FINAL
     ON cur.insight_source_id = p.insight_source_id AND cur.status_id = p.status_id
 LEFT JOIN {{ ref('class_task_issuetypes') }} AS it FINAL
     ON it.insight_source_id = p.insight_source_id AND it.issue_type_id = p.issue_type_id
+-- Issues deleted at the source (or in the project trash) leave every task
+-- metric: this table is the root of the gold task chain, so the filter
+-- propagates to spans, worklog flow and evidence. archived / access_lost /
+-- unobserved issues stay in — the entity still exists, its data is merely
+-- stale. Issues with no availability events default to present ('').
+WHERE p.availability NOT IN ('deleted', 'trashed')

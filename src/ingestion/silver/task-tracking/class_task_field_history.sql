@@ -1,4 +1,7 @@
 -- depends_on: {{ ref('jira__task_field_history') }}
+-- depends_on: {{ ref('jira__availability_events') }}
+-- depends_on: {{ ref('jira__comment_lifecycle_events') }}
+-- depends_on: {{ ref('jira__worklog_lifecycle_events') }}
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',
