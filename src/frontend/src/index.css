@@ -173,3 +173,32 @@
     @apply font-sans;
   }
 }
+
+/* The kit's own CSS is moved into this same layer, so these have to outrank it
+   on specificity rather than on order. Utilities stay a later layer and still
+   win, which is what keeps call-site classes working. */
+@layer components {
+  html [data-slot="button"] svg:not([class*="size-"]) {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  html [data-slot="button"][data-size="xs"],
+  html [data-slot="button"][data-size="icon-xs"] {
+    height: 1.5rem;
+    font-size: var(--text-meta-size);
+  }
+
+  html [data-slot="button"][data-size="xs"] svg:not([class*="size-"]),
+  html [data-slot="button"][data-size="icon-xs"] svg:not([class*="size-"]) {
+    width: 0.75rem;
+    height: 0.75rem;
+  }
+
+  html [data-slot="button"][data-variant="ghost"][aria-expanded="true"],
+  html [data-slot="button"][data-variant="outline"][aria-expanded="true"],
+  html [data-slot="button"][data-variant="secondary"][aria-expanded="true"] {
+    background-color: var(--muted);
+    color: var(--foreground);
+  }
+}
