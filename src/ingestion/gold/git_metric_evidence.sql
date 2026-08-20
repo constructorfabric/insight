@@ -114,7 +114,7 @@ deduplicated_file_changes AS (
         raw_file_change.project_key,
         raw_file_change.repo_slug,
         raw_file_change.file_path,
-        raw_file_change.change_type,
+        lower(raw_file_change.change_type),
         raw_file_change.pre_image_oid,
         raw_file_change.post_image_oid,
         if(

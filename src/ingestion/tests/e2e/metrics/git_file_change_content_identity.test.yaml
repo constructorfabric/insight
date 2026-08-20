@@ -8,8 +8,11 @@ description: >
 
   Fixture isolates itself in its own repository so the breakdown assertions are
   unaffected by any other git fixture seeded in the suite:
-    * add-dup-1 / add-dup-2 add src/bundle.js with the same post-image oid —
-      +100 counts once, and the earliest commit keeps it.
+    * add-dup-1 (October) / add-dup-2 (November) add src/bundle.js with the
+      same post-image oid — +100 counts once, and the EARLIEST commit keeps it,
+      so October reports the lines and November reports none. The two windows
+      are what pin the ordering: if the later commit won, the +100 would move
+      to November.
     * mod-dup-1 / mod-dup-2 make the same oid-to-oid transition on
       src/app.ts — +8/-3 counts once.
     * distinct adds different content, so it is never folded in.
@@ -23,7 +26,7 @@ bronze:
 
   bronze_github.commits:
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-add-dup-1, repository: "https://github.com/constructor/content-identity.git", sha: ci-add-dup-1, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 100}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-add-dup-2, repository: "https://github.com/constructor/content-identity.git", sha: ci-add-dup-2, committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 100}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-add-dup-2, repository: "https://github.com/constructor/content-identity.git", sha: ci-add-dup-2, committed_date: "2026-11-02T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 100}
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-distinct, repository: "https://github.com/constructor/content-identity.git", sha: ci-distinct, committed_date: "2026-10-01T11:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 7}
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-mod-dup-1, repository: "https://github.com/constructor/content-identity.git", sha: ci-mod-dup-1, committed_date: "2026-10-01T12:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 8}
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-mod-dup-2, repository: "https://github.com/constructor/content-identity.git", sha: ci-mod-dup-2, committed_date: "2026-10-01T13:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 8}
@@ -63,7 +66,8 @@ cases:
               - {view: breakdown, dimensions: [repository]}
     expect:
       - assert: "status == 200"
-      # 100 (one add, not two) + 7 + 8 (one modification, not two) + 5 + 5.
+      # 100 (the October add, which is the earliest) + 7 + 8 (one
+      # modification, not two) + 5 + 5.
       - metric: git.lines_added
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/content-identity"}}
@@ -73,8 +77,38 @@ cases:
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/content-identity"}}
         equal: {value: 5}
-      # Commit counting is unaffected: every commit is its own authored commit.
+      # Commit counting is unaffected: every commit is its own authored
+      # commit. Six land in October; add-dup-2 is November's.
       - metric: git.commits
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/content-identity"}}
-        equal: {value: 7}
+        equal: {value: 6}
+
+  - name: The repeat of an earlier content reports no lines of its own
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-11-01", to: "2026-11-30"}
+        metrics:
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.commits
+            views:
+              - {view: breakdown, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      # November holds one commit, and the only file change it carries repeats
+      # content October already accounted for — so the commit counts and the
+      # lines do not.
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/content-identity"}}
+        equal: {value: 1}
+      # No breakdown row at all for the repository: a metric with nothing to
+      # report omits the dimension rather than reporting it as zero.
+      - metric: git.lines_added
+        view: breakdown
+        assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'git-test:constructor/content-identity'))"
