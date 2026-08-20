@@ -18,7 +18,7 @@ _CONNECTOR = "task-tracking/jira"
 _URL = f"{JIRA_URL}/rest/api/3/status"
 
 
-def _status(sid: str, name: str, category_key: str) -> dict:
+def _status(sid: str, name: str, category_key: str) -> dict[str, object]:
     return {"id": sid, "name": name, "statusCategory": {"id": 3, "key": category_key, "name": category_key.title()}}
 
 

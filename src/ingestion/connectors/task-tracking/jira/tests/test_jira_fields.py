@@ -30,6 +30,12 @@ def _fields_response() -> HttpResponse:
                     "custom": True,
                     "schema": {"type": "number", "custom": "com.pyxis.greenhopper.jira:jsw-story-points"},
                 },
+                {
+                    "id": "customfield_10202",
+                    "name": "Sprints",
+                    "custom": True,
+                    "schema": {"type": "array", "items": "string", "custom": "com.example.jira:sprint"},
+                },
             ]
         ),
         status_code=200,
@@ -42,7 +48,7 @@ def test_full_refresh_read(http_mocker: HttpMocker) -> None:
 
     output = read_stream(_CONNECTOR, _STREAM, config)
 
-    assert len(output.records) == 2
+    assert len(output.records) == 3
     assert not output.errors
 
 
@@ -63,3 +69,6 @@ def test_schema_flattening_and_stamping(http_mocker: HttpMocker) -> None:
     assert sp["schema_custom"] == "com.pyxis.greenhopper.jira:jsw-story-points"
     # None-valued AddFields stamps are dropped from the record entirely.
     assert by_id["summary"].get("schema_custom") in (None, "")
+    # An array field carries the element type the flattened contract declares.
+    assert by_id["customfield_10202"]["schema_type"] == "array"
+    assert by_id["customfield_10202"]["schema_items"] == "string"

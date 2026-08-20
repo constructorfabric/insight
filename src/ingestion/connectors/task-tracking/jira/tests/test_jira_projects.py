@@ -30,7 +30,7 @@ _CONNECTOR = "task-tracking/jira"
 _SEARCH_URL = f"{JIRA_URL}/rest/api/3/project/search"
 
 
-def _project(pid: int, key: str) -> dict:
+def _project(pid: int, key: str) -> dict[str, object]:
     """The fixtures/project.json record with only the case-relevant overrides."""
     return load_fixture(
         __file__,
@@ -42,7 +42,7 @@ def _project(pid: int, key: str) -> dict:
     )
 
 
-def _page(records: list[dict], *, is_last: bool = True) -> HttpResponse:
+def _page(records: list[dict[str, object]], *, is_last: bool = True) -> HttpResponse:
     return HttpResponse(body=json.dumps({"values": records, "isLast": is_last}), status_code=200)
 
 

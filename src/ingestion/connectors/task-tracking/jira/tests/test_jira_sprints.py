@@ -31,11 +31,11 @@ def _mock_scrum_boards(http_mocker: HttpMocker, board_ids: list[int]) -> None:
     )
 
 
-def _sprints_response(sprints: list[dict]) -> HttpResponse:
+def _sprints_response(sprints: list[dict[str, object]]) -> HttpResponse:
     return HttpResponse(body=json.dumps({"values": sprints, "isLast": True}), status_code=200)
 
 
-def _sprint(sid: int, state: str) -> dict:
+def _sprint(sid: int, state: str) -> dict[str, object]:
     return {
         "id": sid,
         "name": f"Sprint {sid}",

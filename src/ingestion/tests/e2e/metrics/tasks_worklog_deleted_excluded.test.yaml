@@ -86,3 +86,15 @@ cases:
         view: peer
         find: {entity_id: erin@example.com}
         equal: {target_value: 100, p25: 40, median: 60, p75: 80, min: 20, max: 100, n: 5}
+
+  - name: tasks.worklog_accuracy empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2025-01-01", to: "2025-01-31"}
+        metrics: [{metric_key: tasks.worklog_accuracy, views: [{view: period}]}]
+    expect:
+      - assert: "status == 200"
+      - {metric: tasks.worklog_accuracy, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}

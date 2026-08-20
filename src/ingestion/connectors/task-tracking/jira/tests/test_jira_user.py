@@ -19,7 +19,7 @@ _CONNECTOR = "task-tracking/jira"
 _URL = f"{JIRA_URL}/rest/api/3/users/search"
 
 
-def _user(account_id: str, email: str) -> dict:
+def _user(account_id: str, email: str) -> dict[str, object]:
     return {
         "accountId": account_id,
         "emailAddress": email,

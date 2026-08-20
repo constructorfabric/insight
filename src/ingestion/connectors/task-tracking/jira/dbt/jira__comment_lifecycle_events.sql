@@ -35,26 +35,53 @@ WITH transitions AS (
         new_value,
         updated_at                                              AS detected_at
     FROM {{ ref('jira__comment_lifecycle_history') }}
+),
+
+-- The identity timestamp is event_at, not detection time: detection time comes
+-- from the snapshot's _tracked_at, which is second-resolution, so two
+-- transitions of one comment inside the same second would share unique_key and
+-- collapse under ReplacingMergeTree. event_at carries the comment's own
+-- millisecond timestamp for add/set; a comment is removed at most once.
+resolved AS (
+    SELECT
+        t.source_id                                             AS source_id,
+        t.comment_id                                            AS comment_id,
+        t.action                                                AS action,
+        t.detected_at                                           AS detected_at,
+        st.id_readable                                          AS id_readable,
+        st.author_id                                            AS author_id,
+        av.jira_id                                              AS jira_id,
+        if(t.action IN ('add', 'set'),
+           COALESCE(parseDateTime64BestEffortOrNull(t.new_value, 3),
+                    toDateTime64(t.detected_at, 3)),
+           toDateTime64(t.detected_at, 3))                      AS event_at
+    FROM transitions AS t
+    LEFT JOIN {{ ref('jira__comment_state') }} AS st FINAL
+        ON st.tenant_id = t.tenant_id
+        AND st.source_id = t.source_id
+        AND st.comment_id = t.comment_id
+    LEFT JOIN {{ ref('jira__issue_availability_state') }} AS av FINAL
+        ON av.tenant_id = t.tenant_id
+        AND av.source_id = t.source_id
+        AND av.id_readable = st.id_readable
+    WHERE t.action != ''
 )
 
 SELECT
     concat(COALESCE(t.source_id, ''), '-jira-comment-', COALESCE(t.comment_id, ''),
            '-', t.action, '-',
-           toString(toUnixTimestamp(t.detected_at)))            AS unique_key,
+           toString(toUnixTimestamp64Milli(t.event_at)))         AS unique_key,
     COALESCE(t.source_id, '')                                   AS insight_source_id,
     CAST('jira' AS String)                                      AS data_source,
-    COALESCE(av.jira_id, '')                                    AS issue_id,
-    COALESCE(st.id_readable, '')                                AS id_readable,
+    COALESCE(t.jira_id, '')                                     AS issue_id,
+    COALESCE(t.id_readable, '')                                 AS id_readable,
     concat('comment:', COALESCE(t.comment_id, ''), ':', t.action, ':',
-           toString(toUnixTimestamp(t.detected_at)))            AS event_id,
-    if(t.action IN ('add', 'set'),
-       COALESCE(parseDateTime64BestEffortOrNull(t.new_value, 3),
-                toDateTime64(t.detected_at, 3)),
-       toDateTime64(t.detected_at, 3))                          AS event_at,
+           toString(toUnixTimestamp64Milli(t.event_at)))         AS event_id,
+    t.event_at                                                  AS event_at,
     CAST('lifecycle', 'Enum8(\'changelog\' = 1, \'synthetic_initial\' = 2, \'availability\' = 3, \'lifecycle\' = 4)')
                                                                 AS event_kind,
     toUInt32(0)                                                 AS _seq,
-    st.author_id                                                AS author_id,
+    t.author_id                                                 AS author_id,
     CAST(NULL AS Nullable(String))                              AS author_display,
     CAST('comment' AS String)                                   AS field_id,
     CAST('Comment' AS String)                                   AS field_name,
@@ -68,13 +95,4 @@ SELECT
                                                                 AS value_id_type,
     toDateTime64(t.detected_at, 3)                              AS collected_at,
     toUInt64(toUnixTimestamp64Milli(now64(3)))                  AS _version
-FROM transitions AS t
-LEFT JOIN {{ ref('jira__comment_state') }} AS st FINAL
-    ON st.tenant_id = t.tenant_id
-    AND st.source_id = t.source_id
-    AND st.comment_id = t.comment_id
-LEFT JOIN {{ ref('jira__issue_availability_state') }} AS av FINAL
-    ON av.tenant_id = t.tenant_id
-    AND av.source_id = t.source_id
-    AND av.id_readable = st.id_readable
-WHERE t.action != ''
+FROM resolved AS t

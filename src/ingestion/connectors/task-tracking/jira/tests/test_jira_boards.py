@@ -20,11 +20,11 @@ _CONNECTOR = "task-tracking/jira"
 _URL = f"{JIRA_URL}/rest/agile/1.0/board"
 
 
-def _board(bid: int) -> dict:
+def _board(bid: int) -> dict[str, object]:
     return {"id": bid, "name": f"Board {bid}", "type": "scrum"}
 
 
-def _page(boards: list[dict], *, is_last: bool = True) -> HttpResponse:
+def _page(boards: list[dict[str, object]], *, is_last: bool = True) -> HttpResponse:
     return HttpResponse(body=json.dumps({"values": boards, "isLast": is_last}), status_code=200)
 
 
@@ -50,7 +50,7 @@ def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
     assert rec["unique_key"] == (f"{config['insight_tenant_id']}-{config['insight_source_id']}-7")
 
 
-def test_pagination_offset_50(http_mocker: HttpMocker) -> None:
+def test_reads_the_next_page_after_a_non_final_response(http_mocker: HttpMocker) -> None:
     config = JiraConfigBuilder().build()
     page1 = [_board(i) for i in range(50)]
     page2 = [_board(100)]

@@ -21,7 +21,7 @@ _CONNECTOR = "task-tracking/jira"
 _SEARCH_URL = f"{JIRA_URL}/rest/api/3/project/search"
 
 
-def _project(pid: int, key: str) -> dict:
+def _project(pid: int, key: str) -> dict[str, object]:
     return load_fixture(
         __file__,
         "project.json",
@@ -32,11 +32,11 @@ def _project(pid: int, key: str) -> dict:
     )
 
 
-def _page(records: list[dict]) -> HttpResponse:
+def _page(records: list[dict[str, object]]) -> HttpResponse:
     return HttpResponse(body=json.dumps({"values": records, "isLast": True}), status_code=200)
 
 
-def _mock_status(http_mocker: HttpMocker, status: str, records: list[dict]) -> None:
+def _mock_status(http_mocker: HttpMocker, status: str, records: list[dict[str, object]]) -> None:
     http_mocker.get(HttpRequest(_SEARCH_URL, query_params={"status": status, "maxResults": "50"}), _page(records))
 
 

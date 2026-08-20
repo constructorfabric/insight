@@ -14,8 +14,15 @@
 -- last scan by more than the race window.
 
 WITH issue_scan AS (
-    SELECT max(_airbyte_extracted_at) AS scanned_at
+    -- Per (tenant, source): each source instance scans on its own clock, so a
+    -- global watermark would judge one instance's issues against another's
+    -- scan time and report rows inside their own race window.
+    SELECT
+        tenant_id,
+        source_id,
+        max(_airbyte_extracted_at) AS scanned_at
     FROM bronze_jira.jira_issue
+    GROUP BY tenant_id, source_id
 )
 
 SELECT
@@ -31,6 +38,8 @@ LEFT ANTI JOIN bronze_jira.jira_issue AS i FINAL
     ON i.tenant_id = av.tenant_id
     AND i.source_id = av.source_id
     AND i.jira_id = av.jira_id
-CROSS JOIN issue_scan
+INNER JOIN issue_scan AS scan
+    ON scan.tenant_id = av.tenant_id
+    AND scan.source_id = av.source_id
 WHERE av.availability = 'present'
-  AND parseDateTime64BestEffortOrNull(ik.updated, 3) < issue_scan.scanned_at - INTERVAL 1 HOUR
+  AND parseDateTime64BestEffortOrNull(ik.updated, 3) < scan.scanned_at - INTERVAL 1 HOUR

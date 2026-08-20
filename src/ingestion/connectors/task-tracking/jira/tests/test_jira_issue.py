@@ -35,7 +35,7 @@ def _projects_response(keys: list[str]) -> HttpResponse:
     return HttpResponse(body=json.dumps({"values": values, "isLast": True}), status_code=200)
 
 
-def _issue_fields(**extra: object) -> dict:
+def _issue_fields(**extra: object) -> dict[str, object]:
     fields = {
         "updated": "2026-06-15T10:00:00.000+0000",
         "created": "2026-06-01T09:00:00.000+0000",
@@ -50,7 +50,7 @@ def _issue_fields(**extra: object) -> dict:
     return fields
 
 
-def _issues_response(issues: list[dict]) -> HttpResponse:
+def _issues_response(issues: list[dict[str, object]]) -> HttpResponse:
     return HttpResponse(body=json.dumps({"issues": issues}), status_code=200)
 
 
