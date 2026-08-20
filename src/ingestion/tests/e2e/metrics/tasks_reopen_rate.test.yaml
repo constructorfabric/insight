@@ -143,7 +143,13 @@ cases:
         equal: { target_value: 80, p25: null, median: null, p75: null, min: null, max: null, n: 4 }
       - metric: tasks.reopen_rate
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 80.0))"
+        # Per day, not per period: each of erin's first four closes is reopened
+        # the next day, so those buckets are 100% while the period is 80%. The
+        # last close is never undone, so its bucket is 0%.
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 100.0))"
+      - metric: tasks.reopen_rate
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 0.0))"
 
   - name: tasks.reopen_rate empty window
     request:
