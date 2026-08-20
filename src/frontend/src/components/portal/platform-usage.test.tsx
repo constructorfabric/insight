@@ -115,6 +115,27 @@ describe("PlatformUsage", () => {
     expect(mocks.asked.at(-1)?.since).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  it("names a visitor by handle when the identity rows carry no display name", () => {
+    mocks.summary = {
+      ...SUMMARY,
+      by_person: [
+        {
+          person_id: "4d1f0a6c-0000-4000-8000-0000000000aa",
+          display_name: "",
+          username: "ada",
+          visits: 2,
+          page_views: 3,
+          last_seen: "2026-08-02T10:00:00Z",
+        },
+      ],
+    };
+
+    render(<PlatformUsage />);
+
+    expect(screen.getByText("ada")).toBeInTheDocument();
+    expect(screen.queryByText("4d1f0a6c-0000-4000-8000-0000000000aa")).toBeNull();
+  });
+
   it("counts today without stretching the period it names", () => {
     render(<PlatformUsage />);
 

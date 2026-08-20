@@ -74,6 +74,134 @@ commits_source AS (
     ORDER BY tenant_id, data_source, commit_hash, source_id, project_key, repo_slug
     LIMIT 1 BY tenant_id, data_source, commit_hash
 ),
+-- One row per change CONTENT, not per commit that carries it. The same content
+-- entering a repository on two lines of history — a branch whose copy of a
+-- tree was squashed onto the default branch as well, a cherry-pick, a
+-- reverted-then-restored file — is one authored change with one oid pair, and
+-- summing both commits' diffs would count those lines twice.
+--
+-- Earliest commit wins, so the value lands in the period the content was first
+-- authored and does not move when a later commit repeats it.
+--
+-- The commit_hash tie-breaker keeps rows whose identity is UNKNOWN (a source
+-- that reports no oid, or a row collected before the proxy did) distinct per
+-- commit: without it every such row for one path would collapse into one,
+-- because LIMIT 1 BY reads their NULL keys as equal.
+deduplicated_file_changes AS (
+    SELECT
+        raw_file_change.tenant_id AS tenant_id,
+        raw_file_change.source_id AS source_id,
+        raw_file_change.project_key AS project_key,
+        raw_file_change.repo_slug AS repo_slug,
+        raw_file_change.commit_hash AS commit_hash,
+        raw_file_change.data_source AS data_source,
+        raw_file_change.file_path AS file_path,
+        raw_file_change.file_extension AS file_extension,
+        raw_file_change.change_type AS change_type,
+        raw_file_change.lines_added AS lines_added,
+        raw_file_change.lines_removed AS lines_removed
+    FROM {{ ref('class_git_file_changes') }} AS raw_file_change FINAL
+    INNER JOIN commits_source AS commits
+        ON commits.tenant_id = raw_file_change.tenant_id
+        AND commits.source_id = raw_file_change.source_id
+        AND commits.project_key = raw_file_change.project_key
+        AND commits.repo_slug = raw_file_change.repo_slug
+        AND commits.commit_hash = raw_file_change.commit_hash
+    ORDER BY commits.observed_at, raw_file_change.commit_hash
+    LIMIT 1 BY
+        raw_file_change.tenant_id,
+        raw_file_change.data_source,
+        raw_file_change.project_key,
+        raw_file_change.repo_slug,
+        raw_file_change.file_path,
+        lower(raw_file_change.change_type),
+        raw_file_change.pre_image_oid,
+        raw_file_change.post_image_oid,
+        if(
+            coalesce(raw_file_change.pre_image_oid, '') = ''
+                AND coalesce(raw_file_change.post_image_oid, '') = '',
+            raw_file_change.commit_hash,
+            ''
+        )
+),
+-- A commit's own line stats, less the lines of the file changes that lost the
+-- content dedup. The stats stay the base — a source can report a commit's
+-- totals without reporting its file changes at all — and only what the dedup
+-- removed is taken back out, so a commit that introduces nothing new reports a
+-- size of zero and its drilldown detail agrees with what it contributed.
+reported_commit_file_lines AS (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        commit_hash,
+        sum(lines_added) AS lines_added,
+        sum(lines_removed) AS lines_removed
+    FROM {{ ref('class_git_file_changes') }} FINAL
+    GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash
+),
+authored_commit_file_lines AS (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        commit_hash,
+        sum(lines_added) AS lines_added,
+        sum(lines_removed) AS lines_removed
+    FROM deduplicated_file_changes
+    GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash
+),
+authored_commits AS (
+    SELECT
+        commits.tenant_id AS tenant_id,
+        commits.entity_id AS entity_id,
+        commits.metric_date AS metric_date,
+        commits.observed_at AS observed_at,
+        commits.commit_hash AS commit_hash,
+        commits.message AS message,
+        commits.author_name AS author_name,
+        commits.repository_label AS repository_label,
+        commits.source_value AS source_value,
+        commits.source_dimensions AS source_dimensions,
+        -- SAFETY: the NULL check is explicit because `greatest` IGNORES NULL
+        -- arguments — `greatest(0, NULL)` is 0, which would invent a size for a
+        -- commit whose source reported no line stats. `greatest` floors the
+        -- result because a commit's own stats and the sum of its file changes
+        -- need not agree (binary files, truncated diffs).
+        if(
+            commits.lines_added IS NULL,
+            CAST(NULL AS Nullable(Int64)),
+            toNullable(greatest(
+                toInt64(0),
+                assumeNotNull(commits.lines_added)
+                    - (coalesce(reported.lines_added, 0) - coalesce(authored.lines_added, 0))
+            ))
+        ) AS lines_added,
+        if(
+            commits.lines_removed IS NULL,
+            CAST(NULL AS Nullable(Int64)),
+            toNullable(greatest(
+                toInt64(0),
+                assumeNotNull(commits.lines_removed)
+                    - (coalesce(reported.lines_removed, 0) - coalesce(authored.lines_removed, 0))
+            ))
+        ) AS lines_removed
+    FROM commits_source AS commits
+    LEFT JOIN reported_commit_file_lines AS reported
+        ON reported.tenant_id = commits.tenant_id
+        AND reported.source_id = commits.source_id
+        AND reported.project_key = commits.project_key
+        AND reported.repo_slug = commits.repo_slug
+        AND reported.commit_hash = commits.commit_hash
+    LEFT JOIN authored_commit_file_lines AS authored
+        ON authored.tenant_id = commits.tenant_id
+        AND authored.source_id = commits.source_id
+        AND authored.project_key = commits.project_key
+        AND authored.repo_slug = commits.repo_slug
+        AND authored.commit_hash = commits.commit_hash
+),
 file_changes_source AS (
     SELECT
         commits.tenant_id AS tenant_id,
@@ -129,7 +257,7 @@ file_changes_source AS (
             ) AS change_type_label,
             sum(lines_added) AS lines_added,
             sum(lines_removed) AS lines_removed
-        FROM {{ ref('class_git_file_changes') }} AS raw_file_change FINAL
+        FROM deduplicated_file_changes AS raw_file_change
         GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash, category, file_extension_value, file_extension_label, change_type_value, change_type_label
     ) AS file_changes
     INNER JOIN commits_source AS commits
@@ -368,7 +496,7 @@ SELECT
         'lines_added', coalesce(toString(lines_added), ''),
         'lines_removed', coalesce(toString(lines_removed), '')
     ) AS details
-FROM commits_source
+FROM authored_commits
 ARRAY JOIN arrayConcat(
     [tuple('commit_count', toFloat64(1))],
     if(

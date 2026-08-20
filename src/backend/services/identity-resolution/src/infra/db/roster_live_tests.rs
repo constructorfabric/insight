@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use super::person_listing::{self, After, PersonListRow, VisibleTo};
+use super::person_listing::{self, After, Listed, PersonListRow, Restrict, VisibleTo};
 use super::test_fixture::{SOURCE_TYPE, fixture_or_skip};
 use crate::config::VisibilityPolicy;
 
@@ -8,6 +8,11 @@ type TestResult = anyhow::Result<()>;
 
 const PAGE: u64 = 50;
 
+/// The roster as these cases read it: every identity, so a visibility case is
+/// about visibility alone. The endpoint asks for account holders — the fixture's
+/// `person()` carries no canonical binding, so requiring one here would empty
+/// every case below and prove nothing about the visible set.
+/// [`only_account_holders`] covers the requirement itself.
 async fn page(
     f: &super::test_fixture::Fixture,
     viewer: Uuid,
@@ -16,16 +21,59 @@ async fn page(
     after: Option<After<'_>>,
     limit: u64,
 ) -> anyhow::Result<Vec<PersonListRow>> {
+    listed_page(
+        f,
+        viewer,
+        policy,
+        terms,
+        after,
+        limit,
+        Listed::EveryIdentity,
+    )
+    .await
+}
+
+/// The roster exactly as the endpoint asks for it.
+async fn only_account_holders(
+    f: &super::test_fixture::Fixture,
+    viewer: Uuid,
+    limit: u64,
+) -> anyhow::Result<Vec<PersonListRow>> {
+    listed_page(
+        f,
+        viewer,
+        VisibilityPolicy::Flat,
+        &[],
+        None,
+        limit,
+        Listed::AccountHolders,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn listed_page(
+    f: &super::test_fixture::Fixture,
+    viewer: Uuid,
+    policy: VisibilityPolicy,
+    terms: &[String],
+    after: Option<After<'_>>,
+    limit: u64,
+    listed: Listed,
+) -> anyhow::Result<Vec<PersonListRow>> {
     person_listing::list_persons(
         &f.db,
         f.tenant,
         terms,
         &[],
-        Some(VisibleTo {
-            viewer_person_id: viewer,
-            org_source_type: SOURCE_TYPE,
-            policy,
-        }),
+        Restrict {
+            listed,
+            visible_to: Some(VisibleTo {
+                viewer_person_id: viewer,
+                org_source_type: SOURCE_TYPE,
+                policy,
+            }),
+        },
         after,
         limit,
     )
@@ -163,5 +211,31 @@ async fn a_search_term_narrows_the_roster_within_the_visible_set() -> TestResult
     .await?;
 
     assert_eq!(ids(&rows), vec![viewer]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_roster_of_account_holders_leaves_out_an_identity_nobody_claims() -> TestResult {
+    // The shape a git-only organisation is full of: an address a commit carried,
+    // which the journal turned into a person because that is what the journal
+    // does. Nobody here holds it — no connector ever claimed it as an account —
+    // so it is an observation, and a roster that lists it is a directory of
+    // strangers. The account holder beside it is what the roster IS.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let observed_only = f.person("commit-author@roster.test").await?;
+    let account_holder = f.emailless_person().await?;
+
+    let listed = ids(&only_account_holders(&f, account_holder, PAGE).await?);
+
+    assert!(
+        listed.contains(&account_holder),
+        "the account holder must be listed: {listed:?}"
+    );
+    assert!(
+        !listed.contains(&observed_only),
+        "an unclaimed address must not reach the roster: {listed:?}"
+    );
     Ok(())
 }

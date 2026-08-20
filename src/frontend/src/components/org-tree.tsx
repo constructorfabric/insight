@@ -15,6 +15,9 @@ import {
   type OrgTreeFilter,
 } from "@/lib/portal/org-tree-filter";
 import { useIcPerson } from "@/queries/ic-dashboard";
+import { useVisibilityPolicy } from "@/queries/identity-me";
+import { useVisibleRoster } from "@/queries/visible-roster";
+import type { PersonSummary } from "@/api/identity-client";
 import type { IdentityPerson } from "@/types/insight";
 
 // Person ids, not emails: the identity cutover made the id the key the route
@@ -106,6 +109,79 @@ function PersonNode({
   );
 }
 
+/** How a roster row is labelled: the handle beats no name at all. */
+function rosterLabel(person: PersonSummary): string {
+  return (
+    person.display_name?.trim() ||
+    person.email?.trim() ||
+    person.username?.trim() ||
+    person.person_id
+  );
+}
+
+/**
+ * The same navigation for an organisation with no reporting lines: one flat
+ * list, in label order, scrolling in the pane exactly as the chart does. There
+ * is no chart to draw and no depth to indent, so a row carries no chevron.
+ */
+function RosterList({ query }: { query: string }) {
+  const { personId: viewerPersonId } = useViewer();
+  const { roster } = useVisibleRoster(true);
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const activePersonId = useMemo(() => {
+    const fromPath = personIdFromPath(pathname);
+    if (fromPath) return fromPath;
+    if (pathname === "/" && viewerPersonId) return viewerPersonId;
+    return null;
+  }, [pathname, viewerPersonId]);
+
+  const listed = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    const rows = roster
+      .map((person) => ({ person, label: rosterLabel(person) }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+    return term
+      ? rows.filter((row) => row.label.toLowerCase().includes(term))
+      : rows;
+  }, [roster, query]);
+
+  if (!listed.length) {
+    return (
+      <p className="px-4 py-2 text-sm text-muted-foreground">
+        No one here matches “{query.trim()}”
+      </p>
+    );
+  }
+
+  return (
+    // Padding INSIDE the scroll region the pane owns, so the first and last
+    // names clear its edges instead of touching them.
+    <SidebarMenu className="pb-2">
+        {listed.map(({ person, label }) => (
+          <SidebarMenuItem key={person.person_id}>
+            <SidebarMenuButton
+              isActive={
+                activePersonId
+                  ? personIdEq(activePersonId, person.person_id)
+                  : false
+              }
+              render={
+                <Link
+                  to="/ic/$person/personal"
+                  params={{ person: person.person_id }}
+                />
+              }
+            >
+              <span className="w-4 shrink-0" />
+              <User />
+              <span className="truncate">{label}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+      ))}
+    </SidebarMenu>
+  );
+}
+
 /**
  * Recursive org-chart navigation, rooted at the viewer. Extracted from
  * AppSidebar so the portal shell's context pane can reuse the same tree
@@ -115,6 +191,7 @@ export function OrgTree({
   leadsToTeam = false,
   query = "",
 }: { leadsToTeam?: boolean; query?: string } = {}) {
+  const { isFlat } = useVisibilityPolicy();
   const { personId: viewerPersonId } = useViewer();
   const viewerQ = useIcPerson(viewerPersonId ?? "");
   const viewer = viewerQ.data ?? null;
@@ -127,6 +204,7 @@ export function OrgTree({
   }, [pathname, viewerPersonId]);
   const filter = useMemo(() => filterOrgTree(viewer, query), [viewer, query]);
 
+  if (isFlat) return <RosterList query={query} />;
   if (!viewer) return null;
   if (filter && filter.visible.size === 0) {
     return (

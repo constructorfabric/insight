@@ -166,6 +166,42 @@ SQL
 
 heal_task_users_table silver class_task_users
 
+echo "=== Healing git file-change object id columns ==="
+# The file-change object ids arrive at the tail of every projection that feeds
+# class_git_file_changes. Pre-existing tables lack them and the positional
+# insert misaligns; the silver side heals in migrations/*.sql, the rest heals
+# here because these tables exist only after a connector has run.
+#
+# bronze_github.file_changes is healed for a different reason: the GitHub
+# staging model READS the two columns, and nothing else adds them in time.
+# create-bronze-placeholders.sh is IF NOT EXISTS so a warm bronze table is
+# never altered, and the destination only widens it on the connector's next
+# sync — which lands after this deploy's dbt run, leaving the staging model
+# (and every git model downstream of it) failing on an unknown identifier
+# until then.
+#
+# Existing rows heal to NULL and carry an oid from the first sync that
+# re-collects them. Idempotent.
+heal_git_file_change_oids() {
+  local db="$1" table="$2" anchor="$3"
+  ch_table_is_real "${db}" "${table}" || return 0
+  echo "  ${db}.${table}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS pre_image_oid Nullable(String) AFTER ${anchor};
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS post_image_oid Nullable(String) AFTER pre_image_oid;
+ALTER TABLE ${db}.${table} MODIFY COLUMN pre_image_oid Nullable(String) AFTER ${anchor};
+ALTER TABLE ${db}.${table} MODIFY COLUMN post_image_oid Nullable(String) AFTER pre_image_oid;
+SQL
+}
+
+# Bronze's tail is patch_truncated; every staging projection ends with
+# _airbyte_extracted_at.
+heal_git_file_change_oids bronze_github file_changes patch_truncated
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_file_change_oids staging "${_git_source}__file_changes" _airbyte_extracted_at
+done
+
 echo "=== Healing jira task id column types (#1743) ==="
 # #1892 retyped the jira staging id projections (worklog_id, comment_id)
 # from raw bronze Decimal(38,9) to toString(...), but pre-existing

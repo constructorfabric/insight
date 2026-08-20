@@ -8,6 +8,12 @@ import { orgScopeGate } from "@/components/portal/org-scope-gate";
 import { SectionTrend } from "@/components/portal/section-trend";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   BarChart,
   CartesianGrid,
   ChartBar,
@@ -43,7 +49,9 @@ import type {
   MetricDirection,
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { githubRepoUrl } from "@/lib/metrics/git-links";
 import { formatMetricValue } from "@/lib/format";
+import { seriesColors } from "@/lib/series-colors";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
 import {
   distribution,
@@ -194,7 +202,18 @@ export function DomainLensView({
     () => ({
       metrics: compSections.map((s) => ({
         key: s.metric,
-        views: [{ view: "breakdown" as const, dimensions: [s.dimension] }],
+        views: [
+          {
+            view: "breakdown" as const,
+            // `source` rides along so a row knows which provider it came
+            // from — the only thing that makes a link safe to build.
+            dimensions: [
+              s.dimension,
+              ...(s.splitBy ? [s.splitBy] : []),
+              ...(s.dimension === LINKABLE_DIMENSION ? [SOURCE_DIMENSION] : []),
+            ],
+          },
+        ],
       })),
     }),
     [compSections]
@@ -542,7 +561,9 @@ function CoverageLevelsSection({
   if (counted === 0) return null;
 
   const partCount = GROUPS.length;
-  const levels = [...distribution.byLevel.entries()].sort((a, b) => b[0] - a[0]);
+  const levels = [...distribution.byLevel.entries()].sort(
+    (a, b) => b[0] - a[0]
+  );
   const missing = parts.filter((p) => p.unreachable);
 
   return (
@@ -648,8 +669,8 @@ function CoverageLevelsSection({
 
       <p className="text-xs text-muted-foreground">
         A section counts when at least one of its metrics has a value for that
-        person in this period. This shows where data exists, not how well
-        anyone worked.
+        person in this period. This shows where data exists, not how well anyone
+        worked.
         {missing.length > 0 && (
           <>
             {" "}
@@ -658,8 +679,8 @@ function CoverageLevelsSection({
             {missing.length === 1 ? "has" : "have"} no data for anyone.
           </>
         )}{" "}
-        Counted over the {counted} {counted === 1 ? "person" : "people"} in
-        this scope.
+        Counted over the {counted} {counted === 1 ? "person" : "people"} in this
+        scope.
       </p>
     </section>
   );
@@ -688,8 +709,8 @@ function CoverageLevelPeople({
   const titleById = new Map(GROUPS.map((g) => [g.id, g.title]));
   const rows = [...people].sort((a, b) =>
     (nameByEntity.get(a.entityId) ?? a.entityId).localeCompare(
-      nameByEntity.get(b.entityId) ?? b.entityId,
-    ),
+      nameByEntity.get(b.entityId) ?? b.entityId
+    )
   );
 
   return (
@@ -705,7 +726,10 @@ function CoverageLevelPeople({
         const personId = personIdByEntity.get(p.entityId);
         const name = nameByEntity.get(p.entityId) ?? p.entityId;
         return (
-          <li key={p.entityId} className="flex flex-wrap items-baseline gap-x-2 text-xs">
+          <li
+            key={p.entityId}
+            className="flex flex-wrap items-baseline gap-x-2 text-xs"
+          >
             {personId ? (
               <Link
                 to="/ic/$person/personal"
@@ -1297,13 +1321,46 @@ function CompositionSection({
 
   const r = grid.byKey.get(spec.metric);
   const bd = compData.get(spec.metric);
-  const bucket = new Map<string, number>();
+  // Summed per dimension VALUE and shown under its LABEL: the value is the id
+  // the response groups by (a source id joined to `owner/repo`), which is
+  // neither what a reader recognises nor distinguishable once a list of them is
+  // truncated. Two things that happen to share a label stay two bars, because
+  // the sum is keyed by the id.
+  const bucket = new Map<string, BarEntry>();
   if (bd) {
     for (const id of memberIds) {
       for (const row of forEntity(bd, id).breakdown) {
-        const val = row.dimensions.find((d) => d.key === spec.dimension)?.value;
-        if (!val || row.value == null || row.value <= 0) continue;
-        bucket.set(val, (bucket.get(val) ?? 0) + row.value);
+        const dim = row.dimensions.find((d) => d.key === spec.dimension);
+        if (!dim?.value || row.value == null || row.value <= 0) continue;
+        const running = bucket.get(dim.value);
+        const split = running?.split ?? (spec.splitBy ? new Map() : undefined);
+        if (split && spec.splitBy) {
+          const by = row.dimensions.find((d) => d.key === spec.splitBy);
+          // A row the response did not split still belongs to the total, so it
+          // lands in a segment of its own rather than being dropped.
+          const seed = by?.value || UNSPLIT_SEGMENT;
+          const seen = split.get(seed);
+          split.set(seed, {
+            seed,
+            label: by?.label?.trim() || seen?.label || seed,
+            value: (seen?.value ?? 0) + row.value,
+          });
+        }
+        const label = dim.label?.trim() || running?.label || dim.value;
+        const href =
+          running?.href ??
+          (spec.dimension === LINKABLE_DIMENSION
+            ? (githubRepoUrl(
+                row.dimensions.find((d) => d.key === SOURCE_DIMENSION)?.value,
+                label
+              ) ?? undefined)
+            : undefined);
+        bucket.set(dim.value, {
+          label,
+          value: (running?.value ?? 0) + row.value,
+          href,
+          split,
+        });
       }
     }
   }
@@ -1518,11 +1575,11 @@ function ByUnitSection({
     if (!unit) continue;
     (byUnit.get(unit) ?? byUnit.set(unit, []).get(unit)!).push(id);
   }
-  const bucket = new Map<string, number>();
+  const bucket = new Map<string, BarEntry>();
   for (const [unit, ids] of byUnit) {
     if (ids.length < MIN_COHORT) continue; // small-cohort suppression
     const v = perCapita(r, ids);
-    if (v > 0) bucket.set(`${unit} · ${ids.length}`, v);
+    if (v > 0) bucket.set(unit, { label: `${unit} · ${ids.length}`, value: v });
   }
   const rows = toBarRows(bucket);
   if (rows.length < 2) return <SliceNote text={NO_COMPARABLE_UNITS_NOTE} />;
@@ -1540,22 +1597,77 @@ function ByUnitSection({
 
 /* ── shared bits ─────────────────────────────────────────────────────── */
 
+/** One slice of a bar: a value of the split dimension, and its share of the row. */
+interface BarSegment {
+  /** The split value's own key — the colour seed, stable across rows. */
+  seed: string;
+  label: string;
+  value: number;
+}
+
 interface BarRow {
   label: string;
   value: number;
   pct: number;
+  /** Where the row's subject lives, when that is knowable. */
+  href?: string;
+  /** Absent when the section declares no `splitBy`. */
+  segments?: BarSegment[];
 }
 
-function toBarRows(bucket: Map<string, number>): BarRow[] {
-  const total = [...bucket.values()].reduce((a, b) => a + b, 0) || 1;
-  return [...bucket.entries()]
-    .map(([label, value]) => ({
+/**
+ * One bar before it is measured against the others.
+ *
+ * The map key is the row's IDENTITY and this is what the reader sees. They were
+ * the same string once, which is why a dimension whose ids share a prefix drew a
+ * column of bars all reading alike.
+ */
+interface BarEntry {
+  label: string;
+  value: number;
+  href?: string;
+  /** Totals per split value, keyed by that value. */
+  split?: Map<string, BarSegment>;
+}
+
+function toBarRows(bucket: Map<string, BarEntry>): BarRow[] {
+  const total =
+    [...bucket.values()].reduce((sum, entry) => sum + entry.value, 0) || 1;
+  return [...bucket.values()]
+    .map(({ label, value, split, href }) => ({
       label,
       value,
-      pct: Math.round((value / total) * 100),
+      href,
+      segments: split
+        ? [...split.values()].sort((a, b) => b.value - a.value)
+        : undefined,
+      // Exact share; rounding happens where it is displayed, so a small one
+      // can say so instead of being flattened to zero.
+      pct: (value / total) * 100,
     }))
     .sort((a, b) => b.value - a.value);
 }
+
+/**
+ * A share, as a reader should see it. "0%" beside a non-zero count reads as
+ * "none of it" — which is not what a small share means.
+ */
+function shareLabel(pct: number): string {
+  if (pct > 0 && pct < 1) return "<1%";
+  return `${Math.round(pct)}%`;
+}
+
+/** Same dwell as every other hover explanation in the product. */
+const HOVER_DELAY_MS = 400;
+
+/** The dimension whose rows can address something outside the product. */
+const LINKABLE_DIMENSION = "repository";
+
+/** Names the provider a git row came from. */
+const SOURCE_DIMENSION = "source";
+
+/** Segment a split row falls in when the response named no split value. */
+const UNSPLIT_SEGMENT = "unsplit";
 
 /** Rows shown before the reader opts into the full list. */
 const BAR_LIST_COLLAPSED = 12;
@@ -1577,45 +1689,132 @@ function BarList({
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? rows : rows.slice(0, BAR_LIST_COLLAPSED);
   const max = rows[0]?.value || 1;
-  // Collapsed view is a sample, not the full picture — the title says so,
-  // and the "+N more" button below hands over the rest on demand.
-  const displayTitle =
-    !expanded && rows.length > BAR_LIST_COLLAPSED
-      ? `${title} · top ${BAR_LIST_COLLAPSED}`
-      : title;
+  // Seeded from EVERY row, not the visible page: a colour must not change
+  // meaning when the reader expands the list. Ordered by total so the legend
+  // reads biggest-first, like the bars.
+  const totals = new Map<string, { label: string; value: number }>();
+  for (const row of rows) {
+    for (const segment of row.segments ?? []) {
+      const seen = totals.get(segment.seed);
+      totals.set(segment.seed, {
+        label: seen?.label ?? segment.label,
+        value: (seen?.value ?? 0) + segment.value,
+      });
+    }
+  }
+  const colors = seriesColors([...totals.keys()]);
+  const legend = [...totals.entries()]
+    .sort((a, b) => b[1].value - a[1].value)
+    .map(([seed, { label }]) => ({ seed, label, color: colors[seed] }));
+
   return (
     <section className="flex flex-col gap-3">
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        {displayTitle}
+        {title}
       </p>
       <Card>
         <CardContent className="flex flex-col gap-2 p-4">
-          {visible.map((row) => (
-            <div key={row.label} className="flex items-center gap-3">
-              <div className="w-44 shrink-0 truncate text-sm">{row.label}</div>
-              <div className="relative h-6 flex-1 overflow-hidden rounded bg-muted">
+          <TooltipProvider delay={HOVER_DELAY_MS}>
+            {legend.length ? (
+              <ul
+                className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
+                aria-label="What each colour in a bar means"
+              >
+                {legend.map((entry) => (
+                  <li
+                    key={entry.seed}
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                  >
+                    <span
+                      aria-hidden
+                      className="size-2.5 shrink-0 rounded-[2px]"
+                      style={{ backgroundColor: entry.color }}
+                    />
+                    {entry.label}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {visible.map((row) => (
+              <div key={row.label} className="flex items-center gap-3">
+                {/* A dimension value is often a path (`owner/repo`), and the part
+                  that tells two rows apart is at the END — so the column grows
+                  with the viewport and the full value stays on hover. */}
                 <div
-                  className="h-full rounded bg-primary/25"
-                  style={{ width: `${Math.round((row.value / max) * 100)}%` }}
-                />
-                <span className="absolute inset-y-0 left-2 flex items-center text-xs font-medium tabular-nums">
+                  className="w-44 shrink-0 truncate text-sm md:w-64 lg:w-80"
+                  title={row.label}
+                >
+                  {row.href ? (
+                    <a
+                      href={row.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="hover:text-foreground hover:underline"
+                    >
+                      {row.label}
+                    </a>
+                  ) : (
+                    row.label
+                  )}
+                </div>
+                <div className="h-6 flex-1 overflow-hidden rounded bg-muted">
+                  {/* One bar, however it is cut: the width is the row's share of
+                    the largest row, and the segments divide THAT width, so a
+                    split bar stays comparable with an unsplit one. */}
+                  <div
+                    className="flex h-full overflow-hidden rounded"
+                    style={{ width: `${Math.round((row.value / max) * 100)}%` }}
+                  >
+                    {row.segments?.length ? (
+                      row.segments.map((segment) => (
+                        <Tooltip key={segment.seed}>
+                          <TooltipTrigger
+                            render={
+                              <span
+                                className="h-full first:rounded-s last:rounded-e"
+                                style={{
+                                  width: `${(segment.value / row.value) * 100}%`,
+                                  backgroundColor: colors[segment.seed],
+                                }}
+                              />
+                            }
+                          />
+                          <TooltipContent side="top">
+                            {segment.label} ·{" "}
+                            {formatMetricValue(segment.value, format, unit)} ·{" "}
+                            {shareLabel((segment.value / row.value) * 100)}
+                          </TooltipContent>
+                        </Tooltip>
+                      ))
+                    ) : (
+                      <span className="h-full w-full rounded bg-primary/25" />
+                    )}
+                  </div>
+                </div>
+                {/* Beside the bar, not on it: a segment fill is a full-strength
+                  colour, and no single text colour stays legible across every
+                  hue a palette can hand out. */}
+                {/* Fixed width, right-aligned: sized by its content the column
+                  would differ on every row, and every bar would end somewhere
+                  else. */}
+                <div className="w-28 shrink-0 text-right text-xs font-medium text-muted-foreground tabular-nums md:w-36">
                   {formatMetricValue(row.value, format, unit)}
-                  {showShare ? ` · ${row.pct}%` : ""}
-                </span>
+                  {showShare ? ` · ${shareLabel(row.pct)}` : ""}
+                </div>
               </div>
-            </div>
-          ))}
-          {rows.length > BAR_LIST_COLLAPSED ? (
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            >
-              {expanded
-                ? "Show less"
-                : `+${rows.length - BAR_LIST_COLLAPSED} more`}
-            </button>
-          ) : null}
+            ))}
+            {rows.length > BAR_LIST_COLLAPSED ? (
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                className="self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                {expanded
+                  ? "Show less"
+                  : `+${rows.length - BAR_LIST_COLLAPSED} more`}
+              </button>
+            ) : null}
+          </TooltipProvider>
         </CardContent>
       </Card>
     </section>

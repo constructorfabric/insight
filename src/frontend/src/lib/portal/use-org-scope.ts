@@ -14,7 +14,10 @@ import {
 import {
   usePortalScope,
 } from "@/lib/portal/portal-nav";
+import type { PersonSummary } from "@/api/identity-client";
 import { useIcPerson } from "@/queries/ic-dashboard";
+import { useVisibilityPolicy } from "@/queries/identity-me";
+import { useVisibleRoster } from "@/queries/visible-roster";
 import type { IdentityPerson } from "@/types/insight";
 
 /** One option in the scope picker: a manager, their depth, and their team size. */
@@ -38,6 +41,54 @@ export interface ResolvedScope {
   managerNodes: ManagerNode[];
   /** Whether directOnly can change anything at this pivot. */
   canDirectOnly: boolean;
+}
+
+/** What the scope is called when it is the organisation itself. */
+export const WHOLE_ORG_LABEL = "Whole organisation";
+
+/**
+ * Scope resolution for an organisation with no reporting lines.
+ *
+ * There is one cohort — everyone the viewer may see — so there is no pivot to
+ * pick and nothing for `directOnly` to narrow. The viewer is left out of the
+ * roster for the same reason a manager is left out of their subtree's: they read
+ * their own numbers on their Person page.
+ */
+export function flatOrgScope(
+  roster: readonly PersonSummary[] | null,
+  viewerPersonId: string | null,
+): ResolvedScope {
+  if (!roster) {
+    return {
+      pivot: null,
+      roster: null,
+      label: WHOLE_ORG_LABEL,
+      count: 0,
+      managerNodes: [],
+      canDirectOnly: false,
+    };
+  }
+
+  const viewer = viewerPersonId?.toLowerCase() ?? null;
+  const members: RosterEntry[] = roster
+    .filter((person) => person.person_id.toLowerCase() !== viewer)
+    .map((person) => ({
+      person_id: person.person_id,
+      email: person.email ?? "",
+      display_name: person.display_name ?? "",
+      // No reporting lines to name, and no depth to be at.
+      supervisor_person_id: null,
+      is_direct: false,
+    }));
+
+  return {
+    pivot: null,
+    roster: members,
+    label: WHOLE_ORG_LABEL,
+    count: members.length,
+    managerNodes: [],
+    canDirectOnly: false,
+  };
 }
 
 /**
@@ -109,15 +160,24 @@ export function useOrgScope(): ResolvedScope & {
   const { personId } = useViewer();
   const viewerQ = useIcPerson(personId ?? "");
   const scope = usePortalScope();
+  const { isFlat } = useVisibilityPolicy();
+  const flatRoster = useVisibleRoster(isFlat);
+
   const resolved = useMemo(
-    () => resolveScopeRoster(viewerQ.data ?? null, personId, scope),
-    [viewerQ.data, personId, scope],
+    () =>
+      isFlat
+        ? flatOrgScope(flatRoster.isPending ? null : flatRoster.roster, personId)
+        : resolveScopeRoster(viewerQ.data ?? null, personId, scope),
+    [isFlat, flatRoster.isPending, flatRoster.roster, viewerQ.data, personId, scope],
   );
+
+  // Under a flat policy the roster IS the org zones' subject, so its failure is
+  // theirs; the identity tree still answers who the viewer is.
   return {
     ...resolved,
-    isLoading: viewerQ.isLoading,
-    isError: viewerQ.isError,
-    refetch: () => viewerQ.refetch(),
+    isLoading: isFlat ? flatRoster.isPending : viewerQ.isLoading,
+    isError: isFlat ? flatRoster.isError : viewerQ.isError,
+    refetch: () => (isFlat ? flatRoster.retry() : void viewerQ.refetch()),
     pivotPersonId: resolved.pivot?.person_id ?? personId ?? "",
   };
 }

@@ -41,6 +41,24 @@ vi.mock("@/auth", () => ({
   useViewer: () => ({ email: "viewer@x", personId: mocks.personId }),
 }));
 vi.mock("@/queries/ic-dashboard", () => ({ useIcPerson: () => mocks.ic }));
+// `useOrgScope` reads the deployment's visibility policy, and its flat branch
+// reads the roster. This suite is about the view, so both answer statically.
+vi.mock("@/queries/identity-me", () => ({
+  useVisibilityPolicy: () => ({
+    policy: "org_chart",
+    isFlat: false,
+    isPending: false,
+  }),
+}));
+vi.mock("@/queries/visible-roster", () => ({
+  useVisibleRoster: () => ({
+    roster: [],
+    truncated: false,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
+}));
 // Only the request is stubbed; `useMetricDefinitionsResponse` itself runs, so
 // a cohort built from an attribute the catalog does not offer fails here.
 vi.mock("@/api/metric-definitions-client", () => ({

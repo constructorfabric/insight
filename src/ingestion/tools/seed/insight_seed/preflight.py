@@ -14,7 +14,14 @@ Two signals, because neither sees everything:
 * `persons` rows in the target tenant whose `reason` is outside this seeder's
   namespace. Identity rows are additive, so this one is about not mixing demo
   people into somebody's directory — but it is also the ONLY signal that works
-  on a single-tenant stand, so the silver step consults it too.
+  on a single-tenant stand, so the silver step consults it too. The stand test
+  suite's own rows are exempt: it cannot delete what its resolution round trip
+  appends (the journal is append-only), and a stand it runs against is
+  disposable by definition. The exemption is its scratch value namespace UNDER
+  its own connector instance, never the value alone — a bare prefix would exempt
+  anything that writes one, and an operator's corrections on that same connector
+  still refuse, which is the point: they carry real account values and are the
+  strongest "somebody curates this stand" signal there is.
 * Rows in the reset surface belonging to a different tenant. Silver rows are
   NOT additive: the generators TRUNCATE each table before writing, across every
   tenant, because a partially rewritten silver table produces metrics that are
@@ -41,6 +48,9 @@ from . import config
 from .config import (
     PERSONS_SEED_LINK_REASON,
     SEED_REASON_PREFIX,
+    STAND_SCRATCH_PREFIX,
+    STAND_SCRATCH_SOURCE_ID,
+    STAND_SCRATCH_SOURCE_TYPE,
     ClickHouse,
     EnvContractError,
     MariaDb,
@@ -77,7 +87,9 @@ def foreign_rows_problem(count: int, tenant: str, database: str) -> str:
     return (
         f"tenant {tenant} already holds {count} `{database}.persons` row(s) this seeder "
         f"did not write (their `reason` does not start with {SEED_REASON_PREFIX!r} and is "
-        f"not the persons-seed's {PERSONS_SEED_LINK_REASON!r}), so this stand carries "
+        f"not the persons-seed's {PERSONS_SEED_LINK_REASON!r}, and they are not the stand "
+        f"suite's {STAND_SCRATCH_PREFIX!r} rows under "
+        f"{STAND_SCRATCH_SOURCE_TYPE}/{STAND_SCRATCH_SOURCE_ID}), so this stand carries "
         "identity data from somewhere else. Seed a tenant of your own, "
         f"or set {config.FORCE_ENV}=1 to add demo people to this one anyway."
     )
@@ -93,11 +105,29 @@ def _table_exists(cur: pymysql.cursors.Cursor, database: str, table: str) -> boo
 
 
 def _count_foreign_persons(cur: pymysql.cursors.Cursor, tenant: str) -> int:
+    # The suite's exemption is ONE negated conjunction. Three separately negated
+    # terms would subtract each attribute on its own — every row under the
+    # suite's connector, every row carrying the prefix wherever it came from —
+    # which is a weaker guard, not a narrower one.
+    #
+    # `value_id` and `value_effective` are the two nullable columns the predicate
+    # reads, and LIKE against a NULL yields NULL, so the row would fall out of
+    # the conjunction rather than count: COALESCE keeps it in. The three source
+    # and tenant columns are NOT NULL in the schema.
     cur.execute(
         "SELECT COUNT(*) FROM persons "
         "WHERE insight_tenant_id = %s "
-        "AND (reason IS NULL OR (reason NOT LIKE %s AND reason != %s))",
-        (uuid_mod.UUID(tenant).bytes, f"{SEED_REASON_PREFIX}%", PERSONS_SEED_LINK_REASON),
+        "AND (reason IS NULL OR (reason NOT LIKE %s AND reason != %s)) "
+        "AND NOT (insight_source_type = %s AND insight_source_id = %s "
+        "AND COALESCE(value_id, value_effective, '') LIKE %s)",
+        (
+            uuid_mod.UUID(tenant).bytes,
+            f"{SEED_REASON_PREFIX}%",
+            PERSONS_SEED_LINK_REASON,
+            STAND_SCRATCH_SOURCE_TYPE,
+            uuid_mod.UUID(STAND_SCRATCH_SOURCE_ID).bytes,
+            f"{STAND_SCRATCH_PREFIX}%",
+        ),
     )
     row = cur.fetchone()
     return int(row[0]) if row else 0

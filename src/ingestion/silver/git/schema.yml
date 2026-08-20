@@ -77,6 +77,16 @@ models:
         tests:
           - not_null
           - unique
+      - name: pre_image_oid
+        description: >
+          Object id of the content this change replaced, NULL for an added path
+          and for a source that reports no object id.
+      - name: post_image_oid
+        description: >
+          Object id of the content this change produced, NULL for a deleted path
+          and for a source that reports no object id. With pre_image_oid it is
+          the content identity of the change: the same content entering a
+          repository on two lines of history carries one post_image_oid.
 
   - name: class_git_pull_requests
     description: "Unified git pull requests from all sources (GitHub, Bitbucket, GitLab)"

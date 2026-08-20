@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { IdentityPerson } from "@/types/insight";
-import { resolveScopeRoster } from "./use-org-scope";
+import { flatOrgScope, resolveScopeRoster } from "./use-org-scope";
 
 // Ids deliberately look nothing like emails: the scope resolver keys on
 // `person_id` since the identity cutover, and an email-shaped fixture would
@@ -95,5 +95,51 @@ describe("resolveScopeRoster", () => {
       "p-l2a",
     ]);
     expect(s.managerNodes.map((m) => m.teamSize)).toEqual([6, 2, 1, 2, 1]);
+  });
+});
+
+describe("flatOrgScope", () => {
+  const roster = [
+    { person_id: "p-me", display_name: "Me" },
+    { person_id: "p-b", display_name: "Bea" },
+    { person_id: "p-c", display_name: "Cyd" },
+  ];
+
+  it("counts everyone the viewer may see except the viewer", () => {
+    // The org zones read the roster as "the people this frame is about"; the
+    // viewer reads their own numbers on their Person page, as in a subtree.
+    const scope = flatOrgScope(roster, "p-me");
+
+    expect(scope.roster?.map((r) => r.person_id)).toEqual(["p-b", "p-c"]);
+    expect(scope.count).toBe(2);
+  });
+
+  it("offers no manager nodes and no direct-only cut", () => {
+    // Nothing to pick and nothing to narrow: one organisation, one cohort.
+    const scope = flatOrgScope(roster, "p-me");
+
+    expect(scope.managerNodes).toEqual([]);
+    expect(scope.canDirectOnly).toBe(false);
+  });
+
+  it("names the organisation rather than a person", () => {
+    const scope = flatOrgScope(roster, "p-me");
+
+    expect(scope.label).toBe("Whole organisation");
+  });
+
+  it("keeps a roster it cannot place the viewer in", () => {
+    // A viewer absent from their own roster is a bug elsewhere; dropping every
+    // row here would report it as "you can see nobody".
+    const scope = flatOrgScope(roster, "p-unknown");
+
+    expect(scope.count).toBe(3);
+  });
+
+  it("has no roster before the answer arrives", () => {
+    const scope = flatOrgScope(null, "p-me");
+
+    expect(scope.roster).toBeNull();
+    expect(scope.count).toBe(0);
   });
 });

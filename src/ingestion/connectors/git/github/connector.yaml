@@ -662,6 +662,10 @@ streams:
           is_binary: {type: [boolean, "null"]}
           patch: {type: [string, "null"]}
           patch_truncated: {type: [boolean, "null"]}
+          # INVARIANT: bronze column order is the destination's insert order —
+          # a new column appends at the tail.
+          pre_image_oid: {type: [string, "null"]}
+          post_image_oid: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true

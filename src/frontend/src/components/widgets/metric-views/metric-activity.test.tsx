@@ -31,6 +31,19 @@ vi.mock("@/queries/metric-detail", () => ({
   },
 }));
 
+// The catalogue decides whether `source` may be asked for alongside a git
+// metric's evidence; these tests are about what the grains RENDER, so it
+// answers with a declaration and no request of its own.
+const declared = vi.hoisted(() => ({
+  byMetricKey: new Map<string, ReadonlySet<string>>(),
+}));
+vi.mock("@/queries/metric-definitions", () => ({
+  useDeclaredMetricDimensions: () => ({
+    byMetricKey: declared.byMetricKey,
+    isPending: false,
+  }),
+}));
+
 import { MetricActivity } from "./metric-activity";
 
 const ME = "019e27bc-dec0-7626-81a9-c5524662a6a9";
@@ -208,7 +221,9 @@ describe("MetricActivity", () => {
         { values: { date: "2026-03-05", value: 9 } },
       ],
     };
-    const { container } = draw(metric("collab.messages_sent", ["source_summary"], 13));
+    const { container } = draw(
+      metric("collab.messages_sent", ["source_summary"], 13)
+    );
     const bars = container.querySelectorAll<HTMLElement>('[role="img"] > div');
     expect(bars).toHaveLength(5);
     const readout = () =>

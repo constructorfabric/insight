@@ -55,10 +55,18 @@ export interface MeRole {
  * login token's realm roles, which no identity endpoint reads. An empty list
  * IS the "not an admin" answer; the endpoint never 403s.
  */
+/**
+ * Whose data a caller may see, as the identity service decides it: the
+ * reporting line plus explicit grants, or every person in the tenant.
+ */
+export type VisibilityPolicy = "org_chart" | "flat";
+
 export interface MeResponse {
   person_id: string;
   insight_tenant_id: string;
   roles: MeRole[];
+  /** Absent from an older service; readers treat that as `org_chart`. */
+  visibility_policy?: VisibilityPolicy;
 }
 
 /**
@@ -487,6 +495,38 @@ export async function searchPersons(
     throw new IdentityApiError(res.status, { error: "malformed_search" });
   }
   return found;
+}
+
+/**
+ * The persons the caller may see (`GET /visible-persons`) — one page, ordered by
+ * the label each is shown under. Any signed-in caller may ask; the answer is
+ * their own visible set, so it needs no admin role.
+ */
+export async function listVisiblePersons(
+  page: PageRequest & { q?: string } = {},
+): Promise<PersonSearchResponse> {
+  const params = new URLSearchParams();
+  if (page.q) params.set("q", page.q);
+  if (page.cursor) params.set("cursor", page.cursor);
+  if (page.limit != null) params.set("limit", String(page.limit));
+  const query = params.toString();
+  const res = await fetchWithAuth(
+    `${BASE}/visible-persons${query ? `?${query}` : ""}`,
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let listed: PersonSearchResponse;
+  try {
+    listed = (await res.json()) as PersonSearchResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(listed.items)) {
+    throw new IdentityApiError(res.status, { error: "malformed_roster" });
+  }
+  return listed;
 }
 
 export interface PersonAccountEntry {
