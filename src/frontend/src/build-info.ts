@@ -7,6 +7,8 @@ declare global {
   }
 }
 
+const TIMEOUT_MS = 3000;
+
 const BACKENDS: Record<string, string> = {
   analytics: "/api/analytics/version",
   identity: "/api/identity/version",
@@ -30,13 +32,18 @@ async function readBackendVersions(): Promise<Record<string, string>> {
 }
 
 async function readVersion(path: string): Promise<string> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), TIMEOUT_MS);
+
   try {
-    const response = await fetch(path);
+    const response = await fetch(path, { signal: abort.signal });
     if (!response.ok) return "unreachable";
 
     const body = (await response.json()) as { version?: string };
     return body.version ?? "unreachable";
   } catch {
     return "unreachable";
+  } finally {
+    clearTimeout(timer);
   }
 }

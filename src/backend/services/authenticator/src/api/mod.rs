@@ -3,7 +3,6 @@
 
 pub mod error;
 pub mod handlers;
-mod version;
 
 use std::sync::Arc;
 
@@ -56,7 +55,7 @@ pub fn register_routes(
         ))
         .layer(Extension(state));
     host_router
-        .merge(version::router(std::env::var("INSIGHT_BUILD_VERSION").ok()))
+        .merge(insight_build_version::router("authenticator"))
         .merge(api)
 }
 

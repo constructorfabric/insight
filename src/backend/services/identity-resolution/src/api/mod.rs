@@ -16,7 +16,6 @@ pub mod roles;
 pub mod seed;
 pub mod subchart;
 pub mod sync;
-mod version;
 pub mod visibility;
 pub mod visible_persons;
 
@@ -56,7 +55,7 @@ pub fn register_routes(
     let api = build_operations(Router::new(), openapi).layer(Extension(state));
 
     host_router
-        .merge(version::router(std::env::var("INSIGHT_BUILD_VERSION").ok()))
+        .merge(insight_build_version::router("identity-resolution"))
         .merge(api)
 }
 

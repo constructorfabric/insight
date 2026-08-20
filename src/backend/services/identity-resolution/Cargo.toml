@@ -12,6 +12,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+insight-build-version = { workspace = true }
 # ToolKit host runtime. This service runs as a gears-rust host: routes are
 # served by the `api-gateway` system gear (the REST host) under
 # `toolkit::bootstrap::run_server`. Auth is ENABLED (NGINX_BFF R1): the

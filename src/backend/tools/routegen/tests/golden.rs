@@ -221,8 +221,14 @@ fn the_frontends_version_file_is_never_served_at_the_edge() {
     let conf = generate(&fixture("full.routes.yaml"), &Settings::default())
         .expect("generate should succeed");
 
+    let block = conf
+        .split("location = /version.json {")
+        .nth(1)
+        .expect("the edge must declare a rule for the frontend's build stamp");
+    let body = block.split('}').next().unwrap_or_default();
+
     assert!(
-        conf.contains("        location = /version.json {\n            return 404;\n        }"),
-        "the edge must refuse the frontend's build stamp; got:\n{conf}"
+        body.contains("return 404;"),
+        "the edge must refuse the frontend's build stamp; got:\n{body}"
     );
 }

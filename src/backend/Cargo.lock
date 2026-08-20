@@ -98,6 +98,7 @@ dependencies = [
  "futures",
  "futures-util",
  "hex",
+ "insight-build-version",
  "insight-clickhouse",
  "redis",
  "reqwest 0.12.28",
@@ -336,6 +337,7 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
+ "insight-build-version",
  "jsonwebtoken",
  "openidconnect",
  "opentelemetry 0.32.0",
@@ -3125,6 +3127,7 @@ dependencies = [
  "chrono",
  "clap",
  "clickhouse",
+ "insight-build-version",
  "insight-clickhouse",
  "sea-orm",
  "sea-orm-migration",
@@ -3198,6 +3201,17 @@ name = "inlinable_string"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8fae54786f62fb2918dcfae3d568594e50eb9b5c25bf04371af6fe7516452fb"
+
+[[package]]
+name = "insight-build-version"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+]
 
 [[package]]
 name = "insight-clickhouse"

@@ -7,7 +7,6 @@ mod metric_results;
 mod metrics;
 mod saved_queries;
 pub(crate) mod usage;
-mod version;
 
 #[cfg(test)]
 mod http_live_tests;
@@ -96,7 +95,7 @@ pub fn register_routes(
     let api = build_operations(Router::new(), openapi).layer(Extension(state));
 
     host_router
-        .merge(version::router(std::env::var("INSIGHT_BUILD_VERSION").ok()))
+        .merge(insight_build_version::router("analytics"))
         .merge(api)
 }
 

@@ -12,6 +12,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+insight-build-version = { workspace = true }
 authenticator-sdk = { workspace = true }
 
 # ToolKit host runtime. The authenticator runs as a gears-rust host: routes are

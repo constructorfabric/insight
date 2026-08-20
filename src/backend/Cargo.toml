@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "libs/insight-build-version",
     "libs/insight-clickhouse",
     "libs/authenticator-sdk",
     "services/analytics",
@@ -125,6 +126,7 @@ types_registry = { package = "cf-gears-types-registry", version = "0.1.23" }
 figment = { version = "0.10", features = ["yaml", "env"] }
 
 # Internal crates
+insight-build-version = { path = "libs/insight-build-version" }
 insight-clickhouse = { path = "libs/insight-clickhouse" }
 authenticator-sdk = { path = "libs/authenticator-sdk" }
 
