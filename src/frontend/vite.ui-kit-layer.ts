@@ -2,6 +2,7 @@ import type { Plugin } from "vite";
 
 const KIT = "@gears-frontx/ui-kit";
 
+// TODO(#2705): drop this once the kit ships its CSS in a layer.
 // Unlayered kit CSS beats Tailwind's layered utilities at any specificity, so a
 // call site's className is silently dropped without this. Theme tokens are
 // @imported from index.css and must stay unlayered.
