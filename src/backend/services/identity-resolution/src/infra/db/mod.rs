@@ -175,21 +175,24 @@ pub struct SyncLockGuard {
 }
 
 impl SyncLockGuard {
-    /// Try to take the global sync lock without waiting (`GET_LOCK` timeout 0
-    /// — a concurrent run fails fast instead of publishing a stale snapshot
-    /// after the active one). Returns `None` when another run holds it.
+    /// Take the global sync lock, waiting up to `wait_secs` for the holder to
+    /// finish (`GET_LOCK` waits server-side). Waiting is safe where failing
+    /// fast was not: the holder's quiescence re-check means its snapshot
+    /// covers every row committed before it released, so a waiter that then
+    /// acquires publishes at-least-as-fresh — never a regression. Returns
+    /// `None` when the lock is still held after the wait.
     ///
     /// # Errors
     ///
     /// Returns an error if the connection or the query fails.
-    pub async fn try_acquire(database_url: &str) -> anyhow::Result<Option<Self>> {
+    pub async fn acquire(database_url: &str, wait_secs: u32) -> anyhow::Result<Option<Self>> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let conn = connect_single(database_url).await?;
         let acquired: Option<i8> = conn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::MySql,
-                "SELECT GET_LOCK(?, 0)",
-                [SYNC_LOCK.into()],
+                "SELECT GET_LOCK(?, ?)",
+                [SYNC_LOCK.into(), wait_secs.into()],
             ))
             .await?
             .map(|r| r.try_get_by_index::<Option<i8>>(0))

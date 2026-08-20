@@ -410,21 +410,17 @@ async fn apply_correction(
     })
 }
 
-const PUBLISH_RETRIES: u32 = 3;
-const PUBLISH_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_secs(2);
-
 /// Publish the corrected log into the snapshot the metrics resolver reads.
-/// Never fails the verb: the next seed's own publish is the catch-up path.
+/// Never fails the verb: the runner waits for a busy lock, the lock holder's
+/// quiescence re-check covers rows it raced with, and the next publish is
+/// the catch-up path for everything else.
 async fn publish_correction(config: &crate::config::GearConfig) {
     use crate::sync_runner::{self, SyncRunError};
-    let outcome = sync_runner::retry_while_lock_busy(PUBLISH_RETRIES, PUBLISH_RETRY_PAUSE, || {
-        sync_runner::run(config, false)
-    })
-    .await;
-    match outcome {
+    match sync_runner::run(config, false).await {
         Ok(summary) => tracing::info!(?summary, "persons-sync published the corrected log"),
         Err(SyncRunError::LockBusy) => tracing::warn!(
-            "publish lock stayed busy; the correction reaches the resolver with the next publish"
+            "publish lock stayed busy past the wait; the correction reaches the resolver with \
+             the next publish"
         ),
         Err(SyncRunError::Guard(msg)) => {
             tracing::warn!(%msg, "persons-sync refused the post-correction publish");

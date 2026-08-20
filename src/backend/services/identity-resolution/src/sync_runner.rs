@@ -16,8 +16,10 @@
 //! (`infra::db::SyncLockGuard` — global, not per-tenant: the sync copies the
 //! whole log). This is the actual serialization of the publish step; the
 //! writer's `_synced_at` watermark guard is a backstop for anything that
-//! bypasses the runner. A concurrent run fails fast
-//! ([`SyncRunError::LockBusy`], exit code 2).
+//! bypasses the runner. A concurrent run waits up to [`LOCK_WAIT_SECS`] for
+//! the holder, then reports [`SyncRunError::LockBusy`] (exit code 2) — and
+//! the holder's quiescence re-check means its snapshot already covers every
+//! row committed before a waiter gave up.
 //!
 //! Guard (overridable with `--force`, recorded as a `failed` operation so
 //! the journal explains why nothing was published): an EMPTY `persons` log.
@@ -32,7 +34,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::config::GearConfig;
-use crate::domain::sync_service::{SyncError, SyncSummary, run_sync};
+use crate::domain::sync_service::{SyncError, SyncSummary, run_sync_until_quiescent};
 use crate::infra::db::{self, ops_repo, persons_log_repo::MariaDbPersonsLogReader, seed_repo};
 use crate::infra::identity_persons::ClickHouseIdentityPersonsWriter;
 use crate::seed_runner::{SYSTEM_AUTHOR, resolve_tenant};
@@ -51,6 +53,12 @@ const RUN_TIMEOUT: Duration = Duration::from_mins(7);
 /// How stale a `queued`/`running` operation must be before the pre-run
 /// sweep reclaims it (same convention as the seed runner).
 const ZOMBIE_CUTOFF_HOURS: i64 = 1;
+
+/// How long a run waits for the advisory lock before reporting `LockBusy`.
+/// A healthy publish is seconds even with its quiescence re-copies, so a
+/// holder outliving this wait is wedged, not slow. Each waiter parks one
+/// MariaDB session for at most this long — keep it well under [`RUN_TIMEOUT`].
+const LOCK_WAIT_SECS: u32 = 15;
 
 /// Why a sync run did not complete — the `sync` subcommand maps each variant
 /// to a distinct exit code (0 ok / 1 failed / 2 lock busy / 3 guard), same
@@ -90,7 +98,7 @@ pub async fn run(config: &GearConfig, force: bool) -> Result<SyncSummary, SyncRu
         Err(msg) => return Err(SyncRunError::Failed(anyhow::anyhow!(msg))),
     };
 
-    let Some(lock) = db::SyncLockGuard::try_acquire(&config.database_url).await? else {
+    let Some(lock) = db::SyncLockGuard::acquire(&config.database_url, LOCK_WAIT_SECS).await? else {
         return Err(SyncRunError::LockBusy);
     };
 
@@ -185,7 +193,7 @@ async fn guarded_sync(
     let run = async {
         // The empty-log guard lives with the rows it judges (see `run_sync`), so
         // a seed emptying the log mid-run cannot slip past a stale count.
-        run_sync(&reader, &writer, chrono::Utc::now().naive_utc(), force)
+        run_sync_until_quiescent(&reader, &writer, || chrono::Utc::now().naive_utc(), force)
             .await
             .map_err(|e| match e {
                 SyncError::EmptyLog(msg) => SyncRunError::Guard(msg),
@@ -212,115 +220,5 @@ mod tests {
         let cfg = crate::config::GearConfig::default();
         let err = run(&cfg, false).await;
         assert!(matches!(err, Err(SyncRunError::Failed(_))));
-    }
-}
-
-/// Run `attempt` again while it loses the publish lock, up to `retries` extra
-/// tries with `pause` between them. A busy lock is usually a publisher that
-/// started BEFORE the caller's rows landed, so its snapshot need not carry
-/// them; every other outcome is final and returned as-is.
-pub async fn retry_while_lock_busy<F, Fut>(
-    retries: u32,
-    pause: std::time::Duration,
-    mut attempt: F,
-) -> Result<SyncSummary, SyncRunError>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<SyncSummary, SyncRunError>>,
-{
-    for _ in 0..retries {
-        match attempt().await {
-            Err(SyncRunError::LockBusy) => tokio::time::sleep(pause).await,
-            outcome => return outcome,
-        }
-    }
-    attempt().await
-}
-
-#[cfg(test)]
-mod retry_tests {
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    use super::*;
-
-    const NO_PAUSE: std::time::Duration = std::time::Duration::ZERO;
-
-    fn summary() -> SyncSummary {
-        SyncSummary {
-            rows: 1,
-            max_id: Some(1),
-            max_created_at: Some("2026-01-01T00:00:00".to_owned()),
-            synced_at: "2026-01-01T00:00:01".to_owned(),
-        }
-    }
-
-    #[tokio::test]
-    async fn a_first_try_success_never_retries() {
-        let calls = AtomicU32::new(0);
-        let out = retry_while_lock_busy(3, NO_PAUSE, || {
-            calls.fetch_add(1, Ordering::Relaxed);
-            async { Ok(summary()) }
-        })
-        .await;
-        assert!(out.is_ok());
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
-    }
-
-    #[tokio::test]
-    async fn a_busy_lock_is_retried_until_it_frees() {
-        let calls = AtomicU32::new(0);
-        let out = retry_while_lock_busy(3, NO_PAUSE, || {
-            let n = calls.fetch_add(1, Ordering::Relaxed);
-            async move {
-                if n < 2 {
-                    Err(SyncRunError::LockBusy)
-                } else {
-                    Ok(summary())
-                }
-            }
-        })
-        .await;
-        assert!(out.is_ok());
-        assert_eq!(calls.load(Ordering::Relaxed), 3);
-    }
-
-    #[tokio::test]
-    async fn a_lock_that_never_frees_exhausts_the_budget() {
-        let calls = AtomicU32::new(0);
-        let out = retry_while_lock_busy(3, NO_PAUSE, || {
-            calls.fetch_add(1, Ordering::Relaxed);
-            async { Err(SyncRunError::LockBusy) }
-        })
-        .await;
-        assert!(matches!(out, Err(SyncRunError::LockBusy)));
-        assert_eq!(calls.load(Ordering::Relaxed), 4, "retries are EXTRA tries");
-    }
-
-    #[tokio::test]
-    async fn a_guard_refusal_is_final_on_first_contact() {
-        let calls = AtomicU32::new(0);
-        let out = retry_while_lock_busy(3, NO_PAUSE, || {
-            calls.fetch_add(1, Ordering::Relaxed);
-            async { Err(SyncRunError::Guard("persons log is empty".to_owned())) }
-        })
-        .await;
-        assert!(matches!(out, Err(SyncRunError::Guard(_))));
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
-    }
-
-    #[tokio::test]
-    async fn a_failure_is_final_on_first_contact() {
-        let calls = AtomicU32::new(0);
-        let out = retry_while_lock_busy(3, NO_PAUSE, || {
-            calls.fetch_add(1, Ordering::Relaxed);
-            async {
-                Err(SyncRunError::Failed(anyhow::anyhow!(
-                    "clickhouse unreachable"
-                )))
-            }
-        })
-        .await;
-        assert!(matches!(out, Err(SyncRunError::Failed(_))));
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
 }
