@@ -7,6 +7,8 @@ from the umbrella's `.Chart.AppVersion` yields one no build ever pushed.
 */}}
 {{- $identity := index .Subcharts "identityResolution" -}}
 {{- if not $identity -}}
+{{/* The chart refuses deploy=false anyway, but this template renders FIRST,
+     so without this the operator gets a nil-deref on .Chart instead. */}}
 {{-   fail "identityResolution.deploy must be true when ingestion.templates.enabled: every connector pipeline runs an identity-seed step on that service's image and mounts its config." -}}
 {{- end -}}
 {{- $identityTag := .Values.identityResolution.image.tag | default $identity.Chart.AppVersion -}}
