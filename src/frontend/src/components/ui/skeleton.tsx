@@ -1,13 +1,7 @@
-import { cn } from "@/lib/utils"
+import { Skeleton as KitSkeleton, type SkeletonProps } from "@gears-frontx/ui-kit";
 
-function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="skeleton"
-      className={cn("animate-pulse rounded-md bg-muted", className)}
-      {...props}
-    />
-  )
+function Skeleton(props: SkeletonProps) {
+  return <KitSkeleton data-slot="skeleton" {...props} />;
 }
 
-export { Skeleton }
+export { Skeleton };

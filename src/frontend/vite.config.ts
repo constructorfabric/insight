@@ -7,6 +7,7 @@ import path from "path";
 import { defineConfig, loadEnv } from "vite";
 
 import { backendProxy } from "./vite.backend-proxy";
+import { uiKitLayer } from "./vite.ui-kit-layer";
 
 // CI passes the image tag as VITE_APP_RELEASE. Everywhere else, name the
 // release after the commit built from. `.dockerignore` drops `.git`, so this
@@ -39,6 +40,7 @@ export default defineConfig(({ mode }) => {
       react(),
       babel({ presets: [reactCompilerPreset()] }),
       tailwindcss(),
+      uiKitLayer(),
       backendProxy(env),
     ],
     resolve: {

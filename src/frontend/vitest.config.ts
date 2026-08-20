@@ -18,6 +18,8 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { playwright } from "@vitest/browser-playwright";
 import { storybookTest } from "@storybook/addon-vitest/vitest-plugin";
+
+import { uiKitLayer } from "./vite.ui-kit-layer";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -28,6 +30,10 @@ export default defineConfig({
     },
   },
   test: {
+    // The kit's JS chunks import their own .css. Left external, node's ESM
+    // loader receives those imports directly and rejects the extension before
+    // `css: false` can neutralise them.
+    server: { deps: { inline: ["@gears-frontx/ui-kit"] } },
     // A timezone with no UTC-coinciding offset, ever. CI runners live in UTC,
     // where "parse a zone-less timestamp as UTC" and "parse it as local" are
     // the same function — every zone-handling test passes vacuously. Pinning
@@ -80,6 +86,7 @@ export default defineConfig({
           // (recharts measures its container) never paint. Storybook's own
           // builder gets this from `vite.config.ts`; this project does not.
           tailwindcss(),
+          uiKitLayer(),
           storybookTest({
             configDir: path.resolve(__dirname, ".storybook"),
             tags: { include: ["test"], exclude: [], skip: ["skip-test"] },
@@ -129,6 +136,7 @@ export default defineConfig({
             "@base-ui/react/tooltip",
             "@base-ui/react/use-render",
             "@gears-frontx/telemetry",
+            "@gears-frontx/ui-kit",
             "@sentry/react",
             "@tanstack/react-virtual",
             // `await import("exceljs")` inside the export path: the scan cannot
