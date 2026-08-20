@@ -22,6 +22,15 @@ vi.mock("@tanstack/react-query", () => ({
   },
 }));
 
+// Whether `source` may be asked for alongside a git metric's evidence. These
+// tests are about the dialog, so it declares nothing and stays out of the way.
+vi.mock("@/queries/metric-definitions", () => ({
+  useDeclaredMetricDimensions: () => ({
+    byMetricKey: new Map<string, ReadonlySet<string>>(),
+    isPending: false,
+  }),
+}));
+
 vi.mock("@/auth/use-auth", () => ({
   useAuth: () => ({
     session: {
@@ -426,7 +435,10 @@ describe("MetricEvidenceDialog", () => {
       const user = userEvent.setup();
       renderDialog();
 
-      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "add"
+      );
       expect(tableRefs()).toEqual(["add-parser", "add-cache"]);
       expect(screen.getByText("2 of 3 records")).toBeInTheDocument();
     });
@@ -532,7 +544,10 @@ describe("MetricEvidenceDialog", () => {
       renderDialog({ fetchNextPage, hasNextPage: true });
       fetchNextPage.mockClear();
 
-      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "add"
+      );
       await waitFor(() => expect(fetchNextPage).toHaveBeenCalled());
     });
 
@@ -546,7 +561,10 @@ describe("MetricEvidenceDialog", () => {
       });
       fetchNextPage.mockClear();
 
-      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "add"
+      );
       expect(fetchNextPage).not.toHaveBeenCalled();
     });
 
@@ -571,7 +589,10 @@ describe("MetricEvidenceDialog", () => {
         />
       );
 
-      await user.type(screen.getByRole("searchbox", { name: "Search records" }), "add");
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "add"
+      );
       sortBy("value");
       expect(mocks.tableProps?.sort).not.toBeNull();
 

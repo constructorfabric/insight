@@ -40,6 +40,7 @@ function renderTable(
   overrides: Partial<React.ComponentProps<typeof MetricEvidenceTable>> = {}
 ) {
   const props = {
+    metricKey: null,
     rows,
     columns,
     sort: null,
@@ -319,5 +320,103 @@ describe("MetricEvidenceTable", () => {
     expect(
       screen.getByText(/Showing the first 5,000 rows/)
     ).toBeInTheDocument();
+  });
+  describe("linking a record to its page", () => {
+    const SHA = "e0f4823a55ac28276cf068f066ebf66f872a059c";
+    const linkColumns = [
+      { key: "ref", label: "Ref", type: "string" as const },
+      { key: "title", label: "Title", type: "string" as const },
+      { key: "repository", label: "Repository", type: "string" as const },
+    ];
+
+    function linkRow(overrides: Record<string, unknown> = {}) {
+      return {
+        values: {
+          ref: SHA,
+          title: "the subject line\n\nand a trailer nobody clicks",
+          repository: "owner/repo",
+          source: "GitHub",
+          ...overrides,
+        },
+      };
+    }
+
+    it("addresses the record from its id and its summary, and the repository from its own cell", () => {
+      renderTable({
+        metricKey: "git.commits",
+        columns: linkColumns,
+        rows: [linkRow()],
+      });
+
+      expect(
+        screen.getByRole("link", { name: "the subject line" })
+      ).toHaveAttribute("href", `https://github.com/owner/repo/commit/${SHA}`);
+      expect(screen.getByRole("link", { name: "owner/repo" })).toHaveAttribute(
+        "href",
+        "https://github.com/owner/repo"
+      );
+    });
+
+    // A link inside a row must not also work the row: the whole row toggles
+    // the expanded record, and following a link is not asking for that.
+    it("does not expand the row when a link is followed", async () => {
+      renderTable({
+        metricKey: "git.commits",
+        columns: linkColumns,
+        rows: [linkRow()],
+      });
+
+      await userEvent.click(screen.getByRole("link", { name: "owner/repo" }));
+
+      expect(screen.getAllByRole("row")[1]).toHaveAttribute(
+        "aria-expanded",
+        "false"
+      );
+    });
+
+    // The expanded record shows a value entire, trailers included, so the
+    // title is a paragraph there rather than something to click.
+    it("leaves the title unlinked in the expanded record", async () => {
+      renderTable({
+        metricKey: "git.commits",
+        columns: linkColumns,
+        rows: [linkRow()],
+      });
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Show full record" })
+      );
+
+      expect(
+        screen.queryByRole("link", { name: /and a trailer nobody clicks/ })
+      ).toBeNull();
+      expect(
+        screen.getAllByRole("link", { name: "owner/repo" }).length
+      ).toBeGreaterThan(1);
+    });
+
+    it.each([
+      ["the provider's address is not derivable", { source: "gitlab" }],
+      ["the row does not say where it came from", { source: undefined }],
+      ["the repository is not a path", { repository: "Unknown" }],
+    ])("renders plain text when %s", (_case, overrides) => {
+      renderTable({
+        metricKey: "git.commits",
+        columns: linkColumns,
+        rows: [linkRow(overrides)],
+      });
+
+      expect(screen.queryAllByRole("link")).toHaveLength(0);
+    });
+
+    it("renders plain text for a metric of another family", () => {
+      renderTable({
+        metricKey: "tasks.closed",
+        columns: linkColumns,
+        rows: [linkRow()],
+      });
+
+      expect(screen.queryAllByRole("link")).toHaveLength(0);
+    });
   });
 });
