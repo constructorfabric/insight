@@ -28,7 +28,7 @@ function valueFor(entityId: string, metricKey: string, salt = ""): number {
   return (hash(`${entityId}|${metricKey}|${salt}`) % 900) + 50;
 }
 
-function metaFor(metricKey: string): Omit<MetricResult, "views"> {
+export function metaFor(metricKey: string): Omit<MetricResult, "views"> {
   const fixture = metricResultFixtureByKey(metricKey);
   if (fixture) {
     const { views: _views, ...meta } = fixture;

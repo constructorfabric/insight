@@ -372,14 +372,16 @@ export function AiCostView({ item }: { item: string | null }) {
           sub="org total"
         />
         <Tile
-          label="Avg cost / active user"
+          label="Avg potential cost / active user"
           value={formatMetricValue(
             avgCost,
             costR?.format ?? "currency",
             costR?.unit ?? null,
           )}
           note={
-            hasActual ? `actual ${actualMoney(avgActual)} / active user` : null
+            hasActual
+              ? `avg actual ${actualMoney(avgActual)} / active user`
+              : null
           }
           sub="Claude Code"
         />

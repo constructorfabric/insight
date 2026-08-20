@@ -5,9 +5,9 @@ into the request body at `variables.cursor`. The pagination test matches on the
 exact request body, so a page-2 response is only served when the cursor really
 was injected — that is the assertion, not the record count.
 
-The `login_normalized` assertions guard the join key: it becomes the
-`value_type='id'` binding the authenticator matches byte-exact against a
-case-sensitive column.
+The `member_id` and `unique_key` assertions guard the join key: the member's
+immutable numeric GitHub id becomes the `value_type='id'` binding the
+authenticator matches against the brokered external-id claim.
 
 Coverage matrix rows: full_refresh_single_page, pagination_multi_page,
 empty_page, tenant_source_stamping, schema_conformance, transformations,
@@ -117,12 +117,13 @@ def test_tenant_source_stamping(http_mocker: HttpMocker) -> None:
     assert record["source_id"] == "s-9"
     assert record["data_source"] == "insight_github"
     assert record["collected_at"].endswith("Z")
-    assert record["unique_key"] == f"t-9:s-9:{ORG}:dev-one"
+    assert record["unique_key"] == f"t-9:s-9:{ORG}:7001"
 
 
-def test_login_normalized_is_lowercased(http_mocker: HttpMocker) -> None:
-    """The identity binding is matched byte-exact against a case-sensitive
-    column, and Keycloak lowercases the username it brokers from GitHub."""
+def test_entity_key_is_the_member_id_not_the_login(http_mocker: HttpMocker) -> None:
+    """The identity binding and the bronze entity key follow the immutable
+    numeric member id, so a login rename or letter-case change on GitHub
+    neither forks the member into a second bronze row nor breaks sign-in."""
     config = GitHubDirectoryConfigBuilder().build()
     http_mocker.post(
         HttpRequest(GRAPHQL_URL, body=_body()), _page([_member("Dev-One", 7001)])
@@ -131,10 +132,45 @@ def test_login_normalized_is_lowercased(http_mocker: HttpMocker) -> None:
     record = read_stream(CONNECTOR, _STREAM, config).records[0].record.data
 
     assert record["login"] == "Dev-One"
-    assert record["login_normalized"] == "dev-one"
-    # the entity key follows the normalized login, so a letter-case change on
-    # GitHub does not fork the member into a second bronze row
-    assert record["unique_key"] == f"test-tenant:test-source:{ORG}:dev-one"
+    assert record["member_id"] == 7001
+    assert record["unique_key"] == f"test-tenant:test-source:{ORG}:7001"
+
+
+def test_a_login_rename_keeps_the_entity_key(http_mocker: HttpMocker) -> None:
+    """Two syncs seeing the same databaseId under different logins must stamp
+    the same unique_key: the rename then lands as a field change on ONE bronze
+    entity (and one identity binding) instead of forking a second member —
+    the property the member-id keying exists for."""
+    config = GitHubDirectoryConfigBuilder().build()
+    http_mocker.post(
+        HttpRequest(GRAPHQL_URL, body=_body()),
+        [
+            _page([_member("old-name", 7001)]),
+            _page([_member("new-name", 7001)]),
+        ],
+    )
+
+    before = read_stream(CONNECTOR, _STREAM, config).records[0].record.data
+    after = read_stream(CONNECTOR, _STREAM, config).records[0].record.data
+
+    assert before["login"] == "old-name" and after["login"] == "new-name"
+    assert before["unique_key"] == after["unique_key"] == f"test-tenant:test-source:{ORG}:7001"
+
+
+def test_a_member_without_database_id_is_dropped(http_mocker: HttpMocker) -> None:
+    """No databaseId means no entity key and no identity binding — and an
+    empty unique_key would collapse every such member into one bronze row
+    under ReplacingMergeTree. The stream filters the record out instead."""
+    config = GitHubDirectoryConfigBuilder().build()
+    http_mocker.post(
+        HttpRequest(GRAPHQL_URL, body=_body()),
+        _page([_member("dev-one", 7001), _member("ghost", 0, databaseId=None)]),
+    )
+
+    output = read_stream(CONNECTOR, _STREAM, config)
+
+    assert not output.errors
+    assert [r.record.data["login"] for r in output.records] == ["dev-one"]
 
 
 def test_absent_profile_fields_are_empty_not_the_text_none(http_mocker: HttpMocker) -> None:

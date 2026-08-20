@@ -651,7 +651,7 @@ def test_issue_timeline_carries_board_and_field_changes(http_mocker: HttpMocker)
                                             "id": "IF_1",
                                             "createdAt": "2026-06-12T00:00:00Z",
                                             "actor": {"login": "alice"},
-                                            "issueField": {"name": "Estimate"},
+                                            "issueField": {"id": "IFN_1", "name": "Estimate"},
                                             "previousValue": "3",
                                             "newValue": "5",
                                         },
@@ -660,8 +660,8 @@ def test_issue_timeline_carries_board_and_field_changes(http_mocker: HttpMocker)
                                             "id": "IT_1",
                                             "createdAt": "2026-06-13T00:00:00Z",
                                             "actor": {"login": "alice"},
-                                            "issueType": {"name": "Bug"},
-                                            "prevIssueType": {"name": "Task"},
+                                            "issueType": {"id": "IT_bug", "name": "Bug"},
+                                            "prevIssueType": {"id": "IT_task", "name": "Task"},
                                         },
                                     ],
                                 }
@@ -684,6 +684,10 @@ def test_issue_timeline_carries_board_and_field_changes(http_mocker: HttpMocker)
     assert (field["field_name"], field["prev_value"], field["new_value"]) == ("Estimate", "3", "5")
     kind = by_type["IssueTypeChangedEvent"]
     assert (kind["prev_value"], kind["new_value"]) == ("Task", "Bug")
+    # Identifiers, not just labels: a rename must not orphan the history.
+    assert field["field_id"] == "IFN_1"
+    assert (kind["prev_value_id"], kind["new_value_id"]) == ("IT_task", "IT_bug")
+    assert board["field_id"] == "", "a board move changes no native issue field"
     assert all(r["item_number"] == 7 for r in by_type.values())
     assert board["unique_key"].endswith(":issue:7:PS_1")
     _no_literal_none(output.records)
@@ -1083,3 +1087,276 @@ def test_every_dated_stream_floors_on_the_start_date() -> None:
 
     walk(manifest)
     assert not offenders, "streams flooring on something other than the start date: " + "; ".join(offenders)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issue_timeline_multi_select_keeps_both_option_sets(http_mocker: HttpMocker) -> None:
+    """A multi-select change states its whole option set on both sides and
+    leaves previousValue/newValue null. Reading only the scalars would record
+    the event with an empty before and after — a change that says nothing."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([{"number": 7, "updated_at": "2026-06-20T00:00:00Z"}]), status_code=200),
+    )
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_timeline_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "issue": {
+                                "timelineItems": {
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                    "nodes": [
+                                        {
+                                            "__typename": "IssueFieldChangedEvent",
+                                            "id": "IF_MS",
+                                            "createdAt": "2026-06-12T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                            "issueField": {"id": "IFMS_1", "name": "Platforms"},
+                                            "previousValue": None,
+                                            "newValue": None,
+                                            "previousOptions": [{"name": "iOS"}],
+                                            "newOptions": [{"name": "iOS"}, {"name": "Android"}],
+                                        }
+                                    ],
+                                }
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_timeline_events", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert rec["field_id"] == "IFMS_1"
+    assert json.loads(rec["prev_options_json"]) == ["iOS"]
+    assert json.loads(rec["new_options_json"]) == ["iOS", "Android"]
+    assert (rec["prev_value"], rec["new_value"]) == ("", ""), "a multi-select states nothing in the scalars"
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "issue_timeline_events", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issues_hoist_the_native_field_values(http_mocker: HttpMocker) -> None:
+    """A native issue field set at creation and never changed produces no
+    timeline event, so this snapshot is the only statement of its value that
+    ever reaches bronze. The nested original stays out."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    values = [
+        {"issue_field": {"id": "IFN_1", "name": "Estimated Efforts m*d"}, "value": 5},
+        {"issue_field": {"id": "IFD_1", "name": "Target date"}, "value": "2026-07-01"},
+    ]
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                [
+                    {
+                        "id": 900,
+                        "number": 7,
+                        "state": "open",
+                        "title": "Ship it",
+                        "created_at": "2026-06-01T00:00:00Z",
+                        "updated_at": "2026-06-20T00:00:00Z",
+                        "type": {"node_id": "IT_bug", "name": "Bug"},
+                        "issue_field_values": values,
+                    }
+                ]
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issues", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert json.loads(rec["issue_field_values_json"]) == values
+    assert (rec["issue_type"], rec["issue_type_id"]) == ("Bug", "IT_bug")
+    assert "issue_field_values" not in rec, "the nested original is hoisted, not duplicated"
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "issues", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issues_without_native_fields_emit_an_empty_list(http_mocker: HttpMocker) -> None:
+    """An organization that defines no issue fields answers without the key at
+    all. That must read as "no values", not as a literal None."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps([{"id": 901, "number": 8, "updated_at": "2026-06-20T00:00:00Z"}]), status_code=200
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issues", config)
+
+    assert not output.errors
+    assert json.loads(output.records[0].record.data["issue_field_values_json"]) == []
+    _no_literal_none(output.records)
+
+
+def _issue_fields_body(cursor: str | None = None) -> dict:
+    return _graphql_body("issue_fields", {"org": "acme"}, cursor)
+
+
+def _issue_types_body(cursor: str | None = None) -> dict:
+    return _graphql_body("issue_types", {"org": "acme"}, cursor)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issue_fields_catalogue_carries_identity_and_options(http_mocker: HttpMocker) -> None:
+    """History names a field by node id; without this catalogue that id
+    resolves to nothing and an operator binding a field to a metric role has
+    no list of real identifiers to bind against."""
+    config = GithubConfigBuilder().build()
+    nodes = [
+        {
+            "__typename": "IssueFieldSingleSelect",
+            "id": "IFSS_1",
+            "fullDatabaseId": 111,
+            "name": "Priority",
+            "dataType": "SINGLE_SELECT",
+            "options": [{"id": "o1", "name": "High"}, {"id": "o2", "name": "Low"}],
+        },
+        {
+            "__typename": "IssueFieldNumber",
+            "id": "IFN_1",
+            "fullDatabaseId": 222,
+            "name": "Estimated Efforts m*d",
+            "dataType": "NUMBER",
+        },
+        {
+            "__typename": "IssueFieldMultiSelect",
+            "id": "IFMS_1",
+            "name": "Platforms",
+            "dataType": "MULTI_SELECT",
+            "options": [{"id": "o3", "name": "iOS"}],
+        },
+    ]
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_fields_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "organization": {
+                            "issueFields": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_fields", config)
+
+    assert not output.errors
+    by_id = {r.record.data["field_id"]: r.record.data for r in output.records}
+    assert set(by_id) == {"IFSS_1", "IFN_1", "IFMS_1"}
+    assert by_id["IFSS_1"]["data_type"] == "SINGLE_SELECT"
+    assert [o["name"] for o in json.loads(by_id["IFSS_1"]["options_json"])] == ["High", "Low"]
+    assert by_id["IFMS_1"]["is_multi"] is True
+    assert by_id["IFN_1"]["is_multi"] is False
+    assert json.loads(by_id["IFN_1"]["options_json"]) == [], "a number field admits no options"
+    # The REST issue payload names a field by its numeric id and the timeline
+    # by node id; both must resolve to this one catalogue row.
+    assert by_id["IFN_1"]["field_database_id"] == "222"
+    assert by_id["IFSS_1"]["field_database_id"] == "111"
+    assert by_id["IFN_1"]["unique_key"].endswith(":acme:issue_field:IFN_1")
+    assert by_id["IFN_1"]["tenant_id"] == config["insight_tenant_id"]
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "issue_fields", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issue_fields_paginate_with_the_cursor_in_the_body(http_mocker: HttpMocker) -> None:
+    """A catalogue larger than one page must not truncate silently — the whole
+    point of the stream is that every identifier history can name is present."""
+    config = GithubConfigBuilder().build()
+    page1 = {
+        "data": {
+            "organization": {
+                "issueFields": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+                    "nodes": [{"__typename": "IssueFieldText", "id": "IFT_1", "name": "Notes", "dataType": "TEXT"}],
+                }
+            }
+        }
+    }
+    page2 = {
+        "data": {
+            "organization": {
+                "issueFields": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": "c2"},
+                    "nodes": [
+                        {"__typename": "IssueFieldDate", "id": "IFD_1", "name": "Target date", "dataType": "DATE"}
+                    ],
+                }
+            }
+        }
+    }
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_fields_body()),
+        HttpResponse(body=json.dumps(page1), status_code=200),
+    )
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_fields_body(cursor="c1")),
+        HttpResponse(body=json.dumps(page2), status_code=200),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_fields", config)
+
+    assert not output.errors
+    assert {r.record.data["field_id"] for r in output.records} == {"IFT_1", "IFD_1"}
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issue_types_catalogue_gives_the_type_a_stable_key(http_mocker: HttpMocker) -> None:
+    """The issue payload states its type by display name only, so a rename
+    orphans every mapping built on the name alone."""
+    config = GithubConfigBuilder().build()
+    nodes = [
+        {"id": "IT_task", "name": "Task", "description": "A specific piece of work", "isEnabled": True},
+        {"id": "IT_bug", "name": "Bug", "description": None, "isEnabled": False},
+    ]
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_types_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "organization": {
+                            "issueTypes": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_types", config)
+
+    assert not output.errors
+    by_id = {r.record.data["issue_type_id"]: r.record.data for r in output.records}
+    assert by_id["IT_task"]["issue_type_name"] == "Task"
+    assert by_id["IT_task"]["is_enabled"] is True
+    assert by_id["IT_bug"]["is_enabled"] is False
+    assert by_id["IT_bug"]["description"] == "", "a null description is empty, never a literal None"
+    assert by_id["IT_bug"]["unique_key"].endswith(":acme:issue_type:IT_bug")
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "issue_types", strict=True)

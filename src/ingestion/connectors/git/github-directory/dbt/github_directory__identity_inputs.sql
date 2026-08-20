@@ -14,8 +14,10 @@
 -- authenticated against, not the connector package that supplied the roster.
 --
 -- The canonical `value_type='id'` binding row is emitted by the macro from
--- entity_id (= lowercased login, ADR-0002) — that is the row the login
--- lookup matches. `email` carries a member's org email where one is verified
+-- entity_id (= the member's immutable numeric GitHub id, stringified) — that
+-- is the row the login lookup matches, so the broker must put the same
+-- numeric id in the external-id claim, as a JSON string.
+-- `email` carries a member's org email where one is verified
 -- and visible to the token's scopes; where it is absent, resolution leans on
 -- the id binding and display_name.
 --

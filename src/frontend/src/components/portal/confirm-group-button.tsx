@@ -14,7 +14,7 @@
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/sonner";
 
 import {
   MAX_BINDINGS_PER_CALL,

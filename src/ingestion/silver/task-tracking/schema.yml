@@ -1,5 +1,18 @@
 version: 2
 
+sources:
+  # Operator-authored bindings: which vendor field plays which metric role, and
+  # what a vendor value means. dbt guarantees the relations exist via the
+  # `create_task_config_tables` on-run-start hook but owns none of the rows — a
+  # model materializing over them would wipe the decisions they hold. Declared
+  # in the task-tracking domain rather than under one connector, because every
+  # task source and gold itself read them.
+  - name: config
+    schema: config
+    tables:
+      - name: task_field_roles
+      - name: task_value_map
+
 models:
   - name: class_task_field_history
     description: "Unified per-(issue × field × event) history from all task-tracker sources. Event-sourced: one row per changelog entry or synthetic_initial bootstrap row. Source of truth is the Rust jira-enrich binary (per-source)."

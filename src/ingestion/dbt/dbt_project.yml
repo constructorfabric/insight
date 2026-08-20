@@ -119,6 +119,11 @@ vars:
 # keeps connector-specific table lists co-located with the connector code.
 on-run-start:
   - "{{ create_task_field_history_staging() }}"
+  # config.task_field_roles / config.task_value_map — operator-authored
+  # bindings from a vendor field or value to the role and canonical value gold
+  # consumes. dbt guarantees the relations exist and reads them as sources; the
+  # rows are written by an operator, so no model may own them.
+  - "{{ create_task_config_tables() }}"
   # identity.identity_persons — the persons-log copy the identity-resolution
   # service's persons-sync fills; gold models resolve email → person_id
   # against it. The hook only guarantees the (possibly empty) table exists

@@ -91,6 +91,56 @@ const FILTERABLE_VALUE_TYPES: [&str; 5] = [
     "last_name",
 ];
 
+/// The value type a connector writes for an account it holds — ADR-0002's
+/// canonical binding, and the only thing in the journal that separates a person
+/// some system claims from an address someone else's data merely mentioned.
+const CANONICAL_BINDING: &str = "id";
+
+/// Which persons a listing is about.
+///
+/// The journal is an observation log: a commit author's address enters it and
+/// becomes a person whether or not anybody in the organisation holds that
+/// address. Both readings of that set are legitimate, and they are different
+/// questions, so the caller has to say which one it is asking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Listed {
+    /// Every identity the journal holds, claimed or merely observed. The
+    /// operator's surface: an unclaimed address is precisely what arrives
+    /// needing to be attached to the person it belongs to.
+    EveryIdentity,
+    /// Only persons a connector claims as an account holder — those carrying a
+    /// [`CANONICAL_BINDING`]. The roster: who the organisation IS, rather than
+    /// every address its data has ever named.
+    ///
+    /// Says nothing about whether they still belong to it. Roster removal
+    /// reaches the journal as no observation at all, so a departed member keeps
+    /// the binding they earned; this admits everyone who has ever held an
+    /// account, which is a superset of the current roster.
+    AccountHolders,
+}
+
+/// What narrows a listing: which persons it is about, and whose view of them.
+///
+/// The two are orthogonal — one asks whether an unclaimed address counts as a
+/// person to list, the other whose data this caller may see — and they travel
+/// together everywhere, so they arrive together rather than as two more
+/// positional arguments.
+#[derive(Debug, Clone, Copy)]
+pub struct Restrict<'a> {
+    pub listed: Listed,
+    /// Absent, the listing is the tenant's.
+    pub visible_to: Option<VisibleTo<'a>>,
+}
+
+impl Restrict<'_> {
+    /// The operator's listing: every identity, unfiltered by any viewer.
+    #[cfg(test)]
+    pub(super) const EVERY_IDENTITY: Self = Self {
+        listed: Listed::EveryIdentity,
+        visible_to: None,
+    };
+}
+
 /// Restrict a listing to what one caller may see. Absent, it is the tenant's.
 #[derive(Debug, Clone, Copy)]
 pub struct VisibleTo<'a> {
@@ -155,8 +205,9 @@ pub struct After<'a> {
 ///
 /// `terms` empty lists every person; otherwise every term must match some
 /// current value. `within` (when non-empty) restricts the set to those ids —
-/// the id-named search path. `visible_to` restricts it to one caller's visible
-/// set. `after` resumes a previous page.
+/// the id-named search path. `listed` says whether unclaimed identities count.
+/// `visible_to` restricts it to one caller's visible set. `after` resumes a
+/// previous page.
 ///
 /// Two statements when there are terms and no ids: the probe, then the page over
 /// what it named. One when there is nothing to narrow by.
@@ -169,15 +220,15 @@ pub async fn list_persons(
     tenant_id: Uuid,
     terms: &[String],
     within: &[Uuid],
-    visible_to: Option<VisibleTo<'_>>,
+    restrict: Restrict<'_>,
     after: Option<After<'_>>,
     limit: u64,
 ) -> anyhow::Result<Vec<PersonListRow>> {
     match narrowing(db, tenant_id, terms, within).await? {
         Narrowing::Nobody => Ok(Vec::new()),
-        Narrowing::Tenant => page(db, tenant_id, terms, None, visible_to, after, limit).await,
+        Narrowing::Tenant => page(db, tenant_id, terms, None, restrict, after, limit).await,
         Narrowing::Persons(ids) => {
-            page(db, tenant_id, terms, Some(&ids), visible_to, after, limit).await
+            page(db, tenant_id, terms, Some(&ids), restrict, after, limit).await
         }
     }
 }
@@ -199,11 +250,11 @@ async fn page(
     tenant_id: Uuid,
     terms: &[String],
     narrowed_to: Option<&[Uuid]>,
-    visible_to: Option<VisibleTo<'_>>,
+    restrict: Restrict<'_>,
     after: Option<After<'_>>,
     limit: u64,
 ) -> anyhow::Result<Vec<PersonListRow>> {
-    let (sql, values) = build_query(tenant_id, terms, narrowed_to, visible_to, after, limit);
+    let (sql, values) = build_query(tenant_id, terms, narrowed_to, restrict, after, limit);
     let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
     rows_from(db.query_all(stmt).await?)
 }
@@ -314,7 +365,16 @@ pub(super) async fn list_persons_unnarrowed(
     after: Option<After<'_>>,
     limit: u64,
 ) -> anyhow::Result<Vec<PersonListRow>> {
-    page(db, tenant_id, terms, None, None, after, limit).await
+    page(
+        db,
+        tenant_id,
+        terms,
+        None,
+        Restrict::EVERY_IDENTITY,
+        after,
+        limit,
+    )
+    .await
 }
 
 fn searched_types() -> String {
@@ -414,7 +474,7 @@ fn build_query(
     tenant_id: Uuid,
     terms: &[String],
     narrowed_to: Option<&[Uuid]>,
-    visible_to: Option<VisibleTo<'_>>,
+    restrict: Restrict<'_>,
     after: Option<After<'_>>,
     limit: u64,
 ) -> (String, Vec<sea_orm::Value>) {
@@ -436,17 +496,35 @@ fn build_query(
         }
     };
 
+    // In the roster itself rather than the outer filter: it decides who exists
+    // for this listing, so the ranking has less to rank as well. `idx_value_id`
+    // leads on (tenant, value_type), which is exactly this lookup.
+    let claimed = match restrict.listed {
+        Listed::EveryIdentity => String::new(),
+        Listed::AccountHolders => {
+            values.push(tenant_id.as_bytes().to_vec().into());
+            format!(
+                "\n              AND person_id IN (\
+                 \n                  SELECT person_id FROM persons \
+                 \n                  WHERE insight_tenant_id = ? AND value_type = '{CANONICAL_BINDING}'\
+                 \n              )"
+            )
+        }
+    };
+
     values.push(tenant_id.as_bytes().to_vec().into());
     // Ranking a narrowed roster is the whole point; reaching an unnarrowed one
     // through a semi-join is not — with nothing to narrow by, the plain scan the
-    // browse case had all along stays.
-    let ranked_within = if roster.is_empty() {
+    // browse case had all along stays. Either narrowing earns the semi-join: a
+    // roster browsed with no terms is still a fraction of the identities the
+    // journal holds.
+    let ranked_within = if roster.is_empty() && claimed.is_empty() {
         ""
     } else {
         "\n              AND person_id IN (SELECT person_id FROM people)"
     };
 
-    let scope = visible_scope(visible_to, tenant_id);
+    let scope = visible_scope(restrict.visible_to, tenant_id);
     let visible_cte = scope.cte;
     let recursive = scope.recursive;
     values.extend(scope.values);
@@ -475,7 +553,7 @@ fn build_query(
         WITH {recursive}people AS (
             SELECT DISTINCT person_id
             FROM persons
-            WHERE insight_tenant_id = ? AND person_id != ?{roster}
+            WHERE insight_tenant_id = ? AND person_id != ?{roster}{claimed}
         ),
         ranked AS (
             SELECT person_id, value_type, value_effective, created_at, id,
@@ -534,7 +612,15 @@ mod tests {
     use super::*;
 
     fn query(terms: &[String], narrowed_to: Option<&[Uuid]>, after: Option<After<'_>>) -> String {
-        build_query(Uuid::nil(), terms, narrowed_to, None, after, 50).0
+        build_query(
+            Uuid::nil(),
+            terms,
+            narrowed_to,
+            Restrict::EVERY_IDENTITY,
+            after,
+            50,
+        )
+        .0
     }
 
     fn visible_query(policy: VisibilityPolicy) -> String {
@@ -542,15 +628,97 @@ mod tests {
             Uuid::nil(),
             &[],
             None,
-            Some(VisibleTo {
-                viewer_person_id: Uuid::from_u128(7),
-                org_source_type: "bamboohr",
-                policy,
-            }),
+            Restrict {
+                listed: Listed::EveryIdentity,
+                visible_to: Some(VisibleTo {
+                    viewer_person_id: Uuid::from_u128(7),
+                    org_source_type: "bamboohr",
+                    policy,
+                }),
+            },
             None,
             50,
         )
         .0
+    }
+
+    fn listed_query(listed: Listed) -> String {
+        build_query(
+            Uuid::nil(),
+            &[],
+            None,
+            Restrict {
+                listed,
+                visible_to: None,
+            },
+            None,
+            50,
+        )
+        .0
+    }
+
+    #[test]
+    fn a_roster_admits_only_the_persons_a_connector_claims() {
+        // An address a commit carried is an observation, not a member of the
+        // organisation: it reaches the journal without ever earning the
+        // canonical binding a roster connector writes for an account it holds.
+        let sql = listed_query(Listed::AccountHolders);
+
+        assert!(
+            sql.contains("value_type = 'id'"),
+            "the roster must require a canonical binding: {sql}"
+        );
+    }
+
+    #[test]
+    fn the_operator_surface_still_lists_an_identity_nobody_claims() {
+        // The unclaimed address is the whole reason the picker exists — it is
+        // what an operator arrives holding, to attach to the person it belongs
+        // to. Hiding it would hide the work.
+        let sql = listed_query(Listed::EveryIdentity);
+
+        assert!(
+            !sql.contains("value_type = 'id'"),
+            "the picker must not require a binding: {sql}"
+        );
+    }
+
+    #[test]
+    fn the_binding_requirement_binds_after_the_roster_it_narrows() {
+        // Its placeholder sits in the roster CTE, after the ids the caller
+        // named — so its tenant lands there too, or every later value shifts.
+        let tenant = Uuid::from_u128(0xA1);
+        let within = [Uuid::from_u128(0xB2)];
+
+        let (sql, values) = build_query(
+            tenant,
+            &[],
+            Some(&within),
+            Restrict {
+                listed: Listed::AccountHolders,
+                visible_to: None,
+            },
+            None,
+            50,
+        );
+
+        let bytes = |id: Uuid| sea_orm::Value::from(id.as_bytes().to_vec());
+        assert_eq!(sql.matches('?').count(), values.len());
+        assert_eq!(
+            values,
+            vec![
+                // the roster: the tenant, the sentinel, the named ids…
+                bytes(tenant),
+                bytes(EXCLUDED_PERSON),
+                bytes(within[0]),
+                // …then the binding requirement that narrows it
+                bytes(tenant),
+                // the ranking over that roster
+                bytes(tenant),
+                sea_orm::Value::from(50u64),
+            ],
+            "the bind order drifted from the order the placeholders appear in"
+        );
     }
 
     #[test]
@@ -672,7 +840,7 @@ mod tests {
             tenant,
             &terms,
             Some(&within),
-            None,
+            Restrict::EVERY_IDENTITY,
             Some(After {
                 order_key: "0ivanov",
                 person_id: resuming,
@@ -773,11 +941,14 @@ mod tests {
             tenant,
             &["iva".to_owned()],
             Some(&within),
-            Some(VisibleTo {
-                viewer_person_id: viewer,
-                org_source_type: "bamboohr",
-                policy: VisibilityPolicy::Flat,
-            }),
+            Restrict {
+                listed: Listed::EveryIdentity,
+                visible_to: Some(VisibleTo {
+                    viewer_person_id: viewer,
+                    org_source_type: "bamboohr",
+                    policy: VisibilityPolicy::Flat,
+                }),
+            },
             None,
             50,
         );
@@ -821,11 +992,14 @@ mod tests {
                 Uuid::nil(),
                 &[],
                 None,
-                Some(VisibleTo {
-                    viewer_person_id: Uuid::from_u128(7),
-                    org_source_type: "bamboohr",
-                    policy,
-                }),
+                Restrict {
+                    listed: Listed::EveryIdentity,
+                    visible_to: Some(VisibleTo {
+                        viewer_person_id: Uuid::from_u128(7),
+                        org_source_type: "bamboohr",
+                        policy,
+                    }),
+                },
                 None,
                 50,
             );

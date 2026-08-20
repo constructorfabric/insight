@@ -4,5 +4,5 @@ description: Insight Analytics — query service over ClickHouse views
 version: 0.2.0
 # appVersion is managed by the release pipeline (build-images.yml): it is
 # bumped to the freshly built image tag on merges that change this service.
-appVersion: "2026.08.20.06.45-5e5fc7c"
+appVersion: "2026.08.20.20.14-126985a"
 type: application

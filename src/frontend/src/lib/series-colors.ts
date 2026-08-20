@@ -60,6 +60,21 @@ const BRAND_BY_SEED: ReadonlyMap<string, string> = new Map([
   ["ldap", "var(--brand-ldap)"],
 ]);
 
+/**
+ * Two of the git file categories (`git_file_category` in gold) are pinned
+ * because the sorted fallback gave them neighbouring tokens — alphabetically
+ * `test` and `vendored` landed on two ambers a reader could not tell apart.
+ * The rest keep the fallback: they were already distinct.
+ *
+ * `vendored` takes the muted token rather than a chart hue: it is
+ * machine-produced content, so it should recede from the authored lines beside
+ * it rather than compete with them.
+ */
+const FILE_CATEGORY_BY_SEED: ReadonlyMap<string, string> = new Map([
+  ["test", "var(--chart-8)"],
+  ["vendored", "var(--muted-foreground)"],
+]);
+
 const CHART_TOKENS = [
   "var(--chart-1)",
   "var(--chart-2)",
@@ -84,8 +99,8 @@ export function seriesColors(seeds: string[]): Record<string, string> {
   >;
   const unknown: string[] = [];
   for (const seed of new Set(seeds)) {
-    const brand = BRAND_BY_SEED.get(seed);
-    if (brand) palette[seed] = brand;
+    const known = BRAND_BY_SEED.get(seed) ?? FILE_CATEGORY_BY_SEED.get(seed);
+    if (known) palette[seed] = known;
     else unknown.push(seed);
   }
   unknown.sort();

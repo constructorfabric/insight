@@ -857,8 +857,8 @@ async fn the_roster_lists_the_caller_and_everyone_the_policy_shows_them() -> Tes
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
-    let caller = f.person("roster-caller@http-live.test").await?;
-    let other = f.person("roster-other@http-live.test").await?;
+    let caller = f.account_holder("roster-caller@http-live.test").await?;
+    let other = f.account_holder("roster-other@http-live.test").await?;
 
     let (status, body) = get(flat_app(&f, caller), "/v1/visible-persons").await?;
 
@@ -875,12 +875,39 @@ async fn the_roster_lists_the_caller_and_everyone_the_policy_shows_them() -> Tes
 }
 
 #[tokio::test]
+async fn the_roster_leaves_out_an_identity_nobody_claims() -> TestResult {
+    // The shape a git-only organisation is full of: an address a commit carried,
+    // which the journal turned into a person because that is what an observation
+    // log does. No connector ever claimed it as an account, so it is not a
+    // member, and a roster listing it is a directory of strangers.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let holder = f.account_holder("roster-holder@http-live.test").await?;
+    let observed_only = f.person("roster-observed@http-live.test").await?;
+
+    let (status, body) = get(flat_app(&f, holder), "/v1/visible-persons").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    let listed = listed_ids(&body);
+    assert!(
+        listed.contains(&holder.to_string()),
+        "the account holder IS the roster: {body}"
+    );
+    assert!(
+        !listed.contains(&observed_only.to_string()),
+        "an address nobody claims is not a member: {body}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_roster_cursor_resumes_after_the_page_it_was_issued_for() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
-    let first_person = f.person("roster-aaa@http-live.test").await?;
-    let second_person = f.person("roster-bbb@http-live.test").await?;
+    let first_person = f.account_holder("roster-aaa@http-live.test").await?;
+    let second_person = f.account_holder("roster-bbb@http-live.test").await?;
 
     let (status, first) = get(flat_app(&f, first_person), "/v1/visible-persons?limit=1").await?;
     assert_eq!(status, StatusCode::OK);
@@ -934,8 +961,8 @@ async fn a_cursor_from_another_query_is_refused_rather_than_resumed() -> TestRes
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
-    let caller = f.person("roster-cursor@http-live.test").await?;
-    let _second = f.person("roster-cursor-2@http-live.test").await?;
+    let caller = f.account_holder("roster-cursor@http-live.test").await?;
+    let _second = f.account_holder("roster-cursor-2@http-live.test").await?;
 
     let (_, browsed) = get(flat_app(&f, caller), "/v1/visible-persons?limit=1").await?;
     let cursor = browsed["next_cursor"]

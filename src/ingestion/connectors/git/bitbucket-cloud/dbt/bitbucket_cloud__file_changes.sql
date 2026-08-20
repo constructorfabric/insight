@@ -49,7 +49,12 @@ SELECT
     COALESCE(change.source_type, '') AS source_type,
     'insight_bitbucket_cloud' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    latest.latest_completed_at AS _airbyte_extracted_at
+    latest.latest_completed_at AS _airbyte_extracted_at,
+    -- Bitbucket's diffstat reports no object id for either side of a change;
+    -- the columns keep the union positional until the connector reads through
+    -- the git proxy.
+    CAST(NULL AS Nullable(String)) AS pre_image_oid,
+    CAST(NULL AS Nullable(String)) AS post_image_oid
 FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }} AS change FINAL
 INNER JOIN latest USING (tenant_id, source_id, repository_uuid, sha, generation_id)
 WHERE change.record_type = 'item'

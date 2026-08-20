@@ -49,7 +49,7 @@ const hooks = vi.hoisted(() => {
 vi.mock("@/hooks/use-debounced-value", () => ({
   useDebouncedValue: <T,>(value: T) => value,
 }));
-vi.mock("sonner", () => ({ toast: hooks.toast }));
+vi.mock("@/components/ui/sonner", () => ({ toast: hooks.toast }));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useBindAccount: () => hooks.bind,

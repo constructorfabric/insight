@@ -78,6 +78,17 @@ impl Fixture {
         .await
     }
 
+    /// A person some connector claims as an account holder: an address AND the
+    /// canonical `id` binding that says a system holds it. What a roster
+    /// connector writes, and what the roster lists — [`Self::person`] alone
+    /// leaves an observation nobody has claimed.
+    pub(crate) async fn account_holder(&self, email: &str) -> anyhow::Result<Uuid> {
+        let person_id = self.person(email).await?;
+        self.observed(person_id, "id", &format!("acct-{}", person_id.simple()))
+            .await?;
+        Ok(person_id)
+    }
+
     /// Append one observation of `value_type` for an existing person — the
     /// building block for "this person's value changed later" scenarios.
     pub(crate) async fn observed(

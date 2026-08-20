@@ -13,7 +13,6 @@ CREATE TABLE IF NOT EXISTS bronze_github_directory.org_members
     `data_source` Nullable(String),
     `org` Nullable(String),
     `login` Nullable(String),
-    `login_normalized` Nullable(String),
     `member_id` Nullable(Int64),
     `name` Nullable(String),
     `email` Nullable(String),

@@ -47,10 +47,12 @@ describe("ThemeProvider", () => {
     stubMatchMedia();
     localStorage.clear();
     document.documentElement.classList.remove("light", "dark");
+    delete document.documentElement.dataset.theme;
   });
 
   afterEach(() => {
     document.documentElement.classList.remove("light", "dark");
+    delete document.documentElement.dataset.theme;
   });
 
   it("applies an explicit theme to the document root", () => {
@@ -62,6 +64,22 @@ describe("ThemeProvider", () => {
 
     expect(screen.getByTestId("theme")).toHaveTextContent("dark");
     expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("marks the resolved theme with data-theme for the ui-kit tokens", () => {
+    systemPrefersDark = true;
+    render(
+      <ThemeProvider defaultTheme="system">
+        <Probe />
+      </ThemeProvider>,
+    );
+
+    expect(document.documentElement.dataset.theme).toBe("dark");
+
+    act(() => {
+      screen.getByRole("button", { name: "set-light" }).click();
+    });
+    expect(document.documentElement.dataset.theme).toBe("light");
   });
 
   it("resolves the system theme from the media query and follows changes", () => {

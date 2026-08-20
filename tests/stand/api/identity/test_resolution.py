@@ -37,6 +37,7 @@ from ..schemas import (
     CorrectionResponse,
     PersonAccountsResponse,
 )
+from ..scratch import SCRATCH_SOURCE_ID, SCRATCH_SOURCE_TYPE
 
 ATTENTION = identity_path("/v1/resolution/attention")
 ACCOUNT_SEARCH = identity_path("/v1/resolution/accounts")
@@ -47,14 +48,17 @@ ACCOUNT_SEARCH = identity_path("/v1/resolution/accounts")
 #: guard.
 EXCLUDED_PERSON = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
-#: A connector-instance id for accounts that exist only in this module. Fixed,
-#: not random: the coverage template folds `{id}` per path segment either way,
-#: and a stable value keeps journal rows attributable to this suite.
-SCRATCH_SOURCE_ID = "01900000-0000-7000-8000-00000000feed"
+
+def _account(account_id: str) -> dict[str, str]:
+    """One account under the suite's own connector instance — the only place a
+    correction this module writes may land (`scratch.py` rule 5)."""
+    return {"source": SCRATCH_SOURCE_TYPE, "source_id": SCRATCH_SOURCE_ID, "id": account_id}
 
 
 def _account_path(account_id: str) -> str:
-    return identity_path(f"/v1/resolution/accounts/github/{SCRATCH_SOURCE_ID}/{account_id}")
+    return identity_path(
+        f"/v1/resolution/accounts/{SCRATCH_SOURCE_TYPE}/{SCRATCH_SOURCE_ID}/{account_id}"
+    )
 
 
 @pytest.mark.security
@@ -326,7 +330,7 @@ def test_bind_confirm_and_exclude_round_trip(
     client = admin_operator_session.client
     lead = stand_manifest.fixture("dev_lead")
     account_id = scratch.scratch_name("resolution")
-    account = {"source": "github", "source_id": SCRATCH_SOURCE_ID, "id": account_id}
+    account = _account(account_id)
 
     bind = client.post(
         identity_path("/v1/resolution/bind"),
@@ -399,11 +403,7 @@ def test_the_excluded_sentinel_is_not_a_bind_target(
         json_body={
             "bindings": [
                 {
-                    "account": {
-                        "source": "github",
-                        "source_id": SCRATCH_SOURCE_ID,
-                        "id": "never-observed-account",
-                    },
+                    "account": _account("never-observed-account"),
                     "person_id": EXCLUDED_PERSON,
                 }
             ]
@@ -439,12 +439,6 @@ def test_detach_refuses_an_account_nobody_ever_saw(
     is not — there is nothing to detach. 404, and no write happens."""
     response = admin_operator_session.client.post(
         identity_path("/v1/resolution/detach"),
-        json_body={
-            "account": {
-                "source": "github",
-                "source_id": SCRATCH_SOURCE_ID,
-                "id": "never-observed-account",
-            }
-        },
+        json_body={"account": _account("never-observed-account")},
     )
     assert response.status_code == 404, f"{response.status_code} {response.text[:300]}"

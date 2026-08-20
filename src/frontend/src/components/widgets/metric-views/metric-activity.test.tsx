@@ -32,12 +32,24 @@ vi.mock("@/queries/metric-detail", () => ({
     return detail.state;
   },
 }));
-// The catalogue is a query like the detail one above; the collection boundary
-// it carries is set per test through `detail.collectedThrough`.
+
+// The catalogue decides whether `source` may be asked for alongside a git
+// metric's evidence; these tests are about what the grains RENDER, so it
+// answers with a declaration and no request of its own.
+const declared = vi.hoisted(() => ({
+  byMetricKey: new Map<string, ReadonlySet<string>>(),
+}));
+// One mock for the whole catalogue module: a second `vi.mock` of the same
+// specifier replaces the first, so both hooks are served from here. The
+// collection boundary is set per test through `detail.collectedThrough`.
 vi.mock("@/queries/metric-definitions", () => ({
   useCollectedThrough: () => ({
     collectedThrough: detail.collectedThrough,
     revisionWindowDays: detail.revisionWindowDays,
+  }),
+  useDeclaredMetricDimensions: () => ({
+    byMetricKey: declared.byMetricKey,
+    isPending: false,
   }),
 }));
 
@@ -268,7 +280,9 @@ describe("MetricActivity", () => {
         { values: { date: "2026-03-05", value: 9 } },
       ],
     };
-    const { container } = draw(metric("collab.messages_sent", ["source_summary"], 13));
+    const { container } = draw(
+      metric("collab.messages_sent", ["source_summary"], 13)
+    );
     const bars = container.querySelectorAll<HTMLElement>('[role="img"] > div');
     expect(bars).toHaveLength(5);
     const readout = () =>

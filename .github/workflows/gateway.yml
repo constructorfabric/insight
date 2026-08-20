@@ -9,6 +9,15 @@ name: Gateway — routegen, config, e2e
 # gateway or the generator changes.
 on:
   workflow_call:
+    inputs:
+      gateway_changed:
+        required: false
+        type: boolean
+        default: false
+      authenticator_changed:
+        required: false
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -58,20 +67,6 @@ jobs:
       - name: Test pre-built image selection
         run: PYTHONPATH=scripts/ci python3 -m unittest scripts/ci/test_prebuilt_images.py
 
-      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        if: github.event_name == 'pull_request'
-        id: changed
-        with:
-          filters: |
-            gateway:
-              - 'src/backend/services/gateway/**'
-              - 'src/backend/tools/routegen/**'
-              - 'src/backend/Cargo.toml'
-              - 'src/backend/Cargo.lock'
-              - '.github/workflows/gateway.yml'
-              - '.github/workflows/build-images.yml'
-              - 'scripts/ci/prebuilt_images.py'
-
       - name: routegen fmt + clippy + tests
         working-directory: src/backend
         run: |
@@ -80,16 +75,16 @@ jobs:
           cargo test -p routegen
 
       - name: Build the OpenResty gateway image
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'merge_group'
         working-directory: src/backend
         run: docker build -f services/gateway/Dockerfile -t insight-gateway:ci .
 
-      - name: Load the PR-built gateway image
-        if: github.event_name == 'pull_request'
+      - name: Load the merge-group gateway image
+        if: github.event_name == 'merge_group'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
-          REQUIRED: ${{ steps.changed.outputs.gateway }}
+          REQUIRED: ${{ inputs.gateway_changed }}
         run: |
           policy=unchanged
           if [ "$REQUIRED" = "true" ]; then policy=required; fi
@@ -160,35 +155,13 @@ jobs:
         with:
           save-cache: ${{ github.event_name == 'push' }}
 
-      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        if: github.event_name == 'pull_request'
-        id: changed
-        with:
-          filters: |
-            gateway:
-              - 'src/backend/services/gateway/**'
-              - 'src/backend/tools/routegen/**'
-              - 'src/backend/Cargo.toml'
-              - 'src/backend/Cargo.lock'
-              - '.github/workflows/gateway.yml'
-              - '.github/workflows/build-images.yml'
-              - 'scripts/ci/prebuilt_images.py'
-            authenticator:
-              - 'src/backend/services/authenticator/**'
-              - 'src/backend/libs/authenticator-sdk/**'
-              - 'src/backend/Cargo.toml'
-              - 'src/backend/Cargo.lock'
-              - '.github/workflows/gateway.yml'
-              - '.github/workflows/build-images.yml'
-              - 'scripts/ci/prebuilt_images.py'
-
-      - name: Load PR-built service images
-        if: github.event_name == 'pull_request'
+      - name: Load merge-group service images
+        if: github.event_name == 'merge_group'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
-          GATEWAY_REQUIRED: ${{ steps.changed.outputs.gateway }}
-          AUTHENTICATOR_REQUIRED: ${{ steps.changed.outputs.authenticator }}
+          GATEWAY_REQUIRED: ${{ inputs.gateway_changed }}
+          AUTHENTICATOR_REQUIRED: ${{ inputs.authenticator_changed }}
         run: |
           gateway_policy=unchanged
           authenticator_policy=unchanged
@@ -205,5 +178,5 @@ jobs:
 
       - name: Run the gateway e2e
         env:
-          GATEWAY_E2E_PREBUILT: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+          GATEWAY_E2E_PREBUILT: ${{ github.event_name == 'merge_group' && 'true' || 'false' }}
         run: src/backend/services/gateway/tests/run-e2e.sh

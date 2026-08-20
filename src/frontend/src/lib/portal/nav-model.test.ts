@@ -5,6 +5,7 @@ import {
   MANAGE_ITEMS,
   manageItemsFor,
   partitionByReadiness,
+  peopleItemsFor,
   resolveZoneItem,
   ZONES,
   zoneItems,
@@ -87,5 +88,29 @@ describe("manageItemsFor", () => {
 
     expect(visible.map((i) => i.id)).not.toContain("identities");
     expect(visible).toEqual(MANAGE_ITEMS.filter((i) => !i.adminOnly));
+  });
+});
+
+describe("peopleItemsFor", () => {
+  it("keeps the reporting-line names when there is a reporting line", () => {
+    const labels = peopleItemsFor(false).map((item) => item.label);
+
+    expect(labels).toContain("Employees");
+    expect(labels).toContain("Median by Role");
+  });
+
+  it("names the same views for an organisation with no reporting lines", () => {
+    // Same ids, because the pane routes on them.
+    const items = peopleItemsFor(true);
+
+    expect(items.map((item) => item.id)).toEqual(["roster", "employees"]);
+    expect(items.map((item) => item.label)).toEqual(["Overview", "Roster"]);
+  });
+
+  it("drops the by-role cut a flat roster cannot make", () => {
+    // No job titles in that roster, so the median has nothing to group by.
+    expect(peopleItemsFor(true).map((item) => item.id)).not.toContain(
+      "median-by-role",
+    );
   });
 });

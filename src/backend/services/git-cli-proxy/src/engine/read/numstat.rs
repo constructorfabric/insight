@@ -3,8 +3,13 @@ use std::path::Path;
 
 use crate::engine::runner::{GitCredentials, GitError, GitRunner};
 
-/// One changed path inside one commit: status comes from the tree diff
-/// (`--raw`), line counts from `--numstat`.
+/// One changed path inside one commit: status and the object id of each side
+/// come from the tree diff (`--raw`), line counts from `--numstat`.
+///
+/// The oid pair is the content identity of the change — the same content
+/// entering a repository on two lines of history carries one post-image oid,
+/// however the two commits differ. A side that does not exist (the pre-image
+/// of an add, the post-image of a delete) is `None`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileStat {
     pub filename: String,
@@ -13,6 +18,8 @@ pub struct FileStat {
     pub additions: Option<u64>,
     pub deletions: Option<u64>,
     pub is_binary: bool,
+    pub pre_image_oid: Option<String>,
+    pub post_image_oid: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +163,9 @@ async fn read_batch(
         "--no-walk",
         "--raw",
         "--numstat",
+        // Raw output abbreviates OIDs by default and the abbreviation length
+        // grows with the repository, so an identity built on it is not stable.
+        "--no-abbrev",
         "-M",
         "-C",
         "-z",
@@ -170,8 +180,17 @@ async fn read_batch(
     Ok(parse(&text))
 }
 
-/// Status per new-path, harvested from `--raw` lines.
-type Statuses = HashMap<String, (FileStatus, Option<String>)>;
+/// What a `--raw` record says about one changed path, keyed by new-path.
+#[derive(Debug, Clone)]
+struct RawRecord {
+    status: FileStatus,
+    previous_filename: Option<String>,
+    pre_image_oid: Option<String>,
+    post_image_oid: Option<String>,
+}
+
+/// Status and object ids per new-path, harvested from `--raw` lines.
+type Statuses = HashMap<String, RawRecord>;
 /// Counts per new-path, harvested from `--numstat` lines.
 type Counts = HashMap<String, (Option<u64>, Option<u64>, bool)>;
 
@@ -215,10 +234,10 @@ fn parse(text: &str) -> HashMap<String, Vec<FileStat>> {
         }
 
         if let Some(meta) = head.strip_prefix(':') {
-            let Some((path, status, previous)) = raw_record(meta, &mut fields) else {
+            let Some((path, record)) = raw_record(meta, &mut fields) else {
                 continue;
             };
-            statuses.insert(path, (status, previous));
+            statuses.insert(path, record);
             continue;
         }
 
@@ -242,17 +261,21 @@ fn merge(order: &[String], statuses: &Statuses, counts: &Counts) -> Vec<FileStat
         .map(|path| {
             let (additions, deletions, is_binary) =
                 counts.get(path).copied().unwrap_or((None, None, false));
-            let (status, previous_filename) = statuses
-                .get(path)
-                .cloned()
-                .unwrap_or((FileStatus::Modified, None));
+            let record = statuses.get(path).cloned().unwrap_or(RawRecord {
+                status: FileStatus::Modified,
+                previous_filename: None,
+                pre_image_oid: None,
+                post_image_oid: None,
+            });
             FileStat {
                 filename: path.clone(),
-                previous_filename,
-                status,
+                previous_filename: record.previous_filename,
+                status: record.status,
                 additions,
                 deletions,
                 is_binary,
+                pre_image_oid: record.pre_image_oid,
+                post_image_oid: record.post_image_oid,
             }
         })
         .collect()
@@ -263,15 +286,36 @@ fn merge(order: &[String], statuses: &Statuses, counts: &Counts) -> Vec<FileStat
 fn raw_record<'a>(
     meta: &str,
     fields: &mut impl Iterator<Item = &'a str>,
-) -> Option<(String, FileStatus, Option<String>)> {
-    let status = FileStatus::from_raw(meta.split_whitespace().nth(4)?);
+) -> Option<(String, RawRecord)> {
+    let mut meta_fields = meta.split_whitespace().skip(2);
+    let pre_image_oid = object_oid(meta_fields.next());
+    let post_image_oid = object_oid(meta_fields.next());
+    let status = FileStatus::from_raw(meta_fields.next()?);
     let first = fields.next()?;
 
-    if matches!(status, FileStatus::Renamed | FileStatus::Copied) {
-        let second = fields.next()?;
-        return Some((second.to_owned(), status, Some(first.to_owned())));
-    }
-    Some((first.to_owned(), status, None))
+    let (path, previous_filename) = if matches!(status, FileStatus::Renamed | FileStatus::Copied) {
+        (fields.next()?.to_owned(), Some(first.to_owned()))
+    } else {
+        (first.to_owned(), None)
+    };
+    Some((
+        path,
+        RawRecord {
+            status,
+            previous_filename,
+            pre_image_oid,
+            post_image_oid,
+        },
+    ))
+}
+
+/// The oid of one side of a raw record, or `None` when that side has none —
+/// the all-zero oid of an added or deleted path, or a field that is not an
+/// object id at all.
+fn object_oid(field: Option<&str>) -> Option<String> {
+    field
+        .filter(|oid| super::blobs::is_object_oid(oid))
+        .map(str::to_owned)
 }
 
 /// `<added>\t<deleted>\t<path>` — binary files report `-` for both counts. A
@@ -504,5 +548,85 @@ mod tests {
             assert_eq!(FileStatus::from_raw(raw), expected, "raw: {raw:?}");
             assert_eq!(expected.as_str(), label);
         }
+    }
+
+    const PRE_OID: &str = "cbfd6b63ca7e7774a1fc6d3eef5379ba0477dc2a";
+    const POST_OID: &str = "4283846abb709e1738fdd3e0f0d9cdd16694c6c4";
+    const NULL_OID: &str = "0000000000000000000000000000000000000000";
+
+    #[test]
+    fn a_modified_path_carries_the_oid_of_each_side() {
+        let meta = format!(":100644 100644 {PRE_OID} {POST_OID} M");
+        let text = stream(&[("aaa", &[&meta, "src/a.rs", "3\t1\tsrc/a.rs"])]);
+        let Some(stats) = parse(&text).get("aaa").cloned() else {
+            panic!("commit missing")
+        };
+        assert_eq!(stats[0].pre_image_oid.as_deref(), Some(PRE_OID));
+        assert_eq!(stats[0].post_image_oid.as_deref(), Some(POST_OID));
+    }
+
+    #[test]
+    fn an_added_path_has_no_pre_image_and_a_deleted_path_no_post_image() {
+        let add = format!(":000000 100644 {NULL_OID} {POST_OID} A");
+        let delete = format!(":100644 000000 {PRE_OID} {NULL_OID} D");
+        let text = stream(&[
+            ("aaa", &[&add, "src/new.rs", "9\t0\tsrc/new.rs"]),
+            ("bbb", &[&delete, "gone.rs", "0\t4\tgone.rs"]),
+        ]);
+        let parsed = parse(&text);
+
+        let Some(added) = parsed.get("aaa") else {
+            panic!("commit aaa missing")
+        };
+        assert_eq!(added[0].pre_image_oid, None, "an add has no pre-image");
+        assert_eq!(added[0].post_image_oid.as_deref(), Some(POST_OID));
+
+        let Some(deleted) = parsed.get("bbb") else {
+            panic!("commit bbb missing")
+        };
+        assert_eq!(deleted[0].pre_image_oid.as_deref(), Some(PRE_OID));
+        assert_eq!(
+            deleted[0].post_image_oid, None,
+            "a delete has no post-image"
+        );
+    }
+
+    #[test]
+    fn a_rename_carries_the_oid_of_content_that_did_not_change() {
+        let meta = format!(":100644 100644 {PRE_OID} {PRE_OID} R100");
+        let text = stream(&[(
+            "aaa",
+            &[
+                &meta,
+                "src/old.rs",
+                "src/new.rs",
+                "0\t0\t",
+                "src/old.rs",
+                "src/new.rs",
+            ],
+        )]);
+        let Some(stats) = parse(&text).get("aaa").cloned() else {
+            panic!("commit missing")
+        };
+        assert_eq!(stats[0].pre_image_oid.as_deref(), Some(PRE_OID));
+        assert_eq!(stats[0].post_image_oid.as_deref(), Some(PRE_OID));
+    }
+
+    #[test]
+    fn a_field_that_is_not_an_object_id_reports_no_oid() {
+        let text = stream(&[(
+            "aaa",
+            &[":100644 100644 zz notahex M", "src/a.rs", "1\t1\tsrc/a.rs"],
+        )]);
+        let Some(stats) = parse(&text).get("aaa").cloned() else {
+            panic!("commit missing")
+        };
+        assert_eq!(stats[0].pre_image_oid, None);
+        assert_eq!(stats[0].post_image_oid, None);
+        assert_eq!(
+            stats[0].status,
+            FileStatus::Modified,
+            "the status field is still read from its own position"
+        );
     }
 }

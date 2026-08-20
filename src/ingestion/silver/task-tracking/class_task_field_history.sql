@@ -1,4 +1,5 @@
 -- depends_on: {{ ref('jira__task_field_history') }}
+-- depends_on: {{ ref('github__task_field_history') }}
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',

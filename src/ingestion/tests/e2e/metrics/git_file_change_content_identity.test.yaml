@@ -1,0 +1,127 @@
+spec_version: 1
+description: >
+  Line metrics count a change once per CONTENT, not once per commit that
+  carries it. The same content reaches a repository twice whenever a branch
+  keeps its own copy of a tree that also landed on the default branch, or a
+  commit is cherry-picked: two commits, one (pre_image_oid, post_image_oid)
+  pair, one authored change.
+
+  Fixture isolates itself in its own repository so the breakdown assertions are
+  unaffected by any other git fixture seeded in the suite:
+    * add-dup-1 (October) / add-dup-2 (November) add src/bundle.js with the
+      same post-image oid — +100 counts once, and the EARLIEST commit keeps it,
+      so October reports the lines and November reports none. The two windows
+      are what pin the ordering: if the later commit won, the +100 would move
+      to November.
+    * mod-dup-1 / mod-dup-2 make the same oid-to-oid transition on
+      src/app.ts — +8/-3 counts once.
+    * distinct adds different content, so it is never folded in.
+    * add-dup-2 is also what pins the commit-level correction: its own stats
+      say +100, every line of which October already counted, so its size is 0.
+    * unknown-1 / unknown-2 report NO oid (a source that has none, or a row
+      collected before the proxy reported one). Their identity is unknown, so
+      they must both survive — collapsing them would read NULL keys as equal.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_github.commits:
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-add-dup-1, repository: "https://github.com/constructor/content-identity.git", sha: ci-add-dup-1, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 100}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-add-dup-2, repository: "https://github.com/constructor/content-identity.git", sha: ci-add-dup-2, committed_date: "2026-11-02T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 100}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-distinct, repository: "https://github.com/constructor/content-identity.git", sha: ci-distinct, committed_date: "2026-10-01T11:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 7}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-mod-dup-1, repository: "https://github.com/constructor/content-identity.git", sha: ci-mod-dup-1, committed_date: "2026-10-01T12:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 8}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-mod-dup-2, repository: "https://github.com/constructor/content-identity.git", sha: ci-mod-dup-2, committed_date: "2026-10-01T13:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 8}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-unknown-1, repository: "https://github.com/constructor/content-identity.git", sha: ci-unknown-1, committed_date: "2026-10-01T14:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 5}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: ci-commit-unknown-2, repository: "https://github.com/constructor/content-identity.git", sha: ci-unknown-2, committed_date: "2026-10-01T15:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 5}
+
+  bronze_github.file_changes:
+    # One content, two commits: the add counts once.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: ci-file-add-dup-1, repository: "https://github.com/constructor/content-identity.git", sha: ci-add-dup-1, filename: src/bundle.js, status: added, additions: 100, deletions: 0, pre_image_oid: null, post_image_oid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: ci-file-add-dup-2, repository: "https://github.com/constructor/content-identity.git", sha: ci-add-dup-2, filename: src/bundle.js, status: added, additions: 100, deletions: 0, pre_image_oid: null, post_image_oid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1}
+    # Different content at a different path: never folded in.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: ci-file-distinct, repository: "https://github.com/constructor/content-identity.git", sha: ci-distinct, filename: src/other.js, status: added, additions: 7, deletions: 0, pre_image_oid: null, post_image_oid: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2}
+    # One oid-to-oid transition, two commits: the modification counts once.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: ci-file-mod-dup-1, repository: "https://github.com/constructor/content-identity.git", sha: ci-mod-dup-1, filename: src/app.ts, status: modified, additions: 8, deletions: 3, pre_image_oid: ccccccccccccccccccccccccccccccccccccccc3, post_image_oid: ddddddddddddddddddddddddddddddddddddddd4}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: ci-file-mod-dup-2, repository: "https://github.com/constructor/content-identity.git", sha: ci-mod-dup-2, filename: src/app.ts, status: modified, additions: 8, deletions: 3, pre_image_oid: ccccccccccccccccccccccccccccccccccccccc3, post_image_oid: ddddddddddddddddddddddddddddddddddddddd4}
+    # No oid on either side: identity unknown, so both rows must survive.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: ci-file-unknown-1, repository: "https://github.com/constructor/content-identity.git", sha: ci-unknown-1, filename: src/legacy.js, status: modified, additions: 5, deletions: 1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: ci-file-unknown-2, repository: "https://github.com/constructor/content-identity.git", sha: ci-unknown-2, filename: src/legacy.js, status: modified, additions: 5, deletions: 1}
+
+cases:
+  - name: A change counts once per content, however many commits carry it
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.lines_removed
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.commits
+            views:
+              - {view: breakdown, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      # 100 (the October add, which is the earliest) + 7 + 8 (one
+      # modification, not two) + 5 + 5.
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/content-identity"}}
+        equal: {value: 125}
+      # 3 (one modification, not two) + 1 + 1.
+      - metric: git.lines_removed
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/content-identity"}}
+        equal: {value: 5}
+      # Commit counting is unaffected: every commit is its own authored
+      # commit. Six land in October; add-dup-2 is November's.
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/content-identity"}}
+        equal: {value: 6}
+
+  - name: The repeat of an earlier content reports no lines of its own
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-11-01", to: "2026-11-30"}
+        metrics:
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.commits
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          # No repository dimension on this one, so the window is what isolates
+          # it: November holds exactly this fixture's one commit.
+          - metric_key: git.commit_size
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      # November holds one commit, and the only file change it carries repeats
+      # content October already accounted for — so the commit counts and the
+      # lines do not.
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/content-identity"}}
+        equal: {value: 1}
+      # No breakdown row at all for the repository: a metric with nothing to
+      # report omits the dimension rather than reporting it as zero.
+      - metric: git.lines_added
+        view: breakdown
+        assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'git-test:constructor/content-identity'))"
+      # The commit's own size agrees with what it contributed: its line stats
+      # less the file-change lines the content dedup removed.
+      - metric: git.commit_size
+        view: period
+        find: {entity_id: erin@example.com}
+        equal: {value: 0}

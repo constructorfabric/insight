@@ -138,7 +138,7 @@ this file and the registry disagree.
 - Reads: code_lines_added
 - Formula: sum(code_lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Lines added to files classified as code — tests, configuration, and documentation excluded.
+- Notes: Lines added to files classified as code — tests, configuration, and documentation excluded. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
 
 ## git.lines_added — Lines added
 
@@ -146,7 +146,7 @@ this file and the registry disagree.
 - Reads: lines_added
 - Formula: sum(lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Lines added across all files, split by file category: code, tests, configuration, documentation.
+- Notes: Lines added across all files, split by file category: code, tests, configuration, documentation. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
 
 ## git.lines_removed — Lines removed
 
@@ -154,7 +154,7 @@ this file and the registry disagree.
 - Reads: lines_removed
 - Formula: sum(lines_removed)
 - Shape: integer, neutral, unit lines
-- Notes: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available.
+- Notes: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available. Each change counts once: when the same removal reaches a repository in more than one commit, the lines belong to the commit that made it first.
 
 ## git.prs_created — Pull requests created
 
@@ -194,7 +194,7 @@ this file and the registry disagree.
 - Reads: commit_change_size
 - Formula: median(commit_change_size)
 - Shape: integer, lower_is_better, unit lines
-- Notes: Median diff size of authored commits (lines added plus removed). Smaller commits are easier to review.
+- Notes: Median diff size of authored commits (lines added plus removed), counting only content a commit is the first to introduce — a commit that repeats content already in the repository has a size of zero. Smaller commits are easier to review.
 
 ## git.pr_size — PR size
 

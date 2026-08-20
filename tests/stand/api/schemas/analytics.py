@@ -639,6 +639,7 @@ class UsagePerson(BaseModel):
     last_seen: str
     page_views: int = Field(..., ge=0)
     person_id: str
+    username: str = Field(..., description='The account handle, empty when no identity row carries one.')
     visits: int = Field(..., ge=0)
 
 

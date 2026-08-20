@@ -7,6 +7,7 @@ import type {
 } from "@/api/metrics-client";
 import { isPersonId } from "@/lib/metrics/entity";
 
+import { buildMetricDefinitions } from "./metric-definitions-factory";
 import { buildMetricResultsResponse } from "./metric-results-factory";
 import { buildIdentityTree, PEOPLE, PEOPLE_BY_EMAIL } from "./registry";
 
@@ -409,13 +410,16 @@ export const handlers = [
           name: "admin",
         },
       ],
+      // Mock mode demos the reporting-line product; the flat roster below is
+      // served anyway, so switching this to "flat" exercises that shell.
+      visibility_policy: "org_chart",
     }),
   ),
   // Minimal, honest empty catalog: without this handler the request falls
   // through to the network, and in a proxy-configured dev run the resulting
   // 401 bounces the whole mock session to the real IdP.
   http.get("/api/analytics/v1/metric-definitions", () =>
-    HttpResponse.json({ metrics: [] }),
+    HttpResponse.json({ metrics: buildMetricDefinitions() }),
   ),
   // One account's binding + decision trail. dev-42 carries a small history so
   // the panel has something to show; any other account answers 200 with no
@@ -572,6 +576,30 @@ export const handlers = [
           ? p.person_id.toLowerCase() === term
           : [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(term)),
       ),
+    )
+      .map((p) => ({
+        person_id: p.person_id,
+        email: p.email,
+        username: null,
+        display_name: p.name,
+        job_title: p.role,
+        status: "active",
+      }))
+      .sort((left, right) =>
+        (left.display_name ?? "").localeCompare(right.display_name ?? ""),
+      );
+    return HttpResponse.json(pageOf(items, params, q));
+  }),
+  // Who the caller may see. Mock mode has one tenant and one roster, so this
+  // answers the same people the operator listing does — the difference on a real
+  // stand is the visible-set filter, which a mock cannot have an opinion about.
+  http.get("/api/identity/v1/visible-persons", ({ request }) => {
+    const params = new URL(request.url).searchParams;
+    const q = params.get("q")?.trim().toLowerCase() ?? "";
+    const items = PEOPLE.filter(
+      (p) =>
+        !q ||
+        [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(q)),
     )
       .map((p) => ({
         person_id: p.person_id,
@@ -861,6 +889,7 @@ function usageHandlers() {
           {
             person_id: defaultPerson?.person_id ?? "",
             display_name: defaultPerson?.name ?? "",
+            username: defaultPerson?.email.split("@")[0] ?? "",
             visits: 31,
             page_views: 96,
             last_seen: `${by_day.at(-1)?.day ?? ""} 09:12`,
@@ -868,6 +897,7 @@ function usageHandlers() {
           {
             person_id: PEOPLE[1]?.person_id ?? "",
             display_name: PEOPLE[1]?.name ?? "",
+            username: PEOPLE[1]?.email.split("@")[0] ?? "",
             visits: 18,
             page_views: 64,
             last_seen: `${by_day.at(-1)?.day ?? ""} 08:40`,
@@ -875,6 +905,7 @@ function usageHandlers() {
           {
             person_id: PEOPLE[2]?.person_id ?? "",
             display_name: PEOPLE[2]?.name ?? "",
+            username: PEOPLE[2]?.email.split("@")[0] ?? "",
             visits: 7,
             page_views: 54,
             last_seen: `${by_day.at(-2)?.day ?? ""} 17:05`,

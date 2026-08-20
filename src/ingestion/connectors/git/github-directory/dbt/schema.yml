@@ -21,9 +21,9 @@ models:
   - name: github_directory__org_members_snapshot
     description: "SCD2 snapshot of the GitHub organization roster (appends a version on tracked-field change). Feeds the fields-history / identity-inputs chain."
   - name: github_directory__org_members_fields_history
-    description: "Field-level change log of the GitHub member profile, derived from github_directory__org_members_snapshot. entity_id is the lowercased login. Input to github_directory__identity_inputs."
+    description: "Field-level change log of the GitHub member profile, derived from github_directory__org_members_snapshot. entity_id is the member's immutable numeric GitHub id, stringified. Input to github_directory__identity_inputs."
   - name: github_directory__identity_inputs
-    description: "Identity-resolution inputs from the GitHub member roster (id binding on lowercased login, username, display_name, email). Unioned into silver.identity_inputs via the silver:identity_inputs tag; source_type is 'github'."
+    description: "Identity-resolution inputs from the GitHub member roster (id binding on the numeric member id; username, display_name and email observations). Unioned into silver.identity_inputs via the silver:identity_inputs tag; source_type is 'github'."
     columns:
       - name: unique_key
         tests:

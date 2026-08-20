@@ -10,7 +10,7 @@ const MIN_OID_LEN: usize = 7;
 /// absent side (added or deleted path) and is not fetchable — its length
 /// varies with the repository's hash algorithm, so it is recognized by shape,
 /// not by comparison with one fixed constant.
-fn is_object_oid(field: &str) -> bool {
+pub(super) fn is_object_oid(field: &str) -> bool {
     field.len() >= MIN_OID_LEN
         && field.chars().all(|c| c.is_ascii_hexdigit())
         && field.chars().any(|c| c != '0')
