@@ -166,6 +166,7 @@ sources:
         evidence_granularity: event
     dimensions:
       - type
+      - source
   - source:
       key: wiki
       kind: managed_observation
