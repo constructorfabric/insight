@@ -417,12 +417,12 @@ jobs:
             exit 1
           fi
 
-      # seed-stand.sh runs FOUR Jobs in sequence — the seed itself, persons-seed
-      # and persons-sync for the identity projection, and the gold rebuild —
-      # each with its own hour-long activeDeadlineSeconds. This ceiling is well
-      # under that sum on purpose: four Jobs each taking their full hour is a
-      # wedged stand, not a slow one, and 110 min is already far above a healthy
-      # run. It fires first in that case, so a timed-out seed CAN leave a Job
+      # seed-stand.sh runs THREE Jobs in sequence — the seed itself, the
+      # persons-seed identity projection (which publishes itself), and the gold
+      # rebuild — each with its own hour-long activeDeadlineSeconds. This
+      # ceiling is well under that sum on purpose: three Jobs each taking their
+      # full hour is a wedged stand, not a slow one, and 110 min is already far
+      # above a healthy run. It fires first in that case, so a timed-out seed CAN leave a Job
       # running in the cluster — the run says which one, and it is reaped by
       # ttlSecondsAfterFinished once it ends.
       - name: 'Stage 3/5 — seed the stand'
