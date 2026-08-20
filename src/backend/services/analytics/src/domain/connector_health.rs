@@ -130,9 +130,12 @@ fn is_plain_identifier(name: &str) -> bool {
 const STREAM_CATALOGUE_SQL: &str = "\
     SELECT c.database AS namespace, \
            c.table AS stream, \
-           (SELECT sum(rows) FROM system.parts \
-            WHERE active AND database = c.database AND table = c.table) AS rows \
+           p.rows AS rows \
     FROM system.columns AS c \
+    LEFT JOIN ( \
+        SELECT database, table, sum(rows) AS rows \
+        FROM system.parts WHERE active GROUP BY database, table \
+    ) AS p ON p.database = c.database AND p.table = c.table \
     WHERE c.name = ? AND startsWith(c.database, ?) \
     ORDER BY namespace, stream";
 
@@ -140,7 +143,7 @@ const STREAM_CATALOGUE_SQL: &str = "\
 struct CatalogueRow {
     namespace: String,
     stream: String,
-    rows: Option<u64>,
+    rows: u64,
 }
 
 #[derive(Debug, clickhouse::Row, serde::Deserialize)]
@@ -181,7 +184,7 @@ pub async fn read_stream_states(
         .map(|r| StreamState {
             namespace: r.namespace.clone(),
             stream: r.stream.clone(),
-            rows: r.rows.unwrap_or(0),
+            rows: r.rows,
             newest_extract: newest
                 .get(&(r.namespace.as_str(), r.stream.as_str()))
                 .copied(),
